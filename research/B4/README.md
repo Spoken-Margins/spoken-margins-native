@@ -53,6 +53,16 @@ before a Margin and 120 after it (the app's `ExcerptCapRule`, #2237). It leaves
 out a source URL with a query, credentials or fragment. `GET /l/<id>/packet`
 downloads the unchanged sealed packet, which the app opens with the same key.
 No source audio is served or fetched.
+
+A web app on another origin reads the packet and preview only if the server is
+started with `serve -link-origins https://web.example.com[,…]` (#3013). Empty,
+the default, sends no CORS headers anywhere. A listed origin, matched exactly as
+the browser sends it, gets `Access-Control-Allow-Origin` on those two GET routes
+(errors included, so the app can tell 410 from a network failure), and their
+`OPTIONS` preflight allows `GET` with no extra headers. Every answer on them says
+`Vary: Origin`. Credentials are never allowed, and uploads, reports and the page
+itself never answer CORS. A bad entry (a wildcard, a path, upper case, a default
+port, `null`) stops the server rather than being skipped.
 The report form posts one fixed reason (`privacy`, `copyright`, `harmful`, `spam`
 or `other`) to `/l/<id>/report`; reports join the existing hourly abuse log with
 an `id` field, without a reporter address. Request logs use `/l/*` for all link

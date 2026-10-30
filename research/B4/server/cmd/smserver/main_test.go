@@ -225,3 +225,18 @@ func TestLinkTakedownCommand(t *testing.T) {
 		t.Fatal("missing id")
 	}
 }
+
+// A bad -link-origins entry stops the server before it opens anything,
+// instead of being skipped (#3013).
+func TestServeRefusesBadLinkOrigins(t *testing.T) {
+	for _, bad := range []string{"*", "https://web.example.com/", "null", "https://web.example.com,", "HTTPS://web.example.com"} {
+		dir := t.TempDir()
+		err := serve([]string{"-state", filepath.Join(dir, "state"), "-public", filepath.Join(dir, "public"), "-link-origins", bad})
+		if err == nil || !strings.Contains(err.Error(), "-link-origins") {
+			t.Errorf("%q: %v", bad, err)
+		}
+		if _, err := os.Stat(filepath.Join(dir, "state")); !os.IsNotExist(err) {
+			t.Errorf("%q: state directory made before the flag was checked", bad)
+		}
+	}
+}

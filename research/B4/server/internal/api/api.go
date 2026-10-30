@@ -105,6 +105,11 @@ type Server struct {
 	Links          *links.Store
 	LinkInstallURL string
 
+	// LinkOrigins are the web app origins that may read the sealed packet
+	// and preview from another origin (#3013, link_cors.go). Empty, the
+	// default, sends no CORS headers anywhere.
+	LinkOrigins []string
+
 	// Per-hour limits. Zero means the defaults below.
 	ChallengesPerIPPerHour  int
 	RequestsPerInstallPerHr int
@@ -183,13 +188,19 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET "+pathMapsPrefix+"{key}", s.getMap)
 	mux.HandleFunc("GET "+PathTokenKeys, s.tokensOn(s.tokenKeys))
 	mux.HandleFunc("POST "+PathTokens, s.tokensOn(s.attested(s.issueTokens)))
-	mux.HandleFunc("GET /l/{id}/preview", s.getLinkPreview)
+	mux.HandleFunc("GET /l/{id}/preview", s.linkCORS(s.getLinkPreview))
 	mux.HandleFunc("GET /l/share-link-open.mjs", s.getLinkScript)
 	mux.HandleFunc("GET /l/share-link-page.mjs", s.getLinkScript)
 	mux.HandleFunc("POST "+PathLinks, s.uploadLink)
 	mux.HandleFunc("GET /l/{id}", s.getLink)
-	mux.HandleFunc("GET /l/{id}/packet", s.getLinkPacket)
+	mux.HandleFunc("GET /l/{id}/packet", s.linkCORS(s.getLinkPacket))
 	mux.HandleFunc("POST /l/{id}/report", s.reportLink)
+	if len(s.LinkOrigins) > 0 {
+		// Registered only with origins listed, so an empty list leaves
+		// OPTIONS answering 405 as it always has.
+		mux.HandleFunc("OPTIONS /l/{id}/preview", s.linkPreflight)
+		mux.HandleFunc("OPTIONS /l/{id}/packet", s.linkPreflight)
+	}
 	return s.logRequests(mux)
 }
 

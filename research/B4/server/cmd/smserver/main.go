@@ -1,6 +1,6 @@
 // smserver is the Spoken Margins server (bridge stream, M1 skeleton).
 //
-//	smserver serve   -state DIR -public DIR [-listen 127.0.0.1:8795] [-attest-root PEM] [-allow-development]
+//	smserver serve   -state DIR -public DIR [-listen 127.0.0.1:8795] [-attest-root PEM] [-allow-development] [-link-origins https://web.example]
 //	smserver block   -state DIR TAG      refuse one install from now on
 //	smserver unblock -state DIR TAG
 //	smserver switch  -public DIR [-minimum-build N] SERVICE on|off   the kill switch
@@ -36,6 +36,7 @@ import (
 	"spokenmargins.dev/bridge/internal/maps"
 	"spokenmargins.dev/bridge/internal/store"
 	"spokenmargins.dev/bridge/internal/tokens"
+	"spokenmargins.dev/bridge/internal/weborigin"
 )
 
 const (
@@ -98,12 +99,19 @@ func serve(args []string) error {
 	behindProxy := fs.Bool("behind-proxy", false, "take the client address from X-Forwarded-For when the peer is loopback")
 	idleDays := fs.Int("idle-days", 90, "delete install records unused for this many days")
 	installURL := fs.String("links-install-url", "", "App Store listing or TestFlight invitation (required for links)")
+	linkOrigins := fs.String("link-origins", "", "comma-separated web app origins that may read sealed link packets and previews (CORS); empty sends no CORS headers")
 	var mf mapsFlags
 	mf.register(fs)
 	fs.Parse(args)
 
 	if *installURL != "" && !links.ValidInstallURL(*installURL) {
 		return errors.New("links: install URL must be an App Store listing or TestFlight invitation")
+	}
+	// A bad entry stops the server rather than being skipped, so a typo
+	// can't quietly open the links to other origins than the owner meant.
+	webOrigins, err := weborigin.Parse(*linkOrigins)
+	if err != nil {
+		return fmt.Errorf("links: -link-origins: %w", err)
 	}
 	linkStore, err := links.OpenStore(filepath.Join(*stateDir, "links"))
 	if err != nil {
@@ -165,6 +173,7 @@ func serve(args []string) error {
 		Tokens:            issuer,
 		Links:             linkStore,
 		LinkInstallURL:    *installURL,
+		LinkOrigins:       webOrigins,
 	}
 	httpServer := &http.Server{
 		Addr:              *listen,
