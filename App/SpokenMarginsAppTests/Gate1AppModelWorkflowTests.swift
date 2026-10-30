@@ -1921,6 +1921,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.beginInterjection()
         try await waitFor("Margin finish") { !model.isFinishingInterjection }
         XCTAssertFalse(model.snapshot.isRecording)
+        await model.settleItemReload() // the item detail reloads off the main thread after a save (#2967)
         XCTAssertEqual(model.selectedItem.interjections.count, 1)
         XCTAssertTrue(model.isMarginCaptureCoolingDown)
         model.beginInterjection()
