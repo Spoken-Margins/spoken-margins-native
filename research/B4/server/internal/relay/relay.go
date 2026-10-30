@@ -402,11 +402,21 @@ func (r *Relay) dial(ctx context.Context, network, addr string) (net.Conn, error
 	return nil, lastErr
 }
 
-// Result is a relayed response: the upstream content type and body.
+// Result is a relayed response: the upstream content type and body, and the
+// address the body came from after any redirects.
 type Result struct {
 	ContentType string
 	Body        []byte
+	// FinalURL is where the last redirect landed: the requested URL when
+	// there was none. The web app resolves a feed's relative links against
+	// it, and checks that a Substack page is the post the listener tapped
+	// (#2979). Every hop was checked by the rules above.
+	FinalURL string
 }
+
+// FinalURLHeader carries Result.FinalURL to the web app. It is listed in
+// Access-Control-Expose-Headers, so a cross-origin fetch() can read it.
+const FinalURLHeader = "X-Final-URL"
 
 // Fetch gets one URL under every rule above. Errors are always *Error.
 func (r *Relay) Fetch(ctx context.Context, raw string) (*Result, error) {
@@ -455,7 +465,11 @@ func (r *Relay) Fetch(ctx context.Context, raw string) (*Result, error) {
 	if cs := params["charset"]; cs != "" {
 		contentType = mime.FormatMediaType(media, map[string]string{"charset": cs})
 	}
-	return &Result{ContentType: contentType, Body: body}, nil
+	final := u.String()
+	if resp.Request != nil && resp.Request.URL != nil {
+		final = resp.Request.URL.String()
+	}
+	return &Result{ContentType: contentType, Body: body, FinalURL: final}, nil
 }
 
 func classify(ctx context.Context, err error) error {
@@ -525,6 +539,8 @@ func (r *Relay) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 	h.Set("Content-Type", res.ContentType)
 	h.Set("Content-Disposition", "attachment")
+	h.Set(FinalURLHeader, res.FinalURL)
+	h.Set("Access-Control-Expose-Headers", FinalURLHeader)
 	h.Set("Content-Length", strconv.Itoa(len(res.Body)))
 	w.WriteHeader(http.StatusOK)
 	w.Write(res.Body)

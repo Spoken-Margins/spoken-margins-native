@@ -404,3 +404,52 @@ func TestBusyWhenFull(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// The web app resolves a feed's relative links, and checks that a Substack
+// page is the post the listener tapped, against where the relay actually
+// read the body (#2979). So the answer names the address after redirects,
+// in a header a cross-origin fetch() may read.
+func TestReportsWhereRedirectsLanded(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/old/feed", func(w http.ResponseWriter, req *http.Request) {
+		http.Redirect(w, req, "/new/feed.xml?v=2", http.StatusMovedPermanently)
+	})
+	mux.HandleFunc("/new/feed.xml", func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "application/rss+xml")
+		w.Write([]byte(rss))
+	})
+	_, r, port := upstream(t, mux)
+	front := httptest.NewServer(r)
+	defer front.Close()
+	base := "http://feed.test:" + strconv.Itoa(port)
+
+	for _, c := range []struct{ asked, final string }{
+		{base + "/old/feed", base + "/new/feed.xml?v=2"},
+		{base + "/new/feed.xml", base + "/new/feed.xml"},
+	} {
+		req, _ := http.NewRequest("GET", front.URL+"/?url="+url.QueryEscape(c.asked), nil)
+		req.Header.Set("Origin", "https://web.spokenmargins.test")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != 200 {
+			t.Fatalf("%s: status %d", c.asked, resp.StatusCode)
+		}
+		if got := resp.Header.Get(relay.FinalURLHeader); got != c.final {
+			t.Errorf("%s: %s = %q, want %q", c.asked, relay.FinalURLHeader, got, c.final)
+		}
+		if got := resp.Header.Get("Access-Control-Expose-Headers"); got != relay.FinalURLHeader {
+			t.Errorf("%s: Access-Control-Expose-Headers = %q", c.asked, got)
+		}
+	}
+
+	res, err := r.Fetch(context.Background(), base+"/old/feed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.FinalURL != base+"/new/feed.xml?v=2" {
+		t.Errorf("Fetch FinalURL = %q", res.FinalURL)
+	}
+}
