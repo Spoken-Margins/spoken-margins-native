@@ -1,0 +1,141 @@
+# Hosted web UI checks (#3004, part of #2977): build the web app in `Web/` and run its Playwright suite on a
+# GitHub-hosted ubuntu runner, for PRs that change `Web/**`. Until now the build and the browser tests ran only in the
+# thread that changed them and were reported by hand, so a PR could pass on its author's machine and fail on a clean
+# checkout (#2991 failed in CI on a fixture the author never committed). The owner's 2026-10-21 call: every test
+# blocks merges. `Web/`'s plain-TypeScript tests already run in the fast plan (`npm run test:web`); this adds the
+# part with its own package.json: the Vite build and the Playwright journeys in Chromium.
+#
+# The rerun rule (owner, 2026-10-24): Playwright runs with one retry. A test that fails and then passes counts as a
+# pass, and the job summary lists it under "passed on retry". A test that fails its retry too makes the job red. The
+# retry count is passed on the command line, so it holds whatever `retries` the config file says.
+#
+# While `Web/package.json` is not on the branch (the UI is still landing), the job says so and passes without
+# installing anything. Once it is there the job runs for real, with no further workflow change.
+#
+# No secrets, a read-only token, no pull_request_target, same-repo PRs only. This workflow touches `.github/`, so
+# the runner never merges a PR that changes it: it waits for the owner's merge tap. Making this check hold up
+# `automerge` is a separate change to the lane runner, which reads a fixed list of check names (lane-runner.py
+# HOSTED_*_CHECK); this job's check is "hosted web: build and Playwright".
+#
+# Dispatch it by hand on any branch with `gh workflow run hosted-web.yml --ref <branch>`.
+name: hosted-web
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [next, main]  # either trunk (#1492); the checks read the PR's own base
+    # Only the web app (and this file, so a change to the job proves itself). A PR that touches neither starts no job.
+    paths: ['Web/**', '.github/workflows/hosted-web.yml']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hosted-web-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web:
+    # Same-repo PRs only, as in every other workflow. Always true for workflow_dispatch.
+    name: 'hosted web: build and Playwright'
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Start the clock
+        run: echo "STARTED=$(date +%s)" >> "$GITHUB_ENV"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Is there a web app to test yet?
+        id: present
+        run: |
+          if [ -f Web/package.json ] && [ -f Web/package-lock.json ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            msg="Skipped: Web/package.json and Web/package-lock.json are not on this branch yet, so there is no web app to build or test."
+            echo "$msg"
+            echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        if: steps.present.outputs.present == 'true'
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: Web/package-lock.json
+      - name: Install packages
+        if: steps.present.outputs.present == 'true'
+        working-directory: Web
+        run: npm ci
+      - name: Build
+        if: steps.present.outputs.present == 'true'
+        working-directory: Web
+        run: npm run build
+      # Chromium only, as the config uses; --with-deps adds the system libraries the hosted image lacks.
+      - name: Install Playwright Chromium
+        if: steps.present.outputs.present == 'true'
+        working-directory: Web
+        run: npx playwright install --with-deps chromium
+      - name: Playwright suite
+        if: steps.present.outputs.present == 'true'
+        working-directory: Web
+        env:
+          CI: 'true'
+          PLAYWRIGHT_JSON_OUTPUT_NAME: ${{ github.workspace }}/artifacts/web-ci/results.json
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/artifacts/web-ci"
+          config=$(ls e2e/playwright.config.* playwright.config.* 2>/dev/null | head -n 1 || true)
+          [ -n "$config" ] || { echo "No Playwright config under Web/ (looked for e2e/playwright.config.* and playwright.config.*)." >&2; exit 1; }
+          echo "Playwright config: $config"
+          npx playwright test -c "$config" --retries=1 --reporter=list,json,html
+      # A test that failed and then passed is a pass, but each one is evidence (#2176 tallies them, and three in a
+      # week get an issue). The JSON reporter marks them `flaky`.
+      - name: List tests that passed on retry
+        if: always() && steps.present.outputs.present == 'true'
+        run: |
+          report="$GITHUB_WORKSPACE/artifacts/web-ci/results.json"
+          if [ ! -f "$report" ]; then
+            echo "No Playwright report was written, so there is no retry list." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          node --input-type=module - "$report" <<'JS'
+          import { readFileSync, appendFileSync } from 'node:fs';
+          const report = JSON.parse(readFileSync(process.argv[2], 'utf8'));
+          const flaky = [];
+          const walk = (suite, trail) => {
+            const here = suite.title ? [...trail, suite.title] : trail;
+            for (const spec of suite.specs ?? []) {
+              for (const test of spec.tests ?? []) {
+                if (test.status === 'flaky') flaky.push(`${spec.file} › ${[...here.slice(1), spec.title].join(' › ')} [${test.projectName}]`);
+              }
+            }
+            for (const child of suite.suites ?? []) walk(child, here);
+          };
+          for (const suite of report.suites ?? []) walk(suite, []);
+          const stats = report.stats ?? {};
+          const lines = [`Playwright: ${stats.expected ?? 0} passed, ${stats.flaky ?? 0} passed on retry, ${stats.unexpected ?? 0} failed, ${stats.skipped ?? 0} skipped.`];
+          lines.push(flaky.length ? `Passed on retry: ${flaky.join('; ')}` : 'Passed on retry: none');
+          for (const test of flaky) console.log(`::warning title=passed on retry::${test}`);
+          console.log(lines.join('\n'));
+          appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${lines.join('\n\n')}\n`);
+          JS
+      # The machine is gone after the job: keep the HTML report and the failure traces so a red run is readable.
+      - name: Keep the Playwright report
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: hosted-web-playwright-report
+          path: |
+            artifacts/web-ci/
+            artifacts/web-2982/
+            Web/playwright-report/
+            Web/e2e/playwright-report/
+            Web/test-results/
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Report time
+        if: always()
+        run: |
+          seconds=$(( $(date +%s) - STARTED ))
+          echo "hosted web took ${seconds}s on ubuntu-latest." | tee -a "$GITHUB_STEP_SUMMARY"
