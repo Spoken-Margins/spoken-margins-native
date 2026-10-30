@@ -72,12 +72,13 @@ struct LiveSessionView: View {
                         DispatchQueue.main.async { withAnimation { scroller.scrollTo(Self.endCardId, anchor: .bottom) } }
                     }
                 }
-                // Typing a Margin: bring the whole composer, Add Margin included, up above the keyboard (#2963).
+                // Typing a Margin: bring the composer to the top of the visible area, so the field and the buttons under it sit
+                // above the keyboard even on a short screen (#2963).
                 .onChange(of: marginFieldFocused) { _, focused in
                     guard focused else { return }
                     Task {
                         try? await Task.sleep(for: .milliseconds(350)) // after the keyboard has finished rising
-                        withAnimation { scroller.scrollTo(Self.composerId, anchor: .bottom) }
+                        withAnimation { scroller.scrollTo(Self.composerId, anchor: .top) }
                     }
                 }
             }

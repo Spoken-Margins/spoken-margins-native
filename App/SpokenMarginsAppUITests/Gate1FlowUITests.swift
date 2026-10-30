@@ -925,7 +925,7 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(add.isEnabled && add.isHittable, "Add Margin on the keyboard can't be tapped")
         captureScreen(named: "live-session-add-margin-keyboard")
         add.tap()
-        XCTAssertFalse(app.keyboards.firstMatch.waitForExistence(timeout: 2), "Add Margin left the keyboard up")
+        XCTAssertTrue(waitForDisappearance(app.keyboards.firstMatch, timeout: 4), "Add Margin left the keyboard up")
     }
 
     func testWrittenMarginSaveSearchStarAndDiscardPreserveTheSource() throws {
