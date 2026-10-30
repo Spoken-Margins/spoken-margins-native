@@ -30,6 +30,7 @@ from zoneinfo import ZoneInfo
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'dial'))
 import dial_gate  # noqa: E402  (the Dial's own parsers, so both read #589 and #337 the same way)
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'scripts'))
+from sm_paths import ops_home  # noqa: E402  (#1844)
 from trunk import trunk_branch  # noqa: E402  (#1492)
 
 REPO = dial_gate.REPO
@@ -348,9 +349,19 @@ def latest_comments() -> list[dict]:
 
 
 def agents_md(ref: str) -> str:
-    return subprocess.run(
+    """The public guide on the trunk, plus the owner overlay when it is on this machine (#1854).
+
+    The overlay holds Current focus and the standing calls, so the holds live there; without it the scan
+    sees only the public guide."""
+    text = subprocess.run(
         ['gh', 'api', '-H', 'Accept: application/vnd.github.raw', f'repos/{REPO}/contents/AGENTS.md?ref={ref}'],
         check=True, capture_output=True, text=True).stdout
+    overlay = ops_home() / 'ops' / 'OWNER.md'
+    if overlay.is_file():
+        text += '\n' + overlay.read_text()
+    else:
+        print(f'note: {overlay} not found; holds in the owner overlay were not scanned', file=sys.stderr)
+    return text
 
 
 def main(argv=None) -> int:

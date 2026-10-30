@@ -1,8 +1,10 @@
 """Host tests for the away check. Run: python3 -m unittest discover -s ops/away"""
 import datetime as dt
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).parent))
 import away_check as a  # noqa: E402
@@ -173,6 +175,27 @@ class ReportTests(unittest.TestCase):
         text = a.report(now, 12, dial, q, [], [], [], [], p)
         self.assertIn('the Dial is Off', text)
         self.assertIn('3. Only you: nothing', text)
+
+
+class OverlayTests(unittest.TestCase):
+    """The standing calls moved to the owner overlay (#1854): the scan must still see holds written there."""
+
+    def read(self, overlay_text):
+        with tempfile.TemporaryDirectory() as home:
+            if overlay_text is not None:
+                (Path(home) / 'ops').mkdir()
+                (Path(home) / 'ops' / 'OWNER.md').write_text(overlay_text)
+            run = mock.Mock(return_value=mock.Mock(stdout='# Public guide\n'))
+            with mock.patch.object(a.subprocess, 'run', run), mock.patch.object(a, 'ops_home', return_value=Path(home)):
+                return a.agents_md('main')
+
+    def test_overlay_text_is_appended_when_present(self):
+        text = self.read('## Current focus\n- Held: Co-op waits for the LLC.\n')
+        self.assertIn('# Public guide', text)
+        self.assertEqual([h['line'] for h in a.scan_holds(text)], [4])
+
+    def test_missing_overlay_leaves_the_public_guide_alone(self):
+        self.assertEqual(self.read(None).strip(), '# Public guide')
 
 
 if __name__ == '__main__':

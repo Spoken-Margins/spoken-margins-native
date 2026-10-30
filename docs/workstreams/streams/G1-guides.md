@@ -39,7 +39,7 @@ Each guide has step screenshots and a short animation (GIF or video). All are ge
   - Cross-app steps the simulator can't show use an owner-recorded clip or a clearly marked illustration, and the generator lists which ones need the owner.
   - Help shows the guides offline.
   - The site has a page per guide.
-  - Regeneration is part of the release checklist, as one line in `AGENTS.md` "Releasing a build".
+  - Regeneration is part of the release checklist, as one line in the owner overlay's "Releasing a build".
 
 ## Must not break
 

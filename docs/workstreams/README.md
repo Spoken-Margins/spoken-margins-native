@@ -185,7 +185,7 @@ The reach pass (#141, #145–#149, #151) moves into B1, D3, D4 and D5.
 
 ## Decisions the owner owns
 
-The briefs flag these where they come up. Parallel streams, the lane runner merging into `next`, hosting on the VPS and the design direction are settled (`AGENTS.md`, owner's standing calls).
+The briefs flag these where they come up. Parallel streams, the lane runner merging into `next`, hosting on the VPS and the design direction are settled (the owner's standing calls, in the private overlay to `AGENTS.md`).
 
 | Decision | Blocks | Recommendation |
 | --- | --- | --- |

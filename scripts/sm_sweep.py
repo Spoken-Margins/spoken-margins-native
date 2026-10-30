@@ -431,7 +431,7 @@ def decide(facts, window=STALE_AFTER):
         oldest = min(untriaged, key=lambda row: row['created_at'])
         act('untriaged', LOOK, f'{len(untriaged)} open issue(s) have no milestone (oldest #{oldest["number"]}, filed '
             f'{oldest["created_at"][:10]}): the daily triage must milestone and label every one, not only the issues '
-            'filed since its last run (AGENTS.md, Current focus: Solid Ground, Co-op Experience, Later).',
+            'filed since its last run (owner overlay, Current focus: Solid Ground, Co-op Experience, Later).',
             issues=[row['number'] for row in untriaged[:10]])
 
     outside = facts.get('outside') or []
