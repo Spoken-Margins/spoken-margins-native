@@ -27,7 +27,7 @@ export function Margins({ onPlay, onOpenFile }: { onPlay: () => void; onOpenFile
         <input
           ref={picker}
           type="file"
-          accept=".spokenmargins,application/vnd.spokenmargins.package+zip"
+          accept=".spokenmargins,application/vnd.spokenmargins.package+zip,.zip,application/zip"
           hidden
           data-testid="margin-file"
           onChange={(event) => {

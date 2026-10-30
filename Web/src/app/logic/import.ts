@@ -19,6 +19,13 @@ export interface PlacedImport {
   landAt: number | undefined;
   /** Margins on an article's text, which the web app can't place yet. */
   skipped: number;
+  /** Margins already here (the same words at the same moment), left out so a backup opened twice adds nothing. */
+  duplicates: number;
+}
+
+/** The same Margin: same episode, the same moment to the half second, and the same words. */
+export function sameMargin(a: Margin, b: Margin): boolean {
+  return a.episodeId === b.episodeId && Math.abs(a.atSeconds - b.atSeconds) < 0.5 && (a.text ?? '').trim() === (b.text ?? '').trim();
 }
 
 export const SHARED_SHOW_PREFIX = 'shared:';
@@ -51,7 +58,13 @@ export function findEpisode(read: PacketRead, episodes: readonly Episode[]): Epi
   return undefined;
 }
 
-export function placeImport(read: PacketRead, shows: readonly Show[], episodes: readonly Episode[], now = new Date().toISOString()): PlacedImport {
+export function placeImport(
+  read: PacketRead,
+  shows: readonly Show[],
+  episodes: readonly Episode[],
+  now = new Date().toISOString(),
+  existing: readonly Margin[] = [],
+): PlacedImport {
   const own = findEpisode(read, episodes);
   let episode: Episode;
   let show: Show | undefined;
@@ -67,9 +80,10 @@ export function placeImport(read: PacketRead, shows: readonly Show[], episodes: 
       showId: shared.id,
     };
   }
-  const margins = read.margins.map((m) => ({ ...m, episodeId: episode.id }));
-  const landAt = margins.length ? Math.min(...margins.map((m) => m.atSeconds)) : undefined;
-  return { episode, newEpisode: !own, ...(show && { show }), margins, landAt, skipped: read.textMarginCount };
+  const placed = read.margins.map((m) => ({ ...m, episodeId: episode.id }));
+  const margins = placed.filter((m) => !existing.some((e) => sameMargin(e, m)));
+  const landAt = placed.length ? Math.min(...placed.map((m) => m.atSeconds)) : undefined;
+  return { episode, newEpisode: !own, ...(show && { show }), margins, landAt, skipped: read.textMarginCount, duplicates: placed.length - margins.length };
 }
 
 /** What the listener is told once the Margins are in. */
@@ -80,6 +94,10 @@ export function importSummary(placed: PlacedImport, sender: string | undefined):
   const skipped = placed.skipped
     ? ` ${placed.skipped === 1 ? '1 Margin is' : `${placed.skipped} Margins are`} on an article’s text, which the web app can’t open yet.`
     : '';
+  const already = placed.duplicates
+    ? ` ${placed.duplicates === 1 ? '1 Margin was' : `${placed.duplicates} Margins were`} already here.`
+    : '';
+  if (count === 0 && placed.duplicates) return `Every Margin in this file is already here, on “${placed.episode.title}”.${skipped}`;
   if (count === 0) return `This file has no Margins the web app can place.${skipped}`;
-  return `Opened ${what}${who} on “${placed.episode.title}”.${skipped}`;
+  return `Opened ${what}${who} on “${placed.episode.title}”.${already}${skipped}`;
 }
