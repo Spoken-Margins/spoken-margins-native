@@ -181,14 +181,14 @@ extension Gate1AppModel {
     }
 
     /// Mirrors the link the packet builder keeps, so the share screen never promises a private feed link (#168).
-    func secureSharedItemURL(for item: Item) -> String? {
+    func secureSharedItemURL<Fields: LibraryItemFields>(for item: Fields) -> String? {
         ShareableLinkPolicy.shareableLink(
             item.externalReference.flatMap(SharedItemIdentityBuilder.normalizedSharingURL)
                 ?? item.media?.url.flatMap(SharedItemIdentityBuilder.normalizedSharingURL)
         )
     }
 
-    func sharedItemType(for item: Item) -> SharedItemType {
+    func sharedItemType<Fields: LibraryItemFields>(for item: Fields) -> SharedItemType {
         SharedPacketItemMatcher.itemType(for: item)
     }
 
