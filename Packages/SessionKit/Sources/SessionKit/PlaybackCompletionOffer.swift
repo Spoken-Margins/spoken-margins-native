@@ -11,6 +11,10 @@ public enum PlaybackCompletionOffer {
     /// Where an item with no recognised end of body, or a podcast, starts offering completion.
     public static let fallbackFraction = 0.75
 
+    /// Where completion is offered whatever the structure says. A back-matter part near the very end (a footer, a
+    /// comments link) must not hold the offer back until the item is over (#2968).
+    public static let lateFraction = 0.9
+
     /// A reference list this early is a misread (a short list quoted at the top), not the end of the body.
     static let earliestBodyEndFraction = 0.25
 
@@ -27,6 +31,7 @@ public enum PlaybackCompletionOffer {
         guard length > 0, offset >= 0 else { return false }
         // The common case, early in the item, costs one comparison.
         guard Double(offset) >= Double(length) * earliestBodyEndFraction else { return false }
+        if Double(offset) >= Double(length) * lateFraction { return true }
         if source.characterCount == length, let end = bodyEnd(in: source) { return offset >= end }
         return Double(offset) >= Double(length) * fallbackFraction
     }

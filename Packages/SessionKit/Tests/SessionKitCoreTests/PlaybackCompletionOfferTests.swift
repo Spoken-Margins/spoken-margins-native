@@ -78,6 +78,18 @@ final class PlaybackCompletionOfferTests: XCTestCase {
         XCTAssertTrue(PlaybackCompletionOffer.isOffered(textOffset: 1_500, textLength: 2_000, source: source))
     }
 
+    func testABodyEndNearTheVeryEndDoesNotHideTheOfferUntilTheItemIsDone() {
+        // #2968: a post whose back matter (a footer, a comments link) starts at 99.5% never offered completion
+        // while the listener was nearly done. Past 90% it is offered whatever the structure says.
+        let (text, source) = paper(body: 1_000, references: 5, referenceRole: .backMatter)
+        let length = text.count
+        let end = PlaybackCompletionOffer.bodyEnd(in: source) ?? -1
+        XCTAssertGreaterThan(Double(end), Double(length) * 0.95)
+        XCTAssertFalse(PlaybackCompletionOffer.isOffered(textOffset: length * 89 / 100, textLength: length, source: source))
+        XCTAssertTrue(PlaybackCompletionOffer.isOffered(textOffset: length * 91 / 100, textLength: length, source: source))
+        XCTAssertTrue(PlaybackCompletionOffer.isOffered(textOffset: length * 96 / 100, textLength: length, source: source))
+    }
+
     func testAPodcastIsOfferedFromThreeQuartersOfItsDuration() {
         XCTAssertFalse(PlaybackCompletionOffer.isOffered(mediaTimeMs: 2_699_999, durationMs: 3_600_000))
         XCTAssertTrue(PlaybackCompletionOffer.isOffered(mediaTimeMs: 2_700_000, durationMs: 3_600_000))
