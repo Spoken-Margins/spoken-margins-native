@@ -108,6 +108,11 @@ export interface ReadPacketResult {
   margins: Margin[];
   /** Margins placed by a quote in text. */
   textMargins: TextMargin[];
+  /**
+   * The conversation each reply here belongs to, by Margin id. A reply to one of these Margins stays in the same
+   * conversation (MarginReplyLink.replying): pass this to writePacket's `conversationIds`.
+   */
+  conversationIds: Record<string, string>;
 }
 
 export interface ReadPacketOptions {
@@ -445,6 +450,7 @@ export async function readPacket(input: Uint8Array | ArrayBuffer | Blob, options
   if (decoded.conversation.length > 1) throw mismatch('more than one conversation artifact');
   const scoped = new Set(interjections.map((r) => canon(r.packageScopedId)));
   const replyTo = new Map<string, string>();
+  const conversationIds: Record<string, string> = {};
   for (const conversation of decoded.conversation) {
     const replies: J[] = conversation.replies;
     if (replies.length < 1 || replies.length > LIMITS.margins * 4) throw mismatch('the conversation is empty or too large');
@@ -455,6 +461,8 @@ export async function readPacket(input: Uint8Array | ArrayBuffer | Blob, options
         throw mismatch('a reply link names no Margin in this packet or is out of bounds');
       }
       replyTo.set(canon(reply.packageScopedId), packetMarginId(reply.parentPackageDigest, reply.parentPackageScopedId));
+      const own = interjections.find((r) => canon(r.packageScopedId) === canon(reply.packageScopedId));
+      if (own) conversationIds[packetMarginId(m.contentDigest as string, own.packageScopedId)] = reply.conversationId;
     }
   }
 
@@ -545,5 +553,5 @@ export async function readPacket(input: Uint8Array | ArrayBuffer | Blob, options
     ...(item.showTitle != null && { showTitle: item.showTitle }),
     ...(item.publisher != null && { publisher: item.publisher }),
   };
-  return { packageId: m.packageId, contentDigest: digest, createdAt: m.createdAt, ...(sender && { sender }), item, episode, margins, textMargins };
+  return { packageId: m.packageId, contentDigest: digest, createdAt: m.createdAt, ...(sender && { sender }), item, episode, margins, textMargins, conversationIds };
 }
