@@ -15,6 +15,8 @@ export class FeedParseError extends Error {
 export interface ParseFeedOptions {
   /** Where the feed was read from. Required for `Show.feedUrl`, and relative links resolve against it. */
   feedUrl: string;
+  /** Where the read ended after redirects, when that differs: relative links resolve against it instead. */
+  baseUrl?: string;
   /** Stop after this many items. Default 500: a feed's newest items come first, and the rest is rarely wanted. */
   maxItems?: number;
   /** Stamped on `Show.followedAt`. Default is the current time. */
@@ -113,12 +115,13 @@ export function parseFeed(xml: string, options: ParseFeedOptions): ParsedFeed {
   if (!channel) throw new FeedParseError('Not an RSS 2.0 feed: no <rss><channel> found.');
 
   const feedUrl = options.feedUrl;
+  const base = options.baseUrl ?? feedUrl;
   const kind: Show['kind'] = isSubstackFeed(channel, feedUrl) ? 'substack' : 'podcast';
   const id = `feed:${feedUrl}`;
   const itemElements = childrenNamed(channel, 'item');
   const truncated = itemElements.length > maxItems;
 
-  const siteUrl = resolveWebUrl(childText(channel, 'link'), feedUrl);
+  const siteUrl = resolveWebUrl(childText(channel, 'link'), base);
   const show: Show = {
     id,
     kind,
@@ -129,14 +132,14 @@ export function parseFeed(xml: string, options: ParseFeedOptions): ParsedFeed {
   const author = childText(channel, 'itunes:author');
   if (author) show.author = author;
   if (siteUrl) show.siteUrl = siteUrl;
-  const artworkUrl = artworkOf(channel, feedUrl);
+  const artworkUrl = artworkOf(channel, base);
   if (artworkUrl) show.artworkUrl = artworkUrl;
 
   const episodes: Episode[] = [];
   for (const item of itemElements.slice(0, maxItems)) {
-    const audioUrl = audioEnclosure(item, feedUrl);
+    const audioUrl = audioEnclosure(item, base);
     if (kind === 'podcast' && !audioUrl) continue;
-    const pageUrl = resolveWebUrl(childText(item, 'link'), feedUrl);
+    const pageUrl = resolveWebUrl(childText(item, 'link'), base);
     const guid = childText(item, 'guid');
     const title = childText(item, 'title') ?? pageUrl ?? audioUrl ?? 'Untitled';
     const episode: Episode = {
