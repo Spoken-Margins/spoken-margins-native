@@ -36,8 +36,16 @@ echo "== writing a database and packets with the current code"
 mkdir -p "$packets"
 # Only the SessionKitTests classes that export a packet: the rest of that target holds real-time AVFoundation
 # tests that need a sound output, which the hosted runner leaves out (verify-tests.py PORTABLE_LEFT_OUT).
-exporters=$(grep -l 'exportPacket(' "$repo"/Packages/SessionKit/Tests/SessionKitTests/*.swift \
-    | xargs sed -nE 's/.*class ([A-Za-z0-9_]+): XCTestCase.*/\1/p' | sort -u | paste -sd '|' -)
+# A file that exports with no XCTestCase class found in it fails, rather than leaving its packets out unseen.
+# SM_EXPORTER_TESTS_DIR lets the script's own tests point it at sample sources.
+tests_dir=${SM_EXPORTER_TESTS_DIR:-$repo/Packages/SessionKit/Tests/SessionKitTests}
+exporters=""
+for file in $(grep -l 'exportPacket(' "$tests_dir"/*.swift); do
+    classes=$(sed -nE 's/.*class ([A-Za-z0-9_]+) *: *XCTestCase.*/\1/p' "$file")
+    [ -n "$classes" ] || { echo "FAIL $(basename "$file") exports a packet but no XCTestCase class was found in it" >&2; exit 1; }
+    exporters="$exporters $classes"
+done
+exporters=$(printf '%s\n' $exporters | sort -u | paste -sd '|' -)
 [ -n "$exporters" ] || { echo "FAIL found no exporter tests in SessionKitTests" >&2; exit 1; }
 status=0
 out=$(SM_BUILD29_DB="$db" SM_SHIPPED_PACKETS_DIR="$packets" swift test --package-path "$repo/Packages/SessionKit" \

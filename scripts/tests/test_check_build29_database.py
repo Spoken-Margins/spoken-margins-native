@@ -105,6 +105,24 @@ class PacketTests(unittest.TestCase):
         self.assertNotIn('KittenRendererTests', classes)
         self.assertNotIn('HeardSourceWindowFilesTests', classes)
 
+    def test_a_file_that_exports_with_no_test_class_found_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            sources = Path(tmp) / 'sources'
+            sources.mkdir()
+            (sources / 'Spaced.swift').write_text('final class SpacedTests : XCTestCase { func t() { exportPacket(x) } }\n')
+            (sources / 'Helper.swift').write_text('func exportBoth() { exportPacket(x) }\n')
+            result = run_script(tmp, SM_EXPORTER_TESTS_DIR=str(sources))
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('FAIL Helper.swift exports a packet but no XCTestCase class was found in it', result.stderr)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            sources = Path(tmp) / 'sources'
+            sources.mkdir()
+            (sources / 'Spaced.swift').write_text('final class SpacedTests : XCTestCase { func t() { exportPacket(x) } }\n')
+            run_script(tmp, SM_EXPORTER_TESTS_DIR=str(sources))
+            args = (Path(tmp) / 'swift-test-args').read_text().splitlines()
+        self.assertEqual(args[args.index('--filter') + 1], 'Build29DatabaseFixtureTests|SessionKitTests\\.(SpacedTests)/')
+
     def test_a_packet_the_build_cannot_import_fails_the_script(self):
         with tempfile.TemporaryDirectory() as tmp:
             result = run_script(tmp, FAKE_PACKET_EXIT='1')
