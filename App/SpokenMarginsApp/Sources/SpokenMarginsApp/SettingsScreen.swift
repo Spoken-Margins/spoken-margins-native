@@ -169,11 +169,11 @@ struct SettingsScreen: View {
                         model.mediaSkipSettingsChanged()
                     }
                     Picker("Headphone double-press", selection: $headphoneDoublePress) {
-                        Text("Add a Margin").tag(HeadphoneDoublePressAction.addMargin.rawValue)
                         Text("Skip forward").tag(HeadphoneDoublePressAction.skipForward.rawValue)
+                        Text("Add a Margin").tag(HeadphoneDoublePressAction.addMargin.rawValue)
                     }
                     .accessibilityIdentifier("settings.headphoneDoublePress.picker")
-                    Text("Triple-press still skips back.")
+                    Text("Skip forward is the normal double-press. Add a Margin starts a Margin instead, but a headphone press can't end one: stop talking or use the button on the screen. Triple-press still skips back.")
                         .font(.caption)
                         .foregroundStyle(AppColors.secondaryText)
                     Picker("Native Audio Forward", selection: $model.mediaSkipForwardSeconds) {
