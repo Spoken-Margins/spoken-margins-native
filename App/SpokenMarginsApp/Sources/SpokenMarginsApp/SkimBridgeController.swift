@@ -102,6 +102,8 @@ final class SkimBridgeController {
     /// A summary being prepared for a press (#2185). A press for the same summary meanwhile is told to wait; a press
     /// for another one replaces it, and the replaced result is ignored.
     private var summaryPreparation: (id: UUID, assetID: String, direction: SkimDirection, task: Task<Void, Never>)?
+    /// The preparation whose audio is saved and whose resources are being reloaded: its timeout no longer applies (#2943).
+    private var savedPreparationID: UUID?
     /// Summaries whose preparation failed in this voice: offered no more until the resources are refreshed, so a
     /// render that can't succeed isn't retried and re-advertised on every press (#2185).
     private var failedSummaryAssetIDs: Set<String> = []
@@ -361,7 +363,10 @@ final class SkimBridgeController {
             guard let self, self.summaryPreparation?.id == id else { return } // replaced or timed out: already logged
             // The new asset is in the store, not in what was loaded. The preparation stays registered while that is read,
             // so a press meanwhile is told to wait instead of preparing the same summary again.
-            if prepared { await self.reloadResources(itemId: request.itemId) }
+            if prepared {
+                self.savedPreparationID = id
+                await self.reloadResources(itemId: request.itemId)
+            }
             guard self.summaryPreparation?.id == id else { return }
             self.summaryPreparation = nil
             self.finishPreparation(request, direction: direction, wasPlaying: wasPlaying, prepared: prepared, detail: detail)
@@ -369,18 +374,19 @@ final class SkimBridgeController {
         summaryPreparation = (id, request.assetID, direction, task)
         Task { @MainActor [weak self] in
             try? await Task.sleep(for: Self.summaryPreparationTimeout)
-            guard let self, let pending = self.summaryPreparation, pending.id == id else { return }
+            guard let self, let pending = self.summaryPreparation, pending.id == id, self.savedPreparationID != id else { return }
             pending.task.cancel()
             self.summaryPreparation = nil
             self.preparationFailed(request, direction: direction, detail: "timeout")
         }
     }
 
-    /// Reloads the playing item's resources and returns when they have landed (#2943). Another item playing meanwhile
-    /// needs no reload for this one.
+    /// Marks `itemId`'s resources stale, and reloads them and returns when they have landed (#2943) if it is the
+    /// playing item. When it isn't (a recording is in progress, or another item plays), they are read when Skim next
+    /// asks for that item; the audit found a summary saved meanwhile was otherwise never picked up.
     private func reloadResources(itemId: String) async {
+        if resourceContext?.itemId == itemId || resourceLoad?.itemId == itemId { invalidateResources() }
         guard host?.skimSource?.itemId == itemId else { return }
-        invalidateResources()
         loadResources(itemId: itemId)
         await settleResources()
     }

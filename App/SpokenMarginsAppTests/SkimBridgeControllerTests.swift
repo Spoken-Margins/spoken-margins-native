@@ -288,6 +288,27 @@ final class SkimBridgeControllerTests: XCTestCase {
         XCTAssertEqual(host.prepared.count, 1, "the second press does not prepare it again")
     }
 
+    /// The audit of #2943: a summary saved while Skim has no source (a Margin is recording) must still make the next
+    /// pass reload the item's assets, or the next press renders the summary again.
+    func testASummarySavedWhileThereIsNoSourceIsReadWhenTheSourceReturns() async throws {
+        let host = try mappedHost(try temporaryDirectory())
+        let source = host.source
+        host.prepareDelay = .milliseconds(50)
+        host.prepareResult = true
+        let controller = makeController(host)
+        controller.updateAvailability()
+        await controller.settleResources()
+        let loadsBefore = controller.resourceLoadCount
+
+        controller.perform(direction: .forward)
+        host.source = nil
+        try await waitForRecords(host, count: 2)
+        host.source = source
+        controller.updateAvailability(refreshResources: false)
+        await controller.settleResources()
+        XCTAssertGreaterThan(controller.resourceLoadCount, loadsBefore, "what was loaded predates the saved summary")
+    }
+
     /// Prepared, but a Margin's voice took the listener's ear meanwhile: the summary must not start over it.
     func testAPreparedSummaryDoesNotStartOverAMarginsVoice() async throws {
         let host = try mappedHost(try temporaryDirectory())
