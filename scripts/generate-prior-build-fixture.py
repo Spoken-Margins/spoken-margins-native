@@ -17,10 +17,12 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 RELEASES = {19: '738c743e202f5e700f4d6975adee52862f63c69f',
             25: '3294438ffba790fa281509bc1fa7b51e379a6c71',
-            29: 'fcc4974feb082d0fbf2e608ef2792427fefafc9a'}
-# Build 29's Library holds podcasts as that build left them (#352); the older
-# fixtures hold one article read in two sessions.
-GENERATORS = {29: 'generate-build29-podcasts.swift'}
+            29: 'fcc4974feb082d0fbf2e608ef2792427fefafc9a',
+            32: 'ec940321c8505c39430b18324b76f4fd9a183294',
+            34: '485b144961133f0baeaa8717821a252c294dddbe'}
+# Build 29's Library holds podcasts as that build left them (#352), and Build 34's a podcast with a download and
+# a linked episode (#1900); the others hold one article read in two sessions.
+GENERATORS = {29: 'generate-build29-podcasts.swift', 34: 'generate-build34-podcasts.swift'}
 OUTPUT = ROOT / 'Contracts/fixtures/persistence'
 LINUX = platform.system() == 'Linux'
 

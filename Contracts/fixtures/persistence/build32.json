@@ -1,0 +1,9 @@
+{
+  "sourceRevision": "ec940321c8505c39430b18324b76f4fd9a183294",
+  "sourceTag": "testflight/0.1-build-32",
+  "database": "build32.sqlite",
+  "schemaVersion": 5,
+  "sha256": "b6a9fa0105f25d8f889e349d7637b6b231d9c75e8d36609392721b80593a5c8e",
+  "origin": "Synthetic library written by unmodified prior-release SessionKit and persistence sources on Linux, with the shims linux_shims() names; not device-captured data.",
+  "generator": "scripts/generate-prior-build-fixture.py"
+}

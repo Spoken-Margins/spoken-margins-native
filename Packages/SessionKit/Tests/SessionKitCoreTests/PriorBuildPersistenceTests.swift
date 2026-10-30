@@ -13,6 +13,58 @@ final class PriorBuildPersistenceTests: XCTestCase {
         try checkPriorLibrary(build: 25, schema: 5)
     }
 
+    func testExternalBuild32LibraryOpensAndPreservesBothSessionsAfterReconstruction() throws {
+        try checkPriorLibrary(build: 32, schema: 5)
+    }
+
+    func testInternalBuild34LibraryOpensAndPreservesBothSessionsAfterReconstruction() throws {
+        try checkPriorLibrary(build: 34, schema: 5)
+    }
+
+    /// #1900: what Build 34 wrote for a podcast with a saved download and an imported file the listener linked to its
+    /// episode is read whole, and a round trip through today's store keeps every field and quarantines nothing.
+    func testBuild34PodcastWithADownloadAndALinkedEpisodeIsReadWholeAndSurvivesARewrite() throws {
+        let fixture = try TestInputs.url(.contracts, "fixtures/persistence/build34.sqlite")
+        let temporary = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let database = temporary.appending(path: "library.sqlite")
+        try FileManager.default.copyItem(at: fixture, to: database)
+        let store = try SQLiteSessionStore(path: database.path)
+
+        let episode = try store.loadItem(id: "prior-podcast")
+        XCTAssertEqual(episode.media?.sourceType, .remoteStream)
+        XCTAssertEqual(episode.media?.url, "https://cdn.example.com/prior.mp3")
+        XCTAssertEqual(episode.media?.durationMs, 1_800_000)
+        XCTAssertEqual(episode.episodeGUID, "guid-prior")
+        XCTAssertEqual(episode.showTitle, "The Prior Show")
+        XCTAssertEqual(episode.publishedAt, "Tue, 29 Sep 2026 10:00:00 GMT")
+        let download = try XCTUnwrap(try store.loadPodcastDownload(itemId: episode.id))
+        XCTAssertEqual(download.id, "prior-download")
+        XCTAssertEqual(download.state, .availableOffline)
+        XCTAssertEqual(download.localRelativePath, "Podcasts/prior.mp3")
+        XCTAssertEqual(download.bytesWritten, 28_800_000)
+        XCTAssertEqual(try store.loadSession(id: "prior-podcast-session")?.position.mediaTimeMs, 600_000)
+        let margin = try XCTUnwrap(try store.loadInterjections(sessionId: "prior-podcast-session").first)
+        XCTAssertEqual(margin.id, "prior-podcast-margin")
+        XCTAssertEqual(margin.anchor.mediaTimeMs, 600_000)
+        let linked = try store.loadItem(id: "prior-linked-file")
+        XCTAssertEqual(linked.linkedEpisode, LinkedEpisode(
+            guid: "guid-prior", title: "Prior release episode", showTitle: "The Prior Show",
+            publishedAt: "Tue, 29 Sep 2026 10:00:00 GMT", pageURL: "https://feeds.example.com/prior",
+            enclosureURL: "https://cdn.example.com/prior.mp3", durationMs: 1_800_000))
+        XCTAssertEqual(linked.media?.sourceType, .nativeMediaFile)
+
+        try store.saveItem(episode)
+        try store.saveItem(linked)
+        try store.savePodcastDownload(download)
+        let reopened = try SQLiteSessionStore(path: database.path)
+        XCTAssertEqual(try reopened.loadItem(id: "prior-podcast"), episode)
+        XCTAssertEqual(try reopened.loadItem(id: "prior-linked-file"), linked)
+        XCTAssertEqual(try reopened.loadPodcastDownload(itemId: episode.id), download)
+        XCTAssertEqual(try reopened.quarantinedRecordCount(), 0)
+    }
+
     /// The fixture is the wire form of a written Margin that older readers rely on. Parsing it and
     /// comparing it with literals only proved the file says what it says (#1048, PERSIST-13), so this
     /// saves a written Margin through the engine and expects it to match the file field for field.
