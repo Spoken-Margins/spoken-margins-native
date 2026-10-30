@@ -142,7 +142,7 @@ Slice 1 changes what is stored per feed, so Build 29 must still open the databas
 
 ## Sources checked
 
-Repo, on `next` at `f2e873d`: `AGENTS.md` (2026-10-05 standing calls); `research/B4/DESIGN.md` §§3, 5, 9, 10, 11; `docs/workstreams/interfaces.md` I8, I9, I11; `docs/workstreams/streams/E3-maps.md` and `D3-following.md`; `Site/onboarding/catalog/v1/` (sizes measured); `Packages/SessionKit/Sources/SessionKit/SourceCatalog.swift`, `CommunityMapUpload.swift`, `ServerConfig.swift`; `Packages/SessionKit/Sources/SessionKitFeeds/FeedParser.swift`; issues #485, #552, #553, #737, #748, #805.
+Repo, on `next` at `f2e873d`: the owner overlay to `AGENTS.md` (2026-10-05 standing calls); `research/B4/DESIGN.md` §§3, 5, 9, 10, 11; `docs/workstreams/interfaces.md` I8, I9, I11; `docs/workstreams/streams/E3-maps.md` and `D3-following.md`; `Site/onboarding/catalog/v1/` (sizes measured); `Packages/SessionKit/Sources/SessionKit/SourceCatalog.swift`, `CommunityMapUpload.swift`, `ServerConfig.swift`; `Packages/SessionKit/Sources/SessionKitFeeds/FeedParser.swift`; issues #485, #552, #553, #737, #748, #805.
 
 Outside, read on 2026-10-08:
 - [Announcing Swift Homomorphic Encryption](https://swift.org/blog/announcing-swift-homomorphic-encryption/): Live Caller ID Lookup uses PIR; the quote on sending the whole database.
