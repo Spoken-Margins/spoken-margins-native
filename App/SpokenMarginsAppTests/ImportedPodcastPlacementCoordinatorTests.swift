@@ -12,30 +12,9 @@ import SessionKitPersistence
 final class ImportedPodcastPlacementCoordinatorTests: XCTestCase {
     // MARK: Admission
 
-    /// Mutation: dropping the `admission[item.id] == nil` guard in `scheduleTransientTranscript` admits a second
-    /// transcript of the same item while one is running.
-    func testASecondTransientRequestWhileOneRunsIsRefused() throws {
-        let h = try PlacementCoordinatorHarness()
-        defer { h.shutdown() }
-        let item = h.makeItem()
-        let file = try h.writeAudio("episode.mp3")
-        let start = h.spies.clock
-        XCTAssertTrue(h.coordinator.scheduleTransientTranscript(for: item, localSourceURL: file))
-        let admitted = h.coordinator.admission[item.id]
-        XCTAssertEqual(admitted, .transient(try PodcastPlacementFile(url: file)))
-
-        // Well past the cooldown, so only the occupied slot can be the reason.
-        h.spies.clock = start.addingTimeInterval(ImportedPodcastPlacementCoordinator.transientCooldown * 2)
-        let second = h.coordinator.scheduleTransientTranscript(for: item, localSourceURL: file)
-
-        XCTAssertFalse(second)
-        XCTAssertEqual(h.coordinator.admission[item.id], admitted)
-        XCTAssertEqual(h.coordinator.lastTransientStart[item.id], start, "a refused request must not move the cooldown clock")
-        XCTAssertEqual(h.spies.transientDiagnostics(item.id), ["transcribing_transiently"], "only the first request started a transcript")
-    }
-
-    /// Mutation: measuring the cooldown from the attempt's end, or comparing with `>` instead of `>=`, refuses the
-    /// request at exactly +60.000s; shortening the cooldown admits the request at +59.999s.
+    /// The boundary itself (59.999 s refused, 60 s allowed) is `ImportedPodcastPlacementPolicyTests`' row. Mutation:
+    /// writing `lastTransientStart` when the attempt ends instead of when it starts (it would refuse at +60s, the
+    /// attempt having ended at +5s); passing the policy no `lastStart` or the wrong clock admits the request at +30s.
     func testTransientCooldownIsStartToStart() async throws {
         let h = try PlacementCoordinatorHarness()
         defer { h.shutdown() }
@@ -49,9 +28,9 @@ final class ImportedPodcastPlacementCoordinatorTests: XCTestCase {
         let released = try await h.waitUntil { h.coordinator.admission[item.id] == nil }
         XCTAssertTrue(released, "the first transcript should have finished")
 
-        h.spies.clock = start.addingTimeInterval(59.999)
+        h.spies.clock = start.addingTimeInterval(30)
         XCTAssertFalse(h.coordinator.scheduleTransientTranscript(for: item, localSourceURL: file))
-        h.spies.clock = start.addingTimeInterval(60)
+        h.spies.clock = start.addingTimeInterval(ImportedPodcastPlacementCoordinator.transientCooldown)
         XCTAssertTrue(h.coordinator.scheduleTransientTranscript(for: item, localSourceURL: file))
         XCTAssertEqual(h.coordinator.lastTransientStart[item.id], start.addingTimeInterval(60))
     }
@@ -153,7 +132,9 @@ final class ImportedPodcastPlacementCoordinatorTests: XCTestCase {
     }
 
     /// Mutation: making the full-source pass obey the cooldown, or write to it; letting it start while a transient
-    /// pass holds the slot.
+    /// pass holds the slot; dropping the `admission[item.id] == nil` guard in `scheduleTransientTranscript`, which
+    /// admits a second transcript of the same item while one runs (the clock is far past the cooldown, so only the
+    /// held slot can refuse it).
     func testATransientPassBlocksFullSourceButFullSourceIgnoresTheCooldown() async throws {
         let h = try PlacementCoordinatorHarness()
         defer { h.shutdown() }
@@ -162,6 +143,13 @@ final class ImportedPodcastPlacementCoordinatorTests: XCTestCase {
         let start = h.spies.clock
         XCTAssertTrue(h.coordinator.scheduleTransientTranscript(for: item, localSourceURL: file))
         XCTAssertFalse(h.coordinator.beginFullSourceTranscription(itemId: item.id), "the transient pass holds the slot")
+        let admitted = h.coordinator.admission[item.id]
+        h.spies.clock = start.addingTimeInterval(ImportedPodcastPlacementCoordinator.transientCooldown * 2)
+        XCTAssertFalse(h.coordinator.scheduleTransientTranscript(for: item, localSourceURL: file), "a second transient request")
+        XCTAssertEqual(h.coordinator.admission[item.id], admitted)
+        XCTAssertEqual(h.coordinator.lastTransientStart[item.id], start, "a refused request must not move the cooldown clock")
+        XCTAssertEqual(h.spies.transientDiagnostics(item.id), ["transcribing_transiently"], "only the first request started a transcript")
+        h.spies.clock = start
 
         h.transcriber.open()
         let released = try await h.waitUntil { h.coordinator.admission[item.id] == nil }
