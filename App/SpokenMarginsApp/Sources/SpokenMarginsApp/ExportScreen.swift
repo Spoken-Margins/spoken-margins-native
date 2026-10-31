@@ -185,8 +185,9 @@ struct ExportScreen: View {
     }
 
     private var shareableMarginCount: Int {
+        // A voice Margin with no words still counts: it goes with placeholder words (#3027).
         SharedMarginTextRequirement.initiallyIncluded(model.exportShareCandidates).filter {
-            SharedMarginTextRequirement.hasReviewedText(SharedMarginTextRequirement.initialReviewedText(for: $0))
+            SharedMarginTextRequirement.canShare($0, hasVoice: $0.audioPath.flatMap(model.resolvedInterjectionAudioURL(for:)) != nil)
         }.count
     }
 
