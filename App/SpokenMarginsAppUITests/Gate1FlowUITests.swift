@@ -1400,6 +1400,12 @@ final class Gate1FlowUITests: XCTestCase {
         export.tap()
     }
 
+    /// Pauses the source if it is playing and waits for the button to read "Play".
+    ///
+    /// A tap that lands while the playback screen is still laying out is dropped: the hosted Mac logged "Failed to
+    /// compute hit point ... {{inf, inf}, {0.0, 0.0}}" for the first tap, and the label then stayed "Pause" for the
+    /// whole wait (#3097). So tap only when the button has a frame, read the label again after each try, and tap
+    /// again only while it still says "Pause" (never when it already says "Play", which would start playback again).
     private func pausePlaybackIfNeeded() {
         let playPause = element("playback.play.button")
         XCTAssertTrue(playPause.waitForExistence(timeout: 8))
@@ -1410,19 +1416,21 @@ final class Gate1FlowUITests: XCTestCase {
             )],
             timeout: 20
         )
-        if playPause.label == "Pause" {
-            playPause.tap()
-        }
-        XCTAssertEqual(
-            XCTWaiter().wait(
+        var paused = false
+        for attempt in 0..<3 where !paused {
+            if playPause.label == "Pause", isReadyToTap(playPause) {
+                playPause.tap()
+            }
+            paused = XCTWaiter().wait(
                 for: [XCTNSPredicateExpectation(
                     predicate: NSPredicate(format: "label == %@", "Play"),
                     object: playPause
                 )],
-                timeout: 8
-            ),
-            .completed
-        )
+                // The first try waits as long as the old single wait did, so a slow pause is not tapped a second time.
+                timeout: attempt == 0 ? 8 : 5
+            ) == .completed
+        }
+        XCTAssertTrue(paused, "Playback did not pause: the play button still reads \(playPause.label)")
     }
 
     private func openBuild23Review() {
@@ -1571,9 +1579,17 @@ final class Gate1FlowUITests: XCTestCase {
     /// The row can also go away between two reads when the list redraws after a launch: `exists`, then `frame`, are two
     /// lookups, and `frame` fails the test ("Failed to get matching snapshot: No matches found") if the element left in
     /// between (#2922). `snapshot()` is one lookup that throws instead, so a vanished element means "not ready".
+    ///
+    /// A frame that is valid in one lookup can still have no hit point a moment later while the screen is laying out
+    /// (#3097: "Activation point invalid" from `isHittable` on the start button, 88 s into a slow hosted launch). So
+    /// the frame must read the same in two lookups before `isHittable` is asked.
     private func isReadyToTap(_ candidate: XCUIElement) -> Bool {
-        guard let frame = (try? candidate.snapshot())?.frame else { return false }
-        guard !frame.isNull, !frame.isInfinite, !frame.isEmpty else { return false }
+        func usableFrame() -> CGRect? {
+            guard let frame = (try? candidate.snapshot())?.frame else { return nil }
+            guard !frame.isNull, !frame.isInfinite, !frame.isEmpty else { return nil }
+            return frame
+        }
+        guard let first = usableFrame(), let second = usableFrame(), first == second else { return false }
         return candidate.isHittable
     }
 
