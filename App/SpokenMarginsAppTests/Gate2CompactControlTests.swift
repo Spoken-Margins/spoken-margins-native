@@ -778,6 +778,14 @@ final class Gate2CompactControlTests: XCTestCase {
         paused.status = .paused
         XCTAssertFalse(Gate2LiveActivityPolicy.shouldMaintain(paused, adoptedSessionId: nil))
         XCTAssertTrue(Gate2LiveActivityPolicy.shouldMaintain(paused, adoptedSessionId: "session-pill"))
+        // A Skim summary playing over the paused source keeps the card, as playing does (#2965).
+        var summaryPlaying = paused
+        summaryPlaying.skimBridgeState = SkimBridgeState(
+            direction: .forward, itemId: "item-pill", originMediaTimeMs: 1_000, summarySceneId: "scene-1",
+            destinationSceneId: "scene-2", destinationMediaTimeMs: 9_000, summaryAssetId: "asset-1",
+            wasSourcePlaying: true, status: .playing
+        )
+        XCTAssertTrue(Gate2LiveActivityPolicy.shouldMaintain(summaryPlaying, adoptedSessionId: nil))
         var recording = active
         recording.isRecording = true
         XCTAssertTrue(Gate2LiveActivityPolicy.shouldMaintain(recording, adoptedSessionId: nil))

@@ -1750,9 +1750,103 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(result.snapshot.status, .paused)
         XCTAssertEqual(stalledEngine.snapshot.status, .paused)
 
+        // With audio really playing, Play doesn't pause it. It is a no-op, not a failure (#2965).
         let (running, runningEngine) = try makeDispatcher(transport: .playing)
-        XCTAssertThrowsError(try running.dispatch(.play))
+        let noOp = try running.dispatch(.play)
+        XCTAssertFalse(noOp.delegatedToCanonicalRuntime)
+        XCTAssertEqual(noOp.rejectedReason, CompactControlResult.alreadyPlaying)
         XCTAssertEqual(runningEngine.snapshot.status, .playing)
+    }
+
+    /// #2965: a Lock Screen card is drawn from the state when it was last published, so its tap can arrive after
+    /// the state moved on. A Skim summary ended and the source played again; the card, drawn while the summary
+    /// paused the source, still sent Play, and the app showed "Compact control failed". Play on a playing source
+    /// and Pause on a paused one already have what the listener asked for, so they succeed and change nothing.
+    func testPlayOnAPlayingSourceAndPauseOnAPausedOneAreNoOpsNotFailures() throws {
+        let surface = RuntimeCapabilityProfile(
+            id: "lock-screen-widget",
+            displayName: "Lock Screen / Widget",
+            capabilities: [
+                "timeline": ["chapter_timing"],
+                "interjection": ["delegate_interjection_to_canonical_runtime"],
+                "remoteControl": ["display_snapshot", "send_transport_commands", "send_interjection_commands"]
+            ]
+        )
+        let engine = try compactControlEngine()
+        _ = try engine.startSession(itemId: "item-pill")
+        XCTAssertEqual(engine.snapshot.status, .playing)
+        let dispatcher = CompactControlDispatcher(surfaceProfile: surface, canonicalRuntime: engine)
+
+        let play = try dispatcher.dispatch(.play)
+        XCTAssertFalse(play.delegatedToCanonicalRuntime)
+        XCTAssertEqual(play.rejectedReason, CompactControlResult.alreadyPlaying)
+        XCTAssertTrue(play.isAlreadyInRequestedState)
+        XCTAssertEqual(play.snapshot.status, .playing)
+        XCTAssertEqual(engine.snapshot.status, .playing)
+
+        let paused = try dispatcher.dispatch(.pause)
+        XCTAssertTrue(paused.delegatedToCanonicalRuntime)
+        XCTAssertFalse(paused.isAlreadyInRequestedState)
+        XCTAssertEqual(engine.snapshot.status, .paused)
+
+        let pauseAgain = try dispatcher.dispatch(.pause)
+        XCTAssertFalse(pauseAgain.delegatedToCanonicalRuntime)
+        XCTAssertEqual(pauseAgain.rejectedReason, CompactControlResult.alreadyPaused)
+        XCTAssertTrue(pauseAgain.isAlreadyInRequestedState)
+        XCTAssertEqual(engine.snapshot.status, .paused)
+
+        // A recording Margin still refuses both: they are not no-ops there, and the app's recording guard owns them.
+        _ = try dispatcher.dispatch(.play)
+        _ = try dispatcher.dispatch(.beginInterjection)
+        XCTAssertTrue(engine.snapshot.isRecording)
+        XCTAssertThrowsError(try dispatcher.dispatch(.play))
+        XCTAssertThrowsError(try dispatcher.dispatch(.pause))
+        XCTAssertTrue(engine.snapshot.isRecording)
+    }
+
+    /// #2965: while a Skim summary plays, the source is paused under it. The Lock Screen card must say what the
+    /// listener hears, playing, and not "Paused, tap to resume", whose tap would send Play to a source that has
+    /// moved on by then.
+    func testCardStatusFollowsAPlayingSkimSummaryOverThePausedSource() throws {
+        let engine = try compactControlEngine()
+        _ = try engine.startSession(itemId: "item-pill")
+        let surface = RuntimeCapabilityProfile(
+            id: "lock-screen-widget",
+            displayName: "Lock Screen / Widget",
+            capabilities: [
+                "timeline": ["chapter_timing"],
+                "remoteControl": ["display_snapshot", "send_transport_commands"]
+            ]
+        )
+        let dispatcher = CompactControlDispatcher(surfaceProfile: surface, canonicalRuntime: engine)
+        _ = try dispatcher.dispatch(.pause)
+        var snapshot = dispatcher.snapshot()
+        XCTAssertEqual(snapshot.status, .paused)
+        XCTAssertEqual(snapshot.audibleStatus, .paused, "no summary: the source's own status")
+
+        func bridge(_ status: SkimBridgeStatus) -> SkimBridgeState {
+            SkimBridgeState(
+                direction: .forward, itemId: "item-pill", originMediaTimeMs: 1_000, summarySceneId: "scene-1",
+                destinationSceneId: "scene-2", destinationMediaTimeMs: 9_000, summaryAssetId: "asset-1",
+                wasSourcePlaying: true, status: status
+            )
+        }
+        let expected: [(SkimBridgeStatus, PlaybackStatus)] = [
+            (.preparing, .starting), (.playing, .playing), (.completing, .playing),
+            (.paused, .paused), (.cancelled, .paused),
+        ]
+        for (bridgeStatus, cardStatus) in expected {
+            snapshot.skimBridgeState = bridge(bridgeStatus)
+            XCTAssertEqual(snapshot.audibleStatus, cardStatus, "\(bridgeStatus)")
+        }
+
+        // A source that is itself playing or recording keeps its own status.
+        snapshot.skimBridgeState = bridge(.paused)
+        snapshot.status = .playing
+        XCTAssertEqual(snapshot.audibleStatus, .playing)
+        snapshot.skimBridgeState = bridge(.playing)
+        snapshot.status = .recording
+        XCTAssertEqual(snapshot.audibleStatus, .recording)
     }
 
     /// #943: delayed start, failed start and replacing the item never publish a running clock.
