@@ -23,6 +23,11 @@ func (s *Server) relayOn(w http.ResponseWriter) bool {
 }
 
 func (s *Server) relay(w http.ResponseWriter, r *http.Request) {
+	// Before the switch is checked, so a listed web app can read "disabled"
+	// as well as every later refusal; a browser hides an answer without it.
+	if s.Relay != nil {
+		s.Relay.CORS(w, r)
+	}
 	if !s.relayOn(w) {
 		return
 	}

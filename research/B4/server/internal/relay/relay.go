@@ -502,7 +502,7 @@ func (r *Relay) Admit(w http.ResponseWriter, req *http.Request) bool {
 	// no sources means opening it directly runs nothing and reads nothing
 	// on the share-link host; fetch() from the web app is unaffected.
 	h.Set("Content-Security-Policy", "sandbox; default-src 'none'")
-	h.Set("Vary", "Origin")
+	listed := r.CORS(w, req)
 	// The server's own public address passes PublicAddr, so ?url= can name
 	// this relay under any host name or address. Its User-Agent gives the
 	// nested request away, and redirect hops carry it too.
@@ -510,9 +510,24 @@ func (r *Relay) Admit(w http.ResponseWriter, req *http.Request) bool {
 		writeError(w, ErrLoopRefused)
 		return false
 	}
+	if !listed {
+		writeError(w, ErrOriginRefused)
+		return false
+	}
+	return true
+}
+
+// CORS sets the headers that let a listed web app read this answer, whatever
+// it turns out to be: Vary: Origin always, and Access-Control-Allow-Origin only
+// for a listed origin. Call it before any answer is written. Without it a
+// browser hides an error's status and body, so the web app can't tell
+// "switched off" or "busy" from "unreachable" (#3018). It reports whether the
+// origin is listed.
+func (r *Relay) CORS(w http.ResponseWriter, req *http.Request) bool {
+	h := w.Header()
+	h.Set("Vary", "Origin")
 	origin := req.Header.Get("Origin")
 	if !r.AllowedOrigin(origin) {
-		writeError(w, ErrOriginRefused)
 		return false
 	}
 	h.Set("Access-Control-Allow-Origin", origin)
