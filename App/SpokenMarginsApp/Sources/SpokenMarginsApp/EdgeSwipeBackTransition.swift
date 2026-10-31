@@ -1,12 +1,16 @@
 import SwiftUI
+import UIKit
 import SessionKit
 
 /// The edge swipe back to Library (#106): the screen slides with the finger and Library is drawn
 /// underneath, dimmed. Nothing is navigated until a release commits (`EdgeSwipeBackRule`); a cancelled
 /// drag springs back and leaves the screen, the selected item and playback untouched.
 ///
-/// The gesture stays confined to a 32 pt strip below the navigation bar so it never competes with the
-/// scrubber (Build 26, #84). The strip is not part of what moves, so the finger keeps its recognizer.
+/// The gesture only takes touches that start in a 32 pt strip below the navigation bar, so it never competes
+/// with the scrubber (Build 26, #84). It is a UIKit pan recognizer on the whole screen that leaves touches
+/// alone (`EdgePanGesture`), not a view over the strip: a view over the strip took every tap there and left
+/// the leading 6 pt of the Now button dead (#2917). The recognizer is not part of what moves, so the finger
+/// keeps it.
 private struct EdgeSwipeBackModifier<Underlay: View>: ViewModifier {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let enabled: Bool
@@ -20,7 +24,6 @@ private struct EdgeSwipeBackModifier<Underlay: View>: ViewModifier {
     @State private var width: CGFloat = 0
     /// The moving screen's opacity: only Reduce Motion changes it, to cross-fade instead of slide.
     @State private var fade = 1.0
-    @GestureState private var isTouching = false
     /// Bumped by every reset, so a finished animation from an earlier swipe can't reset a newer one.
     @State private var generation = 0
 
@@ -51,56 +54,41 @@ private struct EdgeSwipeBackModifier<Underlay: View>: ViewModifier {
                     .accessibilityHidden(true)
                 }
             }
-            .overlay(alignment: .leading) {
-                if enabled { edgeStrip }
-            }
+            .gesture(EdgePanGesture(stripWidth: Self.stripWidth, topClearance: Self.topClearance) { handle($0) }, isEnabled: enabled)
             .onChange(of: enabled) { _, isEnabled in
                 if !isEnabled { resetImmediately() }
-            }
-            .onChange(of: isTouching) { _, touching in
-                // The system took the touch away without ending it: go back as if the drag was abandoned.
-                guard !touching, tracker.phase == .dragging else { return }
-                _ = tracker.ended(horizontal: tracker.offset, vertical: 0, velocity: 0, containerWidth: Double(width))
-                finish(.cancel)
             }
             .onDisappear { resetImmediately() }
     }
 
-    private var edgeStrip: some View {
-        // Attach recognition only to the edge. A gesture on the entire screen competes with slider
-        // tracking even when its action later rejects a drag that started away from the edge.
-        GeometryReader { geometry in
-            // Native back buttons can overlap the leading edge on iOS 18. Keep the gesture below the
-            // navigation bar so those buttons receive ordinary center taps.
-            let topClearance = geometry.safeAreaInsets.top + 64
-            Color.clear
-                .frame(width: 32, height: max(0, geometry.size.height - topClearance))
-                .contentShape(Rectangle())
-                .gesture(
-                    DragGesture(minimumDistance: 18, coordinateSpace: .global)
-                        .updating($isTouching) { _, state, _ in state = true }
-                        .onChanged { value in
-                            tracker.changed(
-                                horizontal: value.translation.width,
-                                vertical: value.translation.height,
-                                containerWidth: Double(width),
-                                followsFinger: !reduceMotion
-                            )
-                        }
-                        .onEnded { value in
-                            guard let outcome = tracker.ended(
-                                horizontal: value.translation.width,
-                                vertical: value.translation.height,
-                                velocity: value.velocity.width,
-                                containerWidth: Double(width)
-                            ) else { return }
-                            finish(outcome)
-                        }
-                )
-                .offset(y: topClearance)
-                .accessibilityHidden(true)
+    /// The strip's width, and how far below the top safe area it starts. Native back buttons can overlap the
+    /// leading edge on iOS 18, so the strip stays below the navigation bar and those buttons get ordinary taps.
+    private static var stripWidth: CGFloat { 32 }
+    private static var topClearance: CGFloat { 64 }
+
+    private func handle(_ event: EdgePanGesture.Event) {
+        switch event {
+        case let .moved(translation):
+            tracker.changed(
+                horizontal: translation.width,
+                vertical: translation.height,
+                containerWidth: Double(width),
+                followsFinger: !reduceMotion
+            )
+        case let .ended(translation, velocity):
+            guard let outcome = tracker.ended(
+                horizontal: translation.width,
+                vertical: translation.height,
+                velocity: velocity,
+                containerWidth: Double(width)
+            ) else { return }
+            finish(outcome)
+        case .cancelled:
+            // The system took the touch away without ending it: go back as if the drag was abandoned.
+            guard tracker.phase == .dragging else { return }
+            _ = tracker.ended(horizontal: tracker.offset, vertical: 0, velocity: 0, containerWidth: Double(width))
+            finish(.cancel)
         }
-        .frame(width: 32)
     }
 
     /// Carries out a release from wherever the screen is now.
@@ -153,6 +141,82 @@ private struct EdgeSwipeBackModifier<Underlay: View>: ViewModifier {
         withTransaction(transaction) {
             tracker.reset()
             fade = 1
+        }
+    }
+}
+
+/// A pan recognizer for the edge swipe. It receives a touch only if it starts inside the strip, never cancels
+/// the touch for the views under it, and only runs alongside a scroll view's pan, so a tap or a drag that the
+/// control under the finger wants still reaches it (#2917) and the scrubber keeps its own drags (#84).
+private struct EdgePanGesture: UIGestureRecognizerRepresentable {
+    enum Event {
+        case moved(translation: CGSize)
+        case ended(translation: CGSize, velocity: Double)
+        case cancelled
+    }
+
+    /// DragGesture's old minimum distance: smaller movements are taps and wobble, not the start of a swipe.
+    private static let minimumDistance: CGFloat = 18
+
+    let stripWidth: CGFloat
+    let topClearance: CGFloat
+    let send: (Event) -> Void
+
+    func makeCoordinator(converter: CoordinateSpaceConverter) -> Coordinator {
+        Coordinator(stripWidth: stripWidth, topClearance: topClearance)
+    }
+
+    func makeUIGestureRecognizer(context: Context) -> UIPanGestureRecognizer {
+        let recognizer = UIPanGestureRecognizer()
+        recognizer.maximumNumberOfTouches = 1
+        recognizer.cancelsTouchesInView = false
+        recognizer.delaysTouchesBegan = false
+        recognizer.delaysTouchesEnded = false
+        recognizer.delegate = context.coordinator
+        return recognizer
+    }
+
+    func updateUIGestureRecognizer(_ recognizer: UIPanGestureRecognizer, context: Context) {
+        context.coordinator.stripWidth = stripWidth
+        context.coordinator.topClearance = topClearance
+    }
+
+    func handleUIGestureRecognizerAction(_ recognizer: UIPanGestureRecognizer, context: Context) {
+        let point = recognizer.translation(in: recognizer.view)
+        let translation = CGSize(width: point.x, height: point.y)
+        switch recognizer.state {
+        case .began, .changed:
+            guard hypot(point.x, point.y) >= Self.minimumDistance else { return }
+            send(.moved(translation: translation))
+        case .ended:
+            send(.ended(translation: translation, velocity: Double(recognizer.velocity(in: recognizer.view).x)))
+        case .cancelled, .failed:
+            send(.cancelled)
+        default:
+            break
+        }
+    }
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        var stripWidth: CGFloat
+        var topClearance: CGFloat
+
+        init(stripWidth: CGFloat, topClearance: CGFloat) {
+            self.stripWidth = stripWidth
+            self.topClearance = topClearance
+        }
+
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+            guard let view = gestureRecognizer.view else { return false }
+            let point = touch.location(in: view)
+            return point.x >= 0 && point.x < stripWidth && point.y >= view.safeAreaInsets.top + topClearance
+        }
+
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer
+        ) -> Bool {
+            other.view is UIScrollView
         }
     }
 }
