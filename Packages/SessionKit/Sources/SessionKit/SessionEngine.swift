@@ -277,7 +277,7 @@ public final class SessionEngine {
         snapshot.currentAnchorConfidence = .providerMetadata
 
         if item.media?.url == candidate.audioURL,
-           try repository.loadListeningMap(itemId: item.id) == nil,
+           try repository.listeningMapId(itemId: item.id) == nil, // whether there is one, not the map (#2506)
            let publisherChapters = preferredPublisherChapterCollection(in: candidate) {
             _ = try attachPublisherChapters(itemId: item.id, collection: publisherChapters)
         }
@@ -306,7 +306,7 @@ public final class SessionEngine {
         let item = try sourceImportItem(from: candidate, result: result, request: request, sourceIdentity: sourceIdentity)
         try saveItem(item)
         if item.media?.url == candidate.audioURL,
-           try repository.loadListeningMap(itemId: item.id) == nil,
+           try repository.listeningMapId(itemId: item.id) == nil, // whether there is one, not the map (#2506)
            let publisherChapters = preferredPublisherChapterCollection(in: candidate) {
             _ = try attachPublisherChapters(itemId: item.id, collection: publisherChapters)
         }

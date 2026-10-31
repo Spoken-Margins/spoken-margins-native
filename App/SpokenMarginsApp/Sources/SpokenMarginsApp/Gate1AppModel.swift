@@ -1609,7 +1609,7 @@ final class Gate1AppModel: ObservableObject {
 
     /// The listener's own map or the publisher's chapters, which a friend's map never replaces.
     static func listenerHasListeningMap(itemId: String, store: SQLiteSessionStore) throws -> Bool {
-        try store.loadPortableListeningMapProposals(itemId: itemId).contains { !CommunityMapConverter.isCommunityProposal(id: $0.id) } // a community map never blocks a friend's (#553)
+        try store.portableListeningMapProposalIds(itemId: itemId).contains { !CommunityMapConverter.isCommunityProposal(id: $0) } // a community map never blocks a friend's (#553); ids only, not the maps (#2506)
             || store.loadTranscriptTimelineChapters(itemId: itemId).isEmpty == false // chapters only: this runs from the Item screen's body (#2073)
     }
 
