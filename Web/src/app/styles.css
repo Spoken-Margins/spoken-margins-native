@@ -603,6 +603,16 @@ button:disabled {
   color: var(--muted);
 }
 
+.backup-button {
+  justify-self: start;
+}
+
+/* The browser hasn't agreed to keep storage: said plainly, without alarm (no colour carries it). */
+.storage-note {
+  padding-left: 12px;
+  border-left: 3px solid var(--rule);
+}
+
 .more {
   display: grid;
   gap: 10px;

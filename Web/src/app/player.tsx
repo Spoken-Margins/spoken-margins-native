@@ -5,6 +5,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { Episode } from '../shared/model.ts';
 import { useData } from './data.tsx';
 import { plainError } from './logic/messages.ts';
+import { NotSavedError } from './logic/storage.ts';
 import { FINISHED_WITHIN_SECONDS } from './logic/library.ts';
 import { services } from './services.ts';
 import { useRelay, useUi } from './ui.tsx';
@@ -87,8 +88,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
             await dataRef.current.updateEpisode(target);
           }
         } catch (error) {
-          // The relay pop-up's "Not now", a dead page: one message, not a second "no voice" on top of it.
-          toast(plainError(error), 'problem');
+          // The relay pop-up's "Not now", a dead page: one message, not a second "no voice" on top of it. A
+          // storage failure has already shown its own.
+          if (!(error instanceof NotSavedError)) toast(plainError(error), 'problem');
           return;
         } finally {
           setLoading(false);

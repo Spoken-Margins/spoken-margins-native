@@ -77,3 +77,29 @@ test('the summary counts what was placed and names what wasn’t', () => {
   assert.equal(none.landAt, undefined);
   assert.equal(importSummary(none, undefined), 'This file has no Margins the web app can place. 3 Margins are on an article’s text, which the web app can’t open yet.');
 });
+
+test('opening a backup of Margins already here adds none of them again', () => {
+  // As a backup of the listener's own Margins comes back: the same words at the same moments, under new ids.
+  const here: Margin[] = [
+    { id: 'own-a', episodeId: mine.id, atSeconds: 12.5, createdAt: 'T', text: 'a' },
+    { id: 'own-b', episodeId: mine.id, atSeconds: 40.2, createdAt: 'T', text: 'b ' },
+  ];
+  const all = placeImport(read({ title: 'Ep', guid: 'g-1' }), [show], [mine], 'NOW', here);
+  assert.deepEqual(all.margins, []);
+  assert.equal(all.duplicates, 2);
+  assert.equal(all.landAt, 12.5, 'still lands at the earliest Margin');
+  assert.equal(importSummary(all, undefined), 'Every Margin in this file is already here, on “Episode 1”.');
+
+  // Neighbours that are not the same Margin: other words, another moment, another episode.
+  const near: Margin[] = [
+    { id: 'x', episodeId: mine.id, atSeconds: 12.5, createdAt: 'T', text: 'A' },
+    { id: 'y', episodeId: mine.id, atSeconds: 41, createdAt: 'T', text: 'b' },
+    { id: 'z', episodeId: 'other', atSeconds: 12.5, createdAt: 'T', text: 'a' },
+  ];
+  const none = placeImport(read({ title: 'Ep', guid: 'g-1' }), [show], [mine], 'NOW', near);
+  assert.equal(none.margins.length, 2);
+  assert.equal(none.duplicates, 0);
+
+  const some = placeImport(read({ title: 'Ep', guid: 'g-1' }), [show], [mine], 'NOW', here.slice(0, 1));
+  assert.equal(importSummary(some, 'Ada'), 'Opened 1 Margin from Ada on “Episode 1”. 1 Margin was already here.');
+});

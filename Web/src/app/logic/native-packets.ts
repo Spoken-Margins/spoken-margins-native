@@ -13,8 +13,8 @@ import type { CapacitorBridge } from '../../sources/native-http.ts';
 
 export type PacketRoute = 'native' | 'browser';
 
-/** The file picker's filter in a browser. */
-export const BROWSER_PACKET_ACCEPT = '.spokenmargins,application/vnd.spokenmargins.package+zip';
+/** The file picker's filter in a browser: Margin files, and backup `.zip` files from Settings (#3012). */
+export const BROWSER_PACKET_ACCEPT = '.spokenmargins,application/vnd.spokenmargins.package+zip,.zip,application/zip';
 
 /** Where this page saves and opens packets: the Android app's own path inside Capacitor, the browser's elsewhere. */
 export function packetRoute(host: unknown = globalThis): PacketRoute {

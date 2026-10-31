@@ -3,10 +3,12 @@ import { formatClock } from '../../shared/clock.ts';
 import type { Episode, Margin, Show } from '../../shared/model.ts';
 import { capacitorBridge } from '../../sources/native-http.ts';
 import { useData } from '../data.tsx';
+import { downloadFile } from '../download.ts';
 import { useRestoreFocus } from '../focus.ts';
 import { BackIcon, DownIcon, DownloadIcon, ForwardIcon, MicIcon, PauseIcon, PenIcon, PlayIcon, ShareIcon, StopIcon } from '../icons.tsx';
 import { nextSpeed, timelineFraction, timelinePosts } from '../logic/library.ts';
 import { plainError } from '../logic/messages.ts';
+import { NotSavedError } from '../logic/storage.ts';
 import { shareNativePacket } from '../logic/native-packets.ts';
 import { SKIP_SECONDS, usePlayer } from '../player.tsx';
 import type { RecordedVoice, VoiceRecording } from '../ports.ts';
@@ -225,14 +227,7 @@ function ShareMargins({ episode, margins, show }: { episode: Episode; margins: M
           throw error;
         }
       } else {
-        const url = URL.createObjectURL(file);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = written.fileName;
-        document.body.append(link);
-        link.click();
-        link.remove();
-        window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
+        downloadFile(file);
       }
       const count = written.included.length === 1 ? '1 Margin' : `${written.included.length} Margins`;
       toast(`${how === 'save' ? 'Saved' : 'Shared'} ${count} as ${written.fileName}.${written.notice ? ` ${written.notice}` : ''}`);
@@ -320,7 +315,8 @@ function WriteMargin({ at, episodeId, onDone }: { at: number; episodeId: string;
       toast(`Margin saved at ${formatClock(at)}.`);
       onDone();
     } catch (error) {
-      toast(`The Margin wasn’t saved: ${plainError(error)}`, 'problem');
+      // A storage failure has already said what wasn't saved. The words stay in the box to try again.
+      if (!(error instanceof NotSavedError)) toast(`The Margin wasn’t saved: ${plainError(error)}`, 'problem');
     }
   };
 
@@ -448,10 +444,11 @@ function RecordMargin({
         id: newId(), episodeId, atSeconds: at, createdAt: new Date().toISOString(), voice: recorded, ...(text && { text }),
       });
       toast(`Voice Margin saved at ${formatClock(at)}.${text ? '' : ' It has no words, so it stays out of shared files.'}`);
+      close();
     } catch (error) {
-      toast(`The voice Margin wasn’t saved: ${plainError(error)}`, 'problem');
+      // The recording stays here, so the listener can free space or back up and then save it again.
+      if (!(error instanceof NotSavedError)) toast(`The voice Margin wasn’t saved: ${plainError(error)}`, 'problem');
     }
-    close();
   };
 
   if (problem) {

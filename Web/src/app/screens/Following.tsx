@@ -153,7 +153,10 @@ function ShowScreen({ show, onBack, onPlay }: { show: Show; onBack: () => void; 
           type="button"
           className="button"
           onClick={() => {
-            void data.unfollow(show.id).then(() => toast(`Unfollowed ${show.title}. Its Margins stay in the Margins tab.`));
+            void data.unfollow(show.id).then(
+              () => toast(`Unfollowed ${show.title}. Its Margins stay in the Margins tab.`),
+              () => undefined, // Already shown: the show is still followed, and the problem says why.
+            );
             onBack();
           }}
         >

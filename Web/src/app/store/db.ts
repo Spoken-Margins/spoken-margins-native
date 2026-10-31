@@ -2,27 +2,11 @@
 // (voice audio included, as Blobs), resume positions and settings. Every write is a single put or delete,
 // so a closed tab never leaves half a change behind.
 import type { Episode, Margin, PlaybackPosition, Show } from '../../shared/model.ts';
+import { DB_VERSION, upgrade, type SettingRow, type Settings, type Snapshot } from './schema.ts';
 
 const DB_NAME = 'spoken-margins';
-const DB_VERSION = 1;
 
-export interface Settings {
-  /** The listener allowed feeds a browser can't read to go through the Spoken Margins server. */
-  relayAllowed: boolean;
-  /** The relay pop-up has been answered once, either way. */
-  relayAsked: boolean;
-  playbackRate: number;
-}
-
-export const DEFAULT_SETTINGS: Settings = { relayAllowed: false, relayAsked: false, playbackRate: 1 };
-
-export interface Snapshot {
-  shows: Show[];
-  episodes: Episode[];
-  margins: Margin[];
-  positions: PlaybackPosition[];
-  settings: Settings;
-}
+export { DEFAULT_SETTINGS, type Settings, type Snapshot } from './schema.ts';
 
 type StoreName = 'shows' | 'episodes' | 'margins' | 'positions' | 'settings';
 
@@ -39,8 +23,21 @@ function open(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains('positions')) db.createObjectStore('positions', { keyPath: 'episodeId' });
       if (!db.objectStoreNames.contains('settings')) db.createObjectStore('settings', { keyPath: 'key' });
     };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
+    request.onsuccess = () => {
+      const db = request.result;
+      // A newer copy of the app needs a new store: let it open rather than block it. This copy reopens on its
+      // next write, and that write fails with a message rather than silently.
+      db.onversionchange = () => {
+        db.close();
+        opening = undefined;
+      };
+      resolve(db);
+    };
+    request.onerror = () => {
+      // Let the next write try again rather than fail forever on one bad open (a private window, a full disk).
+      opening = undefined;
+      reject(request.error);
+    };
   });
   return opening;
 }
@@ -48,8 +45,10 @@ function open(): Promise<IDBDatabase> {
 function done(tx: IDBTransaction): Promise<void> {
   return new Promise((resolve, reject) => {
     tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-    tx.onabort = () => reject(tx.error);
+    // An aborted transaction can carry no error (a closed tab, a version change); still reject with one, so the
+    // listener is told what wasn't saved rather than shown "null".
+    tx.onerror = () => reject(tx.error ?? new DOMException('The write didn’t finish.', 'AbortError'));
+    tx.onabort = () => reject(tx.error ?? new DOMException('The write didn’t finish.', 'AbortError'));
   });
 }
 
@@ -63,18 +62,17 @@ function all<T>(db: IDBDatabase, store: StoreName): Promise<T[]> {
 
 export async function loadAll(): Promise<Snapshot> {
   const db = await open();
-  const [shows, episodes, margins, positions, settingRows] = await Promise.all([
+  const [shows, episodes, margins, positions, settings] = await Promise.all([
     all<Show>(db, 'shows'),
     all<Episode>(db, 'episodes'),
     all<Margin>(db, 'margins'),
     all<PlaybackPosition>(db, 'positions'),
-    all<{ key: string; value: unknown }>(db, 'settings'),
+    all<SettingRow>(db, 'settings'),
   ]);
-  const settings: Settings = { ...DEFAULT_SETTINGS };
-  for (const row of settingRows) {
-    if (row.key in settings) (settings as unknown as Record<string, unknown>)[row.key] = row.value;
-  }
-  return { shows, episodes, margins, positions, settings };
+  const upgraded = upgrade({ shows, episodes, margins, positions, settings });
+  // Recording the shape is worth doing but not worth failing a load over: the rows read fine without it.
+  if (upgraded.writes.length) await putMany('settings', upgraded.writes).catch(() => undefined);
+  return upgraded.snapshot;
 }
 
 export async function putMany(store: StoreName, values: readonly object[]): Promise<void> {
