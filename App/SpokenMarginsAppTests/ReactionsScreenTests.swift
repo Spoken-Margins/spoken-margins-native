@@ -102,7 +102,7 @@ final class ReactionsScreenTests: XCTestCase {
         XCTAssertNotNil(store.load(itemId: "item-pill"))
 
         model.openExport()
-        model.buildExport()
+        await model.buildExport()?.value // the preview's reads run off the main thread (#2505)
         XCTAssertFalse(model.exportPreview.isEmpty)
         XCTAssertFalse(model.exportPreview.contains("GENERATED-CLAIM-TEXT"))
         XCTAssertFalse(model.exportPreview.contains(MarginLayerSynthesis.promptVersion))
