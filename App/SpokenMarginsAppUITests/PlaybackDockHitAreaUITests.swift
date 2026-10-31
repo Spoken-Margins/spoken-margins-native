@@ -124,6 +124,26 @@ final class PlaybackDockHitAreaUITests: XCTestCase {
         }
     }
 
+    /// #2917: the edge swipe back must keep working now that its strip no longer sits over the leading 32 pt and
+    /// shadows taps there. A drag that starts a few points from the screen edge takes Now Playing back to Library.
+    func testEdgeSwipeStillGoesBackToLibrary() throws {
+        app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_SOURCE_TITLE"] = "Edge swipe"
+        app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_SOURCE_TEXT"] = (1...12)
+            .map { "Sentence \($0) walks a little further along the path." }.joined(separator: " ")
+        app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_SOURCE_URL"] = "https://example.com/edge-swipe"
+        app.launch()
+        let start = app.buttons["queue.start.item-ui-text-regression"]
+        XCTAssertTrue(start.waitForExistence(timeout: 8), "The seeded article's start control is missing")
+        start.tap()
+        XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8), "Now Playing did not open")
+
+        let from = app.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.5)).withOffset(CGVector(dx: 6, dy: 0))
+        let to = app.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5))
+        from.press(forDuration: 0.05, thenDragTo: to, withVelocity: .default, thenHoldForDuration: 0)
+        XCTAssertTrue(waitFor(element("playback.screen"), "exists == false") && element("home.screen").exists,
+                      "A swipe from the leading edge did not take Now Playing back to Library")
+    }
+
     /// J2's downloaded 25-minute episode: the media scrubber and the seconds skips.
     func testPodcastScrubberAndSkipsTakeTapsAcrossTheirWholeTarget() throws {
         app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_PODCAST"] = "1"
