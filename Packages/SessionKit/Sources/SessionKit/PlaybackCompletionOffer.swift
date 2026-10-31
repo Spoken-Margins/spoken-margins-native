@@ -61,4 +61,12 @@ public enum PlaybackCompletionOffer {
         guard let row else { return .noLibraryRow }
         return ItemQuickAction.completionAction(for: row) == .markComplete ? .offered : .alreadyComplete
     }
+
+    /// Whether to write the "hidden" line to Diagnostics when `presence` changes from `previous` (nil on first
+    /// appearance). Only the two hidden reasons count, and not right after the button was showing: that is the
+    /// listener's own tap on Mark complete turning the row complete, not a button gone missing.
+    public static func shouldRecordHidden(from previous: Presence?, to presence: Presence) -> Bool {
+        guard presence == .noLibraryRow || presence == .alreadyComplete else { return false }
+        return previous != .offered && previous != presence
+    }
 }

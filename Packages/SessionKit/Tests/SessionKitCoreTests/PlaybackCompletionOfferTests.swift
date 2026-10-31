@@ -122,4 +122,20 @@ final class PlaybackCompletionOfferTests: XCTestCase {
         // Completed by hand: the Library offers Mark Unfinished, not Mark complete, so the playback button stays hidden.
         XCTAssertEqual(PlaybackCompletionOffer.presence(positionOffered: true, row: markedByHand), .alreadyComplete)
     }
+
+    func testHiddenIsRecordedOnAppearAndOnTheWayInButNotAfterTheListenersOwnTap() {
+        typealias Offer = PlaybackCompletionOffer
+        // Opened already past the offer point with a complete row.
+        XCTAssertTrue(Offer.shouldRecordHidden(from: nil, to: .alreadyComplete))
+        XCTAssertTrue(Offer.shouldRecordHidden(from: nil, to: .noLibraryRow))
+        // Playing on from before the offer point into a hidden state.
+        XCTAssertTrue(Offer.shouldRecordHidden(from: .notYet, to: .alreadyComplete))
+        XCTAssertTrue(Offer.shouldRecordHidden(from: .noLibraryRow, to: .alreadyComplete))
+        // The button was showing and the listener tapped it: the row turned complete.
+        XCTAssertFalse(Offer.shouldRecordHidden(from: .offered, to: .alreadyComplete))
+        // Nothing hidden, or nothing changed.
+        XCTAssertFalse(Offer.shouldRecordHidden(from: nil, to: .offered))
+        XCTAssertFalse(Offer.shouldRecordHidden(from: nil, to: .notYet))
+        XCTAssertFalse(Offer.shouldRecordHidden(from: .alreadyComplete, to: .alreadyComplete))
+    }
 }
