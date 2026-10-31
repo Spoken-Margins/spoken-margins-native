@@ -118,7 +118,7 @@ The owner's one-phone version, with prepared packets and an episode that shares 
 2. Press Continue on the item (or on its row in the Library).
    - Pass: the app asks whether to hear the new Margin first, before anything plays.
 3. Choose "Hear new Margins first".
-   - Pass: the episode jumps to about 10 s before the friend's Margin and plays on. The card says "Reviewing new Margins · 1 of 1" with the friend's name. A short two-note chime, then the friend's voice. The owner checks by ear that the lead-in sounds natural.
+   - Pass: the episode jumps to about 20 s before the friend's Margin and plays on. The card says "Reviewing new Margins · 1 of 1" with the friend's name. A short two-note chime, then the friend's voice. The owner checks by ear that the lead-in sounds natural.
 4. Let the voice finish.
    - Pass: the episode goes back to where it was paused and carries on. The Margin is no longer marked new.
 5. Repeat with three new Margins, one of them close to another. Use "Skip to the next Margin", "Play it now" and "Stop review" once each.

@@ -146,11 +146,11 @@ final class MarginMomentTests: XCTestCase {
         try XCTUnwrap(MarginMomentSequence(itemId: "ep", reviewing: margins, returnToMediaTimeMs: returnTo, resumesAtEnd: resumes))
     }
 
-    func testTheReviewLeadInIsTenSecondsAndSitsInTheLeadInTable() throws {
-        XCTAssertEqual(MarginMomentSequence.reviewLeadInMs, 10_000)
-        XCTAssertEqual(ListeningMoment.rule(for: .reviewNewMargins).leadInMs, 10_000)
-        XCTAssertEqual(try review([anchor("a", 60_000)]).startMediaTimeMs, 50_000)
-        XCTAssertEqual(try review([anchor("a", 4_000)]).startMediaTimeMs, 0, "clamped at the start of the episode")
+    func testTheReviewLeadInIsTwentySecondsAndSitsInTheLeadInTable() throws {
+        XCTAssertEqual(MarginMomentSequence.reviewLeadInMs, 20_000)
+        XCTAssertEqual(ListeningMoment.rule(for: .reviewNewMargins).leadInMs, 20_000)
+        XCTAssertEqual(try review([anchor("a", 60_000)]).startMediaTimeMs, 40_000)
+        XCTAssertEqual(try review([anchor("a", 14_000)]).startMediaTimeMs, 0, "clamped at the start of the episode")
         XCTAssertEqual(MarginMomentSequence.defaultLeadInMs, 30_000, "Play this moment keeps its own length (#1577)")
     }
 
@@ -164,21 +164,21 @@ final class MarginMomentTests: XCTestCase {
     func testAReviewPlaysEachMarginWithItsOwnLeadInAndSkipsTheStretchesBetween() throws {
         var sequence = try review([anchor("a", 60_000), anchor("b", 120_000), anchor("c", 300_000)], returnTo: 1_500_000)
         XCTAssertTrue(sequence.isReview)
-        XCTAssertEqual(sequence.startMediaTimeMs, 50_000, "the first lead-in starts ten seconds before the first Margin")
-        XCTAssertEqual(sequence.msUntilTarget(currentMediaTimeMs: 50_000), 10_000)
-        XCTAssertNil(sequence.progressed(from: 50_000, to: 55_000))
+        XCTAssertEqual(sequence.startMediaTimeMs, 40_000, "the first lead-in starts twenty seconds before the first Margin")
+        XCTAssertEqual(sequence.msUntilTarget(currentMediaTimeMs: 40_000), 20_000)
+        XCTAssertNil(sequence.progressed(from: 40_000, to: 45_000))
 
         XCTAssertEqual(sequence.progressed(from: 59_800, to: 60_300)?.marginId, "a")
         XCTAssertEqual(sequence.reviewNumber, 1)
-        XCTAssertEqual(sequence.marginFinished(sourceAtMediaTimeMs: 60_300), .seek(toMediaTimeMs: 110_000),
+        XCTAssertEqual(sequence.marginFinished(sourceAtMediaTimeMs: 60_300), .seek(toMediaTimeMs: 100_000),
                        "the stretch between a and b is skipped")
         XCTAssertEqual(sequence.phase, .leadIn)
         XCTAssertEqual(sequence.target.marginId, "b")
         XCTAssertEqual(sequence.reviewNumber, 2)
-        XCTAssertNil(sequence.progressed(from: 110_000, to: 114_000), "still leading in")
+        XCTAssertNil(sequence.progressed(from: 100_000, to: 104_000), "still leading in")
 
         XCTAssertEqual(sequence.progressed(from: 119_800, to: 120_100)?.marginId, "b")
-        XCTAssertEqual(sequence.marginFinished(sourceAtMediaTimeMs: 120_100), .seek(toMediaTimeMs: 290_000))
+        XCTAssertEqual(sequence.marginFinished(sourceAtMediaTimeMs: 120_100), .seek(toMediaTimeMs: 280_000))
         XCTAssertEqual(sequence.progressed(from: 299_800, to: 300_200)?.marginId, "c")
         XCTAssertEqual(sequence.reviewNumber, 3)
         XCTAssertEqual(
@@ -191,15 +191,15 @@ final class MarginMomentTests: XCTestCase {
     }
 
     func testMarginsCloserThanTheLeadInPlayWithoutAnExtraSeek() throws {
-        var sequence = try review([anchor("a", 60_000), anchor("b", 66_000), anchor("c", 76_000), anchor("d", 90_000)])
+        var sequence = try review([anchor("a", 60_000), anchor("b", 66_000), anchor("c", 76_000), anchor("d", 100_000)])
         XCTAssertEqual(sequence.progressed(from: 59_800, to: 60_300)?.marginId, "a")
         XCTAssertEqual(sequence.marginFinished(sourceAtMediaTimeMs: 60_300), .continueSource, "b is six seconds on")
         XCTAssertNil(sequence.progressed(from: 60_300, to: 60_800))
         XCTAssertEqual(sequence.progressed(from: 65_800, to: 66_300)?.marginId, "b")
-        XCTAssertEqual(sequence.marginFinished(sourceAtMediaTimeMs: 66_300), .continueSource, "c is ten seconds on")
+        XCTAssertEqual(sequence.marginFinished(sourceAtMediaTimeMs: 66_300), .continueSource, "c is ten seconds on, inside the twenty-second lead-in")
         XCTAssertEqual(sequence.progressed(from: 75_800, to: 76_300)?.marginId, "c")
         XCTAssertEqual(sequence.marginFinished(sourceAtMediaTimeMs: 76_300), .seek(toMediaTimeMs: 80_000),
-                       "d is fourteen seconds on, so its lead-in is a hop of its own")
+                       "d is twenty-four seconds on, so its lead-in is a hop of its own")
     }
 
     func testTwoMarginsAtTheSamePlaceBothPlayInTheOrderGiven() throws {
@@ -210,7 +210,7 @@ final class MarginMomentTests: XCTestCase {
         XCTAssertEqual(sequence.marginFinished(sourceAtMediaTimeMs: 60_400), .playNow(anchor("second", 60_000, "Ben")))
         XCTAssertEqual(sequence.phase, .playingMargin("second"))
         XCTAssertEqual(sequence.playing?.marginId, "second")
-        XCTAssertEqual(sequence.marginFinished(sourceAtMediaTimeMs: 60_400), .seek(toMediaTimeMs: 190_000))
+        XCTAssertEqual(sequence.marginFinished(sourceAtMediaTimeMs: 60_400), .seek(toMediaTimeMs: 180_000))
     }
 
     func testAMarginTheTickAlreadyPassedPlaysRightAfterTheOneBeforeIt() throws {
@@ -241,7 +241,7 @@ final class MarginMomentTests: XCTestCase {
         var sequence = try review([anchor("a", 60_000), anchor("b", 200_000)])
         _ = sequence.jumpToTarget()
         // The conductor reports a skip the same way as a finished voice.
-        XCTAssertEqual(sequence.marginFinished(sourceAtMediaTimeMs: 60_000), .seek(toMediaTimeMs: 190_000))
+        XCTAssertEqual(sequence.marginFinished(sourceAtMediaTimeMs: 60_000), .seek(toMediaTimeMs: 180_000))
         XCTAssertEqual(sequence.marginFinished(sourceAtMediaTimeMs: 190_000), .continueSource, "nothing is playing, so nothing moves")
     }
 

@@ -17,8 +17,8 @@ public struct ListeningMoment: Sendable, Equatable {
         case friendsCut
         /// One Margin in a Listen Back episode (docs/design/getting-back-to-notes.md, 3.5).
         case listenBack
-        /// Each shared Margin the listener hasn't heard, one after another (#474). Shorter than a single moment's
-        /// lead-in, because the next Margin is never far off and the listener has asked to skim.
+        /// Each shared Margin the listener hasn't heard, one after another (#474). Twenty seconds, the owner's call
+        /// on #3059: ten gave no context for an episode the listener hadn't heard, and a minute would be too slow to skim.
         case reviewNewMargins
     }
 
@@ -64,7 +64,7 @@ public struct ListeningMoment: Sendable, Equatable {
             Rule(leadInMs: 8_000, carryOn: .none, fallbacks: [.readContextText])
         case .reviewNewMargins:
             // The source carries on from the Margin only until the next lead-in starts; the review owns that hop.
-            Rule(leadInMs: 10_000, carryOn: .sourceContinues, fallbacks: [.stream])
+            Rule(leadInMs: 20_000, carryOn: .sourceContinues, fallbacks: [.stream])
         }
     }
 
