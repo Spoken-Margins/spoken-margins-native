@@ -1,0 +1,2 @@
+# The Playwright build (e2e/playwright.config.ts). It carries a test relay origin, so it is never deployed.
+dist-e2e/

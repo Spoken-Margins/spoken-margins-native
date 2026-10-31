@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import type { Show } from '../../shared/model.ts';
 import { useData } from '../data.tsx';
-import { errorText, minutes, shortDate } from '../format.ts';
+import { minutes, shortDate } from '../format.ts';
 import { ChevronIcon, CloseIcon, PlayIcon, PlusIcon } from '../icons.tsx';
 import { followingRows, libraryRows, newestFirst } from '../logic/library.ts';
+import { plainError } from '../logic/messages.ts';
 import { usePlayer } from '../player.tsx';
 import { services } from '../services.ts';
 import { useRelay, useUi } from '../ui.tsx';
@@ -172,7 +173,7 @@ function FollowSheet({ onClose }: { onClose: () => void }) {
       toast(`Following ${read.show.title}. ${read.episodes.length} episodes added to your Library.`);
       onClose();
     } catch (error) {
-      setProblem(errorText(error));
+      setProblem(plainError(error));
     } finally {
       setBusy(false);
     }
@@ -193,7 +194,7 @@ function FollowSheet({ onClose }: { onClose: () => void }) {
       setResults(found);
       if (found.length === 0) setProblem(`No shows found for “${text}”. Try another name, or paste the show’s feed address.`);
     } catch (error) {
-      setProblem(`Search didn’t answer: ${errorText(error)}`);
+      setProblem(plainError(error));
     } finally {
       setBusy(false);
     }

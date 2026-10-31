@@ -1,5 +1,5 @@
-// Playwright runs the built app (`npm run build` first) through `vite preview`, in Chromium only, at a
-// phone size (390×844) and a laptop size (1280×800). Screenshots go to `artifacts/web-2982/` at the repo
+// Playwright builds the app into `dist-e2e/` and serves it through `vite preview` (see webServer), in Chromium only,
+// at a phone size (390×844) and a laptop size (1280×800). Screenshots go to `artifacts/web-2982/` at the repo
 // root, which git ignores.
 import { defineConfig, devices } from '@playwright/test';
 
@@ -31,10 +31,14 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: 'npx vite preview --host 127.0.0.1 --port 4173 --strictPort',
+    // Its own build in `dist-e2e/` (git-ignored, never deployed), with a relay origin only the tests' routes
+    // answer, so the consent journey can count relay calls.
+    command:
+      'npx vite build --outDir dist-e2e --emptyOutDir --logLevel warn && npx vite preview --outDir dist-e2e --host 127.0.0.1 --port 4173 --strictPort',
+    env: { VITE_RELAY_ORIGIN: 'https://relay.test' },
     cwd: '..',
     url: 'http://127.0.0.1:4173/',
     reuseExistingServer: false,
-    timeout: 30_000,
+    timeout: 120_000,
   },
 });
