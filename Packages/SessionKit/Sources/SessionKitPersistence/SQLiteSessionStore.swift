@@ -854,7 +854,7 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         try loadBySession(kind: "turn", sessionId: sessionId)
     }
 
-    /// The id of the session's newest summary turn that has not completed, or nil: what the pending-summary check wants
+    /// The id (the turn's own, not the record key `session::turn`) of the session's newest summary turn that has not completed, or nil: what the pending-summary check wants
     /// from `loadTurns(sessionId:)` without decoding every turn of the session (#2506). The same order as that read
     /// (`updated_at`, then `id`), newest first. A turn whose payload isn't valid JSON is skipped here; the whole read
     /// would have refused it.
@@ -862,7 +862,7 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         var found: String?
         try readTexts(
             """
-            SELECT id FROM records WHERE kind = 'turn' AND session_id = ? AND json_valid(payload)
+            SELECT json_extract(payload, '$.id') FROM records WHERE kind = 'turn' AND session_id = ? AND json_valid(payload)
               AND json_extract(payload, '$.turnType') = 'interjection_summary'
               AND json_extract(payload, '$.status') IS NOT 'complete'
             ORDER BY updated_at DESC, id DESC LIMIT 1;

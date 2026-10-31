@@ -130,7 +130,8 @@ final class SummaryReadRowsTests: XCTestCase {
             XCTAssertEqual(try store.latestPendingSummaryTurnId(sessionId: "other"), try oldAnswer(store, session: "other"), label)
         }
         XCTAssertNotNil(try store.latestPendingSummaryTurnId(sessionId: "s"))
-        XCTAssertEqual(try store.latestPendingSummaryTurnId(sessionId: "other"), nil, "the other session's turn is not a summary")
+        XCTAssertEqual(try store.latestPendingSummaryTurnId(sessionId: "s"), "t5", "the newest turn that is a summary and not complete, by its own id")
+        XCTAssertEqual(try store.latestPendingSummaryTurnId(sessionId: "other"), "t3", "its own session's pending summary")
 
         try store.saveTurn(turn("t4", status: "complete"))
         try store.saveTurn(turn("t5", status: "complete"))
