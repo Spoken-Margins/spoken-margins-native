@@ -10,6 +10,9 @@ import { fileURLToPath } from 'node:url';
 import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 
+/** Build files only a listener who turns transcription on needs: the transcription worker and its chunks. */
+const OPT_IN_DIR = 'assets/opt-in/';
+
 function serviceWorker(): Plugin {
   const source = fileURLToPath(new URL('./src/app/pwa/service-worker.js', import.meta.url));
   return {
@@ -19,10 +22,15 @@ function serviceWorker(): Plugin {
       // The speech engine (onnxruntime-web, about 27 MB) stays out of the shell: only a listener who turns
       // transcription on downloads it, and transformers.js then keeps it with the model (src/transcribe/).
       const files = Object.keys(bundle).filter((name) => !name.endsWith('.map') && !/(^|\/)ort-wasm[^/]*$/.test(name));
-      const shell = ['./', ...files.map((name) => `./${name}`), './manifest.webmanifest', './icons/icon.svg', './icons/icon-192.png', './icons/icon-512.png'];
+      // The transcription worker (about 546 KB) is opt-in too (#2977): the service worker keeps it only once a
+      // listener who turned transcription on has loaded it, so it still works offline after that.
+      const optIn = files.filter((name) => name.startsWith(OPT_IN_DIR));
+      const shellFiles = files.filter((name) => !name.startsWith(OPT_IN_DIR));
+      const shell = ['./', ...shellFiles.map((name) => `./${name}`), './manifest.webmanifest', './icons/icon.svg', './icons/icon-192.png', './icons/icon-512.png'];
       const version = createHash('sha256').update(files.sort().join('\n')).digest('hex').slice(0, 12);
       const code = readFileSync(source, 'utf8')
         .replace('__SM_SHELL__', JSON.stringify(shell))
+        .replace('__SM_OPT_IN__', JSON.stringify(optIn.map((name) => `./${name}`)))
         .replace('__SM_VERSION__', JSON.stringify(version));
       this.emitFile({ type: 'asset', fileName: 'sw.js', source: code });
     },
@@ -40,7 +48,11 @@ export default defineConfig(({ mode }) => ({
   plugins: [react(), serviceWorker()],
   define: { __SM_SHARE_LINKS__: JSON.stringify(mode === SHARE_LINKS_TEST_MODE) },
   build: { target: 'es2022', sourcemap: false },
-  // The transcription worker (src/transcribe/worker.ts) loads transformers.js, which splits into chunks.
-  worker: { format: 'es' },
+  // The transcription worker (src/transcribe/worker.ts) loads transformers.js, which splits into chunks. They are
+  // written under OPT_IN_DIR, so the service worker leaves them out of the shell everyone downloads.
+  worker: {
+    format: 'es',
+    rolldownOptions: { output: { entryFileNames: `${OPT_IN_DIR}[name]-[hash].js`, chunkFileNames: `${OPT_IN_DIR}[name]-[hash].js` } },
+  },
   preview: { port: 4173, strictPort: true },
 }));
