@@ -211,14 +211,12 @@ private struct Gate2LiveActivitySmallView: View {
 }
 
 private struct Gate2LiveActivityView: View {
-    /// How far the round controls have grown with the text size; see `Gate2ControlSize` (#1940).
-    @ScaledMetric(relativeTo: .title2) private var controlScale: CGFloat = 1
     let state: Gate2LiveActivityAttributes.ContentState
     let isStale: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack {
+            HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(state.title)
                         .font(.headline)
@@ -230,6 +228,9 @@ private struct Gate2LiveActivityView: View {
                         .foregroundStyle(.white.opacity(0.78))
                         .adaptiveLineLimit()
                         .minimumScaleFactor(0.82)
+                    if state.sharedMarginSenderLabel == nil {
+                        nextNavigation
+                    }
                 }
                 Spacer()
                 Text(state.headlineWord)
@@ -285,28 +286,15 @@ private struct Gate2LiveActivityView: View {
         .padding(.vertical, 10)
     }
 
-    /// The five circles and the mic share one row while they fit the Lock Screen's width (about 327 pt of content).
-    /// When a next-chapter or next-Margin button is also offered, or the width is short, the five circles keep their
-    /// own row and the button and the mic share a second one (#1940). The circles alone are 240 pt at the default
-    /// size and never grow past `Gate2ControlSize.maxGrowth`, so that row fits at every text size.
+    /// The five circles and the mic always share one row, so the card keeps its height (#1940). At the default size
+    /// they total about 304 pt against the Lock Screen's roughly 327 pt of content, and the circles are fixed-size
+    /// controls (all at least 44 pt), not text. The next-chapter action sits in the header instead of this row,
+    /// because a second row would push the card past the 160 pt the Lock Screen allows.
     private var transportControls: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 6) {
-                playbackCircles
-                nextNavigation
-                Spacer(minLength: 0)
-                recordButton
-            }
-            VStack(spacing: 6) {
-                HStack(spacing: 6) {
-                    playbackCircles
-                }
-                HStack(spacing: 6) {
-                    nextNavigation
-                    Spacer(minLength: 0)
-                    recordButton
-                }
-            }
+        HStack(spacing: Gate2ControlSize.rowSpacing) {
+            playbackCircles
+            Spacer(minLength: 0)
+            recordButton
         }
         .buttonStyle(.plain)
     }
@@ -317,7 +305,7 @@ private struct Gate2LiveActivityView: View {
             CompactRoundIntentButton(
                 command: "skimBackward",
                 systemImage: "backward.end.alt.fill",
-                baseSize: Gate2ControlSize.skim,
+                size: Gate2ControlSize.skim,
                 accessibilityLabel: SkimDestinationLabel.accessibilityLabel(
                     destinationMs: state.skimBackwardDestinationMs, backward: true
                 ),
@@ -328,7 +316,7 @@ private struct Gate2LiveActivityView: View {
             CompactRoundIntentButton(
                 command: "skipBack",
                 systemImage: "gobackward.15",
-                baseSize: Gate2ControlSize.skip,
+                size: Gate2ControlSize.skip,
                 accessibilityLabel: Gate2LiveActivityAccessibility.label(forCommand: "skipBack")
             )
         }
@@ -342,7 +330,7 @@ private struct Gate2LiveActivityView: View {
             CompactRoundIntentButton(
                 command: "skipForward",
                 systemImage: "goforward.15",
-                baseSize: Gate2ControlSize.skip,
+                size: Gate2ControlSize.skip,
                 accessibilityLabel: Gate2LiveActivityAccessibility.label(forCommand: "skipForward")
             )
         }
@@ -350,7 +338,7 @@ private struct Gate2LiveActivityView: View {
             CompactRoundIntentButton(
                 command: "skimForward",
                 systemImage: "forward.end.alt.fill",
-                baseSize: Gate2ControlSize.skim,
+                size: Gate2ControlSize.skim,
                 accessibilityLabel: SkimDestinationLabel.accessibilityLabel(
                     destinationMs: state.skimForwardDestinationMs, backward: false
                 ),
@@ -359,6 +347,8 @@ private struct Gate2LiveActivityView: View {
         }
     }
 
+    /// Skips to the next chapter or Shared Margin: one compact line under the chapter title. Its text follows the
+    /// text size, and its hit area grows to 44 pt without moving anything.
     @ViewBuilder
     private var nextNavigation: some View {
         if let nextChapterTitle = state.nextChapterTitle,
@@ -370,7 +360,7 @@ private struct Gate2LiveActivityView: View {
     @ViewBuilder
     private var recordButton: some View {
         if state.canRun("beginInterjection") || state.canRun("finishInterjection") {
-            let diameter = Gate2ControlSize.diameter(Gate2ControlSize.record, scale: controlScale)
+            let diameter = Gate2ControlSize.record
             Link(destination: Gate2CompactCommandURL.url(command: state.isRecording ? "finishInterjection" : "beginInterjection")) {
                 Image(systemName: state.isRecording ? "checkmark" : "mic.fill")
                     .font(.title2.weight(.semibold))
@@ -386,44 +376,33 @@ private struct Gate2LiveActivityView: View {
 
     @ViewBuilder
     private func nextNavigationButton(title: String, targetID: String) -> some View {
-        let label = state.nextNavigationKind == .sharedMargin ? "NEXT MARGIN" : "NEXT CHAPTER"
         if state.nextNavigationKind == .sharedMargin {
             Button(intent: Gate2NextSharedMarginIntent(interjectionID: targetID)) {
-                nextNavigationLabel(label: label, title: title)
+                nextNavigationLabel(label: "Next Margin", title: title)
             }
             .buttonStyle(.plain)
-            .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
             .accessibilityLabel("Skip to next Shared Margin")
         } else {
             Button(intent: Gate2NextChapterIntent(chapterId: targetID)) {
-                nextNavigationLabel(label: label, title: title)
+                nextNavigationLabel(label: "Next", title: title)
             }
             .buttonStyle(.plain)
-            .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
             .accessibilityLabel("Skip to next chapter, \(title)")
         }
     }
 
     private func nextNavigationLabel(label: String, title: String) -> some View {
-        HStack(spacing: 8) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(label)
-                    .font(.caption2.weight(.bold))
-                    .foregroundStyle(.white.opacity(0.58))
-                Text(title)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.white)
-                    .adaptiveLineLimit()
-                    .minimumScaleFactor(0.78)
-            }
+        HStack(spacing: 4) {
+            Text("\(label): \(title)")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.white.opacity(0.86))
+                .adaptiveLineLimit()
+                .minimumScaleFactor(0.78)
             Image(systemName: state.nextNavigationKind == .sharedMargin ? "text.bubble.fill" : "chevron.forward")
-                .font(.caption.weight(.bold))
+                .font(.caption2.weight(.bold))
                 .foregroundStyle(.white.opacity(0.8))
         }
-        .padding(.horizontal, 14)
-        .frame(maxWidth: .infinity, minHeight: Gate2ControlSize.diameter(Gate2ControlSize.record, scale: controlScale), alignment: .leading)
-        .background(Color.white.opacity(0.12))
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .expandedHitArea(vertical: 15)
     }
 }
 
@@ -472,16 +451,12 @@ private extension Gate2LiveActivityAttributes.ContentState {
 }
 
 private struct CompactRoundIntentButton: View {
-    @ScaledMetric(relativeTo: .title2) private var controlScale: CGFloat = 1
     let command: String
     let systemImage: String
-    /// The diameter at the default text size; the circle grows with the text up to `Gate2ControlSize.maxGrowth`.
-    let baseSize: CGFloat
+    let size: CGFloat
     var accessibilityLabel: String? = nil
     /// Skim's destination time, drawn under the icon inside the circle so the row keeps its height (#115).
     var caption: String? = nil
-
-    private var size: CGFloat { Gate2ControlSize.diameter(baseSize, scale: controlScale) }
 
     var body: some View {
         Button(intent: Gate2CompactPlaybackIntent(command: command)) {
@@ -514,11 +489,10 @@ private struct CompactRoundIntentButton: View {
 }
 
 private struct CompactPlayPauseButton: View {
-    @ScaledMetric(relativeTo: .title2) private var controlScale: CGFloat = 1
     let command: String
     let isPlaying: Bool
 
-    private var size: CGFloat { Gate2ControlSize.diameter(Gate2ControlSize.play, scale: controlScale) }
+    private var size: CGFloat { Gate2ControlSize.play }
 
     var body: some View {
         Button(intent: Gate2CompactPlaybackIntent(command: command)) {
@@ -562,24 +536,20 @@ private struct CompactActionIntentButton: View {
     }
 }
 
-/// Sizes of the round controls (#1940). At the default text size the five transport circles total 240 pt, so they and
-/// the mic fit the Lock Screen's content width of about 327 pt in one row. A circle grows with the text size up to
-/// `maxGrowth` times its base, so the transport row still fits at the largest size. Every base is 44 pt or more, the
-/// minimum touch target.
+/// Sizes of the round controls (#1940). They are fixed-size controls, every one at least the 44 pt touch target. At
+/// the default text size the five transport circles and the mic total 284 pt, plus five 4 pt gaps, so they share one
+/// row of the Lock Screen's roughly 327 pt of content (311 pt on a 375 pt-wide phone). Text inside a circle follows the
+/// text size up to a ceiling, because the circle does not grow.
 enum Gate2ControlSize {
     static let skim: CGFloat = 44
     static let skip: CGFloat = 48
     static let play: CGFloat = 56
-    static let record: CGFloat = 48
-    static let maxGrowth: CGFloat = 1.2
-    /// A glyph inside a circle stops growing at this size; the circle itself is capped, so a larger glyph would not fit.
+    static let record: CGFloat = 44
+    static let rowSpacing: CGFloat = 4
+    /// A glyph inside a circle stops growing at this size.
     static let glyphCeiling: DynamicTypeSize = .accessibility1
-    /// A skim circle also holds its destination time under the icon, so its text stops sooner.
-    static let captionedGlyphCeiling: DynamicTypeSize = .xxxLarge
-
-    static func diameter(_ base: CGFloat, scale: CGFloat) -> CGFloat {
-        base * min(max(scale, 1), maxGrowth)
-    }
+    /// A skim circle also holds its destination time under the icon, so its contents stop sooner.
+    static let captionedGlyphCeiling: DynamicTypeSize = .xLarge
 }
 
 private struct AdaptiveLineLimit: ViewModifier {
