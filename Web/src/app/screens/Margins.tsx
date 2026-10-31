@@ -1,18 +1,17 @@
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import { formatClock } from '../../shared/clock.ts';
 import type { Margin } from '../../shared/model.ts';
 import { useData } from '../data.tsx';
 import { shortDate } from '../format.ts';
-import { openFiles, type OpenMarginFile, type OpenShareLink } from '../import.tsx';
+import { useMarginFilePicker, type OpenMarginFile, type OpenShareLink } from '../import.tsx';
 import { parseShareLink } from '../logic/share-link.ts';
 import { marginGroups, newestMarginId } from '../logic/library.ts';
-import { packetPickerAccept, packetRoute } from '../logic/native-packets.ts';
 import { usePlayer } from '../player.tsx';
 import { VoiceButton } from '../voice.tsx';
 
 export function Margins({ onPlay, onOpenFile, onOpenLink }: { onPlay: () => void; onOpenFile: OpenMarginFile; onOpenLink: OpenShareLink }) {
   const data = useData();
-  const picker = useRef<HTMLInputElement>(null);
+  const picker = useMarginFilePicker(onOpenFile);
   const [linkOpen, setLinkOpen] = useState(false);
   const [linkText, setLinkText] = useState('');
   const [opening, setOpening] = useState(false);
@@ -27,25 +26,14 @@ export function Margins({ onPlay, onOpenFile, onOpenLink }: { onPlay: () => void
           Margins
         </h1>
         <div className="header-actions">
-          <button type="button" className="button" onClick={() => picker.current?.click()}>
+          <button type="button" className="button" onClick={picker.choose}>
             Open a Margin file
           </button>
           <button type="button" className="button" aria-expanded={linkOpen} aria-controls="open-link" onClick={() => setLinkOpen((open) => !open)}>
             Open a link
           </button>
         </div>
-        <input
-          ref={picker}
-          type="file"
-          accept={packetPickerAccept(packetRoute())}
-          hidden
-          data-testid="margin-file"
-          onChange={(event) => {
-            const files = Array.from(event.target.files ?? []);
-            event.target.value = '';
-            void openFiles(files, onOpenFile);
-          }}
-        />
+        {picker.input}
       </header>
       {linkOpen && (
         <form

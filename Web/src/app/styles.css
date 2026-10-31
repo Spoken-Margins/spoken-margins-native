@@ -836,6 +836,13 @@ button:disabled {
   font-size: 0.875rem;
 }
 
+/* After a Margin file opens and the browser waits for a tap (#3039). */
+.landing-offer {
+  display: flex;
+  justify-content: center;
+  margin: 0;
+}
+
 /* The timeline: Margins stand above the track as orange posts you can tap; the track fills blue. */
 .timeline {
   padding-top: 8px;

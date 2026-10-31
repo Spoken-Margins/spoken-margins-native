@@ -2,12 +2,16 @@ import { formatClock } from '../../shared/clock.ts';
 import { useData } from '../data.tsx';
 import { minutes, shortDate } from '../format.ts';
 import { PauseIcon, PlayIcon } from '../icons.tsx';
+import { useMarginFilePicker, type OpenMarginFile } from '../import.tsx';
 import { libraryRows, type LibraryRow } from '../logic/library.ts';
 import { usePlayer } from '../player.tsx';
 
-export function Library({ onPlay, onFindShows }: { onPlay: () => void; onFindShows: () => void }) {
+export function Library({ onPlay, onFindShows, onOpenFile }: { onPlay: () => void; onFindShows: () => void; onOpenFile: OpenMarginFile }) {
   const data = useData();
   const player = usePlayer();
+  // A friend's Margin file is opened where a listener looks first (#3039, owner 2026-10-31: "I didn't see a way to
+  // import margins"). The Margins tab keeps the same button.
+  const picker = useMarginFilePicker(onOpenFile);
   const rows = libraryRows(data.episodes, data.shows, data.positions);
 
   return (
@@ -16,6 +20,12 @@ export function Library({ onPlay, onFindShows }: { onPlay: () => void; onFindSho
         <h1 id="library-title" tabIndex={-1}>
           Library
         </h1>
+        <div className="header-actions">
+          <button type="button" className="button" onClick={picker.choose}>
+            Open a Margin file
+          </button>
+        </div>
+        {picker.input}
       </header>
       {data.ready && rows.length === 0 ? (
         <div className="empty">
@@ -23,6 +33,7 @@ export function Library({ onPlay, onFindShows }: { onPlay: () => void; onFindSho
           <button type="button" className="button button-primary" onClick={onFindShows}>
             Find a show to follow
           </button>
+          <p>Got a .spokenmargins file from a friend? Choose Open a Margin file above. It opens at their first Margin, ready to play.</p>
         </div>
       ) : (
         <ul className="rows" aria-label="Episodes, newest first">
