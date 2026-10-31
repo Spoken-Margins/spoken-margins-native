@@ -9,7 +9,9 @@
 // - itemTransport `reference` when the item has a public https link, else `recipient_supplied`.
 // - each Margin: a media anchor with mediaTimeMs (and roughPercent when the length is known), no Shazam evidence.
 //   Without evidence the app places the Margin at the sender's time, which is right when both play the same file.
-// - non-empty text on every Margin, voice ones included: the app shares no Margin without a transcript.
+// - non-empty text on every Margin, voice ones included: the app shares no Margin without a transcript. A voice
+//   Margin the listener left without words gets placeholder words instead (src/shared/placeholder.ts, #3025), in
+//   the same transcript field, so it is never left out for lack of them.
 
 import { sha256Hex, utf8 } from './bytes.ts';
 import { PacketError } from './errors.ts';
@@ -25,6 +27,7 @@ import { NotAacError, normalizeM4a } from './m4a.ts';
 import { characterCount, swiftFractionalDate, swiftJSON, swiftTrim, swiftWholeSecondDate } from './swift.ts';
 import { writeZip } from './zip.ts';
 import type { Episode, Margin, Show } from '../shared/model.ts';
+import { voicePlaceholder } from '../shared/placeholder.ts';
 
 export interface WritePacketOptions {
   show?: Show;
@@ -46,7 +49,7 @@ export interface WrittenPacket {
   contentDigest: string;
   /** Ids of the Margins written, in packet order. */
   included: string[];
-  /** Ids of Margins left out because they have no text. */
+  /** Ids of written Margins left out because they have no text. A voice Margin is never left out for that. */
   leftOut: string[];
   /** The app's words for what was left out, when anything was. */
   notice?: string;
@@ -75,9 +78,21 @@ export function packetFileName(title: string): string {
   return `${slug || 'Margins'}.${FILE_EXTENSION}`;
 }
 
+/**
+ * The words a Margin travels with: its own, or for a voice Margin without any, the placeholder naming the moment,
+ * the item and the day it was recorded. '' for a written Margin with no words, which can't travel.
+ */
+export function sharedWords(margin: Margin, itemTitle: string): string {
+  const own = swiftTrim(margin.text ?? '');
+  if (own || !margin.voice) return own;
+  return voicePlaceholder({ atSeconds: margin.atSeconds, title: itemTitle, recordedAt: new Date(margin.createdAt) });
+}
+
 export async function writePacket(episode: Episode, margins: readonly Margin[], options: WritePacketOptions = {}): Promise<WrittenPacket> {
+  const title = swiftTrim(episode.title);
   const ordered = [...margins].sort((a, b) => a.atSeconds - b.atSeconds);
-  const withText = ordered.filter((m) => swiftTrim(m.text ?? '') !== '');
+  const words = new Map(ordered.map((m) => [m, sharedWords(m, title)]));
+  const withText = ordered.filter((m) => words.get(m) !== '');
   const leftOut = ordered.filter((m) => !withText.includes(m)).map((m) => m.id);
   if (withText.length === 0) {
     throw new PacketError('cannotShare', 'no Margin has text',
@@ -88,7 +103,6 @@ export async function writePacket(episode: Episode, margins: readonly Margin[], 
   if (withText.length > LIMITS.margins) {
     throw new PacketError('cannotShare', `${withText.length} Margins`, 'Spoken Margins shares up to 50 Margins at a time. Pick fewer, then share again.');
   }
-  const title = swiftTrim(episode.title);
   if (!title || characterCount(title) > LIMITS.titleCharacters) {
     throw new PacketError('cannotShare', 'episode title is empty or too long');
   }
@@ -126,7 +140,7 @@ export async function writePacket(episode: Episode, margins: readonly Margin[], 
   for (const [index, margin] of withText.entries()) {
     const n = pad(index + 1);
     const scopedId = `margin-${n}`;
-    const text = swiftTrim(margin.text ?? '');
+    const text = words.get(margin) as string;
     if (characterCount(text) > LIMITS.transcriptCharacters) throw new PacketError('cannotShare', `${margin.id} text is too long`);
     const mediaTimeMs = Math.max(0, Math.round(margin.atSeconds * 1000));
     let representation;
