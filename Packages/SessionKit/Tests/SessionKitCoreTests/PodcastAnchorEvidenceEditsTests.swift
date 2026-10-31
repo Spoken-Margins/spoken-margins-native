@@ -111,4 +111,45 @@ final class PodcastAnchorEvidenceEditsTests: XCTestCase {
         for task in tasks { _ = try await task.value }
         XCTAssertEqual(try store.loadInterjection(id: "m1", sessionId: "s1")?.podcastAnchorEvidenceCaptureStatus, .ready)
     }
+
+    /// The engine loads a Margin, changes it and saves it whole. An evidence edit that commits on another thread
+    /// between its load and its save must not be written over by the engine's stale copy (the audit of #3080).
+    func testAnEngineUpdateDoesNotEraseEvidenceSavedMeanwhile() throws {
+        let store = try makeStore()
+        try store.saveItem(Item(id: "ep", title: "Episode", mediaType: "text", text: "Words.", externalReference: nil, status: "ready"))
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online", displayName: "Phone/Tablet Online",
+            capabilities: ["sync": ["canonical_persistence"], "playback": ["realtime_tts"],
+                           "interjection": ["record_audio", "capture_text_anchor"]]
+        )
+        let engine = SessionEngine(profile: profile, repository: store)
+        _ = try engine.startSession(itemId: "ep")
+        let capture = try engine.beginWrittenInterjection()
+        _ = try engine.saveWrittenInterjection(captureId: capture.id, text: "A thought.")
+        let sessionId = try XCTUnwrap(engine.currentSession?.id)
+        let saved = try XCTUnwrap(store.loadInterjections(sessionId: sessionId).first)
+
+        let entered = DispatchSemaphore(value: 0)
+        let merged = expectation(description: "the evidence edit finished")
+        let piece = evidence("anchor-pre", role: .preInterjection)
+        DispatchQueue.global().async {
+            entered.wait()
+            _ = try? PodcastAnchorEvidenceEdits.apply(
+                .merge([piece], sourceExactEditionSHA256: "abc"),
+                interjectionId: saved.id, itemId: "ep", sessionId: sessionId, in: store
+            )
+            merged.fulfill()
+        }
+        try engine.updateInterjection(saved.id, sessionId: sessionId) { margin in
+            entered.signal()
+            Thread.sleep(forTimeInterval: 0.3) // the window the evidence edit would land in
+            margin.displayText = "An edited thought."
+        }
+        wait(for: [merged], timeout: 10)
+
+        let stored = try XCTUnwrap(store.loadInterjection(id: saved.id, sessionId: sessionId))
+        XCTAssertEqual(stored.displayText, "An edited thought.")
+        XCTAssertEqual(stored.podcastAnchorEvidence?.map(\.id), ["anchor-pre"], "the evidence survived the engine's save")
+        XCTAssertEqual(stored.podcastAnchorEvidenceCaptureStatus, .ready)
+    }
 }
