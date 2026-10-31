@@ -265,6 +265,31 @@ final class LibraryRowBuilderTests: XCTestCase {
             completionPercent: percent, playbackRate: 1)
     }
 
+    /// #2968: the playback screen's Mark complete hangs on this row. A session still in progress keeps it offered; an
+    /// earlier finished session, or one that reached 99%, makes the row complete, so the button is hidden and the
+    /// playback screen reports `alreadyComplete` instead of hiding it silently.
+    func testPlaybackCompletionPresenceFollowsTheSessionsOnTheItem() throws {
+        let snapshot = LibraryReadSnapshot(
+            items: [article("open"), article("finished"), article("nearly"), article("both")],
+            sessions: [
+                session("s1", item: "open", percent: 90, updatedAt: 1),
+                session("s2", item: "finished", status: "finished", percent: 100, updatedAt: 1),
+                session("s3", item: "nearly", percent: 99, updatedAt: 1),
+                session("s4", item: "both", status: "finished", percent: 100, updatedAt: 1),
+                session("s5", item: "both", percent: 90, updatedAt: 2),
+            ],
+            manifests: [], jobs: [], downloads: [])
+        let rows = Dictionary(uniqueKeysWithValues: LibraryRowBuilder.rows(from: snapshot, context: context()).map { ($0.id, $0) })
+        func presence(_ id: String) -> PlaybackCompletionOffer.Presence {
+            PlaybackCompletionOffer.presence(positionOffered: true, row: rows[id])
+        }
+        XCTAssertEqual(presence("open"), .offered)
+        XCTAssertEqual(presence("finished"), .alreadyComplete)
+        XCTAssertEqual(presence("nearly"), .alreadyComplete)
+        XCTAssertEqual(presence("both"), .alreadyComplete, "any earlier finished session completes the row")
+        XCTAssertEqual(PlaybackCompletionOffer.presence(positionOffered: true, row: rows["missing"]), .noLibraryRow)
+    }
+
     func testRowsSkipTrashedItemsKeepStorageOrderAndCarryTheItemsFields() throws {
         var item = article("a", text: "Hello there", status: "in_progress")
         item.createdAt = date(100)

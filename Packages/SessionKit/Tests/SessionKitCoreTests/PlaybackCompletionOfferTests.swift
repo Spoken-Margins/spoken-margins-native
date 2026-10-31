@@ -96,4 +96,30 @@ final class PlaybackCompletionOfferTests: XCTestCase {
         XCTAssertFalse(PlaybackCompletionOffer.isOffered(mediaTimeMs: 100, durationMs: 0))
         XCTAssertFalse(PlaybackCompletionOffer.isOffered(mediaTimeMs: -1, durationMs: 1_000))
     }
+
+    // MARK: #2968 - a post listened to from 72% to the end offered Mark complete only if the Library row allowed it
+
+    func testTheOwnersRenderedVoiceListenIsOfferedAtEverySampledPositionFrom75Percent() {
+        // Diagnostics: duration 6,040,656 ms, listened from 4,330,387 ms to 6,032,878 ms.
+        let duration = 6_040_656
+        for time in stride(from: 4_530_492, through: 6_032_878, by: 60_000) {
+            XCTAssertTrue(PlaybackCompletionOffer.isOffered(mediaTimeMs: time, durationMs: duration), "\(time)")
+        }
+        XCTAssertFalse(PlaybackCompletionOffer.isOffered(mediaTimeMs: 4_330_387, durationMs: duration))
+    }
+
+    func testPresenceNamesWhyTheButtonIsHidden() {
+        let open = LibraryItemRow(id: "a", title: "Post", status: "", canDelete: true)
+        let listened = LibraryItemRow(id: "a", title: "Post", status: "", canDelete: true, isCompleted: true)
+        var markedByHand = listened
+        markedByHand.canMarkUnfinished = true
+
+        XCTAssertEqual(PlaybackCompletionOffer.presence(positionOffered: false, row: open), .notYet)
+        XCTAssertEqual(PlaybackCompletionOffer.presence(positionOffered: false, row: nil), .notYet)
+        XCTAssertEqual(PlaybackCompletionOffer.presence(positionOffered: true, row: open), .offered)
+        XCTAssertEqual(PlaybackCompletionOffer.presence(positionOffered: true, row: nil), .noLibraryRow)
+        XCTAssertEqual(PlaybackCompletionOffer.presence(positionOffered: true, row: listened), .alreadyComplete)
+        // Completed by hand: the Library offers Mark Unfinished, not Mark complete, so the playback button stays hidden.
+        XCTAssertEqual(PlaybackCompletionOffer.presence(positionOffered: true, row: markedByHand), .alreadyComplete)
+    }
 }

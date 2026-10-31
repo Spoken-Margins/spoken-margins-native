@@ -41,4 +41,24 @@ public enum PlaybackCompletionOffer {
         guard durationMs > 0, timeMs >= 0 else { return false }
         return Double(timeMs) >= Double(durationMs) * fallbackFraction
     }
+
+    /// What the playback screen shows for completion once the position test has run.
+    public enum Presence: String, Equatable, Sendable {
+        /// The playhead is before the point where completion is offered.
+        case notYet
+        /// The button shows.
+        case offered
+        /// The position says offer, but the Library has no row for the playing item.
+        case noLibraryRow
+        /// The position says offer, but the row is complete (finished by listening) and has no completion action.
+        case alreadyComplete
+    }
+
+    /// Joins the position test with the Library row. The playback screen names the reason when the button is
+    /// hidden past the position test, because the owner saw it missing at 96% with no way to tell why (#2968).
+    public static func presence(positionOffered: Bool, row: LibraryItemRow?) -> Presence {
+        guard positionOffered else { return .notYet }
+        guard let row else { return .noLibraryRow }
+        return ItemQuickAction.completionAction(for: row) == .markComplete ? .offered : .alreadyComplete
+    }
 }
