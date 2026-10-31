@@ -178,10 +178,10 @@ enum Gate2LiveActivityPolicy {
 
     static func shouldMaintain(_ snapshot: CompactControlSnapshot, adoptedSessionId: String?) -> Bool {
         guard isEligible(snapshot), let sessionId = snapshot.sessionId else { return false }
-        if snapshot.status.isPlaybackActive || snapshot.isRecording {
+        if snapshot.audibleStatus.isPlaybackActive || snapshot.isRecording { // a Skim summary counts (#2965)
             return true
         }
-        return snapshot.status == .paused && adoptedSessionId == sessionId
+        return snapshot.audibleStatus == .paused && adoptedSessionId == sessionId
     }
 
     /// `isFirstPassInProcess`: activities left by an earlier process (killed in the background, so
@@ -628,8 +628,9 @@ final class Gate2CompactControlController {
     private func publishLiveActivity(_ snapshot: CompactControlSnapshot) {
         let decision = liveActivityLifecycle.observe(
             sessionId: snapshot.sessionId,
-            isListening: snapshot.status.isPlaybackActive || snapshot.isRecording,
-            isPaused: snapshot.status == .paused,
+            // A Skim summary playing over the paused source is listening, not an idle pause (#2965).
+            isListening: snapshot.audibleStatus.isPlaybackActive || snapshot.isRecording,
+            isPaused: snapshot.audibleStatus == .paused,
             now: now()
         )
         switch decision {
@@ -827,7 +828,7 @@ final class Gate2LiveActivityController: Gate2LiveActivityControlling {
         }
         let system = system
         if let sessionId = snapshot.sessionId,
-           snapshot.status.isPlaybackActive || snapshot.isRecording {
+           snapshot.audibleStatus.isPlaybackActive || snapshot.isRecording {
             adoptedSessionId = sessionId
         }
         // Set only once a sweep has run: a pass superseded by a newer publish sweeps nothing.
@@ -866,7 +867,7 @@ final class Gate2LiveActivityController: Gate2LiveActivityControlling {
             nextChapterTitle: nextNavigation?.title,
             nextChapterId: nextNavigation?.targetID,
             nextNavigationKind: nextNavigation?.kind,
-            status: snapshot.status.rawValue,
+            status: snapshot.audibleStatus.rawValue, // what is heard: a Skim summary is not "Paused, tap to resume" (#2965)
             phase: snapshot.phase.rawValue,
             progressPercent: snapshot.currentPlaybackProgressPercent,
             isRecording: snapshot.isRecording,

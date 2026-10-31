@@ -2328,6 +2328,10 @@ final class Gate1AppModel: ObservableObject {
                 playbackRate: normalizedPlaybackRate,
                 origin: origin
             )
+            if result.isAlreadyInRequestedState { // a card tap drawn before the state moved on: nothing to do, nothing failed (#2965)
+                recordDeveloperDiagnostic("transport.no_op", ["command": command.rawValue, "origin": origin, "reason": result.rejectedReason ?? ""])
+                return
+            }
             if let engine {
                 snapshot = engine.snapshot
             } else {
