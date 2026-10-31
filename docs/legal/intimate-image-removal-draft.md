@@ -12,7 +12,8 @@ Read with [content-policy-draft.md](content-policy-draft.md), [terms-draft.md](t
 4. **"Identical copies."** The Act also asks for reasonable efforts to find and remove identical copies. A link holds an encrypted packet we can't read, so we can disable the one link we are given. Counsel to say what we owe beyond that. The page is written to promise only what we can do.
 5. **Are we a "covered platform"?** Attorney question 5. The page is written as if we are, so we meet the notice duty either way.
 6. **Report form URL** is a blank until #2239 ships. The email route works today.
-7. **Blanks** are marked `[[like this]]`.
+7. **Key in the link (check against #2239).** The page asks emailers to leave off the part after `#`, because D21 says reports carry no key outside the abuse-material category. This assumes the link id sits before the `#`. `Site/copyright/index.html` says we need the full link including its key to identify a link; one of the two is wrong and needs aligning.
+8. **Blanks** are marked `[[like this]]`.
 
 ---
 
@@ -21,18 +22,18 @@ Read with [content-policy-draft.md](content-policy-draft.md), [terms-draft.md](t
 **Removing intimate images**
 Version [[1]] · Effective [[date]]
 
-If someone shared an intimate image of you through a Spoken Margins link without your consent, you can ask us to take it down. This includes images made or altered by a computer. You don't need an account, and you don't need to explain yourself to a stranger first.
+If someone shared an intimate image of you through a Spoken Margins link without your consent, you can ask us to take it down. This includes images made or altered by a computer. You don't need an account.
 
 ### How to ask
 
 1. Use **Report this link** on the link's page or in the app, and choose "Intimate images shared without consent". It is at [[report form URL]].
 2. Or email [[cole@proximitytoprogress.com]] with the details below.
 
-The link stops working the moment you file a report through the form. We don't need to see the image, and nobody at Spoken Margins looks at what a link holds.
+The link stops working the moment you file a report through the form. If you have reported another link in the last 7 days, the form also asks for a short note on why; one word is enough, and the link still comes down at once. We don't need to see the image, and nobody at Spoken Margins looks at what a link holds.
 
 ### What your request needs
 
-1. The full link, or enough to find it. The full link is best, because only the full link lets us identify what to remove.
+1. The link, or enough to find it. Leave off everything after the `#` sign: that part is the key, and we don't need it. The part before it tells us which link to remove.
 2. A statement that you believe in good faith that the image shows you, or the person you act for, in an intimate way, and that it was shared without consent.
 3. Your physical or electronic signature, or that of the person who may act for you.
 4. A way to reach you. Your contact details are used only to answer your request.
@@ -47,7 +48,7 @@ The link stops working the moment you file a report through the form. We don't n
 
 ### If the image shows a child
 
-Don't send it to us. If you are or were under 18 in the image, or know of child sexual abuse material, use the form's child-safety category, or report at [report.cybertip.org](https://report.cybertip.org). We forward those reports unread to the National Center for Missing & Exploited Children, and we keep the link in restricted storage for one year, as federal law requires.
+Don't email it to us. If you are or were under 18 in the image, or know of child sexual abuse material, use the form's child-safety category, or report at [report.cybertip.org](https://report.cybertip.org). Reports made through our form are forwarded unread to the National Center for Missing & Exploited Children, and we keep the link in restricted storage for one year, as federal law requires. A report you file directly at the CyberTipline does not reach us.
 
 ### Other help
 

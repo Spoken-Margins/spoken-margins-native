@@ -13,7 +13,8 @@ Read with [intimate-image-removal-draft.md](intimate-image-removal-draft.md), [t
 5. **Strike numbers** (two reported links in 90 days; 1 week, 1 month, permanent) are starting points for counsel (attorney question 4). The page uses them as owner-decided (2026-10-20).
 6. **Reporter wording is deliberately gentle.** The page says that people who give reasons are welcome and that a block follows only from written reasons that show misuse, by a manual decision. It says nothing a reporter could read as a threat.
 7. **Response time.** "Within 48 hours" is only promised for intimate images. The page says the link is disabled at once and a person answers "within [[3 business days]]". Cole to choose the number; he is the only person who answers.
-8. **Blanks** are marked `[[like this]]`.
+8. **Key in the link (check against #2239).** The page asks emailers to leave off the part after `#`, because D21 says reports carry no key outside the abuse-material category. This assumes the link id sits before the `#`; `Site/copyright/index.html` says the full link is needed. Align the two.
+9. **Blanks** are marked `[[like this]]`.
 
 ---
 
@@ -33,11 +34,11 @@ A share link lets you send a Margin to a friend. This page says what may not be 
 - Content you have no right to share. For copyright, see [Copyright and DMCA](https://spokenmargins.com/copyright/).
 - Malware and spam.
 
-A share link carries your own comment with a short quotation of the source around it. It never carries the full source text. To send a whole item, send the `.spokenmargins` file directly (AirDrop, Messages or Files). That never passes through our server.
+A share link is built to carry your own comment with a short quotation of the source around it, not the full source text. To send a whole item, send the `.spokenmargins` file directly (AirDrop, Messages or Files). That never passes through our server.
 
 ### How to report a link
 
-Anyone can report, with no account. Use **Report this link** on the link's page or in the app, at [[report form URL]]. Or email [[cole@proximitytoprogress.com]] with the full link and your reason.
+Anyone can report, with no account. Use **Report this link** on the link's page or in the app, at [[report form URL]]. Or email [[cole@proximitytoprogress.com]] with the link and your reason. Leave off everything after the `#` sign, which is the key. For child sexual abuse material, use the form instead: it is the only route that lets us forward the full link.
 
 1. Choose what the problem is.
 2. If you reported another link in the last 7 days, add a short note on why. One word is enough. The link is taken down either way.
@@ -45,7 +46,7 @@ Anyone can report, with no account. Use **Report this link** on the link's page 
 
 ### What happens next
 
-- **The link comes down at once.** Every report does this, for every category.
+- **The link comes down at once.** A report filed through the form disables the link the moment it is filed, in every category. A report sent by email is acted on by a person, within the time below.
 - **Nobody reads the content.** Spoken Margins can't read what a link holds, and we don't open it. We act on the report, not on a judgment about the content.
 - **The sender sees one notice:** "A link you shared was taken down after a report". It is the same for every category and doesn't say who reported or why. We don't contact the sender about the report.
 - **Strikes.** Two reported links from the same installation within 90 days make a strike. Strike 1 pauses link sharing for 1 week. Strike 2 pauses it for 1 month. Strike 3 ends it for good on that device. This applies to every category, copyright included. Listening, opening links and sending `.spokenmargins` files directly always keep working.
