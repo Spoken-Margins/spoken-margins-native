@@ -51,3 +51,35 @@ public enum JustHeardCue {
         return sentences
     }
 }
+
+
+/// The "Just heard" words for a podcast Margin, which arrive a second or two after recording starts (#2966). Each
+/// recording takes a ticket; words carrying an older ticket belong to a recording that ended or was replaced, and
+/// are dropped, so a slow transcription never shows on the next Margin's screen.
+public struct JustHeardPeekState: Equatable, Sendable {
+    public private(set) var text: String?
+    private var generation = 0
+
+    public init() {}
+
+    /// A recording started: forget the last one's words and return the ticket its words must carry.
+    public mutating func begin() -> Int {
+        generation += 1
+        text = nil
+        return generation
+    }
+
+    /// The recording ended: its words, shown or still coming, are gone.
+    public mutating func end() {
+        generation += 1
+        text = nil
+    }
+
+    /// Shows the words if they belong to the current recording. Returns whether anything changed.
+    @discardableResult
+    public mutating func deliver(_ words: String?, ticket: Int) -> Bool {
+        guard ticket == generation, let words, !words.isEmpty, words != text else { return false }
+        text = words
+        return true
+    }
+}

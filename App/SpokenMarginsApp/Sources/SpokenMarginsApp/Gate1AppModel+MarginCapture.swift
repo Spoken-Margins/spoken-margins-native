@@ -277,6 +277,7 @@ extension Gate1AppModel {
                 ))
                 let latencyMs = max(0, Int(Date().timeIntervalSince(requestedAt) * 1000))
                 diagnostics["lastInterjectionRecordingStartLatencyMs"] = "\(latencyMs)"
+                startJustHeardPeek()
             }
         }
         guard !snapshot.isRecording else { return }
@@ -327,6 +328,7 @@ extension Gate1AppModel {
         }
         if !snapshot.isRecording {
             marginCapture.clearPresentationContext()
+            endJustHeardPeek()
             refreshMarginRowsInBackground(forItem: snapshot.itemId)
             resumeHeldMarginVoice(held)
         }
@@ -357,6 +359,7 @@ extension Gate1AppModel {
         }
         if !snapshot.isRecording {
             marginCapture.clearPresentationContext()
+            endJustHeardPeek()
             resumeHeldMarginVoice(held)
         }
         streamingSpeechQueue.resumeAfterInterjection()

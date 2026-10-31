@@ -59,6 +59,7 @@ final class Gate1AppModel: ObservableObject {
     @Published var requestedExperienceRoot: AppRoot?
     @Published var marginCollectionQuery = MarginCollectionQuery()
     @Published var sharedMarginRows: [SharedMarginRow] = []
+    @Published var justHeardPeek = JustHeardPeekState() // a podcast's "Just heard" words, transcribed after the tap (#2966)
     var screen: Gate1Screen {
         get { presentedScreen }
         set {
@@ -2107,11 +2108,6 @@ final class Gate1AppModel: ObservableObject {
 
     var shouldShowMiniPlayer: Bool {
         miniPlayerVisibility.visible
-    }
-
-    var isMediaPlaybackSnapshot: Bool {
-        snapshot.targetType == TargetType.transcriptBackedMedia.rawValue ||
-            snapshot.targetType == TargetType.browserOwnedMedia.rawValue
     }
 
     /// Starter audio represents only a bounded prefix of a text source. Exposing
