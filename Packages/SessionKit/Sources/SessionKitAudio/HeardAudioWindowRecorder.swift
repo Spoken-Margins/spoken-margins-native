@@ -149,6 +149,39 @@ public struct HeardAudioWindowRecorder: Sendable {
         )
     }
 
+    /// The last `lastMs` of heard audio up to `endingAtMs`, from the newest unbroken run of the rolling minute: what
+    /// was said just before a Margin's tap, for the recording screen's "Just heard" card on a podcast (#2966). The
+    /// tap decodes a little ahead of the clock, so audio past `endingAtMs` is left out. Nil when the run holds less
+    /// than `minimumMs` before that point: just after a seek, or before the tap has heard anything.
+    public func recentRun(endingAtMs: Int, lastMs: Int, minimumMs: Int = 2_000) -> HeardAudioWindow.Segment? {
+        var newestFirst: [Chunk] = []
+        for chunk in ring.reversed() {
+            if let later = newestFirst.last,
+               abs(endMs(of: chunk) - later.startMediaTimeMs) > Self.contiguityToleranceMs { break }
+            newestFirst.append(chunk)
+        }
+        let run = Array(newestFirst.reversed())
+        guard let first = run.first, let last = run.last else { return nil }
+        let endMs = min(endingAtMs, self.endMs(of: last))
+        let startMs = max(first.startMediaTimeMs, endMs - lastMs)
+        guard endMs - startMs >= minimumMs else { return nil }
+        var samples: [Float] = []
+        var segmentStartMs: Int?
+        for chunk in run {
+            let chunkEndMs = self.endMs(of: chunk)
+            guard chunkEndMs > startMs, chunk.startMediaTimeMs < endMs else { continue }
+            let from = max(0, Int((Double(startMs - chunk.startMediaTimeMs) * sampleRate / 1_000).rounded()))
+            let to = min(chunk.samples.count, Int((Double(endMs - chunk.startMediaTimeMs) * sampleRate / 1_000).rounded()))
+            guard from < to else { continue }
+            if segmentStartMs == nil {
+                segmentStartMs = chunk.startMediaTimeMs + Int((Double(from) / sampleRate * 1_000).rounded())
+            }
+            samples.append(contentsOf: chunk.samples[from..<to])
+        }
+        guard let segmentStartMs, !samples.isEmpty else { return nil }
+        return HeardAudioWindow.Segment(startMediaTimeMs: segmentStartMs, samples: samples)
+    }
+
     /// A seek ends every window in progress with what it has, and empties the rolling minute.
     public mutating func noteSeek() -> [HeardAudioWindow] {
         ring.removeAll()
@@ -246,4 +279,14 @@ public enum HeardAudioDownsampler {
         }
         return output
     }
+}
+
+/// Reads the last unbroken heard audio up to a media time, as `HeardAudioWindowRecorder.recentRun` cuts it, with the
+/// recorder's sample rate (#2966). It waits for the tap's queued buffers, so it is called off the main thread.
+public typealias HeardAudioReader = @Sendable (_ endingAtMs: Int, _ lastMs: Int) -> (sampleRate: Double, segment: HeardAudioWindow.Segment)?
+
+/// A player that keeps the heard minute and lends a reader of it while one item is the one playing.
+public protocol HeardAudioSource: AnyObject {
+    /// Nil when that item isn't the one the player's tap is listening to. Called on the main thread.
+    func heardAudioReader(itemId: String) -> HeardAudioReader?
 }

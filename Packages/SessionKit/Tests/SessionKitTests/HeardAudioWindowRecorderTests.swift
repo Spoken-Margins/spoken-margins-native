@@ -198,4 +198,54 @@ final class HeardAudioWindowRecorderTests: XCTestCase {
         XCTAssertEqual(run.startMediaTimeMs, 40_000)
         XCTAssertEqual(run.startMediaTimeMs + window.durationMs(of: run), 102_250)
     }
+
+    /// #2966: the "Just heard" card on a podcast transcribes the last seconds before the tap, from the rolling minute.
+    func testRecentRunIsTheLastSecondsBeforeTheTapFromTheNewestUnbrokenRun() throws {
+        var recorder = HeardAudioWindowRecorder(sampleRate: rate)
+        _ = play(&recorder, fromMs: 100_000, durationMs: 30_000) // 100 s to 130 s
+        // The tap decoded half a second past the clock; the card stops at the tap.
+        _ = play(&recorder, fromMs: 130_000, durationMs: 500)
+        let run = try XCTUnwrap(recorder.recentRun(endingAtMs: 130_000, lastMs: 12_000))
+        XCTAssertEqual(run.startMediaTimeMs, 118_000)
+        XCTAssertEqual(run.samples.count, 12_000)
+
+        // Asked for more than the run holds: what there is, from the run's start.
+        var short = HeardAudioWindowRecorder(sampleRate: rate)
+        _ = play(&short, fromMs: 50_000, durationMs: 5_000)
+        let partial = try XCTUnwrap(short.recentRun(endingAtMs: 55_000, lastMs: 12_000))
+        XCTAssertEqual(partial.startMediaTimeMs, 50_000)
+        XCTAssertEqual(partial.samples.count, 5_000)
+
+        // A tap that cuts a chunk keeps only its first part.
+        let cut = try XCTUnwrap(recorder.recentRun(endingAtMs: 129_750, lastMs: 4_000))
+        XCTAssertEqual(cut.startMediaTimeMs, 125_750)
+        XCTAssertEqual(cut.samples.count, 4_000)
+    }
+
+    func testRecentRunStopsAtAGapAndNeedsTwoSecondsOfAudio() throws {
+        var recorder = HeardAudioWindowRecorder(sampleRate: rate)
+        _ = play(&recorder, fromMs: 0, durationMs: 20_000)
+        // A jump forward without a noted seek: only the run after the gap was heard just before the tap.
+        _ = play(&recorder, fromMs: 40_000, durationMs: 3_000)
+        let run = try XCTUnwrap(recorder.recentRun(endingAtMs: 43_000, lastMs: 12_000))
+        XCTAssertEqual(run.startMediaTimeMs, 40_000)
+        XCTAssertEqual(run.samples.count, 3_000)
+
+        XCTAssertNil(recorder.recentRun(endingAtMs: 41_500, lastMs: 12_000), "1.5 s is too little to transcribe")
+        XCTAssertNil(recorder.recentRun(endingAtMs: 30_000, lastMs: 12_000), "a tap before the newest run")
+        XCTAssertNil(HeardAudioWindowRecorder(sampleRate: rate).recentRun(endingAtMs: 1_000, lastMs: 12_000))
+
+        _ = recorder.noteSeek()
+        XCTAssertNil(recorder.recentRun(endingAtMs: 43_000, lastMs: 12_000), "a seek empties the rolling minute")
+    }
+
+    func testRecentRunLeavesTheRollingMinuteAndAnyMarginWindowAsTheyWere() throws {
+        var recorder = HeardAudioWindowRecorder(sampleRate: rate)
+        _ = play(&recorder, fromMs: 0, durationMs: 300_000)
+        _ = recorder.recentRun(endingAtMs: 300_000, lastMs: 12_000)
+        recorder.begin(request(anchorMs: 300_000))
+        let window = try XCTUnwrap(play(&recorder, fromMs: 300_000, durationMs: 60_000).first)
+        XCTAssertEqual(window.segments.first?.startMediaTimeMs, 240_000)
+        XCTAssertEqual(window.durationMs(of: try XCTUnwrap(window.segments.first)), 120_000)
+    }
 }

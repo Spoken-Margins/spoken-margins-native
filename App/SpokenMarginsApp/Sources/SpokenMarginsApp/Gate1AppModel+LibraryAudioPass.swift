@@ -155,14 +155,14 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
                 ).isEmpty
             }
             let previous = libraryAudioPreparingItemId // nil job: nothing to do, or the foreground loop waits for the background task (#534)
-            guard var job = libraryAudioLoop.turns.select(queuedJobs, activeItemId: activePlaybackItemId, for: caller) else { libraryAudioLoop.turns.stopped(caller); return false }
+            guard let job = libraryAudioLoop.turns.select(queuedJobs, activeItemId: activePlaybackItemId, for: caller) else { libraryAudioLoop.turns.stopped(caller); return false }
             if let previous, previous != job.itemId,
                libraryItems.first(where: { $0.id == previous })?.startupAudioState == .preparing { updateLibraryStartupAudioState(itemId: previous, state: .waiting) }
             if libraryItems.first(where: { $0.id == job.itemId })?.startupAudioState == .waiting { updateLibraryStartupAudioState(itemId: job.itemId, state: .preparing) }
             guard var manifest = try store.loadPreparedAudioManifest(id: job.manifestId),
                   let item = try? store.loadItem(id: job.itemId), item.deletedAt == nil, // a job saved back mid-render for an item since trashed (#883)
                   let sourceText = PreparedSpeechHooks.preparedText(of: item, in: store) else {
-                try store.deleteAudioPreparationJob(id: job.id)
+                try await discardPreparationJob(job.id, store: store)
                 diagnostics["backgroundAudioPreparation"] = "discarded_missing_source_job"
                 return try hasMoreMatchingJobs()
             }
@@ -176,10 +176,8 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
             guard manifest.signature == signature else {
                 manifest.state = .needsRepreparation
                 manifest.updatedAt = Date()
-                _ = try PreparedAudioEnqueue.withCurrentManifest(manifest, repository: store) { _, _ in
-                    try store.savePreparedAudioManifest(manifest)
-                    try store.deleteAudioPreparationJob(id: job.id)
-                }
+                let retired = manifest, jobId = job.id
+                _ = try await preparationWrite(store) { try AudioPreparationPassWrites.retireManifest(retired, discardingJobId: jobId, in: $0) }
                 return try hasMoreMatchingJobs()
             }
             let plan = await Task.detached(priority: .utility) {
@@ -199,7 +197,7 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
             if gated.changed { refreshLibraryRowsInBackground() }
             if gate == .dropListenedItem {
                 // Removing speculative work must never invalidate committed audio.
-                try store.deleteAudioPreparationJob(id: job.id)
+                try await discardPreparationJob(job.id, store: store)
                 diagnostics["automaticAudioPreparation:\(item.id)"] = "cancelled_existing_progress"
                 return try hasMoreMatchingJobs()
             }
@@ -218,7 +216,7 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
                         coordinator: coordinator, support: support
                     )
                 }
-                try store.deleteAudioPreparationJob(id: job.id)
+                try await discardPreparationJob(job.id, store: store)
                 return try hasMoreMatchingJobs()
             }
             let reservation = try await ledger.reserve(
@@ -264,33 +262,40 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
             guard try await ledger.commitPrepared(reservationId: reservation.id, asset: PreparedAudioCoordinator.ledgerAsset(for: committed, itemId: item.id), manifest: updated) else {
                 return try hasMoreMatchingJobs()
             }
-            let needsAssembly = try PreparedAudioEnqueue.withCurrentManifest(updated, repository: store) { _, _ in
-                job = try store.loadAudioPreparationJob(id: job.id) ?? job
+            // The record is written off the main thread, on the job as the store holds it then, so a priority the
+            // listener set while this chunk rendered is kept (#2509).
+            let automaticPolicy = automaticAudioPreparationPolicy
+            let jobBeforeRender = job
+            let decision = try await preparationWrite(store) { [plan, sourceText] store in
+                try AudioPreparationPassWrites.recordChunk(
+                    in: updated, jobId: jobBeforeRender.id, fallback: jobBeforeRender, decide: { fresh in
+                        var job = fresh
+                        job.nextChunkIndex = updated.chunks.count
+                        job.lastFailureCode = PreparedAudioCoordinator.hasStandIns(updated) ? PreparedAudioCoordinator.standInRetried : nil
+                        if PreparedAudioCoordinator.matchingChunks(in: updated, plan: plan, sourceText: sourceText).count == plan.count {
+                            return .init(change: .save(job), needsAssembly: true)
+                        } else if let maximumChunkCount = job.maximumChunkCount {
+                            let horizon = plan.prefix(min(maximumChunkCount, plan.count))
+                            guard PreparedAudioCoordinator.isPrepared(Array(horizon), in: updated, sourceText: sourceText) else {
+                                return .init(change: .save(job), needsAssembly: false)
+                            }
+                            let note = "ready_\(horizon.count)_of_\(plan.count)"
+                            if automaticPolicy == .whileCharging {
+                                job.policy = .whileCharging
+                                job.maximumChunkCount = nil
+                                return .init(change: .save(job), needsAssembly: false, note: note)
+                            }
+                            return .init(change: .delete(id: job.id), needsAssembly: false, note: note)
+                        } else {
+                            return .init(change: .save(job), needsAssembly: false)
+                        }
+                    }, store: store)
+            }
+            let needsAssembly = decision?.needsAssembly
+            if let decision {
                 recordDeveloperDiagnostic("preparation.committed", ["item": DeveloperDiagnosticRecording.token(item.id), "chunks": String(updated.chunks.count),
                                                                     "renderMs": String(renderMs), "thermal": SupertonicResourcePolicy.currentConditions().thermal.rawValue])
-                job.nextChunkIndex = updated.chunks.count
-                job.lastFailureCode = PreparedAudioCoordinator.hasStandIns(updated) ? PreparedAudioCoordinator.standInRetried : nil
-                if PreparedAudioCoordinator.matchingChunks(in: updated, plan: plan, sourceText: sourceText).count == plan.count {
-                    try store.saveAudioPreparationJob(job)
-                    return true
-                } else if let maximumChunkCount = job.maximumChunkCount {
-                    let horizon = plan.prefix(min(maximumChunkCount, plan.count))
-                    if PreparedAudioCoordinator.isPrepared(Array(horizon), in: updated, sourceText: sourceText) {
-                        if automaticAudioPreparationPolicy == .whileCharging {
-                            job.policy = .whileCharging
-                            job.maximumChunkCount = nil
-                            try store.saveAudioPreparationJob(job)
-                        } else {
-                            try store.deleteAudioPreparationJob(id: job.id)
-                        }
-                        diagnostics["startupAudioPreparation:\(item.id)"] = "ready_\(horizon.count)_of_\(plan.count)"
-                    } else {
-                        try store.saveAudioPreparationJob(job)
-                    }
-                } else {
-                    try store.saveAudioPreparationJob(job)
-                }
-                return false
+                if let note = decision.note { diagnostics["startupAudioPreparation:\(item.id)"] = note }
             }
             guard let needsAssembly else { return try hasMoreMatchingJobs() }
             if needsAssembly {
@@ -314,27 +319,17 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
             diagnostics["backgroundAudioPreparation"] = hasMore ? "chunk_committed" : "complete"
             return hasMore
         } catch is CancellationError {
-            if var job = attemptedJob,
+            if let job = attemptedJob,
                !suppressedAutomaticAudioPreparationItemIds.contains(job.itemId),
                let store {
-                job.lastFailureCode = OfflinePreparationRecovery.waitingForSystem
-                if let current = try? store.loadPreparedAudioManifest(id: job.manifestId) {
-                    _ = try? PreparedAudioEnqueue.withCurrentManifest(current, repository: store) { _, _ in
-                        if try store.loadAudioPreparationJob(id: job.id) != nil { try store.saveAudioPreparationJob(job) }
-                    }
-                }
+                await markPreparationFailure(job, code: OfflinePreparationRecovery.waitingForSystem, store: store)
                 await refreshAudioPreparationPresentation()
             }
             diagnostics["backgroundAudioPreparation"] = "expired"
             return !foregroundDemandOnly
         } catch {
-            if var job = attemptedJob, let store {
-                job.lastFailureCode = String(describing: type(of: error))
-                if let current = try? store.loadPreparedAudioManifest(id: job.manifestId) {
-                    _ = try? PreparedAudioEnqueue.withCurrentManifest(current, repository: store) { _, _ in
-                        if try store.loadAudioPreparationJob(id: job.id) != nil { try store.saveAudioPreparationJob(job) }
-                    }
-                }
+            if let job = attemptedJob, let store {
+                await markPreparationFailure(job, code: String(describing: type(of: error)), store: store)
                 if job.maximumChunkCount != nil {
                     failedStartupAudioPreparationItemIds.insert(job.itemId)
                 }
@@ -348,4 +343,24 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
         }
     }
 
+
+    /// The pass's store writes run off the main thread, in line behind the queue's own edits (#2509). The lines up to a
+    /// write read the store on main; the write itself no longer waits for its lock there.
+    private func preparationWrite<T: Sendable>(
+        _ store: SQLiteSessionStore, _ body: @escaping @Sendable (SQLiteSessionStore) throws -> T
+    ) async throws -> T {
+        try await StoreReader(store).readInOrder(AudioPreparationQueueEdits.orderKey, body)
+    }
+
+    private func discardPreparationJob(_ id: String, store: SQLiteSessionStore) async throws {
+        try await preparationWrite(store) { try AudioPreparationPassWrites.discardJob(id: id, in: $0) }
+    }
+
+    /// Notes why the pass stopped, on the job as it is now. Best effort: a failed note must not hide the failure it describes.
+    private func markPreparationFailure(_ job: AudioPreparationJob, code: String, store: SQLiteSessionStore) async {
+        let jobId = job.id, manifestId = job.manifestId
+        _ = try? await preparationWrite(store) {
+            try AudioPreparationPassWrites.markFailure(jobId: jobId, manifestId: manifestId, code: code, in: $0)
+        }
+    }
 }

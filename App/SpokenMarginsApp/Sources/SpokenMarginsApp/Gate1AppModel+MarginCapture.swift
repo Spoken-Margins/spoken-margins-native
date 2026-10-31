@@ -302,12 +302,13 @@ extension Gate1AppModel {
                 ))
                 let latencyMs = max(0, Int(Date().timeIntervalSince(requestedAt) * 1000))
                 diagnostics["lastInterjectionRecordingStartLatencyMs"] = "\(latencyMs)"
+                startJustHeardPeek()
             }
         }
         guard !snapshot.isRecording else { return }
         abandonRecordingSessionPreparation() // a start that failed before the recorder claimed the switch
         resumeSourcePausedOnTap() // a start that failed before the engine took over the pause
-        marginCapture.clearPresentationContext()
+        clearRecordingPresentation()
         resumeHeldMarginVoice(heldMarginVoice) // no recording came of it: the Margin it paused plays on (#1672)
         streamingSpeechQueue.resumeAfterInterjection() // the recorder wouldn't start and the engine put the source back (#1034)
     }
@@ -352,7 +353,7 @@ extension Gate1AppModel {
             labels.scoped("marginSave.report") { reportMarginSaved(verdict) }
         }
         if !snapshot.isRecording {
-            marginCapture.clearPresentationContext()
+            clearRecordingPresentation()
             refreshMarginRowsInBackground(forItem: snapshot.itemId)
             resumeHeldMarginVoice(held)
         }
@@ -383,7 +384,7 @@ extension Gate1AppModel {
             reportSuccess("Cancelled Margin.")
         }
         if !snapshot.isRecording {
-            marginCapture.clearPresentationContext()
+            clearRecordingPresentation()
             resumeHeldMarginVoice(held)
         }
         streamingSpeechQueue.resumeAfterInterjection()
@@ -410,7 +411,7 @@ extension Gate1AppModel {
             marginCapture.clearPermissionDenied()
             snapshot = engine.snapshot
             marginCapture.openDraft(makeWrittenMarginDraft(for: capture, store: store, replyChoice: MarginReplyChoice(suggested: reply)))
-            marginCapture.clearPresentationContext()
+            clearRecordingPresentation()
         } catch {
             streamingSpeechQueue.resumeAfterInterjection()
             reportFailure(error, context: "Written Margin could not start")
@@ -445,7 +446,7 @@ extension Gate1AppModel {
             lastError = nil
             marginCapture.clearPermissionDenied()
             marginCapture.openDraft(makeWrittenMarginDraft(for: capture, store: store, replyChoice: replyChoice))
-            marginCapture.clearPresentationContext()
+            clearRecordingPresentation()
             marginVoiceHeldForRecording = nil // no recording is coming, so a Margin of any kind stays as it is (#1672)
             if held?.kind == .shared { stopImportedCommentaryPlayback(resumeSource: false) }
             if !capture.wasPlaying { streamingSpeechQueue.resumeAfterInterjection() } // a finished source has no Save to resume it

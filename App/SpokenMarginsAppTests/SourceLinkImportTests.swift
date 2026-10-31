@@ -1,4 +1,5 @@
 import XCTest
+import Speech
 import SessionKit
 import SessionKitPersistence
 import SessionKitAudio
@@ -1502,6 +1503,122 @@ final class SourceLinkImportTests: XCTestCase {
         }
     }
 
+    /// #2966: on a podcast with no transcript, the recording screen's "Just heard" card fills in from the seconds the
+    /// player decoded before the tap, and empties once the Margin is saved.
+    func testJustHeardFillsInFromTheHeardAudioWhileAPodcastMarginRecords() async throws {
+        stubSpeechRecognition(.authorized)
+        let resolver = StaticAppLinkResolver(result: LinkResolutionResult(
+            requestId: "ignored",
+            status: .playable,
+            originalLink: SourceLink(url: "https://example.com/episode", provider: "direct_audio", role: "discovery"),
+            selectedCandidate: LinkResolutionCandidate(
+                sourceLink: SourceLink(url: "https://example.com/episode", provider: "direct_audio", role: "audio_file"),
+                title: "Peek Episode",
+                durationMs: 300_000,
+                audioURL: "https://cdn.example.com/peek.mp3",
+                confidence: 1
+            )
+        ))
+        let audio = WindowContextAudioClient()
+        let reads = PeekReads()
+        audio.heardReader = { endingAtMs, lastMs in
+            reads.record(endingAtMs: endingAtMs, lastMs: lastMs)
+            // Silent samples are enough; the fake transcriber doesn't read them.
+            return (1_000, HeardAudioWindow.Segment(startMediaTimeMs: endingAtMs - 5_000, samples: [Float](repeating: 0, count: 5_000)))
+        }
+        let transcriber = RecordingSourceWindowTranscriptionClient(timeline: TranscriptTimeline(
+            segments: [
+                MediaTimelineSegment(id: "a", startMs: 0, endMs: 2_000, text: "Earlier on."),
+                MediaTimelineSegment(id: "b", startMs: 2_000, endMs: 4_000, text: "The host said one thing."),
+                MediaTimelineSegment(id: "c", startMs: 4_000, endMs: 5_000, text: "Then another.")
+            ],
+            chapters: [],
+            durationMs: 5_000
+        ))
+        let model = Gate1AppModel(
+            sourceLinkResolver: resolver,
+            audioPlaybackClient: audio,
+            recordingClient: NoopRecordingClient(),
+            sourceTranscriptionClient: transcriber,
+            interjectionTranscriptionHandler: { _ in "Recorded note." }
+        )
+        _ = try makeHeardWindowRoot(for: model)
+        model.resetAndSeed()
+
+        XCTAssertTrue(model.importSourceLink(urlString: "https://example.com/episode", sourceSurface: "paste"))
+        audio.currentMediaTimeValue = 123_000
+        model.dispatchGate2CompactCommand(.beginInterjection)
+        XCTAssertTrue(model.snapshot.isRecording)
+        try await waitFor("the Just heard card to fill in") {
+            model.justHeardCue == "The host said one thing. Then another."
+        }
+        XCTAssertEqual(reads.lastMs, [Gate1AppModel.justHeardPeekWindowMs], "one peek per Margin")
+        XCTAssertEqual(model.diagnostics["justHeardPeek"], "shown:5000ms")
+        let request = await transcriber.waitForWindowRequest()
+        XCTAssertTrue(request.url.isFileURL, "the peek transcribes a local copy of the heard audio, not the stream")
+        XCTAssertEqual(request.durationMs, 5_000)
+
+        model.dispatchGate2CompactCommand(.finishInterjection)
+        XCTAssertFalse(model.snapshot.isRecording)
+        XCTAssertNil(model.justHeardCue)
+        XCTAssertNil(model.justHeardPeek.text, "the saved Margin's words don't carry into the next recording")
+    }
+
+    /// #2966 audit: the transcriber asks iOS for Speech Recognition when it is still undecided, and that alert would
+    /// cover the recording screen with the microphone live on a first podcast Margin. The peek never starts unless the
+    /// listener has already allowed it, so nothing reads the heard audio, nothing reaches the transcriber, and the
+    /// card stays empty, as before the peek existed.
+    func testJustHeardNeverAsksForSpeechRecognitionWhileAPodcastMarginRecords() async throws {
+        for status in [SFSpeechRecognizerAuthorizationStatus.notDetermined, .denied, .restricted] {
+            stubSpeechRecognition(status)
+            let resolver = StaticAppLinkResolver(result: LinkResolutionResult(
+                requestId: "ignored",
+                status: .playable,
+                originalLink: SourceLink(url: "https://example.com/episode", provider: "direct_audio", role: "discovery"),
+                selectedCandidate: LinkResolutionCandidate(
+                    sourceLink: SourceLink(url: "https://example.com/episode", provider: "direct_audio", role: "audio_file"),
+                    title: "Peek Episode",
+                    durationMs: 300_000,
+                    audioURL: "https://cdn.example.com/peek.mp3",
+                    confidence: 1
+                )
+            ))
+            let audio = WindowContextAudioClient()
+            let reads = PeekReads()
+            audio.heardReader = { endingAtMs, lastMs in
+                reads.record(endingAtMs: endingAtMs, lastMs: lastMs)
+                return (1_000, HeardAudioWindow.Segment(startMediaTimeMs: endingAtMs - 5_000, samples: [Float](repeating: 0, count: 5_000)))
+            }
+            let transcriber = RecordingSourceWindowTranscriptionClient(timeline: TranscriptTimeline(
+                segments: [MediaTimelineSegment(id: "a", startMs: 0, endMs: 2_000, text: "The host said one thing.")],
+                chapters: [],
+                durationMs: 5_000
+            ))
+            let model = Gate1AppModel(
+                sourceLinkResolver: resolver,
+                audioPlaybackClient: audio,
+                recordingClient: NoopRecordingClient(),
+                sourceTranscriptionClient: transcriber,
+                interjectionTranscriptionHandler: { _ in "Recorded note." }
+            )
+            _ = try makeHeardWindowRoot(for: model)
+            model.resetAndSeed()
+
+            XCTAssertTrue(model.importSourceLink(urlString: "https://example.com/episode", sourceSurface: "paste"))
+            audio.currentMediaTimeValue = 123_000
+            model.dispatchGate2CompactCommand(.beginInterjection)
+            XCTAssertTrue(model.snapshot.isRecording, "\(status.rawValue): recording starts as usual")
+            // Give a wrongly started peek time to read and transcribe before checking that it didn't.
+            try await Task.sleep(nanoseconds: 300_000_000)
+            XCTAssertEqual(model.diagnostics["justHeardPeek"], "speech_not_authorized", "\(status.rawValue)")
+            XCTAssertTrue(reads.lastMs.isEmpty, "\(status.rawValue): the heard audio is not even read")
+            let requests = await transcriber.windowRequestCount()
+            XCTAssertEqual(requests, 0, "\(status.rawValue): nothing reaches the transcriber, which would ask iOS")
+            XCTAssertNil(model.justHeardCue)
+            model.dispatchGate2CompactCommand(.finishInterjection)
+        }
+    }
+
     /// #652: heard audio for a Margin whose context is already ready is never used, so it mustn't stay in the cache,
     /// and the Margin's context must stay as it was.
     func testHeardAudioForAMarginWithReadyContextIsDiscarded() async throws {
@@ -1619,6 +1736,9 @@ final class SourceLinkImportTests: XCTestCase {
             model.marginDiagnostic("interjectionAnchorAtCapture", interjectionId: "ij-001"),
             "type=media;media_time=present;segment=missing;before=missing;after=missing;context=pending"
         )
+        // The item detail reloads off the main thread when each stage finishes (#2510): the diagnostics above are set
+        // before the reload publishes, so a slow simulator read `selectedItem` first and saw no transcript yet.
+        await model.settleItemReload()
         XCTAssertEqual(model.selectedItem.interjections.first?.transcript, "My recorded note.")
     }
 
@@ -2839,8 +2959,24 @@ private struct ThrowingSourceTranscriptionClient: SourceTranscriptionClient {
     }
 }
 
-private final class WindowContextAudioClient: AudioPlaybackClient {
+/// What the "Just heard" peek asked the heard minute for (#2966). The reader runs off the main thread.
+private final class PeekReads: @unchecked Sendable {
+    private let lock = NSLock()
+    private var lengths: [Int] = []
+
+    func record(endingAtMs: Int, lastMs: Int) {
+        lock.withLock { lengths.append(lastMs) }
+    }
+
+    var lastMs: [Int] { lock.withLock { lengths } }
+}
+
+private final class WindowContextAudioClient: AudioPlaybackClient, HeardAudioSource {
     private(set) var lastMediaContext: PlaybackMediaContext?
+    /// Stands in for the player's heard minute (#2966). Nil, as for a player whose tap isn't running.
+    var heardReader: HeardAudioReader?
+
+    func heardAudioReader(itemId: String) -> HeardAudioReader? { heardReader }
     private var durationMs = 300_000
 
     func configureMediaContext(_ context: PlaybackMediaContext?) throws {
@@ -2881,6 +3017,13 @@ private final class WindowContextAudioClient: AudioPlaybackClient {
 
 extension SourceLinkImportTests {
     /// Points the model's heard-audio files at an empty temporary folder, so a test can see exactly what is left (#652).
+    /// Sets Speech Recognition's answer for this test and puts the real one back afterwards.
+    func stubSpeechRecognition(_ status: SFSpeechRecognizerAuthorizationStatus) {
+        let original = SpeechRecognitionAccess.statusProvider
+        SpeechRecognitionAccess.statusProvider = { status }
+        addTeardownBlock { SpeechRecognitionAccess.statusProvider = original }
+    }
+
     func makeHeardWindowRoot(for model: Gate1AppModel) throws -> URL {
         let root = FileManager.default.temporaryDirectory.appending(path: "heard-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
