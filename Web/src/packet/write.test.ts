@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
 import { PacketError } from './errors.ts';
-import { episode, show, voiceMargins, writeVoice, writeWritten, writtenMargins } from './fixtures.ts';
+import { episode, show, voiceMargins, writePlaceholder, writeVoice, writeWritten, writtenMargins } from './fixtures.ts';
 import { packetMarginId, readPacket } from './read.ts';
 import { conversationId, sharedWords, writePacket } from './write.ts';
 import { voicePlaceholder } from '../shared/placeholder.ts';
@@ -14,7 +14,9 @@ const load = (name: string): Uint8Array => new Uint8Array(readFileSync(new URL(n
 const unlimited = { totalBytes: Infinity, compressionRatio: Infinity, entryBytes: () => Infinity };
 
 test('the committed web fixtures are what the writer writes now', async () => {
-  for (const [name, write] of [['web-written.spokenmargins', writeWritten], ['web-voice.spokenmargins', writeVoice]] as const) {
+  for (const [name, write] of [
+    ['web-written.spokenmargins', writeWritten], ['web-voice.spokenmargins', writeVoice], ['web-voice-placeholder.spokenmargins', writePlaceholder],
+  ] as const) {
     const committed = await readPacket(load(name));
     const fresh = await write();
     assert.equal(fresh.contentDigest, committed.contentDigest, `${name}: regenerate with node Web/src/packet/fixtures.ts`);
