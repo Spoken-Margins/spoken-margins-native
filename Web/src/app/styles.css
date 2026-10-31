@@ -1016,6 +1016,15 @@ button:disabled {
   }
 }
 
+/* After Stop: the Margin is already kept (#3038). The word "Saved" carries it, not a colour. */
+.saved-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-weight: 650;
+}
+
 .np-margins {
   display: grid;
   gap: 10px;

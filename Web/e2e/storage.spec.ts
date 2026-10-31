@@ -121,11 +121,11 @@ test('Back up all Margins saves one file that opens here and in a fresh browser,
   await nowPlaying.getByRole('button', { name: 'Record a Margin' }).click();
   await expect(nowPlaying.getByRole('status').filter({ hasText: 'Recording' })).toBeVisible();
   await page.waitForTimeout(1200);
-  await nowPlaying.getByRole('button', { name: 'Stop', exact: true }).click();
+  await nowPlaying.getByRole('button', { name: 'Stop and save' }).click();
   const placeholder = await nowPlaying.getByLabel(/Words to go with your voice Margin at/).inputValue();
   expect(placeholder).toMatch(/^Voice Margin at \d+:\d\d in “.+”, recorded \d{1,2} [A-Z][a-z]{2} \d{4}$/);
-  await nowPlaying.getByRole('button', { name: 'Save Margin' }).click();
-  await expect(page.getByText(/Voice Margin saved at .* It shares with placeholder words/)).toBeVisible();
+  await expect(nowPlaying.getByTestId('voice-saved')).toHaveText(/^Saved Voice Margin at/);
+  await nowPlaying.getByRole('button', { name: 'Done' }).click();
   await nowPlaying.getByRole('button', { name: 'Close Now Playing' }).click();
 
   await tab(page, 'Settings');
