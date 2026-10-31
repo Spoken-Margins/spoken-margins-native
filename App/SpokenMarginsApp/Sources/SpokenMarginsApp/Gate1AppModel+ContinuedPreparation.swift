@@ -103,11 +103,17 @@ extension Gate1AppModel {
 
     /// Also covers expiry during a heat wait, when no renderer is there to record cancellation.
     func deferExplicitPreparation(_ requests: Set<OfflinePreparationRun.RequestKey>) {
-        if let store, let jobs = try? store.loadAudioPreparationJobs() {
-            for job in OfflinePreparationRecovery.interruptedJobs(jobs, requests: requests) {
-                try? store.saveAudioPreparationJob(job)
+        if let store {
+            // The note is written off the main thread (#2509). iOS is ending our background time right now, so a
+            // background task holds the app awake until the write lands.
+            let endBackgroundTask = Gate2AppState.beginBackgroundTask("Spoken Margins preparation expiry note")
+            Task { @MainActor [weak self] in
+                let marked = try? await StoreReader(store).readInOrder(AudioPreparationQueueEdits.orderKey, priority: .userInitiated) {
+                    try AudioPreparationQueueEdits.markInterrupted(requests: requests, in: $0)
+                }
+                endBackgroundTask()
+                if marked != nil { await self?.refreshAudioPreparationPresentation() }
             }
-            Task { @MainActor [weak self] in await self?.refreshAudioPreparationPresentation() }
         }
         scheduleAudioPreparationBackgroundTask()
     }
