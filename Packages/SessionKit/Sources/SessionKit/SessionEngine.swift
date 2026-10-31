@@ -3238,11 +3238,9 @@ public final class SessionEngine {
     public func buildExportReadingOffMain(options: ExportOptions) async throws -> SessionExport {
         guard let sessionId = options.sessionId else { return try buildExport(options: options) }
         let repository = repository
-        let includeFullText = options.includeFullText, includeListeningMap = options.includeListeningMap
-        let inputs = try await Task.detached(priority: .userInitiated) {
-            try Self.readExportInputs(sessionId: sessionId, includeFullText: includeFullText,
-                                      includeListeningMap: includeListeningMap, repository: repository)
-        }.value
+        let inputs = try await Self.readExportInputsOffMain(
+            sessionId: sessionId, includeFullText: options.includeFullText,
+            includeListeningMap: options.includeListeningMap, repository: repository)
         guard let inputs else { return try buildExport(options: options) } // not stored: the engine's own session
         let itemId = inputs.item.id
         let sourceTimeline = inputs.timeline.map { timeline in LazyTimeline { timeline } }
@@ -3251,6 +3249,17 @@ public final class SessionEngine {
             session: inputs.session, item: inputs.item, sourceTimeline: sourceTimeline,
             allInterjections: inputs.allInterjections, allTurns: inputs.allTurns,
             listeningMap: inputs.listeningMap, pageDocument: inputs.pageDocument))
+    }
+
+    /// `readExportInputs` on the global executor, so the store reads never touch the caller's (main) thread. This is
+    /// `@concurrent` rather than a `Task.detached` block because the Linux Swift compiler's region-based isolation
+    /// checker rejects returning `ExportInputs?` out of a detached closure (#3054); the Mac compiler accepts both.
+    @concurrent
+    nonisolated static func readExportInputsOffMain(
+        sessionId: String, includeFullText: Bool, includeListeningMap: Bool, repository: SessionRepository
+    ) async throws -> ExportInputs? {
+        try readExportInputs(sessionId: sessionId, includeFullText: includeFullText,
+                             includeListeningMap: includeListeningMap, repository: repository)
     }
 
     /// The reads `loadExportSource` and `buildExport(options:source:)` make, done ahead in one go. The timeline is
