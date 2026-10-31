@@ -608,7 +608,7 @@ function RecordMargin({
         <p className="saved-line" role="status" data-testid="voice-saved">
           {saving === 'saved' && (
             <>
-              <span className="tag tag-blue">Saved</span> Voice Margin at {formatClock(at)}.
+              <span className="tag tag-status">Saved</span> Voice Margin at {formatClock(at)}.
             </>
           )}
           {saving === 'saving' && 'Saving your voice Margin…'}
