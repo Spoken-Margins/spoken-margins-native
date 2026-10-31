@@ -204,12 +204,17 @@ extension ImportedCommentaryInterjection {
     /// a position only once no pass is running (#872). A Margin that is already placed carries evidence by
     /// definition.
     public func carriesPositionEvidence(in layer: ImportedCommentaryLayer) -> Bool {
+        sentPositionEvidence(in: layer) || SharedMarginPlacementStatus.isPlaced(resolution)
+    }
+
+    /// Whether the packet itself gave this Margin anything to match on, whatever a pass has made of it since. A
+    /// podcast Margin without any carries only the sender's clock time (#3041).
+    public func sentPositionEvidence(in layer: ImportedCommentaryLayer) -> Bool {
         guard layer.itemIdentity.itemType == .podcast else { return true }
         return !anchorEvidence.machineEvidenceAssetIds.isEmpty
             || !(podcastAnchorEvidence ?? []).isEmpty
             || anchorEvidence.hasUsableTextContext
             || layer.itemIdentity.exactEditionSHA256 != nil
-            || SharedMarginPlacementStatus.isPlaced(resolution)
     }
 }
 

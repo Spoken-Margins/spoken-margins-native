@@ -6,6 +6,7 @@ import { useData } from '../data.tsx';
 import { downloadFile } from '../download.ts';
 import { useRestoreFocus } from '../focus.ts';
 import { BackIcon, DownIcon, DownloadIcon, ForwardIcon, MicIcon, PauseIcon, PenIcon, PlayIcon, ShareIcon, StopIcon } from '../icons.tsx';
+import { landingOffer, type Landing } from '../logic/import.ts';
 import { nextSpeed, timelineFraction, timelinePosts } from '../logic/library.ts';
 import { plainError } from '../logic/messages.ts';
 import { NotSavedError } from '../logic/storage.ts';
@@ -25,7 +26,32 @@ function newId(): string {
   return crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-export function NowPlaying({ onClose }: { onClose: () => void }) {
+/**
+ * A file just opened here, and the browser wouldn't start it without a tap: one clear button to hear it from the
+ * first Margin (#3039). It goes once it plays.
+ */
+function LandingOffer({ landing }: { landing?: Landing }) {
+  const player = usePlayer();
+  const label = landingOffer(landing, { episodeId: player.episode?.id, playing: player.playing, loading: player.loading });
+  if (!landing || !label) return null;
+  return (
+    <p className="landing-offer">
+      <button
+        type="button"
+        className="button button-primary"
+        onClick={() => {
+          player.seek(landing.at);
+          player.toggle();
+        }}
+      >
+        <PlayIcon size={18} />
+        {label}
+      </button>
+    </p>
+  );
+}
+
+export function NowPlaying({ onClose, landing }: { onClose: () => void; landing?: Landing }) {
   const player = usePlayer();
   const data = useData();
   const [composer, setComposer] = useState<{ kind: 'write' | 'record'; at: number } | null>(null);
@@ -145,6 +171,7 @@ export function NowPlaying({ onClose }: { onClose: () => void }) {
           </button>
         </div>
         {player.loading && <p className="muted np-status">Loading audio…</p>}
+        <LandingOffer landing={landing} />
 
         {composer ? (
           composer.kind === 'write' ? (
@@ -608,7 +635,7 @@ function RecordMargin({
         <p className="saved-line" role="status" data-testid="voice-saved">
           {saving === 'saved' && (
             <>
-              <span className="tag tag-blue">Saved</span> Voice Margin at {formatClock(at)}.
+              <span className="tag tag-status">Saved</span> Voice Margin at {formatClock(at)}.
             </>
           )}
           {saving === 'saving' && 'Saving your voice Margin…'}

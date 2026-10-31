@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState, type DragEvent, type ReactNode } from
 import { DataProvider } from './data.tsx';
 import { FollowingIcon, LibraryIcon, MarginsIcon, SettingsIcon } from './icons.tsx';
 import { openFileBytes, openFiles, useLaunchLink, useOpenMarginFile, useOpenShareLink, type OpenMarginFile } from './import.tsx';
+import type { Landing } from './logic/import.ts';
 import type { ParsedLink } from './logic/share-link.ts';
 import { PlayerProvider, usePlayer } from './player.tsx';
 import { FeedRefreshProvider } from './refresh.tsx';
@@ -13,7 +14,7 @@ import { Margins } from './screens/Margins.tsx';
 import { MiniPlayer, NowPlaying } from './screens/NowPlaying.tsx';
 import { Settings } from './screens/Settings.tsx';
 import { useNativeOpenedFiles } from './native-files.ts';
-import { useSharedFiles } from './shared-files.ts';
+import { useLaunchedFiles, useSharedFiles } from './shared-files.ts';
 import { UiProvider } from './ui.tsx';
 
 type Tab = 'library' | 'following' | 'margins' | 'settings';
@@ -34,6 +35,8 @@ function Shell({ launchLink }: { launchLink: ParsedLink }) {
   const [nowPlaying, setNowPlaying] = useState(false);
   const [followOpen, setFollowOpen] = useState(false);
   const [dropping, setDropping] = useState(false);
+  // Where the last opened file left the listener, so Now Playing can offer to start there (#3039).
+  const [landing, setLanding] = useState<Landing>();
 
   const setTab = useCallback((next: Tab) => {
     setTabState(next);
@@ -47,13 +50,18 @@ function Shell({ launchLink }: { launchLink: ParsedLink }) {
   }, []);
 
   const openPlayer = useCallback(() => setNowPlaying(true), []);
-  const openMarginFile = useOpenMarginFile(openPlayer);
+  const landed = useCallback((at: Landing) => {
+    setLanding(at);
+    setNowPlaying(true);
+  }, []);
+  const openMarginFile = useOpenMarginFile(landed);
   // Every way a file arrives goes through the same unpacking, so a backup `.zip` shared to the installed app, or
   // opened with the Android app, opens its packets as a picked one does.
   const openArrivedFile = useCallback<OpenMarginFile>((bytes, fileName) => openFileBytes(bytes, fileName, openMarginFile), [openMarginFile]);
   useSharedFiles(openArrivedFile);
   useNativeOpenedFiles(openArrivedFile);
-  const openShareLink = useOpenShareLink(openPlayer);
+  useLaunchedFiles(openMarginFile);
+  const openShareLink = useOpenShareLink(landed);
   useLaunchLink(launchLink, openShareLink);
 
   // A `.spokenmargins` file dropped anywhere on the app opens like a picked one.
@@ -105,6 +113,7 @@ function Shell({ launchLink }: { launchLink: ParsedLink }) {
         {tab === 'library' && (
           <Library
             onPlay={openPlayer}
+            onOpenFile={openMarginFile}
             onFindShows={() => {
               setTab('following');
               setFollowOpen(true);
@@ -116,7 +125,15 @@ function Shell({ launchLink }: { launchLink: ParsedLink }) {
         {tab === 'settings' && <Settings />}
       </main>
       {!nowPlaying && <MiniPlayer onOpen={openPlayer} />}
-      {nowPlaying && <NowPlaying onClose={() => setNowPlaying(false)} />}
+      {nowPlaying && (
+        <NowPlaying
+          landing={landing}
+          onClose={() => {
+            setNowPlaying(false);
+            setLanding(undefined);
+          }}
+        />
+      )}
       {dropping && (
         <div className="drop-overlay" aria-hidden="true">
           <p>Drop a .spokenmargins file to open its Margins</p>
