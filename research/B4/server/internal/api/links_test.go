@@ -3,6 +3,7 @@ package api_test
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"mime/multipart"
@@ -64,7 +65,32 @@ func TestLinkServiceOffDoesNotBreakPublicDocuments(t *testing.T) {
 	}
 }
 
-const linkPreview = `{"source":{"title":"Source title","show":"Show name","url":"https://example.org/source"},"margins":[{"text":"Margin <b>text</b>","before":"before <script>","after":"after & text"}]}`
+// Uploads are the shared sealing vector's parts (#805), the bytes the phone and the browser agree on.
+var linkPreview, linkPacket, linkPreviewPlain, linkPacketPlain = func() ([]byte, []byte, []byte, []byte) {
+	data, err := os.ReadFile("../../../contracts/fixtures/share-link-sealing-vector.json")
+	if err != nil {
+		panic(err)
+	}
+	var v struct {
+		Preview, Packet struct{ PlaintextBase64, SealedBase64 string }
+	}
+	if err := json.Unmarshal(data, &v); err != nil {
+		panic(err)
+	}
+	decode := func(s string) []byte {
+		b, err := base64.StdEncoding.DecodeString(s)
+		if err != nil {
+			panic(err)
+		}
+		return b
+	}
+	return decode(v.Preview.SealedBase64), decode(v.Packet.SealedBase64), decode(v.Preview.PlaintextBase64), decode(v.Packet.PlaintextBase64)
+}()
+
+// sealedOfSize is a part with the vector's sealed header, padded to n bytes.
+func sealedOfSize(part []byte, n int) []byte {
+	return append(append([]byte{}, part[:8]...), make([]byte, n-8)...)
+}
 
 func enabledLinks(t *testing.T) (*api.Server, string) {
 	t.Helper()
@@ -116,7 +142,7 @@ func postLink(t *testing.T, h http.Handler, packet, preview []byte) *httptest.Re
 }
 func createdLink(t *testing.T, h http.Handler) string {
 	t.Helper()
-	w := postLink(t, h, []byte{'P', 'K', 0, 255, 42}, []byte(linkPreview))
+	w := postLink(t, h, linkPacket, linkPreview)
 	if w.Code != 201 {
 		t.Fatalf("upload: %d %s", w.Code, w.Body)
 	}
@@ -142,17 +168,49 @@ func TestLinkHTTPRoundTripReportsExpiryAndLogs(t *testing.T) {
 	s.RequestLog, s.AbuseLog = &reqLog, &abuseLog
 	h := s.Handler()
 	id := createdLink(t, h)
+	// The page is a shell: the server can't read the sealed preview, so the page holds none of it.
 	w := linkRequest(h, "GET", "/l/"+id, "", nil, "203.0.113.7")
-	if w.Code != 200 || !strings.Contains(w.Body.String(), "Margin &lt;b&gt;text&lt;/b&gt;") || !strings.Contains(w.Body.String(), "before &lt;script&gt;") {
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `data-link="`+id+`"`) || !strings.Contains(w.Body.String(), `src="/l/share-link-page.mjs"`) {
 		t.Fatalf("page: %d %s", w.Code, w.Body)
+	}
+	for _, plain := range []string{"This is the part", "Fourier", "Signals"} {
+		if strings.Contains(w.Body.String(), plain) {
+			t.Fatalf("page holds readable %q", plain)
+		}
 	}
 	if w.Header().Get("Referrer-Policy") != "no-referrer" || w.Header().Get("Cache-Control") != "no-store" {
 		t.Fatal("page leaks referrer or can be cached past expiry")
 	}
+	if csp := w.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "script-src 'self'") || !strings.Contains(csp, "connect-src 'self'") || !strings.Contains(csp, "default-src 'none'") {
+		t.Fatalf("page CSP %q", csp)
+	}
+	w = linkRequest(h, "GET", "/l/"+id+"/preview", "", nil, "203.0.113.7")
+	if w.Code != 200 || !bytes.Equal(w.Body.Bytes(), linkPreview) || w.Header().Get("Content-Type") != "application/octet-stream" || w.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("sealed preview: %d %q", w.Code, w.Header().Get("Content-Type"))
+	}
+	for _, name := range []string{"share-link-page.mjs", "share-link-open.mjs"} {
+		w = linkRequest(h, "GET", "/l/"+name, "", nil, "203.0.113.7")
+		if want, _ := links.PageScript(name); w.Code != 200 || !bytes.Equal(w.Body.Bytes(), want) || w.Header().Get("Content-Type") != "text/javascript; charset=utf-8" {
+			t.Fatalf("%s: %d %q", name, w.Code, w.Header().Get("Content-Type"))
+		}
+	}
 	w = linkRequest(h, "GET", "/l/"+id+"/packet", "", nil, "203.0.113.7")
-	if w.Code != 200 || sha256.Sum256(w.Body.Bytes()) != sha256.Sum256([]byte{'P', 'K', 0, 255, 42}) {
+	if w.Code != 200 || sha256.Sum256(w.Body.Bytes()) != sha256.Sum256(linkPacket) {
 		t.Fatal("HTTP packet hash round trip changed")
 	}
+	// Nothing readable reached the disk.
+	filepath.WalkDir(filepath.Dir(s.PublicDir), func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		data, _ := os.ReadFile(path)
+		for _, plain := range [][]byte{[]byte("This is the part I wanted you to hear"), []byte("Fourier"), linkPreviewPlain, linkPacketPlain[:32]} {
+			if bytes.Contains(data, plain) {
+				t.Fatalf("%s holds readable %q", path, plain)
+			}
+		}
+		return nil
+	})
 	if w.Header().Get("Content-Type") != "application/octet-stream" {
 		t.Fatal("packet can render as active content")
 	}
@@ -173,7 +231,7 @@ func TestLinkHTTPRoundTripReportsExpiryAndLogs(t *testing.T) {
 	if !strings.Contains(reqLog.String(), `"route":"/l/*"`) || !strings.Contains(reqLog.String(), `"route":"/api/v1/links"`) {
 		t.Fatal("missing aggregate link routes")
 	}
-	for _, secret := range []string{id, "SECRET", "203.0.113.7", "Margin", "Source title"} {
+	for _, secret := range []string{id, "SECRET", "203.0.113.7", "This is the part", "Fourier"} {
 		if strings.Contains(reqLog.String(), secret) {
 			t.Fatalf("request log leaked %q: %s", secret, reqLog.String())
 		}
@@ -182,7 +240,7 @@ func TestLinkHTTPRoundTripReportsExpiryAndLogs(t *testing.T) {
 		t.Fatal("report log invalid")
 	}
 	now = now.Add(links.Lifetime)
-	for _, suffix := range []string{"", "/packet"} {
+	for _, suffix := range []string{"", "/packet", "/preview"} {
 		w = linkRequest(h, "GET", "/l/"+id+suffix, "", nil, "203.0.113.7")
 		if w.Code != 410 {
 			t.Fatalf("expired %s: %d", suffix, w.Code)
@@ -198,9 +256,9 @@ func TestLinkHTTPRoundTripReportsExpiryAndLogs(t *testing.T) {
 	if _, err := config.Set(path, config.ServiceLinks, false); err != nil {
 		t.Fatal(err)
 	}
-	for _, suffix := range []string{"", "/packet"} {
-		if w := linkRequest(h, "GET", "/l/"+id+suffix, "", nil, "203.0.113.7"); w.Code != 503 {
-			t.Fatal("disabled fetch")
+	for _, path := range []string{"/l/" + id, "/l/" + id + "/packet", "/l/" + id + "/preview", "/l/share-link-page.mjs"} {
+		if w := linkRequest(h, "GET", path, "", nil, "203.0.113.7"); w.Code != 503 {
+			t.Fatalf("disabled fetch %s", path)
 		}
 	}
 }
@@ -211,15 +269,20 @@ func TestLinkHTTPUploadValidation(t *testing.T) {
 		packet, preview []byte
 		status          int
 	}{
-		{"packet over 20 MB", make([]byte, links.MaxPacketBytes+1), []byte(linkPreview), 413},
-		{"packet exactly 20 MB", make([]byte, links.MaxPacketBytes), []byte(linkPreview), 201},
-		{"empty packet", nil, []byte(linkPreview), 400},
-		{"preview over 16 KB", []byte("packet"), bytes.Repeat([]byte(" "), links.MaxPreviewBytes+1), 413},
-		{"before over 500", []byte("packet"), []byte(strings.Replace(linkPreview, "before <script>", strings.Repeat("x", 501), 1)), 400},
-		{"after over 120", []byte("packet"), []byte(strings.Replace(linkPreview, "after & text", strings.Repeat("🎧", 121), 1)), 400},
-		{"after exactly 120", []byte("packet"), []byte(strings.Replace(linkPreview, "after & text", strings.Repeat("🎧", 120), 1)), 201},
-		{"invalid JSON", []byte("packet"), []byte(`{}`), 400},
-		{"trailing JSON", []byte("packet"), []byte(linkPreview + ` null`), 400},
+		{"the shared vector", linkPacket, linkPreview, 201},
+		{"packet over 20 MB", sealedOfSize(linkPacket, links.MaxPacketBytes+1), linkPreview, 413},
+		{"packet exactly 20 MB", sealedOfSize(linkPacket, links.MaxPacketBytes), linkPreview, 201},
+		{"empty packet", nil, linkPreview, 400},
+		{"preview over 16 KB", linkPacket, sealedOfSize(linkPreview, links.MaxPreviewBytes+1), 413},
+		{"preview exactly 16 KB", linkPacket, sealedOfSize(linkPreview, links.MaxPreviewBytes), 201},
+		// Readable parts were the pre-#805 contract; no shipped build sends them, and storing one
+		// would put Margin text on the server.
+		{"readable preview JSON", linkPacket, linkPreviewPlain, 400},
+		{"readable packet", linkPacketPlain, linkPreview, 400},
+		{"empty preview", linkPacket, nil, 400},
+		{"parts swapped", linkPreview, linkPacket, 400},
+		{"packet sent as both", linkPacket, linkPacket, 400},
+		{"truncated preview", linkPacket, linkPreview[:links.SealedOverhead-1], 400},
 	} {
 		t.Run(row.name, func(t *testing.T) {
 			s, _ := enabledLinks(t)
@@ -232,10 +295,10 @@ func TestLinkHTTPUploadValidation(t *testing.T) {
 	s, _ := enabledLinks(t)
 	h := s.Handler()
 	for _, parts := range [][][2][]byte{
-		{{[]byte("packet"), []byte("p")}},
-		{{[]byte("preview"), []byte(linkPreview)}},
-		{{[]byte("packet"), []byte("p")}, {[]byte("preview"), []byte(linkPreview)}, {[]byte("preview"), []byte(linkPreview)}},
-		{{[]byte("unknown"), []byte("p")}, {[]byte("preview"), []byte(linkPreview)}},
+		{{[]byte("packet"), linkPacket}},
+		{{[]byte("preview"), linkPreview}},
+		{{[]byte("packet"), linkPacket}, {[]byte("preview"), linkPreview}, {[]byte("preview"), linkPreview}},
+		{{[]byte("unknown"), linkPacket}, {[]byte("preview"), linkPreview}},
 	} {
 		data, ct := multipartLink(t, parts)
 		if w := linkRequest(h, "POST", "/api/v1/links", ct, data, "203.0.113.7"); w.Code != 400 {
@@ -243,7 +306,7 @@ func TestLinkHTTPUploadValidation(t *testing.T) {
 		}
 	}
 	// Preview-first uploads are also valid.
-	data, ct := multipartLink(t, [][2][]byte{{[]byte("preview"), []byte(linkPreview)}, {[]byte("packet"), []byte("p")}})
+	data, ct := multipartLink(t, [][2][]byte{{[]byte("preview"), linkPreview}, {[]byte("packet"), linkPacket}})
 	if w := linkRequest(h, "POST", "/api/v1/links", ct, data, "203.0.113.7"); w.Code != 201 {
 		t.Fatalf("preview first: %d", w.Code)
 	}
@@ -326,7 +389,7 @@ func TestLinkServiceMissingConfigurationFailsClosed(t *testing.T) {
 				s.LinkInstallURL = ""
 			}
 			h := s.Handler()
-			if w := postLink(t, h, []byte("packet"), []byte(linkPreview)); w.Code != 503 {
+			if w := postLink(t, h, linkPacket, linkPreview); w.Code != 503 {
 				t.Fatal("unconfigured service accepted upload")
 			}
 			for _, path := range []string{"/api/v1/health", "/api/v1/config.json", "/bridge/v1/manifest.json"} {

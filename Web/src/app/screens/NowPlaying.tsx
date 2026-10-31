@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { formatClock } from '../../shared/clock.ts';
 import type { Episode, Margin, Show } from '../../shared/model.ts';
+import { capacitorBridge } from '../../sources/native-http.ts';
 import { useData } from '../data.tsx';
 import { downloadFile } from '../download.ts';
 import { useRestoreFocus } from '../focus.ts';
@@ -8,9 +9,12 @@ import { BackIcon, DownIcon, DownloadIcon, ForwardIcon, MicIcon, PauseIcon, PenI
 import { nextSpeed, timelineFraction, timelinePosts } from '../logic/library.ts';
 import { plainError } from '../logic/messages.ts';
 import { NotSavedError } from '../logic/storage.ts';
+import { shareNativePacket } from '../logic/native-packets.ts';
 import { SKIP_SECONDS, usePlayer } from '../player.tsx';
 import type { RecordedVoice, VoiceRecording } from '../ports.ts';
-import { services } from '../services.ts';
+import { linkPreview, linkUploadMessage } from '../logic/share-link.ts';
+import { SHARE_LINKS_OFFERED, services, uploadShareLink } from '../services.ts';
+import { shortDate } from '../format.ts';
 import { useUi } from '../ui.tsx';
 import { MarginRow } from './Margins.tsx';
 
@@ -200,11 +204,20 @@ function ShareMargins({ episode, margins, show }: { episode: Episode; margins: M
   const { toast } = useUi();
   const [busy, setBusy] = useState(false);
   const [sendable] = useState(canSendFiles);
+  // Inside the Android app (#3009) one button writes the file and opens Android's share sheet, which can also save it.
+  const [bridge] = useState(() => capacitorBridge());
+  const [link, setLink] = useState('');
 
   const share = async (how: 'save' | 'send') => {
     setBusy(true);
     try {
       const written = await services.packets.writePacket(episode, margins, show);
+      if (bridge) {
+        if ((await shareNativePacket(bridge, written.bytes, written.fileName, episode.title)) === 'cancelled') return;
+        const count = written.included.length === 1 ? '1 Margin' : `${written.included.length} Margins`;
+        toast(`Shared ${count} as ${written.fileName}.${written.notice ? ` ${written.notice}` : ''}`);
+        return;
+      }
       const file = new File([written.bytes as BlobPart], written.fileName, { type: written.mimeType });
       if (how === 'send') {
         try {
@@ -225,21 +238,63 @@ function ShareMargins({ episode, margins, show }: { episode: Episode; margins: M
     }
   };
 
+  const makeLink = async () => {
+    setBusy(true);
+    try {
+      const written = await services.packets.writePacket(episode, margins, show);
+      const preview = linkPreview(episode, show, margins, written.included);
+      const made = await uploadShareLink(written.bytes, preview);
+      setLink(made.url);
+      let copied = false;
+      try {
+        await navigator.clipboard.writeText(made.url);
+        copied = true;
+      } catch {
+        // No clipboard permission: the link is in the field below to copy by hand.
+      }
+      const until = made.expiresAt ? ` It works until ${shortDate(made.expiresAt)}.` : '';
+      toast(`${copied ? 'Link copied.' : 'Link ready. Copy it below.'}${until}${written.notice ? ` ${written.notice}` : ''}`);
+    } catch (error) {
+      toast(`No link was made. ${linkUploadMessage(error)}`, 'problem');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="share-margins">
       <p className="muted">Share them as a .spokenmargins file. A friend opens it in Spoken Margins and hears each one at its moment.</p>
       <div className="share-actions">
-        <button type="button" className="button" disabled={busy} onClick={() => void share('save')}>
-          <DownloadIcon />
-          Save as a file
-        </button>
-        {sendable && (
+        {bridge ? (
+          <button type="button" className="button" disabled={busy} onClick={() => void share('send')}>
+            <ShareIcon />
+            Save or send
+          </button>
+        ) : (
+          <button type="button" className="button" disabled={busy} onClick={() => void share('save')}>
+            <DownloadIcon />
+            Save as a file
+          </button>
+        )}
+        {!bridge && sendable && (
           <button type="button" className="button" disabled={busy} onClick={() => void share('send')}>
             <ShareIcon />
             Send
           </button>
         )}
+        {SHARE_LINKS_OFFERED && (
+          <button type="button" className="button" disabled={busy} onClick={() => void makeLink()}>
+            <ShareIcon />
+            Make a link
+          </button>
+        )}
       </div>
+      {link && (
+        <div className="share-link-row">
+          <label htmlFor="share-link-made">Link to these Margins</label>
+          <input id="share-link-made" type="text" readOnly value={link} onFocus={(event) => event.target.select()} />
+        </div>
+      )}
     </div>
   );
 }

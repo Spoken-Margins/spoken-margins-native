@@ -27,9 +27,16 @@ function serviceWorker(): Plugin {
   };
 }
 
-export default defineConfig({
+// The share-link switch (#3003), fixed at build time (owner, 2026-10-17: a build setting, never a server switch).
+// Only the Playwright build turns it on, with `--mode share-links-test` into the git-ignored `dist-share-links/`;
+// every other build, including `npm run build`, leaves link creation out. Turning it on for listeners waits for
+// the DMCA designated agent (owner, 2026-10-20) and is a change to this line in a reviewed PR.
+export const SHARE_LINKS_TEST_MODE = 'share-links-test';
+
+export default defineConfig(({ mode }) => ({
   base: './',
   plugins: [react(), serviceWorker()],
+  define: { __SM_SHARE_LINKS__: JSON.stringify(mode === SHARE_LINKS_TEST_MODE) },
   build: { target: 'es2022', sourcemap: false },
   preview: { port: 4173, strictPort: true },
-});
+}));

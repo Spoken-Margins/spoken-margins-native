@@ -28,7 +28,33 @@ One writer per folder while the first wave runs in parallel.
 - **Share links are built but off.** Creating one is behind a build-time flag that every hosted build
   leaves off. It turns on in a new build after the DMCA designated agent is registered (owner, 2026-10-20),
   never from a server switch (2026-10-17).
+  - `SHARE_LINKS_ENABLED` (`src/packet/share-link.ts`) reads `__SM_SHARE_LINKS__`, which `vite.config.ts` sets
+    true only for `--mode share-links-test`, the Playwright build in `dist-share-links/`. `npm run build` leaves
+    it false, and the upload code is compiled out (`e2e/share-links.spec.ts` checks both).
+  - Opening a link needs no flag: a `/l/<id>#<key>` address, or the same pasted under Margins › Open a link,
+    fetches `/l/<id>/packet` from the link's own server and opens it with the key in the `#` part.
+  - A host that serves the app at `/l/<id>` adds `<base href="<app root>">`, as the stub server does. A host on
+    another origin than the link server needs that server to allow cross-origin reads of `/l/<id>/packet`;
+    it doesn't yet.
 - **Feeds:** read directly from the browser first. Only when a feed blocks that, ask once and then read
   it through the Spoken Margins server, which keeps nothing. A Substack post page is read only when the
   listener taps that post (owner, 2026-10-21).
 - **Packets stay importable by Build 32 and Build 34.** Voice Margins are AAC in `.m4a`.
+
+## Android wrapper (#2981)
+
+`android/` is a Capacitor project that serves the same Vite build in an Android WebView. Inside it, feeds,
+Substack pages and podcast search are read with Android's own HTTP stack (`src/sources/native-http.ts`), so no
+site blocks the read and there is no relay and no consent question. The read path picks that transport itself;
+every rule about what is read and when stays in `read.ts` and `search.ts`.
+
+- `npm run android:sync` builds the web app and copies it into `android/`.
+- `npm run android:build` also runs Gradle and writes `android/app/build/outputs/apk/debug/app-debug.apk`.
+  It needs JDK 21 (`JAVA_HOME`) and an Android SDK whose licences are already accepted (`ANDROID_HOME`, or
+  `sdk.dir` in the git-ignored `android/local.properties`). Gradle fetches the missing SDK platform itself.
+- **Packets in the app (#3009).** The WebView has no Web Share and ignores a blob download, so "Save or send"
+  writes the file to the app's cache (Filesystem plugin) and opens Android's share sheet (Share plugin). A packet
+  opened with or shared to the app arrives through the App plugin and is read with Filesystem; the file picker
+  shows every file there, because Android reports `.spokenmargins` as `application/octet-stream`. The choice is
+  `src/app/logic/native-packets.ts`; the browser keeps its download link and Web Share.
+- Nothing here is verified on a device until someone installs the APK.
