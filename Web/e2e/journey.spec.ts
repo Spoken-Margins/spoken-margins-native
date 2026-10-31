@@ -169,17 +169,18 @@ test('record a voice Margin with the microphone', async ({ page }, info) => {
   await expect(nowPlaying.getByRole('button', { name: 'Play', exact: true })).toBeVisible();
   await shot(page, info, '10-recording');
   await page.waitForTimeout(1200);
-  await nowPlaying.getByRole('button', { name: 'Stop', exact: true }).click();
+  await nowPlaying.getByRole('button', { name: 'Stop and save' }).click();
   // Words are optional: the box starts with placeholder words, marked as such, which the Margin shares with (#3025).
   const words = nowPlaying.getByLabel(/Words to go with your voice Margin at/);
   await expect(words).toHaveValue(/^Voice Margin at \d+:\d\d in “.+”, recorded \d{1,2} [A-Z][a-z]{2} \d{4}$/);
   await expect(words).toHaveAttribute('data-placeholder', 'true');
   await expect(nowPlaying.getByText('Replace with your own words.', { exact: false })).toBeVisible();
-  await shot(page, info, '10b-voice-placeholder');
-  await nowPlaying.getByRole('button', { name: 'Save Margin' }).click();
-  await expect(page.getByText(/Voice Margin saved at .* It shares with placeholder words/)).toBeVisible();
-  // And resumes afterwards.
+  // Stop saved it (#3038): no Save step, and the episode carries on.
+  await expect(nowPlaying.getByTestId('voice-saved')).toHaveText(/^Saved Voice Margin at \d+:\d\d\.$/);
+  await expect(nowPlaying.getByRole('button', { name: /Hear this voice Margin/ })).toBeVisible();
   await expect(nowPlaying.getByRole('button', { name: 'Pause' })).toBeVisible();
+  await shot(page, info, '10b-voice-placeholder');
+  await nowPlaying.getByRole('button', { name: 'Done' }).click();
 
   await nowPlaying.getByRole('button', { name: 'Close Now Playing' }).click();
   await tab(page, 'Margins');
@@ -311,12 +312,12 @@ test('every control has a name and a target of at least 44 px, in every state', 
   await expect(page.locator('.tick')).toHaveCount(1);
   expect(await checkControls(page), 'Now Playing').toEqual([]);
   await page.getByRole('button', { name: 'Record a Margin' }).click();
-  await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Stop and save' })).toBeEnabled();
   expect(await checkControls(page), 'Now Playing, recording').toEqual([]);
-  await page.getByRole('button', { name: 'Stop', exact: true }).click();
+  await page.getByRole('button', { name: 'Stop and save' }).click();
   await page.getByLabel(/Words to go with your voice Margin at/).fill('A spoken note.');
   expect(await checkControls(page), 'Now Playing, voice words').toEqual([]);
-  await page.getByRole('button', { name: 'Save Margin' }).click();
+  await page.getByRole('button', { name: 'Done' }).click();
   await expect(page.getByRole('button', { name: /Hear this voice Margin/ })).toBeVisible();
   expect(await checkControls(page), 'Now Playing, voice Margin').toEqual([]);
 

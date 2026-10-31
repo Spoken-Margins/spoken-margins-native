@@ -139,7 +139,7 @@ export function TranscriptionNote({
       }
       return (
         <p className="transcribe-note" role="status" data-testid="transcribe-status" data-device={transcription.device}>
-          {prefilled ? 'Written out from your recording, on this device. Check the words before you save.' : 'Written out from your recording.'}
+          {prefilled ? 'Written out from your recording, on this device. Check the words.' : 'Written out from your recording.'}
         </p>
       );
     case 'failed':
