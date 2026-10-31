@@ -13,6 +13,8 @@
 // 1. #2989 to #3010: shows, episodes, margins, positions, settings {relayAllowed, relayAsked, playbackRate}.
 //    No version row.
 // 2. #3012: adds the version row and the settings persistAsked and lastBackupAt. Records are unchanged.
+//    Later settings that default when missing (transcription, on-device speech-to-text) keep shape 2: an older copy
+//    ignores a setting it doesn't know, and a newer one reads its default.
 import type { Episode, Margin, PlaybackPosition, Show } from '../../shared/model.ts';
 
 export const DB_VERSION = 1;
@@ -29,6 +31,11 @@ export interface Settings {
   persistAsked: boolean;
   /** When "Back up all Margins" last wrote a file, as an ISO date. Empty before the first backup. */
   lastBackupAt: string;
+  /**
+   * On-device speech-to-text for voice Margins: '' until the listener has answered, then 'on' or 'off'. Nothing is
+   * downloaded while it is not 'on'.
+   */
+  transcription: '' | 'on' | 'off';
 }
 
 export const DEFAULT_SETTINGS: Settings = Object.freeze({
@@ -37,6 +44,7 @@ export const DEFAULT_SETTINGS: Settings = Object.freeze({
   playbackRate: 1,
   persistAsked: false,
   lastBackupAt: '',
+  transcription: '',
 });
 
 export interface Snapshot {
@@ -83,6 +91,7 @@ export function readSettings(rows: readonly SettingRow[]): Settings {
     if (!Object.hasOwn(DEFAULT_SETTINGS, row.key)) continue;
     if (typeof row.value !== typeof target[row.key]) continue;
     if (typeof row.value === 'number' && !Number.isFinite(row.value)) continue;
+    if (row.key === 'transcription' && !['', 'on', 'off'].includes(row.value as string)) continue;
     target[row.key] = row.value;
   }
   return settings;

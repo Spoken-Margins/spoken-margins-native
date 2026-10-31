@@ -16,6 +16,8 @@ import { linkPreview, linkUploadMessage } from '../logic/share-link.ts';
 import { SHARE_LINKS_OFFERED, services, uploadShareLink } from '../services.ts';
 import { shortDate } from '../format.ts';
 import { useUi } from '../ui.tsx';
+import { prefill } from '../../transcribe/state.ts';
+import { TranscriptionNote, useTranscription } from '../transcription.tsx';
 import { MarginRow } from './Margins.tsx';
 
 function newId(): string {
@@ -372,6 +374,20 @@ function RecordMargin({
   const [problem, setProblem] = useState<string>();
   const [recorded, setRecorded] = useState<RecordedVoice>();
   const [words, setWords] = useState('');
+  // Whether the listener has typed in the words box since the recording stopped: the transcript never overwrites that.
+  const edited = useRef(false);
+  const wordsRef = useRef(words);
+  wordsRef.current = words;
+  const [prefilled, setPrefilled] = useState(false);
+  const [suggestion, setSuggestion] = useState<string>();
+  const transcription = useTranscription(recorded?.blob, (transcript) => {
+    const result = prefill(wordsRef.current, edited.current, transcript);
+    if (result.words !== wordsRef.current) {
+      setWords(result.words);
+      setPrefilled(true);
+    }
+    setSuggestion(result.suggestion);
+  });
   const resumeAfter = useRef(false);
   const started = useRef(false);
   const live = useRef<VoiceRecording | null>(null);
@@ -478,8 +494,9 @@ function RecordMargin({
   }
 
   if (recorded) {
-    // The iPhone app shares a voice Margin only with words (a transcript), and the web app has no speech
-    // recognition, so the listener types a few. Optional: without them the Margin stays here.
+    // The iPhone app shares a voice Margin only with words (a transcript). The listener types a few, or, with
+    // transcription on, gets them written out on this device and can edit them. Optional: without words the Margin
+    // stays here.
     return (
       <form
         className="composer"
@@ -492,7 +509,26 @@ function RecordMargin({
         <p className="muted composer-hint" id="voice-words-hint">
           Friends read these alongside your voice. A voice Margin is shared only with words.
         </p>
-        <textarea id="voice-words" aria-describedby="voice-words-hint" rows={2} value={words} onChange={(event) => setWords(event.target.value)} />
+        <textarea
+          id="voice-words"
+          aria-describedby="voice-words-hint"
+          rows={2}
+          value={words}
+          onChange={(event) => {
+            edited.current = true;
+            setWords(event.target.value);
+          }}
+        />
+        <TranscriptionNote
+          transcription={transcription}
+          prefilled={prefilled}
+          {...(suggestion !== undefined && { suggestion })}
+          onUseSuggestion={() => {
+            if (suggestion) setWords(suggestion);
+            setSuggestion(undefined);
+            setPrefilled(true);
+          }}
+        />
         <div className="composer-actions">
           <button type="button" className="button" onClick={close}>
             Discard
