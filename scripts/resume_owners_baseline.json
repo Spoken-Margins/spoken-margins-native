@@ -1,0 +1,195 @@
+{
+ "about": "Resume-decision state known when the guard landed (#3032). scripts/resume_owners.py fails on a declaration not listed here or one written in more places. --update only removes rows and lowers counts.",
+ "rows": [
+  {
+   "key": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+MarginVoicePlayback.swift::shouldResume",
+   "writes": 0,
+   "why": "known when the guard landed (#3032); retired by the one-owner type"
+  },
+  {
+   "key": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+MarginVoicePlayback.swift::shouldResumeSource",
+   "writes": 0,
+   "why": "known when the guard landed (#3032); retired by the one-owner type"
+  },
+  {
+   "key": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate2CompactControlController.swift::shouldResume",
+   "writes": 0,
+   "why": "known when the guard landed (#3032); retired by the one-owner type"
+  },
+  {
+   "key": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/SupertonicSpeechPlaybackClient.swift::SystemPauseHandler",
+   "writes": 1,
+   "why": "known when the guard landed (#3032); retired by the one-owner type"
+  },
+  {
+   "key": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/SupertonicSpeechPlaybackClient.swift::onSystemPause",
+   "writes": 1,
+   "why": "known when the guard landed (#3032); retired by the one-owner type"
+  },
+  {
+   "key": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/SupertonicSpeechPlaybackClient.swift::recordSystemPause",
+   "writes": 0,
+   "why": "known when the guard landed (#3032); retired by the one-owner type"
+  },
+  {
+   "key": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/SupertonicSpeechPlaybackClient.swift::shouldResume",
+   "writes": 0,
+   "why": "known when the guard landed (#3032); retired by the one-owner type"
+  },
+  {
+   "key": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/SupertonicSpeechPlaybackClient.swift::shouldResumeAfterInterruption",
+   "writes": 9,
+   "why": "known when the guard landed (#3032); retired by the one-owner type"
+  },
+  {
+   "key": "Packages/SessionKit/Sources/SessionKit/HandsFreeMarginCoordinator.swift::shouldResume",
+   "writes": 0,
+   "why": "known when the guard landed (#3032); retired by the one-owner type"
+  },
+  {
+   "key": "Packages/SessionKit/Sources/SessionKit/LibraryAudioPreparationQueue.swift::foregroundShouldResume",
+   "writes": 0,
+   "why": "the audio-preparation queue, not the playing source; outside the system-interruption path, listed so it stays visible (#3032)"
+  },
+  {
+   "key": "Packages/SessionKit/Sources/SessionKit/LiveActivityLifecycle.swift::shouldResume",
+   "writes": 0,
+   "why": "known when the guard landed (#3032); retired by the one-owner type"
+  },
+  {
+   "key": "Packages/SessionKit/Sources/SessionKit/MarginRecordingInterruption.swift::PendingResume",
+   "writes": 0,
+   "why": "known when the guard landed (#3032); retired by the one-owner type"
+  },
+  {
+   "key": "Packages/SessionKit/Sources/SessionKit/MarginRecordingInterruption.swift::pendingResume",
+   "writes": 5,
+   "why": "known when the guard landed (#3032); retired by the one-owner type"
+  },
+  {
+   "key": "Packages/SessionKit/Sources/SessionKit/MarginRecordingInterruption.swift::shouldResume",
+   "writes": 0,
+   "why": "known when the guard landed (#3032); retired by the one-owner type"
+  },
+  {
+   "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::PendingInterjectionPause",
+   "writes": 0,
+   "why": "known when the guard landed (#3032); retired by the one-owner type"
+  },
+  {
+   "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::PendingPlaybackPosition",
+   "writes": 0,
+   "why": "known when the guard landed (#3032); retired by the one-owner type"
+  },
+  {
+   "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::activePlaybackStartAttemptId",
+   "writes": 2,
+   "why": "known when the guard landed (#3032); retired by the one-owner type"
+  },
+  {
+   "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::clearPlaybackStartPending",
+   "writes": 0,
+   "why": "known when the guard landed (#3032); retired by the one-owner type"
+  },
+  {
+   "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::hasPendingInterjectionPause",
+   "writes": 0,
+   "why": "known when the guard landed (#3032); retired by the one-owner type"
+  },
+  {
+   "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::hasPendingPlaybackPosition",
+   "writes": 0,
+   "why": "known when the guard landed (#3032); retired by the one-owner type"
+  },
+  {
+   "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::pendingInterjectionPause",
+   "writes": 6,
+   "why": "known when the guard landed (#3032); retired by the one-owner type"
+  },
+  {
+   "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::pendingPlaybackPosition",
+   "writes": 8,
+   "why": "known when the guard landed (#3032); retired by the one-owner type"
+  },
+  {
+   "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::playbackStartAttemptId",
+   "writes": 1,
+   "why": "known when the guard landed (#3032); retired by the one-owner type"
+  },
+  {
+   "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::playbackStartDeadline",
+   "writes": 5,
+   "why": "known when the guard landed (#3032); retired by the one-owner type"
+  },
+  {
+   "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::playbackStartPendingAttemptId",
+   "writes": 4,
+   "why": "known when the guard landed (#3032); retired by the one-owner type"
+  },
+  {
+   "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::playbackStartPendingTargetId",
+   "writes": 4,
+   "why": "known when the guard landed (#3032); retired by the one-owner type"
+  },
+  {
+   "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::previousPendingPlaybackPosition",
+   "writes": 0,
+   "why": "known when the guard landed (#3032); retired by the one-owner type"
+  },
+  {
+   "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::priorPhase",
+   "writes": 3,
+   "why": "known when the guard landed (#3032); retired by the one-owner type"
+  },
+  {
+   "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::priorPhaseForResume",
+   "writes": 0,
+   "why": "known when the guard landed (#3032); retired by the one-owner type"
+  },
+  {
+   "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::recordingOnFinishedSource",
+   "writes": 3,
+   "why": "known when the guard landed (#3032); retired by the one-owner type"
+  },
+  {
+   "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::rejoinAttempted",
+   "writes": 1,
+   "why": "known when the guard landed (#3032); retired by the one-owner type"
+  },
+  {
+   "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::systemPause",
+   "writes": 4,
+   "why": "known when the guard landed (#3032); retired by the one-owner type"
+  },
+  {
+   "key": "Packages/SessionKit/Sources/SessionKit/SpeechSystemPause.swift::SpeechSystemPause",
+   "writes": 0,
+   "why": "known when the guard landed (#3032); retired by the one-owner type"
+  },
+  {
+   "key": "Packages/SessionKit/Sources/SessionKit/SpeechSystemPause.swift::shouldResume",
+   "writes": 0,
+   "why": "known when the guard landed (#3032); retired by the one-owner type"
+  },
+  {
+   "key": "Packages/SessionKit/Sources/SessionKitAudio/AudioAdapters.swift::AudioPlaybackInterruptionResumePolicy",
+   "writes": 0,
+   "why": "known when the guard landed (#3032); retired by the one-owner type"
+  },
+  {
+   "key": "Packages/SessionKit/Sources/SessionKitAudio/AudioAdapters.swift::endedShouldResume",
+   "writes": 0,
+   "why": "known when the guard landed (#3032); retired by the one-owner type"
+  },
+  {
+   "key": "Packages/SessionKit/Sources/SessionKitAudio/AudioAdapters.swift::interruptionResumePolicy",
+   "writes": 0,
+   "why": "known when the guard landed (#3032); retired by the one-owner type"
+  },
+  {
+   "key": "Packages/SessionKit/Sources/SessionKitAudio/AudioAdapters.swift::shouldResume",
+   "writes": 0,
+   "why": "known when the guard landed (#3032); retired by the one-owner type"
+  }
+ ]
+}
