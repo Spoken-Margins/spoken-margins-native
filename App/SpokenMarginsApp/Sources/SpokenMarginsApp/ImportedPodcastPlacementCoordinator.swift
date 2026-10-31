@@ -289,7 +289,8 @@ final class ImportedPodcastPlacementCoordinator {
                     try Task.checkCancellation()
                     let fusedResolutions = ImportedPodcastPlacement.fuse(
                         queries: queries, records: records, acoustic: resolutions,
-                        recipientTranscript: recipientTranscript)
+                        recipientTranscript: recipientTranscript,
+                        layer: layer, recipientDurationMs: item.media?.durationMs)
                     let updated = ImportedPodcastPlacement.apply(
                         fusedResolutions, to: records, layer: &layer,
                         recipientDigest: recipientDigest, hasTranscript: recipientTranscript != nil)

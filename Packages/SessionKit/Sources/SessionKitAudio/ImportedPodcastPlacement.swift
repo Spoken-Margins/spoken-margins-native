@@ -26,8 +26,80 @@ public enum ImportedPodcastPlacement {
 
     /// Turns the transcript and acoustic evidence for one layer's Margins into one placement each. The
     /// order is part of the rule: fuse each Margin, drop contradictions, interpolate between the verified
-    /// ones, drop contradictions again, then let an edition rejection override everything.
+    /// ones, drop contradictions again, let an edition rejection override everything, and last, when the
+    /// pass knows the layer, place the Margins that sent only a clock time (`placingClockOnlyMargins`).
     public static func fuse(
+        queries: [PodcastPortableAnchorQuery],
+        records: [ImportedCommentaryInterjection],
+        acoustic: [String: ImportedAnchorResolution],
+        recipientTranscript: TranscriptTimeline?,
+        layer: ImportedCommentaryLayer? = nil,
+        recipientDurationMs: Int? = nil
+    ) -> [String: ImportedAnchorResolution] {
+        let evidenced = fuseEvidence(
+            queries: queries, records: records, acoustic: acoustic, recipientTranscript: recipientTranscript)
+        guard let layer else { return evidenced }
+        return placingClockOnlyMargins(
+            evidenced, records: records, layer: layer, recipientDurationMs: recipientDurationMs)
+    }
+
+    /// How far a placed Margin may sit from its sender's time before it says the two copies' clocks differ.
+    /// Acoustic matches land within about a second of the true spot on the same file; an inserted or swapped
+    /// advert moves everything after it by tens of seconds.
+    public static let clockAgreementToleranceMs = 2_000
+
+    /// Places the Margins that sent nothing to find their spot by, only the sender's clock time, at that time,
+    /// as an approximate `timestampFallback` (#3041). The web app's packets are all like this: it streams the
+    /// episode, so it has no bytes to fingerprint or hash. Left unplaced, such a Margin never played during
+    /// playback, only when tapped, which plays it at the same time (`SharedMarginPlaybackPosition`, #158).
+    /// "Unplaced moments play at the sender's time, labelled 'about here'. Never silently wrong."
+    /// (`docs/design/sharing-with-a-friend.md`).
+    ///
+    /// Only when nothing in the pass says the clock is wrong:
+    /// - no Margin was found on a different edition (an edition rejection);
+    /// - every Margin of the layer that the pass did place sits within `clockAgreementToleranceMs` of its
+    ///   sender's time, so the two copies' clocks agree wherever there is evidence;
+    /// - the sender's time falls inside the listener's copy, when its length is known.
+    /// A Margin that sent evidence and wasn't found, or is ambiguous, keeps that answer.
+    public static func placingClockOnlyMargins(
+        _ resolutions: [String: ImportedAnchorResolution],
+        records: [ImportedCommentaryInterjection],
+        layer: ImportedCommentaryLayer,
+        recipientDurationMs: Int?
+    ) -> [String: ImportedAnchorResolution] {
+        guard layer.itemIdentity.itemType == .podcast, layer.sourceResolutionStatus != .wrongSource,
+              !resolutions.values.contains(where: PodcastAcousticAnchorResolver.isEditionRejection) else {
+            return resolutions
+        }
+        let clocksDisagree = records.contains { record in
+            guard let resolution = resolutions[record.packageScopedId],
+                  PodcastAnchorFusionResolver.isInlinePlacement(resolution), !resolution.isAmbiguous,
+                  let placed = resolution.localMediaTimeMs, let sender = record.anchorEvidence.mediaTimeMs else {
+                return false
+            }
+            return abs(placed - sender) > clockAgreementToleranceMs
+        }
+        guard !clocksDisagree else { return resolutions }
+        var result = resolutions
+        for record in records {
+            guard let resolution = resolutions[record.packageScopedId],
+                  resolution.evidenceClass == .unresolved, !resolution.isAmbiguous,
+                  !record.sentPositionEvidence(in: layer),
+                  let sender = record.anchorEvidence.mediaTimeMs, sender >= 0 else { continue }
+            if let recipientDurationMs, recipientDurationMs > 0, sender >= recipientDurationMs { continue }
+            result[record.packageScopedId] = ImportedAnchorResolution(
+                evidenceClass: .timestampFallback,
+                localMediaTimeMs: sender,
+                algorithmVersion: clockOnlyAlgorithmVersion
+            )
+        }
+        return result
+    }
+
+    /// Persisted with a clock-only placement, so it must not change.
+    public static let clockOnlyAlgorithmVersion = "podcast-anchor-sender-clock.v1"
+
+    private static func fuseEvidence(
         queries: [PodcastPortableAnchorQuery],
         records: [ImportedCommentaryInterjection],
         acoustic: [String: ImportedAnchorResolution],

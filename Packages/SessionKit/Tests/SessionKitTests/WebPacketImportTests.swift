@@ -1,6 +1,7 @@
 import AVFoundation
 import Foundation
 import SessionKit
+import SessionKitAudio
 import SessionKitSharing
 import SessionKitTestInputs
 import ShippedPacketReader
@@ -24,6 +25,13 @@ final class WebPacketImportTests: XCTestCase {
     }
 
     private func importFixture(_ name: String) throws -> (VerifiedSpokenMarginsPackage, [ImportedCommentaryInterjection]) {
+        let (contents, _, margins) = try importFixtureWithLayer(name)
+        return (contents, margins)
+    }
+
+    private func importFixtureWithLayer(
+        _ name: String
+    ) throws -> (VerifiedSpokenMarginsPackage, ImportedCommentaryLayer, [ImportedCommentaryInterjection]) {
         let url = try TestInputs.url(.contracts, "fixtures/web-packets/\(name)")
         let contents = try SpokenMarginsPackageArchive.read(from: url, extractingAssetsTo: root.appendingPathComponent(name))
         let repository = InMemorySessionRepository()
@@ -36,7 +44,7 @@ final class WebPacketImportTests: XCTestCase {
         let shippedIDs = try ShippedPacketReader.importPacket(at: url)
         XCTAssertEqual(shippedIDs.sorted(), margins.map(\.packageScopedId), "Build 29's reader reads every Margin")
         try keepForLaterShippedBuilds(url, sent: margins.map(\.packageScopedId))
-        return (contents, margins)
+        return (contents, layer, margins)
     }
 
     func testWrittenMarginsImportAtTheSendersTimes() throws {
@@ -65,6 +73,40 @@ final class WebPacketImportTests: XCTestCase {
         XCTAssertGreaterThan(decodedMs, 2_500)
         XCTAssertLessThanOrEqual(abs(decodedMs - declared), 150, "declared \(declared) ms, decoded \(decodedMs) ms")
         XCTAssertEqual(contents.manifest.assets.map(\.mimeType), ["audio/mp4"])
+    }
+
+    /// The owner's report on Build 35 (#3041): a web packet imported fine and its Margin played when tapped, but never
+    /// during playback. A web packet's Margins carry only the sender's clock time, and the placement pass left them
+    /// unplaced. Run this fixture through the pass's own steps (the acoustic resolver on a stand-in file, fusion,
+    /// apply) and check that every Margin plays during playback, at the sender's time, marked approximate.
+    func testWebMarginsArePlacedAtTheSendersTimesAndPlayDuringPlayback() async throws {
+        let (_, importedLayer, records) = try importFixtureWithLayer("web-voice.spokenmargins")
+        var layer = importedLayer
+        XCTAssertTrue(records.allSatisfy { !$0.sentPositionEvidence(in: layer) }, "a web packet sends only clock times")
+
+        let listenersCopy = root.appendingPathComponent("episode.mp3")
+        try Data("not the sender's file".utf8).write(to: listenersCopy)
+        let queries = records.map {
+            PodcastPortableAnchorQuery(packageScopedId: $0.packageScopedId, senderMediaTimeMs: $0.anchorEvidence.mediaTimeMs,
+                                       evidence: [], evidenceWasDeclared: !$0.anchorEvidence.machineEvidenceAssetIds.isEmpty)
+        }
+        let acoustic = try await PodcastAcousticAnchorResolver.resolve(
+            queries: queries, recipientAudioURL: listenersCopy, senderExactEditionSHA256: layer.itemIdentity.exactEditionSHA256,
+            senderDurationMs: layer.itemIdentity.durationMs, strongSourceIdentity: true)
+        let fused = ImportedPodcastPlacement.fuse(
+            queries: queries, records: records, acoustic: acoustic, recipientTranscript: nil,
+            layer: layer, recipientDurationMs: 3_600_000)
+        let placed = ImportedPodcastPlacement.apply(
+            fused, to: records, layer: &layer, recipientDigest: String(repeating: "c", count: 64), hasTranscript: false)
+
+        XCTAssertEqual(placed.map(\.resolution.evidenceClass), [.timestampFallback, .timestampFallback])
+        XCTAssertEqual(placed.map(\.resolution.localMediaTimeMs), [30_000, 125_250])
+        let prompts = SharedMarginPrompts.prompts(
+            layers: [layer], recordsByLayerID: [layer.id: placed], announcedIDs: [], includeAnnounced: false)
+        XCTAssertEqual(prompts.map(\.interjection.packageScopedId), placed.map(\.packageScopedId), "both play during playback")
+        let review = SharedMarginReview.entries(layers: [layer], records: [layer.id: placed])
+        XCTAssertEqual(review.map(\.mediaTimeMs), [125_250], "the voice Margin is offered, at the sender's time")
+        XCTAssertTrue(review.allSatisfy(\.isApproximate), "a clock placement is never shown as a verified one")
     }
 
     /// A voice Margin the web listener left without words travels with placeholder words in its transcript (#3025),

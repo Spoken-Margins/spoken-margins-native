@@ -180,6 +180,97 @@ final class ImportedPodcastPlacementTests: XCTestCase {
         }
     }
 
+    // MARK: Margins sent with only a clock time (#3041)
+
+    func testAClockOnlyMarginIsPlacedApproximatelyAtTheSendersTime() {
+        let records = [record(id: "a", senderMs: 18_838), record(id: "b", senderMs: 600_400)]
+        let fused = ImportedPodcastPlacement.fuse(
+            queries: queries(records), records: records, acoustic: [:], recipientTranscript: nil,
+            layer: layer(id: "layer"), recipientDurationMs: 3_670_000)
+        for (id, ms) in [("a", 18_838), ("b", 600_400)] {
+            XCTAssertEqual(fused[id]?.evidenceClass, .timestampFallback, id)
+            XCTAssertEqual(fused[id]?.localMediaTimeMs, ms, id)
+            XCTAssertTrue(SharedMarginPrompts.isPlayable(fused[id]!), "plays during playback: \(id)")
+            XCTAssertEqual(SharedMarginPlacementWording.line(for: fused[id]!), SharedMarginPlacementWording.approximate, id)
+        }
+        XCTAssertEqual(fused["a"]?.algorithmVersion, ImportedPodcastPlacement.clockOnlyAlgorithmVersion)
+        XCTAssertEqual(ImportedPodcastPlacement.clockOnlyAlgorithmVersion, "podcast-anchor-sender-clock.v1")
+    }
+
+    func testAMarginThatSentEvidenceIsNeverPlacedByTheClock() {
+        let fingerprinted = record(id: "fingerprinted", senderMs: 10_000, anchor: PortableAnchorEvidence(
+            anchorType: .media, mediaTimeMs: 10_000, machineEvidenceAssetIds: ["pre"]))
+        let worded = record(id: "worded", senderMs: 20_000, anchor: PortableAnchorEvidence(
+            anchorType: .media, prefix: contextWords, mediaTimeMs: 20_000))
+        let records = [fingerprinted, worded]
+        let fused = ImportedPodcastPlacement.fuse(
+            queries: queries(records), records: records, acoustic: [:], recipientTranscript: nil, layer: layer(id: "layer"))
+        XCTAssertEqual(fused["fingerprinted"]?.evidenceClass, .unresolved)
+        XCTAssertEqual(fused["worded"]?.evidenceClass, .unresolved)
+
+        // The sender named their exact file, and the listener's isn't it: the clock belongs to another edition.
+        let bare = [record(id: "a", senderMs: 10_000)]
+        let otherFile = ImportedPodcastPlacement.fuse(
+            queries: queries(bare), records: bare, acoustic: [:], recipientTranscript: nil,
+            layer: layer(id: "layer", exactEditionSHA256: String(repeating: "b", count: 64)))
+        XCTAssertEqual(otherFile["a"]?.evidenceClass, .unresolved)
+    }
+
+    func testTheClockIsNotTrustedWhenAPlacedMarginShowsTheCopiesDiffer() {
+        let fingerprinted = PortableAnchorEvidence(anchorType: .media, mediaTimeMs: 10_000, machineEvidenceAssetIds: ["pre"])
+        let records = [record(id: "verified", senderMs: 10_000, anchor: fingerprinted), record(id: "bare", senderMs: 20_000)]
+        func pass(placedAt ms: Int) -> [String: ImportedAnchorResolution] {
+            ImportedPodcastPlacement.fuse(
+                queries: queries(records), records: records,
+                acoustic: ["verified": ImportedAnchorResolution(evidenceClass: .acousticVerified, localMediaTimeMs: ms, confidence: 0.9)],
+                recipientTranscript: nil, layer: layer(id: "layer"))
+        }
+        // An advert 30 s longer before the verified Margin: the sender's clock is off here.
+        XCTAssertEqual(pass(placedAt: 40_000)["bare"]?.evidenceClass, .unresolved)
+        XCTAssertEqual(pass(placedAt: 40_000)["verified"]?.localMediaTimeMs, 40_000, "the verified placement is untouched")
+        // The match agrees with the sender's clock, so the bare one may follow it.
+        XCTAssertEqual(pass(placedAt: 11_000)["bare"]?.evidenceClass, .timestampFallback)
+        XCTAssertEqual(pass(placedAt: 11_000)["bare"]?.localMediaTimeMs, 20_000)
+    }
+
+    func testTheClockIsNotTrustedAfterAnEditionRejectionOrPastTheEndOfTheCopy() {
+        let fingerprinted = PortableAnchorEvidence(anchorType: .media, mediaTimeMs: 10_000, machineEvidenceAssetIds: ["pre"])
+        let records = [record(id: "rejected", senderMs: 10_000, anchor: fingerprinted), record(id: "bare", senderMs: 20_000)]
+        let rejected = ImportedPodcastPlacement.fuse(
+            queries: queries(records), records: records,
+            acoustic: ["rejected": PodcastAcousticAnchorResolver.editionRejection],
+            recipientTranscript: nil, layer: layer(id: "layer"))
+        XCTAssertNil(rejected["bare"]?.localMediaTimeMs)
+
+        let late = [record(id: "late", senderMs: 3_000_000)]
+        let shorter = ImportedPodcastPlacement.fuse(
+            queries: queries(late), records: late, acoustic: [:], recipientTranscript: nil,
+            layer: layer(id: "layer"), recipientDurationMs: 2_000_000)
+        XCTAssertEqual(shorter["late"]?.evidenceClass, .unresolved)
+
+        var wrong = layer(id: "layer")
+        wrong.sourceResolutionStatus = .wrongSource
+        let wrongSource = ImportedPodcastPlacement.fuse(
+            queries: queries(late), records: late, acoustic: [:], recipientTranscript: nil, layer: wrong)
+        XCTAssertEqual(wrongSource["late"]?.evidenceClass, .unresolved)
+    }
+
+    /// A clock placement saved by one pass is still a Margin that sent no evidence: the next pass on the same
+    /// file places it again rather than reading the saved placement as evidence and leaving it unresolved.
+    func testASecondPassKeepsAClockPlacement() {
+        var target = layer(id: "layer")
+        var records = [record(id: "a", senderMs: 18_838)]
+        for pass in 1...2 {
+            let fused = ImportedPodcastPlacement.fuse(
+                queries: queries(records), records: records, acoustic: [:], recipientTranscript: nil, layer: target)
+            records = ImportedPodcastPlacement.apply(
+                fused, to: records, layer: &target, recipientDigest: "same", hasTranscript: pass == 2)
+            XCTAssertEqual(records[0].resolution.evidenceClass, .timestampFallback, "pass \(pass)")
+            XCTAssertEqual(records[0].resolution.localMediaTimeMs, 18_838, "pass \(pass)")
+            XCTAssertEqual(target.sourceResolutionStatus, .resolved, "pass \(pass)")
+        }
+    }
+
     // MARK: applying a pass
 
     func testApplyKeepsAVerifiedPlacementOnTheSameEditionAndSetsTheDigest() {
@@ -224,11 +315,12 @@ final class ImportedPodcastPlacementTests: XCTestCase {
         itemType: SharedItemType = .podcast,
         deletedAt: Date? = nil,
         episodeMapEvidencePaths: [String: String]? = nil,
-        resolvedRecipientEditionSHA256: String? = nil
+        resolvedRecipientEditionSHA256: String? = nil,
+        exactEditionSHA256: String? = nil
     ) -> ImportedCommentaryLayer {
         ImportedCommentaryLayer(
             id: id, itemId: "item", packageDigest: "digest-\(id)", packageId: "package-\(id)",
-            itemIdentity: SharedItemIdentity(itemType: itemType, title: "Episode"),
+            itemIdentity: SharedItemIdentity(itemType: itemType, title: "Episode", exactEditionSHA256: exactEditionSHA256),
             importedAt: date, deletedAt: deletedAt, episodeMapEvidencePaths: episodeMapEvidencePaths,
             resolvedRecipientEditionSHA256: resolvedRecipientEditionSHA256)
     }
