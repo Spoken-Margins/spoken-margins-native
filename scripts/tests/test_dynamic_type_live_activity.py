@@ -49,9 +49,9 @@ class LiveActivityDynamicTypeTests(unittest.TestCase):
         text = _text()
         self.assertIn("dynamicTypeSize.isAccessibilitySize ? 2 : 1", text)
         # The Dynamic Island lines, the small and medium titles and chapters, and the next-chapter title.
-        self.assertGreaterEqual(text.count(".adaptiveLineLimit()"), 9)
+        self.assertGreaterEqual(text.count(".adaptiveLineLimit()"), 8)
         # What keeps a bare one-line limit is a short word or a button label that shrinks to fit.
-        self.assertEqual(text.count(".lineLimit(1)"), 5)
+        self.assertEqual(text.count(".lineLimit(1)"), 6)
 
     def test_the_circles_are_fixed_size_controls_that_never_drop_below_a_touch_target(self):
         text = _text()
@@ -74,14 +74,36 @@ class LiveActivityDynamicTypeTests(unittest.TestCase):
         header = _between(text, "struct Gate2LiveActivityView", "private var transportControls")
         self.assertIn("nextNavigation", header)
 
-    def test_the_card_height_budget_holds_at_the_default_text_size(self):
+    def test_the_next_chip_adds_no_height_and_no_tap_area_over_text(self):
+        # The audit on 9e1ce20: a line under the chapter title made a paused card about 173 pt, and its 15 pt hit area
+        # reached up over the chapter title, so tapping the title skipped the chapter.
+        text = _text()
+        header = _between(text, "struct Gate2LiveActivityView", "private var transportControls")
+        title_column, trailing = header.split("Spacer()", 1)
+        self.assertNotIn("nextNavigation", title_column, "the chip is not under the titles")
+        self.assertLess(trailing.index("headlineWord"), trailing.index("nextNavigation"))
+        chip = _between(text, "private func nextNavigationLabel", "private struct Gate2SharedMarginButtons")
+        match = re.search(r"\.expandedHitArea\(top: ([0-9.]+), bottom: ([0-9.]+)\)", chip)
+        self.assertIsNotNone(match, "the chip grows its tap area by hand, up and down by different amounts")
+        top, bottom = float(match.group(1)), float(match.group(2))
+        chip_height = _constant(_between(text, "enum Gate2ControlSize", "private struct AdaptiveLineLimit"), "nextChipHeight")
+        self.assertGreaterEqual(chip_height + top + bottom, MIN_TOUCH_TARGET)
+        self.assertLessEqual(top, 4, "above the chip is the state word; keep clear of it")
+        # Below the chip: a 6 pt gap, the 4 pt progress bar and a 6 pt gap, then the transport row.
+        self.assertLessEqual(bottom, 6 + 4 + 6)
+
+    def test_the_card_height_budget_holds_at_the_default_text_size_even_when_paused(self):
         text = _text()
         helper = _between(text, "enum Gate2ControlSize", "private struct AdaptiveLineLimit")
-        play = _constant(helper, "play")
-        # headline 22 + chapter 16 + next line 13 and their 2 pt gaps, the progress bar, and the 6 pt stack gaps and 10 pt
-        # vertical padding. The Summary and Discuss row and the paused prompt are not counted.
-        height = 2 * 10 + (22 + 2 + 16 + 2 + 13) + 6 + 4 + 6 + play
-        self.assertLessEqual(height, LOCK_SCREEN_MAX_HEIGHT, height)
+        play, chip = _constant(helper, "play"), _constant(helper, "nextChipHeight")
+        # 10 pt padding top and bottom; the header is the taller of the title column (22 + 2 + 16) and the trailing
+        # column (state word 14 + the chip); a 6 pt gap, the 4 pt progress bar and a 6 pt gap; the transport row. A
+        # paused card adds the 6 pt gap and the 20 pt "Paused, tap to resume" line. The Summary and Discuss row is not
+        # counted: it was already there and `main` is over the limit with it.
+        header = max(22 + 2 + 16, 14 + chip)
+        base = 2 * 10 + header + 6 + 4 + 6 + play
+        paused = base + 6 + 20
+        self.assertLessEqual(paused, LOCK_SCREEN_MAX_HEIGHT, paused)
 
     def test_the_base_sizes_fit_one_row_on_the_narrowest_lock_screen(self):
         helper = _between(_text(), "enum Gate2ControlSize", "private struct AdaptiveLineLimit")

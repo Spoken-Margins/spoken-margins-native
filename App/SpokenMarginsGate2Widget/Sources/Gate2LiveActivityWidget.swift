@@ -228,16 +228,20 @@ private struct Gate2LiveActivityView: View {
                         .foregroundStyle(.white.opacity(0.78))
                         .adaptiveLineLimit()
                         .minimumScaleFactor(0.82)
+                }
+                Spacer()
+                // The next-chapter action sits under the state word, in the header's free corner, so it adds no
+                // height to the card and no tappable area over the titles (#1940).
+                VStack(alignment: .trailing, spacing: 0) {
+                    Text(state.headlineWord)
+                        .font(.caption.weight(.bold).monospaced())
+                        .foregroundStyle(state.isRecording ? state.recordingTint : .white)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
                     if state.sharedMarginSenderLabel == nil {
                         nextNavigation
                     }
                 }
-                Spacer()
-                Text(state.headlineWord)
-                    .font(.caption.weight(.bold).monospaced())
-                    .foregroundStyle(state.isRecording ? state.recordingTint : .white)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
             }
 
             ProgressView(value: Double(max(0, min(100, state.progressPercent))), total: 100)
@@ -347,8 +351,9 @@ private struct Gate2LiveActivityView: View {
         }
     }
 
-    /// Skips to the next chapter or Shared Margin: one compact line under the chapter title. Its text follows the
-    /// text size, and its hit area grows to 44 pt without moving anything.
+    /// Skips to the next chapter or Shared Margin: a small "Next" chip in the header's trailing corner, under the state
+    /// word. The listener hears the next title through its VoiceOver label. The chip is 28 pt tall and its tap area
+    /// grows to 44 pt toward the progress bar, which is not tappable, and never over the titles or the transport row.
     @ViewBuilder
     private var nextNavigation: some View {
         if let nextChapterTitle = state.nextChapterTitle,
@@ -378,31 +383,33 @@ private struct Gate2LiveActivityView: View {
     private func nextNavigationButton(title: String, targetID: String) -> some View {
         if state.nextNavigationKind == .sharedMargin {
             Button(intent: Gate2NextSharedMarginIntent(interjectionID: targetID)) {
-                nextNavigationLabel(label: "Next Margin", title: title)
+                nextNavigationLabel(label: "Next Margin")
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Skip to next Shared Margin")
         } else {
             Button(intent: Gate2NextChapterIntent(chapterId: targetID)) {
-                nextNavigationLabel(label: "Next", title: title)
+                nextNavigationLabel(label: "Next")
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Skip to next chapter, \(title)")
         }
     }
 
-    private func nextNavigationLabel(label: String, title: String) -> some View {
-        HStack(spacing: 4) {
-            Text("\(label): \(title)")
+    private func nextNavigationLabel(label: String) -> some View {
+        HStack(spacing: 3) {
+            Text(label)
                 .font(.caption2.weight(.semibold))
-                .foregroundStyle(.white.opacity(0.86))
-                .adaptiveLineLimit()
-                .minimumScaleFactor(0.78)
+                .lineLimit(1)
             Image(systemName: state.nextNavigationKind == .sharedMargin ? "text.bubble.fill" : "chevron.forward")
                 .font(.caption2.weight(.bold))
-                .foregroundStyle(.white.opacity(0.8))
         }
-        .expandedHitArea(vertical: 15)
+        .foregroundStyle(.white.opacity(0.86))
+        .padding(.horizontal, 8)
+        .frame(minHeight: Gate2ControlSize.nextChipHeight)
+        .background(Color.white.opacity(0.12))
+        .clipShape(Capsule())
+        .expandedHitArea(top: 4, bottom: 12)
     }
 }
 
@@ -546,6 +553,7 @@ enum Gate2ControlSize {
     static let play: CGFloat = 56
     static let record: CGFloat = 44
     static let rowSpacing: CGFloat = 4
+    static let nextChipHeight: CGFloat = 28
     /// A glyph inside a circle stops growing at this size.
     static let glyphCeiling: DynamicTypeSize = .accessibility1
     /// A skim circle also holds its destination time under the icon, so its contents stop sooner.
@@ -565,6 +573,14 @@ private extension View {
     /// nothing (#1940).
     func adaptiveLineLimit() -> some View {
         modifier(AdaptiveLineLimit())
+    }
+
+    /// Grows the hit area by different amounts above and below, for a control with something tappable or readable on
+    /// one side only (#1940).
+    func expandedHitArea(top: CGFloat, bottom: CGFloat) -> some View {
+        padding(.top, top).padding(.bottom, bottom)
+            .contentShape(Rectangle())
+            .padding(.top, -top).padding(.bottom, -bottom)
     }
 
     /// Grows the hit area to 44 pt without moving anything: the layout keeps its size (#1929).
