@@ -14,6 +14,6 @@
     "skipLibCheck": true,
     "types": []
   },
-  "include": ["src/app", "src/shared"],
+  "include": ["src/app", "src/shared", "src/transcribe"],
   "exclude": ["src/**/*.test.ts"]
 }

@@ -82,3 +82,12 @@ test('a setting row of the wrong type keeps its default rather than breaking the
   assert.equal(storedVersion([{ key: SCHEMA_KEY, value: 0 }]), 1);
   assert.equal(storedVersion([]), 1);
 });
+
+test('the transcription answer reads back, and an unknown value means not asked yet', () => {
+  assert.equal(readSettings([]).transcription, '');
+  assert.equal(readSettings([{ key: 'transcription', value: 'on' }]).transcription, 'on');
+  assert.equal(readSettings([{ key: 'transcription', value: 'off' }]).transcription, 'off');
+  // A value no copy writes (or a newer copy's) is not taken as a yes, so nothing downloads on it.
+  assert.equal(readSettings([{ key: 'transcription', value: 'always' }]).transcription, '');
+  assert.equal(readSettings([{ key: 'transcription', value: true }]).transcription, '');
+});

@@ -5,7 +5,9 @@ import { recordVoiceMargin } from '../packet/record.ts';
 import { SHARE_LINKS_ENABLED, uploadLink, type LinkPreview } from '../packet/share-link.ts';
 import { writePacket } from '../packet/write.ts';
 import { readFeed, readSubstackVoice, searchPodcasts } from '../sources/index.ts';
-import type { PacketPort, RecorderPort, Services, SourcesPort } from './ports.ts';
+import { downloadSizeLabel } from '../transcribe/catalog.ts';
+import { createTranscriber } from '../transcribe/client.ts';
+import type { PacketPort, RecorderPort, Services, SourcesPort, TranscriberPort } from './ports.ts';
 
 /**
  * The share-link server's origin, whose `/api/v1/relay` reads feeds a browser may not (#2985). Set at build time
@@ -60,7 +62,10 @@ const packets: PacketPort = {
   },
 };
 
-export const services: Services = { sources, recorder, packets };
+// Nothing starts until the listener turns transcription on: the worker and the model load on the first prepare().
+const transcriber: TranscriberPort = Object.assign(createTranscriber(), { sizeLabel: downloadSizeLabel() });
+
+export const services: Services = { sources, recorder, packets, transcriber };
 
 /**
  * Making share links (#3003): offered only by a build with SHARE_LINKS_ENABLED, which every hosted build leaves
