@@ -129,6 +129,20 @@ export function backupSummary(result: BackupResult, describe: (error: unknown) =
   return { text: parts.join(' '), problem: !result.file || result.failed.length > 0 || result.unplaced > 0 };
 }
 
+/**
+ * What to open for one file that arrived, however it arrived (picker, drop, the installed app's share target, or a
+ * file Android opens the Android app with): a backup `.zip`'s packets, or the file itself. A file with no name (an
+ * opaque Android content URI) is looked inside, so a backup still unpacks. Anything that isn't a backup goes to the
+ * packet reader as it is, which says plainly when it isn't a Margin file.
+ */
+export async function packetsToOpen(bytes: Uint8Array, fileName: string | undefined): Promise<Array<{ name: string | undefined; bytes: Uint8Array }>> {
+  if (isBackupArchive(fileName) || fileName === undefined) {
+    const packets = await packetsInBackup(bytes).catch(() => []);
+    if (packets.length > 0) return packets;
+  }
+  return [{ name: fileName, bytes }];
+}
+
 /** Whether a picked file is a backup `.zip` rather than a single packet. */
 export function isBackupArchive(fileName: string | undefined): boolean {
   return /\.zip$/i.test(fileName ?? '');

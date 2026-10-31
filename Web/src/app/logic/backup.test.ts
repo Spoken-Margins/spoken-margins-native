@@ -8,7 +8,7 @@ import { writePacket } from '../../packet/write.ts';
 import { listZip, writeZip } from '../../packet/zip.ts';
 import type { Episode, Margin } from '../../shared/model.ts';
 import { voicePlaceholder } from '../../shared/placeholder.ts';
-import { backupSummary, buildBackup, isBackupArchive, MARGINS_PER_PACKET, packetsInBackup, uniqueName, type WritePacket } from './backup.ts';
+import { backupSummary, buildBackup, isBackupArchive, MARGINS_PER_PACKET, packetsInBackup, packetsToOpen, uniqueName, type WritePacket } from './backup.ts';
 
 const fixtures = new URL('../../../../Contracts/fixtures/web-packets/', import.meta.url);
 
@@ -136,4 +136,26 @@ test('names stay unique without regard to case, and only .zip files are read as 
   assert.equal(isBackupArchive('Spoken-Margins-backup-2026-10-30.ZIP'), true);
   assert.equal(isBackupArchive('Episode.spokenmargins'), false);
   assert.equal(isBackupArchive(undefined), false);
+});
+
+test('a backup opens as its packets from every way in, named or not; a packet or other file opens as itself', async () => {
+  const two: Margin = { id: 'b1', episodeId: second.id, atSeconds: 4, createdAt: '2026-10-30T11:00:00Z', text: 'Two' };
+  const backup = await buildBackup({ episodes: [episode, second], shows: [show], margins: [...writtenMargins(), two] }, write);
+  const zip = backup.file!.bytes;
+  const names = ['Episode-1-example-episode.spokenmargins', 'Episode-2.spokenmargins'];
+  // Picked, dropped or shared to the installed app: the name says it is a backup.
+  assert.deepEqual((await packetsToOpen(zip, 'Spoken-Margins-backup-2026-10-30.zip')).map((p) => p.name), names);
+  // Opened with the Android app through an opaque content address: no name, so its contents say so.
+  assert.deepEqual((await packetsToOpen(zip, undefined)).map((p) => p.name), names);
+
+  const single = await buildBackup({ episodes: [episode], shows: [show], margins: writtenMargins() }, write);
+  for (const name of ['Episode-1.spokenmargins', undefined]) {
+    const opened = await packetsToOpen(single.file!.bytes, name);
+    assert.equal(opened.length, 1, 'a packet is not a backup, though both are zips');
+    assert.equal(opened[0]!.bytes, single.file!.bytes);
+    assert.equal(opened[0]!.name, name);
+  }
+  const junk = new Uint8Array([1, 2, 3]);
+  assert.deepEqual(await packetsToOpen(junk, 'x.zip'), [{ name: 'x.zip', bytes: junk }]);
+  assert.deepEqual(await packetsToOpen(junk, undefined), [{ name: undefined, bytes: junk }]);
 });
