@@ -10,11 +10,16 @@ import XCTest
 final class PlaybackMarginsFilterContrastTests: XCTestCase {
     func testTheSelectedFilterSegmentReachesThreeToOneAgainstTheTray() throws {
         let image = try render(selection: .mine)
+        // The pixel positions below only mean something on the 360 x 60 canvas this test draws.
+        XCTAssertEqual([image.width, image.height], [360, 60], "the render is not the size the pixel positions assume")
         // 360 pt wide, 4 pt tray padding, three segments with 4 pt gaps: "Mine" spans about x 123 to 237.
         let selected = try XCTUnwrap(luminance(of: image, x: 130, y: 26))
         let tray = try XCTUnwrap(luminance(of: image, x: 2, y: 26))
         let ratio = (selected + 0.05) / (tray + 0.05)
-        XCTAssertGreaterThanOrEqual(ratio, 3, "Selected segment is \(ratio):1 against the tray")
+        // Name both pixels so a failure on a hosted run says which one was off, not only the ratio (#2970).
+        XCTAssertGreaterThanOrEqual(
+            ratio, 3, "Selected segment is \(ratio):1 against the tray (selected \(selected), tray \(tray), image \(image.width) x \(image.height))"
+        )
     }
 
     private func render(selection: PlaybackMarginsList.Filter) throws -> CGImage {
@@ -24,6 +29,9 @@ final class PlaybackMarginsFilterContrastTests: XCTestCase {
         }
         .frame(width: 360, height: 60)
         .environment(\.colorScheme, .dark)
+        // The filter lays out as a column at accessibility text sizes, which would move "Mine" off the sampled pixel.
+        // Pin the size so the render doesn't depend on the simulator's or an earlier test's text setting (#2970).
+        .environment(\.dynamicTypeSize, .large)
         let renderer = ImageRenderer(content: view)
         renderer.scale = 1
         return try XCTUnwrap(renderer.cgImage)
