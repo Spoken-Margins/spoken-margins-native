@@ -15,6 +15,15 @@
     { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
     { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
   ],
+  "file_handlers": [
+    {
+      "action": "./",
+      "accept": {
+        "application/vnd.spokenmargins.package+zip": [".spokenmargins"]
+      },
+      "launch_type": "single-client"
+    }
+  ],
   "share_target": {
     "action": "./share-target",
     "method": "POST",

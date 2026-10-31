@@ -1,6 +1,6 @@
-// Playwright builds the app into `dist-e2e/` and serves it through `vite preview` (see webServer), in Chromium only,
-// at a phone size (390×844) and a laptop size (1280×800). Screenshots go to `artifacts/web-2982/` at the repo
-// root, which git ignores.
+// Playwright builds the app into `dist-e2e/` and serves it through `vite preview` (see webServer), in Chromium at a
+// phone size (390×844) and a laptop size (1280×800), and the `phone-*` specs at iPhone size in Chrome and WebKit.
+// Screenshots go to `artifacts/web-2982/` at the repo root, which git ignores.
 import { fileURLToPath } from 'node:url';
 import { defineConfig, devices } from '@playwright/test';
 
@@ -27,11 +27,26 @@ export default defineConfig({
   projects: [
     {
       name: 'phone',
+      testIgnore: /phone-[\w-]+\.spec\.ts$/,
       use: { ...devices['Desktop Chrome'], viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: false },
     },
     {
       name: 'laptop',
+      testIgnore: /phone-[\w-]+\.spec\.ts$/,
       use: { ...devices['Desktop Chrome'], viewport: { width: 1280, height: 800 } },
+    },
+    {
+      // The owner's phone feedback (#2977) is checked at iPhone size in installed Google Chrome and in WebKit, the
+      // engine under Safari on an iPhone: specs named `phone-*.spec.ts`.
+      name: 'phone-chrome',
+      testMatch: /phone-[\w-]+\.spec\.ts$/,
+      use: { ...devices['Desktop Chrome'], channel: 'chrome', viewport: { width: 393, height: 659 }, hasTouch: true },
+    },
+    {
+      name: 'phone-webkit',
+      testMatch: /phone-[\w-]+\.spec\.ts$/,
+      // WebKit takes none of Chrome's fake-microphone switches; it brings its own mock microphone.
+      use: { ...devices['iPhone 15 Pro'], launchOptions: { args: [] } },
     },
     {
       // On-device transcription (transcribe.spec.ts) in installed Google Chrome, the browser listeners use, rather
