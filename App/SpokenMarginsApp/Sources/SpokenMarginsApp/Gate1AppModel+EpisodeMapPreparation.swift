@@ -235,30 +235,29 @@ extension Gate1AppModel {
         try await Gate1AppModel.offMain { try SourceTranscriptionCaches.purge(itemId: itemId) }
     }
 
+    /// Queues an episode-map job for every downloaded episode that has none. The spine, summary and job reads and the
+    /// job save run off the main actor, one row after another in line with any earlier call (#2509); only the check
+    /// that a downloaded file is still there comes back, because the download coordinator answers it on the main actor.
     func submitAutomaticEpisodeMapPreparationIfNeeded() {
         guard automaticEpisodeMapPreparationPolicy == .whileCharging,
               let store else { return }
-        // A summary has the media kind; a whole `loadItem` per row decoded every article's text (#2506).
-        let candidates = libraryItems.compactMap { row -> LibraryItemSummary? in
-            guard (try? store.loadEditionFingerprintSpine(itemId: row.id)) == nil,
-                  let item = try? store.loadItemSummary(id: row.id),
-                  item.media?.sourceType == .nativeMediaFile || item.media?.sourceType == .remoteStream,
-                  podcastDownloadCoordinator?.validatedLocalURL(for: row.id) != nil else { return nil }
-            return item
+        let rowIds = libraryItems.map(\.id)
+        Task { [weak self] in
+            let candidates = (try? await StoreReader(store).read {
+                AutomaticEpisodeMapJobs.candidates(itemIds: rowIds, store: $0)
+            }) ?? []
+            guard let self else { return }
+            let downloaded = candidates.filter { self.podcastDownloadCoordinator?.validatedLocalURL(for: $0) != nil }
+            // The listener may have turned the setting off while the reads ran.
+            if !downloaded.isEmpty, self.automaticEpisodeMapPreparationPolicy == .whileCharging {
+                _ = try? await StoreReader(store).readInOrder(AutomaticEpisodeMapJobs.orderKey) {
+                    AutomaticEpisodeMapJobs.enqueue(itemIds: downloaded, policy: .whileCharging, store: $0)
+                }
+            }
+            #if canImport(BackgroundTasks) && canImport(UIKit)
+            self.scheduleAudioPreparationBackgroundTask()
+            #endif
         }
-        for item in candidates {
-            let id = "episode-map-job-\(safePodcastEvidenceComponent(item.id))"
-            // One job by id, not every job decoded to build a set of ids (#2507).
-            if let existing = try? store.loadEpisodeMapPreparationJob(id: id), !existing.isCancelled { continue }
-            try? store.saveEpisodeMapPreparationJob(EpisodeMapPreparationJob(
-                id: id,
-                itemId: item.id,
-                policy: .whileCharging
-            ))
-        }
-        #if canImport(BackgroundTasks) && canImport(UIKit)
-        scheduleAudioPreparationBackgroundTask()
-        #endif
     }
 }
 
