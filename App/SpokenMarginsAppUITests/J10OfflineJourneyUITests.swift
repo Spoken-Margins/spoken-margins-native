@@ -144,13 +144,20 @@ final class J10OfflineJourneyUITests: XCTestCase {
             // (ShareLinkOpeningTests pins this exact link).
             let link = try XCTUnwrap(URL(string:
                 "https://spokenmargins.proximitytoprogress.com/l/0123456789abcdef0123456789abcdef#AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"))
-            app.open(link)
-            guard app.wait(for: .runningForeground, timeout: 5) else {
-                // J10: if Safari takes the link, the universal link didn't route; neither a pass nor a fail.
-                throw XCTSkip("The share link opened outside the app, so this simulator didn't route it")
-            }
+            // `XCUIApplication.open(_:)` launches the app again (the hosted run's log shows "Launch" and a new
+            // automation session at this step, #2919), which ends the article and lands on a fresh Library, so it
+            // can't show playback surviving a failed link. The system opens the link, as a tap in another app would,
+            // and hands it to the app that is already running.
+            XCUIDevice.shared.system.open(link)
             let banner = element("app.feedback.banner")
-            XCTAssertTrue(banner.waitForExistence(timeout: 20), "The share link showed no message")
+            guard banner.waitForExistence(timeout: 20) else {
+                // J10: if Safari takes the link, the universal link didn't route; neither a pass nor a fail.
+                // The app is still foreground when `open` returns, so only a missing message tells the two apart.
+                if app.state != .runningForeground {
+                    throw XCTSkip("The share link opened outside the app, so this simulator didn't route it")
+                }
+                return XCTFail("The share link showed no message")
+            }
             screenshot("J10 share link with the server unreachable")
             // "offline" means the fetch went to the swapped host; the real server would answer with a not-found.
             XCTAssertTrue(banner.label.localizedCaseInsensitiveContains("offline"),
