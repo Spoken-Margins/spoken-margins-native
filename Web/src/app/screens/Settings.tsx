@@ -1,5 +1,12 @@
+import { useState } from 'react';
 import { useData } from '../data.tsx';
-import { RELAY_BODY } from '../ui.tsx';
+import { downloadFile } from '../download.ts';
+import { DownloadIcon } from '../icons.tsx';
+import { backupSummary, buildBackup } from '../logic/backup.ts';
+import { plainError } from '../logic/messages.ts';
+import { lastBackupLine, persistNote } from '../logic/storage.ts';
+import { services } from '../services.ts';
+import { RELAY_BODY, useUi } from '../ui.tsx';
 
 export function Settings() {
   const { settings, setSetting } = useData();
@@ -44,6 +51,8 @@ export function Settings() {
         </details>
       </section>
 
+      <BackupSection />
+
       <section className="settings-section">
         <h2>Privacy</h2>
         <p>Your shows, your place in each episode and your Margins stay in this browser. Nothing is sent to us, and there is no account.</p>
@@ -64,5 +73,53 @@ export function Settings() {
         <p className="muted">Web app, early version. Source code under AGPL-3.0.</p>
       </section>
     </div>
+  );
+}
+
+/**
+ * Backing up (#3012). Margins live only in this browser, which may clear them, so one tap saves all of them in
+ * files the iPhone app and this web app open. Says when that last happened, and, quietly, when the browser
+ * hasn't agreed to keep them.
+ */
+function BackupSection() {
+  const data = useData();
+  const { toast } = useUi();
+  const [busy, setBusy] = useState(false);
+  const note = persistNote(data.persist, data.settings.persistAsked);
+  const count = data.margins.length;
+
+  const backUp = async () => {
+    setBusy(true);
+    try {
+      const result = await buildBackup(data, (episode, margins, show) => services.packets.writePacket(episode, margins, show));
+      if (result.file) {
+        downloadFile(new File([result.file.bytes as BlobPart], result.file.name, { type: result.file.mimeType }));
+        await data.setSetting('lastBackupAt', new Date().toISOString());
+      }
+      const summary = backupSummary(result, (error) => plainError(error));
+      toast(summary.text, summary.problem ? 'problem' : 'info');
+    } catch (error) {
+      toast(`Your Margins weren’t backed up. ${plainError(error)}`, 'problem');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="settings-section" aria-labelledby="backup-title">
+      <h2 id="backup-title">Backing up your Margins</h2>
+      <p>Your Margins are kept only in this browser. A backup saves all of them as a file that the iPhone app and this web app open.</p>
+      {note && (
+        <p className="storage-note" data-testid="storage-note">
+          {note}
+        </p>
+      )}
+      <p data-testid="last-backup">{lastBackupLine(data.settings.lastBackupAt || undefined)}</p>
+      <button type="button" className="button backup-button" disabled={busy || count === 0} onClick={() => void backUp()}>
+        <DownloadIcon />
+        Back up all Margins
+      </button>
+      {count === 0 && <p className="muted">No Margins yet.</p>}
+    </section>
   );
 }
