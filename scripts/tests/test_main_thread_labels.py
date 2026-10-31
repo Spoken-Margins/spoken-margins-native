@@ -29,7 +29,6 @@ SITES = {
         'nowPlaying.installCommands', 'nowPlaying.remoteEvents', 'nowPlaying.commandAvailability', 'nowPlaying.infoWrite'],
     'Gate1AppModel+MarginVoicePlayback.swift': ['importedCommentaryAutoPlay'],
     'Gate1AppModel+PackageImport.swift': ['pendingPackageHandoffs', 'restoreAudioCleanup'],
-    'SpokenMarginsPackageImportCoordinator.swift': ['stagePackageFiles'],
     'Gate1AppModel+PodcastPlacementDeferral.swift': ['resumeDeferredPlacements'],
     'Gate1AppModel+SourceLinkBackground.swift': ['sharedLinkVoiceover'],
     'Gate1AppModel+SourceLinkForm.swift': ['sourceLinkFormFinish'],

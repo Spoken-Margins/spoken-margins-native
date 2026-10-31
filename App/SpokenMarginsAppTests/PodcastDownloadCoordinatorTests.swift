@@ -189,7 +189,7 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
             id: "podcast-offline-episode", itemId: "episode", category: .podcast,
             relativePath: "PodcastAudio/episode.mp3", byteCount: 1, isReproducible: true
         ))
-        coordinator.removeItem("episode")
+        coordinator.queueRemoval("episode")
         coordinator.flushPendingRowWritesForTesting()
 
         XCTAssertTrue(try fixture.store.loadOwnedOfflineAssets().isEmpty)
@@ -402,7 +402,7 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
         coordinator.register(itemId: "episode", remoteURL: URL(string: "https://example.com/audio")!)
         await head.waitUntilRequested()
         let preparation = try XCTUnwrap(coordinator.preparationTasks["episode"])
-        coordinator.removeItem("episode")
+        coordinator.queueRemoval("episode")
         await head.finish(8)
         await preparation.value
         XCTAssertEqual(starts, 0)
@@ -478,7 +478,7 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
         coordinator.register(itemId: "episode", remoteURL: URL(string: "https://example.com/audio")!)
         try await waitForStarts(1, starts: { started.count })
         let old = started[0]
-        coordinator.removeItem("episode")
+        coordinator.queueRemoval("episode")
         coordinator.register(itemId: "episode", remoteURL: URL(string: "https://example.com/new-audio")!)
         try await waitForStarts(2, starts: { started.count })
         let current = started[1]
@@ -924,7 +924,7 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
         coordinator.register(itemId: "episode", remoteURL: URL(string: "https://example.com/audio")!)
         try await waitForStarts(1, starts: { started.count })
         let old = started[0]
-        coordinator.removeItem("episode")
+        coordinator.queueRemoval("episode")
         coordinator.register(itemId: "episode", remoteURL: URL(string: "https://example.com/new-audio")!)
         try await waitForStarts(2, starts: { started.count })
         let current = started[1]

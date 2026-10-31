@@ -104,7 +104,8 @@ extension Gate1AppModel {
             return .opened
         case .restoreAudio(let restore):
             Task { @MainActor [weak self, labels = hangTelemetry.labels] in
-                defer { labels.scoped("restoreAudioCleanup") { _ = try? FileManager.default.removeItem(at: restore.directory) } }
+                // The folder holds the extracted audio, so its removal runs off the main actor (#2510), still after the restore ends.
+                defer { labels.scoped("restoreAudioCleanup") { Task.detached(priority: .utility) { _ = try? FileManager.default.removeItem(at: restore.directory) } } }
                 guard let self else { return }
                 await self.packageImport.restoreAudio(restore)
                 withExtendedLifetime(self) {} // the model stays retained until the work ends, as the old task body did
