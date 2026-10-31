@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -70,8 +71,15 @@ func (s *Store) logAccess(event, id, detail string, now time.Time) error {
 	return err
 }
 
+// errNoSource means the file to copy was not there: the link had nothing left to hold under that name.
+var errNoSource = errors.New("links: nothing to copy")
+
+// copyFile copies src to a new file dst and syncs it, so the held copy is on disk before the live one goes.
 func copyFile(dst, src string) error {
 	in, err := os.Open(src)
+	if errors.Is(err, os.ErrNotExist) {
+		return errNoSource
+	}
 	if err != nil {
 		return err
 	}
@@ -84,7 +92,36 @@ func copyFile(dst, src string) error {
 		out.Close()
 		return err
 	}
+	if err := out.Sync(); err != nil {
+		out.Close()
+		return err
+	}
 	return out.Close()
+}
+
+func writeFileSynced(path string, data []byte) error {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
+}
+
+func syncDir(path string) error {
+	d, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	return d.Sync()
 }
 
 // Hold moves a reported link's stored content into the restricted directory for one year and takes the
@@ -110,6 +147,7 @@ func (s *Store) Hold(id, reportID string, fullLink []byte, now time.Time) error 
 		return err
 	}
 	final := filepath.Join(s.heldDir(), id)
+	logErr := error(nil)
 	if _, err := os.Stat(final); errors.Is(err, os.ErrNotExist) {
 		tmp, err := os.MkdirTemp(s.heldDir(), ".hold-")
 		if err != nil {
@@ -117,29 +155,52 @@ func (s *Store) Hold(id, reportID string, fullLink []byte, now time.Time) error 
 		}
 		defer os.RemoveAll(tmp)
 		for _, name := range []string{"packet", previewFile} {
-			if err := copyFile(filepath.Join(tmp, name), filepath.Join(src, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			if err := copyFile(filepath.Join(tmp, name), filepath.Join(src, name)); err != nil && !errors.Is(err, errNoSource) {
 				return err
 			}
 		}
 		if len(fullLink) > 0 {
-			if err := os.WriteFile(filepath.Join(tmp, reportedRef), fullLink, 0o600); err != nil {
+			if err := writeFileSynced(filepath.Join(tmp, reportedRef), fullLink); err != nil {
 				return err
 			}
 		}
 		record, _ := json.Marshal(holdRecord{ReportID: reportID, HeldAt: now.UTC(), ReleaseAfter: HoldLifetime(now)})
-		if err := os.WriteFile(filepath.Join(tmp, holdMeta), record, 0o600); err != nil {
+		if err := writeFileSynced(filepath.Join(tmp, holdMeta), record); err != nil {
+			return err
+		}
+		if err := syncDir(tmp); err != nil {
 			return err
 		}
 		if err := os.Rename(tmp, final); err != nil {
 			return err
 		}
-		if err := s.logAccess("hold", id, "report "+reportID, now); err != nil {
+		if err := syncDir(s.heldDir()); err != nil {
 			return err
 		}
+		logErr = s.logAccess("hold", id, "report "+reportID, now)
 	} else if err != nil {
 		return err
+	} else if len(fullLink) > 0 {
+		// A second run may bring the reported link the first run did not have. It adds the link and
+		// never changes the report id or the year.
+		path := filepath.Join(final, reportedRef)
+		if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+			if err := writeFileSynced(path, fullLink); err != nil {
+				return err
+			}
+			if err := syncDir(final); err != nil {
+				return err
+			}
+			logErr = s.logAccess("add-link", id, "report "+reportID, now)
+		} else if err != nil {
+			return err
+		}
 	}
-	return s.takedownLocked(id)
+	// The held copy is safely on disk, so the link comes down even if the log line could not be written.
+	if err := s.takedownLocked(id); err != nil {
+		return err
+	}
+	return logErr
 }
 
 // SweepHeld deletes every held item whose year is up and logs each deletion. It returns how many it deleted.
@@ -154,23 +215,40 @@ func (s *Store) SweepHeld(now time.Time) (int, error) {
 		return 0, err
 	}
 	n := 0
+	var firstErr error
 	for _, e := range entries {
 		if !ValidID(e.Name()) {
+			// A crash mid-hold leaves a .hold- folder with a copy of the ciphertext and the reported link.
+			// Clear it once it is an hour old, so no copy outlives the rules.
+			if strings.HasPrefix(e.Name(), ".hold-") {
+				if info, err := e.Info(); err == nil && now.Sub(info.ModTime()) >= time.Hour {
+					if err := os.RemoveAll(filepath.Join(s.heldDir(), e.Name())); err != nil && firstErr == nil {
+						firstErr = err
+					}
+				}
+			}
 			continue
 		}
+		// One unreadable record must not keep every later link past its year.
 		due, err := s.holdDue(e.Name(), now)
 		if err != nil {
-			return n, err
+			if firstErr == nil {
+				firstErr = fmt.Errorf("held link %s: %w", e.Name(), err)
+			}
+			continue
 		}
 		if !due {
 			continue
 		}
 		if err := s.deleteHeld(e.Name(), "year up", now); err != nil {
-			return n, err
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
 		}
 		n++
 	}
-	return n, nil
+	return n, firstErr
 }
 
 func (s *Store) holdDue(id string, now time.Time) (bool, error) {
@@ -204,11 +282,13 @@ func (s *Store) ReleaseHeld(id, reason string, now time.Time) error {
 	return s.deleteHeld(id, reason, now)
 }
 
+// deleteHeld writes the log line first, so a deletion always has its record; a crash between the two
+// leaves a line and a folder, and the next sweep or release finishes the job.
 func (s *Store) deleteHeld(id, why string, now time.Time) error {
-	if err := os.RemoveAll(filepath.Join(s.heldDir(), id)); err != nil {
+	if err := s.logAccess("delete", id, singleLine(why), now); err != nil {
 		return err
 	}
-	return s.logAccess("delete", id, singleLine(why), now)
+	return os.RemoveAll(filepath.Join(s.heldDir(), id))
 }
 
 func singleLine(text string) string {

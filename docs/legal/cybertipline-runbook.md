@@ -4,7 +4,7 @@ For #2235 and D18 in [attorney-questions.md](attorney-questions.md). Nothing in 
 
 ## What the server does by itself
 
-1. Every report disables the link at once, blind (#2239). Nothing here changes that.
+1. Taking a link down at once, blind, is #2239's job. Nothing here changes it. **Run `hold` before `smserver takedown`:** a plain takedown deletes the ciphertext, and a `hold` run after it can keep only the reported link.
 2. A link is held only when you run the `hold` command below. Until then the normal 30-day expiry applies.
 3. A held link is moved out of the serving folder (`/var/lib/smserver/links`) into `/var/lib/smserver/links-held`, a folder only the `smserver` user can open (mode 0700). The server has no call that reads it back.
 4. The daily sweep deletes each held link one year after the hold began and writes a line to `/var/lib/smserver/links-held/access.log`. The log has event names, link ids, report ids and dates. It never has content, keys or client addresses.
@@ -26,7 +26,7 @@ B. Register as an electronic service provider with the NCMEC CyberTipline and no
    shred -u /tmp/reported-link.txt
    ```
 
-   It prints `link taken down and held for one year`. Running it twice for the same link is harmless; the second run changes nothing.
+   It prints `link taken down and held for one year`. Running it again for the same link is harmless: it never restarts the year or changes the report id, and it only adds the reported link if the first run had none. The link file must hold between 1 byte and 64 KB.
 4. Check the hold: `ls /var/lib/smserver/links-held` lists the link id. Do not open the files inside.
 
 ## A law-enforcement request, or ending a hold early

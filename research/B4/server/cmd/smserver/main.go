@@ -475,6 +475,8 @@ func takedownLink(args []string) error {
 	return nil
 }
 
+const maxReportedLink = 64 << 10
+
 // holdLink moves a reported link into restricted storage for a year and takes it down (#2235). The
 // reported link, key included, is read from -link-file (or stdin with "-") and stored unread; it is
 // never printed or logged.
@@ -491,7 +493,7 @@ func holdLink(args []string) error {
 	switch *linkFile {
 	case "":
 	case "-":
-		data, err := io.ReadAll(io.LimitReader(os.Stdin, 64<<10))
+		data, err := io.ReadAll(io.LimitReader(os.Stdin, maxReportedLink+1))
 		if err != nil {
 			return err
 		}
@@ -502,6 +504,9 @@ func holdLink(args []string) error {
 			return err
 		}
 		full = data
+	}
+	if *linkFile != "" && (len(full) == 0 || len(full) > maxReportedLink) {
+		return fmt.Errorf("the reported link must be between 1 and %d bytes", maxReportedLink)
 	}
 	st, err := links.OpenStore(filepath.Join(*state, "links"))
 	if err != nil {

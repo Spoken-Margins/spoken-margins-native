@@ -2,6 +2,7 @@ package links
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -144,8 +145,19 @@ func TestHoldAgainIsHarmlessAndAnExpiredSweptLinkCanStillBeHeld(t *testing.T) {
 	if !bytes.Equal(got, packet) {
 		t.Fatal("a second hold damaged the held packet")
 	}
-	if _, err := os.Stat(heldFile(st, id, reportedRef)); err == nil {
-		t.Fatal("a second hold must not add to or restart an existing hold")
+	if data, err := os.ReadFile(heldFile(st, id, reportedRef)); err != nil || string(data) != "later" {
+		t.Fatalf("a second run must add the reported link the first run lacked: %q, %v", data, err)
+	}
+	var rec holdRecord
+	raw, _ := os.ReadFile(heldFile(st, id, holdMeta))
+	if err := json.Unmarshal(raw, &rec); err != nil || rec.ReportID != "R1" || !rec.HeldAt.Equal(holdNow) {
+		t.Fatalf("a second run must not change the report id or restart the year: %+v, %v", rec, err)
+	}
+	if err := st.Hold(id, "R3", []byte("other"), holdNow.Add(2*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := os.ReadFile(heldFile(st, id, reportedRef)); string(data) != "later" {
+		t.Fatal("a third run replaced the reported link")
 	}
 
 	// A different link, expired and swept before anyone reported it: only the reported link can be held.
@@ -157,7 +169,7 @@ func TestHoldAgainIsHarmlessAndAnExpiredSweptLinkCanStillBeHeld(t *testing.T) {
 	if _, err := st.Sweep(holdNow.Add(Lifetime + time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Hold(id2, "R3", []byte("full-link-2"), holdNow.Add(Lifetime+time.Hour)); err != nil {
+	if err := st.Hold(id2, "R4", []byte("full-link-2"), holdNow.Add(Lifetime+time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(heldFile(st, id2, "packet")); err == nil {
@@ -217,5 +229,46 @@ func TestReleaseNeedsAHeldLinkAndAReasonAndLogsIt(t *testing.T) {
 	lines := strings.Split(strings.TrimSpace(string(logText)), "\n")
 	if len(lines) != 2 || !strings.Contains(lines[1], "law enforcement request") {
 		t.Fatalf("log should have one hold and one delete line, got %q", lines)
+	}
+}
+
+func TestSweepHeldKeepsGoingPastABadRecordAndClearsStaleTempFolders(t *testing.T) {
+	st, id, _, _ := putLink(t)
+	preview, packet, _, _ := loadVector(t)
+	id2, _, err := st.Put(packet, preview, holdNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, h := range []string{id, id2} {
+		if err := st.Hold(h, "R-"+h[:4], nil, holdNow); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Corrupt whichever record sorts first, so the loop meets it before the good one.
+	ids, _ := st.HeldIDs()
+	if err := os.WriteFile(heldFile(st, ids[0], holdMeta), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stale := filepath.Join(st.heldDir(), ".hold-crashed")
+	if err := os.Mkdir(stale, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stale, reportedRef), []byte("key"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := holdNow.Add(-2 * time.Hour)
+	if err := os.Chtimes(stale, old, old); err != nil {
+		t.Fatal(err)
+	}
+	// The temp folder's age is measured against the sweep time, so sweep a year on.
+	n, err := st.SweepHeld(HoldLifetime(holdNow))
+	if err == nil || !strings.Contains(err.Error(), ids[0]) {
+		t.Fatalf("the bad record should be reported by id, got %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("the good link after the bad one should still be deleted; deleted %d", n)
+	}
+	if _, err := os.Stat(stale); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("a stale .hold- folder outlived the sweep")
 	}
 }
