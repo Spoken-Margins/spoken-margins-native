@@ -1,4 +1,4 @@
-spokenmargins.proximitytoprogress.com {
+spokenmargins.com {
 	# managed-by: spokenmargins-server (research/B4/deploy/deploy.sh)
 	encode gzip
 
