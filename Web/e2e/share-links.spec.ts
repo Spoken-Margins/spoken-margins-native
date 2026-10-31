@@ -146,10 +146,11 @@ test('with links on, a Margin’s share menu makes a link that holds only sealed
     for (const plain of [words, 'tide tables', EPISODE_3]) expect(stored.includes(Buffer.from(plain))).toBe(false);
   }
 
-  // The same listener opens it: the episode matches theirs, so no "shared" show appears.
+  // The same listener opens it: the episode matches theirs, so no "shared" show appears, and the Margin they
+  // already have isn't added twice (#3012).
   await nowPlaying.getByRole('button', { name: 'Close Now Playing' }).click();
   await pasteLink(page, link);
-  await expect(page.getByText(new RegExp(`Opened 1 Margin( from .+)? on “${EPISODE_3}”`))).toBeVisible();
+  await expect(page.getByText(`Every Margin in this file is already here, on “${EPISODE_3}”.`)).toBeVisible();
   await page.getByRole('dialog', { name: EPISODE_3 }).getByRole('button', { name: 'Close Now Playing' }).click();
   await tab(page, 'Following');
   await expect(page.getByRole('button', { name: /Open Shared (by|with)/ })).toHaveCount(0);
