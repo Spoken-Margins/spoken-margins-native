@@ -1,13 +1,16 @@
+import { useRef } from 'react';
 import { formatClock } from '../../shared/clock.ts';
 import type { Margin } from '../../shared/model.ts';
 import { useData } from '../data.tsx';
 import { shortDate } from '../format.ts';
+import { openFiles, type OpenMarginFile } from '../import.tsx';
 import { marginGroups, newestMarginId } from '../logic/library.ts';
 import { usePlayer } from '../player.tsx';
 import { VoiceButton } from '../voice.tsx';
 
-export function Margins({ onPlay }: { onPlay: () => void }) {
+export function Margins({ onPlay, onOpenFile }: { onPlay: () => void; onOpenFile: OpenMarginFile }) {
   const data = useData();
+  const picker = useRef<HTMLInputElement>(null);
   const groups = marginGroups(data.margins, data.episodes);
   const newestId = newestMarginId(data.margins);
   const showTitle = (showId: string | undefined) => data.shows.find((s) => s.id === showId)?.title;
@@ -18,10 +21,26 @@ export function Margins({ onPlay }: { onPlay: () => void }) {
         <h1 id="margins-title" tabIndex={-1}>
           Margins
         </h1>
+        <button type="button" className="button" onClick={() => picker.current?.click()}>
+          Open a Margin file
+        </button>
+        <input
+          ref={picker}
+          type="file"
+          accept=".spokenmargins,application/vnd.spokenmargins.package+zip"
+          hidden
+          data-testid="margin-file"
+          onChange={(event) => {
+            const files = Array.from(event.target.files ?? []);
+            event.target.value = '';
+            void openFiles(files, onOpenFile);
+          }}
+        />
       </header>
       {data.ready && groups.length === 0 ? (
         <div className="empty">
           <p>Margins you write or record while listening appear here, the newest at the top. Tap one to hear its moment.</p>
+          <p>A friend’s Margins arrive as a file ending in .spokenmargins. Open it here, or drop it on this page.</p>
         </div>
       ) : (
         groups.map((group) => (

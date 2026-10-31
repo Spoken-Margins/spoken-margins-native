@@ -4,6 +4,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { Episode } from '../shared/model.ts';
 import { useData } from './data.tsx';
+import { plainError } from './logic/messages.ts';
 import { FINISHED_WITHIN_SECONDS } from './logic/library.ts';
 import { services } from './services.ts';
 import { useRelay, useUi } from './ui.tsx';
@@ -18,8 +19,11 @@ export interface PlayerApi {
   time: number;
   duration: number | undefined;
   rate: number;
-  /** Opens an episode. `at` jumps to a moment (a Margin); otherwise it resumes where the listener left off. */
-  open(episodeId: string, options?: { at?: number }): Promise<void>;
+  /**
+   * Opens an episode. `at` jumps to a moment (a Margin); otherwise it resumes where the listener left off. `episode`
+   * is the episode itself, for one just stored that this render does not show yet (an opened Margin file).
+   */
+  open(episodeId: string, options?: { at?: number; episode?: Episode }): Promise<void>;
   toggle(): void;
   skip(seconds: number): void;
   seek(seconds: number): void;
@@ -62,9 +66,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const open = useCallback(
-    async (id: string, options: { at?: number } = {}) => {
+    async (id: string, options: { at?: number; episode?: Episode } = {}) => {
       const audio = audioRef.current;
-      let target = dataRef.current.episodes.find((e) => e.id === id);
+      let target = options.episode?.id === id ? options.episode : dataRef.current.episodes.find((e) => e.id === id);
       if (!audio || !target) return;
       if (id === loadedId.current && audio.src) {
         if (options.at !== undefined) audio.currentTime = options.at;
@@ -83,7 +87,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
             await dataRef.current.updateEpisode(target);
           }
         } catch (error) {
-          toast(error instanceof Error ? error.message : String(error), 'problem');
+          // The relay pop-up's "Not now", a dead page: one message, not a second "no voice" on top of it.
+          toast(plainError(error), 'problem');
+          return;
         } finally {
           setLoading(false);
         }
@@ -104,6 +110,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       setLoading(true);
       await audio.play().catch((error: unknown) => {
         if (error instanceof DOMException && error.name === 'AbortError') return;
+        // Autoplay refused (a Margin file opened with no tap to play): it waits at its moment, paused, for Play.
+        if (error instanceof DOMException && error.name === 'NotAllowedError') {
+          setLoading(false);
+          return;
+        }
         toast('This episode’s audio couldn’t be played.', 'problem');
       });
     },
