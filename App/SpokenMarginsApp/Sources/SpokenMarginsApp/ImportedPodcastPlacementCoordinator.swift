@@ -292,7 +292,8 @@ final class ImportedPodcastPlacementCoordinator {
                         recipientTranscript: recipientTranscript)
                     let updated = ImportedPodcastPlacement.apply(
                         fusedResolutions, to: records, layer: &layer,
-                        recipientDigest: recipientDigest, hasTranscript: recipientTranscript != nil)
+                        recipientDigest: recipientDigest, hasTranscript: recipientTranscript != nil,
+                        recipientDurationMs: item.media?.durationMs)
                     var mapOutcome: SharedListeningMapPlacement.Outcome?
                     if layer.listeningMapProposals?.first != nil, layer.editionFingerprintSpines?.first == nil {
                         mapOutcome = .notPlaced(.init(sceneId: nil, sceneLabel: nil, reason: .noEvidence))

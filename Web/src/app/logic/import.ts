@@ -3,6 +3,7 @@
 // With no copy in the Library, the episode is added under a "shared with you" show named for the sender, so the
 // Margins land in Following under the person who sent them (owner, 2026-10-17, #1507) and can play at once.
 // Plain TypeScript, so `npm run test:web` covers it (import.test.ts).
+import { formatClock } from '../../shared/clock.ts';
 import type { Episode, Margin, Show } from '../../shared/model.ts';
 import { sharedWords } from '../../packet/write.ts';
 import { samePage } from '../../sources/substack.ts';
@@ -105,4 +106,23 @@ export function importSummary(placed: PlacedImport, sender: string | undefined):
   if (count === 0 && placed.duplicates) return `Every Margin in this file is already here, on “${placed.episode.title}”.${skipped}`;
   if (count === 0) return `This file has no Margins the web app can place.${skipped}`;
   return `Opened ${what}${who} on “${placed.episode.title}”.${already}${skipped}`;
+}
+
+/** Where an opened file left the listener: its episode, at the first Margin's moment (#3039). */
+export interface Landing {
+  episodeId: string;
+  at: number;
+}
+
+/**
+ * The words on Now Playing's offer to start, for when a browser won't start the audio by itself after a file opens
+ * (the file was read, but nobody tapped Play). Undefined once it plays, while the audio loads, and when Now Playing
+ * shows another episode.
+ */
+export function landingOffer(
+  landing: Landing | undefined,
+  now: { episodeId: string | undefined; playing: boolean; loading: boolean },
+): string | undefined {
+  if (!landing || now.playing || now.loading || now.episodeId !== landing.episodeId) return undefined;
+  return `Play from the first Margin, at ${formatClock(landing.at)}`;
 }

@@ -139,6 +139,20 @@ final class UITestingLaunchSeedTests: XCTestCase {
         XCTAssertFalse(UITestingLaunchSeed(arguments: ["--ui-testing"], environment: ["SPOKEN_MARGINS_UI_TEST_KEEP_LIBRARY": "1"]).writesLibrary)
     }
 
+    // #2918: the kept-Library relaunch reaches the bootstrap, which is where the co-op layer is imported. It used to
+    // be dropped there with the seeds that don't write, so J9's friend's Margin never arrived.
+    func testAKeptLibraryRelaunchStillReachesTheLibraryBootstrap() {
+        let relaunch = UITestingLaunchSeed(arguments: ["--ui-testing"], environment: everySeedVariable)
+        XCTAssertEqual(relaunch, .keepLibrary)
+        XCTAssertTrue(relaunch.runsAtLibraryBootstrap, "the co-op import runs from the bootstrap's keepLibrary branch")
+        XCTAssertFalse(relaunch.writesLibrary, "a kept Library is still never replaced")
+        XCTAssertFalse(UITestingLaunchSeed.none.runsAtLibraryBootstrap)
+        XCTAssertFalse(UITestingLaunchSeed(arguments: ["SpokenMarginsApp"], environment: everySeedVariable).runsAtLibraryBootstrap)
+        for seed: UITestingLaunchSeed in [.fixture, .importedPDF, .firstRun, .offlinePodcast(title: "t", durationSeconds: 10)] {
+            XCTAssertTrue(seed.runsAtLibraryBootstrap, "\(seed)")
+        }
+    }
+
     // The co-op journey (#474): a relaunch that keeps the Library and adds one friend's Margin.
 
     func testTheCoopLayerComesOnlyWithAKeptLibraryAndTheCoopSwitch() {

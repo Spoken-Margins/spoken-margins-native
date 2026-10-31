@@ -15,6 +15,8 @@
 // 2. #3012: adds the version row and the settings persistAsked and lastBackupAt. Records are unchanged.
 //    Later settings that default when missing (transcription, on-device speech-to-text) keep shape 2: an older copy
 //    ignores a setting it doesn't know, and a newer one reads its default.
+//    #3043: a voice Margin's audio is stored as bytes (`voice.data`) instead of a Blob (`voice.blob`), since Safari's
+//    private browsing won't store a Blob. Rows with a Blob still read; see voice-rows.ts. Still shape 2.
 import type { Episode, Margin, PlaybackPosition, Show } from '../../shared/model.ts';
 
 export const DB_VERSION = 1;
