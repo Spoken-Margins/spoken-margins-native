@@ -24,6 +24,21 @@ public struct SceneStarts: Equatable, Sendable {
         self.sceneEnds = self.scenes.map { projectedTime($0.endAnchor.mediaTimeMs) }
     }
 
+    /// Scene starts on a text item (an article, PDF or Listening Edition), read from the character positions the
+    /// import stored on each scene (`startAnchor.startChar`, `endAnchor.endChar`) (#1471). Every position is in
+    /// characters, not milliseconds, and `skimPlan` takes the reading position and the text length the same way, so
+    /// the one ordering rule serves audio and text. A scene without a character start stays unplaced, and an end
+    /// at or before its start is treated as unknown.
+    public init(textScenes scenes: [PortableListeningMapScene]) {
+        self.scenes = scenes.sorted { $0.order < $1.order }
+        let starts = self.scenes.map { $0.startAnchor.startChar.flatMap { $0 >= 0 ? $0 : nil } }
+        self.sceneStarts = starts
+        self.sceneEnds = zip(self.scenes, starts).map { scene, start in
+            guard let start, let end = scene.endAnchor.endChar, end > start else { return nil }
+            return end
+        }
+    }
+
     public struct SkimPlan: Equatable, Sendable {
         public let currentScene: PortableListeningMapScene
         public let summaryScene: PortableListeningMapScene
