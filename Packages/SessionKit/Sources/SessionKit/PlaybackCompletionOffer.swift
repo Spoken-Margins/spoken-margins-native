@@ -62,6 +62,13 @@ public enum PlaybackCompletionOffer {
         return ItemQuickAction.completionAction(for: row) == .markComplete ? .offered : .alreadyComplete
     }
 
+    /// Whether the playback screen shows Share beside Mark complete. It follows the same position test, but not the
+    /// Library row: Share must stay after a tap on Mark complete turns the row complete, which is when a listener
+    /// is getting their Margins out (owner, 2026-10-31).
+    public static func offersShare(_ presence: Presence) -> Bool {
+        presence != .notYet
+    }
+
     /// Whether to write the "hidden" line to Diagnostics when `presence` changes from `previous` (nil on first
     /// appearance). Only the two hidden reasons count, and not right after the button was showing: that is the
     /// listener's own tap on Mark complete turning the row complete, not a button gone missing.

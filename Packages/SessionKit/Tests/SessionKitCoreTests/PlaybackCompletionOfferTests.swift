@@ -138,4 +138,13 @@ final class PlaybackCompletionOfferTests: XCTestCase {
         XCTAssertFalse(Offer.shouldRecordHidden(from: nil, to: .notYet))
         XCTAssertFalse(Offer.shouldRecordHidden(from: .alreadyComplete, to: .alreadyComplete))
     }
+
+    func testShareFollowsThePositionAndStaysAfterMarkCompleteIsTapped() {
+        typealias Offer = PlaybackCompletionOffer
+        XCTAssertFalse(Offer.offersShare(.notYet))
+        XCTAssertTrue(Offer.offersShare(.offered))
+        // Tapping Mark complete turns the row complete; that is when Share matters most.
+        XCTAssertTrue(Offer.offersShare(.alreadyComplete))
+        XCTAssertTrue(Offer.offersShare(.noLibraryRow))
+    }
 }

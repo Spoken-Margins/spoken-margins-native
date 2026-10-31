@@ -1,9 +1,10 @@
 import SwiftUI
 import SessionKit
 
-/// "Mark complete" on the playback screen, once the listener is past the end of the body (#2393): the first
+/// "Mark complete" and "Share" on the playback screen, once the listener is past the end of the body (#2393): the first
 /// reference list or back matter of a text or PDF, or three quarters of the way through anything without one.
-/// Before then it takes no room. It is the Library swipe's action, so it has the same undo.
+/// Before then it takes no room. Mark complete is the Library swipe's action, so it has the same undo. Share opens
+/// the export screen, as it does after the item finishes, and stays when Mark complete is hidden for a Library-row reason.
 ///
 /// The playback screen computes `presence` on each playback tick (it follows the clock) and passes it in, so this
 /// view's body runs when the answer changes. A view that shows nothing does not get `onAppear`, `onChange` or a
@@ -13,13 +14,21 @@ struct PlaybackMarkCompleteButton: View {
     let presence: PlaybackCompletionOffer.Presence
 
     var body: some View {
-        if presence == .offered {
-            Button { model.markItemCompleted(id: model.selectedItem.id) } label: {
-                Label("Mark complete", systemImage: "checkmark.circle").minimumTapTarget()
+        if PlaybackCompletionOffer.offersShare(presence) {
+            HStack(spacing: 24) {
+                if presence == .offered {
+                    Button { model.markItemCompleted(id: model.selectedItem.id) } label: {
+                        Label("Mark complete", systemImage: "checkmark.circle").minimumTapTarget()
+                    }
+                    .accessibilityIdentifier("playback.markComplete.button")
+                }
+                Button(action: model.openExport) {
+                    Label("Share", systemImage: "square.and.arrow.up").minimumTapTarget()
+                }
+                .accessibilityIdentifier("playback.share.button")
             }
             .font(.subheadline.weight(.medium))
             .foregroundStyle(.white)
-            .accessibilityIdentifier("playback.markComplete.button")
         }
     }
 }
