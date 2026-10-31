@@ -401,10 +401,7 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
     /// when the session holds no such Margin. Packets already shared keep the link they were made with.
     @discardableResult
     public func updateReply(ofInterjection interjectionId: String, sessionId: String, to link: MarginReplyLink?) throws -> Bool {
-        guard var saved = try loadInterjections(sessionId: sessionId).first(where: { $0.id == interjectionId }) else { return false }
-        saved.replyTo = link
-        try saveInterjection(saved)
-        return true
+        try updateInterjection(id: interjectionId, sessionId: sessionId) { $0.replyTo = link } != nil
     }
 
     /// Whether any session has a Margin that is still active: the yes or no onboarding wants where it used to decode
