@@ -17,7 +17,7 @@ import { SHARE_LINKS_OFFERED, services, uploadShareLink } from '../services.ts';
 import { shortDate } from '../format.ts';
 import { useUi } from '../ui.tsx';
 import { voicePlaceholder } from '../../shared/placeholder.ts';
-import { isPlaceholder, prefillOverPlaceholder, wordsToSave } from '../logic/voice-words.ts';
+import { isPlaceholder, prefillOverPlaceholder, voiceMarginOnStop, withWords } from '../logic/voice-words.ts';
 import { TranscriptionNote, useTranscription } from '../transcription.tsx';
 import { MarginRow } from './Margins.tsx';
 
@@ -388,12 +388,43 @@ function RecordMargin({
   wordsRef.current = words;
   const [prefilled, setPrefilled] = useState(false);
   const [suggestion, setSuggestion] = useState<string>();
+  // Stop saves the Margin (#3038). `saved` is what is stored now; the words box then updates it.
+  const [saving, setSaving] = useState<'saving' | 'saved' | 'not-saved'>('saving');
+  const saved = useRef<Margin | undefined>(undefined);
+  const marginId = useRef(newId());
+  // Every write for this Margin runs in order, so an Undo can't land before the save it undoes.
+  const writes = useRef<Promise<unknown>>(Promise.resolve());
+  const wordsTimer = useRef<number | undefined>(undefined);
   const showingPlaceholder = recorded !== undefined && isPlaceholder(words, placeholder);
+
+  /** Puts the box's words on the saved Margin, when they change it. */
+  const storeWords = (value: string) => {
+    window.clearTimeout(wordsTimer.current);
+    wordsTimer.current = undefined;
+    writes.current = writes.current.then(async () => {
+      const current = saved.current;
+      if (!current) return;
+      const next = withWords(current, value, placeholderRef.current);
+      if (!next) return;
+      saved.current = next;
+      try {
+        await data.addMargin(next);
+      } catch (error) {
+        saved.current = current;
+        if (!(error instanceof NotSavedError)) toast(`The words weren’t saved: ${plainError(error)}`, 'problem');
+      }
+    });
+    return writes.current;
+  };
+  const storeWordsRef = useRef(storeWords);
+  storeWordsRef.current = storeWords;
+
   const transcription = useTranscription(recorded?.blob, (transcript) => {
     const result = prefillOverPlaceholder(wordsRef.current, edited.current, transcript, placeholderRef.current);
     if (result.words !== wordsRef.current) {
       setWords(result.words);
       setPrefilled(true);
+      void storeWordsRef.current(result.words);
     }
     setSuggestion(result.suggestion);
   });
@@ -421,12 +452,14 @@ function RecordMargin({
       .catch((error: unknown) => setProblem(`Recording didn’t start. ${plainError(error, 'microphone')}`));
   }, [player]);
 
-  // Leaving Now Playing mid-recording throws the recording away and frees the microphone.
+  // Leaving Now Playing mid-recording throws the recording away and frees the microphone. Leaving after Stop keeps
+  // the saved Margin, with whatever was typed in the words box.
   useEffect(() => {
     gone.current = false;
     return () => {
       gone.current = true;
       live.current?.cancel();
+      if (wordsTimer.current !== undefined) void storeWordsRef.current(wordsRef.current);
     };
   }, []);
 
@@ -437,9 +470,14 @@ function RecordMargin({
     return () => window.clearInterval(timer);
   }, [recording]);
 
+  const resume = () => {
+    if (resumeAfter.current && !player.playing) player.toggle();
+    resumeAfter.current = false;
+  };
+
   const close = () => {
     setRecording(null);
-    if (resumeAfter.current && !player.playing) player.toggle();
+    resume();
     onDone();
   };
 
@@ -449,6 +487,26 @@ function RecordMargin({
     close();
   };
 
+  /** Saves the recording as a new Margin, with the box's words if they are the listener's or a transcript's. */
+  const saveNew = (voice: RecordedVoice, stoppedAt: Date) => {
+    setSaving('saving');
+    writes.current = writes.current.then(async () => {
+      const bare = voiceMarginOnStop({ id: marginId.current, episodeId, atSeconds: at, recordedAt: stoppedAt, voice });
+      const margin = withWords(bare, wordsRef.current, placeholderRef.current) ?? bare;
+      try {
+        await data.addMargin(margin);
+        saved.current = margin;
+        setSaving('saved');
+        // The episode carries on: the Margin is kept, and the words can be changed while it plays.
+        resume();
+      } catch (error) {
+        // The recording stays here, so the listener can free space or back up and then save it again.
+        setSaving('not-saved');
+        if (!(error instanceof NotSavedError)) toast(`The voice Margin wasn’t saved: ${plainError(error)}`, 'problem');
+      }
+    });
+  };
+
   const stop = async () => {
     if (!recording) return;
     live.current = null;
@@ -456,32 +514,54 @@ function RecordMargin({
       const voice = await recording.stop();
       const stoppedAt = new Date();
       setRecordedAt(stoppedAt);
+      const initial = voicePlaceholder({ atSeconds: at, ...(title !== undefined && { title }), recordedAt: stoppedAt });
+      placeholderRef.current = initial;
       // The words box starts with the placeholder; a transcript or the listener's own words replace it.
       if (!edited.current && wordsRef.current === '') {
-        setWords(voicePlaceholder({ atSeconds: at, ...(title !== undefined && { title }), recordedAt: stoppedAt }));
+        wordsRef.current = initial;
+        setWords(initial);
       }
       setRecorded(voice);
       setRecording(null);
+      saveNew(voice, stoppedAt);
     } catch (error) {
       setRecording(null);
       setProblem(plainError(error, 'microphone'));
     }
   };
 
-  const save = async () => {
-    if (!recorded) return;
-    // The placeholder isn't stored as the Margin's words: the packet writer writes the same words at export.
-    const text = wordsToSave(words, placeholder);
-    try {
-      await data.addMargin({
-        id: newId(), episodeId, atSeconds: at, createdAt: (recordedAt ?? new Date()).toISOString(), voice: recorded, ...(text && { text }),
-      });
-      toast(`Voice Margin saved at ${formatClock(at)}.${text ? '' : ' It shares with placeholder words naming the episode, the moment and the day.'}`);
+  const done = async () => {
+    await storeWords(wordsRef.current);
+    close();
+  };
+
+  const undo = async () => {
+    window.clearTimeout(wordsTimer.current);
+    wordsTimer.current = undefined;
+    // A recording that couldn't be saved is only thrown away.
+    if (saving === 'not-saved') {
       close();
-    } catch (error) {
-      // The recording stays here, so the listener can free space or back up and then save it again.
-      if (!(error instanceof NotSavedError)) toast(`The voice Margin wasn’t saved: ${plainError(error)}`, 'problem');
+      return;
     }
+    let removed = false;
+    writes.current = writes.current.then(async () => {
+      const current = saved.current;
+      if (!current) {
+        removed = true;
+        return;
+      }
+      try {
+        await data.deleteMargin(current.id);
+        saved.current = undefined;
+        removed = true;
+      } catch (error) {
+        if (!(error instanceof NotSavedError)) toast(`The voice Margin wasn’t removed: ${plainError(error)}`, 'problem');
+      }
+    });
+    await writes.current;
+    if (!removed) return;
+    toast(`Voice Margin at ${formatClock(at)} removed.`);
+    close();
   };
 
   if (problem) {
@@ -511,17 +591,31 @@ function RecordMargin({
   }
 
   if (recorded) {
-    // The iPhone app shares a voice Margin only with words (a transcript). The box starts with placeholder words
-    // (#3025), shown muted; the listener types their own, or, with transcription on, gets them written out on this
-    // device and can edit them. Left as it is, the Margin shares with the placeholder.
+    // Stop has saved the Margin (#3038). The iPhone app shares a voice Margin only with words, so the box starts with
+    // placeholder words (#3025), shown muted; a transcript (transcription on) or the listener's own words replace
+    // them, and each change goes on the saved Margin. Undo takes the Margin away again.
     return (
       <form
         className="composer"
         onSubmit={(event) => {
           event.preventDefault();
-          void save();
+          if (saving === 'not-saved') saveNew(recorded, recordedAt ?? new Date());
+          else void done();
         }}
       >
+        <p className="saved-line" role="status" data-testid="voice-saved">
+          {saving === 'saved' && (
+            <>
+              <span className="tag tag-blue">Saved</span> Voice Margin at {formatClock(at)}.
+            </>
+          )}
+          {saving === 'saving' && 'Saving your voice Margin…'}
+          {saving === 'not-saved' && (
+            <>
+              <span className="tag tag-quiet">Not saved</span> Your recording is still here. Try again.
+            </>
+          )}
+        </p>
         <label htmlFor="voice-words">Words to go with your voice Margin at {formatClock(at)}</label>
         <p className="muted composer-hint" id="voice-words-hint">
           {showingPlaceholder ? (
@@ -529,7 +623,7 @@ function RecordMargin({
               <span className="placeholder-tag">Placeholder</span> Replace with your own words. Friends read them alongside your voice.
             </>
           ) : (
-            'Friends read these alongside your voice.'
+            'Friends read these alongside your voice. Changes are kept as you type.'
           )}
         </p>
         <textarea
@@ -547,6 +641,12 @@ function RecordMargin({
           onChange={(event) => {
             edited.current = true;
             setWords(event.target.value);
+            const value = event.target.value;
+            window.clearTimeout(wordsTimer.current);
+            wordsTimer.current = window.setTimeout(() => void storeWordsRef.current(value), 700);
+          }}
+          onBlur={() => {
+            if (wordsTimer.current !== undefined) void storeWords(wordsRef.current);
           }}
         />
         <TranscriptionNote
@@ -554,17 +654,20 @@ function RecordMargin({
           prefilled={prefilled}
           {...(suggestion !== undefined && { suggestion })}
           onUseSuggestion={() => {
-            if (suggestion) setWords(suggestion);
+            if (suggestion) {
+              setWords(suggestion);
+              void storeWords(suggestion);
+            }
             setSuggestion(undefined);
             setPrefilled(true);
           }}
         />
         <div className="composer-actions">
-          <button type="button" className="button" onClick={close}>
-            Discard
+          <button type="button" className="button" disabled={saving === 'saving'} onClick={() => void undo()}>
+            {saving === 'not-saved' ? 'Discard' : 'Undo'}
           </button>
-          <button type="submit" className="button button-primary">
-            Save Margin
+          <button type="submit" className="button button-primary" disabled={saving === 'saving'}>
+            {saving === 'not-saved' ? 'Save Margin' : 'Done'}
           </button>
         </div>
       </form>
@@ -584,14 +687,14 @@ function RecordMargin({
           </span>
         )}
       </p>
-      <p className="muted">Your Margin goes at {formatClock(at)} in the episode.</p>
+      <p className="muted">Your Margin goes at {formatClock(at)} in the episode. Stop saves it.</p>
       <div className="composer-actions">
         <button type="button" className="button" onClick={cancel}>
           Cancel
         </button>
         <button type="button" className="button button-primary" disabled={!recording} onClick={() => void stop()}>
           <StopIcon />
-          Stop
+          Stop and save
         </button>
       </div>
     </div>
