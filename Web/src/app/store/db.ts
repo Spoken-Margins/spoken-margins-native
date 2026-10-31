@@ -1,7 +1,8 @@
 // The web app's own storage: IndexedDB in this browser, nothing on a server. Shows, episodes, Margins
-// (voice audio included, as Blobs), resume positions and settings. Every write is a single put or delete,
+// (voice audio included, as bytes: see voice-rows.ts), resume positions and settings. Every write is a single put or delete,
 // so a closed tab never leaves half a change behind.
 import type { Episode, Margin, PlaybackPosition, Show } from '../../shared/model.ts';
+import { fromRow, toRow, type MarginRow } from './voice-rows.ts';
 import { DB_VERSION, upgrade, type SettingRow, type Settings, type Snapshot } from './schema.ts';
 
 const DB_NAME = 'spoken-margins';
@@ -65,11 +66,11 @@ export async function loadAll(): Promise<Snapshot> {
   const [shows, episodes, margins, positions, settings] = await Promise.all([
     all<Show>(db, 'shows'),
     all<Episode>(db, 'episodes'),
-    all<Margin>(db, 'margins'),
+    all<MarginRow>(db, 'margins'),
     all<PlaybackPosition>(db, 'positions'),
     all<SettingRow>(db, 'settings'),
   ]);
-  const upgraded = upgrade({ shows, episodes, margins, positions, settings });
+  const upgraded = upgrade({ shows, episodes, margins: margins.map(fromRow), positions, settings });
   // Recording the shape is worth doing but not worth failing a load over: the rows read fine without it.
   if (upgraded.writes.length) await putMany('settings', upgraded.writes).catch(() => undefined);
   return upgraded.snapshot;
@@ -81,6 +82,11 @@ export async function putMany(store: StoreName, values: readonly object[]): Prom
   const os = tx.objectStore(store);
   for (const value of values) os.put(value);
   await done(tx);
+}
+
+/** Saves a Margin. A voice Margin's audio goes in as bytes, since some browsers won't store a Blob (#3043). */
+export async function putMargin(margin: Margin): Promise<void> {
+  await putMany('margins', [await toRow(margin)]);
 }
 
 export async function remove(store: StoreName, key: string): Promise<void> {
