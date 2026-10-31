@@ -185,15 +185,21 @@ final class J10OfflineJourneyUITests: XCTestCase {
         screenshot("J10 article playing offline")
     }
 
-    /// Scrolls the sender flow until `identifier` sits clear of its pinned footer, as Gate1FlowUITests does.
+    /// Scrolls the sender flow until `identifier` sits clear of whatever is pinned at its bottom, as Gate1FlowUITests does.
+    ///
+    /// What is pinned depends on the stage: Review on the select stage, Share on the review stage (#2920), and the
+    /// Debug "Create recipient test session" tool once a verified packet exists. The drag must start above all of
+    /// them, or it lands on the pinned bar and the list never moves (the hosted run's video shows exactly that).
     private func senderElement(_ identifier: String) -> XCUIElement {
         let candidate = element(identifier)
         let sender = element("build23.sender.experience")
         XCTAssertTrue(sender.waitForExistence(timeout: 5), "The sender flow is missing")
-        let footer = element("build23.sender.recipient-test-session")
+        let pinned = ["build23.sender.recipient-test-session", "build23.sender.review.share", "build23.sender.select.continue"]
+            .filter { $0 != identifier }
+            .map { element($0) }
         func visibleBottom() -> CGFloat {
             let screenBottom = min(sender.frame.maxY - 8, app.windows.firstMatch.frame.maxY - 34)
-            return footer.exists ? min(screenBottom, footer.frame.minY - 12) : screenBottom
+            return pinned.filter { $0.exists && !$0.frame.isEmpty }.reduce(screenBottom) { min($0, $1.frame.minY - 12) }
         }
         func reachable() -> Bool {
             candidate.exists && candidate.isHittable
