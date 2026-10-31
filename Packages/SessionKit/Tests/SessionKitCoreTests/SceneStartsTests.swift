@@ -135,4 +135,93 @@ final class SceneStartsTests: XCTestCase {
             XCTAssertNil(starts.skimPlan(direction: .backward, at: 0, durationMs: 10_000))
         }
     }
+    // MARK: Text items (#1471)
+
+    private func textScene(
+        _ order: Int, start: Int?, end: Int?, summary: String? = "A recap.", eligibility: PortableSceneEligibility = .eligible
+    ) -> PortableListeningMapScene {
+        PortableListeningMapScene(
+            id: "scene-\(order)", order: order, title: nil, summaryText: summary, eligibility: eligibility,
+            startAnchor: PortableAnchorEvidence(anchorType: .text, startChar: start, endChar: start.map { $0 + 5 }),
+            endAnchor: PortableAnchorEvidence(anchorType: .text, startChar: end.map { $0 - 5 }, endChar: end)
+        )
+    }
+
+    func testTextScenesTakeStartsAndEndsFromCharacterPositionsInSceneOrder() {
+        let starts = SceneStarts(textScenes: [
+            textScene(2, start: 900, end: 1_400), textScene(0, start: 0, end: 400), textScene(1, start: 400, end: 900)
+        ])
+        XCTAssertEqual(starts.scenes.map(\.id), ["scene-0", "scene-1", "scene-2"])
+        XCTAssertEqual(starts.sceneStarts, [0, 400, 900])
+        XCTAssertEqual(starts.sceneEnds, [400, 900, 1_400])
+    }
+
+    func testTextScenesNeverReadMediaTimes() {
+        // A media-anchored scene has no character start, so a text item never mistakes milliseconds for characters.
+        let starts = SceneStarts(textScenes: [scene(0, start: 5_000), scene(1, start: 9_000)])
+        XCTAssertEqual(starts.sceneStarts, [nil, nil])
+        XCTAssertEqual(starts.sceneEnds, [nil, nil])
+        XCTAssertNil(starts.skimPlan(direction: .forward, at: 6_000, durationMs: 20_000))
+    }
+
+    func testTextSceneNeighbouringInputsStayUnplacedOrUnknown() {
+        let rows: [(start: Int?, end: Int?, expectedStart: Int?, expectedEnd: Int?, why: String)] = [
+            (nil, 100, nil, nil, "no start: unplaced, and its end is not trusted"),
+            (-1, 100, nil, nil, "a negative start is not a position"),
+            (50, nil, 50, nil, "no end: placed with the end unknown"),
+            (50, 50, 50, nil, "an empty span is an unknown end"),
+            (50, 49, 50, nil, "an end before the start is an unknown end"),
+            (0, 1, 0, 1, "the shortest span"),
+        ]
+        for row in rows {
+            let starts = SceneStarts(textScenes: [textScene(0, start: row.start, end: row.end)])
+            XCTAssertEqual(starts.sceneStarts, [row.expectedStart], row.why)
+            XCTAssertEqual(starts.sceneEnds, [row.expectedEnd], row.why)
+        }
+    }
+
+    func testSkimPlansOnTextUseCharactersForThePositionAndTheTextLength() throws {
+        let starts = SceneStarts(textScenes: [
+            textScene(0, start: 0, end: 400, summary: "First."),
+            textScene(1, start: 400, end: 900, summary: "Second."),
+            textScene(2, start: 900, end: 1_400, summary: "Third.")
+        ])
+        let forward = try XCTUnwrap(starts.skimPlan(direction: .forward, at: 120, durationMs: 1_400))
+        XCTAssertEqual(forward.summaryScene.id, "scene-0")
+        XCTAssertEqual(forward.destinationSceneId, "scene-1")
+        XCTAssertEqual(forward.destinationMediaTimeMs, 400, "a character offset, not milliseconds")
+
+        let atBoundary = try XCTUnwrap(starts.skimPlan(direction: .forward, at: 400, durationMs: 1_400))
+        XCTAssertEqual(atBoundary.currentScene.id, "scene-1", "the character that starts a scene belongs to it")
+
+        let last = try XCTUnwrap(starts.skimPlan(direction: .forward, at: 1_000, durationMs: 1_400))
+        XCTAssertNil(last.destinationSceneId)
+        XCTAssertEqual(last.destinationMediaTimeMs, 1_400, "past the last chapter is the end of the text")
+
+        let back = try XCTUnwrap(starts.skimPlan(direction: .backward, at: 1_000, durationMs: 1_400))
+        XCTAssertEqual(back.summaryScene.id, "scene-1")
+        XCTAssertEqual(back.destinationSceneId, "scene-2")
+        XCTAssertEqual(back.destinationMediaTimeMs, 900)
+
+        XCTAssertNil(starts.skimPlan(direction: .backward, at: 120, durationMs: 1_400), "nothing before the first chapter")
+    }
+
+    func testTextSkimRefusesAnUnplacedDestinationAndAnUnusableSummary() {
+        let gap = SceneStarts(textScenes: [
+            textScene(0, start: 0, end: 400), textScene(1, start: nil, end: nil), textScene(2, start: 900, end: 1_400)
+        ])
+        XCTAssertNil(gap.skimPlan(direction: .forward, at: 100, durationMs: 1_400))
+        for (eligibility, summary) in [(PortableSceneEligibility.excluded, "A recap."), (.eligible, " \n ")] as [(PortableSceneEligibility, String)] {
+            let starts = SceneStarts(textScenes: [
+                textScene(0, start: 0, end: 400, summary: summary, eligibility: eligibility), textScene(1, start: 400, end: 900)
+            ])
+            XCTAssertNil(starts.skimPlan(direction: .forward, at: 100, durationMs: 900))
+        }
+    }
+
+    func testTextScenesFeedTheChaptersAndSummarySpansTheItemPageUses() {
+        let starts = SceneStarts(textScenes: [textScene(0, start: 0, end: 400), textScene(1, start: 400, end: 900)])
+        XCTAssertEqual(starts.chapters.map(\.startMs), [0, 400])
+        XCTAssertEqual(starts.summarySpans.map(\.endMs), [400, 900])
+    }
 }
