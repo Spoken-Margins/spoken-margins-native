@@ -25,7 +25,7 @@ struct Gate2LiveActivityWidget: Widget {
                         VStack(spacing: 8) {
                             Text("Shared Margin from \(sender)")
                                 .font(.caption.weight(.semibold))
-                                .lineLimit(1)
+                                .adaptiveLineLimit()
                                 .privacySensitive()
                             Gate2SharedMarginButtons()
                         }
@@ -35,12 +35,12 @@ struct Gate2LiveActivityWidget: Widget {
                                 ? Gate2LiveActivityCopy.pausedPrompt
                                 : context.state.chapterTitle)
                                 .font(.caption)
-                                .lineLimit(1)
+                                .adaptiveLineLimit()
                             if let next = context.state.nextChapterTitle {
                                 Text("Next: \(next)")
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)
-                                    .lineLimit(1)
+                                    .adaptiveLineLimit()
                             }
                         }
                     }
@@ -138,6 +138,9 @@ private struct Gate2LiveActivityContent: View {
 
 private struct Gate2LiveActivitySmallView: View {
     @Environment(\.isLuminanceReduced) private var isLuminanceReduced
+    /// The state glyph and its frame follow the text size, never below the default (#1940).
+    @ScaledMetric(relativeTo: .caption) private var glyphSize: CGFloat = 16
+    @ScaledMetric(relativeTo: .caption) private var glyphFrame: CGFloat = 22
     let state: Gate2LiveActivityAttributes.ContentState
     let isStale: Bool
 
@@ -162,21 +165,21 @@ private struct Gate2LiveActivitySmallView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .center, spacing: 8) {
                 Image(systemName: stateImage)
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(.system(size: glyphSize, weight: .semibold))
                     .foregroundStyle(state.isRecording ? state.recordingTint : Gate2LiveActivityAttributes.ContentState.progressTint)
-                    .frame(width: 22, height: 22)
+                    .frame(width: glyphFrame, height: glyphFrame)
                     .accessibilityHidden(true)
 
                 VStack(alignment: .leading, spacing: 1) {
                     Text(state.title)
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.white)
-                        .lineLimit(1)
+                        .adaptiveLineLimit()
                         .minimumScaleFactor(0.76)
                     Text(state.sharedMarginSenderLabel.map { "Margin from \($0)" } ?? state.chapterTitle)
                         .font(.caption2)
                         .foregroundStyle(.white.opacity(0.74))
-                        .lineLimit(1)
+                        .adaptiveLineLimit()
                         .minimumScaleFactor(0.76)
                         .privacySensitive(state.sharedMarginSenderLabel != nil)
                 }
@@ -189,6 +192,8 @@ private struct Gate2LiveActivitySmallView: View {
                     Text(stateText)
                         .font(.caption2.weight(.bold).monospaced())
                         .foregroundStyle(state.isRecording ? state.recordingTint : .white.opacity(0.84))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
                         .accessibilityLabel(state.stateAccessibilityLabel(isStale: isStale))
                     Spacer(minLength: 4)
                     Text("\(max(0, min(100, state.progressPercent)))%")
@@ -206,6 +211,8 @@ private struct Gate2LiveActivitySmallView: View {
 }
 
 private struct Gate2LiveActivityView: View {
+    /// How far the round controls have grown with the text size; see `Gate2ControlSize` (#1940).
+    @ScaledMetric(relativeTo: .title2) private var controlScale: CGFloat = 1
     let state: Gate2LiveActivityAttributes.ContentState
     let isStale: Bool
 
@@ -216,18 +223,20 @@ private struct Gate2LiveActivityView: View {
                     Text(state.title)
                         .font(.headline)
                         .foregroundStyle(.white)
-                        .lineLimit(1)
+                        .adaptiveLineLimit()
                         .minimumScaleFactor(0.82)
                     Text(state.chapterTitle)
                         .font(.caption)
                         .foregroundStyle(.white.opacity(0.78))
-                        .lineLimit(1)
+                        .adaptiveLineLimit()
                         .minimumScaleFactor(0.82)
                 }
                 Spacer()
                 Text(state.headlineWord)
                     .font(.caption.weight(.bold).monospaced())
                     .foregroundStyle(state.isRecording ? state.recordingTint : .white)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
             }
 
             ProgressView(value: Double(max(0, min(100, state.progressPercent))), total: 100)
@@ -276,70 +285,103 @@ private struct Gate2LiveActivityView: View {
         .padding(.vertical, 10)
     }
 
+    /// The five circles and the mic share one row while they fit the Lock Screen's width (about 327 pt of content).
+    /// When a next-chapter or next-Margin button is also offered, or the width is short, the five circles keep their
+    /// own row and the button and the mic share a second one (#1940). The circles alone are 240 pt at the default
+    /// size and never grow past `Gate2ControlSize.maxGrowth`, so that row fits at every text size.
     private var transportControls: some View {
-        HStack(spacing: 16) {
-                if state.canRun("skimBackward") {
-                    CompactRoundIntentButton(
-                        command: "skimBackward",
-                        systemImage: "backward.end.alt.fill",
-                        size: 50,
-                        accessibilityLabel: SkimDestinationLabel.accessibilityLabel(
-                            destinationMs: state.skimBackwardDestinationMs, backward: true
-                        ),
-                        caption: state.skimBackwardDestinationMs.map(SkimDestinationLabel.time)
-                    )
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 6) {
+                playbackCircles
+                nextNavigation
+                Spacer(minLength: 0)
+                recordButton
+            }
+            VStack(spacing: 6) {
+                HStack(spacing: 6) {
+                    playbackCircles
                 }
-                if state.canRun("skipBack") {
-                    CompactRoundIntentButton(
-                        command: "skipBack",
-                        systemImage: "gobackward.15",
-                        size: 56,
-                        accessibilityLabel: Gate2LiveActivityAccessibility.label(forCommand: "skipBack")
-                    )
-                }
-                if state.canRun("togglePlayPause") {
-                    CompactPlayPauseButton(
-                        command: "togglePlayPause",
-                        isPlaying: state.status == "playing" || state.status == "starting"
-                    )
-                }
-                if state.canRun("skipForward") {
-                    CompactRoundIntentButton(
-                        command: "skipForward",
-                        systemImage: "goforward.15",
-                        size: 56,
-                        accessibilityLabel: Gate2LiveActivityAccessibility.label(forCommand: "skipForward")
-                    )
-                }
-                if state.canRun("skimForward") {
-                    CompactRoundIntentButton(
-                        command: "skimForward",
-                        systemImage: "forward.end.alt.fill",
-                        size: 50,
-                        accessibilityLabel: SkimDestinationLabel.accessibilityLabel(
-                            destinationMs: state.skimForwardDestinationMs, backward: false
-                        ),
-                        caption: state.skimForwardDestinationMs.map(SkimDestinationLabel.time)
-                    )
-                }
-                if let nextChapterTitle = state.nextChapterTitle,
-                   let nextChapterId = state.nextChapterId {
-                    nextNavigationButton(title: nextChapterTitle, targetID: nextChapterId)
-                }
-                Spacer()
-                if state.canRun("beginInterjection") || state.canRun("finishInterjection") {
-                    Link(destination: Gate2CompactCommandURL.url(command: state.isRecording ? "finishInterjection" : "beginInterjection")) {
-                        Image(systemName: state.isRecording ? "checkmark" : "mic.fill")
-                            .font(.title2.weight(.semibold))
-                            .frame(width: 56, height: 56)
-                            .foregroundStyle(.white)
-                            .background(Color.white.opacity(0.16))
-                            .clipShape(Circle())
-                    }
-                    .accessibilityLabel(state.isRecording ? "Finish Margin" : "Add a Margin")
+                HStack(spacing: 6) {
+                    nextNavigation
+                    Spacer(minLength: 0)
+                    recordButton
                 }
             }
-            .buttonStyle(.plain)
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private var playbackCircles: some View {
+        if state.canRun("skimBackward") {
+            CompactRoundIntentButton(
+                command: "skimBackward",
+                systemImage: "backward.end.alt.fill",
+                baseSize: Gate2ControlSize.skim,
+                accessibilityLabel: SkimDestinationLabel.accessibilityLabel(
+                    destinationMs: state.skimBackwardDestinationMs, backward: true
+                ),
+                caption: state.skimBackwardDestinationMs.map(SkimDestinationLabel.time)
+            )
+        }
+        if state.canRun("skipBack") {
+            CompactRoundIntentButton(
+                command: "skipBack",
+                systemImage: "gobackward.15",
+                baseSize: Gate2ControlSize.skip,
+                accessibilityLabel: Gate2LiveActivityAccessibility.label(forCommand: "skipBack")
+            )
+        }
+        if state.canRun("togglePlayPause") {
+            CompactPlayPauseButton(
+                command: "togglePlayPause",
+                isPlaying: state.status == "playing" || state.status == "starting"
+            )
+        }
+        if state.canRun("skipForward") {
+            CompactRoundIntentButton(
+                command: "skipForward",
+                systemImage: "goforward.15",
+                baseSize: Gate2ControlSize.skip,
+                accessibilityLabel: Gate2LiveActivityAccessibility.label(forCommand: "skipForward")
+            )
+        }
+        if state.canRun("skimForward") {
+            CompactRoundIntentButton(
+                command: "skimForward",
+                systemImage: "forward.end.alt.fill",
+                baseSize: Gate2ControlSize.skim,
+                accessibilityLabel: SkimDestinationLabel.accessibilityLabel(
+                    destinationMs: state.skimForwardDestinationMs, backward: false
+                ),
+                caption: state.skimForwardDestinationMs.map(SkimDestinationLabel.time)
+            )
+        }
+    }
+
+    @ViewBuilder
+    private var nextNavigation: some View {
+        if let nextChapterTitle = state.nextChapterTitle,
+           let nextChapterId = state.nextChapterId {
+            nextNavigationButton(title: nextChapterTitle, targetID: nextChapterId)
+        }
+    }
+
+    @ViewBuilder
+    private var recordButton: some View {
+        if state.canRun("beginInterjection") || state.canRun("finishInterjection") {
+            let diameter = Gate2ControlSize.diameter(Gate2ControlSize.record, scale: controlScale)
+            Link(destination: Gate2CompactCommandURL.url(command: state.isRecording ? "finishInterjection" : "beginInterjection")) {
+                Image(systemName: state.isRecording ? "checkmark" : "mic.fill")
+                    .font(.title2.weight(.semibold))
+                    .dynamicTypeSize(...Gate2ControlSize.glyphCeiling)
+                    .frame(width: diameter, height: diameter)
+                    .foregroundStyle(.white)
+                    .background(Color.white.opacity(0.16))
+                    .clipShape(Circle())
+            }
+            .accessibilityLabel(state.isRecording ? "Finish Margin" : "Add a Margin")
+        }
     }
 
     @ViewBuilder
@@ -371,7 +413,7 @@ private struct Gate2LiveActivityView: View {
                 Text(title)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.white)
-                    .lineLimit(1)
+                    .adaptiveLineLimit()
                     .minimumScaleFactor(0.78)
             }
             Image(systemName: state.nextNavigationKind == .sharedMargin ? "text.bubble.fill" : "chevron.forward")
@@ -379,7 +421,7 @@ private struct Gate2LiveActivityView: View {
                 .foregroundStyle(.white.opacity(0.8))
         }
         .padding(.horizontal, 14)
-        .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
+        .frame(maxWidth: .infinity, minHeight: Gate2ControlSize.diameter(Gate2ControlSize.record, scale: controlScale), alignment: .leading)
         .background(Color.white.opacity(0.12))
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
@@ -393,6 +435,8 @@ private struct Gate2SharedMarginButtons: View {
             Button(intent: Gate2SharedMarginActionIntent(command: Gate2CompactApplicationCommand.listenToSharedMargin)) {
                 Label(compact ? "Play" : "Listen", systemImage: "play.fill")
                     .font(.caption.weight(.bold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
                     .frame(maxWidth: .infinity, minHeight: compact ? 30 : 38)
                     .foregroundStyle(.white)
                     .background(Color.green.opacity(0.28))
@@ -405,6 +449,8 @@ private struct Gate2SharedMarginButtons: View {
             Button(intent: Gate2SharedMarginActionIntent(command: Gate2CompactApplicationCommand.dismissSharedMargin)) {
                 Label(compact ? "Skip" : "Dismiss", systemImage: "xmark")
                     .font(.caption.weight(.bold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
                     .frame(maxWidth: .infinity, minHeight: compact ? 30 : 38)
                     .foregroundStyle(.white)
                     .background(Color.white.opacity(0.14))
@@ -426,12 +472,16 @@ private extension Gate2LiveActivityAttributes.ContentState {
 }
 
 private struct CompactRoundIntentButton: View {
+    @ScaledMetric(relativeTo: .title2) private var controlScale: CGFloat = 1
     let command: String
     let systemImage: String
-    let size: CGFloat
+    /// The diameter at the default text size; the circle grows with the text up to `Gate2ControlSize.maxGrowth`.
+    let baseSize: CGFloat
     var accessibilityLabel: String? = nil
     /// Skim's destination time, drawn under the icon inside the circle so the row keeps its height (#115).
     var caption: String? = nil
+
+    private var size: CGFloat { Gate2ControlSize.diameter(baseSize, scale: controlScale) }
 
     var body: some View {
         Button(intent: Gate2CompactPlaybackIntent(command: command)) {
@@ -441,7 +491,7 @@ private struct CompactRoundIntentButton: View {
                         Image(systemName: systemImage)
                             .font(.body.weight(.semibold))
                         Text(caption)
-                            .font(.system(size: 10, weight: .semibold).monospacedDigit())
+                            .font(.caption2.weight(.semibold).monospacedDigit())
                             .lineLimit(1)
                             .minimumScaleFactor(0.7)
                             .padding(.horizontal, 4)
@@ -451,6 +501,7 @@ private struct CompactRoundIntentButton: View {
                         .font(.title2.weight(.semibold))
                 }
             }
+            .dynamicTypeSize(...(caption == nil ? Gate2ControlSize.glyphCeiling : Gate2ControlSize.captionedGlyphCeiling))
             .frame(width: size, height: size)
             .foregroundStyle(.white)
             .background(Color.white.opacity(0.16))
@@ -463,14 +514,17 @@ private struct CompactRoundIntentButton: View {
 }
 
 private struct CompactPlayPauseButton: View {
+    @ScaledMetric(relativeTo: .title2) private var controlScale: CGFloat = 1
     let command: String
     let isPlaying: Bool
+
+    private var size: CGFloat { Gate2ControlSize.diameter(Gate2ControlSize.play, scale: controlScale) }
 
     var body: some View {
         Button(intent: Gate2CompactPlaybackIntent(command: command)) {
             playPauseLabel
         }
-        .frame(width: 60, height: 60)
+        .frame(width: size, height: size)
         .contentShape(Circle())
         .accessibilityLabel(Gate2LiveActivityAccessibility.playPauseLabel(isPlaying: isPlaying))
     }
@@ -478,7 +532,8 @@ private struct CompactPlayPauseButton: View {
     private var playPauseLabel: some View {
         Image(systemName: isPlaying ? "pause.fill" : "play.fill")
             .font(.title.weight(.bold))
-            .frame(width: 60, height: 60)
+            .dynamicTypeSize(...Gate2ControlSize.glyphCeiling)
+            .frame(width: size, height: size)
             .foregroundStyle(.white)
             .padding(.leading, isPlaying ? 0 : 3)
             .background(Color(red: 0.27, green: 0.78, blue: 0.43).opacity(0.28))
@@ -495,7 +550,7 @@ private struct CompactActionIntentButton: View {
         Button(intent: Gate2CompactPlaybackIntent(command: command)) {
             Label(title, systemImage: systemImage)
                 .font(.caption.weight(.bold))
-                .lineLimit(1)
+                .adaptiveLineLimit()
                 .minimumScaleFactor(0.82)
                 .frame(maxWidth: .infinity, minHeight: 38)
                 .foregroundStyle(.white)
@@ -507,7 +562,41 @@ private struct CompactActionIntentButton: View {
     }
 }
 
+/// Sizes of the round controls (#1940). At the default text size the five transport circles total 240 pt, so they and
+/// the mic fit the Lock Screen's content width of about 327 pt in one row. A circle grows with the text size up to
+/// `maxGrowth` times its base, so the transport row still fits at the largest size. Every base is 44 pt or more, the
+/// minimum touch target.
+enum Gate2ControlSize {
+    static let skim: CGFloat = 44
+    static let skip: CGFloat = 48
+    static let play: CGFloat = 56
+    static let record: CGFloat = 48
+    static let maxGrowth: CGFloat = 1.2
+    /// A glyph inside a circle stops growing at this size; the circle itself is capped, so a larger glyph would not fit.
+    static let glyphCeiling: DynamicTypeSize = .accessibility1
+    /// A skim circle also holds its destination time under the icon, so its text stops sooner.
+    static let captionedGlyphCeiling: DynamicTypeSize = .xxxLarge
+
+    static func diameter(_ base: CGFloat, scale: CGFloat) -> CGFloat {
+        base * min(max(scale, 1), maxGrowth)
+    }
+}
+
+private struct AdaptiveLineLimit: ViewModifier {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    func body(content: Content) -> some View {
+        content.lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
+    }
+}
+
 private extension View {
+    /// One line at ordinary text sizes, two at accessibility sizes, so a long title wraps instead of shrinking to
+    /// nothing (#1940).
+    func adaptiveLineLimit() -> some View {
+        modifier(AdaptiveLineLimit())
+    }
+
     /// Grows the hit area to 44 pt without moving anything: the layout keeps its size (#1929).
     func expandedHitArea(vertical: CGFloat) -> some View {
         padding(.vertical, vertical)
