@@ -9,9 +9,10 @@
 #
 # It builds a static linux/amd64 binary, uploads it with the templates to a
 # temporary directory, and runs remote-install.sh there. That script edits
-# only the spokenmargins.proximitytoprogress.com block, the web app's
-# app.spokenmargins.proximitytoprogress.com block (its files come from
-# deploy-web.sh), and the global log filter; it refuses if the block isn't the plain one it expects,
+# only the product's blocks (#3062: spokenmargins.com, www, the web app's
+# app.spokenmargins.com whose files come from deploy-web.sh, and the two old
+# proximitytoprogress.com hosts, which keep serving the API and redirect the
+# rest) and the global log filter; it refuses if the old block isn't the plain one it expects,
 # validates the candidate with `caddy validate`, backs up the Caddyfile,
 # reloads (never restarts) Caddy, checks the sites and health, and rolls the
 # Caddyfile back if a check fails. It copies the old smserver binary and unit
@@ -26,7 +27,8 @@ if [[ "${1:-}" == --dry-run ]]; then dry_run=1; shift; fi
 host="$1"
 port="${SM_SERVER_PORT:-8795}"
 server_root="${SM_SERVER_ROOT:-/srv/www/spokenmargins-server}"
-site_host="spokenmargins.proximitytoprogress.com"
+site_host="spokenmargins.com"
+legacy_site_host="spokenmargins.proximitytoprogress.com"
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 stage="$(mktemp -d "${TMPDIR:-/tmp}/smserver-deploy.XXXXXX")"
@@ -42,7 +44,7 @@ trap cleanup EXIT
 
 echo "== build linux/amd64 smserver"
 cp "${here}/edit-caddyfile.sh" "${here}/remote-install.sh" "${here}/caddy-global.caddy" "${here}/caddy-site.caddy" \
-  "${here}/caddy-web.caddy" "${here}/smserver.service" "${here}/journald@smserver.conf" "${stage}/"
+  "${here}/caddy-legacy-site.caddy" "${here}/caddy-www.caddy" "${here}/caddy-legacy-web.caddy" "${here}/caddy-web.caddy" "${here}/smserver.service" "${here}/journald@smserver.conf" "${stage}/"
 (cd "${here}/../server" && go test ./... >/dev/null && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o "${stage}/smserver" ./cmd/smserver)
 echo "built $(git -C "${here}" rev-parse --short HEAD), tests pass"
 if ((dry_run)); then rm "${stage}/smserver"; fi
@@ -68,10 +70,15 @@ unit_backup="$(sed -n 's/^UNIT_BACKUP=//p' "${log}")"
 
 echo "== checking from this machine"
 failed=""
-for url in https://proximitytoprogress.com/ "https://${site_host}/" "https://${site_host}/api/v1/health"; do
+# The old host's API must keep answering (shipped builds use it). The new hosts
+# are reported but cannot roll the deploy back: they need DNS and a certificate.
+for url in https://proximitytoprogress.com/ "https://${legacy_site_host}/api/v1/health"; do
   code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "${url}" || true)"
   echo "${code} ${url}"
   if [[ "${code}" == 000 || "${code}" -ge 500 ]]; then failed="${url}"; fi
+done
+for url in "https://${site_host}/" "https://${site_host}/api/v1/health" "https://www.${site_host}/" "https://app.${site_host}/" "https://${legacy_site_host}/"; do
+  echo "$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "${url}" || true) ${url} (not a rollback condition)"
 done
 if [[ -n "${failed}" ]]; then
   echo "== ${failed} failed from outside; rolling the Caddyfile and smserver back" >&2
