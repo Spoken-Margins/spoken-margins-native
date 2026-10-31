@@ -40,7 +40,7 @@ class HostedAppPaths(unittest.TestCase):
     def test_every_project_source_triggers_a_build(self):
         paths = trigger_paths('pull_request')
         sources = project_sources()
-        self.assertIn('Contracts/fixtures', sources)
+        self.assertIn('Contracts/fixtures/items', sources)
         for source in sources:
             probe = source if '.' in Path(source).name else source + '/probe.file'
             self.assertTrue(built(probe, paths), f'{source} is bundled by project.yml but does not trigger the build')

@@ -72,9 +72,14 @@ targets:
         buildPhase: resources
       - path: Site/onboarding/catalog/v1/catalog.json
         buildPhase: resources
-      - path: Contracts/fixtures
+      # Only the fixture folders the app reads at run time (Gate1AppModel's loadFixtureItem, loadFixtureMap and
+      # loadProfile). Saved feeds, search responses and traces stay in the repository for tests (#3075);
+      # scripts/third_party_notices.py fails if an app target bundles a Contracts folder no app source reads.
+      - path: Contracts/fixtures/items
         type: folder
-      - path: Contracts/traces
+      - path: Contracts/fixtures/maps
+        type: folder
+      - path: Contracts/fixtures/capabilities
         type: folder
     dependencies:
       - target: SpokenMarginsGate2Widget

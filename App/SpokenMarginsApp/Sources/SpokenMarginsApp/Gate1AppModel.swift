@@ -3173,21 +3173,21 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func loadFixtureItem(name: String) throws -> Item {
-        guard let url = Bundle.main.url(forResource: name, withExtension: "json", subdirectory: "fixtures/items") else {
+        guard let url = Bundle.main.url(forResource: name, withExtension: "json", subdirectory: "items") else {
             throw CocoaError(.fileNoSuchFile)
         }
         return try ContractFixtureLoader.item(at: url)
     }
 
     func loadFixtureMap(name: String) throws -> ListeningMap {
-        guard let url = Bundle.main.url(forResource: name, withExtension: "json", subdirectory: "fixtures/maps") else {
+        guard let url = Bundle.main.url(forResource: name, withExtension: "json", subdirectory: "maps") else {
             throw CocoaError(.fileNoSuchFile)
         }
         return try ContractFixtureLoader.listeningMap(at: url)
     }
 
     func loadProfile(id: String) throws -> RuntimeCapabilityProfile {
-        guard let url = Bundle.main.url(forResource: id, withExtension: "json", subdirectory: "fixtures/capabilities") else {
+        guard let url = Bundle.main.url(forResource: id, withExtension: "json", subdirectory: "capabilities") else {
             throw CocoaError(.fileNoSuchFile)
         }
         return try ContractFixtureLoader.profile(at: url)
