@@ -474,8 +474,12 @@ extension Gate1AppModel {
                         imported = itemId != nil
                     } else {
                         let itemId = self.listeningSignals.followedArticleImported(try self.importBrowserTextInBackground(handoff), for: entry)
-                        let audio = try PublisherAudioDetector.publisherAudio(for: entry, itemId: itemId)?.keepingTextMap(of: store.loadPublisherAudio(itemId: itemId))
-                        if let audio { try store.savePublisherAudio(audio); PublisherAudioTextMapper.start(audio, store: store, transcriber: self.sourceTranscriptionClient) { [weak self] in self?.diagnostics["publisherAudioTextMap"] = "\(itemId): \($0)" } }
+                        // The earlier record's text map is kept and the save runs off the main actor (#2509), as for a shared link.
+                        var audio: PublisherAudio?
+                        if let found = try PublisherAudioDetector.publisherAudio(for: entry, itemId: itemId) {
+                            audio = try await StoreReader(store).read { try $0.savePublisherAudioIfItemExists(found) }
+                        }
+                        if let audio { PublisherAudioTextMapper.start(audio, store: store, transcriber: self.sourceTranscriptionClient) { [weak self] in self?.diagnostics["publisherAudioTextMap"] = "\(itemId): \($0)" } }
                         self.recordFollowedPublisherAudio(lookup?.outcome, itemId: audio?.itemId ?? itemId, saved: audio != nil)
                         if openWhenFinished { self.openItem(id: itemId) }; if playWhenFinished { self.startItem(id: itemId) } // Play now (#478)
                         imported = true
