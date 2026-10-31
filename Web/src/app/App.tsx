@@ -3,8 +3,9 @@
 import { useCallback, useEffect, useState, type DragEvent, type ReactNode } from 'react';
 import { DataProvider } from './data.tsx';
 import { FollowingIcon, LibraryIcon, MarginsIcon, SettingsIcon } from './icons.tsx';
-import { openFiles, useOpenMarginFile } from './import.tsx';
-import { PlayerProvider } from './player.tsx';
+import { openFiles, useLaunchLink, useOpenMarginFile, useOpenShareLink } from './import.tsx';
+import type { ParsedLink } from './logic/share-link.ts';
+import { PlayerProvider, usePlayer } from './player.tsx';
 import { Following } from './screens/Following.tsx';
 import { Library } from './screens/Library.tsx';
 import { Margins } from './screens/Margins.tsx';
@@ -27,7 +28,7 @@ function tabFromHash(): Tab {
   return TABS.some((t) => t.id === id) ? (id as Tab) : 'library';
 }
 
-function Shell() {
+function Shell({ launchLink }: { launchLink: ParsedLink }) {
   const [tab, setTabState] = useState<Tab>(tabFromHash);
   const [nowPlaying, setNowPlaying] = useState(false);
   const [followOpen, setFollowOpen] = useState(false);
@@ -48,6 +49,8 @@ function Shell() {
   const openMarginFile = useOpenMarginFile(openPlayer);
   useSharedFiles(openMarginFile);
   useNativeOpenedFiles(openMarginFile);
+  const openShareLink = useOpenShareLink(openPlayer);
+  useLaunchLink(launchLink, openShareLink);
 
   // A `.spokenmargins` file dropped anywhere on the app opens like a picked one.
   const carriesFiles = (event: DragEvent) => Array.from(event.dataTransfer.types).includes('Files');
@@ -63,6 +66,14 @@ function Shell() {
     setDropping(false);
     void openFiles(Array.from(event.dataTransfer.files), openMarginFile);
   };
+
+  // The tab's title names where the listener is, so a screen reader or the tab switcher can tell (WCAG 2.4.2).
+  const player = usePlayer();
+  const playingTitle = nowPlaying ? player.episode?.title : undefined;
+  useEffect(() => {
+    const label = TABS.find((t) => t.id === tab)?.label ?? 'Library';
+    document.title = playingTitle ? `${playingTitle}, Now Playing · Spoken Margins` : `${label} · Spoken Margins`;
+  }, [tab, playingTitle]);
 
   return (
     <div
@@ -97,7 +108,7 @@ function Shell() {
           />
         )}
         {tab === 'following' && <Following onPlay={openPlayer} followOpen={followOpen} setFollowOpen={setFollowOpen} />}
-        {tab === 'margins' && <Margins onPlay={openPlayer} onOpenFile={openMarginFile} />}
+        {tab === 'margins' && <Margins onPlay={openPlayer} onOpenFile={openMarginFile} onOpenLink={openShareLink} />}
         {tab === 'settings' && <Settings />}
       </main>
       {!nowPlaying && <MiniPlayer onOpen={openPlayer} />}
@@ -111,12 +122,12 @@ function Shell() {
   );
 }
 
-export function App() {
+export function App({ launchLink = { kind: 'none' } }: { launchLink?: ParsedLink }) {
   return (
     <UiProvider>
       <DataProvider>
         <PlayerProvider>
-          <Shell />
+          <Shell launchLink={launchLink} />
         </PlayerProvider>
       </DataProvider>
     </UiProvider>

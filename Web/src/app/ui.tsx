@@ -2,6 +2,7 @@
 // feed the browser can't read asks the listener once before anything goes through the server.
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useData } from './data.tsx';
+import { useRestoreFocus } from './focus.ts';
 import { NeedsRelayConsent } from './ports.ts';
 
 // The pop-up text for the feed relay (#2977, owner 2026-10-30: "you need to use a route through our
@@ -29,11 +30,17 @@ export function UiProvider({ children }: { children: ReactNode }) {
   const [asking, setAsking] = useState<((yes: boolean) => void) | null>(null);
   const nextId = useRef(1);
 
-  const toast = useCallback((text: string, tone: Toast['tone'] = 'info') => {
-    const id = nextId.current++;
-    setToasts((list) => [...list, { id, text, tone }]);
-    window.setTimeout(() => setToasts((list) => list.filter((t) => t.id !== id)), 5000);
-  }, []);
+  const dismiss = useCallback((id: number) => setToasts((list) => list.filter((t) => t.id !== id)), []);
+  // A note goes after a few seconds, and only the latest is shown. A problem stays until the listener
+  // closes it, so nobody has to read it against a timer (WCAG 2.2.1).
+  const toast = useCallback(
+    (text: string, tone: Toast['tone'] = 'info') => {
+      const id = nextId.current++;
+      setToasts((list) => [...list.filter((t) => t.tone === 'problem'), { id, text, tone }]);
+      if (tone === 'info') window.setTimeout(() => dismiss(id), 6000);
+    },
+    [dismiss],
+  );
 
   const askRelay = useCallback(() => new Promise<boolean>((resolve) => setAsking(() => resolve)), []);
 
@@ -41,13 +48,38 @@ export function UiProvider({ children }: { children: ReactNode }) {
   return (
     <UiContext.Provider value={api}>
       {children}
-      <div className="toasts" role="status" aria-live="polite">
-        {toasts.map((t) => (
-          <p key={t.id} className={`toast toast-${t.tone}`}>
-            <span className="toast-mark" aria-hidden="true">{t.tone === 'problem' ? '!' : 'i'}</span>
-            {t.text}
-          </p>
-        ))}
+      <div className="toasts">
+        {/* role="alert" is announced when it arrives with its text, so it exists only while there is a
+            problem; the status region below stays in place so polite notes are heard. */}
+        {toasts.some((t) => t.tone === 'problem') && (
+        <div role="alert">
+          {toasts
+            .filter((t) => t.tone === 'problem')
+            .map((t) => (
+              <p key={t.id} className="toast toast-problem">
+                <span className="toast-mark" aria-hidden="true">
+                  !
+                </span>
+                <span>{t.text}</span>
+                <button type="button" className="toast-close" onClick={() => dismiss(t.id)}>
+                  Close
+                </button>
+              </p>
+            ))}
+        </div>
+        )}
+        <div role="status">
+          {toasts
+            .filter((t) => t.tone === 'info')
+            .map((t) => (
+              <p key={t.id} className="toast toast-info">
+                <span className="toast-mark" aria-hidden="true">
+                  i
+                </span>
+                {t.text}
+              </p>
+            ))}
+        </div>
       </div>
       {asking && (
         <RelayDialog
@@ -63,6 +95,7 @@ export function UiProvider({ children }: { children: ReactNode }) {
 
 function RelayDialog({ onAnswer }: { onAnswer: (yes: boolean) => void }) {
   const ref = useRef<HTMLDialogElement>(null);
+  useRestoreFocus();
   useEffect(() => {
     const dialog = ref.current;
     if (dialog && !dialog.open) dialog.showModal();
@@ -100,6 +133,9 @@ export function useRelay() {
         return await read(settings.relayAllowed);
       } catch (error) {
         if (!(error instanceof NeedsRelayConsent)) throw error;
+        // Offline, every feed read fails the way a refused one does. Asking about the server then would
+        // be the wrong question, and a "Not now" would be remembered for good.
+        if (!navigator.onLine) throw new Error('You’re offline. Connect to the internet and try again.');
         if (settings.relayAsked) {
           throw new Error('This feed needs our server to read it. Reading feeds through the server is off in Settings.');
         }

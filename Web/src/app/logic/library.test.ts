@@ -10,6 +10,8 @@ import {
   nextSpeed,
   stableId,
   timelineFraction,
+  timelinePosts,
+  FINISHED_WITHIN_SECONDS,
 } from './library.ts';
 
 const show = (id: string, title: string): Show => ({ id, kind: 'podcast', title, feedUrl: `https://e.test/${id}`, followedAt: '2026-10-01T00:00:00Z' });
@@ -91,4 +93,31 @@ test('stableId is stable and differs for different inputs', () => {
   assert.equal(stableId('https://e.test/feed'), stableId('https://e.test/feed'));
   assert.notEqual(stableId('https://e.test/feed'), stableId('https://e.test/feed2'));
   assert.match(stableId(''), /^[0-9a-f]{8}$/);
+  // Pinned: ids are stored, so a change to the hash would orphan every saved show and episode.
+  assert.equal(stableId(''), '811c9dc5');
+  assert.equal(stableId('a'), 'e40c292c');
+});
+
+test('an episode counts as finished only within the last FINISHED_WITHIN_SECONDS', () => {
+  assert.equal(FINISHED_WITHIN_SECONDS, 15);
+  const shows = [show('s', 'Show')];
+  const state = (seconds: number) => libraryRows([ep('e', 's', '2026-10-01T00:00:00Z', 600)], shows, [pos('e', seconds)])[0].state;
+  assert.equal(state(584), 'started');
+  assert.equal(state(585), 'finished');
+  assert.equal(state(586), 'finished');
+});
+
+test('timelinePosts shares a post between Margins closer than the gap, and keeps the rest apart', () => {
+  const ms = [margin('c', 'e', 300, 'x'), margin('a', 'e', 10, 'x'), margin('b', 'e', 12, 'x'), margin('d', 'e', 330, 'x')];
+  assert.deepEqual(
+    timelinePosts(ms, 600, 0.1).map((p) => [p.atSeconds, p.margins.map((m) => m.id)]),
+    [
+      [10, ['a', 'b']],
+      [300, ['c', 'd']],
+    ],
+  );
+  // Far enough apart, each Margin keeps its own post.
+  assert.equal(timelinePosts(ms, 600, 0.001).length, 4);
+  // Unknown duration: everything sits at the start, on one post.
+  assert.equal(timelinePosts(ms, undefined, 0.1).length, 1);
 });

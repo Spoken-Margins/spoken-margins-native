@@ -149,3 +149,26 @@ export function timelineFraction(atSeconds: number, durationSeconds: number | un
   if (!durationSeconds || !Number.isFinite(durationSeconds) || durationSeconds <= 0) return 0;
   return Math.min(1, Math.max(0, atSeconds / durationSeconds));
 }
+
+/** One post on the timeline: the Margins close enough together to share it, earliest first. */
+export interface TimelinePost {
+  atSeconds: number;
+  fraction: number;
+  margins: Margin[];
+}
+
+/**
+ * Margins whose posts would sit closer than `minGap` (a fraction of the track's width: 44 px over the
+ * track) share one post, so no post covers another and each stays a 44 px target. Tapping a shared post
+ * plays from its earliest Margin; the list under the player still reaches each one.
+ */
+export function timelinePosts(margins: readonly Margin[], durationSeconds: number | undefined, minGap: number): TimelinePost[] {
+  const posts: TimelinePost[] = [];
+  for (const margin of [...margins].sort((a, b) => a.atSeconds - b.atSeconds)) {
+    const fraction = timelineFraction(margin.atSeconds, durationSeconds);
+    const last = posts.at(-1);
+    if (last && fraction - last.fraction < minGap) last.margins.push(margin);
+    else posts.push({ atSeconds: margin.atSeconds, fraction, margins: [margin] });
+  }
+  return posts;
+}

@@ -37,8 +37,11 @@ export function VoiceButton({ voice }: { voice: { blob: Blob; durationSeconds: n
   };
 
   return (
-    <button type="button" className="icon-button voice-button" onClick={toggle} aria-label={playing ? 'Pause this voice Margin' : `Hear this voice Margin, ${formatClock(voice.durationSeconds)}`}>
-      {playing ? <PauseIcon size={20} /> : <PlayIcon size={20} />}
+    // A word as well as the triangle: the row beside it also plays (the episode, from this moment), and
+    // two look-alike triangles in one row don't say which is which.
+    <button type="button" className="voice-button" onClick={toggle} aria-label={playing ? 'Pause this voice Margin' : `Hear this voice Margin, ${formatClock(voice.durationSeconds)}`}>
+      {playing ? <PauseIcon size={18} /> : <PlayIcon size={18} />}
+      <span aria-hidden="true">{playing ? 'Pause' : 'Hear'}</span>
     </button>
   );
 }
