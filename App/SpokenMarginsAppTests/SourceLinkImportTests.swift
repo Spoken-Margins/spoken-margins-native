@@ -1491,6 +1491,7 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(request.windowBeforeMs, 0)
         XCTAssertEqual(request.windowAfterMs, 120_000)
         XCTAssertEqual(request.durationMs, 120_000)
+        await model.settleItemReload() // the item detail reloads off the main thread after the context attaches (#2510)
         XCTAssertEqual(model.selectedItem.interjections.first?.anchor.anchorBefore, "Minute before. Interjection context.")
         XCTAssertEqual(model.selectedItem.interjections.first?.anchor.anchorAfter, "Minute after.")
         XCTAssertEqual(model.selectedItem.interjections.first?.anchorContextStatus, .ready)
@@ -1733,6 +1734,9 @@ final class SourceLinkImportTests: XCTestCase {
             model.marginDiagnostic("interjectionAnchorAtCapture", interjectionId: "ij-001"),
             "type=media;media_time=present;segment=missing;before=missing;after=missing;context=pending"
         )
+        // The item detail reloads off the main thread when each stage finishes (#2510): the diagnostics above are set
+        // before the reload publishes, so a slow simulator read `selectedItem` first and saw no transcript yet.
+        await model.settleItemReload()
         XCTAssertEqual(model.selectedItem.interjections.first?.transcript, "My recorded note.")
     }
 
