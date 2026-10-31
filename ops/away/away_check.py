@@ -8,13 +8,13 @@ report in four numbered parts:
 
 1. Queue depth against time away: open `ready` issues not `in-progress`, plus open audit
    issues, against the Dial's thread count (#589) times the hours away.
-2. Holds an agent wrote: lines in AGENTS.md on the trunk (`main`) that make work wait, and whether
-   each quotes the owner with a date. A hold with no owner quote is suspect.
+2. Holds an agent wrote: lines in AGENTS.md and docs/decisions.md on the trunk (`main`) that make
+   work wait, and whether each quotes the owner with a date. A hold with no owner quote is suspect.
 3. Owner-only items: open PRs touching `scripts/lane-runner.py` or `.github/` (his merge
    tap), `needs-owner` issues, and issues whose latest comment asks him to run a command.
 4. Allowance pace: the latest Mac tick on #337 against the Dial's straight line to the reset.
 
-It reads only; it never edits AGENTS.md, issues or labels. Stdlib only, Python 3.9+.
+It reads only; it never edits the guide, the record, issues or labels. Stdlib only, Python 3.9+.
 """
 from __future__ import annotations
 
@@ -71,7 +71,7 @@ def queue_verdict(ready: list[dict], audits: list[dict], threads: int, hours: fl
             'enough': have >= need, 'short': max(0, need - have)}
 
 
-# ---------- 2. holds in AGENTS.md (pure) ----------
+# ---------- 2. holds in the guide and the decisions record (pure) ----------
 
 HOLD_RE = re.compile(
     r"\buntil\b|\bwaits?\b|\bwaiting\b|\b(?:on|a|to) hold\b|\bholds? (?:back|off|new work|work)\b|"
@@ -129,7 +129,7 @@ def sentences(text: str) -> list[str]:
 
 
 def scan_holds(agents_md: str) -> list[dict]:
-    """Every line of AGENTS.md with a sentence that makes work wait.
+    """Every line of the guide text with a sentence that makes work wait.
 
     Each is marked by `hold_backing` from the line, the bullets it sits under and the
     paragraph leading into them, and the `##` section. Fenced code is skipped."""
@@ -250,7 +250,7 @@ def report(now: dt.datetime, hours: float, dial: dict, q: dict, holds: list[dict
     suspect = [h for h in holds if h['backing'] == 'suspect']
     unbacked = [h for h in holds if h['backing'] == 'unbacked']
     owned = len(holds) - len(suspect) - len(unbacked)
-    line = (f'2. Holds in AGENTS.md: {plural(len(holds), "line")} make work wait; '
+    line = (f'2. Holds in AGENTS.md and docs/decisions.md: {plural(len(holds), "line")} make work wait; '
             f'{owned} quote the owner asking for it, with a date.')
     if suspect or unbacked:
         out.append(line + f' Check {len(suspect)} with no dated owner call and {len(unbacked)} '
@@ -347,10 +347,19 @@ def latest_comments() -> list[dict]:
         cursor = page['pageInfo']['endCursor']
 
 
+# The guide holds the rules; the owner's dated calls, where the holds live, are in the record (#3033).
+GUIDE_FILES = ('AGENTS.md', 'docs/decisions.md')
+
+
 def agents_md(ref: str) -> str:
-    return subprocess.run(
-        ['gh', 'api', '-H', 'Accept: application/vnd.github.raw', f'repos/{REPO}/contents/AGENTS.md?ref={ref}'],
-        check=True, capture_output=True, text=True).stdout
+    """The guide and the decisions record on `ref`, joined, each under a heading that names its file."""
+    parts = []
+    for path in GUIDE_FILES:
+        text = subprocess.run(
+            ['gh', 'api', '-H', 'Accept: application/vnd.github.raw', f'repos/{REPO}/contents/{path}?ref={ref}'],
+            check=True, capture_output=True, text=True).stdout
+        parts.append(f'# {path}\n\n{text}')
+    return '\n\n'.join(parts)
 
 
 def main(argv=None) -> int:
@@ -358,7 +367,7 @@ def main(argv=None) -> int:
     ap.add_argument('--hours', type=float, required=True, help='hours the owner will be away')
     ap.add_argument('--rate', type=float, default=ISSUES_PER_THREAD_HOUR,
                     help='issues one thread finishes per hour (default %(default)s)')
-    ap.add_argument('--ref', default=trunk_branch(), help='branch to read AGENTS.md from (default: the trunk)')
+    ap.add_argument('--ref', default=trunk_branch(), help='branch to read the guide and the record from (default: the trunk)')
     args = ap.parse_args(argv)
 
     now = dt.datetime.now(dt.timezone.utc)

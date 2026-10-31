@@ -69,7 +69,7 @@ Buckets:
 | `.github/ISSUE_TEMPLATE/agent-task.md` | Example | Rewrite as a contributor template; agent task text is an injection surface (section 3). |
 | `.claude/skills/lane-request/` | Example until #1389 | Tied to the self-hosted lane. |
 | `.claude/skills/journey/` | Example | Portable agent-driven journey instructions; drop the owner's Test Desk session name. |
-| `AGENTS.md` | Example | Split: a public contributor guide (repo map, how to work, verification) and a private owner overlay (Current focus, standing calls, owner contact rules, `sm-gh`). Needs the owner's yes; it is his text. |
+| `AGENTS.md` | Example | Done as a public split (#3033, owner 2026-10-30): the guide keeps the rules that change behaviour, and the dated standing calls moved verbatim to `docs/decisions.md`. The private overlay of #1854 (PR #2946) was the other option; it stays open for the lead to close or rebase. |
 | `docs/scheduled-jobs.md`, `docs/workstreams/` (dispatch, kickoff, daily-phone-plan, test-lane) | Private | Describe owner automation. Keep a short public `docs/contributing/automation.md` that says private automation exists and is optional. |
 | `docs/legal/attorney-questions.md`, `docs/growth/`, `docs/launch/` | Private | #1383 lists these as the owner's own text. |
 
