@@ -251,6 +251,7 @@ class HostedRunAutoTests(unittest.TestCase):
                 mock.patch.object(lane, 'fetch_base', return_value=NEWER), \
                 mock.patch.object(lane, 'base_policy', return_value=scope), \
                 mock.patch.object(lane, 'diff_scope', return_value=scope.classify(list(paths))), \
+                mock.patch.object(lane, 'committed_changes', return_value=(list(paths), {})), \
                 mock.patch.object(lane, 'inherited_check', return_value=lambda comments: []), \
                 mock.patch.object(lane, 'hot_file_violations', return_value=[]), \
                 mock.patch.object(lane, 'host_build_folders') as folders, \
