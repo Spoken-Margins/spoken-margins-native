@@ -2095,7 +2095,7 @@ class PlanGroupingTests(unittest.TestCase):
 
     def test_held_milestones_wait_outside_the_ten_minutes(self):
         # fdda29c: a Later diagnostics fix led the plan and two Co-op Experience checks filled it, though co-op
-        # work starts only after Solid Ground ships (AGENTS.md Current focus, owner 2026-10-08).
+        # work starts only after Solid Ground ships (docs/decisions.md, owner 2026-10-08).
         later = self.issue(1682, 'Play an article until the phone is warm.', phone=True)
         later['milestone'] = {'title': 'Later', 'state': 'OPEN'}
         current = self.issue(1700, 'Open the Library and read the rows.')

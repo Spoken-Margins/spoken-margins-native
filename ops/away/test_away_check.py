@@ -2,6 +2,7 @@
 import datetime as dt
 import sys
 import unittest
+from unittest import mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -145,6 +146,22 @@ class PaceTests(unittest.TestCase):
                         a.pace(now, old, self.DIAL))
         self.assertIn('5 hours old', text)
         self.assertIn('HALT for claude', text)
+
+
+class GuideTextTests(unittest.TestCase):
+    def test_reads_the_guide_and_the_decisions_record(self):
+        """The holds moved to docs/decisions.md with the standing calls (#3033); the scan reads both files."""
+        asked = []
+
+        def fake_run(cmd, **kw):
+            asked.append(cmd[-1])
+            return type('R', (), {'stdout': f'body of {cmd[-1].split("/")[-1].split("?")[0]}\n'})()
+
+        with mock.patch.object(a.subprocess, 'run', fake_run):
+            text = a.agents_md('main')
+        self.assertEqual([x.split('contents/')[1] for x in asked], ['AGENTS.md?ref=main', 'docs/decisions.md?ref=main'])
+        self.assertIn('# AGENTS.md\n\nbody of AGENTS.md', text)
+        self.assertIn('# docs/decisions.md\n\nbody of decisions.md', text)
 
 
 class ReportTests(unittest.TestCase):
