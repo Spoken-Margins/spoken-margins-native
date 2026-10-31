@@ -37,8 +37,9 @@ async function elapsed(page: Page): Promise<number> {
 /** A toast holding `text`; with `whole`, one whose words are exactly `text` (the toast's icon aside). */
 function toast(page: Page, text: string | RegExp, whole = false) {
   const escaped = typeof text === 'string' ? text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') : '';
-  const pattern = typeof text === 'string' ? new RegExp(whole ? `^\\W?${escaped}$` : escaped) : text;
-  return page.getByRole('status').locator('p').filter({ hasText: pattern });
+  // Problems sit in the role="alert" region with a Close button, notes in role="status" (#2980).
+  const pattern = typeof text === 'string' ? new RegExp(whole ? `^\\W?${escaped}(Close)?$` : escaped) : text;
+  return page.locator('[role="status"] p, [role="alert"] p').filter({ hasText: pattern });
 }
 
 const audioTime = (page: Page) => page.getByTestId('audio').evaluate((a: HTMLAudioElement) => a.currentTime);
