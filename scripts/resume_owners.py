@@ -9,7 +9,7 @@ a new one out. The end state is one SessionKit type that owns the decision (the 
 the baseline names every remaining instance, and it only shrinks.
 
   scripts/resume_owners.py             check: fail on a declaration that is not in the baseline, or whose count of
-                                       writes grew
+                                       declarations or writes grew
   scripts/resume_owners.py --list      every declaration with file, line and write count
   scripts/resume_owners.py --update    tighten the baseline: drop fixed rows, lower counts. Never adds.
 
@@ -53,11 +53,12 @@ RESUME_NAMES = (
 OWNING_FILES: tuple = ()
 SCAN_DIRS = ('App', 'Packages')
 SKIP_PARTS = ('Tests', 'UITests', '.build', 'Fixtures')  # test targets and build output are not production code
-DECLARATION = re.compile(r'\b(?:var|let|func|struct|enum|class|actor|protocol|typealias|case)\s+(`?\w+`?)')
-# A function's parameter, by label or by internal name: `func interruptionEnded(shouldResume: Bool)`. One level of
-# parentheses inside the list (a closure type) is enough for a signature.
-SIGNATURE = re.compile(r'\bfunc\s+`?\w+`?\s*(?:<[^>]*>)?\s*\(((?:[^()]|\([^()]*\))*)\)')
+DECLARATION = re.compile(r'\b(?:func|struct|enum|class|actor|protocol|typealias|case)\s+(`?\w+`?)')
+BINDING = re.compile(r'\b(?:var|let)\b([^\n{]*)')
+# What starts a parameter list: `func name(`, `init(`, `init?(`, and an enum case with associated values `case name(`.
+SIGNATURE = re.compile(r'\b(?:func\s+`?\w+`?|init[?!]?|case\s+`?\w+`?)\s*(?:<[^>]*>)?\s*\(')
 PARAMETER = re.compile(r'(?:^|,)\s*(\w+)(?:\s+(\w+))?\s*:')
+OPENERS, CLOSERS = '([{', ')]}'
 
 
 def blank_literals(text: str) -> str:
@@ -112,6 +113,43 @@ def blank_literals(text: str) -> str:
     return ''.join(out)
 
 
+def balanced(code: str, opener: int) -> str:
+    """The text inside the parenthesis that opens at `opener`, however deeply it nests; '' when it never closes."""
+    depth = 0
+    for i in range(opener, len(code)):
+        if code[i] in OPENERS:
+            depth += 1
+        elif code[i] in CLOSERS:
+            depth -= 1
+            if depth == 0:
+                return code[opener + 1:i]
+    return ''
+
+
+def top_level_split(text: str):
+    parts, depth, start = [], 0, 0
+    for i, char in enumerate(text):
+        if char in OPENERS:
+            depth += 1
+        elif char in CLOSERS:
+            depth -= 1
+        elif char == ',' and depth == 0:
+            parts.append(text[start:i])
+            start = i + 1
+    parts.append(text[start:])
+    return parts
+
+
+def bound_names(rest: str):
+    """The names a `var`/`let` binds on its line: `a = 1, shouldResume = 2` and `(a, shouldResume) = pair` both
+    give the second name. A name sits before the segment's first `=` or `:`."""
+    for segment in top_level_split(rest):
+        pattern = re.split(r'[=:]', segment, maxsplit=1)[0]
+        for name in re.findall(r'\w+', pattern):
+            if name not in ('_', 'private', 'fileprivate', 'internal', 'public', 'static', 'lazy', 'weak') and not name.isdigit():
+                yield name
+
+
 def carries_resume(name: str) -> bool:
     lowered = name.lower()
     return any(part.lower() in lowered for part in RESUME_NAMES)
@@ -121,29 +159,33 @@ def scan_source(path: str, original: str):
     """Rows for one file: one per declared name, with its first line and the writes to it in this file."""
     code = blank_literals(original)
     rows = {}
+    def add(name: str, offset: int):
+        if carries_resume(name):
+            line = code.count('\n', 0, offset) + 1
+            rows.setdefault(name, {'file': path, 'name': name, 'line': line, 'decls': 0, 'writes': 0})['decls'] += 1
+
     for match in DECLARATION.finditer(code):
-        name = match.group(1).strip('`')
-        if not carries_resume(name):
-            continue
-        line = code.count('\n', 0, match.start()) + 1
-        row = rows.setdefault(name, {'file': path, 'name': name, 'line': line, 'decls': 0, 'writes': 0})
-        row['decls'] += 1
+        add(match.group(1).strip('`'), match.start())
+    for match in BINDING.finditer(code):
+        for name in bound_names(match.group(1)):
+            add(name, match.start())
     for signature in SIGNATURE.finditer(code):
-        line = code.count('\n', 0, signature.start()) + 1
-        for parameter in PARAMETER.finditer(signature.group(1)):
+        for parameter in PARAMETER.finditer(balanced(code, signature.end() - 1)):
             for name in {n for n in parameter.groups() if n}:
-                if carries_resume(name):
-                    row = rows.setdefault(name, {'file': path, 'name': name, 'line': line, 'decls': 0, 'writes': 0})
-                    row['decls'] += 1
+                add(name, signature.start())
     for name, row in rows.items():
-        # `name = x`, `self.name = x`, `state.name = x`, `name += x`; not `name == x`, `name != x`, `var name: T = x` (a declaration).
-        writes = re.compile(r'(?<!\w)' + re.escape(name) + r'\s*(?:[-+*/|&]?=)(?!=)')
-        decl_inits = re.compile(r'\b(?:var|let)\s+`?' + re.escape(name) + r'`?\s*(?::[^=\n{]*)?=(?!=)')
-        row['writes'] = max(0, len(writes.findall(code)) - len(decl_inits.findall(code)))
+        # `name = x`, `self.name = x`, `state.name = x`, `name += x`, `name ??= x`, `name <<= x`; `name.toggle()` and
+        # `f(&name)` too. Not `name == x`, `name != x`, `name <= x`, or `var name: T = x` (a declaration).
+        escaped = re.escape(name)
+        writes = re.compile(r'(?<!\w)' + escaped + r'\s*(?:(?:\?\?|<<|>>|[-+*/%^|&])?=(?!=)|\.toggle\(|\.(?:append|insert|remove\w*)\()'
+                            r'|&' + escaped + r'(?!\w)')
+        initial = re.compile(r'\b(?:var|let)\s+`?' + escaped + r'`?\s*(?::[^=\n{]*)?=(?!=)')
+        row['writes'] = max(0, len(writes.findall(code)) - len(initial.findall(code)))
     return sorted(rows.values(), key=lambda r: r['name'])
 
 
-def scan_tree(root: Path = ROOT):
+def scan_tree(root: Path = None):
+    root = root or ROOT
     rows = []
     for top in SCAN_DIRS:
         for file in sorted((root / top).rglob('*.swift')):
@@ -160,7 +202,8 @@ def key(row) -> str:
     return f"{row['file']}::{row['name']}"
 
 
-def load_baseline(path: Path = BASELINE) -> dict:
+def load_baseline(path: Path = None) -> dict:
+    path = path or BASELINE
     if not path.exists():
         return {}
     return {entry['key']: entry for entry in json.loads(path.read_text())['rows']}
@@ -175,6 +218,10 @@ def problems(rows, baseline) -> list:
             found.append(f"{row['file']}:{row['line']}: `{row['name']}` is a new copy of the resume decision. Ask the "
                          f"one owner (#3032) whether the source resumes instead of keeping a flag of your own; if "
                          f"this really is the owner, list its file in OWNING_FILES in scripts/resume_owners.py.")
+        elif row['decls'] > known.get('decls', 1):
+            found.append(f"{row['file']}:{row['line']}: `{row['name']}` is declared {row['decls']} times in this file, "
+                         f"up from {known.get('decls', 1)}. Each declaration is another copy of the resume decision "
+                         f"(#3032).")
         elif row['writes'] > known['writes']:
             found.append(f"{row['file']}:{row['line']}: `{row['name']}` is written in {row['writes']} places, up from "
                          f"{known['writes']}. Another write site is another place the resume decision can disagree "
@@ -185,10 +232,10 @@ def problems(rows, baseline) -> list:
 def render_baseline(rows, old: dict) -> str:
     entries = []
     for row in sorted(rows, key=key):
-        entries.append({'key': key(row), 'writes': row['writes'],
+        entries.append({'key': key(row), 'decls': row['decls'], 'writes': row['writes'],
                         'why': old.get(key(row), {}).get('why', 'known when the guard landed (#3032); retired by the one-owner type')})
     return json.dumps({'about': 'Resume-decision state known when the guard landed (#3032). scripts/resume_owners.py '
-                                'fails on a declaration not listed here or one written in more places. --update only '
+                                'fails on a declaration not listed here or one declared or written in more places. --update only '
                                 'removes rows and lowers counts.',
                        'rows': entries}, indent=1) + '\n'
 
@@ -211,7 +258,8 @@ def main(argv=None) -> int:
         print(f'baseline: {len(rows)} rows')
         return 0
     if args.update:
-        kept = [dict(row, writes=min(row['writes'], baseline[key(row)]['writes'])) for row in rows if key(row) in baseline]
+        kept = [dict(row, writes=min(row['writes'], baseline[key(row)]['writes']),
+                     decls=min(row['decls'], baseline[key(row)].get('decls', row['decls']))) for row in rows if key(row) in baseline]
         BASELINE.write_text(render_baseline(kept, baseline))
         print(f'baseline: {len(kept)} rows (was {len(baseline)})')
         return 0

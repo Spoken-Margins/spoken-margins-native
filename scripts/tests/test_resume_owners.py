@@ -48,6 +48,19 @@ class WhatIsAResumeDeclaration(unittest.TestCase):
         self.assertEqual(names('func ended(with flag: Bool, again shouldResume: Bool) {}'), ['shouldResume'])
         self.assertEqual(names('func ended(handler: (Bool) -> Void, shouldResume: Bool) {}'), ['shouldResume'])
 
+    def test_an_initializer_an_enum_case_and_a_nested_closure_type_are_rows(self):
+        self.assertEqual(names('init(shouldResume: Bool) {}'), ['shouldResume'])
+        self.assertEqual(names('init?(shouldResume: Bool) {}'), ['shouldResume'])
+        self.assertEqual(names('enum E { case ended(shouldResume: Bool) }'), ['shouldResume'])
+        self.assertEqual(names('func f(handler: ((Bool) -> Void)?, shouldResume: Bool) {}'), ['shouldResume'])
+        self.assertEqual(names('func f<T>(_ x: T, shouldResume: Bool) {}'), ['shouldResume'])
+
+    def test_a_later_name_in_a_list_or_a_tuple_is_a_row(self):
+        self.assertEqual(names('var a = 1, shouldResume = 2'), ['shouldResume'])
+        self.assertEqual(names('var (a, shouldResume) = (1, 2)'), ['shouldResume'])
+        self.assertEqual(names('let a: [Int: Int] = [1: 2], pendingResume: Bool = false'), ['pendingResume'])
+        self.assertEqual(names('var a = f(1, 2), b = 3'), [])
+
     def test_a_call_or_a_read_is_not_a_row(self):
         self.assertEqual(names('interruptionEnded(shouldResume: true)'), [])
         self.assertEqual(names('if shouldResume { play() }'), [])
@@ -75,12 +88,15 @@ class WhatIsAWrite(unittest.TestCase):
     func c() { state.shouldResume = true }
     func d() { if shouldResume == true { shouldResume = !shouldResume } }
     func e() { if shouldResume != false {} }
-    func f() { shouldResume ||= true }
+    func f() { shouldResume ??= true }
+    func g() { shouldResume.toggle() }
+    func h() { flip(&shouldResume) }
+    func i() { if shouldResume <= 1 || shouldResume >= 2 {} }
     '''
 
     def test_assignments_count_and_comparisons_and_the_initial_value_do_not(self):
-        # a, b, c, and the assignment inside d. `==` and `!=` are reads. `||=` is not Swift, so it is not a write.
-        self.assertEqual(writes(self.SOURCE, 'shouldResume'), 4)
+        # a, b, c, the assignment inside d, then `??=` (f), `.toggle()` (g) and `&` (h). `==`, `!=`, `<=` and `>=` are reads.
+        self.assertEqual(writes(self.SOURCE, 'shouldResume'), 7)
 
     def test_a_declaration_with_an_initial_value_is_not_a_write(self):
         self.assertEqual(writes('var shouldResume: Bool = false', 'shouldResume'), 0)
@@ -99,7 +115,7 @@ class WhatFailsTheCheck(unittest.TestCase):
         return ro.scan_source(file, source)
 
     def baseline(self, rows):
-        return {ro.key(row): {'writes': row['writes']} for row in rows}
+        return {ro.key(row): {'writes': row['writes'], 'decls': row['decls']} for row in rows}
 
     def test_a_new_declaration_fails_and_names_the_file_and_the_owner(self):
         old = self.rows('var shouldResume = false')
@@ -120,6 +136,13 @@ class WhatFailsTheCheck(unittest.TestCase):
         found = ro.problems(new, self.baseline(old))
         self.assertEqual(len(found), 1)
         self.assertIn('2 places', found[0])
+
+    def test_a_second_declaration_of_a_known_name_in_the_same_file_fails(self):
+        old = self.rows('var shouldResume = false')
+        new = self.rows('var shouldResume = false\nstruct B { var shouldResume = true }')
+        found = ro.problems(new, {ro.key(r): {'writes': r['writes'], 'decls': r['decls']} for r in old})
+        self.assertEqual(len(found), 1)
+        self.assertIn('declared 2 times', found[0])
 
     def test_fewer_writes_or_a_fixed_row_pass(self):
         old = self.rows('var shouldResume = false\nfunc a() { shouldResume = true }')
@@ -147,6 +170,30 @@ class WhatFailsTheCheck(unittest.TestCase):
             tests.mkdir(parents=True)
             (tests / 'T.swift').write_text('var shouldResume = false\n')
             self.assertEqual(ro.scan_tree(root), [])
+
+
+class TheBaselineOnlyShrinks(unittest.TestCase):
+    def test_update_drops_fixed_rows_lowers_counts_and_never_adds(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sources = root / 'Packages' / 'K' / 'Sources' / 'K'
+            sources.mkdir(parents=True)
+            (sources / 'A.swift').write_text('var shouldResume = false\nfunc a() { shouldResume = true }\nvar pendingResume = 1\n')
+            baseline_file = root / 'baseline.json'
+            saved = (ro.ROOT, ro.BASELINE)
+            ro.ROOT, ro.BASELINE = root, baseline_file
+            try:
+                self.assertEqual(ro.main(['--seed']), 0)
+                self.assertEqual(len(ro.load_baseline()), 2)
+                # One flag is fixed, one new flag appears, and the remaining one loses its write.
+                (sources / 'A.swift').write_text('var shouldResume = false\nvar shouldResumeNew = false\n')
+                self.assertEqual(ro.main([]), 1)  # the new flag fails the check
+                self.assertEqual(ro.main(['--update']), 0)
+                kept = ro.load_baseline()
+                self.assertEqual(sorted(k.split('::')[1] for k in kept), ['shouldResume'])
+                self.assertEqual(kept[next(iter(kept))]['writes'], 0)
+            finally:
+                ro.ROOT, ro.BASELINE = saved
 
 
 class TheGuardOnTheRealTree(unittest.TestCase):
