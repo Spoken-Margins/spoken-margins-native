@@ -51,6 +51,9 @@ public struct ShareInterjectionDraft: Identifiable {
     public var isPreparingCleanup = false
     public var preparationMessage: String?
     public var renderGeneration = 0
+    /// The stand-in words this Margin starts with when it has none of its own (#3027), or `nil`. The listener can
+    /// replace them; clearing their words brings these back, so the Margin never goes word-less.
+    public var placeholderText: String?
 
     public init(
         interjection: Interjection,
@@ -69,7 +72,8 @@ public struct ShareInterjectionDraft: Identifiable {
         isAnalyzingPauses: Bool = false,
         isPreparingCleanup: Bool = false,
         preparationMessage: String? = nil,
-        renderGeneration: Int = 0
+        renderGeneration: Int = 0,
+        placeholderText: String? = nil
     ) {
         self.interjection = interjection
         self.isIncluded = isIncluded
@@ -88,6 +92,7 @@ public struct ShareInterjectionDraft: Identifiable {
         self.isPreparingCleanup = isPreparingCleanup
         self.preparationMessage = preparationMessage
         self.renderGeneration = renderGeneration
+        self.placeholderText = placeholderText
     }
 
     public var currentEditState: ShareMarginEditState {
@@ -96,6 +101,53 @@ public struct ShareInterjectionDraft: Identifiable {
 
     public var canUndoEdit: Bool { editHistoryIndex > 0 }
     public var canRedoEdit: Bool { editHistoryIndex + 1 < editHistory.count }
+
+    /// Whether the words that will be sent are still the placeholder, not the listener's own.
+    public var isShowingPlaceholder: Bool {
+        guard let placeholderText else { return false }
+        return approvedTranscript.trimmingCharacters(in: .whitespacesAndNewlines) == placeholderText
+    }
+}
+
+extension ShareInterjectionDraft {
+    /// The draft the review sheet starts with (#3027). The Margin's own words win: its cleaned transcript, then its
+    /// transcript, then its display text. A voice Margin with none starts with `SharedMarginPlaceholder` words, so it
+    /// is shared rather than left out. Only a Margin with neither words nor voice keeps the "can't be shared" warning.
+    public static func initial(
+        for interjection: Interjection,
+        isIncluded: Bool,
+        hasVoice: Bool,
+        itemTitle: String?,
+        anchorWarning: String?,
+        timeZone: TimeZone = .current
+    ) -> ShareInterjectionDraft {
+        let words = SharedMarginTextRequirement.initialReviewedText(for: interjection)
+        let placeholder = SharedMarginPlaceholder.words(for: interjection, itemTitle: itemTitle, hasVoice: hasVoice, timeZone: timeZone)
+        let transcript = placeholder ?? words
+        // The excerpt cap scales with the listener's own words; placeholder words are not commentary.
+        let context = ExcerptCapRule.select(
+            before: interjection.anchor.anchorBefore,
+            after: interjection.anchor.anchorAfter,
+            commentLength: ExcerptCapRule.commentLength(transcript: words)
+        )
+        return ShareInterjectionDraft(
+            interjection: interjection,
+            isIncluded: isIncluded,
+            approvedTranscript: transcript,
+            representationChoice: hasVoice ? .original : .textOnly,
+            warning: SharedMarginTextRequirement.reviewWarning(for: transcript) ?? anchorWarning,
+            anchorBefore: context.before,
+            anchorAfter: context.after,
+            placeholderText: placeholder
+        )
+    }
+
+    /// The listener's words for a Margin that started with placeholder words. Clearing them brings the placeholder
+    /// back, so the Margin is never left word-less.
+    public mutating func setReviewedWords(_ words: String) {
+        guard let placeholderText else { return }
+        approvedTranscript = SharedMarginTextRequirement.hasReviewedText(words) ? words : placeholderText
+    }
 }
 
 extension ShareInterjectionDraft {
@@ -175,7 +227,8 @@ extension ShareInterjectionDraft {
         isAnalyzingPauses = false
         isPreparingCleanup = false
         preparationMessage = nil
-        approvedTranscript = interjection.transcript ?? interjection.displayText ?? ""
+        let words = interjection.transcript ?? interjection.displayText ?? ""
+        approvedTranscript = SharedMarginTextRequirement.hasReviewedText(words) ? words : (placeholderText ?? words)
         representationChoice = hasOriginalAudio ? .original : .textOnly
         warning = SharedMarginTextRequirement.reviewWarning(for: approvedTranscript) ?? anchorWarning
     }

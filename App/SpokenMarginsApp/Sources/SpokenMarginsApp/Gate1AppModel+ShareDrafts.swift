@@ -68,22 +68,14 @@ extension Gate1AppModel {
                 && item.hasListenableText
             sharingState.confirmsPrivateSharingRights = sharingState.isAppAuthoredItem
         }
+        // A voice Margin with no words starts with placeholder words instead of being left out (#3027).
         sharingState.drafts = candidates.map { interjection in
-            let transcript = SharedMarginTextRequirement.initialReviewedText(for: interjection)
-            let hasAudio = interjection.audioPath.flatMap(resolvedInterjectionAudioURL(for:)) != nil
-            let context = ExcerptCapRule.select(
-                before: interjection.anchor.anchorBefore,
-                after: interjection.anchor.anchorAfter,
-                commentLength: ExcerptCapRule.commentLength(transcript: transcript)
-            )
-            return ShareInterjectionDraft(
-                interjection: interjection,
+            ShareInterjectionDraft.initial(
+                for: interjection,
                 isIncluded: !hasStarredCandidates || interjection.isStarredForSharing == true,
-                approvedTranscript: transcript,
-                representationChoice: hasAudio ? .original : .textOnly,
-                warning: SharedMarginTextRequirement.reviewWarning(for: transcript) ?? shareAnchorWarning(for: interjection),
-                anchorBefore: context.before,
-                anchorAfter: context.after
+                hasVoice: interjection.audioPath.flatMap(resolvedInterjectionAudioURL(for:)) != nil,
+                itemTitle: selectedItem.title,
+                anchorWarning: shareAnchorWarning(for: interjection)
             )
         }
         sharingState.isPreparing = false

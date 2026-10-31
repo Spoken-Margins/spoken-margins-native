@@ -2,18 +2,29 @@ import Foundation
 import SessionKit
 
 /// A shared Margin must carry reviewed words. `SpokenMarginsPackageBuilder` and every
-/// packet reader back to Build 29 reject an empty transcript, voice Margins included,
-/// so a Margin whose transcription failed or is still pending can't go in a packet.
-/// Leaving it out must never be silent (#304).
+/// packet reader back to Build 29 reject an empty transcript, voice Margins included.
+/// A voice Margin whose transcription failed or is still pending travels with placeholder
+/// words (`SharedMarginPlaceholder`, #3027); a Margin with neither words nor voice can't go
+/// in a packet, and leaving it out must never be silent (#304).
 public enum SharedMarginTextRequirement {
     public static func hasReviewedText(_ approvedTranscript: String) -> Bool {
         !approvedTranscript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    /// The words the sender starts reviewing with: cleaned, then raw, then display text.
+    /// The words the sender starts reviewing with: cleaned, then raw, then display text, the first that has words
+    /// (a blank cleaned transcript no longer hides the raw one, #3027).
     /// Both the count on the Share Margins button and the review sheet start here, so they agree (#1185).
     public static func initialReviewedText(for interjection: Interjection) -> String {
-        interjection.cleanedTranscript ?? interjection.transcript ?? interjection.displayText ?? ""
+        [interjection.cleanedTranscript, interjection.transcript, interjection.displayText]
+            .compactMap { $0 }
+            .first(where: hasReviewedText) ?? ""
+    }
+
+    /// Whether a packet can carry this Margin: it has words, or it is a voice Margin, which travels with placeholder
+    /// words when it has none (`SharedMarginPlaceholder`, #3027). Only a Margin with neither is left out.
+    public static func canShare(_ interjection: Interjection, hasVoice: Bool) -> Bool {
+        hasReviewedText(initialReviewedText(for: interjection))
+            || SharedMarginPlaceholder.words(for: interjection, itemTitle: nil, hasVoice: hasVoice) != nil
     }
 
     /// The Margins the share sheet starts with included: only the starred ones when any

@@ -145,6 +145,55 @@ struct Build23SharingStageProgress: View {
     }
 }
 
+/// Marks words that are only a stand-in for a voice Margin that has none (#3027): an icon and a word, not colour alone.
+struct Build23PlaceholderTag: View {
+    var body: some View {
+        Label("Placeholder words", systemImage: "text.badge.plus")
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(AppColors.secondaryText)
+            .accessibilityHidden(true)
+    }
+}
+
+/// The words a word-less voice Margin is sent with (#3027). The box starts empty with the placeholder as its prompt,
+/// so typing replaces it whole; clearing the box brings the placeholder back.
+struct Build23PlaceholderWordsEditor: View {
+    let margin: Build23SharingMarginSnapshot
+    let placeholder: String
+    let send: (Build23SenderAction) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Words to send")
+                    .font(.headline)
+                Spacer()
+                if margin.isShowingPlaceholder {
+                    Build23PlaceholderTag()
+                }
+            }
+            TextField(
+                placeholder,
+                text: Binding(
+                    get: { margin.isShowingPlaceholder ? "" : margin.reviewedText },
+                    set: { send(.setReviewedWords(id: margin.id, text: $0)) }
+                ),
+                axis: .vertical
+            )
+            .textFieldStyle(.roundedBorder)
+            .accessibilityLabel("Words to send with this voice Margin")
+            .accessibilityValue(margin.isShowingPlaceholder ? "Placeholder words: \(placeholder)" : margin.reviewedText)
+            .accessibilityIdentifier("build23.sender.placeholder.words.\(margin.id)")
+            Text(margin.isShowingPlaceholder
+                 ? "This voice Margin has no transcript, so it goes with these placeholder words. Type to replace them with your own."
+                 : "Clear the box to send the placeholder words instead.")
+                .font(.caption)
+                .foregroundStyle(AppColors.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
 struct Build23StatusLabel: View {
     let icon: String
     let title: String
@@ -238,8 +287,13 @@ struct Build23MarginSelectionRow: View {
 
                         Text(margin.reviewedText.isEmpty ? "No reviewed text" : margin.reviewedText)
                             .font(.body)
-                            .foregroundStyle(AppColors.text)
+                            .italic(margin.isShowingPlaceholder)
+                            .foregroundStyle(margin.isShowingPlaceholder ? AppColors.secondaryText : AppColors.text)
                             .multilineTextAlignment(.leading)
+
+                        if margin.isShowingPlaceholder {
+                            Build23PlaceholderTag()
+                        }
 
                         Text(margin.isLeftOutForMissingText ? "Left out: no transcript yet" : (margin.isIncluded ? "Included" : "Tap to include"))
                             .font(.caption)
@@ -250,7 +304,7 @@ struct Build23MarginSelectionRow: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(!isEnabled)
-                .accessibilityLabel("\(margin.isStarred ? "Starred " : "")Margin, \(margin.reviewedText), \(margin.shareStatusDescription)")
+                .accessibilityLabel("\(margin.isStarred ? "Starred " : "")Margin, \(margin.spokenWordsDescription), \(margin.shareStatusDescription)")
                 .accessibilityHint("Double tap to \(margin.isIncluded ? "exclude" : "include") this Margin")
                 .accessibilityIdentifier("build23.sender.margin.row.\(margin.id)")
 
@@ -294,8 +348,13 @@ struct Build23ReviewSelectionRow: View {
 
                     Text(margin.reviewedText.isEmpty ? "No reviewed text" : margin.reviewedText)
                         .font(.subheadline)
-                        .foregroundStyle(AppColors.text)
+                        .italic(margin.isShowingPlaceholder)
+                        .foregroundStyle(margin.isShowingPlaceholder ? AppColors.secondaryText : AppColors.text)
                         .multilineTextAlignment(.leading)
+
+                    if margin.isShowingPlaceholder {
+                        Build23PlaceholderTag()
+                    }
 
                     if margin.isLeftOutForMissingText {
                         Label("Left out: no transcript yet", systemImage: "info.circle")
@@ -310,7 +369,7 @@ struct Build23ReviewSelectionRow: View {
             }
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(margin.isLeftOutForMissingText ? "Left out Margin, no transcript yet" : "Included Margin, \(margin.reviewedText)"), \(isSelected ? "editor open" : "open editor")")
+        .accessibilityLabel("\(margin.isLeftOutForMissingText ? "Left out Margin, no transcript yet" : "Included Margin, \(margin.spokenWordsDescription)"), \(isSelected ? "editor open" : "open editor")")
         .accessibilityIdentifier("build23.sender.review.selector.\(margin.id)")
     }
 }
@@ -406,6 +465,8 @@ struct Build23MarginEditor: View {
                             ))
                         }
                     }
+                } else if let placeholder = margin.placeholderText {
+                    Build23PlaceholderWordsEditor(margin: margin, placeholder: placeholder, send: send)
                 } else {
                     VStack(alignment: .leading, spacing: 10) {
                         Text("Reviewed transcript")
