@@ -6,6 +6,7 @@ This script fails when:
 - a Swift package, an npm package, a Python dev requirement or a package compiled into the page-reading scripts
   has no entry (or an entry at another version);
 - a model or font file, or a folder the app bundles (project.yml), sits under no entry's paths;
+- an app target bundles a Contracts/fixtures or Contracts/traces path no app source reads from the bundle;
 - a dependency manifest (package.json, requirements*.txt, Package.swift, go.mod) is claimed by no entry, or a
   Go module requires an outside module;
 - a path or licence file an entry names does not exist;
@@ -155,6 +156,53 @@ def resource_folders(root):
     return found
 
 
+# Test bundles may carry any fixture; a target of another type ships to listeners.
+TEST_TARGET_TYPES = ('bundle.unit-test', 'bundle.ui-testing')
+APP_TEST_SOURCES = ('App/SpokenMarginsAppTests/', 'App/SpokenMarginsAppUITests/')
+
+
+def shipped_contract_resources(root):
+    """(target, path, is folder) for each Contracts/fixtures or Contracts/traces path a shipped target bundles."""
+    found = []
+    target = kind = None
+    in_targets = False
+    lines = (root / 'project.yml').read_text().splitlines()
+    for index, line in enumerate(lines):
+        if re.match(r'\S', line):
+            in_targets = line.startswith('targets:')
+            continue
+        if not in_targets:
+            continue
+        if match := re.match(r'  (\S[^:]*):\s*$', line):
+            target, kind = match.group(1), None
+        elif match := re.match(r'    type: (\S+)', line):
+            kind = match.group(1)
+        elif match := re.match(r'(\s*)- path: (Contracts/(?:fixtures|traces)(?:/\S*)?)\s*$', line):
+            if kind in TEST_TARGET_TYPES:
+                continue
+            body = []
+            for follower in lines[index + 1:]:
+                if re.match(r'\s*- ', follower) or not follower.startswith(match.group(1) + '  '):
+                    break
+                body.append(follower)
+            found.append((target, match.group(2), bool(re.search(r'type: folder\b', ' '.join(body)))))
+    return found
+
+
+def bundle_reads(root, files):
+    """The `subdirectory:` and `forResource:` names app and SessionKit sources (not their tests) pass to Bundle."""
+    subdirectories, resources = set(), set()
+    for path in files:
+        if not path.endswith('.swift') or path.startswith(APP_TEST_SOURCES):
+            continue
+        if not (path.startswith('App/') or re.match(r'Packages/[^/]+/Sources/', path)):
+            continue
+        text = (root / path).read_text(errors='replace')
+        subdirectories.update(re.findall(r'subdirectory:\s*"([^"]+)"', text))
+        resources.update(re.findall(r'forResource:\s*"([^"]+)"', text))
+    return subdirectories, resources
+
+
 def problems(root):
     data = load(root)
     components = data['components']
@@ -213,9 +261,17 @@ def problems(root):
     for path in sorted(resource_folders(root)):
         if not covers([*prefixes, *own], path) and not any(covers([path], listed) for listed in [*prefixes, *own]):
             found.append(f'project.yml bundles {path}, which no entry lists in "paths" and "projectAuthored" does not claim')
+    files = list(walk(root))
+    # Captured feeds, search responses and traces are kept for tests; a folder ships only when the app reads it (#3075).
+    subdirectories, resources = bundle_reads(root, files)
+    for target, path, is_folder in shipped_contract_resources(root):
+        name = Path(path).name
+        if (name not in subdirectories) if is_folder else (Path(path).stem not in resources):
+            found.append(f'project.yml bundles {path} in {target}, but no app source reads "{name}" from the bundle; '
+                         'bundle only the folders the app reads and keep test fixtures in the test bundle')
     claimed_manifests = {path for component in components for path in component.get('tracks', {}).get('manifests', [])}
     individually_checked = {'package.json', 'requirements-dev.txt', *SWIFT_MANIFESTS, *SWIFT_RESOLVED}
-    for path in walk(root):
+    for path in files:
         name = path.rsplit('/', 1)[-1]
         if Path(path).suffix.lower() in MODEL_SUFFIXES and not covers(model_prefixes, path):
             found.append(f'{path}: a model or font file under no entry\'s paths')

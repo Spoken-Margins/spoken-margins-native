@@ -21,7 +21,11 @@ READ = ['docs/legal/third-party-components.json', 'THIRD_PARTY_NOTICES.md', 'pro
         'App/SharedResources/BundledJavaScript-NOTICES.txt', 'App/SharedResources/Defuddle-LICENSE.txt',
         'App/SpokenMarginsShareExtension/Resources/BundledJavaScript-NOTICES.txt',
         'App/SpokenMarginsShareExtension/Resources/Defuddle-LICENSE.txt',
-        'SpokenMarginsNative.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved']
+        'SpokenMarginsNative.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved',
+        'App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift']
+# The run-time fixture folders the app bundles (#3075), as project.yml lists them.
+APP_FIXTURES = ''.join(f'      - path: Contracts/fixtures/{name}\n        type: folder\n'
+                       for name in ('items', 'maps', 'capabilities'))
 
 
 class ThirdPartyNoticesTests(unittest.TestCase):
@@ -120,6 +124,45 @@ class ThirdPartyNoticesTests(unittest.TestCase):
         project = root / 'project.yml'
         project.write_text(project.read_text() + '\n      - path: App/SpokenMarginsApp/Resources/Mystery\n        type: folder\n')
         self.assertProblem(root, 'project.yml bundles App/SpokenMarginsApp/Resources/Mystery')
+
+    def test_the_app_bundles_only_the_contract_fixtures_it_reads(self):
+        # main before #3075: the whole of Contracts/fixtures and Contracts/traces shipped to every listener.
+        root = self.tree()
+        project = root / 'project.yml'
+        original = project.read_text()
+        self.assertIn(APP_FIXTURES, original)
+        project.write_text(original.replace(APP_FIXTURES, '      - path: Contracts/fixtures\n        type: folder\n'
+                                            '      - path: Contracts/traces\n        type: folder\n'))
+        self.assertProblem(root, 'project.yml bundles Contracts/fixtures in SpokenMarginsApp')
+        self.assertProblem(root, 'project.yml bundles Contracts/traces in SpokenMarginsApp')
+        project.write_text(original.replace(APP_FIXTURES, APP_FIXTURES + '      - path: Contracts/fixtures/feeds\n'
+                                            '        type: folder\n'))
+        self.assertProblem(root, 'project.yml bundles Contracts/fixtures/feeds in SpokenMarginsApp')
+        project.write_text(original.replace(APP_FIXTURES, APP_FIXTURES + '      - path: Contracts/fixtures/feeds/x.rss\n'
+                                            '        buildPhase: resources\n'))
+        self.assertProblem(root, 'project.yml bundles Contracts/fixtures/feeds/x.rss in SpokenMarginsApp')
+
+    def test_a_bundled_fixture_folder_fails_once_its_reader_is_gone(self):
+        root = self.tree()
+        model = root / 'App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift'
+        text = model.read_text()
+        self.assertIn('subdirectory: "maps"', text)
+        model.write_text(text.replace('subdirectory: "maps"', 'subdirectory: "fixtures/maps"'))
+        self.assertProblem(root, 'project.yml bundles Contracts/fixtures/maps in SpokenMarginsApp')
+        # A test's read does not count: it runs in the test bundle, not on a listener's phone.
+        test = root / 'App/SpokenMarginsAppTests/MapsReaderTests.swift'
+        test.parent.mkdir(parents=True)
+        test.write_text('let url = Bundle.main.url(forResource: "m", withExtension: "json", subdirectory: "maps")\n')
+        self.assertProblem(root, 'project.yml bundles Contracts/fixtures/maps in SpokenMarginsApp')
+
+    def test_a_test_bundle_may_carry_any_fixture(self):
+        root = self.tree()
+        project = root / 'project.yml'
+        original = project.read_text()
+        marker = '      - path: App/TestFixtures\n        buildPhase: resources\n'
+        self.assertEqual(original.count(marker), 2, 'the unit and UI test targets both bundle App/TestFixtures')
+        project.write_text(original.replace(marker, marker + '      - path: Contracts/traces\n        type: folder\n'))
+        self.assertEqual(notices.problems(root), [])
 
     def test_a_dependency_manifest_nobody_claims_fails(self):
         root = self.tree()

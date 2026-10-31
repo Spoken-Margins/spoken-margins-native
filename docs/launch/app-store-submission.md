@@ -240,7 +240,7 @@ My pick: ask the attorney. If the answer isn't clear before submission, use the 
 Data bundled in the app that isn't open-source software:
 
 - **Starter podcast catalog.** `Site/onboarding/catalog/v1/catalog.json` is bundled (`project.yml:33-34`). Since #1732 it is built from a hand-picked list of shows (`research/B1/shows.json`), and each row's title, author, description and artwork URL come from that show's own feed. It carries no Apple chart data and no Apple-hosted artwork; `scripts/validate-contracts.py` fails the build if either returns. It used to be built from Apple's Top Charts RSS feeds: see "The starter podcast catalog" below (#632).
-- **Test fixtures and traces.** `Contracts/fixtures` (about 2 MB, including iTunes Search responses and OPML from real feeds) and `Contracts/traces` are bundled (`project.yml:35-38`) only for the test hooks. #517 already plans to stop shipping the test hooks; these folders should leave the Release build with them.
+- **Test fixtures and traces.** Since #3075 the app bundles only `Contracts/fixtures/items`, `maps` and `capabilities` (about 70 KB, written for the tests), which first-run seeding and the test hooks read. The saved iTunes Search responses, feeds, OPML and `Contracts/traces` stay in the repository, and `scripts/third_party_notices.py` fails if an app target bundles a fixture folder no app source reads.
 
 No bundled license forbids App Store distribution or conflicts with Apple's Standard EULA. None is GPL or LGPL, and the only copyleft is Eigen's file-level MPL-2.0, satisfied by the source pointer above.
 
