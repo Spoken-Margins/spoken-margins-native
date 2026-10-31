@@ -97,10 +97,10 @@ class LiveActivityDynamicTypeTests(unittest.TestCase):
         helper = _between(text, "enum Gate2ControlSize", "private struct AdaptiveLineLimit")
         play, chip = _constant(helper, "play"), _constant(helper, "nextChipHeight")
         # 10 pt padding top and bottom; the header is the taller of the title column (22 + 2 + 16) and the trailing
-        # column (state word 14 + the chip); a 6 pt gap, the 4 pt progress bar and a 6 pt gap; the transport row. A
+        # column (state word 16, a caption line, + the chip); a 6 pt gap, the 4 pt progress bar and a 6 pt gap; the transport row. A
         # paused card adds the 6 pt gap and the 20 pt "Paused, tap to resume" line. The Summary and Discuss row is not
         # counted: it was already there and `main` is over the limit with it.
-        header = max(22 + 2 + 16, 14 + chip)
+        header = max(22 + 2 + 16, 16 + chip)
         base = 2 * 10 + header + 6 + 4 + 6 + play
         paused = base + 6 + 20
         self.assertLessEqual(paused, LOCK_SCREEN_MAX_HEIGHT, paused)
@@ -110,7 +110,7 @@ class LiveActivityDynamicTypeTests(unittest.TestCase):
         skim, skip, play, record, spacing = (
             _constant(helper, name) for name in ("skim", "skip", "play", "record", "rowSpacing")
         )
-        row = 2 * skim + 2 * skip + play + record + 5 * spacing  # five circles, a spacer and the mic: five gaps
+        row = 2 * skim + 2 * skip + play + record + 6 * spacing  # five circles, a spacer and the mic: six gaps
         self.assertLessEqual(row, NARROW_LOCK_SCREEN_CONTENT_WIDTH)
         self.assertLessEqual(NARROW_LOCK_SCREEN_CONTENT_WIDTH, LOCK_SCREEN_CONTENT_WIDTH)
 
