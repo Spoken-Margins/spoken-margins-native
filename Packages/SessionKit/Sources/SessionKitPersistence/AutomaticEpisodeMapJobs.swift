@@ -28,7 +28,7 @@ public enum AutomaticEpisodeMapJobs {
         }
     }
 
-    /// Saves a `policy` job for each item that has no live one. A cancelled job is replaced, as before. Returns the
+    /// Saves a `policy` job for each item that has no live one and still no map. A cancelled job is replaced, as before. Returns the
     /// ids it saved a job for.
     @discardableResult
     public static func enqueue(
@@ -39,6 +39,8 @@ public enum AutomaticEpisodeMapJobs {
         var saved: [String] = []
         for itemId in itemIds {
             let id = jobId(itemId: itemId)
+            // A map can finish between `candidates` and now; a job saved over it would transcribe the episode again.
+            if (try? store.hasEditionFingerprintSpine(itemId: itemId)) == true { continue }
             if let existing = try? store.loadEpisodeMapPreparationJob(id: id), !existing.isCancelled { continue }
             do {
                 try store.saveEpisodeMapPreparationJob(EpisodeMapPreparationJob(id: id, itemId: itemId, policy: policy))

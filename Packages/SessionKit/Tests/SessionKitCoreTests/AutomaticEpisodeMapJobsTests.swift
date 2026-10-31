@@ -68,6 +68,20 @@ final class AutomaticEpisodeMapJobsTests: XCTestCase {
         XCTAssertEqual(cancelled.nextUnitIndex, 0)
     }
 
+    /// The audit of #3077: a map that finishes after `candidates` ran must not get a fresh job saved over it.
+    func testAMapSavedAfterTheCandidateReadGetsNoJob() throws {
+        try episode("ep-1")
+        try episode("ep-2")
+        let candidates = AutomaticEpisodeMapJobs.candidates(itemIds: ["ep-1", "ep-2"], store: store)
+        XCTAssertEqual(candidates, ["ep-1", "ep-2"])
+        try store.saveEditionFingerprintSpine(spine(itemId: "ep-1"))
+
+        let saved = AutomaticEpisodeMapJobs.enqueue(itemIds: candidates, policy: .whileCharging, store: store)
+
+        XCTAssertEqual(saved, ["ep-2"])
+        XCTAssertNil(try store.loadEpisodeMapPreparationJob(id: AutomaticEpisodeMapJobs.jobId(itemId: "ep-1")))
+    }
+
     func testQueueingTwiceLeavesOneJob() throws {
         AutomaticEpisodeMapJobs.enqueue(itemIds: ["ep-1"], policy: .whileCharging, store: store)
         let second = AutomaticEpisodeMapJobs.enqueue(itemIds: ["ep-1"], policy: .whileCharging, store: store)
