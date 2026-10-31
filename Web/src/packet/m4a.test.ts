@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { test } from 'node:test';
 
-import { NotAacError, audioSpecificConfig, demuxAac, durationMs, muxM4a, normalizeM4a, parseAdts } from './m4a.ts';
+import { NotAacError, audioSpecificConfig, audioSpecificConfigFromDescription, demuxAac, durationMs, muxM4a, normalizeM4a, parseAdts } from './m4a.ts';
 
 // voice.adts.aac: `say` then `afconvert -f adts -d aac` (1 channel, 22050 Hz, about 2.79 s by afinfo).
 // voice-apple.m4a: the same speech through `afconvert -f m4af`, what the iPhone app's recorder writes.
@@ -63,6 +63,49 @@ test('AudioSpecificConfig for AAC-LC 48 kHz stereo is 0x1190', () => {
   assert.deepEqual([...audioSpecificConfig(44100, 1)], [0x12, 0x08]);
   assert.throws(() => audioSpecificConfig(12345, 1), RangeError);
 });
+
+// WebCodecs AudioEncoder `decoderConfig.description` for AAC-LC, 48 kHz mono, captured on the Mac on 2026-10-30.
+const hex = (text: string): Uint8Array => new Uint8Array(text.split(' ').map((b) => parseInt(b, 16)));
+const CHROME_DESCRIPTION = hex('11 88'); // Chrome 156: the bare AudioSpecificConfig.
+const WEBKIT_DESCRIPTION = hex( // Playwright WebKit 27.2 (revision 2370): an MPEG-4 ES_Descriptor, 39 bytes.
+  '03 80 80 80 22 00 00 00 04 80 80 80 14 40 14 00 18 00 00 00 00 00 00 00 00 00 05 80 80 80 02 11 88 06 80 80 80 01 02');
+
+test('an encoder description gives the AudioSpecificConfig in Chrome\'s bare form and WebKit\'s ES_Descriptor form', () => {
+  assert.equal(WEBKIT_DESCRIPTION.length, 39);
+  const rows: [string, Uint8Array][] = [
+    ['Chrome: bare AudioSpecificConfig', CHROME_DESCRIPTION],
+    ['WebKit: ES_Descriptor (tag 0x03) with four-byte lengths', WEBKIT_DESCRIPTION],
+    ['ES_Descriptor with one-byte lengths', hex('03 19 00 00 00 04 11 40 14 00 18 00 00 00 00 00 00 00 00 00 05 02 11 88 06 01 02')],
+    ['a whole esds box', concatBytes(hex('00 00 00 33'), new TextEncoder().encode('esds'), hex('00 00 00 00'), WEBKIT_DESCRIPTION)],
+    ['DecoderConfigDescriptor alone (tag 0x04)', WEBKIT_DESCRIPTION.subarray(8, 33)],
+    ['DecoderSpecificInfo alone (tag 0x05)', WEBKIT_DESCRIPTION.subarray(26, 33)],
+  ];
+  for (const [name, description] of rows) assert.deepEqual([...audioSpecificConfigFromDescription(description)], [0x11, 0x88], name);
+  // The 48 kHz mono config the muxer would write for itself matches what both browsers describe.
+  assert.deepEqual([...audioSpecificConfig(48000, 1)], [0x11, 0x88]);
+});
+
+test('an encoder description that isn\'t AAC, or is cut short, is refused', () => {
+  const rows: [string, Uint8Array][] = [
+    ['empty', new Uint8Array()],
+    ['one byte', hex('11')],
+    ['audio object type 0 (what reading WebKit\'s descriptor as a config gave)', hex('00 88')],
+    ['ES_Descriptor cut inside its config', WEBKIT_DESCRIPTION.subarray(0, 31)],
+    ['ES_Descriptor around MP3 (object type 0x6b)', hex('03 19 00 00 00 04 11 6b 14 00 18 00 00 00 00 00 00 00 00 00 05 02 11 88 06 01 02')],
+    ['ES_Descriptor around Opus-looking config (AOT 31)', hex('03 19 00 00 00 04 11 40 14 00 18 00 00 00 00 00 00 00 00 00 05 02 f8 88 06 01 02')],
+  ];
+  for (const [name, description] of rows) assert.throws(() => audioSpecificConfigFromDescription(description), NotAacError, name);
+});
+
+function concatBytes(...parts: Uint8Array[]): Uint8Array {
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let at = 0;
+  for (const p of parts) {
+    out.set(p, at);
+    at += p.length;
+  }
+  return out;
+}
 
 function findBox(bytes: Uint8Array, type: string): boolean {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);

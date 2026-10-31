@@ -9,7 +9,7 @@
 // Whatever records, the result goes through normalizeM4a, which refuses anything that isn't AAC and rewrites
 // fragmented MP4 (Chrome's MediaRecorder output) as one plain progressive `.m4a`. Opus or WebM never reaches a packet.
 
-import { NotAacError, muxM4a, normalizeM4a } from './m4a.ts';
+import { NotAacError, audioSpecificConfigFromDescription, muxM4a, normalizeM4a } from './m4a.ts';
 import type { AacTrack } from './m4a.ts';
 
 export type RecordingPath = 'media-recorder-aac' | 'media-recorder-mp4' | 'webcodecs-aac' | 'unsupported';
@@ -59,6 +59,8 @@ export interface RecordedVoice {
 
 export interface VoiceRecording {
   readonly path: RecordingPath;
+  /** How long the microphone took to deliver audio before recording began, and whether it did within the limit. */
+  readonly warmUp: AudioFlow;
   /** Ends the recording and returns AAC `.m4a`. Rejects with NotAacError when the browser recorded something else. */
   stop(): Promise<RecordedVoice>;
   /** Ends the recording and drops it. */
@@ -78,6 +80,90 @@ export interface RecordOptions {
   environment?: RecordingEnvironment;
   /** Force a path, for the test page. */
   path?: Exclude<RecordingPath, 'unsupported'>;
+  /** Stand-in for waitForAudioFlow, for tests. */
+  waitForAudio?: (stream: MediaStream, context?: FlowContext) => Promise<AudioFlow>;
+}
+
+// --- microphone warm-up ------------------------------------------------------------------------------------------
+//
+// A microphone that has just been opened can take most of a second to deliver its first real sample (WebKit's
+// capture: about 0.7 s for the first getUserMedia in a fresh process, measured 2026-10-30). Until then the track
+// is "live" but its samples are digital silence, and a MediaRecorder started in that window starts its file at the
+// first real sample: everything said before it is lost. A listener who starts talking when the screen says
+// "Recording" loses their first words. So recording starts only once samples are flowing, and recordVoiceMargin
+// resolves (the UI's "Recording" state) only then.
+
+export interface AudioFlow {
+  /** True when a real sample arrived; false when the limit passed first and recording began anyway. */
+  flowing: boolean;
+  waitedMs: number;
+}
+
+/** Long enough for a slow first capture; short enough that a microphone that never warms still records. */
+export const AUDIO_FLOW_LIMIT_MS = 2500;
+
+interface FlowNode {
+  connect(destination: never): unknown;
+  disconnect(): void;
+}
+interface FlowProcessor extends FlowNode {
+  onaudioprocess: ((event: { inputBuffer: { getChannelData(channel: number): Float32Array } }) => void) | null;
+}
+/** The part of an AudioContext the warm-up check uses, so a test can stand in for one. */
+export interface FlowContext {
+  readonly destination: unknown;
+  createMediaStreamSource(stream: MediaStream): FlowNode;
+  createScriptProcessor(bufferSize: number, inputs: number, outputs: number): FlowProcessor;
+  resume?(): Promise<void>;
+  close?(): Promise<void>;
+}
+
+/**
+ * Resolves once the stream delivers a sample that isn't digital silence, or after `limitMs`. A real microphone's
+ * noise floor is never exactly zero, so the first non-zero sample marks the moment capture really began.
+ * Without a `context`, it makes and closes its own AudioContext.
+ */
+export async function waitForAudioFlow(
+  stream: MediaStream,
+  context?: FlowContext,
+  limitMs: number = AUDIO_FLOW_LIMIT_MS,
+): Promise<AudioFlow> {
+  const begun = Date.now();
+  const own = !context;
+  const ctx: FlowContext = context ?? (new AudioContext() as unknown as FlowContext);
+  // WebKit lets a context run while the page captures; elsewhere this is a no-op or, without a gesture, a refusal.
+  ctx.resume?.().catch(() => undefined);
+  let source: FlowNode | undefined;
+  let probe: FlowProcessor | undefined;
+  try {
+    source = ctx.createMediaStreamSource(stream);
+    probe = ctx.createScriptProcessor(512, 1, 1);
+    const [input, output] = [source, probe];
+    const flowing = await new Promise<boolean>((resolve) => {
+      const timer = setTimeout(() => resolve(false), limitMs);
+      output.onaudioprocess = (event) => {
+        const samples = event.inputBuffer.getChannelData(0);
+        for (let i = 0; i < samples.length; i += 1) {
+          if (samples[i] !== 0) {
+            clearTimeout(timer);
+            resolve(true);
+            return;
+          }
+        }
+      };
+      input.connect(output as never);
+      // A ScriptProcessorNode only runs while connected onward; its output is silence.
+      output.connect(ctx.destination as never);
+    });
+    return { flowing, waitedMs: Date.now() - begun };
+  } finally {
+    if (probe) {
+      probe.onaudioprocess = null;
+      probe.disconnect();
+    }
+    source?.disconnect();
+    if (own) await ctx.close?.().catch(() => undefined);
+  }
 }
 
 function finish(bytes: Uint8Array, path: RecordingPath): RecordedVoice {
@@ -90,7 +176,11 @@ function finish(bytes: Uint8Array, path: RecordingPath): RecordedVoice {
   };
 }
 
-/** Starts recording a voice Margin. Call `stop()` for the `.m4a`. */
+/**
+ * Starts recording a voice Margin and resolves once it is really recording: after the microphone's audio is
+ * flowing (see waitForAudioFlow), so nothing said after this resolves is lost. Show "Recording" only then.
+ * Call `stop()` for the `.m4a`.
+ */
 export async function recordVoiceMargin(options: RecordOptions = {}): Promise<VoiceRecording> {
   const path = options.path ?? await chooseRecordingPath(options.environment);
   if (path === 'unsupported') throw new RecordingUnavailableError();
@@ -99,15 +189,18 @@ export async function recordVoiceMargin(options: RecordOptions = {}): Promise<Vo
   const release = (): void => {
     if (ownStream) for (const track of stream.getTracks()) track.stop();
   };
+  const waitForAudio = options.waitForAudio ?? waitForAudioFlow;
   try {
-    return path === 'webcodecs-aac' ? await recordWithEncoder(stream, release) : recordWithRecorder(stream, path, release);
+    if (path === 'webcodecs-aac') return await recordWithEncoder(stream, release, waitForAudio);
+    const warmUp = await waitForAudio(stream);
+    return recordWithRecorder(stream, path, release, warmUp);
   } catch (error) {
     release();
     throw error;
   }
 }
 
-function recordWithRecorder(stream: MediaStream, path: 'media-recorder-aac' | 'media-recorder-mp4', release: () => void): VoiceRecording {
+function recordWithRecorder(stream: MediaStream, path: 'media-recorder-aac' | 'media-recorder-mp4', release: () => void, warmUp: AudioFlow): VoiceRecording {
   const recorder = new MediaRecorder(stream, { mimeType: path === 'media-recorder-aac' ? AAC_RECORDER_TYPE : MP4_RECORDER_TYPE });
   const chunks: Blob[] = [];
   recorder.addEventListener('dataavailable', (event) => {
@@ -120,6 +213,7 @@ function recordWithRecorder(stream: MediaStream, path: 'media-recorder-aac' | 'm
   recorder.start(1000);
   return {
     path,
+    warmUp,
     async stop() {
       if (recorder.state !== 'inactive') recorder.stop();
       await stopped;
@@ -149,9 +243,11 @@ export class AacFrameCollector {
   add(chunk: { byteLength: number; copyTo(destination: Uint8Array): void }, metadata?: { decoderConfig?: { description?: AllowSharedBufferSource } }): void {
     const description = metadata?.decoderConfig?.description;
     if (description && !this.audioSpecificConfig) {
-      this.audioSpecificConfig = description instanceof ArrayBuffer
+      const bytes = description instanceof ArrayBuffer
         ? new Uint8Array(description.slice(0))
-        : new Uint8Array((description as ArrayBufferView).buffer.slice(0) as ArrayBuffer, (description as ArrayBufferView).byteOffset, (description as ArrayBufferView).byteLength).slice();
+        : new Uint8Array((description as ArrayBufferView).buffer as ArrayBuffer, (description as ArrayBufferView).byteOffset, (description as ArrayBufferView).byteLength).slice();
+      // Chrome describes the stream with a bare AudioSpecificConfig, WebKit with an ES_Descriptor around one.
+      this.audioSpecificConfig = audioSpecificConfigFromDescription(bytes);
     }
     const frame = new Uint8Array(chunk.byteLength);
     chunk.copyTo(frame);
@@ -171,8 +267,20 @@ export class AacFrameCollector {
   }
 }
 
-async function recordWithEncoder(stream: MediaStream, release: () => void): Promise<VoiceRecording> {
+async function recordWithEncoder(
+  stream: MediaStream,
+  release: () => void,
+  waitForAudio: (stream: MediaStream, context?: FlowContext) => Promise<AudioFlow>,
+): Promise<VoiceRecording> {
   const context = new AudioContext({ sampleRate: AAC_ENCODER_CONFIG.sampleRate });
+  let warmUp: AudioFlow;
+  try {
+    // The same context, so the encoder's first buffer is the microphone's first real audio, not leading silence.
+    warmUp = await waitForAudio(stream, context as unknown as FlowContext);
+  } catch (error) {
+    await context.close().catch(() => undefined);
+    throw error;
+  }
   const sampleRate = context.sampleRate;
   const collector = new AacFrameCollector(sampleRate, 1);
   let failure: Error | undefined;
@@ -202,6 +310,7 @@ async function recordWithEncoder(stream: MediaStream, release: () => void): Prom
   };
   return {
     path: 'webcodecs-aac',
+    warmUp,
     async stop() {
       await teardown();
       await encoder.flush();
