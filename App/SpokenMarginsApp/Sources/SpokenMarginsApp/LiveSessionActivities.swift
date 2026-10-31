@@ -1,5 +1,6 @@
 import ActivityKit
 import Foundation
+import os
 import SessionKit
 
 /// The live session's Lock Screen card (#2481), kept in step with the session: running with a clock and a Mark
@@ -11,6 +12,16 @@ import SessionKit
 /// again; `endExpired` then removes it whenever the app next runs.
 enum LiveSessionActivities {
     typealias State = LiveSessionActivityAttributes.ContentState
+
+    /// Posted when the live session's card has been ended, removed or turned into "Ended · Resume", so the item's
+    /// Live Activity, held back while the session ran (#2962), comes back without waiting for its state to change.
+    static let cardsChanged = Notification.Name("LiveSessionActivities.cardsChanged")
+
+    /// What the last start did, for the diagnostics export (#2962): iOS gives no say in which of an app's cards it
+    /// shows first, so the export has to say what the app asked for.
+    private static let startOutcomeStore = OSAllocatedUnfairLock(initialState: "none")
+    static var lastStartOutcome: String { startOutcomeStore.withLock { $0 } }
+    private static func noteStartOutcome(_ outcome: String) { startOutcomeStore.withLock { $0 = outcome } }
 
     static func runningState(for session: LiveSession, markCount: Int, lastMarkAt: Date?, now: Date = Date()) -> State {
         State(
@@ -35,7 +46,10 @@ enum LiveSessionActivities {
     }
 
     static func start(for session: LiveSession, markCount: Int = 0) {
-        guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
+        guard ActivityAuthorizationInfo().areActivitiesEnabled else {
+            noteStartOutcome("disabled")
+            return
+        }
         // An "Ended · Resume" card left from the last session goes: a new session replaces it, and it must not turn
         // into this session's running card on the next update.
         Task {
@@ -44,11 +58,34 @@ enum LiveSessionActivities {
             }
         }
         // The Lock Screen Mark is a convenience; the session works without it.
-        _ = try? Activity<LiveSessionActivityAttributes>.request(
-            attributes: LiveSessionActivityAttributes(sessionStartedAt: session.startedAt),
-            content: ActivityContent(state: runningState(for: session, markCount: markCount, lastMarkAt: nil), staleDate: nil),
-            pushType: nil
-        )
+        do {
+            _ = try Activity<LiveSessionActivityAttributes>.request(
+                attributes: LiveSessionActivityAttributes(sessionStartedAt: session.startedAt),
+                content: ActivityContent(state: runningState(for: session, markCount: markCount, lastMarkAt: nil), staleDate: nil),
+                pushType: nil
+            )
+        } catch {
+            noteStartOutcome("failed:\(error.localizedDescription)")
+            return
+        }
+        // The live session takes the Lock Screen (#2962). iOS decides which of an app's cards shows first, and a
+        // listener's podcast card, paused or playing, was staying on top of the session's. The item's card goes while
+        // the session runs; `Gate2LiveActivityController` holds it back and puts it up again after the session.
+        Task {
+            let ended = await endItemCards()
+            noteStartOutcome("started; ended \(ended) item card(s)")
+        }
+    }
+
+    /// Ends the playing item's Live Activity cards, whatever they say. Returns how many went.
+    @discardableResult
+    static func endItemCards() async -> Int {
+        var ended = 0
+        for activity in Activity<Gate2LiveActivityAttributes>.activities {
+            await activity.end(nil, dismissalPolicy: .immediate)
+            ended += 1
+        }
+        return ended
     }
 
     /// Shows the running card for `session`: the source's clock (#2834) and the kind follow the session, an ended card
@@ -73,12 +110,14 @@ enum LiveSessionActivities {
             let state = endedState(from: activity.content.state, plan: plan)
             await activity.update(ActivityContent(state: state, staleDate: plan.resumeUntil))
         }
+        NotificationCenter.default.post(name: cardsChanged, object: nil)
     }
 
     static func endAll() async {
         for activity in Activity<LiveSessionActivityAttributes>.activities {
             await activity.end(nil, dismissalPolicy: .immediate)
         }
+        NotificationCenter.default.post(name: cardsChanged, object: nil)
     }
 
     /// Removes the card for `sessionId`; a card from an earlier build, which names none, goes too.
@@ -86,14 +125,18 @@ enum LiveSessionActivities {
         for activity in Activity<LiveSessionActivityAttributes>.activities where isCard(activity, for: sessionId) {
             await activity.end(nil, dismissalPolicy: .immediate)
         }
+        NotificationCenter.default.post(name: cardsChanged, object: nil)
     }
 
     /// Removes ended cards whose Resume window has closed.
     static func endExpired(now: Date = Date()) async {
+        var ended = false
         for activity in Activity<LiveSessionActivityAttributes>.activities {
             guard let until = activity.content.state.resumeUntil, until <= now else { continue }
             await activity.end(nil, dismissalPolicy: .immediate)
+            ended = true
         }
+        if ended { NotificationCenter.default.post(name: cardsChanged, object: nil) }
     }
 }
 
