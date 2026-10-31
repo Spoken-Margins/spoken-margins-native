@@ -289,7 +289,16 @@ extension Gate1AppModel {
         announceNewCompletions: Bool,
         now: Date
     ) throws {
-        try store.deleteAudioPreparationJobs(ids: presentation.staleJobIds)
+        // Written behind (#2509): the lists below already leave these jobs out, and the delete re-checks that each is
+        // still stale when it runs, so a restored item's job survives.
+        let staleJobIds = presentation.staleJobIds
+        if !staleJobIds.isEmpty {
+            Task.detached(priority: .utility) {
+                _ = try? await StoreReader(store).readInOrder(AudioPreparationQueueEdits.orderKey) {
+                    try $0.deleteStaleAudioPreparationJobs(among: staleJobIds)
+                }
+            }
+        }
         audioPreparationQueue = presentation.queue
         recentlyPreparedAudio = presentation.recentlyPrepared
 
