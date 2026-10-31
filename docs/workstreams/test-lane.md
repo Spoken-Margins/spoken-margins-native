@@ -174,9 +174,13 @@ When main's tip has no integration report on #184, run one job on that tip, in t
    scripts/verify-tests.py --plan app --device <udid>. Post "Lane report
    integration-<sha7> — PASS | FAIL | INCONCLUSIVE" on #184, with the line
    "run by: Test Desk".
-2. Only after a PASS: the screen tour, if the repo has one, then the scripted journeys in
-   TestPlans/scripted-journeys.json (gating, then probation). They launch with --ui-testing,
-   which resets the app's library, so they run before step 3 builds the journey library. A
+2. Only after a PASS: the scripted journeys in
+   TestPlans/scripted-journeys.json (gating, then probation), then the screen tour
+   (`scripts/verify-tests.py --plan tour`, #381), which `ops/testdesk/sm_integration_run.py` runs on its own
+   after a PASS. The tour is never verdict input: its report line (`screen tour (not verdict input)`) names the
+   screenshots, one per screen in light and dark, exported to `tour/screens/` of the run's evidence folder (the
+   hosted run's `hosted-integration-<sha>` artifact keeps them 14 days); a failed or empty tour is only that line. The scripts and the tour launch with --ui-testing,
+   which resets the app's library, so they all run before step 3 builds the journey library. A
    probation failure goes in the report but doesn't make it FAIL. Move a script to gating
    after two passes, and back to probation after two bad runs, in a PR into main
    (ops/testdesk/journey_promotion.py). Run them
