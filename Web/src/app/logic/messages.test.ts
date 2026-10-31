@@ -4,7 +4,7 @@ import { PacketError } from '../../packet/errors.ts';
 import { NotAacError } from '../../packet/m4a.ts';
 import { RecordingUnavailableError } from '../../packet/record.ts';
 import { FeedParseError } from '../../sources/feed.ts';
-import { NeedsRelayConsent, PostPageReadRefused, ReadHttpError, ReadTooLarge, RelayNotConfigured } from '../../sources/read.ts';
+import { NeedsRelayConsent, PaidPostNoVoice, PostPageReadRefused, ReadHttpError, ReadTooLarge, RelayNotConfigured, RelayUnreachable } from '../../sources/read.ts';
 import { SearchError } from '../../sources/search.ts';
 import { MESSAGES, plainError } from './messages.ts';
 
@@ -18,6 +18,11 @@ test('feed failures read as what happened and what to do, never a status code', 
     [new ReadHttpError(502, 'relay'), MESSAGES.relayFailed],
     [new ReadHttpError(429, 'relay'), MESSAGES.relayLimit],
     [new ReadHttpError(503, 'relay'), MESSAGES.relayBusy],
+    [new ReadHttpError(503, 'relay', 'busy'), MESSAGES.relayBusy],
+    // A switched-off relay is not a busy one: "try again in a minute" would send the listener round in circles.
+    [new ReadHttpError(503, 'relay', 'disabled'), MESSAGES.relayOff],
+    [new RelayUnreachable(), MESSAGES.relayUnreachable],
+    [new PaidPostNoVoice('https://a.example/p/x'), MESSAGES.paidPost],
     [new ReadHttpError(403, 'relay'), MESSAGES.relayOff],
     [new ReadHttpError(404, 'relay'), MESSAGES.relayOff],
     [new FeedParseError('Not an RSS 2.0 feed: no <rss><channel> found.'), MESSAGES.notAFeed],

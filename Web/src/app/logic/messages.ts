@@ -5,7 +5,7 @@ import { PacketError } from '../../packet/errors.ts';
 import { NotAacError } from '../../packet/m4a.ts';
 import { RecordingUnavailableError } from '../../packet/record.ts';
 import { FeedParseError } from '../../sources/feed.ts';
-import { PostPageReadRefused, ReadHttpError, ReadTooLarge, RelayNotConfigured } from '../../sources/read.ts';
+import { PaidPostNoVoice, PostPageReadRefused, ReadHttpError, ReadTooLarge, RelayNotConfigured, RelayUnreachable } from '../../sources/read.ts';
 import { SearchError } from '../../sources/search.ts';
 
 export const MESSAGES = Object.freeze({
@@ -19,7 +19,9 @@ export const MESSAGES = Object.freeze({
   relayLimit: 'Our server has read a lot of feeds for you this hour. Try again later.',
   relayOff: 'Reading feeds through our server isn’t available right now.',
   relayFailed: 'Our server couldn’t read that feed. Its site may be down, or the feed may not be a podcast or Substack feed.',
+  relayUnreachable: 'Neither this site nor our server could be reached. Check you’re online, then try again later.',
   offline: 'No connection. Check you’re online, then try again.',
+  paidPost: 'This post is for paid subscribers. The web app reads posts without your Substack sign-in, so it can’t play this one.',
   searchFailed: 'Search isn’t answering right now. Try again, or paste the show’s feed address.',
   micBlocked: 'The microphone is blocked for this site. Allow it in your browser’s site settings, then try again. Written Margins still work.',
   micMissing: 'No microphone was found. Connect one, then try again. Written Margins still work.',
@@ -34,9 +36,10 @@ function errorName(error: unknown): string | undefined {
     : undefined;
 }
 
-function relayStatus(status: number): string {
+function relayStatus(status: number, code: string | undefined): string {
   if (status === 429) return MESSAGES.relayLimit;
-  if (status === 503) return MESSAGES.relayBusy;
+  // The relay answers 503 both when it is switched off and when it is busy; its body says which.
+  if (status === 503) return code === 'disabled' ? MESSAGES.relayOff : MESSAGES.relayBusy;
   if (status === 403 || status === 404) return MESSAGES.relayOff;
   return MESSAGES.relayFailed;
 }
@@ -49,7 +52,7 @@ export function plainError(error: unknown, context?: 'microphone'): string {
   if (error instanceof PacketError || error instanceof RecordingUnavailableError) return error.message;
   if (error instanceof NotAacError) return MESSAGES.notAac;
   if (error instanceof ReadHttpError) {
-    if (error.via === 'relay') return relayStatus(error.status);
+    if (error.via === 'relay') return relayStatus(error.status, error.code);
     if (error.status === 404 || error.status === 410) return MESSAGES.feedGone;
     if (error.status === 401 || error.status === 403) return MESSAGES.feedRefused;
     return MESSAGES.feedSiteError;
@@ -57,6 +60,8 @@ export function plainError(error: unknown, context?: 'microphone'): string {
   if (error instanceof FeedParseError) return MESSAGES.notAFeed;
   if (error instanceof ReadTooLarge) return MESSAGES.tooLarge;
   if (error instanceof RelayNotConfigured) return MESSAGES.noRelay;
+  if (error instanceof RelayUnreachable) return MESSAGES.relayUnreachable;
+  if (error instanceof PaidPostNoVoice) return MESSAGES.paidPost;
   if (error instanceof PostPageReadRefused) return MESSAGES.postNeedsTap;
   if (error instanceof SearchError) return MESSAGES.searchFailed;
   const name = errorName(error);

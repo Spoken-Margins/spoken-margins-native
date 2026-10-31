@@ -8,12 +8,12 @@
 // Inside the Android app (#2981) the direct read is native HTTP (`native-http.ts`), which no CORS rule blocks, so a
 // failed read there is the network's and never offers the relay.
 
-import { parseFeed } from './feed.ts';
+import { discoverFeedUrl, FeedParseError, parseFeed } from './feed.ts';
 import type { ParseFeedOptions, ParsedFeed } from './feed.ts';
 import { pickReadTransport } from './native-http.ts';
 import type { ReadTransport } from './native-http.ts';
 import type { FetchLike } from './search.ts';
-import { findSubstackVoice, isSubstackPostUrl } from './substack.ts';
+import { inspectSubstackPost, isSubstackPostUrl } from './substack.ts';
 import type { SubstackVoice } from './substack.ts';
 
 /** Why the page is being read. Only an explicit tap may read a Substack post page. */
@@ -43,11 +43,49 @@ export class PostPageReadRefused extends Error {
 export class ReadHttpError extends Error {
   readonly status: number;
   readonly via: 'direct' | 'relay';
-  constructor(status: number, via: 'direct' | 'relay') {
-    super(`Reading failed with status ${status}${via === 'relay' ? ' (through the server)' : ''}.`);
+  /**
+   * The relay's own reason, from its `{"error": "<code>"}` body: `disabled` (switched off) and `busy` both come as
+   * 503, and they mean different things to a listener. Unset for a direct read or a body without one.
+   */
+  readonly code: string | undefined;
+  constructor(status: number, via: 'direct' | 'relay', code?: string) {
+    super(`Reading failed with status ${status}${via === 'relay' ? ' (through the server)' : ''}${code ? ` (${code})` : ''}.`);
     this.name = 'ReadHttpError';
     this.status = status;
     this.via = via;
+    this.code = code;
+  }
+}
+
+/**
+ * The relay itself couldn't be reached: the request threw, as a browser's `fetch` does when the server is down, when
+ * it doesn't list this web app's origin (a CORS refusal), or when the device is offline.
+ */
+export class RelayUnreachable extends Error {
+  constructor() {
+    super('The Spoken Margins server could not be reached.');
+    this.name = 'RelayUnreachable';
+  }
+}
+
+/** A tapped Substack post is for paid subscribers, and its page, read without anyone's sign-in, gives no voice. */
+export class PaidPostNoVoice extends Error {
+  readonly url: string;
+  constructor(url: string) {
+    super('This post is for paid subscribers, and its page offers no voice without a sign-in.');
+    this.name = 'PaidPostNoVoice';
+    this.url = url;
+  }
+}
+
+/** The relay's error code from its JSON `{"error": "<code>"}` body, or undefined. */
+async function relayErrorCode(response: Response): Promise<string | undefined> {
+  try {
+    const body: unknown = JSON.parse(await response.text());
+    const code = (body as { error?: unknown } | null)?.error;
+    return typeof code === 'string' && /^[a-z_]{1,40}$/.test(code) ? code : undefined;
+  } catch {
+    return undefined;
   }
 }
 
@@ -151,8 +189,13 @@ export async function readUrl(url: string, options: ReadOptions = {}): Promise<R
 
   if (!options.consent) throw new NeedsRelayConsent(url);
   if (!options.relayBase) throw new RelayNotConfigured();
-  const relayed = await doFetch(relayUrl(options.relayBase, url), { credentials: 'omit' });
-  if (!relayed.ok) throw new ReadHttpError(relayed.status, 'relay');
+  let relayed: Response;
+  try {
+    relayed = await doFetch(relayUrl(options.relayBase, url), { credentials: 'omit' });
+  } catch {
+    throw new RelayUnreachable();
+  }
+  if (!relayed.ok) throw new ReadHttpError(relayed.status, 'relay', await relayErrorCode(relayed));
   const finalUrl = relayFinalUrl(relayed);
   // The same rule as a direct read: a redirect can land on a post page the listener never tapped.
   if (finalUrl && finalUrl !== url && isSubstackPostUrl(finalUrl) && options.reason !== 'listener-tap') throw new PostPageReadRefused(finalUrl);
@@ -163,20 +206,38 @@ export async function readUrl(url: string, options: ReadOptions = {}): Promise<R
 /**
  * Reads a feed and parses it. The show keeps the address asked for (`feedUrl`, what the listener follows); relative
  * links resolve against where the read ended after redirects.
+ *
+ * A web page instead of a feed, such as a Substack's home page (`https://www.astralcodexten.com`), is what a listener
+ * pastes when the box asks for "a Substack address". Its `<link rel="alternate" type="application/rss+xml">` names
+ * the feed, which is read once in its place, and the show follows that feed's address, so a refresh reads the feed
+ * and not the page. One hop only: a feed link that leads to another page is not a feed.
  */
 export async function readFeed(
   url: string,
   options: ReadOptions & Pick<ParseFeedOptions, 'maxItems' | 'followedAt'> = {},
 ): Promise<ParsedFeed> {
   const { body, finalUrl } = await readUrl(url, options);
-  return parseFeed(body, { feedUrl: url, baseUrl: finalUrl, maxItems: options.maxItems, followedAt: options.followedAt });
+  const parse = { maxItems: options.maxItems, followedAt: options.followedAt };
+  try {
+    return parseFeed(body, { feedUrl: url, baseUrl: finalUrl, ...parse });
+  } catch (error) {
+    if (!(error instanceof FeedParseError)) throw error;
+    const discovered = discoverFeedUrl(body, finalUrl ?? url);
+    if (!discovered || discovered === url || discovered === finalUrl) throw error;
+    const feed = await readUrl(discovered, options);
+    return parseFeed(feed.body, { feedUrl: discovered, baseUrl: feed.finalUrl, ...parse });
+  }
 }
 
 /**
  * Reads one Substack post page and finds its voice, for a post the listener just tapped. Always passes
- * `reason: 'listener-tap'`, so call it only from that tap. Null when the post has no playable voice.
+ * `reason: 'listener-tap'`, so call it only from that tap. Null when the post has no playable voice; throws
+ * `PaidPostNoVoice` when that is because the post is for paid subscribers.
  */
 export async function readSubstackVoice(postUrl: string, options: Omit<ReadOptions, 'reason'> = {}): Promise<SubstackVoice | null> {
   const result = await readUrl(postUrl, { ...options, reason: 'listener-tap' });
-  return findSubstackVoice(result.body, result.finalUrl === undefined ? {} : { finalUrl: result.finalUrl });
+  const post = inspectSubstackPost(result.body, result.finalUrl === undefined ? {} : { finalUrl: result.finalUrl });
+  // A paid post's voice is behind the paywall, not missing: "no voice" would be the wrong thing to say.
+  if (!post.voice && post.paidOnly) throw new PaidPostNoVoice(postUrl);
+  return post.voice;
 }
