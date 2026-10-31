@@ -34,15 +34,18 @@ summarize() { printf '%s\n' "$1" | grep -E "error|Executed .* test" | tail -2 ||
 
 echo "== writing a database and packets with the current code"
 mkdir -p "$packets"
-# Only the SessionKitTests classes that export a packet: the rest of that target holds real-time AVFoundation
-# tests that need a sound output, which the hosted runner leaves out (verify-tests.py PORTABLE_LEFT_OUT).
-# A file that exports with no XCTestCase class found in it fails, rather than leaving its packets out unseen.
+# Only the SessionKitTests classes that keep a packet for the shipped builds: the rest of that target holds
+# real-time AVFoundation tests that need a sound output, which the hosted runner leaves out (verify-tests.py
+# PORTABLE_LEFT_OUT). A packet is kept either by exportPacket (packets this code writes) or by a direct
+# keepForLaterShippedBuilds call (packets written elsewhere, such as the web app's fixtures in
+# Contracts/fixtures/web-packets/, read by WebPacketImportTests).
+# A file that keeps packets with no XCTestCase class found in it fails, rather than leaving its packets out unseen.
 # SM_EXPORTER_TESTS_DIR lets the script's own tests point it at sample sources.
 tests_dir=${SM_EXPORTER_TESTS_DIR:-$repo/Packages/SessionKit/Tests/SessionKitTests}
 exporters=""
-for file in $(grep -l 'exportPacket(' "$tests_dir"/*.swift); do
+for file in $(grep -lE 'exportPacket\(|keepForLaterShippedBuilds\(' "$tests_dir"/*.swift); do
     classes=$(sed -nE 's/.*class ([A-Za-z0-9_]+) *: *XCTestCase.*/\1/p' "$file")
-    [ -n "$classes" ] || { echo "FAIL $(basename "$file") exports a packet but no XCTestCase class was found in it" >&2; exit 1; }
+    [ -n "$classes" ] || { echo "FAIL $(basename "$file") keeps a packet but no XCTestCase class was found in it" >&2; exit 1; }
     exporters="$exporters $classes"
 done
 exporters=$(printf '%s\n' $exporters | sort -u | paste -sd '|' -)

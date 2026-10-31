@@ -1,6 +1,6 @@
 // smserver is the Spoken Margins server (bridge stream, M1 skeleton).
 //
-//	smserver serve   -state DIR -public DIR [-listen 127.0.0.1:8795] [-attest-root PEM] [-allow-development]
+//	smserver serve   -state DIR -public DIR [-listen 127.0.0.1:8795] [-attest-root PEM] [-allow-development] [-relay-origins https://web.example]
 //	smserver block   -state DIR TAG      refuse one install from now on
 //	smserver unblock -state DIR TAG
 //	smserver switch  -public DIR [-minimum-build N] SERVICE on|off   the kill switch
@@ -34,6 +34,7 @@ import (
 	"spokenmargins.dev/bridge/internal/links"
 	"spokenmargins.dev/bridge/internal/manifest"
 	"spokenmargins.dev/bridge/internal/maps"
+	"spokenmargins.dev/bridge/internal/relay"
 	"spokenmargins.dev/bridge/internal/store"
 	"spokenmargins.dev/bridge/internal/tokens"
 )
@@ -83,6 +84,21 @@ func usage() {
 	os.Exit(2)
 }
 
+// parseRelayOrigins reads -relay-origins. A bad entry stops the server
+// rather than being skipped, so a typo can't quietly leave the relay open
+// to fewer (or other) origins than the owner meant.
+func parseRelayOrigins(s string) ([]string, error) {
+	var out []string
+	for _, o := range strings.Split(s, ",") {
+		o = strings.TrimSpace(o)
+		if !relay.ValidOrigin(o) {
+			return nil, fmt.Errorf("relay: %q is not an origin like https://web.example.com", o)
+		}
+		out = append(out, o)
+	}
+	return out, nil
+}
+
 func configPath(public string) string {
 	return filepath.Join(public, filepath.FromSlash(strings.TrimPrefix(api.PathConfig, "/")))
 }
@@ -98,12 +114,21 @@ func serve(args []string) error {
 	behindProxy := fs.Bool("behind-proxy", false, "take the client address from X-Forwarded-For when the peer is loopback")
 	idleDays := fs.Int("idle-days", 90, "delete install records unused for this many days")
 	installURL := fs.String("links-install-url", "", "App Store listing or TestFlight invitation (required for links)")
+	relayOrigins := fs.String("relay-origins", "", "comma-separated web app origins that may use the feed relay (required for relay)")
 	var mf mapsFlags
 	mf.register(fs)
 	fs.Parse(args)
 
 	if *installURL != "" && !links.ValidInstallURL(*installURL) {
 		return errors.New("links: install URL must be an App Store listing or TestFlight invitation")
+	}
+	var feedRelay *relay.Relay
+	if *relayOrigins != "" {
+		origins, err := parseRelayOrigins(*relayOrigins)
+		if err != nil {
+			return err
+		}
+		feedRelay = &relay.Relay{Origins: origins}
 	}
 	linkStore, err := links.OpenStore(filepath.Join(*stateDir, "links"))
 	if err != nil {
@@ -165,6 +190,7 @@ func serve(args []string) error {
 		Tokens:            issuer,
 		Links:             linkStore,
 		LinkInstallURL:    *installURL,
+		Relay:             feedRelay,
 	}
 	httpServer := &http.Server{
 		Addr:              *listen,

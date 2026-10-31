@@ -15,9 +15,13 @@
 				request>client_ip delete
 				request>headers delete
 				request>tls delete
-				# A listening-map path names an episode (#551).
-				# Never log episode keys or share link ids, even on proxy failures.
-				request>uri regexp ^(/api/v1/maps|/l)/.* $1/*
+				# A listening-map path names an episode (#551), a /l/ path
+				# names a share link, and a query can hold anything: the
+				# relay's is the fetched URL, maybe with a private feed's
+				# token (#2988). Log those paths as their route and drop
+				# every query, even on proxy failures. One filter per field,
+				# so it is one regexp; Caddy replaces every match.
+				request>uri regexp (^/api/v1/maps/|^/l/|[?]).* $1*
 			}
 		}
 	}
