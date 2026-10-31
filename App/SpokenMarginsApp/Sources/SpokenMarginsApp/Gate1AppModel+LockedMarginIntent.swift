@@ -24,22 +24,32 @@ extension Gate1AppModel {
         let liveActivitiesBefore = Self.activeLiveActivityCount()
         let audioCategory = AVAudioSession.sharedInstance().category.rawValue
         let wasRecording = snapshot.isRecording
+        let microphoneBefore = microphoneAccess.status()
         let failureBefore = diagnostics["recentFailure"]
+        // Success messages also write "none" here; only a new failure text is this tap's failure.
+        let newFailure = { [weak self] () -> String? in
+            guard let failure = self?.diagnostics["recentFailure"], failure != failureBefore, failure != "none" else { return nil }
+            return failure
+        }
         recordDeveloperDiagnostic("margin.locked_intent.received", [
             "action": action.rawValue, "appState": appState,
             "protectedData": protectedData ? "available" : "unavailable_maybe_locked",
-            "liveActivities": String(liveActivitiesBefore), "audioCategory": audioCategory
+            "liveActivities": String(liveActivitiesBefore), "audioCategory": audioCategory,
+            "microphone": microphoneBefore.map { String(describing: $0) } ?? "unknown",
+            // The app's own reasons to start nothing, told apart from iOS refusing.
+            "recordingNavigationLocked": String(recordingNavigationIsLocked),
+            "requestingPermission": String(isRequestingRecordingPermission)
         ])
         // A begin while recording, or a finish with nothing recording, only reports.
         if finish == wasRecording {
             dispatchGate2CompactCommand(finish ? .finishInterjection : .beginInterjection, origin: Self.lockedMarginIntentOrigin)
-            // Production starts the recorder one main-actor turn after the request, so wait for it to land.
-            let deadline = Date().addingTimeInterval(3)
-            while snapshot.isRecording == wasRecording, diagnostics["recentFailure"] == failureBefore, Date() < deadline {
-                try? await Task.sleep(for: .milliseconds(50))
+            // Production starts the recorder one main-actor turn after the request; a first-ever microphone
+            // prompt takes longer.
+            let deadline = Date().addingTimeInterval(microphoneBefore == .granted ? 3 : 12)
+            while snapshot.isRecording == wasRecording, newFailure() == nil, Date() < deadline {
+                guard (try? await Task.sleep(for: .milliseconds(50))) != nil else { break }
             }
         }
-        let failureAfter = diagnostics["recentFailure"]
         let report = LockedMarginIntentReport(
             action: action,
             appState: appState,
@@ -50,7 +60,7 @@ extension Gate1AppModel {
             microphonePermission: microphoneAccess.status().map { String(describing: $0) } ?? "unknown",
             wasRecording: wasRecording,
             isRecording: snapshot.isRecording,
-            failure: failureAfter != failureBefore ? failureAfter : nil
+            failure: newFailure()
         )
         recordDeveloperDiagnostic("margin.locked_intent", report.fields)
         diagnostics["lastLockedMarginIntent"] = report.summary

@@ -1048,6 +1048,7 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.spokenmargins.native.tests;
 				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) $(SM_PHONE_BUILD_CONDITIONS_$(SM_PHONE_BUILD))";
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/SpokenMarginsApp.app/SpokenMarginsApp";
 			};
@@ -1328,6 +1329,7 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.spokenmargins.native.tests;
 				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) $(SM_PHONE_BUILD_CONDITIONS_$(SM_PHONE_BUILD))";
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/SpokenMarginsApp.app/SpokenMarginsApp";
 			};

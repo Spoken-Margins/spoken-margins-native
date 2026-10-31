@@ -28,6 +28,20 @@ class PhoneBuildGateTests(unittest.TestCase):
         self.assertRegex(block, r'    Release:\n      SM_PHONE_BUILD: NO\n')
         self.assertRegex(block, r'    Debug:\n      SM_PHONE_BUILD: YES\n')
 
+    def test_the_generated_project_keeps_release_off(self):
+        """xcodebuild reads the committed pbxproj, not project.yml: a stale or hand-edited one must fail too."""
+        pbxproj = (ROOT / 'SpokenMarginsNative.xcodeproj/project.pbxproj').read_text()
+        switches = set()
+        for block, name in re.findall(r'isa = XCBuildConfiguration;(.*?)\bname = (\w+);', pbxproj, re.S):
+            value = re.search(r'\bSM_PHONE_BUILD = (\w+);', block)
+            if value:
+                switches.add((name, value.group(1)))
+            for condition in self.spike_conditions():
+                for line in block.splitlines():
+                    if 'SWIFT_ACTIVE_COMPILATION_CONDITIONS' in line:
+                        self.assertNotIn(condition, line, f'{name} sets {condition} outside the switch')
+        self.assertEqual(switches, {('Debug', 'YES'), ('Release', 'NO')})
+
     def test_spike_conditions_are_reached_only_through_the_switch(self):
         conditions = self.spike_conditions()
         self.assertIn('SM_LOCKED_MARGIN_SPIKE', conditions)
@@ -54,6 +68,7 @@ class PhoneBuildGateTests(unittest.TestCase):
         self.assertIn('scripts/phone-build', turned_on)
 
     def test_the_upload_steps_never_pass_the_switch(self):
+        """The upload steps are prose in AGENTS.md that agents follow by hand; this keeps the prose clean."""
         guide = (ROOT / 'AGENTS.md').read_text()
         upload = guide[guide.index('## Releasing a build'):]
         self.assertIn('-configuration Release', upload)
