@@ -28,7 +28,7 @@ SITES = {
     'Gate2CompactControlController.swift': [
         'nowPlaying.installCommands', 'nowPlaying.remoteEvents', 'nowPlaying.commandAvailability', 'nowPlaying.infoWrite'],
     'Gate1AppModel+MarginVoicePlayback.swift': ['importedCommentaryAutoPlay'],
-    'Gate1AppModel+PackageImport.swift': ['pendingPackageHandoffs', 'restoreAudioCleanup'],
+    'Gate1AppModel+PackageImport.swift': ['restoreAudioCleanup'],
     'Gate1AppModel+PodcastPlacementDeferral.swift': ['resumeDeferredPlacements'],
     'Gate1AppModel+SourceLinkBackground.swift': ['sharedLinkVoiceover'],
     'Gate1AppModel+SourceLinkForm.swift': ['sourceLinkFormFinish'],
