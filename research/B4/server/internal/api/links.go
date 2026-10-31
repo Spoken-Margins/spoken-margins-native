@@ -26,8 +26,10 @@ func (s *Server) linksOn(w http.ResponseWriter) bool {
 	return true
 }
 
-// Upload is multipart/form-data with exactly two parts, preview (JSON) and
-// packet (opaque bytes), in either order. No identity or archive decoding.
+// Upload is multipart/form-data with exactly two parts, preview and packet, in
+// either order. Both are sealed on the phone (#805) and stored as they came: the
+// server checks only their sealed header and size, never decodes them, and asks
+// for no identity.
 func (s *Server) uploadLink(w http.ResponseWriter, r *http.Request) {
 	if !s.linksOn(w) {
 		return
@@ -94,8 +96,12 @@ func (s *Server) uploadLink(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, "bad_request")
 		return
 	}
-	if _, err := links.ParsePreview(preview); err != nil {
+	if !links.Sealed(preview, links.PartPreview) {
 		fail(w, http.StatusBadRequest, "bad_preview")
+		return
+	}
+	if !links.Sealed(packet, links.PartPacket) {
+		fail(w, http.StatusBadRequest, "bad_packet")
 		return
 	}
 	id, expires, err := s.Links.Put(packet, preview, s.Now())
@@ -131,7 +137,8 @@ func linkHeaders(w http.ResponseWriter) {
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("X-Robots-Tag", "noindex, nofollow")
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
+	// The page runs only its own two modules and fetches only its own sealed preview.
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
 }
 
 func (s *Server) getLink(w http.ResponseWriter, r *http.Request) {
@@ -140,18 +147,47 @@ func (s *Server) getLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
-	p, err := s.Links.Preview(id, s.Now())
-	if err != nil {
+	if err := s.Links.Live(id, s.Now()); err != nil {
 		linkFailure(w, err)
 		return
 	}
 	var page bytes.Buffer
-	if err := links.Render(&page, id, p, s.LinkInstallURL); err != nil {
+	if err := links.Render(&page, id, s.LinkInstallURL); err != nil {
 		linkFailure(w, err)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write(page.Bytes())
+}
+
+// The sealed preview, byte for byte. The landing page opens it in the browser.
+func (s *Server) getLinkPreview(w http.ResponseWriter, r *http.Request) {
+	linkHeaders(w)
+	if !s.linksOn(w) {
+		return
+	}
+	data, err := s.Links.Preview(r.PathValue("id"), s.Now())
+	if err != nil {
+		linkFailure(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Write(data)
+}
+
+// The landing page's two modules, embedded in the binary.
+func (s *Server) getLinkScript(w http.ResponseWriter, r *http.Request) {
+	linkHeaders(w)
+	if !s.linksOn(w) {
+		return
+	}
+	data, ok := links.PageScript(strings.TrimPrefix(r.URL.Path, "/l/"))
+	if !ok {
+		fail(w, http.StatusNotFound, "not_found")
+		return
+	}
+	w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+	w.Write(data)
 }
 
 func (s *Server) getLinkPacket(w http.ResponseWriter, r *http.Request) {
@@ -182,7 +218,7 @@ func (s *Server) reportLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
-	if _, err := s.Links.Preview(id, s.Now()); err != nil {
+	if err := s.Links.Live(id, s.Now()); err != nil {
 		linkFailure(w, err)
 		return
 	}
