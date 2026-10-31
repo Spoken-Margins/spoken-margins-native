@@ -225,3 +225,16 @@ func TestLinkTakedownCommand(t *testing.T) {
 		t.Fatal("missing id")
 	}
 }
+
+// A bad -relay-origins entry stops the server instead of being skipped.
+func TestParseRelayOrigins(t *testing.T) {
+	got, err := parseRelayOrigins("https://web.example.com, http://localhost:5173")
+	if err != nil || len(got) != 2 || got[0] != "https://web.example.com" || got[1] != "http://localhost:5173" {
+		t.Fatalf("got %v %v", got, err)
+	}
+	for _, bad := range []string{"https://web.example.com,*", "https://web.example.com/", "http://web.example.com", "https://ok.example,"} {
+		if _, err := parseRelayOrigins(bad); err == nil {
+			t.Errorf("%q should be refused", bad)
+		}
+	}
+}

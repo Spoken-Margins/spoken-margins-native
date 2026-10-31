@@ -101,6 +101,9 @@ class PacketTests(unittest.TestCase):
         classes = selected.split('(', 1)[1].rstrip(')/').split('|')
         self.assertIn('SharingTests', classes)
         self.assertIn('ShippedReaderRoundTripTests', classes)
+        # The web app's fixture packets (Contracts/fixtures/web-packets/) are kept by keepForLaterShippedBuilds, not
+        # exportPacket; without this class Builds 32 and 34 never open them in the compat workflow (#2991 Mac check).
+        self.assertIn('WebPacketImportTests', classes)
         # Real-time audio tests need a sound output the hosted runner lacks; they export no packet.
         self.assertNotIn('KittenRendererTests', classes)
         self.assertNotIn('HeardSourceWindowFilesTests', classes)
@@ -113,7 +116,7 @@ class PacketTests(unittest.TestCase):
             (sources / 'Helper.swift').write_text('func exportBoth() { exportPacket(x) }\n')
             result = run_script(tmp, SM_EXPORTER_TESTS_DIR=str(sources))
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn('FAIL Helper.swift exports a packet but no XCTestCase class was found in it', result.stderr)
+        self.assertIn('FAIL Helper.swift keeps a packet but no XCTestCase class was found in it', result.stderr)
 
         with tempfile.TemporaryDirectory() as tmp:
             sources = Path(tmp) / 'sources'
@@ -122,6 +125,20 @@ class PacketTests(unittest.TestCase):
             run_script(tmp, SM_EXPORTER_TESTS_DIR=str(sources))
             args = (Path(tmp) / 'swift-test-args').read_text().splitlines()
         self.assertEqual(args[args.index('--filter') + 1], 'Build29DatabaseFixtureTests|SessionKitTests\\.(SpacedTests)/')
+
+    def test_a_class_that_keeps_fixture_packets_without_exporting_is_selected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            sources = Path(tmp) / 'sources'
+            sources.mkdir()
+            (sources / 'Exporter.swift').write_text('final class ExporterTests: XCTestCase { func t() { exportPacket(x) } }\n')
+            (sources / 'Fixtures.swift').write_text(
+                'final class FixtureImportTests: XCTestCase {\n'
+                '  func t() { try keepForLaterShippedBuilds(url, sent: ids) }\n}\n')
+            (sources / 'Other.swift').write_text('final class OtherTests: XCTestCase { func t() { importPacket(x) } }\n')
+            run_script(tmp, SM_EXPORTER_TESTS_DIR=str(sources))
+            args = (Path(tmp) / 'swift-test-args').read_text().splitlines()
+        self.assertEqual(args[args.index('--filter') + 1],
+                         'Build29DatabaseFixtureTests|SessionKitTests\\.(ExporterTests|FixtureImportTests)/')
 
     def test_a_packet_the_build_cannot_import_fails_the_script(self):
         with tempfile.TemporaryDirectory() as tmp:
