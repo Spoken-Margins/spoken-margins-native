@@ -95,7 +95,7 @@ async function recordClip(page: Page, nowPlaying: ReturnType<Page['getByRole']>)
   // Chrome's first start of the fake microphone, reading the clip, can take several seconds.
   await expect(nowPlaying.getByRole('status').filter({ hasText: 'Recording' })).toBeVisible({ timeout: 30_000 });
   await page.waitForTimeout(12_500);
-  await nowPlaying.getByRole('button', { name: 'Stop', exact: true }).click();
+  await nowPlaying.getByRole('button', { name: 'Stop and save' }).click();
 }
 
 const normalized = (text: string) => text.toLowerCase().replace(/[^a-z ]+/g, ' ').replace(/\s+/g, ' ').trim();
@@ -116,17 +116,18 @@ test('the first time, the composer offers transcription with its size, and nothi
   await offer.getByRole('button', { name: 'Write out my words' }).click();
   const words = nowPlaying.getByLabel(/Words to go with your voice Margin at/);
   await expect.poll(async () => normalized(await words.inputValue()), { timeout: 90_000 }).toContain(SPOKEN);
-  await expect(nowPlaying.getByTestId('transcribe-status')).toContainText('Check the words before you save.');
+  await expect(nowPlaying.getByTestId('transcribe-status')).toContainText('Check the words.');
   // The transcript replaced the placeholder words rather than joining them.
   expect(await words.inputValue()).not.toContain('Voice Margin at');
   await expect(words).not.toHaveAttribute('data-placeholder', 'true');
   await shot(page, info, '41-transcribe-prefilled');
 
-  // The words are the listener's to edit before saving; the saved Margin carries the edited text.
+  // Stop saved the Margin (#3038), and the transcript went on it as it arrived, with no Save step.
   const transcript = await words.inputValue();
+  await expect(nowPlaying.locator('.margin-list .margin-text', { hasText: transcript })).toBeVisible();
+  // The words stay the listener's to edit; the saved Margin carries the edited text.
   await words.fill(`${transcript} (JFK, 1961)`);
-  await nowPlaying.getByRole('button', { name: 'Save Margin' }).click();
-  await expect(page.getByText(/Voice Margin saved at [\d:]+\.$/)).toBeVisible();
+  await nowPlaying.getByRole('button', { name: 'Done' }).click();
   await expect(nowPlaying.getByText('(JFK, 1961)')).toBeVisible();
 
   const fetched = modelRequests(requests).filter((r) => isModelRequest(r.url())).map((r) => new URL(r.url()).pathname.split(`/${TRANSCRIPTION_MODEL.revision}/`)[1]);
@@ -161,7 +162,7 @@ test('turned on in Settings, it downloads there, and later recordings are writte
   expectNothingUploaded(requests);
 
   // Removing the model forgets it and turns transcription off.
-  await nowPlaying.getByRole('button', { name: 'Discard' }).click();
+  await nowPlaying.getByRole('button', { name: 'Done' }).click();
   // A fresh load of Settings, so the open episode's sheet doesn't sit over it.
   await page.goto('./#settings');
   await page.reload();
@@ -182,13 +183,13 @@ test('“No thanks” keeps the plain words box, downloads nothing, and is remem
   await expect(words).toHaveValue(/^Voice Margin at \d+:\d\d in “.+”, recorded \d{1,2} [A-Z][a-z]{2} \d{4}$/);
   await words.fill('Typed by hand.');
   await expect(words).not.toHaveAttribute('data-placeholder', 'true');
-  await nowPlaying.getByRole('button', { name: 'Save Margin' }).click();
-  await expect(page.getByText(/Voice Margin saved at [\d:]+\.$/)).toBeVisible();
+  await nowPlaying.getByRole('button', { name: 'Done' }).click();
+  await expect(nowPlaying.getByText('Typed by hand.')).toBeVisible();
 
   // The next recording asks nothing and fetches nothing.
   await nowPlaying.getByRole('button', { name: 'Record a Margin' }).click();
   await page.waitForTimeout(1500);
-  await nowPlaying.getByRole('button', { name: 'Stop', exact: true }).click();
+  await nowPlaying.getByRole('button', { name: 'Stop and save' }).click();
   await expect(nowPlaying.getByLabel(/Words to go with your voice Margin at/)).toBeVisible();
   await expect(nowPlaying.getByTestId('transcribe-offer')).toHaveCount(0);
   expect(modelRequests(requests)).toEqual([]);

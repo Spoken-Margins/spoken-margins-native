@@ -59,11 +59,11 @@ test('follow, play, write and record Margins, export them, and open the file in 
   await nowPlaying.getByRole('button', { name: 'Record a Margin' }).click();
   await expect(nowPlaying.getByRole('status').filter({ hasText: 'Recording' })).toBeVisible();
   await page.waitForTimeout(1500);
-  await nowPlaying.getByRole('button', { name: 'Stop', exact: true }).click();
+  await nowPlaying.getByRole('button', { name: 'Stop and save' }).click();
   await nowPlaying.getByLabel(/Words to go with your voice Margin at/).fill('Listen to the tide bit again.');
   await shot(page, info, '20-voice-words');
-  await nowPlaying.getByRole('button', { name: 'Save Margin' }).click();
-  await expect(page.getByText(/Voice Margin saved at [\d:]+\.$/)).toBeVisible();
+  await nowPlaying.getByRole('button', { name: 'Done' }).click();
+  await expect(nowPlaying.getByRole('button', { name: /^Play from .*Listen to the tide bit again/ })).toBeVisible();
 
   // Export: a real `.spokenmargins` file, which the packet reader (the iPhone app's rules) opens.
   const downloading = page.waitForEvent('download');
