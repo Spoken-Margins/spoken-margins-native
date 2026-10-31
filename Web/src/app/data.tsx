@@ -11,7 +11,7 @@ import type { Episode, Margin, PlaybackPosition, Show } from '../shared/model.ts
 import { mergeRefresh } from './logic/refresh.ts';
 import { FailureGate, NotSavedError, notSavedMessage, shouldAskToPersist, type PersistState, type WriteKind } from './logic/storage.ts';
 import type { FeedRead } from './ports.ts';
-import { DEFAULT_SETTINGS, loadAll, putMany, putSetting, putShowWithEpisodes, remove, removeShow, type Settings, type Snapshot } from './store/db.ts';
+import { DEFAULT_SETTINGS, loadAll, putMany, putMargin, putSetting, putShowWithEpisodes, remove, removeShow, type Settings, type Snapshot } from './store/db.ts';
 import { useUi } from './ui.tsx';
 
 export interface DataApi extends Snapshot {
@@ -179,7 +179,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     async (margin: Margin) => {
       const what = margin.voice ? 'voice Margin' : 'Margin';
       const lead = margin.author ? `A ${what} at ${formatClock(margin.atSeconds)} wasn’t saved.` : `Your ${what} at ${formatClock(margin.atSeconds)} wasn’t saved.`;
-      const failed = await run('margin', lead, () => putMany('margins', [margin]));
+      const failed = await run('margin', lead, () => putMargin(margin));
       if (failed) throw failed;
       setData((d) => ({ ...d, margins: upsert(d.margins, [margin], (m) => m.id) }));
       dataRef.current = { ...dataRef.current, margins: upsert(dataRef.current.margins, [margin], (m) => m.id) };

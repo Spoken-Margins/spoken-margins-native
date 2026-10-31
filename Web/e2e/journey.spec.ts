@@ -195,11 +195,11 @@ test('record a voice Margin with the microphone', async ({ page }, info) => {
           const get = open.result.transaction('margins').objectStore('margins').getAll();
           get.onsuccess = async () => {
             const margin = get.result.find((m: { voice?: unknown }) => m.voice) as
-              | { atSeconds: number; voice: { blob: Blob; mimeType: string; durationSeconds: number } }
+              | { atSeconds: number; voice: { data: ArrayBuffer; mimeType: string; durationSeconds: number } }
               | undefined;
             if (!margin) return reject(new Error('no voice Margin stored'));
             try {
-              const audio = await new AudioContext().decodeAudioData(await margin.voice.blob.arrayBuffer());
+              const audio = await new AudioContext().decodeAudioData(margin.voice.data);
               resolve({ type: margin.voice.mimeType, at: margin.atSeconds, duration: margin.voice.durationSeconds, decoded: audio.duration });
             } catch (error) {
               reject(error);

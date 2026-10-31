@@ -77,6 +77,14 @@ public enum UITestingLaunchSeed: Equatable, Sendable {
         }
     }
 
+    /// Whether the Library bootstrap has work to do for this seed at launch: writing the Library, or adding the
+    /// co-op relaunch's friend's layer to a kept one (#2918). The app used to keep only seeds that write, so a kept
+    /// Library reached the bootstrap as `.none`, the friend's Margin never arrived, and J9's Continue had nothing
+    /// to offer. The co-op import does nothing without its switch, and nothing on a second relaunch.
+    public var runsAtLibraryBootstrap: Bool {
+        writesLibrary || self == .keepLibrary
+    }
+
     /// The single Item this seed adds, when it adds one of its own.
     public var item: Item? {
         switch self {
