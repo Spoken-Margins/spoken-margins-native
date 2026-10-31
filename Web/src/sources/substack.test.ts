@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { feedFixture } from './fixtures.ts';
-import { findSubstackVoice, isSubstackPostUrl, samePage } from './substack.ts';
+import { findSubstackVoice, inspectSubstackPost, isSubstackPostUrl, samePage } from './substack.ts';
 
 function page(post: Record<string, unknown>): string {
   const json = JSON.stringify({ post });
@@ -48,6 +48,34 @@ test('both present: the publisher voiceover wins, though the automatic voice is 
 
 test('paid post: has_voiceover is true but the voice is paywalled, so none', () => {
   assert.equal(findSubstackVoice(feedFixture('substack-paid-post-page.html')), null);
+});
+
+test('inspectSubstackPost says when a missing voice is behind the paywall', async (t) => {
+  const page = (post: Record<string, unknown>) => `<script>window._preloads = JSON.parse(${JSON.stringify(JSON.stringify({ post }))});</script>`;
+  const base = { type: 'newsletter', id: 9, canonical_url: 'https://captured.example/p/x' };
+  const tts = (status: string, audio_url: string | null = null) => ({ post_id: 9, type: 'tts', status, audio_url });
+  const rows: Array<[string, string, boolean, boolean]> = [
+    // [name, page, has a voice, paidOnly]
+    ['captured paid page: paywalled tts', feedFixture('substack-paid-post-page.html'), false, true],
+    ['paid audience, no audio items at all', page({ ...base, audience: 'only_paid', audio_items: [] }), false, true],
+    ['founding-members audience', page({ ...base, audience: 'founding' }), false, true],
+    ['free post, automatic voice failed', page({ ...base, audience: 'everyone', audio_items: [tts('failed')] }), false, false],
+    ['free post, no audio', page({ ...base, audience: 'everyone' }), false, false],
+    ['free post with a voice', feedFixture('substack-voiceover-page.html'), true, false],
+    ['paid audience but the voice is there (a preview)', page({ ...base, audience: 'only_paid', audio_items: [tts('completed', 'https://audio.example/a.mp3')] }), true, false],
+    ['not a post page', '<html></html>', false, false],
+  ];
+  for (const [name, html, hasVoice, paidOnly] of rows) {
+    await t.test(name, () => {
+      const got = inspectSubstackPost(html);
+      assert.equal(got.voice !== null, hasVoice);
+      assert.equal(got.paidOnly, paidOnly);
+    });
+  }
+  await t.test('another post\'s paid page, after a redirect, is not this post\'s paywall', () => {
+    const got = inspectSubstackPost(feedFixture('substack-paid-post-page.html'), { finalUrl: 'https://captured.example/p/other' });
+    assert.deepEqual(got, { voice: null, paidOnly: false });
+  });
 });
 
 test('finalUrl: a voice belongs only to its own post (query, trailing slash and host case ignored)', () => {
