@@ -1035,6 +1035,25 @@ button:disabled {
   min-height: 64px;
 }
 
+/* Placeholder words in a voice Margin's box (#3025): muted, italic and named by a "Placeholder" tag, never colour alone. */
+.composer textarea.words-placeholder,
+.composer textarea#voice-words::placeholder {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.placeholder-tag {
+  display: inline-block;
+  margin-right: 4px;
+  padding: 0 6px;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  font-size: 0.8125rem;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
 /* Writing out a voice Margin's words on the device: a quiet note under the words box, never a colour alone. */
 .transcribe-note {
   display: grid;

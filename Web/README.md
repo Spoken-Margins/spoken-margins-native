@@ -41,6 +41,11 @@ One writer per folder while the first wave runs in parallel.
   it through the Spoken Margins server, which keeps nothing. A Substack post page is read only when the
   listener taps that post (owner, 2026-10-21).
 - **Packets stay importable by Build 32 and Build 34.** Voice Margins are AAC in `.m4a`.
+- **A voice Margin without words shares with placeholder words** (#3025): `Voice Margin at 12:34 in “Title”,
+  recorded 30 Oct 2026` (`src/shared/placeholder.ts`), because every iPhone reader back to Build 29 rejects an empty
+  transcript. The words box starts with them, muted and tagged "Placeholder"; a transcript or the listener's own words
+  replace them. They aren't stored as the Margin's words: the packet writer writes the same ones at export, in the
+  existing transcript field, so no packet key changes.
 
 ## On-device transcription
 

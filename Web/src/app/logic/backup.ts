@@ -1,17 +1,16 @@
 // "Back up all Margins" (#3012): every Margin in this browser, in files the iPhone app (Builds 32 and 34) and
 // this web app open. Plain TypeScript, so `npm run test:web` covers it (backup.test.ts).
 //
-// A `.spokenmargins` packet holds one episode, up to 50 Margins, and only Margins with words (the app shares no
-// Margin without a transcript). So the backup is the packet writer's own files, one per episode (more past 50),
-// unchanged. One packet downloads as itself; more go into one `.zip`, stored rather than compressed. A voice Margin
-// with no words can't go in a packet, so its audio goes in the zip under its own folder: not something the apps
-// open, but not lost either, and the listener is told.
+// A `.spokenmargins` packet holds one episode and up to 50 Margins. So the backup is the packet writer's own files,
+// one per episode (more past 50), unchanged. One packet downloads as itself; more go into one `.zip`, stored rather
+// than compressed. A voice Margin with no words goes in its packet like any other: the writer gives it placeholder
+// words (#3025). Backups made before that may also hold a "Voice Margins without words" folder of loose audio,
+// which reading a backup skips.
 import { readZip, writeZip, type ZipInput } from '../../packet/zip.ts';
 import type { Episode, Margin, Show } from '../../shared/model.ts';
 import type { PacketWritten } from '../ports.ts';
 
 export const MARGINS_PER_PACKET = 50;
-export const VOICE_ONLY_FOLDER = 'Voice Margins without words';
 const PACKET_EXTENSION = '.spokenmargins';
 
 export type WritePacket = (episode: Episode, margins: readonly Margin[], show?: Show) => Promise<PacketWritten>;
@@ -29,34 +28,10 @@ export interface BackupResult {
   inPackets: number;
   /** Episodes with at least one Margin in a packet. */
   episodes: number;
-  /** Voice Margins with no words, kept as audio only. */
-  audioOnly: number;
   /** Episodes whose packet couldn't be written, with how many Margins that left out and why. */
   failed: Array<{ title: string; margins: number; error: unknown }>;
   /** Margins whose episode isn't in this browser any more, so no packet can name it. */
   unplaced: number;
-}
-
-const hasWords = (m: Margin): boolean => (m.text ?? '').trim() !== '';
-
-function clockForName(seconds: number): string {
-  const total = Math.max(0, Math.floor(seconds));
-  const h = Math.floor(total / 3600);
-  const m = Math.floor((total % 3600) / 60);
-  const s = total % 60;
-  const mm = String(m).padStart(h ? 2 : 1, '0');
-  return `${h ? `${h}-` : ''}${mm}-${String(s).padStart(2, '0')}`;
-}
-
-function slug(title: string): string {
-  return title.normalize('NFKD').replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'Episode';
-}
-
-function audioExtension(mimeType: string): string {
-  if (/mp4|m4a|aac/i.test(mimeType)) return '.m4a';
-  if (/webm/i.test(mimeType)) return '.webm';
-  if (/ogg/i.test(mimeType)) return '.ogg';
-  return '.audio';
 }
 
 /** `name`, or `name-2`, `name-3`… before the extension, whichever isn't taken yet. */
@@ -94,23 +69,22 @@ export async function buildBackup(
     byEpisode.set(margin.episodeId, list);
   }
 
-  const result: BackupResult = { inPackets: 0, episodes: 0, audioOnly: 0, failed: [], unplaced };
+  const result: BackupResult = { inPackets: 0, episodes: 0, failed: [], unplaced };
   const packets: ZipInput[] = [];
-  const audio: ZipInput[] = [];
   const taken = new Set<string>();
 
   for (const [episodeId, margins] of byEpisode) {
     const episode = episodes.get(episodeId) as Episode;
     const show = shows.get(episode.showId);
-    const worded = margins.filter(hasWords).sort((a, b) => a.atSeconds - b.atSeconds);
+    const sorted = [...margins].sort((a, b) => a.atSeconds - b.atSeconds);
     let written = 0;
-    for (let i = 0; i < worded.length; i += MARGINS_PER_PACKET) {
-      const chunk = worded.slice(i, i + MARGINS_PER_PACKET);
+    for (let i = 0; i < sorted.length; i += MARGINS_PER_PACKET) {
+      const chunk = sorted.slice(i, i + MARGINS_PER_PACKET);
       try {
         const packet = await write(episode, chunk, show);
         packets.push({ path: uniqueName(packet.fileName, taken), data: packet.bytes, deflate: false });
         written += packet.included.length;
-        // The writer drops a Margin whose words are only spaces by its own (Swift) rules; never let that pass quietly.
+        // The writer leaves out a written Margin with no words by its own (Swift) rules; never let that pass quietly.
         const missed = chunk.length - packet.included.length;
         if (missed > 0) result.failed.push({ title: episode.title, margins: missed, error: new Error(packet.notice ?? 'Left out of the file.') });
       } catch (error) {
@@ -121,20 +95,13 @@ export async function buildBackup(
       result.inPackets += written;
       result.episodes += 1;
     }
-    for (const margin of margins) {
-      if (hasWords(margin) || !margin.voice) continue;
-      const name = `${slug(episode.title)} at ${clockForName(margin.atSeconds)}${audioExtension(margin.voice.mimeType)}`;
-      const data = new Uint8Array(await margin.voice.blob.arrayBuffer());
-      audio.push({ path: `${VOICE_ONLY_FOLDER}/${uniqueName(name, taken)}`, data, deflate: false });
-      result.audioOnly += 1;
-    }
   }
 
-  if (packets.length === 1 && audio.length === 0) {
+  if (packets.length === 1) {
     const only = packets[0] as ZipInput;
     result.file = { name: only.path, bytes: only.data, mimeType: 'application/vnd.spokenmargins.package+zip' };
-  } else if (packets.length + audio.length > 0) {
-    result.file = { name: backupFileName(now), bytes: await writeZip([...packets, ...audio]), mimeType: 'application/zip' };
+  } else if (packets.length > 1) {
+    result.file = { name: backupFileName(now), bytes: await writeZip(packets), mimeType: 'application/zip' };
   }
   return result;
 }
@@ -152,11 +119,6 @@ export function backupSummary(result: BackupResult, describe: (error: unknown) =
     );
   } else {
     parts.push('Nothing was backed up.');
-  }
-  if (result.audioOnly) {
-    parts.push(
-      `${count(result.audioOnly, 'voice Margin has', 'voice Margins have')} no words, so ${result.audioOnly === 1 ? 'it is' : 'they are'} in the file as audio only, which the apps can’t open.`,
-    );
   }
   for (const failure of result.failed) {
     parts.push(`${count(failure.margins, 'Margin', 'Margins')} on “${failure.title}” couldn’t be backed up. ${describe(failure.error)}`);
@@ -186,7 +148,7 @@ export function isBackupArchive(fileName: string | undefined): boolean {
   return /\.zip$/i.test(fileName ?? '');
 }
 
-/** The packets inside a backup `.zip`, in archive order. Audio-only entries are skipped: no app opens them. */
+/** The packets inside a backup `.zip`, in archive order. Anything else, such as an older backup's loose audio, is skipped. */
 export async function packetsInBackup(bytes: Uint8Array): Promise<Array<{ name: string; bytes: Uint8Array }>> {
   const entries = await readZip(bytes, {
     totalBytes: 1024 * 1024 * 1024,

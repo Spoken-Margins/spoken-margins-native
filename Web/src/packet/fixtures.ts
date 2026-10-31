@@ -1,4 +1,4 @@
-// The two web-made packets in Contracts/fixtures/web-packets/, which SessionKit's WebPacketImportTests imports
+// The three web-made packets in Contracts/fixtures/web-packets/, which SessionKit's WebPacketImportTests imports
 // through the app's real reader. Regenerate with `node Web/src/packet/fixtures.ts` (from the repo root) after a
 // writer change; the content digest stays the same unless what the packet says changes.
 
@@ -58,11 +58,22 @@ export function voiceMargins(): Margin[] {
   ];
 }
 
+/**
+ * A voice Margin the listener left without words, which travels with placeholder words (#3025). Recorded at noon UTC,
+ * so its placeholder names 30 Oct 2026 wherever the fixture is regenerated (UTC−11 to UTC+11).
+ */
+export function placeholderMargins(): Margin[] {
+  const [, voice] = voiceMargins() as [Margin, Margin];
+  return [{ ...voice, id: 'p1', atSeconds: 45, createdAt: '2026-10-30T12:00:00Z', text: undefined }];
+}
+
 export const writeWritten = (): Promise<WrittenPacket> => writePacket(episode, writtenMargins(), options('written'));
 export const writeVoice = (): Promise<WrittenPacket> => writePacket(episode, voiceMargins(), options('voice'));
+export const writePlaceholder = (): Promise<WrittenPacket> => writePacket(episode, placeholderMargins(), options('voice-placeholder'));
 
 if (import.meta.main) {
   writeFileSync(new URL('web-written.spokenmargins', fixtures), (await writeWritten()).bytes);
   writeFileSync(new URL('web-voice.spokenmargins', fixtures), (await writeVoice()).bytes);
-  console.log('wrote web-written.spokenmargins and web-voice.spokenmargins');
+  writeFileSync(new URL('web-voice-placeholder.spokenmargins', fixtures), (await writePlaceholder()).bytes);
+  console.log('wrote web-written.spokenmargins, web-voice.spokenmargins and web-voice-placeholder.spokenmargins');
 }

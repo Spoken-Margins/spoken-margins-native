@@ -5,9 +5,10 @@ import { PacketError } from '../../packet/errors.ts';
 import { episode, show, writtenMargins } from '../../packet/fixtures.ts';
 import { readPacket } from '../../packet/read.ts';
 import { writePacket } from '../../packet/write.ts';
-import { listZip } from '../../packet/zip.ts';
+import { listZip, writeZip } from '../../packet/zip.ts';
 import type { Episode, Margin } from '../../shared/model.ts';
-import { backupSummary, buildBackup, isBackupArchive, MARGINS_PER_PACKET, packetsInBackup, packetsToOpen, uniqueName, VOICE_ONLY_FOLDER, type WritePacket } from './backup.ts';
+import { voicePlaceholder } from '../../shared/placeholder.ts';
+import { backupSummary, buildBackup, isBackupArchive, MARGINS_PER_PACKET, packetsInBackup, packetsToOpen, uniqueName, type WritePacket } from './backup.ts';
 
 const fixtures = new URL('../../../../Contracts/fixtures/web-packets/', import.meta.url);
 
@@ -23,9 +24,11 @@ const write: WritePacket = async (ep, margins, sh) => {
 };
 
 const second: Episode = { ...episode, id: 'episode-two', title: 'Episode 2', guid: 'example-episode-guid-2', audioUrl: 'https://example.com/podcast/episode-2.mp3' };
+const recorded = readFileSync(new URL('audio/voice-fragmented.mp4', fixtures));
+/** A voice Margin with no words: real AAC, as every web recording is. */
 const voiceOnly = (id: string, episodeId: string, at: number): Margin => ({
   id, episodeId, atSeconds: at, createdAt: '2026-10-30T11:00:00Z',
-  voice: { blob: new Blob([new Uint8Array([7, 7, 7, id.length])], { type: 'audio/mp4' }), mimeType: 'audio/mp4', durationSeconds: 1 },
+  voice: { blob: new Blob([recorded], { type: 'audio/mp4' }), mimeType: 'audio/mp4', durationSeconds: 2.9 },
 });
 const describe = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
@@ -53,23 +56,23 @@ test('several episodes, a voice Margin with no words and a long episode go in on
     'Episode-1-example-episode.spokenmargins',
     'Episode-2.spokenmargins',
     'Episode-2-2.spokenmargins',
-    `${VOICE_ONLY_FOLDER}/Episode-1-example-episode at 1-15.m4a`,
   ]);
-  assert.equal(result.inPackets, 2 + MARGINS_PER_PACKET + 3);
+  assert.equal(result.inPackets, 3 + MARGINS_PER_PACKET + 3);
   assert.equal(result.episodes, 2);
-  assert.equal(result.audioOnly, 1);
 
-  // Every packet in it opens, and between them they hold every worded Margin once.
+  // Every packet in it opens, and between them they hold every Margin once, the voice one with placeholder words.
   const packets = await packetsInBackup(result.file!.bytes);
   assert.deepEqual(packets.map((p) => p.name), ['Episode-1-example-episode.spokenmargins', 'Episode-2.spokenmargins', 'Episode-2-2.spokenmargins']);
   const texts: string[] = [];
   for (const packet of packets) texts.push(...(await readPacket(packet.bytes)).margins.map((m) => m.text ?? ''));
   assert.equal(texts.length, result.inPackets);
   assert.equal(new Set(texts).size, texts.length);
+  assert.ok(texts.includes(voicePlaceholder({ atSeconds: 75, title: episode.title, recordedAt: new Date('2026-10-30T11:00:00Z') })));
 
-  const summary = backupSummary(result, describe);
-  assert.equal(summary.problem, false);
-  assert.match(summary.text, /^Backed up 55 Margins from 2 episodes as Spoken-Margins-backup-2026-10-30\.zip\. 1 voice Margin has no words, so it is in the file as audio only/);
+  assert.deepEqual(backupSummary(result, describe), {
+    text: 'Backed up 56 Margins from 2 episodes as Spoken-Margins-backup-2026-10-30.zip.',
+    problem: false,
+  });
 });
 
 test('a packet that can’t be written, or a Margin with no episode, is named as not backed up', async () => {
@@ -100,16 +103,27 @@ test('a Margin the writer leaves out of its packet is counted as not backed up',
   assert.equal(backupSummary(result, describe).problem, true);
 });
 
-test('nothing to back up says so; only voice Margins without words still make a file', async () => {
+test('nothing to back up says so; voice Margins without words back up as a packet the apps open', async () => {
   const none = await buildBackup({ episodes: [episode], shows: [show], margins: [] }, write);
   assert.equal(none.file, undefined);
   assert.deepEqual(backupSummary(none, describe), { text: 'Nothing was backed up.', problem: true });
   const voices = await buildBackup({ episodes: [episode], shows: [], margins: [voiceOnly('a', episode.id, 3), voiceOnly('b', episode.id, 3)] }, write);
-  assert.deepEqual(listZip(voices.file!.bytes).map((e) => e.path), [
-    `${VOICE_ONLY_FOLDER}/Episode-1-example-episode at 0-03.m4a`,
-    `${VOICE_ONLY_FOLDER}/Episode-1-example-episode at 0-03-2.m4a`,
+  assert.equal(voices.file?.name, 'Episode-1-example-episode.spokenmargins');
+  assert.equal(voices.inPackets, 2);
+  assert.deepEqual(voices.failed, []);
+  const read = await readPacket(voices.file!.bytes);
+  assert.equal(read.margins.length, 2);
+  assert.ok(read.margins.every((m) => m.voice && m.text?.startsWith('Voice Margin at 0:03 in “Episode 1 (example episode)”, recorded ')));
+  assert.deepEqual(backupSummary(voices, describe), { text: 'Backed up 2 Margins from 1 episode as Episode-1-example-episode.spokenmargins.', problem: false });
+});
+
+test('an older backup’s loose voice audio is skipped when reading it', async () => {
+  const packet = (await write(episode, writtenMargins(), show)).bytes;
+  const zip = await writeZip([
+    { path: 'Episode-1-example-episode.spokenmargins', data: packet, deflate: false },
+    { path: 'Voice Margins without words/Episode-1-example-episode at 1-15.m4a', data: new Uint8Array(recorded), deflate: false },
   ]);
-  assert.deepEqual(await packetsInBackup(voices.file!.bytes), []);
+  assert.deepEqual((await packetsInBackup(zip)).map((p) => p.name), ['Episode-1-example-episode.spokenmargins']);
 });
 
 test('names stay unique without regard to case, and only .zip files are read as backups', () => {
