@@ -1417,7 +1417,7 @@ final class Gate1FlowUITests: XCTestCase {
             timeout: 20
         )
         var paused = false
-        for _ in 0..<3 where !paused {
+        for attempt in 0..<3 where !paused {
             if playPause.label == "Pause", isReadyToTap(playPause) {
                 playPause.tap()
             }
@@ -1426,7 +1426,8 @@ final class Gate1FlowUITests: XCTestCase {
                     predicate: NSPredicate(format: "label == %@", "Play"),
                     object: playPause
                 )],
-                timeout: 5
+                // The first try waits as long as the old single wait did, so a slow pause is not tapped a second time.
+                timeout: attempt == 0 ? 8 : 5
             ) == .completed
         }
         XCTAssertTrue(paused, "Playback did not pause: the play button still reads \(playPause.label)")
