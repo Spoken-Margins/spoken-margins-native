@@ -171,7 +171,7 @@ Facts behind the draft:
 
 My pick is option 1, as a small follow-up. Users can still add any feed they like, as in any podcast app.
 
-**Support URL, DRAFT:** `https://spokenmargins.proximitytoprogress.com/support/` (`Site/support/index.html`; the app links it at `A/SettingsScreen.swift:340`). **Privacy policy URL, DRAFT:** `https://spokenmargins.proximitytoprogress.com/privacy/`. **Support contact:** [SUPPORT CONTACT — TO FILL]. Check both URLs are live before submitting.
+**Support URL, DRAFT:** `https://spokenmargins.com/support/` (`Site/support/index.html`; the app links it at `A/SettingsScreen.swift:340`). **Privacy policy URL, DRAFT:** `https://spokenmargins.proximitytoprogress.com/privacy/`. **Support contact:** [SUPPORT CONTACT — TO FILL]. Check both URLs are live before submitting.
 
 **Export compliance:** `ITSAppUsesNonExemptEncryption: false` (`project.yml:116`). The app uses only HTTPS and Apple's own encryption.
 
@@ -207,14 +207,14 @@ Checked on `next` at `c951fdb` (2026-10-01). Paths are shortened: `L/` is `App/S
 `docs/legal/spoken-margins-terms.md` already settles the structure: the App Store listing uses **Apple's Standard EULA**, with no custom EULA in App Store Connect. The versioned Spoken Margins Terms of Use supplement it.
 
 - Bundled copy: `App/SpokenMarginsApp/Resources/Legal/SPOKEN_MARGINS_TERMS_OF_USE.txt`.
-- Public copy: `https://spokenmargins.proximitytoprogress.com/terms/` (`Site/terms/index.html`).
+- Public copy: `https://spokenmargins.com/terms/` (`Site/terms/index.html`).
 - The Terms carry the Open RAIL-M paragraph 5 and Attachment A restrictions as an enforceable provision (`SPOKEN_MARGINS_TERMS_OF_USE.txt:18-20`), as paragraph 4(a) requires.
 - The app asks the listener to accept the Terms before James or Lily speaks, and checks acceptance again where it renders speech.
 
 The Standard EULA field can't carry extra text, so the listing points to the restrictions in two places:
 
 1. **Last line of the description, DRAFT:**
-   > DRAFT. The on-device voices are licensed under the Open RAIL-M License, whose use restrictions are part of the Spoken Margins Terms of Use: https://spokenmargins.proximitytoprogress.com/terms/
+   > DRAFT. The on-device voices are licensed under the Open RAIL-M License, whose use restrictions are part of the Spoken Margins Terms of Use: https://spokenmargins.com/terms/
 2. **App Review notes:** the "Voices" paragraph in section 2 already says the voices require accepting the Terms, which supplement Apple's Standard EULA.
 
 **Q3, for the attorney (#455).** Is a supplement the listener accepts before the voice speaks enough for paragraph 4(a)? Paragraph 4(a) covers any agreement "governing the use and/or distribution" of the model. The model ships to every user under the Standard EULA, but only listeners who choose James or Lily accept the Terms (`SPOKEN_MARGINS_TERMS_OF_USE.txt:10`). The alternative is a custom EULA in App Store Connect: Apple's Standard EULA terms plus the Terms of Use, so everyone who downloads the app agrees to the restrictions.

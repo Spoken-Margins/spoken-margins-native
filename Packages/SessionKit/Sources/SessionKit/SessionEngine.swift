@@ -1681,6 +1681,10 @@ public final class SessionEngine {
     /// True between `pauseSourceForInterjection` and the `beginInterjection` that takes it over.
     public var hasPendingInterjectionPause: Bool { pendingInterjectionPause != nil }
 
+    /// The recorder, when it can switch the audio session for recording off the main thread before
+    /// `beginInterjection` (#2511). Nil for recorders that can't (tests' fakes, the watch).
+    public var recordingSessionPreparer: RecordingSessionPreparing? { recorder as? RecordingSessionPreparing }
+
     /// Cancel before the recorder was asked for: nothing is recording and there is no draft, so the podcast
     /// goes on from where it stopped (#1696). Does nothing when the tap did not pause anything.
     @discardableResult
