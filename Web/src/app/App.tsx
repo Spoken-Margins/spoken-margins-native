@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState, type DragEvent, type ReactNode } from 'react';
 import { DataProvider } from './data.tsx';
 import { FollowingIcon, LibraryIcon, MarginsIcon, SettingsIcon } from './icons.tsx';
-import { openFiles, useLaunchLink, useOpenMarginFile, useOpenShareLink } from './import.tsx';
+import { openFileBytes, openFiles, useLaunchLink, useOpenMarginFile, useOpenShareLink, type OpenMarginFile } from './import.tsx';
 import type { ParsedLink } from './logic/share-link.ts';
 import { PlayerProvider, usePlayer } from './player.tsx';
 import { Following } from './screens/Following.tsx';
@@ -47,8 +47,11 @@ function Shell({ launchLink }: { launchLink: ParsedLink }) {
 
   const openPlayer = useCallback(() => setNowPlaying(true), []);
   const openMarginFile = useOpenMarginFile(openPlayer);
-  useSharedFiles(openMarginFile);
-  useNativeOpenedFiles(openMarginFile);
+  // Every way a file arrives goes through the same unpacking, so a backup `.zip` shared to the installed app, or
+  // opened with the Android app, opens its packets as a picked one does.
+  const openArrivedFile = useCallback<OpenMarginFile>((bytes, fileName) => openFileBytes(bytes, fileName, openMarginFile), [openMarginFile]);
+  useSharedFiles(openArrivedFile);
+  useNativeOpenedFiles(openArrivedFile);
   const openShareLink = useOpenShareLink(openPlayer);
   useLaunchLink(launchLink, openShareLink);
 

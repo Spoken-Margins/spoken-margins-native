@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useData } from '../data.tsx';
-import { downloadFile } from '../download.ts';
+import { saveFile } from '../download.ts';
 import { DownloadIcon } from '../icons.tsx';
 import { backupSummary, buildBackup } from '../logic/backup.ts';
 import { plainError } from '../logic/messages.ts';
@@ -97,7 +97,9 @@ function BackupSection() {
     try {
       const result = await buildBackup(data, (episode, margins, show) => services.packets.writePacket(episode, margins, show));
       if (result.file) {
-        downloadFile(new File([result.file.bytes as BlobPart], result.file.name, { type: result.file.mimeType }));
+        // Through the Android app's share sheet there; a closed sheet saved nothing, so it neither says so nor counts.
+        const file = new File([result.file.bytes as BlobPart], result.file.name, { type: result.file.mimeType });
+        if ((await saveFile(file, 'Spoken Margins backup')) === 'cancelled') return;
         await data.setSetting('lastBackupAt', new Date().toISOString());
       }
       const summary = backupSummary(result, (error) => plainError(error));
