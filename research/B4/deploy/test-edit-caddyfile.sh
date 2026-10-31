@@ -58,13 +58,13 @@ for filter_line in \
   'log default {' 'format filter {' 'wrap json' \
   'request>remote_ip delete' 'request>remote_port delete' 'request>client_ip delete' \
   'request>headers delete' 'request>tls delete' \
-  'request>uri regexp ^(/api/v1/maps|/l)/.* $1/*'; do
+  'request>uri regexp (^/api/v1/maps/|^/l/|[?]).* $1*'; do
   grep -qxF -e "${filter_line}" <<<"${global_block}" || die "log filter line missing from the global block: ${filter_line}"
 done
 grep -q 'reverse_proxy 127.0.0.1:8795' "${work}/c1" || die "port not rendered"
 grep -q 'root \* /srv/www/spokenmargins-server' "${work}/c1" || die "server root not rendered"
 grep -q 'handle /l/\*' "${work}/c1" || die "share link routing missing"
-grep -Fq 'request>uri regexp ^(/api/v1/maps|/l)/.* $1/*' "${work}/c1" || die "share link privacy filter missing"
+grep -Fq 'request>uri regexp (^/api/v1/maps/|^/l/|[?]).* $1*' "${work}/c1" || die "share link, episode and query privacy filter missing"
 # Everything outside the two managed blocks is byte-for-byte unchanged.
 diff <(sed -n '/^proximitytoprogress.com {/,/^}/p;/^other.proximitytoprogress.com {/,/^}/p' "${work}/live") \
   <(sed -n '/^proximitytoprogress.com {/,/^}/p;/^other.proximitytoprogress.com {/,/^}/p' "${work}/c1") >/dev/null ||
@@ -79,6 +79,19 @@ ok "rerun on its own output changes nothing"
 "${here}/edit-caddyfile.sh" "${work}/c1" "${work}/c3" 8796 /srv/www/spokenmargins-server
 grep -q '127.0.0.1:8796' "${work}/c3" && ! grep -q '127.0.0.1:8795' "${work}/c3" || die "port change not applied"
 ok "rerun with another port replaces the managed blocks"
+
+# The web app's block (#3020): added once, at the end, exactly as the
+# template has it, and replaced in place on a rerun.
+[[ "$(grep -c '^app.spokenmargins.proximitytoprogress.com {$' "${work}/c1")" == 1 ]] || die "web app block not added exactly once"
+cmp -s <(sed -n '/^app.spokenmargins.proximitytoprogress.com {$/,/^}$/p' "${work}/c1") "${here}/caddy-web.caddy" ||
+  die "web app block differs from caddy-web.caddy"
+[[ "$(tail -n "$(wc -l <"${here}/caddy-web.caddy")" "${work}/c1")" == "$(cat "${here}/caddy-web.caddy")" ]] || die "web app block not at the end"
+grep -q '^other.proximitytoprogress.com {$' "${work}/c1" || die "other site lost when the web block was added"
+! sed -n '/^app.spokenmargins.proximitytoprogress.com {$/,/^}$/p' "${work}/c1" | grep -qE '^[[:space:]]*log' || die "web app block must not write an access log"
+sed 's|max-age=31536000|max-age=1|' "${work}/c1" >"${work}/web-old"
+edit "${work}/web-old" "${work}/web-new" || die "managed web block refused"
+cmp -s "${work}/c1" "${work}/web-new" || { diff -u "${work}/c1" "${work}/web-new"; die "managed web block not replaced in place"; }
+ok "web app block added at the end once, and replaced in place on a rerun"
 
 # A refusal is exit status 2 with the "refusing:" message and no candidate
 # file; a crash (any other status) or a half-written candidate is a failure.
@@ -99,6 +112,10 @@ grep -v '^spokenmargins' "${work}/live" | sed '/^  root \* \/srv\/www\/spokenmar
 expect_refusal "no site block" "${work}/nosite"
 { cat "${work}/live"; printf '\nspokenmargins.proximitytoprogress.com {\n  file_server\n}\n'; } >"${work}/twice"
 expect_refusal "two site blocks" "${work}/twice"
+{ cat "${work}/live"; printf '\napp.spokenmargins.proximitytoprogress.com {\n\trespond "someone else"\n}\n'; } >"${work}/webforeign"
+expect_refusal "a web app block it didn't write" "${work}/webforeign"
+{ cat "${work}/c1"; printf '\n'; cat "${here}/caddy-web.caddy"; } >"${work}/webtwice"
+expect_refusal "two web app blocks" "${work}/webtwice"
 rm -f "${work}/out"
 status=0
 "${here}/edit-caddyfile.sh" "${work}/live" "${work}/out" '8795; rm -rf /' /srv/x 2>"${work}/err" || status=$?
@@ -111,25 +128,35 @@ ok "refuses: a server root that isn't a plain absolute path"
 
 if [[ -n "${CADDY:-}" && -n "${SMSERVER:-}" ]]; then
   # Serve the candidate on loopback: same blocks, site address swapped.
-  root="${work}/server-root" site="${work}/site"
-  mkdir -p "${site}"
+  root="${work}/server-root" site="${work}/site" web="${work}/web"
+  mkdir -p "${site}" "${web}/assets"
   echo "site index" >"${site}/index.html"
+  echo "web index" >"${web}/index.html"
+  echo "self.x=1" >"${web}/sw.js"
+  echo "a=1" >"${web}/assets/index-abc123.js"
   "${SMSERVER}" switch -public "${root}" attest on >/dev/null
   sed -e 's|^spokenmargins.proximitytoprogress.com {|http://127.0.0.1:18443 {|' \
     -e "s|/srv/www/spokenmargins-server|${root}|" -e "s|root \* /srv/www/spokenmargins\$|root * ${site}|" \
     -e 's|^proximitytoprogress.com {|http://127.0.0.1:18444 {|' -e 's|^other.proximitytoprogress.com {|http://127.0.0.1:18445 {|' \
+    -e 's|^app.spokenmargins.proximitytoprogress.com {|http://127.0.0.1:18446 {|' -e "s|/srv/www/spokenmargins-web\$|${web}|" \
     -e 's|^{$|{\n\tadmin off|' "${work}/c1" >"${work}/local"
   "${CADDY}" run --adapter caddyfile --config "${work}/local" >"${work}/caddy.log" 2>&1 &
   sleep 1.5
   code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
   [[ "$(code http://127.0.0.1:18443/api/v1/config.json)" == 200 ]] || die "config.json not served while smserver is down"
   [[ "$(code http://127.0.0.1:18443/)" == 200 ]] || die "site root not served"
+  [[ "$(curl -s http://127.0.0.1:18446/)" == "web index" ]] || die "web app not served"
+  curl -sI http://127.0.0.1:18446/sw.js | grep -qi '^cache-control: no-cache' || die "sw.js must be no-cache"
+  curl -sI http://127.0.0.1:18446/assets/index-abc123.js | grep -qi '^cache-control: public, max-age=31536000, immutable' || die "hashed assets must be immutable"
+  ! curl -sI http://127.0.0.1:18446/ | grep -qi '^server:' || die "web app sends a Server header"
   curl -s -X POST -H 'X-SM-Key-Id: SECRETKEYID' http://127.0.0.1:18443/api/v1/ping >/dev/null
   linkid=8badf00d8badf00d8badf00d8badf00d
   [[ "$(code http://127.0.0.1:18443/l/${linkid})" == 502 ]] || die "link should 502 with smserver down"
   mapkey=5ec2e7a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1
   [[ "$(code http://127.0.0.1:18443/api/v1/maps/${mapkey})" == 502 ]] || die "map fetch should 502 with smserver down"
   [[ "$(code http://127.0.0.1:18443/api/v1/health)" == 502 ]] || die "api should 502 with smserver down"
+  relayurl='https%3A%2F%2Ffeeds.example%2Fprivate%3Ftoken%3DRELAYSECRET'
+  [[ "$(code "http://127.0.0.1:18443/api/v1/relay?url=${relayurl}")" == 502 ]] || die "relay should 502 with smserver down"
   "${SMSERVER}" serve -listen 127.0.0.1:8795 -state "${work}/state" -public "${root}" >/dev/null 2>&1 &
   sleep 0.5
   [[ "$(curl -s http://127.0.0.1:18443/api/v1/health)" == *'"status":"ok"'* ]] || die "health not proxied to smserver"
@@ -140,8 +167,10 @@ if [[ -n "${CADDY:-}" && -n "${SMSERVER:-}" ]]; then
   grep -q '"uri":"/l/\*"' "${work}/caddy.log" || die "share link not logged as /l/*"
   ! grep -q "${mapkey}" "${work}/caddy.log" || die "Caddy error log leaked an episode key"
   grep -q '"uri":"/api/v1/maps/\*"' "${work}/caddy.log" || die "map fetch not logged as /api/v1/maps/*"
+  ! grep -qE 'RELAYSECRET|url=' "${work}/caddy.log" || die "Caddy error log leaked a relay URL"
+  grep -q '"uri":"/api/v1/relay?\*"' "${work}/caddy.log" || die "relay not logged as /api/v1/relay?*"
   grep 'http.log.error' "${work}/caddy.log" | head -1 | grep -q '^{' || die "error log is not JSON"
-  ok "served locally: config.json with smserver down, site, /api proxied, error log JSON without IP, headers or episode keys"
+  ok "served locally: config.json with smserver down, site, /api proxied, error log JSON without IP, headers, episode keys or relay URLs"
 fi
 if [[ -z "${CADDY:-}" ]]; then
   echo "SKIPPED caddy validate of every candidate (set CADDY)"

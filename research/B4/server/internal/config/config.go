@@ -27,17 +27,19 @@ const (
 	// anonymous token issuance (#737), off by default for the same reason.
 	// MapUploadToken, when on, makes map uploads carry an anonymous token
 	// (#743). It is a switch of its own, not a field on maps, so an app that
-	// knows nothing of it reads it as off and nothing else changes.
+	// knows nothing of it reads it as off and nothing else changes. Relay
+	// gates the web app's feed and page relay (#2985), off by default.
 	ServiceLinks          = "links"
 	ServiceAttest         = "attest"
 	ServiceBridge         = "bridge"
 	ServiceMaps           = "maps"
 	ServiceTokens         = "tokens"
 	ServiceMapUploadToken = "mapUploadToken"
+	ServiceRelay          = "relay"
 )
 
 // KnownServices are the switches the owner can flip.
-var KnownServices = []string{ServiceLinks, ServiceAttest, ServiceBridge, ServiceMaps, ServiceTokens, ServiceMapUploadToken}
+var KnownServices = []string{ServiceLinks, ServiceAttest, ServiceBridge, ServiceMaps, ServiceTokens, ServiceMapUploadToken, ServiceRelay}
 
 type Service struct {
 	Enabled bool `json:"enabled"`

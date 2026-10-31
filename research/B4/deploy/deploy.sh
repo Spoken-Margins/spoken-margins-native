@@ -9,8 +9,9 @@
 #
 # It builds a static linux/amd64 binary, uploads it with the templates to a
 # temporary directory, and runs remote-install.sh there. That script edits
-# only the spokenmargins.proximitytoprogress.com block and adds the global
-# log filter; it refuses if the block isn't the plain one it expects,
+# only the spokenmargins.proximitytoprogress.com block, the web app's
+# app.spokenmargins.proximitytoprogress.com block (its files come from
+# deploy-web.sh), and the global log filter; it refuses if the block isn't the plain one it expects,
 # validates the candidate with `caddy validate`, backs up the Caddyfile,
 # reloads (never restarts) Caddy, checks the sites and health, and rolls the
 # Caddyfile back if a check fails. It copies the old smserver binary and unit
@@ -41,7 +42,7 @@ trap cleanup EXIT
 
 echo "== build linux/amd64 smserver"
 cp "${here}/edit-caddyfile.sh" "${here}/remote-install.sh" "${here}/caddy-global.caddy" "${here}/caddy-site.caddy" \
-  "${here}/smserver.service" "${here}/journald@smserver.conf" "${stage}/"
+  "${here}/caddy-web.caddy" "${here}/smserver.service" "${here}/journald@smserver.conf" "${stage}/"
 (cd "${here}/../server" && go test ./... >/dev/null && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o "${stage}/smserver" ./cmd/smserver)
 echo "built $(git -C "${here}" rev-parse --short HEAD), tests pass"
 if ((dry_run)); then rm "${stage}/smserver"; fi
