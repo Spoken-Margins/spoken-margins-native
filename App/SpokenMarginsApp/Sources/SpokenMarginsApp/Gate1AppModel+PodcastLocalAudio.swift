@@ -41,7 +41,7 @@ extension Gate1AppModel {
         // Placement reads the item off the main thread and decides later (#2507), so the deferral it records is not
         // there yet. Ask the #914 question here instead: a stream the session keeps gets no transcript of the download.
         if importedPodcastCommentaryNeedsTranscript(itemId: itemId, store: store),
-           let item = try? store.loadItem(id: itemId),
+           let item = try? store.loadItemSummary(id: itemId), // a summary answers the stream check and the duration; the article text stays on disk (#2506)
            !deferPlacementWhileSessionKeepsItsEdition(item: item, localURL: url) {
             diagnostics["sourceTranscriptionAfterDownload:\(itemId)"] = "requested_for_imported_commentary"
             scheduleTransientRecipientAlignmentTranscript(for: item, localSourceURL: url)

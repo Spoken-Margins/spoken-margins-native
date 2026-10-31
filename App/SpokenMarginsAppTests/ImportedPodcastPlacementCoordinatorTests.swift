@@ -168,6 +168,24 @@ final class ImportedPodcastPlacementCoordinatorTests: XCTestCase {
         XCTAssertEqual(h.coordinator.lastTransientStart[item.id], start.addingTimeInterval(60))
     }
 
+    /// The download-finished path asks for the transcript with an item summary, not the whole article (#2506). Mutation:
+    /// keying the slot or the cooldown on anything but the summary's own id leaves `admission[item.id]` empty here.
+    func testTransientTranscriptIsAdmittedFromAnItemSummary() throws {
+        let h = try PlacementCoordinatorHarness()
+        defer { h.shutdown() }
+        let item = h.makeItem()
+        let summary = LibraryItemSummary(
+            id: item.id, title: item.title, mediaType: item.mediaType, status: item.status, media: item.media,
+            hasListenableText: false, textCharacterCount: nil
+        )
+        let file = try h.writeAudio("episode.mp3")
+
+        XCTAssertTrue(h.coordinator.scheduleTransientTranscript(for: summary, localSourceURL: file))
+
+        XCTAssertNotNil(h.coordinator.admission[item.id])
+        XCTAssertNotNil(h.coordinator.lastTransientStart[item.id])
+    }
+
     /// Mutation: taking the slot (or writing the cooldown, a diagnostic or a display) before the readability check.
     func testAnUnreadableFileDoesNotTakeTheSlot() throws {
         let h = try PlacementCoordinatorHarness()

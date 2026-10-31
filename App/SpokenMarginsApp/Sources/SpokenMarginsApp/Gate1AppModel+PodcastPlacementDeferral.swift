@@ -7,7 +7,7 @@ import SessionKitAudio
 extension Gate1AppModel {
     /// True when placement must wait: a streamed episode whose session plays another file. Remembers the download
     /// for `resumeDeferredPodcastPlacements`; otherwise clears any earlier deferral.
-    func deferPlacementWhileSessionKeepsItsEdition(item: Item, localURL: URL) -> Bool {
+    func deferPlacementWhileSessionKeepsItsEdition(item: some LibraryItemFields, localURL: URL) -> Bool {
         if item.media?.sourceType == .remoteStream,
            engine?.mediaSessionPlays(itemId: item.id, playbackURL: localURL.absoluteString) == false {
             deferredPodcastPlacementURLs[item.id] = localURL
