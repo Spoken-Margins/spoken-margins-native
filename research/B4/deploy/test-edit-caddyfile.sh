@@ -187,13 +187,21 @@ if [[ -n "${CADDY:-}" && -n "${SMSERVER:-}" ]]; then
   sed -e 's|^spokenmargins.com {|http://127.0.0.1:18443 {|' \
     -e "s|/srv/www/spokenmargins-server|${root}|" -e "s|root \* /srv/www/spokenmargins\$|root * ${site}|" \
     -e 's|^proximitytoprogress.com {|http://127.0.0.1:18444 {|' -e 's|^other.proximitytoprogress.com {|http://127.0.0.1:18445 {|' \
-    -e 's|^app.spokenmargins.com {|http://127.0.0.1:18446 {|' -e "s|/srv/www/spokenmargins-web\$|${web}|" \
+    -e 's|^app.spokenmargins.com {|http://127.0.0.1:18446 {|' -e 's|^spokenmargins.proximitytoprogress.com {|http://127.0.0.1:18447 {|' \
+    -e 's|^www.spokenmargins.com {|http://127.0.0.1:18448 {|' -e 's|^app.spokenmargins.proximitytoprogress.com {|http://127.0.0.1:18449 {|' -e "s|/srv/www/spokenmargins-web\$|${web}|" \
     -e 's|^{$|{\n\tadmin off|' "${work}/c1" >"${work}/local"
   "${CADDY}" run --adapter caddyfile --config "${work}/local" >"${work}/caddy.log" 2>&1 &
   sleep 1.5
   code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
   [[ "$(code http://127.0.0.1:18443/api/v1/config.json)" == 200 ]] || die "config.json not served while smserver is down"
   [[ "$(code http://127.0.0.1:18443/)" == 200 ]] || die "site root not served"
+  # The old hosts: machine paths served, pages and the old web host redirected with the path kept.
+  [[ "$(code http://127.0.0.1:18447/api/v1/config.json)" == 200 ]] || die "old host must still serve config.json"
+  [[ "$(code http://127.0.0.1:18447/privacy/)" == 301 ]] || die "old host must 301 a page"
+  curl -sI http://127.0.0.1:18447/privacy/ | grep -qi '^location: https://spokenmargins.com/privacy/' || die "old host redirect lost the path"
+  [[ "$(code http://127.0.0.1:18447/l/8badf00d8badf00d8badf00d8badf00d)" == 502 ]] || die "old host must proxy /l/, not redirect it"
+  curl -sI http://127.0.0.1:18448/privacy/ | grep -qi '^location: https://spokenmargins.com/privacy/' || die "www must 301 with the path kept"
+  curl -sI http://127.0.0.1:18449/x?y=1 | grep -qi '^location: https://app.spokenmargins.com/x?y=1' || die "old web host must 301 with path and query"
   [[ "$(curl -s http://127.0.0.1:18446/)" == "web index" ]] || die "web app not served"
   curl -sI http://127.0.0.1:18446/sw.js | grep -qi '^cache-control: no-cache' || die "sw.js must be no-cache"
   curl -sI http://127.0.0.1:18446/assets/index-abc123.js | grep -qi '^cache-control: public, max-age=31536000, immutable' || die "hashed assets must be immutable"
