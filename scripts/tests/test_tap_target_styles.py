@@ -35,7 +35,7 @@ class TapTargetStyleTests(unittest.TestCase):
 
     def test_live_activity_buttons_expand_their_hit_area(self):
         widget = _strip(WIDGET.read_text())
-        self.assertEqual(widget.count(".expandedHitArea("), 3)
+        self.assertEqual(widget.count(".expandedHitArea("), 4)
 
     def test_the_helper_does_not_change_layout(self):
         text = _strip((APP / "ExperienceDesignSystem.swift").read_text())
