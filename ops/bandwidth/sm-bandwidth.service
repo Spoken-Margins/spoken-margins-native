@@ -1,0 +1,12 @@
+[Unit]
+Description=Spoken Margins VPS transfer check: email the owner past half the monthly allowance
+After=network-online.target vnstat.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/sm-bandwidth/bandwidth_check.py
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadOnlyPaths=/etc/sm-bandwidth
+PrivateTmp=true
