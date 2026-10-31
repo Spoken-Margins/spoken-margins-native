@@ -1,10 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { statSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
   HUGGING_FACE,
   RUNTIME_BYTES,
+  RUNTIME_VERSION,
   TRANSCRIPTION_MODEL,
   downloadBytes,
   downloadSizeLabel,
@@ -45,7 +46,14 @@ test('only GETs of the pinned files count as the model download', () => {
 });
 
 test('the speech engine size matches the onnxruntime-web files the build ships', () => {
+  // The fast plan runs these tests without Web's packages installed, so the lock file is the check that always runs:
+  // a moved onnxruntime-web means the size the listener is told must be measured again.
+  const lock = JSON.parse(readFileSync(new URL('../../package-lock.json', import.meta.url), 'utf8'));
+  assert.equal(lock.packages['node_modules/onnxruntime-web']?.version, RUNTIME_VERSION,
+    'onnxruntime-web moved: run `npm ci` in Web/, then update RUNTIME_BYTES and RUNTIME_VERSION in catalog.ts');
+  // Where they are installed (a thread's own checkout, the Playwright run), the shipped files are measured too.
   const dist = (name: string) => fileURLToPath(new URL(`../../node_modules/onnxruntime-web/dist/${name}`, import.meta.url));
   const files = ['ort-wasm-simd-threaded.asyncify.wasm', 'ort-wasm-simd-threaded.asyncify.mjs'];
+  if (!files.every((name) => existsSync(dist(name)))) return;
   assert.equal(RUNTIME_BYTES, files.reduce((n, name) => n + statSync(dist(name)).size, 0));
 });

@@ -66,9 +66,13 @@ export function modelBytes(model: TranscriptionModel = TRANSCRIPTION_MODEL): num
 /**
  * The speech engine (onnxruntime-web's WebAssembly build and its loader), which comes from the app's own site rather
  * than Hugging Face and is kept with the model once transcription is on. It is not part of the app shell, so a
- * listener who never turns transcription on never downloads it. catalog.test.ts checks this against node_modules.
+ * listener who never turns transcription on never downloads it. Measured from `RUNTIME_VERSION`; catalog.test.ts
+ * checks Web/package-lock.json still pins that version, and the file sizes when Web's packages are installed.
  */
 export const RUNTIME_BYTES = 26_861_777 + 53_057;
+
+/** The onnxruntime-web version `RUNTIME_BYTES` was measured from. Re-measure when the lock file moves. */
+export const RUNTIME_VERSION = '1.31.0-dev.20260914-8d85527a0';
 
 /** Everything turning transcription on adds to this browser: the model plus the speech engine. */
 export function downloadBytes(model: TranscriptionModel = TRANSCRIPTION_MODEL): number {
