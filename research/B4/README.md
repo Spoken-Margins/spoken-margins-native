@@ -12,7 +12,10 @@ research/B4/scripts/demo.sh                                 # health, one attest
 CADDY=caddy SMSERVER=smserver research/B4/deploy/test-edit-caddyfile.sh   # Caddyfile edit, validate, local routing
 research/B4/deploy/test-server-rollback.sh   # deploy keeps the old smserver and puts it back on rollback
 research/B4/deploy/deploy.sh --dry-run root@<vps>           # from the Mac: show every change on the box, change nothing
+research/B4/deploy/deploy-web.sh --dry-run root@<vps>       # from the Mac: build Web/ and list what would change, change nothing
 ```
+
+The web app (`Web/`, #3020) is served by the same Caddy from `https://app.spokenmargins.proximitytoprogress.com`: `deploy.sh` adds that site block (`deploy/caddy-web.caddy`, no access log) and an empty `/srv/www/spokenmargins-web`, and `deploy-web.sh` builds the committed `Web/` with `VITE_RELAY_ORIGIN` set to this server and copies it there. The unit lists that origin in `-relay-origins` and `-link-origins`; the relay still answers 503 until `smserver switch ... relay on`.
 
 `deploy/deploy.sh` without `--dry-run` deploys; the owner approves the dry-run diff first. Admin on the box runs as the service user, e.g. `runuser -u smserver -- smserver switch -public /srv/www/spokenmargins-server attest off`.
 

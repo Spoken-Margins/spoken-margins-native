@@ -15,6 +15,10 @@ unit="${SM_UNIT:-/etc/systemd/system/smserver.service}"
 jconf="${SM_JOURNALD_CONF:-/etc/systemd/journald@smserver.conf}"
 bin="${SM_BIN:-/usr/local/bin/smserver}"
 site_host="spokenmargins.proximitytoprogress.com"
+# The web app's files (#3020): deploy-web.sh fills this folder; Caddy serves
+# it as app.spokenmargins.proximitytoprogress.com (caddy-web.caddy).
+web_host="app.spokenmargins.proximitytoprogress.com"
+web_root="${SM_WEB_ROOT:-/srv/www/spokenmargins-web}"
 check_urls=("https://proximitytoprogress.com/" "https://${site_host}/")
 
 say() { printf '== %s\n' "$*"; }
@@ -128,6 +132,8 @@ show_diff "${unit}" "${unit}" "${stage}/smserver.service.rendered"
 show_diff "${jconf}" "${jconf}" "${stage}/journald@smserver.conf"
 id smserver >/dev/null 2>&1 && echo "-- user smserver: exists" || echo "-- user smserver: will be created (system user, no login)"
 echo "-- directories: ${server_root}/api/v1 and ${server_root}/bridge/v1 (owner smserver, 0755); state in /var/lib/smserver (systemd StateDirectory, 0700)"
+[[ -d "${web_root}" ]] && echo "-- ${web_root}: exists, kept as is ($(find "${web_root}" -type f | wc -l | tr -d ' ') files)" ||
+  echo "-- ${web_root}: will be created empty (owner root, 0755); deploy-web.sh fills it, and until then https://${web_host}/ answers 404"
 [[ -f "${server_root}/api/v1/config.json" ]] && echo "-- config.json: exists, kept as is" || echo "-- config.json: will be created (attest on, bridge on)"
 [[ -x "${bin}" ]] && echo "-- ${bin}: will be replaced" || echo "-- ${bin}: will be installed"
 echo "-- then: enable and (re)start smserver, check 127.0.0.1:${port}/api/v1/health, back up ${caddyfile}, install the candidate, reload (not restart) Caddy"
@@ -147,6 +153,7 @@ stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 backup_server "${stamp}"
 id smserver >/dev/null 2>&1 || useradd --system --home-dir /var/lib/smserver --no-create-home --shell /usr/sbin/nologin smserver
 install -d -o smserver -g smserver -m 0755 "${server_root}" "${server_root}/api" "${server_root}/api/v1" "${server_root}/bridge" "${server_root}/bridge/v1"
+install -d -m 0755 "${web_root}"
 install -m 0755 "${stage}/smserver" "${bin}.new" && mv -f "${bin}.new" "${bin}"
 install -m 0644 "${stage}/smserver.service.rendered" "${unit}"
 install -m 0644 "${stage}/journald@smserver.conf" "${jconf}"
@@ -198,4 +205,7 @@ body="$(curl -s --noproxy '*' --max-time 15 --resolve "${site_host}:443:127.0.0.
 echo "ok 200 https://${site_host}/api/v1/health"
 [[ "$(status "https://${site_host}/api/v1/config.json")" == 200 ]] || rollback "config.json not served"
 echo "ok 200 https://${site_host}/api/v1/config.json"
+# Not a rollback condition: the web app's certificate may still be on its way,
+# and its folder is empty until deploy-web.sh runs.
+echo "web app (not checked for rollback): $(status "https://${web_host}/") https://${web_host}/"
 say "deployed"
