@@ -136,6 +136,19 @@ extension CompactControlCommand {
 }
 
 extension CompactControlSnapshot {
+    /// What the listener hears, for the Lock Screen card (#2965). A Skim summary plays while the source is paused
+    /// under it; the card says playing then, not "Paused, tap to resume", whose tap would send Play to a source
+    /// that has moved on by the time it lands. A summary that is preparing reads as starting, so the card says
+    /// Loading. A source that is itself playing or recording keeps its own status.
+    public var audibleStatus: PlaybackStatus {
+        guard status == .paused, let skimBridgeState else { return status }
+        switch skimBridgeState.status {
+        case .preparing: return .starting
+        case .playing, .completing: return .playing
+        case .paused, .cancelled: return status
+        }
+    }
+
     /// A Margin is recording and this surface may finish it, so the system transport commands must reach
     /// the app and end the Margin. Now Playing keeps them enabled for that; disabled, iOS never delivers
     /// the headphone click and the Margin can't be ended without touching the screen (#1030).
@@ -184,6 +197,16 @@ public struct CompactControlResult: Equatable, Sendable {
         self.snapshot = snapshot
         self.delegatedToCanonicalRuntime = delegatedToCanonicalRuntime
         self.rejectedReason = rejectedReason
+    }
+
+    /// Play reached a source that was already playing, or Pause one already paused (#2965).
+    public static let alreadyPlaying = "already_playing"
+    public static let alreadyPaused = "already_paused"
+
+    /// The source already had what the command asked for, so nothing ran and nothing failed.
+    public var isAlreadyInRequestedState: Bool {
+        !delegatedToCanonicalRuntime
+            && (rejectedReason == Self.alreadyPlaying || rejectedReason == Self.alreadyPaused)
     }
 }
 
@@ -297,6 +320,13 @@ public final class CompactControlDispatcher {
             let paused = try canonicalRuntime.pause()
             return CompactControlResult(snapshot: compactSnapshot(from: paused), delegatedToCanonicalRuntime: true)
         }
+        if let reason = alreadyInRequestedState(command) {
+            return CompactControlResult(
+                snapshot: compactSnapshot(from: canonicalRuntime.snapshot),
+                delegatedToCanonicalRuntime: false,
+                rejectedReason: reason
+            )
+        }
         try validate(command)
         let updated: SessionSnapshot
         switch command {
@@ -340,6 +370,24 @@ public final class CompactControlDispatcher {
         }
         noteContentChanged() // a command may have saved a Margin or a turn the snapshot doesn't count
         return CompactControlResult(snapshot: compactSnapshot(from: updated), delegatedToCanonicalRuntime: true)
+    }
+
+    /// A card or a Lock Screen button is drawn from the state when it was last published, so its tap can land
+    /// after the state moved on: Play on a source that is playing again, Pause on one that already paused. The
+    /// listener has what they asked for, so that is a no-op rather than a failure (#2965). A recording Margin, a
+    /// session the surface can't show and a command this surface doesn't expose still go to `validate`.
+    private func alreadyInRequestedState(_ command: CompactControlCommand) -> String? {
+        let snapshot = canonicalRuntime.snapshot
+        guard command == .play || command == .pause,
+              !snapshot.isRecording,
+              surfaceProfile.has("remoteControl", "display_snapshot"),
+              surfaceProfile.has("remoteControl", "send_transport_commands"),
+              isCompactSessionEligible(snapshot) else {
+            return nil
+        }
+        if command == .play, snapshot.status.isPlaybackActive { return CompactControlResult.alreadyPlaying }
+        if command == .pause, snapshot.status == .paused { return CompactControlResult.alreadyPaused }
+        return nil
     }
 
     private func validate(_ command: CompactControlCommand) throws {
