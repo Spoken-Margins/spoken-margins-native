@@ -583,6 +583,7 @@ class PhoneBuildTests(unittest.TestCase):
         builds = self.log.read_text()
         self.assertIn('-configuration Release', builds)
         self.assertIn('-allowProvisioningUpdates', builds)
+        self.assertIn('SM_PHONE_BUILD=YES', builds)  # phone-build-only spikes are on (#3086)
         self.assertNotIn('build-for-testing', builds)  # the runner already tested this commit
         self.assertIn(f'Commit {self.tip[:7]} is ready: 2 things to try.', builds)  # the owner's notification
         self.assertFalse(any((self.phone / '.work').iterdir()))  # temporary logs gone; cache persists

@@ -14,6 +14,16 @@ configFiles:
 settings:
   base:
     EXCLUDED_ARCHS[sdk=iphonesimulator*]: x86_64
+    # Phone-build-only spikes (#3086). The phone builds (scripts/phone-build, .github/workflows/phone-build.yml) pass
+    # SM_PHONE_BUILD=YES; Debug turns it on so the lane compiles and tests the code. An upload is a Release archive
+    # without the setting, so nothing listed here reaches testers or App Review (2026-10-17: gates are build-time).
+    SM_PHONE_BUILD_CONDITIONS_YES: SM_LOCKED_MARGIN_SPIKE
+    SM_PHONE_BUILD_CONDITIONS_NO: ""
+  configs:
+    Debug:
+      SM_PHONE_BUILD: YES
+    Release:
+      SM_PHONE_BUILD: NO
 packages:
   SessionKit:
     path: Packages/SessionKit
@@ -121,6 +131,7 @@ targets:
         MARKETING_VERSION: "0.1"
         REMOVE_STATIC_EXECUTABLES_FROM_EMBEDDED_BUNDLES: YES
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) $(SM_PHONE_BUILD_CONDITIONS_$(SM_PHONE_BUILD))
         SWIFT_VERSION: "6.0"
         TARGETED_DEVICE_FAMILY: "1,2"
     postBuildScripts:
@@ -237,6 +248,7 @@ targets:
         CURRENT_PROJECT_VERSION: "35"
         ENABLE_DEBUG_DYLIB: NO
         MARKETING_VERSION: "0.1"
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) $(SM_PHONE_BUILD_CONDITIONS_$(SM_PHONE_BUILD))
         SWIFT_VERSION: "6.0"
     info:
       path: App/SpokenMarginsGate2Widget/Info.plist
@@ -290,6 +302,7 @@ targets:
           - Gate2CompactCommandURL.swift
           - Gate2LiveActivityAttributes.swift
           - Gate2LiveActivityIntents.swift
+          - Gate2RecordMarginIntent.swift
           - LiveSessionActivity.swift
     settings:
       base:
