@@ -1,6 +1,7 @@
 // Playwright builds the app into `dist-e2e/` and serves it through `vite preview` (see webServer), in Chromium only,
 // at a phone size (390×844) and a laptop size (1280×800). Screenshots go to `artifacts/web-2982/` at the repo
 // root, which git ignores.
+import { fileURLToPath } from 'node:url';
 import { defineConfig, devices } from '@playwright/test';
 
 // Threads run side by side on one Mac, so another worktree may hold the port: set SM_E2E_PORT to move.
@@ -31,6 +32,26 @@ export default defineConfig({
     {
       name: 'laptop',
       use: { ...devices['Desktop Chrome'], viewport: { width: 1280, height: 800 } },
+    },
+    {
+      // On-device transcription (transcribe.spec.ts) in installed Google Chrome, the browser listeners use, rather
+      // than the bundled Chromium. The fake microphone plays a spoken clip once (`%noloop`).
+      name: 'chrome-transcribe',
+      testMatch: /transcribe\.spec\.ts$/,
+      timeout: 180_000,
+      use: {
+        ...devices['Desktop Chrome'],
+        channel: 'chrome',
+        viewport: { width: 390, height: 844 },
+        hasTouch: true,
+        launchOptions: {
+          args: [
+            '--use-fake-ui-for-media-stream',
+            '--use-fake-device-for-media-stream',
+            `--use-file-for-fake-audio-capture=${fileURLToPath(new URL('./audio/ask-not-16k.wav', import.meta.url))}%noloop`,
+          ],
+        },
+      },
     },
   ],
   webServer: [

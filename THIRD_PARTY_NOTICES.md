@@ -67,6 +67,36 @@ Ships in the web app (Web/), compiled by Vite into the JavaScript that the page 
 
 Ships in the web app (Web/), compiled by Vite into the JavaScript that the page serves to browsers. Not in the iOS app. React DOM depends on it (Web/package-lock.json); Web/package.json does not list it itself.
 
+### Transformers.js (@huggingface/transformers) 4.3.1
+
+- Licence: Apache-2.0
+- From: Hugging Face
+- Source: <https://github.com/huggingface/transformers.js>
+- Where: `Web`
+- Licence text: <https://github.com/huggingface/transformers.js/blob/main/LICENSE>
+
+Ships in the web app (Web/) only after the listener turns on writing out voice Margins: Vite compiles it into the transcription worker (src/transcribe/worker.ts), which the page loads on that yes. Not in the iOS app. Runs the speech model. Listed in Web/package.json. npm also installs its Node-only dependencies, onnxruntime-node 1.30.0 (MIT) and sharp 0.35.5 (Apache-2.0), which the web build never imports and the page never ships.
+
+### @huggingface/jinja and @huggingface/tokenizers 0.5.11 and 0.2.0
+
+- Licence: MIT (@huggingface/jinja); Apache-2.0 (@huggingface/tokenizers)
+- From: Hugging Face
+- Source: <https://github.com/huggingface/huggingface.js>
+- Where: `Web`
+- Licence text: <https://github.com/huggingface/huggingface.js/blob/main/LICENSE>
+
+Ships in the web app (Web/) only after the listener turns on writing out voice Margins: Vite compiles it into the transcription worker (src/transcribe/worker.ts), which the page loads on that yes. Not in the iOS app. Transformers.js depends on them (Web/package-lock.json) to read the model's tokenizer; @huggingface/tokenizers' licence is at https://github.com/huggingface/tokenizers.js/blob/main/LICENSE.
+
+### ONNX Runtime Web (onnxruntime-web, with onnxruntime-common) 1.31.0-dev.20260914-8d85527a0
+
+- Licence: MIT
+- From: Microsoft Corporation
+- Source: <https://github.com/microsoft/onnxruntime>
+- Where: `Web`
+- Licence text: <https://github.com/microsoft/onnxruntime/blob/main/LICENSE>
+
+Ships in the web app (Web/) only after the listener turns on writing out voice Margins: Vite compiles it into the transcription worker (src/transcribe/worker.ts), which the page loads on that yes. Not in the iOS app. Its WebAssembly build (ort-wasm-simd-threaded.asyncify.wasm, about 27 MB) is served from the app's own site, kept out of the offline app shell, and stored with the model once transcription is on. ONNX Runtime's own third-party components are listed at https://github.com/microsoft/onnxruntime/blob/main/ThirdPartyNotices.txt. Its npm dependencies, which may be compiled in, are flatbuffers 25.9.23 (Apache-2.0, Google), guid-typescript 1.0.9 (ISC), long 5.3.2 (Apache-2.0, Daniel Wirtz), platform 1.3.6 (MIT, Benjamin Tan and John-David Dalton) and protobufjs 7.6.6 with its @protobufjs helpers (BSD-3-Clause, Daniel Wirtz).
+
 ### turndown 7.2.4
 
 - Licence: MIT
@@ -155,6 +185,16 @@ Runs the downloadable Kokoro voice's Core ML stages on the Neural Engine and CPU
 ## Downloaded, not distributed here
 
 Fetched on request. They are not in this repository or in the app. Where the voice catalog (#1818) publishes the current address and licence text, it is the reference.
+
+### Moonshine Tiny speech-to-text model (English, ONNX, 8-bit) onnx-community/moonshine-tiny-ONNX at a6da1241cd305dcd64eab1edbd615f2bb9aabb95
+
+- Licence: MIT
+- From: Useful Sensors (Moonshine AI); ONNX conversion by the onnx-community organisation on Hugging Face
+- Source: <https://huggingface.co/onnx-community/moonshine-tiny-ONNX>
+- Where: `Web/src/transcribe/catalog.ts`
+- Licence text: <https://github.com/moonshine-ai/moonshine/blob/main/LICENSE>
+
+Downloaded, not in the app or this repository: the web app fetches it from Hugging Face at the pinned revision, about 32 MB, only after the listener turns on writing out voice Margins, and keeps it in the browser until they remove it. The model card at that revision and the base model (UsefulSensors/moonshine-tiny) both say MIT.
 
 ### Supertonic 3 model and preset voice styles (INT8)
 
@@ -321,6 +361,15 @@ Resolved by SwiftPM only because kokoro-coreml's manifest names it for its Kokor
 ## Third-party content in the repository
 
 Data and text captured from other people's work. This project does not license it; the rights stay with their owners.
+
+### Test recording: 11 seconds of President Kennedy's 1961 inaugural address
+
+- Licence: Public domain (a work of the US government)
+- From: John F. Kennedy, 1961; clip as published in Hugging Face's transformers.js-docs dataset
+- Source: <https://huggingface.co/datasets/Xenova/transformers.js-docs/blob/main/jfk.wav>
+- Where: `Web/e2e/audio/ask-not-16k.wav`
+
+Test data only: Chrome's fake microphone plays it in Web/e2e/transcribe.spec.ts. Not shipped in the web app or the iOS app.
 
 ### Starter podcast catalog and recorded feed heads
 

@@ -16,7 +16,9 @@ function serviceWorker(): Plugin {
     name: 'spoken-margins-service-worker',
     apply: 'build',
     generateBundle(_options, bundle) {
-      const files = Object.keys(bundle).filter((name) => !name.endsWith('.map'));
+      // The speech engine (onnxruntime-web, about 27 MB) stays out of the shell: only a listener who turns
+      // transcription on downloads it, and transformers.js then keeps it with the model (src/transcribe/).
+      const files = Object.keys(bundle).filter((name) => !name.endsWith('.map') && !/(^|\/)ort-wasm[^/]*$/.test(name));
       const shell = ['./', ...files.map((name) => `./${name}`), './manifest.webmanifest', './icons/icon.svg', './icons/icon-192.png', './icons/icon-512.png'];
       const version = createHash('sha256').update(files.sort().join('\n')).digest('hex').slice(0, 12);
       const code = readFileSync(source, 'utf8')
@@ -38,5 +40,7 @@ export default defineConfig(({ mode }) => ({
   plugins: [react(), serviceWorker()],
   define: { __SM_SHARE_LINKS__: JSON.stringify(mode === SHARE_LINKS_TEST_MODE) },
   build: { target: 'es2022', sourcemap: false },
+  // The transcription worker (src/transcribe/worker.ts) loads transformers.js, which splits into chunks.
+  worker: { format: 'es' },
   preview: { port: 4173, strictPort: true },
 }));
