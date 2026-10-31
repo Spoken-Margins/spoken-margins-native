@@ -2,8 +2,9 @@
 // off), play, pause, skip, speed, seek, and the Media Session, so Android's lock screen and notification
 // controls work. Positions are saved every few seconds while playing, and on pause, seek and leaving.
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import type { Episode } from '../shared/model.ts';
+import type { Episode, Margin } from '../shared/model.ts';
 import { useData } from './data.tsx';
+import { dueMargins } from './logic/margin-autoplay.ts';
 import { plainError } from './logic/messages.ts';
 import { NotSavedError } from './logic/storage.ts';
 import { FINISHED_WITHIN_SECONDS } from './logic/library.ts';
@@ -12,6 +13,14 @@ import { useRelay, useUi } from './ui.tsx';
 
 export const SKIP_SECONDS = 15;
 const SAVE_EVERY_MS = 5000;
+/** How long a written Margin stays on the screen after its moment. */
+const WRITTEN_SHOWN_MS = 10_000;
+
+/** A friend's Margin that has just come up in the episode. `blocked`: the browser would not start its clip. */
+export interface Arrived {
+  margin: Margin;
+  blocked: boolean;
+}
 
 export interface PlayerApi {
   episode: Episode | undefined;
@@ -31,6 +40,10 @@ export interface PlayerApi {
   setRate(rate: number): void;
   /** The current time, read straight from the audio element (for a Margin's anchor). */
   now(): number;
+  /** The friend's Margin that last came up by itself (#3058), for Now Playing to show. */
+  arrived: Arrived | undefined;
+  /** Plays the arrived Margin's clip from a tap (when the browser blocked it), then the episode carries on. */
+  playArrived(): void;
 }
 
 const PlayerContext = createContext<PlayerApi | null>(null);
@@ -47,6 +60,15 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const [mediaDuration, setMediaDuration] = useState<number>();
   const lastSave = useRef(0);
   const pendingSeek = useRef<number | undefined>(undefined);
+  const [arrived, setArrived] = useState<Arrived>();
+  // The previous time update while playing, for spotting a Margin's moment being crossed. Undefined after a seek.
+  const lastTime = useRef<number | undefined>(undefined);
+  const clip = useRef<{ element: HTMLAudioElement; url: string } | null>(null);
+  const clipQueue = useRef<Margin[]>([]);
+  // Margins that have come up since the last seek. A browser may resume the episode a hair before the moment it paused
+  // at, which would cross the same Margin again; a seek (the listener rewinding over it) lets it fire again.
+  const comeUp = useRef(new Set<string>());
+  const shownTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const dataRef = useRef(data);
   dataRef.current = data;
 
@@ -66,6 +88,71 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     void dataRef.current.savePosition({ episodeId: id, seconds: audio.currentTime, updatedAt: new Date().toISOString() });
   }, []);
 
+  const stopClip = useCallback(() => {
+    clipQueue.current = [];
+    const current = clip.current;
+    clip.current = null;
+    if (!current) return;
+    current.element.onended = null;
+    current.element.pause();
+    URL.revokeObjectURL(current.url);
+  }, []);
+
+  /** Plays a voice Margin's clip with the episode paused, then resumes the episode (or the next queued clip). */
+  const playClip = useCallback((margin: Margin) => {
+    const audio = audioRef.current;
+    if (!audio || !margin.voice) return;
+    audio.pause();
+    clearTimeout(shownTimer.current);
+    setArrived({ margin, blocked: false });
+    const url = URL.createObjectURL(margin.voice.blob);
+    const element = new Audio(url);
+    clip.current = { element, url };
+    const finish = () => {
+      if (clip.current?.element !== element) return;
+      clip.current = null;
+      URL.revokeObjectURL(url);
+      const next = clipQueue.current.shift();
+      if (next) playClip(next);
+      else void audio.play().catch(() => undefined);
+    };
+    element.onended = finish;
+    element.onerror = finish;
+    element.play().catch((error: unknown) => {
+      if (clip.current?.element !== element) return;
+      if (error instanceof DOMException && error.name === 'NotAllowedError') {
+        // The browser won't start the clip without a tap: the episode stays paused at the Margin, with a Play.
+        clip.current = null;
+        URL.revokeObjectURL(url);
+        setArrived({ margin, blocked: true });
+        return;
+      }
+      finish();
+    });
+  }, []);
+
+  /** A friend's Margins whose moment playback just reached: written ones appear, spoken ones play. */
+  const fire = useCallback(
+    (due: Margin[]) => {
+      for (const margin of due) {
+        if (margin.voice) {
+          if (clip.current) clipQueue.current.push(margin);
+          else playClip(margin);
+        } else {
+          setArrived({ margin, blocked: false });
+          clearTimeout(shownTimer.current);
+          shownTimer.current = setTimeout(() => setArrived((a) => (a?.margin.id === margin.id ? undefined : a)), WRITTEN_SHOWN_MS);
+        }
+      }
+    },
+    [playClip],
+  );
+
+  const playArrived = useCallback(() => {
+    const margin = arrived?.margin;
+    if (margin) playClip(margin);
+  }, [arrived, playClip]);
+
   const open = useCallback(
     async (id: string, options: { at?: number; episode?: Episode } = {}) => {
       const audio = audioRef.current;
@@ -77,6 +164,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         return;
       }
       save();
+      stopClip();
+      setArrived(undefined);
       if (!target.audioUrl && target.pageUrl) {
         // A Substack post: its voice is looked up now, because the listener tapped it (owner, 2026-10-21).
         setLoading(true);
@@ -120,15 +209,18 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         toast('This episode’s audio couldn’t be played.', 'problem');
       });
     },
-    [relay, save, toast],
+    [relay, save, toast, stopClip],
   );
 
   const toggle = useCallback(() => {
     const audio = audioRef.current;
     if (!audio || !audio.src) return;
+    // A tap on Play while a Margin's clip is playing (or was blocked) goes to the episode: the clip is dropped.
+    stopClip();
+    setArrived((a) => (a?.blocked ? undefined : a));
     if (audio.paused) void audio.play().catch(() => undefined);
     else audio.pause();
-  }, []);
+  }, [stopClip]);
 
   const seek = useCallback((seconds: number) => {
     const audio = audioRef.current;
@@ -199,8 +291,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   }, [episode, playing, duration, rate, time]);
 
   const api = useMemo<PlayerApi>(
-    () => ({ episode, playing, loading, time, duration, rate, open, toggle, skip, seek, setRate, now }),
-    [episode, playing, loading, time, duration, rate, open, toggle, skip, seek, setRate, now],
+    () => ({ episode, playing, loading, time, duration, rate, open, toggle, skip, seek, setRate, now, arrived, playArrived }),
+    [episode, playing, loading, time, duration, rate, open, toggle, skip, seek, setRate, now, arrived, playArrived],
   );
 
   return (
@@ -222,7 +314,12 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           const d = event.currentTarget.duration;
           if (Number.isFinite(d)) setMediaDuration(d);
         }}
-        onPlaying={() => {
+        onSeeking={() => {
+          lastTime.current = undefined;
+          comeUp.current.clear();
+        }}
+        onPlaying={(event) => {
+          lastTime.current = event.currentTarget.currentTime;
           setPlaying(true);
           setLoading(false);
         }}
@@ -242,7 +339,18 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           if (episodeId) toast('This episode’s audio couldn’t be loaded.', 'problem');
         }}
         onTimeUpdate={(event) => {
-          setTime(event.currentTarget.currentTime);
+          const audio = event.currentTarget;
+          setTime(audio.currentTime);
+          if (!audio.paused && !audio.seeking && loadedId.current) {
+            const due = dueMargins(
+              dataRef.current.margins.filter((m) => m.episodeId === loadedId.current && !comeUp.current.has(m.id)),
+              lastTime.current,
+              audio.currentTime,
+            );
+            for (const m of due) comeUp.current.add(m.id);
+            lastTime.current = audio.currentTime;
+            if (due.length > 0) fire(due);
+          }
           if (Date.now() - lastSave.current > SAVE_EVERY_MS) save();
         }}
       />

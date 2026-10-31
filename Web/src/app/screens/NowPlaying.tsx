@@ -51,6 +51,31 @@ function LandingOffer({ landing }: { landing?: Landing }) {
   );
 }
 
+/**
+ * A friend's Margin that has just come up in the episode (#3058): the words of a written one, the words and a note for
+ * a spoken one. When the browser wouldn't start the spoken clip, the episode waits here with a Play for it.
+ */
+function ArrivedMargin() {
+  const player = usePlayer();
+  const arrived = player.arrived;
+  if (!arrived) return null;
+  const { margin, blocked } = arrived;
+  const words = margin.text ?? (margin.voice ? 'A spoken Margin' : '');
+  return (
+    <div className="arrived-margin" role="status" data-testid="arrived-margin">
+      <p className="arrived-margin-text">
+        {margin.author ? <strong>{margin.author}</strong> : null} {formatClock(margin.atSeconds)}: {words}
+      </p>
+      {blocked && (
+        <button type="button" className="button button-primary" onClick={player.playArrived}>
+          <PlayIcon size={18} />
+          Play {margin.author ? `${margin.author}’s` : 'this'} Margin
+        </button>
+      )}
+    </div>
+  );
+}
+
 export function NowPlaying({ onClose, landing }: { onClose: () => void; landing?: Landing }) {
   const player = usePlayer();
   const data = useData();
@@ -172,6 +197,7 @@ export function NowPlaying({ onClose, landing }: { onClose: () => void; landing?
         </div>
         {player.loading && <p className="muted np-status">Loading audio…</p>}
         <LandingOffer landing={landing} />
+        <ArrivedMargin />
 
         {composer ? (
           composer.kind === 'write' ? (
