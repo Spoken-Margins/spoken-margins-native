@@ -27,6 +27,13 @@ extension Gate1AppModel {
               let sessionId = snapshot.sessionId,
               let anchorMs = snapshot.currentMediaTimeMs,
               let reader = source?.heardAudioReader(itemId: itemId) else { return }
+        // The transcriber asks iOS for Speech Recognition when the answer is still open, and the system alert would
+        // cover the recording screen with the microphone live. The peek only runs once the listener has allowed it
+        // (the first Margin's own transcription asks, after Save), and until then the card stays as it was.
+        guard SpeechRecognitionAccess.isAuthorized else {
+            diagnostics["justHeardPeek"] = "speech_not_authorized"
+            return
+        }
         let transcriber = sourceTranscriptionClient
         let root = heardSourceWindows.rootDirectory
         diagnostics["justHeardPeek"] = "started"
