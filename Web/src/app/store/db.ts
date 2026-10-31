@@ -102,6 +102,15 @@ export async function removeShow(showId: string, episodeIds: readonly string[]):
   await done(tx);
 }
 
+/** Writes a refreshed show and its new or changed episodes in one transaction (#2977). */
+export async function putShowWithEpisodes(show: Show, episodes: readonly Episode[]): Promise<void> {
+  const db = await open();
+  const tx = db.transaction(['shows', 'episodes'], 'readwrite');
+  tx.objectStore('shows').put(show);
+  for (const episode of episodes) tx.objectStore('episodes').put(episode);
+  await done(tx);
+}
+
 export async function putSetting<K extends keyof Settings>(key: K, value: Settings[K]): Promise<void> {
   await putMany('settings', [{ key, value }]);
 }

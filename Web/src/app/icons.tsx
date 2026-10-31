@@ -79,6 +79,12 @@ export const PlusIcon = () => (
     <path d="M12 5v14M5 12h14" />
   </Icon>
 );
+export const RefreshIcon = () => (
+  <Icon>
+    <path d="M20 12a8 8 0 1 1-2.34-5.66" />
+    <path d="M20 4v5h-5" />
+  </Icon>
+);
 export const ChevronIcon = () => (
   <Icon>
     <path d="M9 5l7 7-7 7" />
