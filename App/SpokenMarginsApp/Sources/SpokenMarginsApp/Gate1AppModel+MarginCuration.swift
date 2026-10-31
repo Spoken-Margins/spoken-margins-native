@@ -130,12 +130,10 @@ extension Gate1AppModel {
     func setInterjectionStarredForSharing(_ interjectionID: String, sessionId: String? = nil, starred: Bool) {
         do {
             let store = try requireStore()
-            let candidates = try sessionId.map { try store.loadInterjections(sessionId: $0) } ?? selectedItem.interjections
-            guard var interjection = candidates.first(where: { $0.id == interjectionID && (sessionId == nil || $0.sessionId == sessionId) }) else {
+            guard let owningSessionId = sessionId ?? selectedItem.interjections.first(where: { $0.id == interjectionID })?.sessionId,
+                  let interjection = try store.updateInterjection(id: interjectionID, sessionId: owningSessionId, { $0.isStarredForSharing = starred ? true : nil }) else {
                 throw SessionKitError.persistenceFailed("share_curation_interjection_missing")
             }
-            interjection.isStarredForSharing = starred ? true : nil
-            try store.saveInterjection(interjection)
             refreshSelectedItem()
             refreshMarginRow(sessionId: interjection.sessionId, interjectionId: interjection.id)
             diagnostics["shareCuration:\(interjectionID)"] = starred ? "starred" : "unstarred"
@@ -148,15 +146,14 @@ extension Gate1AppModel {
         guard !rejectNavigationOrSessionMutationWhileRecording("star_margin") else { return }
         do {
             let store = try requireStore()
-            guard var interjection = try store.loadInterjections(sessionId: row.interjection.sessionId).first(where: {
-                $0.id == row.interjection.id
-                    && $0.sessionId == row.interjection.sessionId
-                    && $0.itemId == row.interjection.itemId
-            }) else {
+            guard let interjection = try store.updateInterjection(
+                id: row.interjection.id,
+                sessionId: row.interjection.sessionId,
+                itemId: row.interjection.itemId,
+                { $0.isStarredForSharing = starred ? true : nil }
+            ) else {
                 throw SessionKitError.persistenceFailed("margin_curation_interjection_missing")
             }
-            interjection.isStarredForSharing = starred ? true : nil
-            try store.saveInterjection(interjection)
             refreshMarginRow(sessionId: interjection.sessionId, interjectionId: interjection.id)
             if snapshot.sessionId == row.interjection.sessionId { refreshSelectedItem() }
             diagnostics["marginCuration:\(row.id)"] = starred ? "starred" : "unstarred"
@@ -168,14 +165,12 @@ extension Gate1AppModel {
     func setInterjectionPrivateSharingNote(_ interjectionID: String, sessionId: String? = nil, note: String) {
         do {
             let store = try requireStore()
-            let candidates = try sessionId.map { try store.loadInterjections(sessionId: $0) } ?? selectedItem.interjections
-            guard var interjection = candidates.first(where: { $0.id == interjectionID && (sessionId == nil || $0.sessionId == sessionId) }) else {
-                throw SessionKitError.persistenceFailed("share_curation_interjection_missing")
-            }
             let bounded = String(note.prefix(Self.privateSharingNoteCharacterLimit))
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            interjection.privateSharingNote = bounded.isEmpty ? nil : bounded
-            try store.saveInterjection(interjection)
+            guard let owningSessionId = sessionId ?? selectedItem.interjections.first(where: { $0.id == interjectionID })?.sessionId,
+                  let interjection = try store.updateInterjection(id: interjectionID, sessionId: owningSessionId, { $0.privateSharingNote = bounded.isEmpty ? nil : bounded }) else {
+                throw SessionKitError.persistenceFailed("share_curation_interjection_missing")
+            }
             refreshSelectedItem()
             refreshMarginRow(sessionId: interjection.sessionId, interjectionId: interjection.id)
             diagnostics["shareCurationNote:\(interjectionID)"] = bounded.isEmpty ? "empty" : "saved"

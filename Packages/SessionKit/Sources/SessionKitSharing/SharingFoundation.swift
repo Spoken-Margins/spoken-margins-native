@@ -573,12 +573,21 @@ public enum SpokenMarginsPackageExportRecord {
         guard let digest = manifest.contentDigest else {
             throw InterjectionPackagePreparationError.missingVerifiedDigest
         }
-        for selection in selections {
-            let revision = selection.revision
-            guard let margin = try repository.loadInterjections(sessionId: revision.sessionId)
-                .first(where: { $0.id == revision.interjectionId }) else { continue }
-            let identity = MarginPacketIdentity(packageDigest: digest, packageScopedId: selection.packageScopedId)
-            try repository.saveInterjection(margin.recordingShare(as: identity))
+        // One transaction for the whole export, so a Margin read here is not saved over a change another thread
+        // made to it in between (the anchor-evidence edits run off the main thread, #2509).
+        let record = {
+            for selection in selections {
+                let revision = selection.revision
+                guard let margin = try repository.loadInterjections(sessionId: revision.sessionId)
+                    .first(where: { $0.id == revision.interjectionId }) else { continue }
+                let identity = MarginPacketIdentity(packageDigest: digest, packageScopedId: selection.packageScopedId)
+                try repository.saveInterjection(margin.recordingShare(as: identity))
+            }
+        }
+        if let store = repository as? any SessionRepositoryTransaction {
+            try store.withSessionTransaction(record)
+        } else {
+            try record()
         }
     }
 }
