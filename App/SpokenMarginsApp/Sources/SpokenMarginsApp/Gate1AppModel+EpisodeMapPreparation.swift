@@ -240,7 +240,8 @@ extension Gate1AppModel {
               let store else { return }
         // A summary has the media kind; a whole `loadItem` per row decoded every article's text (#2506).
         let candidates = libraryItems.compactMap { row -> LibraryItemSummary? in
-            guard (try? store.loadEditionFingerprintSpine(itemId: row.id)) == nil,
+            // Whether a spine exists is one id lookup; the spine itself is megabytes for a long episode (#2506).
+            guard (try? store.hasEditionFingerprintSpine(itemId: row.id)) != true,
                   let item = try? store.loadItemSummary(id: row.id),
                   item.media?.sourceType == .nativeMediaFile || item.media?.sourceType == .remoteStream,
                   podcastDownloadCoordinator?.validatedLocalURL(for: row.id) != nil else { return nil }
