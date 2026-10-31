@@ -196,3 +196,40 @@ test('“No thanks” keeps the plain words box, downloads nothing, and is remem
   await expect(page.getByText(/Off\. Turning it on downloads \d+ MB once/)).toBeVisible();
   expectNothingUploaded(requests);
 });
+
+test.describe('installed app', () => {
+  test.use({ serviceWorkers: 'allow' });
+
+  // The worker is left out of the offline precache everyone downloads (#2977). Once a listener turns transcription
+  // on, the service worker keeps it, so writing out words still works with no network.
+  test('once turned on, transcription works offline in a fresh page', async ({ page, context }) => {
+    await serveModel(context);
+    await page.goto('./');
+    await page.evaluate(() => navigator.serviceWorker.ready);
+    await page.reload();
+    await expect.poll(() => page.evaluate(() => Boolean(navigator.serviceWorker.controller))).toBe(true);
+    const optInKept = () =>
+      page.evaluate(async () => {
+        const urls: string[] = [];
+        for (const key of (await caches.keys()).filter((k) => k.startsWith('sm-opt-in-'))) for (const r of await (await caches.open(key)).keys()) urls.push(r.url);
+        return urls;
+      });
+    expect(await optInKept()).toEqual([]);
+
+    await page.goto('./#settings');
+    const section = page.getByRole('region', { name: 'Writing out voice Margins' });
+    await section.getByRole('switch', { name: 'Write out my words on this device' }).click();
+    await expect(section.getByText('On, the speech model is on this device')).toBeVisible({ timeout: 60_000 });
+    await expect.poll(optInKept).toEqual([expect.stringMatching(/\/assets\/opt-in\/worker-[\w-]+\.js$/)]);
+    await openEpisode(page);
+
+    await context.setOffline(true);
+    await page.reload();
+    await page.getByRole('button', { name: /Play the newest episode/ }).click();
+    const nowPlaying = page.getByRole('dialog', { name: EPISODE_3 });
+    await recordClip(page, nowPlaying);
+    const words = nowPlaying.getByLabel(/Words to go with your voice Margin at/);
+    await expect.poll(async () => normalized(await words.inputValue()), { timeout: 90_000 }).toContain(SPOKEN);
+    await context.setOffline(false);
+  });
+});

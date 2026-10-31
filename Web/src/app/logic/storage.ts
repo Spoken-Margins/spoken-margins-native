@@ -41,8 +41,8 @@ export class NotSavedError extends Error {
  * ones the app makes on its own every few seconds (your place in an episode, a setting) are shown on the first
  * failure only, and again only after one of that kind has worked, so a full disk doesn't stack a toast a second.
  */
-export type WriteKind = 'margin' | 'delete-margin' | 'follow' | 'unfollow' | 'episode' | 'position' | 'setting';
-const QUIET_REPEATS: ReadonlySet<WriteKind> = new Set(['position', 'setting']);
+export type WriteKind = 'margin' | 'delete-margin' | 'follow' | 'unfollow' | 'refresh' | 'episode' | 'position' | 'setting';
+const QUIET_REPEATS: ReadonlySet<WriteKind> = new Set(['position', 'setting', 'refresh']);
 
 export class FailureGate {
   readonly #failing = new Set<WriteKind>();

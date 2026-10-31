@@ -6,6 +6,7 @@ import { FollowingIcon, LibraryIcon, MarginsIcon, SettingsIcon } from './icons.t
 import { openFileBytes, openFiles, useLaunchLink, useOpenMarginFile, useOpenShareLink, type OpenMarginFile } from './import.tsx';
 import type { ParsedLink } from './logic/share-link.ts';
 import { PlayerProvider, usePlayer } from './player.tsx';
+import { FeedRefreshProvider } from './refresh.tsx';
 import { Following } from './screens/Following.tsx';
 import { Library } from './screens/Library.tsx';
 import { Margins } from './screens/Margins.tsx';
@@ -129,9 +130,11 @@ export function App({ launchLink = { kind: 'none' } }: { launchLink?: ParsedLink
   return (
     <UiProvider>
       <DataProvider>
-        <PlayerProvider>
-          <Shell launchLink={launchLink} />
-        </PlayerProvider>
+        <FeedRefreshProvider>
+          <PlayerProvider>
+            <Shell launchLink={launchLink} />
+          </PlayerProvider>
+        </FeedRefreshProvider>
       </DataProvider>
     </UiProvider>
   );

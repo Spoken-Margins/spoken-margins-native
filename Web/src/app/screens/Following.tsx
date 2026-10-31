@@ -3,10 +3,12 @@ import { useRestoreFocus } from '../focus.ts';
 import type { Show } from '../../shared/model.ts';
 import { useData } from '../data.tsx';
 import { minutes, shortDate } from '../format.ts';
-import { ChevronIcon, CloseIcon, PlayIcon, PlusIcon } from '../icons.tsx';
+import { ChevronIcon, CloseIcon, PlayIcon, PlusIcon, RefreshIcon } from '../icons.tsx';
 import { followingRows, libraryRows, newestFirst } from '../logic/library.ts';
 import { plainError } from '../logic/messages.ts';
+import { checkedLabel, needsRelayLine } from '../logic/refresh.ts';
 import { usePlayer } from '../player.tsx';
+import { useFeedRefresh } from '../refresh.tsx';
 import { services } from '../services.ts';
 import { useRelay, useUi } from '../ui.tsx';
 import { StateTag } from './Library.tsx';
@@ -17,6 +19,7 @@ export function Following({ onPlay, followOpen, setFollowOpen }: { onPlay: () =>
   const [openShowId, setOpenShowId] = useState<string>();
   // The show the listener came back from, so focus lands on its row again, not at the top of the page.
   const [returnTo, setReturnTo] = useState<string>();
+  const refresh = useFeedRefresh();
   const rows = followingRows(data.shows, data.episodes, data.positions);
   const openShow = data.shows.find((s) => s.id === openShowId);
 
@@ -46,10 +49,24 @@ export function Following({ onPlay, followOpen, setFollowOpen }: { onPlay: () =>
         <h1 id="following-title" tabIndex={-1}>
           Following
         </h1>
-        <button type="button" className="icon-button" aria-label="Follow a show" onClick={() => setFollowOpen(true)}>
-          <PlusIcon />
-        </button>
+        <div className="header-actions">
+          {rows.length > 0 && (
+            <button
+              type="button"
+              className="icon-button"
+              aria-label="Check for new episodes"
+              disabled={refresh.checking}
+              onClick={() => void refresh.refresh()}
+            >
+              <RefreshIcon />
+            </button>
+          )}
+          <button type="button" className="icon-button" aria-label="Follow a show" onClick={() => setFollowOpen(true)}>
+            <PlusIcon />
+          </button>
+        </div>
       </header>
+      {rows.length > 0 && <RefreshNotes />}
       {data.ready && rows.length === 0 ? (
         <div className="empty">
           <p>Follow a podcast or a Substack, and its newest episodes show up here and in your Library.</p>
@@ -105,6 +122,39 @@ export function Following({ onPlay, followOpen, setFollowOpen }: { onPlay: () =>
         </ul>
       )}
       {followOpen && <FollowSheet onClose={() => setFollowOpen(false)} />}
+    </div>
+  );
+}
+
+/** When the shows were last checked, and the one line about shows that need the server. */
+function RefreshNotes() {
+  const refresh = useFeedRefresh();
+  // "Checked 3 minutes ago" moves on while the tab is open.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  return (
+    <div className="refresh-notes" style={{ display: 'grid', gap: 8, paddingBottom: 12 }}>
+      <p className="muted" role="status" data-testid="refresh-status">
+        {refresh.checking ? 'Checking for new episodes…' : checkedLabel(refresh.lastCheckedAt, now)}
+      </p>
+      {refresh.needsRelay > 0 && (
+        <p className="problem" data-testid="refresh-needs-relay" style={{ alignItems: 'center', flexWrap: 'wrap' }}>
+          <span className="toast-mark" aria-hidden="true">i</span>
+          <span style={{ flex: '1 1 14em' }}>
+            {refresh.relayAvailable
+              ? needsRelayLine(refresh.needsRelay)
+              : `${needsRelayLine(refresh.needsRelay).replace(/\.$/, '')}, and this copy of the app has no server to use.`}
+          </span>
+          {refresh.relayAvailable && (
+            <button type="button" className="button" disabled={refresh.checking} onClick={() => void refresh.allowRelay()}>
+              Use the server
+            </button>
+          )}
+        </p>
+      )}
     </div>
   );
 }
@@ -217,7 +267,8 @@ function FollowSheet({ onClose }: { onClose: () => void }) {
     setProblem(undefined);
     try {
       const read = await relay((relayAllowed) => services.sources.readFeed(feedUrl, { relayAllowed }));
-      await data.follow(read.show, newestFirst(read.episodes));
+      // Just read, so the next automatic refresh leaves it for 30 minutes.
+      await data.follow({ ...read.show, refreshedAt: new Date().toISOString() }, newestFirst(read.episodes));
       toast(`Following ${read.show.title}. ${read.episodes.length} episodes added to your Library.`);
       onClose();
     } catch (error) {
