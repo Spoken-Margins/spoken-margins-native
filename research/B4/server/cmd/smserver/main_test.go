@@ -226,6 +226,52 @@ func TestLinkTakedownCommand(t *testing.T) {
 	}
 }
 
+func TestHoldAndReleaseHoldCommands(t *testing.T) {
+	dir := t.TempDir()
+	st, err := links.OpenStore(filepath.Join(dir, "links"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed := func(part byte) []byte {
+		return append([]byte{'S', 'M', 'L', 'I', 'N', 'K', 1, part}, []byte("twelve-nonce opaque ciphertext sixteen-byte-tag")...)
+	}
+	id, _, err := st.Put(sealed(links.PartPacket), sealed(links.PartPreview), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	reported := filepath.Join(t.TempDir(), "reported-link.txt")
+	if err := os.WriteFile(reported, []byte("https://share.example/l/"+id+"#k=KEY"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := holdLink([]string{"-state", dir, id}); err == nil {
+		t.Fatal("a hold without a report id must be refused")
+	}
+	if err := holdLink([]string{"-state", dir, "-report", "NCMEC-1", "-link-file", reported, id}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Packet(id, time.Now()); !errors.Is(err, links.ErrGone) {
+		t.Fatal("a held link is still served")
+	}
+	held := filepath.Join(dir, "links-held", id)
+	for _, name := range []string{"packet", "preview", "reported-link", "hold.json"} {
+		if _, err := os.Stat(filepath.Join(held, name)); err != nil {
+			t.Fatalf("held copy lacks %s: %v", name, err)
+		}
+	}
+	if err := releaseHold([]string{"-state", dir, id}); err == nil {
+		t.Fatal("a release without a reason must be refused")
+	}
+	if _, err := os.Stat(held); err != nil {
+		t.Fatal("a refused release deleted the held copy")
+	}
+	if err := releaseHold([]string{"-state", dir, "-reason", "law-enforcement request", id}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(held); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("release left the held copy")
+	}
+}
+
 // A bad -relay-origins entry stops the server instead of being skipped.
 func TestParseRelayOrigins(t *testing.T) {
 	got, err := parseRelayOrigins("https://web.example.com, http://localhost:5173")

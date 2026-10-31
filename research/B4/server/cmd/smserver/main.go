@@ -8,6 +8,8 @@
 //	smserver validate-manifest FILE
 //	smserver publish-manifest -public DIR FILE   the only way the manifest should change
 //	smserver takedown-map -state DIR EPISODEKEY   delete a listening map at once and keep it down
+//	smserver hold    -state DIR -report REPORTID [-link-file FILE|-] ID   hold a CyberTipline-reported link for a year
+//	smserver release-hold -state DIR -reason TEXT ID   end a hold early and delete the held copy
 //	smserver make-test-ca DIR            a fake Apple CA for local testing
 //
 // Admin is CLI-only, on the box: there is no remote admin endpoint to attack.
@@ -18,6 +20,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -71,6 +74,10 @@ func main() {
 		err = takedownLink(args)
 	case "takedown-map":
 		err = takedownMap(args)
+	case "hold":
+		err = holdLink(args)
+	case "release-hold":
+		err = releaseHold(args)
 	default:
 		usage()
 	}
@@ -81,7 +88,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: smserver serve|block|unblock|switch|purge|validate-manifest|publish-manifest|make-test-ca|takedown|takedown-map [flags]")
+	fmt.Fprintln(os.Stderr, "usage: smserver serve|block|unblock|switch|purge|validate-manifest|publish-manifest|make-test-ca|takedown|takedown-map|hold|release-hold [flags]")
 	os.Exit(2)
 }
 
@@ -239,6 +246,11 @@ func serve(args []string) error {
 					log.Print("links: daily sweep failed")
 				} else if n > 0 {
 					log.Printf("links: swept %d expired packets", n)
+				}
+				if n, err := linkStore.SweepHeld(time.Now()); err != nil {
+					log.Print("links: held-link sweep failed")
+				} else if n > 0 {
+					log.Printf("links: deleted %d held links at one year", n)
 				}
 			}
 			if n, err := st.Purge(time.Now(), *idleDays); err != nil {
@@ -460,5 +472,63 @@ func takedownLink(args []string) error {
 		return err
 	}
 	fmt.Println("shared link removed")
+	return nil
+}
+
+// holdLink moves a reported link into restricted storage for a year and takes it down (#2235). The
+// reported link, key included, is read from -link-file (or stdin with "-") and stored unread; it is
+// never printed or logged.
+func holdLink(args []string) error {
+	fs := flag.NewFlagSet("hold", flag.ExitOnError)
+	state := fs.String("state", "state", "state directory")
+	report := fs.String("report", "", "the CyberTipline report id")
+	linkFile := fs.String("link-file", "", "file holding the full reported link, or - for stdin")
+	fs.Parse(args)
+	if fs.NArg() != 1 || *report == "" {
+		return errors.New("usage: smserver hold -state DIR -report REPORTID [-link-file FILE|-] ID")
+	}
+	var full []byte
+	switch *linkFile {
+	case "":
+	case "-":
+		data, err := io.ReadAll(io.LimitReader(os.Stdin, 64<<10))
+		if err != nil {
+			return err
+		}
+		full = data
+	default:
+		data, err := os.ReadFile(*linkFile)
+		if err != nil {
+			return err
+		}
+		full = data
+	}
+	st, err := links.OpenStore(filepath.Join(*state, "links"))
+	if err != nil {
+		return err
+	}
+	if err := st.Hold(fs.Arg(0), *report, full, time.Now()); err != nil {
+		return err
+	}
+	fmt.Println("link taken down and held for one year")
+	return nil
+}
+
+func releaseHold(args []string) error {
+	fs := flag.NewFlagSet("release-hold", flag.ExitOnError)
+	state := fs.String("state", "state", "state directory")
+	reason := fs.String("reason", "", "why the hold ends early (goes in the access log)")
+	fs.Parse(args)
+	if fs.NArg() != 1 || *reason == "" {
+		return errors.New("usage: smserver release-hold -state DIR -reason TEXT ID")
+	}
+	st, err := links.OpenStore(filepath.Join(*state, "links"))
+	if err != nil {
+		return err
+	}
+	if err := st.ReleaseHeld(fs.Arg(0), *reason, time.Now()); err != nil {
+		return err
+	}
+	fmt.Println("hold ended and the held copy deleted")
 	return nil
 }
