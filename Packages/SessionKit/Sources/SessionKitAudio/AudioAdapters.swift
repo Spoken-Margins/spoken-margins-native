@@ -1781,7 +1781,7 @@ struct MediaPlaybackCompletionPolicy {
     }
 }
 
-public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked Sendable {
+public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, HeardAudioSource, @unchecked Sendable {
     #if canImport(AVFoundation)
     private var player: AVPlayer?
     private var completionObserver: NSObjectProtocol?
@@ -2267,6 +2267,23 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         #else
         _ = request
         return false
+        #endif
+    }
+
+    /// The recording screen's "Just heard" words for a podcast with no transcript come from the audio this tap
+    /// decoded before the Margin (#2966). The reader holds the tap's context, not the player.
+    public func heardAudioReader(itemId: String) -> HeardAudioReader? {
+        #if canImport(AVFoundation) && canImport(MediaToolbox) && canImport(ShazamKit) && !os(watchOS)
+        guard Thread.isMainThread else { return nil }
+        return MainActor.assumeIsolated { () -> HeardAudioReader? in
+            guard mediaContext?.itemId == itemId,
+                  let context = postResumeEvidenceTapContext,
+                  postResumeEvidenceItem === player?.currentItem else { return nil }
+            return { endingAtMs, lastMs in context.recentHeardAudio(endingAtMs: endingAtMs, lastMs: lastMs) }
+        }
+        #else
+        _ = itemId
+        return nil
         #endif
     }
 

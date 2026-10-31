@@ -227,6 +227,18 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
         return armed
     }
 
+    /// The last `lastMs` of unbroken heard audio up to `endingAtMs`, for the recording screen's "Just heard" card
+    /// (#2966). A copy: the rolling minute and any Margin's window are left as they were. Waits for the tap's
+    /// queued buffers, so call it off the main thread.
+    func recentHeardAudio(endingAtMs: Int, lastMs: Int) -> (sampleRate: Double, segment: HeardAudioWindow.Segment)? {
+        drainTapWork()
+        return lock.withLock {
+            guard let heardRecorder,
+                  let segment = heardRecorder.recentRun(endingAtMs: endingAtMs, lastMs: lastMs) else { return nil }
+            return (heardRecorder.sampleRate, segment)
+        }
+    }
+
     func captureBufferedPreInterjection(_ request: PostResumeAudioSampleRequest) -> Bool {
         // Called when a Margin finishes and before playback resumes, so the rolling minute ends at the anchor,
         // plus the half second or so the tap decoded ahead of the clock (#1133).

@@ -59,6 +59,7 @@ final class Gate1AppModel: ObservableObject {
     @Published var requestedExperienceRoot: AppRoot?
     @Published var marginCollectionQuery = MarginCollectionQuery()
     @Published var sharedMarginRows: [SharedMarginRow] = []
+    @Published var justHeardPeek = JustHeardPeekState() // a podcast's "Just heard" words, transcribed after the tap (#2966)
     var screen: Gate1Screen {
         get { presentedScreen }
         set {
@@ -2109,11 +2110,6 @@ final class Gate1AppModel: ObservableObject {
         miniPlayerVisibility.visible
     }
 
-    var isMediaPlaybackSnapshot: Bool {
-        snapshot.targetType == TargetType.transcriptBackedMedia.rawValue ||
-            snapshot.targetType == TargetType.browserOwnedMedia.rawValue
-    }
-
     /// Starter audio represents only a bounded prefix of a text source. Exposing
     /// a full-range scrubber in that state would imply that every destination is
     /// already prepared, so the player falls back to truthful progress until the
@@ -2330,7 +2326,7 @@ final class Gate1AppModel: ObservableObject {
             if command == .finishInterjection || command == .cancelInterjection {
                 streamingSpeechQueue.resumeAfterInterjection()
                 if !snapshot.isRecording {
-                    marginCapture.clearPresentationContext()
+                    clearRecordingPresentation()
                     refreshMarginRowsInBackground(forItem: snapshot.itemId)
                 }
             }
