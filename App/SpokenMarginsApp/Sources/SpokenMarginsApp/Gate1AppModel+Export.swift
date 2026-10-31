@@ -12,20 +12,26 @@ extension Gate1AppModel {
         refreshExportPreview(reportStatus: true)
     }
 
-    func exportOptionsChanged() {
+    @discardableResult
+    func exportOptionsChanged() -> Task<Void, Never>? {
         persistExportSettings()
-        refreshExportPreview(reportStatus: false)
+        return refreshExportPreview(reportStatus: false)
     }
 
     /// Builds the Export screen's preview with its store reads off the main thread (#2505): a podcast's transcript
     /// timeline and Listening Map run to megabytes, and every switch on the screen asked for them again. The share
     /// candidates stay a quick read here. A preview that arrives after the listener picked another session, option
-    /// or format is dropped, so an older, slower build never replaces a newer one. The returned task is for tests.
+    /// or format is dropped, so an older, slower build never replaces a newer one. The old preview goes at
+    /// once, before the new build starts: Share and Copy read it, and until the new build lands they would send an
+    /// export the listener has already changed (text they turned off, another format, another session). With the
+    /// preview empty the Export button is hidden, Copy is disabled and the screen says "No export yet." (the audit
+    /// of #3049). `exportFileURL` stays until the build lands only so that it can delete that file in its turn; the
+    /// screen offers it only while a preview exists. The returned task is for tests.
     @discardableResult
     func refreshExportPreview(reportStatus: Bool) -> Task<Void, Never>? {
         exportShareCandidates = []
+        exportPreview = ""
         guard let exportSessionId else {
-            exportPreview = ""
             exportFileURL = nil
             return nil
         }

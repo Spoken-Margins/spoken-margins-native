@@ -2585,6 +2585,44 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.statusMessage, "Built session export.")
     }
 
+    /// The preview builds off the main thread, so for a moment after a change the screen holds the old build.
+    /// Share and Copy read it, so it must be gone the moment an option, the format or the session changes
+    /// (the audit of #3049): empty until the matching build lands.
+    func testExportPreviewIsWithdrawnAtOnceWhenTheListenerChangesWhatIsExported() async {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        model.openExport()
+        await model.buildExport()?.value
+        XCTAssertFalse(model.exportPreview.isEmpty)
+        model.exportFormat = "markdown"
+        await model.refreshExportPreview(reportStatus: false)?.value
+        XCTAssertNotNil(model.exportFileURL)
+
+        // An option off: nothing of the old build may be sent while the new one is read.
+        model.exportIncludesTurns.toggle()
+        let optionBuild = model.refreshExportPreview(reportStatus: false)
+        XCTAssertEqual(model.exportPreview, "", "Copy is disabled and Export Session hidden until the preview matches")
+        await optionBuild?.value
+        XCTAssertFalse(model.exportPreview.isEmpty)
+        XCTAssertNotNil(model.exportFileURL)
+
+        // A different format: the Markdown text must not sit under a "Copied JSON export" message.
+        model.exportFormat = "json"
+        let formatBuild = model.exportOptionsChanged()
+        XCTAssertEqual(model.exportPreview, "")
+        model.copyPlainTextExport()
+        XCTAssertNotEqual(model.statusMessage, "Copied JSON export.")
+        await formatBuild?.value
+        XCTAssertTrue(model.exportPreview.hasPrefix("{"), "the JSON build replaced it")
+
+        // Another session: the screen must not keep showing the first session's export.
+        model.exportSessionId = "no-such-session"
+        let sessionBuild = model.refreshExportPreview(reportStatus: false)
+        XCTAssertEqual(model.exportPreview, "")
+        await sessionBuild?.value
+    }
+
     func testPlaybackHeaderOpensCurrentItemWithoutStoppingItsSession() throws {
         let restoreTerms = acceptTerms()
         defer { restoreTerms() }
