@@ -21,13 +21,29 @@ export function packetRoute(host: unknown = globalThis): PacketRoute {
   return capacitorBridge(host) ? 'native' : 'browser';
 }
 
+/** The part of `navigator` that tells an iPhone or iPad apart. */
+export interface DeviceHint {
+  userAgent: string;
+  maxTouchPoints: number;
+}
+
+/**
+ * An iPhone or iPad. iPadOS asks for desktop pages with a Mac user agent, so a "Mac" with a touch screen counts too.
+ */
+export function isAppleTouchDevice(device: DeviceHint): boolean {
+  if (/\b(iPhone|iPad|iPod)\b/.test(device.userAgent)) return true;
+  return /\bMacintosh\b/.test(device.userAgent) && device.maxTouchPoints > 1;
+}
+
 /**
  * The file picker's filter. Android knows no `.spokenmargins` type, so a document provider reports such a file as
- * `application/octet-stream` and a filter would grey it out. In the app the picker shows every file, and a file that
+ * `application/octet-stream` and a filter would grey it out. iOS does the same to an extension it has no type for,
+ * which is every iPhone without the Spoken Margins app (#3039). On both the picker shows every file, and a file that
  * isn't a packet gets the usual plain message when it is read.
  */
-export function packetPickerAccept(route: PacketRoute): string | undefined {
-  return route === 'native' ? undefined : BROWSER_PACKET_ACCEPT;
+export function packetPickerAccept(route: PacketRoute, device: DeviceHint | undefined = globalThis.navigator): string | undefined {
+  if (route === 'native') return undefined;
+  return device && isAppleTouchDevice(device) ? undefined : BROWSER_PACKET_ACCEPT;
 }
 
 const BASE64_CHUNK = 0x8000;

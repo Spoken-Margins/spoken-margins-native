@@ -8,7 +8,9 @@
 //   The app finds the listener's copy by guid, then enclosure, then link; with none it asks them to pick it.
 // - itemTransport `reference` when the item has a public https link, else `recipient_supplied`.
 // - each Margin: a media anchor with mediaTimeMs (and roughPercent when the length is known), no Shazam evidence.
-//   Without evidence the app places the Margin at the sender's time, which is right when both play the same file.
+//   The page streams the episode, so it has no bytes to fingerprint or hash. Without evidence the app (from the
+//   build after 35, #3041) places the Margin at the sender's time, marked approximate, and plays it there during
+//   playback unless its placement pass finds the two copies' clocks differ. Builds 32 to 35 leave it unplaced.
 // - non-empty text on every Margin, voice ones included: the app shares no Margin without a transcript. A voice
 //   Margin the listener left without words gets placeholder words instead (src/shared/placeholder.ts, #3025), in
 //   the same transcript field, so it is never left out for lack of them.
