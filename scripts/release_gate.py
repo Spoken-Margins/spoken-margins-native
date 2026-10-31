@@ -15,23 +15,31 @@ Run it in the release steps before a build is assigned to the external group (AG
   scripts/release_gate.py --destination external path/to/SpokenMargins.xcarchive
 
 The build argument is an archive, an app bundle or an Info.plist. Share-link creation is on when the plist's
-`SMShareLinkCreation` is true. A missing key means off (builds before the build setting exist); a key that
-isn't a boolean refuses the build. A build with creation off is always allowed, and so is any build for the
-internal group. Exit 0 allowed, 1 refused, 2 the inputs couldn't be read. Stdlib only.
+`SMShareLinkCreation` is true. The build setting that writes this key into the app's Info.plist is #2236
+step 3 and must use exactly this name. Builds up to Build 34 predate it, so a missing key means off only for
+a CFBundleVersion of 34 or lower; a newer build without the key, or with a key that isn't a boolean, is
+refused, so a renamed key can't open the gate. A build with creation off is always allowed, and so is any
+build for the internal group. Exit 0 allowed, 1 refused, 2 the inputs couldn't be read. Stdlib only.
+Tests set SM_RELEASE_GATE_TODAY (YYYY-MM-DD) to pin today's date; release runs never do.
 """
 from __future__ import annotations
 
 import argparse
 import datetime
 import json
+import os
 import plistlib
+import re
 import sys
 from pathlib import Path
+from xml.parsers.expat import ExpatError
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_RECORD = ROOT / "docs" / "legal" / "gate-record.json"
 PLIST_KEY = "SMShareLinkCreation"
 TESTER_LIMIT = 100  # the waiver holds below this many external testers
+LAST_BUILD_WITHOUT_KEY = 34  # Build 34 (testflight/0.1-build-34) predates the build setting
+ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
 class InputError(Exception):
@@ -39,9 +47,12 @@ class InputError(Exception):
 
 
 def share_links_on(plist: dict) -> tuple[bool, str | None]:
-    """(creation is on, a problem). A non-boolean value is a problem and counts as on."""
+    """(creation is on, a problem). A missing key is off only for builds that predate it; a bad one counts as on."""
     if PLIST_KEY not in plist:
-        return False, None
+        build = plist.get("CFBundleVersion")
+        if isinstance(build, str) and build.isdecimal() and int(build) <= LAST_BUILD_WITHOUT_KEY:
+            return False, None
+        return True, f"{PLIST_KEY} is missing from Build {build!r}; builds after {LAST_BUILD_WITHOUT_KEY} must declare it"
     value = plist[PLIST_KEY]
     if isinstance(value, bool):
         return value, None
@@ -67,7 +78,7 @@ def read_plist(path: Path) -> dict:
     try:
         with find_info_plist(path).open("rb") as handle:
             data = plistlib.load(handle)
-    except (OSError, plistlib.InvalidFileException, ValueError) as error:
+    except (OSError, plistlib.InvalidFileException, ExpatError, ValueError) as error:
         raise InputError(f"can't read the build's Info.plist: {error}") from error
     if not isinstance(data, dict):
         raise InputError("the build's Info.plist isn't a dictionary")
@@ -94,7 +105,7 @@ def _text(value) -> bool:
 
 
 def _date(value) -> datetime.date | None:
-    if not _text(value):
+    if not _text(value) or not ISO_DATE.fullmatch(value.strip()):
         return None
     try:
         return datetime.date.fromisoformat(value.strip())
@@ -124,6 +135,8 @@ def missing_items(record: dict, today: datetime.date) -> list[str]:
     registered_on = _date(agent.get("registered_on"))
     if registered_on is None:
         missing.append("the agent registration date is missing or isn't YYYY-MM-DD")
+    elif registered_on > today:
+        missing.append(f"the agent registration date {registered_on} is in the future")
     elif today >= registration_expires(registered_on):
         missing.append(f"the agent registration lapsed on {registration_expires(registered_on)}; renew it")
     if not _text(agent.get("page_url")) or agent.get("page_live") is not True:
@@ -132,8 +145,9 @@ def missing_items(record: dict, today: datetime.date) -> list[str]:
     if _section(record, "insurance").get("in_place") is not True:
         waiver = _section(record, "waiver")
         testers = waiver.get("external_testers")
-        if _date(waiver.get("granted_on")) is None:
-            missing.append("no insurance and no dated waiver recorded")
+        granted_on = _date(waiver.get("granted_on"))
+        if granted_on is None or granted_on > today:
+            missing.append("no insurance and no valid dated waiver recorded")
         elif waiver.get("no_revenue") is not True:
             missing.append("no insurance, and the waiver's no-revenue condition no longer holds")
         elif not isinstance(testers, int) or isinstance(testers, bool) or testers < 0:
@@ -163,7 +177,6 @@ def main(argv=None) -> int:
     parser.add_argument("--destination", required=True, choices=["external", "internal"],
                         help="the TestFlight group the build is about to be assigned to")
     parser.add_argument("--record", type=Path, default=DEFAULT_RECORD, help="the gate record (default: %(default)s)")
-    parser.add_argument("--today", type=datetime.date.fromisoformat, default=None, help="override today's date (tests)")
     args = parser.parse_args(argv)
     try:
         plist = read_plist(args.build)
@@ -171,7 +184,8 @@ def main(argv=None) -> int:
     except InputError as error:
         print(f"release gate: {error}", file=sys.stderr)
         return 2
-    allowed, reasons = decide(args.destination, plist, record, args.today or datetime.date.today())
+    today = datetime.date.fromisoformat(os.environ.get("SM_RELEASE_GATE_TODAY") or datetime.date.today().isoformat())
+    allowed, reasons = decide(args.destination, plist, record, today)
     stream = sys.stdout if allowed else sys.stderr
     print(("release gate: allowed. " if allowed else "release gate: REFUSED. ") + reasons[0], file=stream)
     for reason in reasons[1:]:

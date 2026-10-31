@@ -3,6 +3,7 @@ import copy
 import datetime
 import importlib.util
 import json
+import os
 import plistlib
 import subprocess
 import sys
@@ -29,6 +30,7 @@ COMPLETE_WITH_WAIVER["insurance"]["in_place"] = False
 COMPLETE_WITH_WAIVER["waiver"]["external_testers"] = 12
 ON = {gate.PLIST_KEY: True}
 OFF = {gate.PLIST_KEY: False}
+OLD_BUILD = {"CFBundleVersion": "34"}
 
 
 def record_with(base, section, **changes):
@@ -50,7 +52,7 @@ class DecideTests(unittest.TestCase):
         self.assertTrue(self.allowed("external", ON, COMPLETE_WITH_WAIVER))
 
     def test_creation_off_is_always_allowed(self):
-        for plist in (OFF, {}):
+        for plist in (OFF, OLD_BUILD, {**OLD_BUILD, "CFBundleVersion": "9"}):
             for record in ({}, gate_record_default(), COMPLETE_WITH_INSURANCE):
                 self.assertTrue(self.allowed("external", plist, record))
 
@@ -62,6 +64,23 @@ class DecideTests(unittest.TestCase):
             allowed, reasons = gate.decide("external", {gate.PLIST_KEY: value}, COMPLETE_WITH_INSURANCE, TODAY)
             self.assertFalse(allowed, value)
             self.assertIn("not a boolean", " ".join(reasons))
+
+    def test_a_missing_key_is_off_only_for_builds_that_predate_it(self):
+        for build in ("35", "100", "", "34a", "-1", None):
+            plist = {} if build is None else {"CFBundleVersion": build}
+            allowed, reasons = gate.decide("external", plist, COMPLETE_WITH_INSURANCE | {"llc": {}}, TODAY)
+            self.assertFalse(allowed, build)
+            self.assertIn("missing", " ".join(reasons))
+        self.assertTrue(self.allowed("external", {"CFBundleVersion": "35", gate.PLIST_KEY: False}, {}))
+
+    def test_future_dates_and_compact_dates_do_not_count(self):
+        for value in ("2099-01-01", "2026-11-16", "20261101", "2026-1-1", "2026-11-01T00:00"):
+            record = record_with(COMPLETE_WITH_INSURANCE, "dmca_agent", registered_on=value)
+            self.assertFalse(self.allowed("external", ON, record), value)
+        for value in ("2099-01-01", "20261028"):
+            record = record_with(COMPLETE_WITH_WAIVER, "waiver", granted_on=value)
+            self.assertFalse(self.allowed("external", ON, record), value)
+        self.assertTrue(self.allowed("external", ON, record_with(COMPLETE_WITH_INSURANCE, "dmca_agent", registered_on="2026-11-15")))
 
     def test_each_agent_field_is_required(self):
         for field, value in (("registered", False), ("registration_number", ""), ("registration_number", "  "),
@@ -134,9 +153,8 @@ class CommandLineTests(unittest.TestCase):
 
     def run_gate(self, build, record, destination="external"):
         return subprocess.run(
-            [sys.executable, "-I", str(SCRIPT), "--destination", destination, "--record", str(record),
-             "--today", TODAY.isoformat(), str(build)],
-            capture_output=True, text=True)
+            [sys.executable, "-I", str(SCRIPT), "--destination", destination, "--record", str(record), str(build)],
+            capture_output=True, text=True, env={**os.environ, "SM_RELEASE_GATE_TODAY": TODAY.isoformat()})
 
     def test_refused_then_allowed_for_an_archive_with_creation_on(self):
         build = self.archive({"CFBundleVersion": "35", gate.PLIST_KEY: True})
@@ -149,7 +167,7 @@ class CommandLineTests(unittest.TestCase):
         self.assertIn("allowed", allowed.stdout)
 
     def test_creation_off_is_allowed_with_an_empty_record(self):
-        for plist in ({"CFBundleVersion": "34"}, {gate.PLIST_KEY: False}):
+        for plist in ({"CFBundleVersion": "34"}, {"CFBundleVersion": "35", gate.PLIST_KEY: False}):
             self.assertEqual(self.run_gate(self.archive(plist), self.record({})).returncode, 0)
 
     def test_a_bare_plist_and_an_app_bundle_are_read_too(self):
@@ -166,6 +184,9 @@ class CommandLineTests(unittest.TestCase):
         broken = self.dir / "broken.json"
         broken.write_text("{", encoding="utf-8")
         self.assertEqual(self.run_gate(build, broken).returncode, 2)
+        truncated = self.dir / "Truncated.plist"
+        truncated.write_text('<?xml version="1.0"?><plist><dict><key>a', encoding="utf-8")
+        self.assertEqual(self.run_gate(truncated, self.record({})).returncode, 2)
         empty = self.dir / "Empty.xcarchive"
         (empty / "Products" / "Applications").mkdir(parents=True)
         self.assertEqual(self.run_gate(empty, self.record({})).returncode, 2)
