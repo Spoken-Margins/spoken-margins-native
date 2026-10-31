@@ -1,0 +1,4 @@
+# The Playwright build (e2e/playwright.config.ts). It carries a test relay origin, so it is never deployed.
+dist-e2e/
+# The share-link journeys' build (#3003), the only one with link creation on. Never deployed.
+dist-share-links/

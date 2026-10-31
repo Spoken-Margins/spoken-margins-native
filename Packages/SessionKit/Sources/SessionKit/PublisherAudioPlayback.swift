@@ -24,20 +24,7 @@ public struct PublisherAudioPlayback: Equatable, Sendable {
     /// the record needs a usable map and a web address, and the item must be an article with text
     /// whose own audio (if any) is generated narration, never a recording the listener owns.
     public static func plan(for item: Item, record: PublisherAudio?) -> PublisherAudioPlayback? {
-        guard let record, record.itemId == item.id,
-              let timeline = record.textMap,
-              timeline.segments.contains(where: { $0.startChar != nil && $0.endChar != nil }),
-              let url = URL(string: record.audioURL),
-              ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
-              item.deletedAt == nil,
-              !PreparedNarrationFallback.isAudioFirst(item),
-              item.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else { return nil }
-        switch item.media?.sourceType {
-        case .none, .some(.generatedTTSRealtime), .some(.generatedTTSPrerendered):
-            break
-        case .some(.nativeMediaFile), .some(.remoteStream), .some(.browserOwnedMedia):
-            return nil
-        }
+        guard let (record, timeline) = usableRecording(for: item, record: record) else { return nil }
         return PublisherAudioPlayback(
             recording: record,
             timeline: timeline,
@@ -47,6 +34,32 @@ public struct PublisherAudioPlayback: Equatable, Sendable {
             ),
             storedMedia: item.media
         )
+    }
+
+    /// Whether `item` plays a recording, from the fields a Library summary carries, so a caller that only needs the
+    /// answer need not decode the article's text (#2506). Always the same answer as `plan(for:record:) != nil`.
+    public static func playsRecording(summary item: LibraryItemSummary, record: PublisherAudio?) -> Bool {
+        usableRecording(for: item, record: record) != nil
+    }
+
+    /// The conditions `plan(for:record:)` checks, read from `LibraryItemFields` so an `Item` and a summary share them.
+    private static func usableRecording<Fields: LibraryItemFields>(
+        for item: Fields, record: PublisherAudio?
+    ) -> (PublisherAudio, TranscriptTimeline)? {
+        guard let record, record.itemId == item.id,
+              let timeline = record.textMap,
+              timeline.segments.contains(where: { $0.startChar != nil && $0.endChar != nil }),
+              let url = URL(string: record.audioURL),
+              ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
+              item.deletedAt == nil,
+              !PreparedNarrationFallback.isAudioFirst(mediaType: item.mediaType),
+              item.hasListenableText else { return nil }
+        switch item.media?.sourceType {
+        case .none, .some(.generatedTTSRealtime), .some(.generatedTTSPrerendered):
+            return (record, timeline)
+        case .some(.nativeMediaFile), .some(.remoteStream), .some(.browserOwnedMedia):
+            return nil
+        }
     }
 
     /// The same plan with `timeline` as the map the engine plays through. The engine adds the article's

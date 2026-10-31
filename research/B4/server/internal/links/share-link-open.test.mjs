@@ -2,7 +2,20 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import { DAMAGED_MESSAGE, DamagedLinkError, PART, keyFromFragment, openPart, openPreview } from './share-link-open.mjs';
+import { parseHTML } from 'linkedom';
+import {
+  DAMAGED_MESSAGE,
+  DamagedLinkError,
+  MAX_AFTER_CHARACTERS,
+  MAX_BEFORE_CHARACTERS,
+  PART,
+  checkPreview,
+  keyFromFragment,
+  openPart,
+  openPreview,
+  safeSourceURL,
+} from './share-link-open.mjs';
+import { EXPIRED_MESSAGE, OFFLINE_MESSAGE, SERVER_MESSAGE, showSharedMargins } from './share-link-page.mjs';
 
 const vector = JSON.parse(
   readFileSync(new URL('../../../contracts/fixtures/share-link-sealing-vector.json', import.meta.url), 'utf8'),
@@ -88,5 +101,161 @@ test('a correctly sealed preview that is not valid JSON or not valid UTF-8 fails
   for (const [name, plaintext] of Object.entries(cases)) {
     const sealed = await seal(plaintext, PART.preview, key);
     await assert.rejects(openPreview(sealed, hash), damaged, name);
+  }
+});
+
+// The server can't read the sealed preview (#805), so the page checks what the server's ParsePreview
+// used to: a title, at least one Margin, and the excerpt ceilings (#2237), in code points.
+const vectorPreview = () => JSON.parse(Buffer.from(vector.preview.plaintextBase64, 'base64').toString('utf8'));
+
+test('the vector preview passes the page check, which keeps only the shown fields', () => {
+  assert.deepEqual(checkPreview(vectorPreview()), {
+    source: { title: 'Café notes on the Fourier transform', show: 'Signals & Noise', url: '' },
+    margins: [{ text: 'This is the part I wanted you to hear 🎧', before: 'the transform', after: 'of a square wave' }],
+  });
+});
+
+test('excerpts are held to their ceilings on each side, in code points', () => {
+  for (const [side, max] of [['before', MAX_BEFORE_CHARACTERS], ['after', MAX_AFTER_CHARACTERS]]) {
+    for (const [name, text, valid] of [
+      ['empty', '', true], ['whitespace', ' \t\n', true], ['punctuation', '—.!?', true], ['case', 'Aa', true],
+      ['composed', 'café', true], ['decomposed', 'café', true],
+      ['at the cap, ASCII', 'x'.repeat(max), true], ['at the cap, Unicode', '🎧'.repeat(max), true],
+      ['over the cap, ASCII', 'x'.repeat(max + 1), false], ['over the cap, Unicode', '🎧'.repeat(max + 1), false],
+      ['very long', 'x'.repeat(16000), false],
+    ]) {
+      const preview = vectorPreview();
+      preview.margins[0][side] = text;
+      if (valid) assert.equal(checkPreview(preview).margins[0][side], text, `${side}/${name}`);
+      else assert.throws(() => checkPreview(preview), damaged, `${side}/${name}`);
+    }
+  }
+  // The caps differ: 121 characters fit before a Margin, not after it.
+  const preview = vectorPreview();
+  preview.margins[0].before = 'x'.repeat(MAX_AFTER_CHARACTERS + 1);
+  preview.margins[0].after = '';
+  assert.doesNotThrow(() => checkPreview(preview));
+  preview.margins[0].after = 'x'.repeat(MAX_AFTER_CHARACTERS + 1);
+  assert.throws(() => checkPreview(preview), damaged);
+});
+
+test('a preview without a title or a Margin, or with odd types, fails plainly', () => {
+  const variants = {
+    null: () => null,
+    array: () => [],
+    'no source': (p) => { delete p.source; return p; },
+    'blank title': (p) => { p.source.title = ' \n'; return p; },
+    'numeric title': (p) => { p.source.title = 7; return p; },
+    'object show': (p) => { p.source.show = {}; return p; },
+    'no margins': (p) => { p.margins = []; return p; },
+    'margins not a list': (p) => { p.margins = { text: 'x' }; return p; },
+    'margin without text': (p) => { delete p.margins[0].text; return p; },
+    'numeric before': (p) => { p.margins[0].before = 3; return p; },
+    'null margin': (p) => { p.margins = [null]; return p; },
+  };
+  for (const [name, change] of Object.entries(variants)) {
+    assert.throws(() => checkPreview(change(vectorPreview())), damaged, name);
+  }
+  const extra = vectorPreview();
+  extra.unknown = true;
+  extra.margins[0].unknown = '<b>';
+  assert.doesNotThrow(() => checkPreview(extra));
+});
+
+test('the source link is left out when it could disclose a private URL', () => {
+  for (const [url, safe] of [
+    ['https://example.org/episode', true], ['http://example.org/a', true], ['HTTPS://example.org/A', true],
+    ['https://other.example/episode', true], ['https://examp1e.org/episode', true], ['https://example.org/caf%C3%A9', true],
+    ['https://example.org/episode?token=PRIVATE', false], ['https://example.org/episode?', false],
+    ['https://PRIVATE:secret@example.org/episode', false], ['https://PRIVATE@example.org/episode', false],
+    ['https://example.org/episode#PRIVATE', false], ['javascript:alert(1)', false], ['//example.org/a', false],
+    ['', false], [' https://example.org/a', false], ['https://example.org/\nPRIVATE', false], ['https://', false],
+    ['https://example.org/%zz', false], ['data:text/html,hi', false], [undefined, false],
+  ]) {
+    assert.equal(safeSourceURL(url) !== '', safe, String(url));
+  }
+});
+
+// The page module against a DOM, with the shell the server renders (links.Render).
+const LINK_ID = 'ab'.repeat(16);
+function shell() {
+  const { document } = parseHTML(
+    `<!doctype html><html><body><section id="margins" data-link="${LINK_ID}"><p id="status" role="status"></p></section></body></html>`,
+  );
+  return document;
+}
+const answer = (status, bytes = new Uint8Array()) => ({
+  status,
+  arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+});
+const linkHash = `#${vector.keyFragment}`;
+const sealJSON = (value) => seal(new TextEncoder().encode(JSON.stringify(value)), PART.preview, key);
+
+test('the page opens the vector preview from the server and shows it as text', async () => {
+  const document = shell();
+  const asked = [];
+  const shown = await showSharedMargins(document, linkHash, async (path) => {
+    asked.push(path);
+    return answer(200, sealedPreview);
+  });
+  assert.equal(shown, '');
+  assert.deepEqual(asked, [`/l/${LINK_ID}/preview`]);
+  const article = document.querySelector('article');
+  assert.match(article.textContent, /This is the part I wanted you to hear 🎧/);
+  assert.match(article.textContent, /Café notes on the Fourier transform/);
+  assert.match(article.textContent, /Signals & Noise/);
+  assert.match(article.textContent, /Quotation from the source · before this Margin/);
+  assert.equal(document.querySelector('a'), null, 'the vector has no source URL');
+  assert.equal(document.getElementById('status').textContent, '');
+});
+
+test('HTML in a sealed preview is shown as text, and only a safe source URL is linked', async () => {
+  const preview = {
+    source: { title: 'A source <title>', show: 'A show & name', url: 'https://example.org/episode?token=PRIVATE' },
+    margins: [{ text: 'My <script>alert(1)</script>', before: 'Before <img src=x>', after: 'After & <b>text</b>' }],
+  };
+  const document = shell();
+  const sealed = await sealJSON(preview);
+  await showSharedMargins(document, linkHash, async () => answer(200, sealed));
+  const section = document.getElementById('margins');
+  assert.equal(section.querySelector('script, img, b'), null);
+  assert.match(section.textContent, /My <script>alert\(1\)<\/script>/);
+  assert.match(section.textContent, /A source <title>/);
+  assert.equal(section.querySelector('a'), null);
+  assert.doesNotMatch(section.innerHTML, /PRIVATE/);
+
+  preview.source.url = 'https://example.org/episode';
+  const second = shell();
+  const safe = await sealJSON(preview);
+  await showSharedMargins(second, linkHash, async () => answer(200, safe));
+  const link = second.querySelector('a');
+  assert.equal(link.getAttribute('href'), 'https://example.org/episode');
+  assert.equal(link.getAttribute('rel'), 'noreferrer noopener');
+});
+
+test('the page says plainly when the link is missing its key, expired, damaged or unreachable', async () => {
+  const never = async () => assert.fail('fetched without a usable key');
+  for (const missing of ['', '#', '#not a key', `#${vector.keyFragment.slice(0, -3)}`]) {
+    assert.equal(await showSharedMargins(shell(), missing, never), DAMAGED_MESSAGE, missing);
+  }
+  const overCap = vectorPreview();
+  overCap.margins[0].after = 'x'.repeat(MAX_AFTER_CHARACTERS + 1);
+  const overCapSealed = await sealJSON(overCap);
+  const tampered = sealedPreview.slice();
+  tampered[30] ^= 1;
+  for (const [name, respond, message] of [
+    ['expired', async () => answer(410), EXPIRED_MESSAGE],
+    ['unknown', async () => answer(404), EXPIRED_MESSAGE],
+    ['rate limited', async () => answer(429), SERVER_MESSAGE],
+    ['switched off', async () => answer(503), SERVER_MESSAGE],
+    ['offline', async () => { throw new TypeError('Failed to fetch'); }, OFFLINE_MESSAGE],
+    ['tampered', async () => answer(200, tampered), DAMAGED_MESSAGE],
+    ['the packet served as the preview', async () => answer(200, sealedPacket), DAMAGED_MESSAGE],
+    ['an excerpt over its ceiling', async () => answer(200, overCapSealed), DAMAGED_MESSAGE],
+  ]) {
+    const document = shell();
+    assert.equal(await showSharedMargins(document, linkHash, respond), message, name);
+    assert.equal(document.getElementById('status').textContent, message, name);
+    assert.equal(document.querySelector('article'), null, name);
   }
 });

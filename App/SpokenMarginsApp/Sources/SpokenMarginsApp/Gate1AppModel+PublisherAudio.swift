@@ -8,8 +8,9 @@ import SessionKitPersistence
 /// its size ceiling (scripts/hot_file_ratchet.py).
 extension Gate1AppModel {
     func playsPublisherAudio(itemId: String) -> Bool {
-        guard let store, let item = try? store.loadItem(id: itemId) else { return false }
-        return PublisherAudioPlayback.plan(for: item, record: try? store.loadPublisherAudio(itemId: itemId)) != nil
+        // The summary: every play start asks, and the answer needs no article text (#2506).
+        guard let store, let item = try? store.loadItemSummary(id: itemId) else { return false }
+        return PublisherAudioPlayback.playsRecording(summary: item, record: try? store.loadPublisherAudio(itemId: itemId))
     }
 
     /// Why a post added from Following kept, or didn't keep, its publisher's voice (#2024): the item it was added as,

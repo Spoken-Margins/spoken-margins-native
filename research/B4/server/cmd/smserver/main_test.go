@@ -199,7 +199,11 @@ func TestLinkTakedownCommand(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now()
-	id, _, err := st.Put([]byte("opaque packet"), []byte(`{"source":{"title":"Title","show":"Show","url":"https://example.org"},"margins":[{"text":"Margin","before":"Before","after":"After"}]}`), now)
+	// Parts sealed on the phone (#805): the header, nonce and tag of each, with opaque bytes between.
+	sealed := func(part byte) []byte {
+		return append([]byte{'S', 'M', 'L', 'I', 'N', 'K', 1, part}, []byte("twelve-nonce opaque ciphertext sixteen-byte-tag")...)
+	}
+	id, _, err := st.Put(sealed(links.PartPacket), sealed(links.PartPreview), now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,7 +213,7 @@ func TestLinkTakedownCommand(t *testing.T) {
 	if _, err := st.Packet(id, now); !errors.Is(err, links.ErrGone) {
 		t.Fatal("CLI did not delete link")
 	}
-	for _, name := range []string{"packet", "preview.json"} {
+	for _, name := range []string{"packet", "preview", "preview.json"} {
 		if _, err := os.Stat(filepath.Join(dir, "links", id, name)); !errors.Is(err, os.ErrNotExist) {
 			t.Fatal("CLI left content")
 		}
