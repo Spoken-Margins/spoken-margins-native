@@ -4,7 +4,6 @@
 import { readFileSync } from 'node:fs';
 import { expect, test, type Page } from '@playwright/test';
 import { readPacket } from '../src/packet/read.ts';
-import { listZip, readZip } from '../src/packet/zip.ts';
 import { FEED_ORIGIN, SHOTS_DIR, seconds, serveFixtures, shot } from './fixtures.ts';
 
 const FEED = `${FEED_ORIGIN}/enclosure-only-episodes.rss`;
@@ -118,13 +117,15 @@ test('Back up all Margins saves one file that opens here and in a fresh browser,
   await nowPlaying.getByLabel(/Your Margin at/).fill('Back me up.');
   await nowPlaying.getByRole('button', { name: 'Save Margin' }).click();
   await expect(page.getByRole('status').getByText(/Margin saved at/)).toBeVisible();
-  // A voice Margin with no words: no packet can carry it, so the backup keeps its audio alongside.
+  // A voice Margin with no words of the listener's: it goes in the packet with its placeholder words (#3025).
   await nowPlaying.getByRole('button', { name: 'Record a Margin' }).click();
   await expect(nowPlaying.getByRole('status').filter({ hasText: 'Recording' })).toBeVisible();
   await page.waitForTimeout(1200);
   await nowPlaying.getByRole('button', { name: 'Stop', exact: true }).click();
+  const placeholder = await nowPlaying.getByLabel(/Words to go with your voice Margin at/).inputValue();
+  expect(placeholder).toMatch(/^Voice Margin at \d+:\d\d in “.+”, recorded \d{1,2} [A-Z][a-z]{2} \d{4}$/);
   await nowPlaying.getByRole('button', { name: 'Save Margin' }).click();
-  await expect(page.getByText(/Voice Margin saved at .* It has no words/)).toBeVisible();
+  await expect(page.getByText(/Voice Margin saved at .* It shares with placeholder words/)).toBeVisible();
   await nowPlaying.getByRole('button', { name: 'Close Now Playing' }).click();
 
   await tab(page, 'Settings');
@@ -133,22 +134,20 @@ test('Back up all Margins saves one file that opens here and in a fresh browser,
   await page.getByRole('button', { name: 'Back up all Margins' }).click();
   const download = await downloading;
   const fileName = download.suggestedFilename();
-  expect(fileName).toMatch(/^Spoken-Margins-backup-\d{4}-\d{2}-\d{2}\.zip$/);
+  // One episode, so the backup is its one packet.
+  expect(fileName).toMatch(/\.spokenmargins$/);
   const filePath = `${SHOTS_DIR}/storage-${fileName}`;
   await download.saveAs(filePath);
-  await expect(page.getByRole('status')).toContainText(`Backed up 1 Margin from 1 episode as ${fileName}. 1 voice Margin has no words`);
+  await expect(page.getByRole('status')).toContainText(`Backed up 2 Margins from 1 episode as ${fileName}.`);
   await expect(page.getByTestId('last-backup')).toHaveText(/^Last backed up .+\.$/);
   await shot(page, info, '32-backed-up');
 
-  // What's in it: the episode's packet, which the packet reader (the iPhone app's rules) opens, and the audio.
-  const bytes = new Uint8Array(readFileSync(filePath));
-  const paths = listZip(bytes).map((e) => e.path);
-  expect(paths).toHaveLength(2);
-  expect(paths[1]).toMatch(/^Voice Margins without words\/.+ at \d+-\d\d\.m4a$/);
-  const entries = await readZip(bytes, { totalBytes: Infinity, compressionRatio: Infinity, entryBytes: () => Infinity });
-  const packet = await readPacket(entries.get(paths[0] as string) as Uint8Array);
+  // What's in it: the episode's packet, which the packet reader (the iPhone app's rules) opens, with the voice
+  // Margin's audio and the placeholder words the listener saw.
+  const packet = await readPacket(new Uint8Array(readFileSync(filePath)));
   expect(packet.episode.title).toBe(EPISODE_3);
-  expect(packet.margins.map((m) => m.text)).toEqual(['Back me up.']);
+  expect(packet.margins.map((m) => m.text).sort()).toEqual(['Back me up.', placeholder].sort());
+  expect(packet.margins.find((m) => m.text === placeholder)?.voice).toBeTruthy();
 
   // Opened again in the same browser, it adds nothing twice.
   await tab(page, 'Margins');
@@ -163,7 +162,7 @@ test('Back up all Margins saves one file that opens here and in a fresh browser,
   await serveFixtures(freshPage);
   await freshPage.goto('./#margins');
   await freshPage.getByTestId('margin-file').setInputFiles(filePath);
-  await expect(freshPage.getByText(new RegExp(`Opened 1 Margin .*${EPISODE_3}`))).toBeVisible();
+  await expect(freshPage.getByText(new RegExp(`Opened 2 Margins .*${EPISODE_3}`))).toBeVisible();
   await freshPage.getByRole('dialog', { name: EPISODE_3 }).getByRole('button', { name: 'Close Now Playing' }).click();
   await expect(freshPage.getByRole('button', { name: /Back me up\./ })).toBeVisible();
   await shot(freshPage, info, '33-restored');
