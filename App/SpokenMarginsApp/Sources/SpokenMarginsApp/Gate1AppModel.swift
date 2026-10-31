@@ -1609,7 +1609,7 @@ final class Gate1AppModel: ObservableObject {
 
     /// The listener's own map or the publisher's chapters, which a friend's map never replaces.
     static func listenerHasListeningMap(itemId: String, store: SQLiteSessionStore) throws -> Bool {
-        try store.loadPortableListeningMapProposals(itemId: itemId).contains { !CommunityMapConverter.isCommunityProposal(id: $0.id) } // a community map never blocks a friend's (#553)
+        try store.portableListeningMapProposalIds(itemId: itemId).contains { !CommunityMapConverter.isCommunityProposal(id: $0) } // a community map never blocks a friend's (#553); ids only, not the maps (#2506)
             || store.loadTranscriptTimelineChapters(itemId: itemId).isEmpty == false // chapters only: this runs from the Item screen's body (#2073)
     }
 
@@ -2458,7 +2458,7 @@ final class Gate1AppModel: ObservableObject {
                     ))
                     let store = try requireStore()
                     let id = "read-later-" + ListeningEdition.digest(document.url + "\n" + handoff.text)
-                    if (try? store.loadItem(id: id)) != nil {
+                    if (try? store.loadItemSummary(id: id)) != nil {
                         reportConfirmation("This article is already in your Library.")
                         return
                     }
@@ -2472,7 +2472,7 @@ final class Gate1AppModel: ObservableObject {
                     var handoff = try await readablePageExtractor.extract(url: url)
                     let id = "read-later-" + ListeningEdition.digest(document.url + "\n" + handoff.text)
                     let store = try requireStore()
-                    if (try? store.loadItem(id: id)) != nil {
+                    if (try? store.loadItemSummary(id: id)) != nil {
                         reportConfirmation("This article is already in your Library."); return
                     }
                     handoff.itemId = id

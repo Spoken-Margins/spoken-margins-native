@@ -354,6 +354,12 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         return maps.first
     }
 
+    /// The id `loadListeningMap(itemId:)` would return, read from the row's id column: the map's JSON is never copied
+    /// out or decoded (#2506). A row whose JSON is broken still counts here; the next whole read sets it aside.
+    public func listeningMapId(itemId: String) throws -> String? {
+        try recordIds(kind: "listening_map", itemId: itemId, name: #function).first
+    }
+
     public func saveListeningMap(_ map: ListeningMap) throws {
         try withTransaction {
             try deleteRecords(kind: "listening_map", itemId: map.itemId)
@@ -1228,6 +1234,12 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         try loadByItem(kind: "portable_listening_map_proposal", itemId: itemId)
     }
 
+    /// The ids of the item's proposals, in `loadPortableListeningMapProposals(itemId:)`'s order, without reading them
+    /// (#2506). A proposal carries its whole map, so a caller asking only whether there is one reads this instead.
+    public func portableListeningMapProposalIds(itemId: String) throws -> [String] {
+        try recordIds(kind: "portable_listening_map_proposal", itemId: itemId, name: #function)
+    }
+
     public func saveResolvedListeningMapProjection(_ projection: ResolvedListeningMapProjection) throws {
         try withTransaction {
             try deleteRecords(kind: "resolved_listening_map_projection", itemId: projection.itemId)
@@ -1244,7 +1256,7 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         projection: ResolvedListeningMapProjection
     ) throws -> Bool {
         try withTransaction {
-            guard try loadPortableListeningMapProposals(itemId: projection.itemId).isEmpty,
+            guard try portableListeningMapProposalIds(itemId: projection.itemId).isEmpty,
                   try loadResolvedListeningMapProjection(itemId: projection.itemId) == nil,
                   // A friend's map not placed yet (its audio may still be downloading) comes first.
                   try !loadImportedCommentaryLayers(itemId: projection.itemId).contains(where: \.holdsListeningMap)
@@ -1700,6 +1712,14 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
 
     private func loadBySession<T: Decodable>(kind: String, sessionId: String, caller: String = #function) throws -> [T] {
         try query("SELECT kind, id, payload FROM records WHERE kind = ? AND session_id = ? ORDER BY updated_at, id;", [kind, sessionId], caller: caller)
+    }
+
+    /// The ids of an item's records of one kind, in `loadByItem`'s order. Only the id column is read (#2506).
+    private func recordIds(kind: String, itemId: String, name: String) throws -> [String] {
+        var ids: [String] = []
+        try readTexts("SELECT id FROM records WHERE kind = ? AND item_id = ? ORDER BY updated_at, id;",
+                      [kind, itemId], name: name) { ids.append($0) }
+        return ids
     }
 
     private func loadByItem<T: Decodable>(kind: String, itemId: String, caller: String = #function) throws -> [T] {

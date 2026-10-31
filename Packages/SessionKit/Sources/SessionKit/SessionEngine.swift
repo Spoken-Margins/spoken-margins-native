@@ -277,7 +277,7 @@ public final class SessionEngine {
         snapshot.currentAnchorConfidence = .providerMetadata
 
         if item.media?.url == candidate.audioURL,
-           try repository.loadListeningMap(itemId: item.id) == nil,
+           try repository.listeningMapId(itemId: item.id) == nil, // whether there is one, not the map (#2506)
            let publisherChapters = preferredPublisherChapterCollection(in: candidate) {
             _ = try attachPublisherChapters(itemId: item.id, collection: publisherChapters)
         }
@@ -306,7 +306,7 @@ public final class SessionEngine {
         let item = try sourceImportItem(from: candidate, result: result, request: request, sourceIdentity: sourceIdentity)
         try saveItem(item)
         if item.media?.url == candidate.audioURL,
-           try repository.loadListeningMap(itemId: item.id) == nil,
+           try repository.listeningMapId(itemId: item.id) == nil, // whether there is one, not the map (#2506)
            let publisherChapters = preferredPublisherChapterCollection(in: candidate) {
             _ = try attachPublisherChapters(itemId: item.id, collection: publisherChapters)
         }
@@ -3239,9 +3239,11 @@ public final class SessionEngine {
         guard let sessionId = options.sessionId else { return try buildExport(options: options) }
         let repository = repository
         let includeFullText = options.includeFullText, includeListeningMap = options.includeListeningMap
+        // Named type, not `Self`: capturing the dynamic `Self` in a detached closure makes Swift 6.2.4 on Linux fail with
+        // "pattern that the region based isolation checker does not understand"; macOS accepts both.
         let inputs = try await Task.detached(priority: .userInitiated) {
-            try Self.readExportInputs(sessionId: sessionId, includeFullText: includeFullText,
-                                      includeListeningMap: includeListeningMap, repository: repository)
+            try SessionEngine.readExportInputs(sessionId: sessionId, includeFullText: includeFullText,
+                                               includeListeningMap: includeListeningMap, repository: repository)
         }.value
         guard let inputs else { return try buildExport(options: options) } // not stored: the engine's own session
         let itemId = inputs.item.id
