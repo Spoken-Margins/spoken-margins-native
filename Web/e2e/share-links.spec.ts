@@ -8,7 +8,7 @@ import { expect, test, type Page, type Request } from '@playwright/test';
 import { FEED_ORIGIN, seconds, serveAudio, serveFixtures, shot } from './fixtures.ts';
 
 const STUB = 'http://127.0.0.1:4174';
-const SHIPPED = 'http://127.0.0.1:4173';
+const SHIPPED = `http://127.0.0.1:${process.env.SM_E2E_PORT ?? 4173}`;
 const vector = JSON.parse(
   readFileSync(fileURLToPath(new URL('../../research/B4/contracts/fixtures/share-link-sealing-vector.json', import.meta.url)), 'utf8'),
 );
