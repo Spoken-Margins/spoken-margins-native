@@ -53,7 +53,9 @@ if [[ -n "$(git -C "${repo}" status --porcelain -- Web)" ]]; then
   echo "note: Web/ has uncommitted changes; they are not deployed"
 fi
 echo "== build Web/ at ${commit} (relay ${relay_origin})"
-git -C "${repo}" archive HEAD Web | tar -x -C "${stage}"
+# Web/ imports the share-link page's opener from the server's tree, so that
+# folder comes along (only its .mjs files are read).
+git -C "${repo}" archive HEAD Web research/B4/server/internal/links | tar -x -C "${stage}"
 if ! (cd "${stage}/Web" && npm ci --no-audit --no-fund --loglevel=error &&
   VITE_RELAY_ORIGIN="${relay_origin}" npm run build -- --outDir "${stage}/dist" --emptyOutDir) >"${stage}/build.log" 2>&1; then
   tail -30 "${stage}/build.log" >&2
