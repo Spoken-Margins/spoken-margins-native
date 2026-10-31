@@ -27,12 +27,15 @@ struct PlaybackMarkCompleteButton: View {
             }
         }
         .followsPlaybackClock(model.playbackClock, tick: $playbackTick)
-        // Past the position test and still hidden: say why in Diagnostics, once per change (#2968).
-        .onCompatibleChange(of: presence) { value in
-            if value == .noLibraryRow || value == .alreadyComplete {
-                model.recordDeveloperDiagnostic("playback.markComplete.hidden", ["reason": value.rawValue, "item": model.selectedItem.id])
-            }
-        }
+        // Past the position test and still hidden: say why in Diagnostics (#2968). On change, and once on appear,
+        // because a screen opened at 96% on an item the Library calls complete never changes.
+        .onAppear { recordHidden(presence) }
+        .onCompatibleChange(of: presence) { recordHidden($0) }
+    }
+
+    private func recordHidden(_ presence: PlaybackCompletionOffer.Presence) {
+        guard presence == .noLibraryRow || presence == .alreadyComplete else { return }
+        model.recordDeveloperDiagnostic("playback.markComplete.hidden", ["reason": presence.rawValue, "item": model.selectedItem.id])
     }
 
     /// The playing item's Library row; looked up only once the position test has passed.
