@@ -11,6 +11,7 @@ import { Library } from './screens/Library.tsx';
 import { Margins } from './screens/Margins.tsx';
 import { MiniPlayer, NowPlaying } from './screens/NowPlaying.tsx';
 import { Settings } from './screens/Settings.tsx';
+import { useNativeOpenedFiles } from './native-files.ts';
 import { useSharedFiles } from './shared-files.ts';
 import { UiProvider } from './ui.tsx';
 
@@ -47,6 +48,7 @@ function Shell({ launchLink }: { launchLink: ParsedLink }) {
   const openPlayer = useCallback(() => setNowPlaying(true), []);
   const openMarginFile = useOpenMarginFile(openPlayer);
   useSharedFiles(openMarginFile);
+  useNativeOpenedFiles(openMarginFile);
   const openShareLink = useOpenShareLink(openPlayer);
   useLaunchLink(launchLink, openShareLink);
 
