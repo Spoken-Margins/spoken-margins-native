@@ -1,0 +1,5 @@
+www.spokenmargins.com {
+	# managed-by: spokenmargins-server (research/B4/deploy/deploy.sh)
+	# www is only a doorway to the bare domain (#3062); the path is kept.
+	redir https://spokenmargins.com{uri} permanent
+}

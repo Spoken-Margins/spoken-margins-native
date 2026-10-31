@@ -1,4 +1,4 @@
-app.spokenmargins.proximitytoprogress.com {
+app.spokenmargins.com {
 	# managed-by: spokenmargins-web (research/B4/deploy/deploy.sh)
 	# The web app (Web/, a static Vite PWA, #3020), copied here by
 	# deploy-web.sh. Its own host, because the feed relay and the share-link

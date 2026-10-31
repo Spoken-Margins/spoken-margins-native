@@ -30,7 +30,14 @@ public protocol ItemRepository {
     func saveItem(_ item: Item) throws
     func listItems(includeDeleted: Bool) throws -> [Item]
     func loadListeningMap(itemId: String) throws -> ListeningMap?
+    /// The id of the item's stored Listening Map, without reading the map (#2506). For a caller that asks only whether
+    /// there is one, or whose it is (a publisher's map id holds `-publisher-`). nil when there is none.
+    func listeningMapId(itemId: String) throws -> String?
     func saveListeningMap(_ map: ListeningMap) throws
+}
+
+extension ItemRepository {
+    public func listeningMapId(itemId: String) throws -> String? { try loadListeningMap(itemId: itemId)?.id }
 }
 
 /// A repository that can say, without reading the item, whether an item was saved or deleted
@@ -106,6 +113,8 @@ public protocol MediaRepository {
     /// equal fingerprints mean the same record, unchanged. nil when there is none, or when the store can't tell,
     /// and then a reader has to read the timeline every time.
     func transcriptTimelineStamp(itemId: String) throws -> String?
+    /// Only the chapters of the item's transcript timeline, without its segments (#2506). Empty when there is none.
+    func loadTranscriptTimelineChapters(itemId: String) throws -> [MediaTimelineChapter]
     func saveAudioAsset(_ asset: AudioAsset) throws
     func loadAudioAssets(itemId: String) throws -> [AudioAsset]
     func deleteAudioAsset(id: String) throws
@@ -117,6 +126,9 @@ public protocol MediaRepository {
 
 extension MediaRepository {
     public func transcriptTimelineStamp(itemId: String) throws -> String? { nil }
+    public func loadTranscriptTimelineChapters(itemId: String) throws -> [MediaTimelineChapter] {
+        try loadTranscriptTimeline(itemId: itemId)?.timeline.chapters ?? []
+    }
 }
 
 public protocol CanonicalSourceRepository {
@@ -145,6 +157,9 @@ public protocol EpisodeMapRepository {
     func loadTranscriptPhraseSketch(itemId: String) throws -> TranscriptPhraseSketchArtifact?
     func savePortableListeningMapProposal(_ proposal: PortableListeningMapProposalArtifact, itemId: String) throws
     func loadPortableListeningMapProposals(itemId: String) throws -> [PortableListeningMapProposalArtifact]
+    /// The ids of the item's stored proposals, without reading them (#2506): enough to ask whether the item has a map,
+    /// and whether one is the listener's own rather than a community map (`CommunityMapConverter.isCommunityProposal`).
+    func portableListeningMapProposalIds(itemId: String) throws -> [String]
     /// Removes every stored proposal of the item and the projection that points at one, so a map that replaces
     /// another is the only one left and nothing is left pointing at a proposal that is gone (#1471).
     func removePortableListeningMapProposals(itemId: String) throws
@@ -506,6 +521,10 @@ public extension AIProviderClient {
 }
 
 extension EpisodeMapRepository {
+    public func portableListeningMapProposalIds(itemId: String) throws -> [String] {
+        try loadPortableListeningMapProposals(itemId: itemId).map(\.id)
+    }
+
     /// Stores that never hold community maps have nothing to remove.
     public func removeCommunityMap(itemId: String) throws {}
 }

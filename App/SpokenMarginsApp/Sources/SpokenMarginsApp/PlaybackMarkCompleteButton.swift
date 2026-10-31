@@ -4,12 +4,17 @@ import SessionKit
 /// "Mark complete" on the playback screen, once the listener is past the end of the body (#2393): the first
 /// reference list or back matter of a text or PDF, or three quarters of the way through anything without one.
 /// Before then it takes no room. It is the Library swipe's action, so it has the same undo.
+///
+/// The playback screen computes `presence` on each playback tick (it follows the clock) and passes it in, so this
+/// view's body runs when the answer changes. A view that shows nothing does not get `onAppear`, `onChange` or a
+/// clock subscription, which is why the playhead follow and the diagnostics live on views that always exist (#2968).
 struct PlaybackMarkCompleteButton: View {
     @EnvironmentObject private var model: Gate1AppModel
+    let presence: PlaybackCompletionOffer.Presence
 
     var body: some View {
-        if let row = offeredRow {
-            Button { model.markItemCompleted(id: row.id) } label: {
+        if presence == .offered {
+            Button { model.markItemCompleted(id: model.selectedItem.id) } label: {
                 Label("Mark complete", systemImage: "checkmark.circle").minimumTapTarget()
             }
             .font(.subheadline.weight(.medium))
@@ -17,26 +22,51 @@ struct PlaybackMarkCompleteButton: View {
             .accessibilityIdentifier("playback.markComplete.button")
         }
     }
+}
 
-    /// The playing item's Library row, when completion is offered at the playing position. The position test comes
-    /// first because it is one comparison; the row lookup runs only once the offer is on.
-    private var offeredRow: LibraryItemRow? {
-        let snapshot = model.snapshot
-        let item = model.selectedItem
+/// Says in Diagnostics why Mark complete is hidden past the offer point (#2968). Zero size, always on screen, so its
+/// `onAppear` and `onChange` run whether or not the button shows.
+struct PlaybackMarkCompleteDiagnostics: View {
+    @EnvironmentObject private var model: Gate1AppModel
+    let presence: PlaybackCompletionOffer.Presence
+    @State private var previous: PlaybackCompletionOffer.Presence?
+
+    var body: some View {
+        Color.clear.frame(width: 0, height: 0)
+            .accessibilityHidden(true)
+            .onAppear { record(presence) }
+            .onCompatibleChange(of: presence) { record($0) }
+    }
+
+    private func record(_ next: PlaybackCompletionOffer.Presence) {
+        let before = previous
+        previous = next
+        guard PlaybackCompletionOffer.shouldRecordHidden(from: before, to: next) else { return }
+        model.recordDeveloperDiagnostic("playback.markComplete.hidden", ["reason": next.rawValue, "item": model.selectedItem.id])
+    }
+}
+
+extension Gate1AppModel {
+    /// What the playback screen shows for completion at the playing position. The position test comes first because
+    /// it is one comparison; the Library row lookup runs only once the offer is on. The playhead is read from the
+    /// clock, the source the scrubber reads.
+    var playbackCompletionPresence: PlaybackCompletionOffer.Presence {
+        let item = selectedItem
         guard snapshot.itemId == item.id, !snapshot.isRecording,
               snapshot.targetType != TargetType.assistantTurnTTS.rawValue,
-              snapshot.targetType != TargetType.summaryTurnTTS.rawValue else { return nil }
-        let offered: Bool
-        if model.isMediaPlaybackSnapshot {
-            offered = PlaybackCompletionOffer.isOffered(
-                mediaTimeMs: snapshot.currentMediaTimeMs ?? 0, durationMs: snapshot.currentPlaybackDurationMs ?? 0)
+              snapshot.targetType != TargetType.summaryTurnTTS.rawValue else { return .notYet }
+        let position = playbackClock.position
+        let positionOffered: Bool
+        if isMediaPlaybackSnapshot {
+            positionOffered = PlaybackCompletionOffer.isOffered(
+                mediaTimeMs: position.mediaTimeMs ?? 0, durationMs: snapshot.currentPlaybackDurationMs ?? 0)
         } else {
             let length = item.timelineSource.characterCount > 0 ? item.timelineSource.characterCount : item.text.count
-            offered = PlaybackCompletionOffer.isOffered(
-                textOffset: snapshot.currentTextStart ?? 0, textLength: length, source: item.timelineSource)
+            positionOffered = PlaybackCompletionOffer.isOffered(
+                textOffset: position.textStart ?? 0, textLength: length, source: item.timelineSource)
         }
-        guard offered, let row = model.libraryItems.first(where: { $0.id == item.id }),
-              ItemQuickAction.completionAction(for: row) == .markComplete else { return nil }
-        return row
+        return PlaybackCompletionOffer.presence(
+            positionOffered: positionOffered,
+            row: positionOffered ? libraryItems.first(where: { $0.id == item.id }) : nil)
     }
 }

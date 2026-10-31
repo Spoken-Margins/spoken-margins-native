@@ -3530,6 +3530,12 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
     private var stoppedMeasurement: StoppedFileMeasurement?
     /// Chosen at the start of a Margin from the route playback was on, and kept for its restarts (#1506).
     private var inputChoice: RecordingInputChoice = .headsetMicrophoneAllowed
+    /// The switch to `playAndRecord` made ahead of `beginRecording`, off the main thread (#2511).
+    private let sessionPreparation = RecordingSessionPreparation<PreparedRecordingSession>(
+        label: "com.spokenmargins.recording-session-preparation"
+    )
+    /// How the last start's session switch went, for the capture diagnostics (#2511).
+    private var sessionSwitchFields: [String: String] = [:]
     #endif
     private let fileManager: FileManager
     private let baseDirectory: URL?
@@ -3626,16 +3632,21 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
         #if os(watchOS)
         try session.setCategory(.playAndRecord, mode: .spokenAudio, options: [.allowBluetoothHFP])
         #else
-        switch inputChoice {
-        case .phoneMicrophoneKeepingA2DP:
-            // No hands-free profile in the options: the Bluetooth microphone isn't an input, so iOS leaves
-            // the headphones on A2DP and records from the phone (#1506).
-            try session.setCategory(.playAndRecord, mode: .spokenAudio, options: [.defaultToSpeaker, .allowBluetoothA2DP])
-        case .headsetMicrophoneAllowed:
-            try session.setCategory(.playAndRecord, mode: .spokenAudio, options: [.defaultToSpeaker, .allowBluetoothHFP])
+        let started = ProcessInfo.processInfo.systemUptime
+        // A preparation off the main thread usually set this already (#2511); then only the cheap activation of a
+        // session already on its route is left here. A restart's cycle sets the category again, as before (#937).
+        let wanted = Self.recordingConfiguration(for: inputChoice)
+        if cycleSession || AudioSessionConfiguration.needsCategoryChange(current: Self.currentConfiguration(session), wanted: wanted) {
+            try session.setCategory(.playAndRecord, mode: .spokenAudio, options: Self.recordingOptions(for: inputChoice))
+            sessionSwitchFields["sessionCategoryOnMain"] = "set"
+        } else {
+            sessionSwitchFields["sessionCategoryOnMain"] = "already_set"
         }
         #endif
         try session.setActive(true)
+        #if os(iOS)
+        sessionSwitchFields["sessionOnMainMs"] = String(max(0, Int(((ProcessInfo.processInfo.systemUptime - started) * 1_000).rounded())))
+        #endif
         #endif
         let directory = try recordingsDirectory()
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -3733,11 +3744,16 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
         captureRestarts = 0
         peakPowerDb = nil
         releasedSessionAtEnd = false
-        #if os(iOS) || os(watchOS)
-        shouldNotifyOtherAudioOnFinish = session.categoryOptions.contains(.mixWithOthers)
-        #endif
         #if os(iOS)
-        inputChoice = RecordingInputPolicy.choice(outputPortTypes: session.currentRoute.outputs.map(\.portType.rawValue))
+        // A preparation read the session before its switch changed it (#2511); without one, read it now.
+        let prepared = sessionPreparation.claim()
+        let context = prepared?.context ?? Self.readRecordingContext(session)
+        shouldNotifyOtherAudioOnFinish = context.otherAudioMixed
+        inputChoice = context.inputChoice
+        sessionSwitchFields = Self.preparationFields(prepared)
+        #elseif os(watchOS)
+        shouldNotifyOtherAudioOnFinish = session.categoryOptions.contains(.mixWithOthers)
+        inputChoice = .headsetMicrophoneAllowed
         #else
         inputChoice = .headsetMicrophoneAllowed
         #endif
@@ -3866,6 +3882,7 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
         #if os(iOS)
         // The session fields name only the output route; a silent microphone is about the input.
         fields["inputs"] = AVAudioSession.sharedInstance().currentRoute.inputs.map(\.portType.rawValue).joined(separator: "+")
+        fields.merge(sessionSwitchFields) { current, _ in current }
         #endif
         return fields.merging(AudioSessionDiagnostics.fields()) { current, _ in current }
         #else
@@ -3948,6 +3965,7 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
 
     public func cancelRecording() throws {
         #if canImport(AVFoundation)
+        _ = sessionPreparation.abandon() // the session is let go just below either way
         finalizedIntegrity = nil
         let url = currentURL
         isCaptureActive = false
@@ -4066,6 +4084,105 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
         }
         return path
     }
+}
+
+/// What a Margin's start reads from the audio session before switching it to `playAndRecord` (#2511): once the switch
+/// has run, the route and the category options say what the recording set, not what playback had.
+struct PreparedRecordingSession: Sendable {
+    /// Which microphone to open, from the output route playback was on (#1506).
+    var inputChoice: RecordingInputChoice
+    /// Playback mixed with other apps' audio, so finishing the Margin tells them they may resume.
+    var otherAudioMixed: Bool
+}
+
+extension SystemRecordingClient: RecordingSessionPreparing {
+    /// Called on the tap, after the tap paused the source. The switch runs on the preparation queue; `beginRecording`
+    /// claims it, and `cancelRecording` or `abandonRecordingSessionPreparation` drop it (#2511).
+    public func prepareRecordingSession(then: @escaping @MainActor @Sendable () -> Void) {
+        #if canImport(AVFoundation) && os(iOS)
+        guard !isCaptureActive else {
+            Task { @MainActor in then() }
+            return
+        }
+        sessionPreparation.prepare(
+            readContext: { Self.readRecordingContext(AVAudioSession.sharedInstance()) },
+            apply: { context in Self.applyRecordingSession(for: context.inputChoice) },
+            then: then
+        )
+        #else
+        Task { @MainActor in then() }
+        #endif
+    }
+
+    public func abandonRecordingSessionPreparation() {
+        #if canImport(AVFoundation) && os(iOS)
+        // As `cancelRecording` does after a recording started: let go and tell other audio it may resume. A source
+        // the tap paused takes the session back for playback when it resumes.
+        guard sessionPreparation.abandon(), !isCaptureActive else { return }
+        MainThreadOperationLabels.shared.scoped("audioSession.deactivate") {
+            _ = try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        }
+        releasedSessionAtEnd = true
+        #endif
+    }
+
+    #if canImport(AVFoundation) && os(iOS)
+    static func recordingOptions(for choice: RecordingInputChoice) -> AVAudioSession.CategoryOptions {
+        switch choice {
+        case .phoneMicrophoneKeepingA2DP:
+            // No hands-free profile in the options: the Bluetooth microphone isn't an input, so iOS leaves
+            // the headphones on A2DP and records from the phone (#1506).
+            return [.defaultToSpeaker, .allowBluetoothA2DP]
+        case .headsetMicrophoneAllowed:
+            return [.defaultToSpeaker, .allowBluetoothHFP]
+        }
+    }
+
+    static func recordingConfiguration(for choice: RecordingInputChoice) -> AudioSessionConfiguration {
+        AudioSessionConfiguration(
+            category: AVAudioSession.Category.playAndRecord.rawValue,
+            mode: AVAudioSession.Mode.spokenAudio.rawValue,
+            optionsRawValue: recordingOptions(for: choice).rawValue
+        )
+    }
+
+    static func currentConfiguration(_ session: AVAudioSession) -> AudioSessionConfiguration {
+        AudioSessionConfiguration(
+            category: session.category.rawValue, mode: session.mode.rawValue, optionsRawValue: session.categoryOptions.rawValue
+        )
+    }
+
+    static func readRecordingContext(_ session: AVAudioSession) -> PreparedRecordingSession {
+        PreparedRecordingSession(
+            inputChoice: RecordingInputPolicy.choice(outputPortTypes: session.currentRoute.outputs.map(\.portType.rawValue)),
+            otherAudioMixed: session.categoryOptions.contains(.mixWithOthers)
+        )
+    }
+
+    /// Runs on the preparation queue. True when it left the session in the recording configuration, which is
+    /// what an abandon has to let go of.
+    static func applyRecordingSession(for choice: RecordingInputChoice) -> Bool {
+        let session = AVAudioSession.sharedInstance()
+        var changed = false
+        do {
+            if AudioSessionConfiguration.needsCategoryChange(current: currentConfiguration(session), wanted: recordingConfiguration(for: choice)) {
+                try session.setCategory(.playAndRecord, mode: .spokenAudio, options: recordingOptions(for: choice))
+                changed = true
+            }
+            try session.setActive(true)
+            return true
+        } catch {
+            return changed
+        }
+    }
+
+    static func preparationFields(_ claim: RecordingSessionPreparation<PreparedRecordingSession>.Claim?) -> [String: String] {
+        guard let claim else { return ["sessionPreparedOffMain": "none"] }
+        var fields = ["sessionPreparedOffMain": claim.applied ? "applied" : "failed"]
+        if let elapsedMs = claim.elapsedMs { fields["sessionPreparedOffMainMs"] = String(elapsedMs) }
+        return fields
+    }
+    #endif
 }
 
 public final class SystemSpeechTranscriptionClient: @unchecked Sendable {

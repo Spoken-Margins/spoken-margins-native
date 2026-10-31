@@ -354,6 +354,12 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         return maps.first
     }
 
+    /// The id `loadListeningMap(itemId:)` would return, read from the row's id column: the map's JSON is never copied
+    /// out or decoded (#2506). A row whose JSON is broken still counts here; the next whole read sets it aside.
+    public func listeningMapId(itemId: String) throws -> String? {
+        try recordIds(kind: "listening_map", itemId: itemId, name: #function).first
+    }
+
     public func saveListeningMap(_ map: ListeningMap) throws {
         try withTransaction {
             try deleteRecords(kind: "listening_map", itemId: map.itemId)
@@ -848,6 +854,23 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         try loadBySession(kind: "turn", sessionId: sessionId)
     }
 
+    /// The id (the turn's own, not the record key `session::turn`) of the session's newest summary turn that has not completed, or nil: what the pending-summary check wants
+    /// from `loadTurns(sessionId:)` without decoding every turn of the session (#2506). The same order as that read
+    /// (`updated_at`, then `id`), newest first. A turn whose payload isn't valid JSON is skipped here; the whole read
+    /// would have refused it.
+    public func latestPendingSummaryTurnId(sessionId: String) throws -> String? {
+        var found: String?
+        try readTexts(
+            """
+            SELECT json_extract(payload, '$.id') FROM records WHERE kind = 'turn' AND session_id = ? AND json_valid(payload)
+              AND json_extract(payload, '$.turnType') = 'interjection_summary'
+              AND json_extract(payload, '$.status') IS NOT 'complete'
+            ORDER BY updated_at DESC, id DESC LIMIT 1;
+            """, [sessionId], name: "latest_pending_summary_turn_id"
+        ) { found = $0 }
+        return found
+    }
+
     public func saveAIJob(_ job: AIJob) throws {
         try save(kind: "ai_job", id: job.id, sessionId: job.sessionId, itemId: job.itemId, value: job)
     }
@@ -1193,6 +1216,16 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         return values.last
     }
 
+    /// Whether the item has a fingerprint spine, without reading or decoding it (#2506): a spine is megabytes for a long
+    /// episode, and a caller that only branches on "is there one" asked `loadEditionFingerprintSpine` for all of it. A
+    /// spine this build can't decode counts as present, so a cleanup keeps what it can't read instead of deleting it.
+    public func hasEditionFingerprintSpine(itemId: String) throws -> Bool {
+        var found = false
+        try readTexts("SELECT id FROM records WHERE kind = 'edition_fingerprint_spine' AND item_id = ? LIMIT 1;", [itemId],
+                      name: "has_edition_fingerprint_spine") { _ in found = true }
+        return found
+    }
+
     public func saveTranscriptPhraseSketch(_ sketch: TranscriptPhraseSketchArtifact) throws {
         try withTransaction {
             try deleteRecords(kind: "transcript_phrase_sketch", itemId: sketch.itemId)
@@ -1228,6 +1261,12 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         try loadByItem(kind: "portable_listening_map_proposal", itemId: itemId)
     }
 
+    /// The ids of the item's proposals, in `loadPortableListeningMapProposals(itemId:)`'s order, without reading them
+    /// (#2506). A proposal carries its whole map, so a caller asking only whether there is one reads this instead.
+    public func portableListeningMapProposalIds(itemId: String) throws -> [String] {
+        try recordIds(kind: "portable_listening_map_proposal", itemId: itemId, name: #function)
+    }
+
     public func saveResolvedListeningMapProjection(_ projection: ResolvedListeningMapProjection) throws {
         try withTransaction {
             try deleteRecords(kind: "resolved_listening_map_projection", itemId: projection.itemId)
@@ -1244,7 +1283,7 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         projection: ResolvedListeningMapProjection
     ) throws -> Bool {
         try withTransaction {
-            guard try loadPortableListeningMapProposals(itemId: projection.itemId).isEmpty,
+            guard try portableListeningMapProposalIds(itemId: projection.itemId).isEmpty,
                   try loadResolvedListeningMapProjection(itemId: projection.itemId) == nil,
                   // A friend's map not placed yet (its audio may still be downloading) comes first.
                   try !loadImportedCommentaryLayers(itemId: projection.itemId).contains(where: \.holdsListeningMap)
@@ -1700,6 +1739,14 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
 
     private func loadBySession<T: Decodable>(kind: String, sessionId: String, caller: String = #function) throws -> [T] {
         try query("SELECT kind, id, payload FROM records WHERE kind = ? AND session_id = ? ORDER BY updated_at, id;", [kind, sessionId], caller: caller)
+    }
+
+    /// The ids of an item's records of one kind, in `loadByItem`'s order. Only the id column is read (#2506).
+    private func recordIds(kind: String, itemId: String, name: String) throws -> [String] {
+        var ids: [String] = []
+        try readTexts("SELECT id FROM records WHERE kind = ? AND item_id = ? ORDER BY updated_at, id;",
+                      [kind, itemId], name: name) { ids.append($0) }
+        return ids
     }
 
     private func loadByItem<T: Decodable>(kind: String, itemId: String, caller: String = #function) throws -> [T] {

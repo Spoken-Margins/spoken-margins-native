@@ -1,0 +1,7 @@
+app.spokenmargins.proximitytoprogress.com {
+	# managed-by: spokenmargins-web (research/B4/deploy/deploy.sh)
+	# The web listener moved to app.spokenmargins.com (#3062). This old host
+	# redirects page loads there, path kept. No log directive, like the new
+	# host. Keep it up as long as anything may point here.
+	redir https://app.spokenmargins.com{uri} permanent
+}

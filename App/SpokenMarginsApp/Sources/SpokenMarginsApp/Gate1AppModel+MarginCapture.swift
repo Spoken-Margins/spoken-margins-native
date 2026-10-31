@@ -202,7 +202,14 @@ extension Gate1AppModel {
         if status == .granted {
             diagnostics["lastMicrophonePermissionResult"] = "granted"
             pauseSourceOnTap(requestedAt: requestedAt)
-            microphoneAccess.record { [weak self] in self?.startInterjectionRecording(requestedAt: requestedAt, captureID: voiceCaptureRequestID) }
+            let start: @MainActor @Sendable () -> Void = { [weak self] in
+                self?.startInterjectionRecording(requestedAt: requestedAt, captureID: voiceCaptureRequestID)
+            }
+            if let preparer = recordingSessionPreparerForTap() {
+                preparer.prepareRecordingSession(then: start)
+            } else {
+                microphoneAccess.record(start)
+            }
             return
         }
         if let status, marginCapture.holdForPrimer(captureID: voiceCaptureRequestID, status: status) {
@@ -217,6 +224,24 @@ extension Gate1AppModel {
     private func pauseSourceOnTap(requestedAt: Date) {
         guard let engine else { return }
         snapshot = engine.pauseSourceForInterjection(request: .tapped(at: requestedAt))
+    }
+
+    /// #2511: switching the audio session to `playAndRecord` moves Bluetooth headphones to the hands-free profile, and
+    /// that wait (about 1 s on AirPods in the owner's Diagnostics) froze the screen on every Margin's tap. When nothing
+    /// is sounding (the tap paused the podcast, or nothing played), the switch runs off the main thread first and the
+    /// recorder starts once it is done. A source still playing (speech, which the engine pauses itself) keeps the old
+    /// order, so it is never heard moving to the hands-free profile.
+    private func recordingSessionPreparerForTap() -> RecordingSessionPreparing? {
+        guard let engine, let preparer = engine.recordingSessionPreparer,
+              !snapshot.status.isPlaybackActive, !snapshot.isRecording else { return nil }
+        gate2CompactControls.recordingWillTakeAudioSession() // a live-speech activation still waiting must not follow the switch (#2967)
+        return preparer
+    }
+
+    /// No recording is coming from a tap whose session switch may have run (#2511): let the session go, after the
+    /// switch if it is still running, before anything else touches it.
+    private func abandonRecordingSessionPreparation() {
+        engine?.recordingSessionPreparer?.abandonRecordingSessionPreparation()
     }
 
     /// The Margin ended before the recorder was asked for (Cancel, or a start that failed): a podcast the tap
@@ -281,6 +306,7 @@ extension Gate1AppModel {
             }
         }
         guard !snapshot.isRecording else { return }
+        abandonRecordingSessionPreparation() // a start that failed before the recorder claimed the switch
         resumeSourcePausedOnTap() // a start that failed before the engine took over the pause
         clearRecordingPresentation()
         resumeHeldMarginVoice(heldMarginVoice) // no recording came of it: the Margin it paused plays on (#1672)
@@ -345,6 +371,7 @@ extension Gate1AppModel {
         let held = heldMarginVoice
         if isRequestingRecordingPermission && !snapshot.isRecording {
             marginCapture.abandonVoiceRequest()
+            abandonRecordingSessionPreparation()
             resumeSourcePausedOnTap()
             resumeHeldMarginVoice(held)
             return
@@ -437,6 +464,7 @@ extension Gate1AppModel {
     func switchPendingVoiceCaptureToWrittenMargin() {
         guard isRequestingRecordingPermission, !snapshot.isRecording else { return }
         marginCapture.abandonVoiceRequest()
+        abandonRecordingSessionPreparation()
         let heldShared = heldMarginVoice?.kind == .shared
         marginVoiceHeldForRecording = nil // no recording is coming, so a Margin of any kind stays as it is and nothing is left to play it on (#1672)
         if heldShared { stopImportedCommentaryPlayback(resumeSource: false) } // a card up blocks writing; the Margin is let go, as Add a Margin used to do

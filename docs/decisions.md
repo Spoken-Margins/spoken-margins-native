@@ -309,3 +309,12 @@ How it is used:
   - **A voice Margin without words shares with placeholder words (item title, moment, date), which the listener can replace; on-device transcription replaces it when on.** Every iPhone packet reader back to Build 29 rejects an empty transcript (#304), and transcription is opt-in. He asked: "could we just make up some text or put some placeholder for margins to allow for there to be text? ... can it just be the title of the item they're listening to and the timestamp and the date?"
     - The words read like `Voice Margin at 12:34 in “<item title>”, recorded 30 Oct 2026`, go in the existing transcript field, and add no packet key.
     - The listener's own typed words always win. The web app does this (#3025); the iPhone share flow is #3027.
+
+## 2026-10-31
+
+- **Owner's standing call (2026-10-31).** Don't ask again:
+  - **A friend's Margins arrive inside the episode, not ahead of it.** He was asked three questions: should the big button play only the friend's Margins or the whole episode; should the lead-in be 10, 20 or 30 seconds; and should several senders be heard together or one at a time. He turned down a "Cole sent you 7 Margins" front door: "I don't like the idea of Cole sent you his 7 margins, and then you just listen to me talking about something you have absolutely no context for." (#3059)
+    - The big button plays the episode with the friend's Margins on auto-play: "the big button should play the podcast with the margins turned on to autoplay, and then they should be able to turn off autoplay if they only want to hear the tone when the margins are in the episode." With auto-play off, a tone marks each Margin, and one tap plays it.
+    - Review new Margins stays as the second path. It jumps to the lead-in before each Margin, then plays the Margin. Skip goes to the next Margin's lead-in, and a second skip goes straight to the Margin.
+    - The review lead-in is 20 seconds: "if we just did 10 seconds, it's not giving you any context."
+    - The playback screen's Margins tab already lists the friend's Margins in place. The work is drawing the eye to it: "we need to draw their attention to the margins tab in the playback screen so they know that's where they can navigate."

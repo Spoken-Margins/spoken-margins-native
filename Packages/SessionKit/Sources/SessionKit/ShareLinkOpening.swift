@@ -29,8 +29,13 @@ public struct ShareLinkURL: Equatable, Sendable {
     /// Links people send always name the real host, so a Debug build pointed elsewhere (``ProductServer``)
     /// still recognises them; their packet is then fetched from the host in use, and fails like a down server.
     public static func isOnShareHost(_ url: URL) -> Bool {
-        isOnShareHost(url, hosts: [ProductServer.productionHost, ProductServer.host])
+        isOnShareHost(url, hosts: shareHosts + [ProductServer.productionHost, ProductServer.host])
     }
+
+    /// The hosts a share link may name (#3062). The product moved to `spokenmargins.com`; links made under
+    /// the old address keep opening, and the server answers `/l/` on both. Exact hosts only: `www.` is
+    /// not listed (it redirects and is not in the app's Associated Domains), and neither is any suffix match.
+    public static let shareHosts = ["spokenmargins.com", "spokenmargins.proximitytoprogress.com"]
 
     static func isOnShareHost(_ url: URL, hosts: [String]) -> Bool {
         hosts.contains { host in

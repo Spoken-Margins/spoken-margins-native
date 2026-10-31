@@ -5,7 +5,7 @@
 #   research/B4/deploy/deploy-web.sh root@<vps>             # copy it (after the owner approves the dry run)
 #
 # Run deploy.sh first: it adds the Caddy block that serves /srv/www/spokenmargins-web as
-# https://app.spokenmargins.proximitytoprogress.com (caddy-web.caddy) and creates the folder.
+# https://app.spokenmargins.com (caddy-web.caddy) and creates the folder.
 #
 # It builds Web/ as committed at HEAD (git archive, so uncommitted edits never ship) in a temporary
 # folder, with VITE_RELAY_ORIGIN set to the share-link server, and copies the result with rsync. Files
@@ -16,7 +16,7 @@
 # `--mode share-links-test` turns it on (Web/vite.config.ts). The script also refuses a build that
 # carries a test relay origin.
 #
-# Environment: SM_SSH_KEY, SM_RELAY_ORIGIN (default https://spokenmargins.proximitytoprogress.com).
+# Environment: SM_SSH_KEY, SM_RELAY_ORIGIN (default https://spokenmargins.com).
 set -euo pipefail
 IFS=$'\n\t'
 
@@ -24,9 +24,9 @@ dry_run=0
 if [[ "${1:-}" == --dry-run ]]; then dry_run=1; shift; fi
 [[ $# -eq 1 ]] || { echo "usage: $0 [--dry-run] <ssh-host>" >&2; exit 2; }
 host="$1"
-web_host="app.spokenmargins.proximitytoprogress.com"
+web_host="app.spokenmargins.com"
 web_root="/srv/www/spokenmargins-web"
-relay_origin="${SM_RELAY_ORIGIN:-https://spokenmargins.proximitytoprogress.com}"
+relay_origin="${SM_RELAY_ORIGIN:-https://spokenmargins.com}"
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo="$(git -C "${here}" rev-parse --show-toplevel)"
 

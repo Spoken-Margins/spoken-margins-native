@@ -20,13 +20,14 @@ extension Gate1AppModel {
         now: Date = Date()
     ) async throws {
         packageImport.sweepOrphanedFoldersOnce()
-        // The staging below is awaited, so the label covers only the folder listing; `stagePackageFiles` names the rest.
-        let payloadIDs = try hangTelemetry.labels.scoped("pendingPackageHandoffs") { try packageStore.pendingPayloadIDs() }
+        // The inbox is shared with the Share extension, so listing and deleting its files can wait on it; they run off the
+        // main actor (#2510). The staging below is awaited too.
+        let payloadIDs = try await Self.offMain { try packageStore.pendingPayloadIDs() }
         diagnostics["pendingSpokenMarginsPackages"] = "\(payloadIDs.count)"
         for payloadID in payloadIDs where spokenMarginsPackageImportReview == nil {
             do {
                 if keptNotices.hasExpired(payloadID: payloadID, now: now) {
-                    try packageStore.deletePackage(payloadID: payloadID)
+                    try await Self.offMain { try packageStore.deletePackage(payloadID: payloadID) }
                     keptNotices.forget(payloadID: payloadID)
                     diagnostics["pendingSpokenMarginsPackage:\(payloadID)"] = "expired"
                     continue
@@ -38,7 +39,9 @@ extension Gate1AppModel {
                     diagnostics["pendingSpokenMarginsPackage:\(payloadID)"] = "kept_needs_newer_app"
                     continue
                 }
-                let packageURL = try packageStore.packageURL(payloadID: payloadID)
+                let packageURL = try await Self.offMain { try packageStore.packageURL(payloadID: payloadID) }
+                // The release runs when the listener imports or cancels, which must leave no file to open again after a
+                // kill (#2123), so this one stays a single delete in place.
                 let outcome = await stageSpokenMarginsPackage(from: packageURL, announcesRejection: announces) {
                     try? packageStore.deletePackage(payloadID: payloadID)
                     keptNotices.forget(payloadID: payloadID)
@@ -54,21 +57,21 @@ extension Gate1AppModel {
                 }
                 // A staging cut short by a cancelled caller says nothing about the file: keep it for the next launch.
                 guard !Task.isCancelled else { return }
-                try packageStore.deletePackage(payloadID: payloadID)
+                try await Self.offMain { try packageStore.deletePackage(payloadID: payloadID) }
                 keptNotices.forget(payloadID: payloadID)
                 diagnostics["pendingSpokenMarginsPackage:\(payloadID)"] = "rejected"
             } catch {
-                try? packageStore.deletePackage(payloadID: payloadID)
+                try? await Self.offMain { try packageStore.deletePackage(payloadID: payloadID) }
                 keptNotices.forget(payloadID: payloadID)
                 diagnostics["pendingSpokenMarginsPackage:\(payloadID)"] = "rejected:\(error.localizedDescription)"
                 reportFailure(error, context: "Shared Margins package could not be opened")
             }
         }
         for payloadID in keptNotices.overflowIDs() {
-            try? packageStore.deletePackage(payloadID: payloadID)
+            try? await Self.offMain { try packageStore.deletePackage(payloadID: payloadID) }
             keptNotices.forget(payloadID: payloadID)
         }
-        keptNotices.forgetAll(except: Set(try hangTelemetry.labels.scoped("pendingPackageHandoffs") { try packageStore.pendingPayloadIDs() }))
+        keptNotices.forgetAll(except: Set(try await Self.offMain { try packageStore.pendingPayloadIDs() }))
     }
 
     enum SpokenMarginsPackageStageOutcome: Equatable {
@@ -104,7 +107,8 @@ extension Gate1AppModel {
             return .opened
         case .restoreAudio(let restore):
             Task { @MainActor [weak self, labels = hangTelemetry.labels] in
-                defer { labels.scoped("restoreAudioCleanup") { _ = try? FileManager.default.removeItem(at: restore.directory) } }
+                // The folder holds the extracted audio, so its removal runs off the main actor (#2510), still after the restore ends.
+                defer { labels.scoped("restoreAudioCleanup") { Task.detached(priority: .utility) { _ = try? FileManager.default.removeItem(at: restore.directory) } } }
                 guard let self else { return }
                 await self.packageImport.restoreAudio(restore)
                 withExtendedLifetime(self) {} // the model stays retained until the work ends, as the old task body did

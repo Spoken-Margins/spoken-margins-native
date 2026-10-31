@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the Spoken Margins VPS transfer check once a day
+
+[Timer]
+OnCalendar=*-*-* 15:17
+RandomizedDelaySec=600
+Persistent=true
+
+[Install]
+WantedBy=timers.target

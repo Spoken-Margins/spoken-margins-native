@@ -1491,7 +1491,9 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(request.windowBeforeMs, 0)
         XCTAssertEqual(request.windowAfterMs, 120_000)
         XCTAssertEqual(request.durationMs, 120_000)
-        await model.settleItemReload() // the item detail reloads off the main thread after the context attaches (#2510)
+        // The transcript reaches `selectedItem` through a background reload, and the heard-window completion starts a
+        // newer one that supersedes the earlier one, so wait for it before reading the item (#2956, as #2942).
+        await model.settleItemReload()
         XCTAssertEqual(model.selectedItem.interjections.first?.anchor.anchorBefore, "Minute before. Interjection context.")
         XCTAssertEqual(model.selectedItem.interjections.first?.anchor.anchorAfter, "Minute after.")
         XCTAssertEqual(model.selectedItem.interjections.first?.anchorContextStatus, .ready)

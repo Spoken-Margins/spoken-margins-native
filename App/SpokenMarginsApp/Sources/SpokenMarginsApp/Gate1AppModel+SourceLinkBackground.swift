@@ -124,7 +124,7 @@ extension Gate1AppModel {
             feedEntry.fillEpisodeIdentity(of: &identified, showTitle: subscription?.source.title)
             try store.saveItem(identified)
             if item.media?.url == result.selectedCandidate?.audioURL,
-               try store.loadListeningMap(itemId: item.id) == nil,
+               try store.listeningMapId(itemId: item.id) == nil, // whether there is one, not the map (#2506)
                let summary = feedEntry.summary,
                let chapters = TimestampedDescriptionChapterParser.parse(summary) {
                 _ = try engine.attachPublisherChapters(itemId: item.id, collection: chapters)

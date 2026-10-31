@@ -40,7 +40,7 @@ extension Gate1AppModel {
             guard let previous = try ListeningEditionStore.application().load(itemID: edition.itemID) else { return .none }
             if previous != edition { return .different }
             // Saved edition but the item is gone from the Library: import it again.
-            return (try? requireStore().loadItem(id: edition.itemID)) == nil ? .none : .identical
+            return (try? requireStore().loadItemSummary(id: edition.itemID)) == nil ? .none : .identical // not the text (#2506)
         }, importOne: { edition in
             try saveListeningEdition(edition, replaceMap: false)
             schedulePrewarmAfterPreparedTextChange(itemId: edition.itemID)
@@ -137,7 +137,7 @@ extension Gate1AppModel {
         }
         let store = try requireStore()
         // Stable source identity preserves every existing session and Margin on retry.
-        if (try? store.loadItem(id: edition.itemID)) == nil {
+        if (try? store.loadItemSummary(id: edition.itemID)) == nil { // whether it is there, not its text (#2506)
             try store.saveItem(Item(id: edition.itemID, title: edition.title, mediaType: "text", text: edition.text,
                                    externalReference: edition.sourceURL, status: "ready", externalReferenceType: "url", createdAt: Date()))
         }

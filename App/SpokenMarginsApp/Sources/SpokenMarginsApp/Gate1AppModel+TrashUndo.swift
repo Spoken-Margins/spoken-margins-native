@@ -115,7 +115,7 @@ extension Gate1AppModel {
             }
             let recordings = try store.loadInterjections(itemId: id)
             let quarantinedRecordings = try store.quarantinedMarginAudioPaths(itemId: id)
-            podcastDownloadCoordinator?.removeItem(id)
+            podcastDownloadCoordinator?.queueRemoval(id)
             removeDurableGeneratedAudio(for: item)
             removeEpisodeMapArtifacts(itemId: id)
             try store.deleteItem(id: id)
@@ -157,7 +157,7 @@ extension Gate1AppModel {
             }
             let recordings = try ids.flatMap { try store.loadInterjections(itemId: $0) }
             let quarantinedRecordings = try ids.flatMap { try store.quarantinedMarginAudioPaths(itemId: $0) }
-            ids.forEach { podcastDownloadCoordinator?.removeItem($0) }
+            ids.forEach { podcastDownloadCoordinator?.queueRemoval($0) }
             items.forEach { removeDurableGeneratedAudio(for: $0) }
             ids.forEach(removeEpisodeMapArtifacts)
             try store.deleteItems(ids: ids)

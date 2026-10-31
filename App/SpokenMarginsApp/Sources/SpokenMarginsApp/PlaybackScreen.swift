@@ -315,8 +315,11 @@ struct PlaybackScreen: View {
                 .foregroundStyle(.white)
                 .accessibilityIdentifier("playback.finished.share.button")
             } else {
-                marginRow
-                PlaybackMarkCompleteButton()
+                // Computed here, where the screen follows the playback clock; the diagnostics sit behind a row that
+                // is always there, because a button that shows nothing gets no appear or change callbacks (#2968).
+                let completion = model.playbackCompletionPresence
+                marginRow.background { PlaybackMarkCompleteDiagnostics(presence: completion) }
+                PlaybackMarkCompleteButton(presence: completion)
             }
         }
         .padding(.horizontal, 22)

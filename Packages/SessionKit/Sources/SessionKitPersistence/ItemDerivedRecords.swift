@@ -244,7 +244,7 @@ extension SQLiteSessionStore {
                 media: item.media, deletedAt: item.deletedAt, author: item.author, sourceTitle: item.sourceTitle,
                 sourceURL: item.sourceURL, createdAt: item.createdAt, publishedAt: item.publishedAt,
                 sourceCompletedAt: item.sourceCompletedAt, hasListenableText: slice.hasListenableText,
-                textCharacterCount: slice.textCharacterCount)
+                textCharacterCount: slice.textCharacterCount, transcriptId: item.transcriptId)
         }
     }
 

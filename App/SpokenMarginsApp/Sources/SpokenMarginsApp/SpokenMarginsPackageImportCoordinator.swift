@@ -58,7 +58,7 @@ final class SpokenMarginsPackageImportCoordinator {
         var publishError: @MainActor (String?) -> Void
         /// Saves a shared Listening Map for a text item and tells a running session about it. Nil saves straight to the store.
         var attachListeningMap: (@MainActor (ListeningMap) throws -> Void)? = nil
-        /// Names the main-thread work `stage` still does itself (copying the packet and reading its archive), for the hang probe.
+        /// Names main-thread work for the hang probe. `stage` no longer has any (#2510).
         var labels = MainThreadOperationLabels()
     }
 
@@ -158,14 +158,29 @@ final class SpokenMarginsPackageImportCoordinator {
 
     // MARK: Stage
 
+    /// Creates `root`, copies the packet into it and reads the archive, on a background thread (#2510). The same
+    /// steps in the same order as before; only the thread changes. The caller holds the security-scoped access to
+    /// `sourceURL` for the whole call, and removes `root` itself if this throws.
+    nonisolated private static func copyAndRead(from sourceURL: URL, into root: URL) async throws -> VerifiedSpokenMarginsPackage {
+        try await Task.detached(priority: .userInitiated) {
+            let copiedPackage = root.appending(path: "package.spokenmargins")
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            try FileManager.default.copyItem(at: sourceURL, to: copiedPackage)
+            return try SpokenMarginsPackageArchive.read(
+                from: copiedPackage,
+                extractingAssetsTo: root.appending(path: "assets", directoryHint: .isDirectory)
+            )
+        }.value
+    }
+
     /// Copies the packet into its own folder under Application Support, verifies it and either opens an item it
     /// already belongs to or shows it for review. `releaseSource` runs once the packet no longer needs the file it
     /// came from: now for a packet already in the library, otherwise when its review is imported or cancelled. A
     /// rejected packet never calls it; the caller decides what happens to that file.
     ///
     /// The Library is searched for the packet's item, and for an earlier import of it, off the main actor (#2507):
-    /// matching hashes every item's text. The copy of the packet and the read of its archive still run on the main
-    /// actor (#2510). The staging folder is registered in `stagingFolders` from its creation to the end of the call,
+    /// matching hashes every item's text. The copy of the packet and the read of its archive run off the main actor
+    /// too (#2510): both scale with the packet. The staging folder is registered in `stagingFolders` from its creation to the end of the call,
     /// so the launch sweep and a second `stage` that runs while this one waits leave it alone.
     func stage(
         from sourceURL: URL, announcesRejection: Bool = true, releaseSource: (@MainActor () -> Void)? = nil
@@ -181,14 +196,7 @@ final class SpokenMarginsPackageImportCoordinator {
             stagingFolders.insert(root.lastPathComponent)
             defer { stagingFolders.remove(root.lastPathComponent) } // by then queue, restoringFolders or the bin owns it
             let copiedPackage = root.appending(path: "package.spokenmargins")
-            let contents = try environment.labels.scoped("stagePackageFiles") {
-                try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-                try FileManager.default.copyItem(at: sourceURL, to: copiedPackage)
-                return try SpokenMarginsPackageArchive.read(
-                    from: copiedPackage,
-                    extractingAssetsTo: root.appending(path: "assets", directoryHint: .isDirectory)
-                )
-            }
+            let contents = try await Self.copyAndRead(from: sourceURL, into: root)
             guard let digest = contents.manifest.contentDigest else {
                 throw SpokenMarginsPackageArchiveError.invalidDigest
             }

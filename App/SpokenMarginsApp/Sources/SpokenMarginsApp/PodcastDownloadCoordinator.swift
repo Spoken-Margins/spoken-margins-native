@@ -310,7 +310,7 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
         }
     }
 
-    func removeItem(_ itemId: String) {
+    func queueRemoval(_ itemId: String) {
         invalidateAttempt(itemId: itemId)
         let file = recordsByItemId[itemId].flatMap { localURL(for: $0) }
         recordsByItemId[itemId] = nil
