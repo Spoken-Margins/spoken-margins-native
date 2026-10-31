@@ -128,9 +128,9 @@ export function NowPlaying({ onClose }: { onClose: () => void }) {
         </div>
 
         <div className="transport">
-          <button type="button" className="speed-button" aria-label={`Speed ${player.rate} times. Change speed`} onClick={() => player.setRate(nextSpeed(player.rate))}>
-            {player.rate}×
-          </button>
+          {/* Speed sits on the right: on an iPhone the volume indicator slides in over the left edge (#3037). The
+              spacer on the left keeps Play centred. */}
+          <span className="speed-button-spacer" aria-hidden="true" />
           <button type="button" className="icon-button transport-skip" aria-label={`Back ${SKIP_SECONDS} seconds`} onClick={() => player.skip(-SKIP_SECONDS)}>
             <BackIcon />
           </button>
@@ -140,7 +140,9 @@ export function NowPlaying({ onClose }: { onClose: () => void }) {
           <button type="button" className="icon-button transport-skip" aria-label={`Forward ${SKIP_SECONDS} seconds`} onClick={() => player.skip(SKIP_SECONDS)}>
             <ForwardIcon />
           </button>
-          <span className="speed-button-spacer" aria-hidden="true" />
+          <button type="button" className="speed-button" aria-label={`Speed ${player.rate} times. Change speed`} onClick={() => player.setRate(nextSpeed(player.rate))}>
+            {player.rate}×
+          </button>
         </div>
         {player.loading && <p className="muted np-status">Loading audio…</p>}
 
