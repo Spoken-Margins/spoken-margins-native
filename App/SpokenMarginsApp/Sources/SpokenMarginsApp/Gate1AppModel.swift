@@ -2325,7 +2325,7 @@ final class Gate1AppModel: ObservableObject {
             if command == .finishInterjection || command == .cancelInterjection {
                 streamingSpeechQueue.resumeAfterInterjection()
                 if !snapshot.isRecording {
-                    marginCapture.clearPresentationContext()
+                    clearRecordingPresentation()
                     refreshMarginRowsInBackground(forItem: snapshot.itemId)
                 }
             }

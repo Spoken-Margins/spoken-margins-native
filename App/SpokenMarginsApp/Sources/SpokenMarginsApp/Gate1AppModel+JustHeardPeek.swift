@@ -41,8 +41,12 @@ extension Gate1AppModel {
         }
     }
 
-    /// The Margin was saved or cancelled: words still on their way are for nobody.
-    func endJustHeardPeek() {
+    /// A recording screen's context is gone: the Margin was saved, cancelled, cut short, switched to writing or failed to
+    /// start. The words still on their way, or already shown, are for nobody. Every path that ends a recording clears
+    /// through here, so a path added later can't leave the last Margin's words behind (Lock Screen and Live Activity
+    /// finish, an interruption and the switch to writing did before this).
+    func clearRecordingPresentation() {
+        marginCapture.clearPresentationContext()
         justHeardPeek.end()
     }
 

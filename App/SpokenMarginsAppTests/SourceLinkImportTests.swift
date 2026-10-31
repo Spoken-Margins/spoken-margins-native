@@ -1499,8 +1499,6 @@ final class SourceLinkImportTests: XCTestCase {
         }
     }
 
-    /// #652: heard audio for a Margin whose context is already ready is never used, so it mustn't stay in the cache,
-    /// and the Margin's context must stay as it was.
     /// #2966: on a podcast with no transcript, the recording screen's "Just heard" card fills in from the seconds the
     /// player decoded before the tap, and empties once the Margin is saved.
     func testJustHeardFillsInFromTheHeardAudioWhileAPodcastMarginRecords() async throws {
@@ -1561,6 +1559,8 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertNil(model.justHeardPeek.text, "the saved Margin's words don't carry into the next recording")
     }
 
+    /// #652: heard audio for a Margin whose context is already ready is never used, so it mustn't stay in the cache,
+    /// and the Margin's context must stay as it was.
     func testHeardAudioForAMarginWithReadyContextIsDiscarded() async throws {
         let resolver = StaticAppLinkResolver(result: LinkResolutionResult(
             requestId: "ignored",
