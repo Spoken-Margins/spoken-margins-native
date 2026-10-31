@@ -46,7 +46,7 @@ export function Library({ onPlay, onFindShows }: { onPlay: () => void; onFindSho
                   <span className="row-kicker">{row.show?.title}</span>
                   <span className="row-title">{row.episode.title}</span>
                   <span className="row-meta">
-                    {current ? <span className="tag tag-blue">{player.playing ? 'Playing' : 'Paused'}</span> : <StateTag row={row} />}
+                    {current ? <span className="tag tag-status">{player.playing ? 'Playing' : 'Paused'}</span> : <StateTag row={row} />}
                     {[shortDate(row.episode.publishedAt), minutes(row.episode.durationSeconds)].filter(Boolean).join(', ')}
                   </span>
                   {row.state === 'started' && row.progress !== undefined && (
@@ -68,7 +68,7 @@ export function Library({ onPlay, onFindShows }: { onPlay: () => void; onFindSho
 /** New, Resume at, Played: a word for every state, so none rests on colour. */
 export function StateTag({ row }: { row: LibraryRow }) {
   if (row.state === 'started' && row.resumeAt !== undefined) {
-    return <span className="tag tag-blue">Resume at {formatClock(row.resumeAt)}</span>;
+    return <span className="tag tag-status">Resume at {formatClock(row.resumeAt)}</span>;
   }
   if (row.state === 'finished') return <span className="tag tag-quiet">Played</span>;
   if (!row.episode.audioUrl) return <span className="tag tag-quiet">Post, voice checked when you play</span>;
