@@ -79,9 +79,9 @@ extension Gate1AppModel {
                     isReproducible: true
                 ), manifest: manifest
             ) else { return }
-            for asset in try store.loadOwnedOfflineAssets(itemId: item.id) where asset.category == .preparedChunk {
-                try store.updateOwnedOfflineAsset(id: asset.id) { $0.isRedundant = true }
-            }
+            // The whole audio now stands in for the chunks; marking them is a few small writes, off the main actor (#2509).
+            let itemId = item.id
+            _ = try await StoreReader(store).read { try OnboardingAndOfflineAssetWrites.markRedundant(category: .preparedChunk, itemId: itemId, in: $0) }
         } catch {
             try? await ledger.release(reservationId: assemblyReservation.id)
             throw error
