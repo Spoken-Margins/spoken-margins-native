@@ -7,7 +7,8 @@ import UIKit
 
 /// Session export, batch export and copying. Moved out of `Gate1AppModel.swift` unchanged (#983).
 extension Gate1AppModel {
-    func buildExport() {
+    @discardableResult
+    func buildExport() -> Task<Void, Never>? {
         refreshExportPreview(reportStatus: true)
     }
 
@@ -16,25 +17,44 @@ extension Gate1AppModel {
         refreshExportPreview(reportStatus: false)
     }
 
-    func refreshExportPreview(reportStatus: Bool) {
+    /// Builds the Export screen's preview with its store reads off the main thread (#2505): a podcast's transcript
+    /// timeline and Listening Map run to megabytes, and every switch on the screen asked for them again. The share
+    /// candidates stay a quick read here. A preview that arrives after the listener picked another session, option
+    /// or format is dropped, so an older, slower build never replaces a newer one. The returned task is for tests.
+    @discardableResult
+    func refreshExportPreview(reportStatus: Bool) -> Task<Void, Never>? {
         exportShareCandidates = []
         guard let exportSessionId else {
             exportPreview = ""
             exportFileURL = nil
-            return
+            return nil
         }
+        var exportEngine: SessionEngine?
         run { engine in
             let store = try requireStore()
             exportShareCandidates = try store.loadInterjections(sessionId: exportSessionId)
                 .filter { $0.status == "active" && $0.targetType == .item }
-            let export = try engine.buildExport(options: currentExportOptions())
-            exportPreview = try renderExport(export)
-            exportFileURL = exportFormat == "markdown"
-                ? try prepareIndividualMarkdownExportFile(markdown: exportPreview, export: export)
-                : nil
-            screen = .export
-            if reportStatus {
-                reportSuccess("Built session export.")
+            exportEngine = engine
+        }
+        guard let engine = exportEngine else { return nil }
+        let options = currentExportOptions(), format = exportFormat
+        return Task { [weak self] in
+            let built: Result<SessionExport, Error>
+            do { built = .success(try await engine.buildExportReadingOffMain(options: options)) } catch { built = .failure(error) }
+            guard let self, currentExportOptions() == options, exportFormat == format else { return }
+            hangTelemetry.labels.scoped("exportPreview.publish") {
+                do {
+                    let export = try built.get()
+                    exportPreview = try renderExport(export)
+                    exportFileURL = format == "markdown"
+                        ? try prepareIndividualMarkdownExportFile(markdown: exportPreview, export: export)
+                        : nil
+                    if reportStatus {
+                        reportSuccess("Built session export.")
+                    }
+                } catch {
+                    reportFailure(error)
+                }
             }
         }
     }

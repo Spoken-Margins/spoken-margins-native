@@ -2572,13 +2572,13 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertTrue(model.statusMessage.hasPrefix("Opened "))
     }
 
-    func testBuildingVisibleExportPreviewDoesNotPresentFeedback() {
+    func testBuildingVisibleExportPreviewDoesNotPresentFeedback() async {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
         model.startItem(id: "item-pill")
 
         model.openExport()
-        model.buildExport()
+        await model.buildExport()?.value // the preview's reads run off the main thread (#2505)
 
         XCTAssertFalse(model.exportPreview.isEmpty)
         XCTAssertNil(model.feedbackEvent)
