@@ -106,7 +106,10 @@ test('follow a show, play, write a Margin, find it in Margins, and resume after 
 
   // Pause, reload: the Library offers to resume, and reopening resumes there.
   await page.getByRole('button', { name: 'Pause' }).click();
-  const pausedAt = await elapsed(page);
+  // The audio's own clock, not the shown one: the label is whole seconds and trails timeupdate, so it can sit more
+  // than a second behind the exact place the pause saves, which made this check fail about half the time.
+  await expect.poll(() => page.getByTestId('audio').evaluate((a: HTMLAudioElement) => a.paused)).toBe(true);
+  const pausedAt = await page.getByTestId('audio').evaluate((a: HTMLAudioElement) => a.currentTime);
   // The pause itself saved the place: wait for that stored row, not for a timer.
   const stored = () =>
     page.evaluate(

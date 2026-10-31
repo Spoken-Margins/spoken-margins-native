@@ -76,6 +76,12 @@ test('the cache file name keeps the packet name and stays inside the folder', ()
   assert.equal(cacheFileName('/'), 'Margins.spokenmargins');
 });
 
+test('a Settings backup keeps its .zip name in the cache, so it opens as the archive it is', () => {
+  assert.equal(cacheFileName('Spoken-Margins-backup-2026-10-31.zip'), 'Spoken-Margins-backup-2026-10-31.zip');
+  assert.equal(cacheFileName('../x/Backup.ZIP'), 'Backup.ZIP');
+  assert.equal(cacheFileName('notes.zip.txt'), 'notes.zip.txt.spokenmargins');
+});
+
 test('saving in the app writes the bytes to the cache, then opens the share sheet with that file', async () => {
   const calls: Call[] = [];
   const { bridge } = fakeBridge(
@@ -141,6 +147,9 @@ test('the file name comes from the address only when it names a packet', () => {
   assert.equal(fileNameFromUri('content://x.provider/document/1234'), undefined);
   assert.equal(fileNameFromUri('content://x.provider/bad%E0%A4%A'), undefined);
   assert.equal(fileNameFromUri('not a url'), undefined);
+  // A backup's name comes through too, so opening it unpacks its packets.
+  assert.equal(fileNameFromUri('file:///storage/emulated/0/Download/Spoken-Margins-backup-2026-10-31.zip'), 'Spoken-Margins-backup-2026-10-31.zip');
+  assert.equal(fileNameFromUri('file:///storage/emulated/0/Download/photo.jpg'), undefined);
 });
 
 test('opened files: content and file addresses are passed on, web addresses ignored, and the listener stops', () => {

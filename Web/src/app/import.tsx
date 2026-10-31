@@ -4,7 +4,7 @@
 // in Now Playing (#2979).
 import { useCallback, useEffect, useRef } from 'react';
 import { useData } from './data.tsx';
-import { isBackupArchive, packetsInBackup } from './logic/backup.ts';
+import { packetsToOpen } from './logic/backup.ts';
 import { importSummary, placeImport } from './logic/import.ts';
 import { plainError } from './logic/messages.ts';
 import { NotSavedError } from './logic/storage.ts';
@@ -103,17 +103,14 @@ export function useLaunchLink(link: ParsedLink, open: OpenShareLink): void {
 }
 
 /**
- * Files from a drop or a picker, one at a time. A backup `.zip` from Settings opens each packet in it (#3012); one
- * with no packets goes to the packet reader as it is, which says plainly that it isn't a Margin file.
+ * Opens one file's bytes, from any way in. A backup `.zip` from Settings opens each packet in it (#3012); anything
+ * else goes to the packet reader as it is, which says plainly when it isn't a Margin file.
  */
+export async function openFileBytes(bytes: Uint8Array, fileName: string | undefined, open: OpenMarginFile): Promise<void> {
+  for (const packet of await packetsToOpen(bytes, fileName)) await open(packet.bytes, packet.name);
+}
+
+/** Files from a drop or a picker, one at a time. */
 export async function openFiles(files: Iterable<File>, open: OpenMarginFile): Promise<void> {
-  for (const file of files) {
-    const bytes = new Uint8Array(await file.arrayBuffer());
-    const packets = isBackupArchive(file.name) ? await packetsInBackup(bytes).catch(() => []) : [];
-    if (packets.length === 0) {
-      await open(bytes, file.name);
-      continue;
-    }
-    for (const packet of packets) await open(packet.bytes, packet.name);
-  }
+  for (const file of files) await openFileBytes(new Uint8Array(await file.arrayBuffer()), file.name, open);
 }

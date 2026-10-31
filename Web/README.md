@@ -90,7 +90,9 @@ every rule about what is read and when stays in `read.ts` and `search.ts`.
   writes the file to the app's cache (Filesystem plugin) and opens Android's share sheet (Share plugin). A packet
   opened with or shared to the app arrives through the App plugin and is read with Filesystem; the file picker
   shows every file there, because Android reports `.spokenmargins` as `application/octet-stream`. The choice is
-  `src/app/logic/native-packets.ts`; the browser keeps its download link and Web Share.
+  `src/app/logic/native-packets.ts`; the browser keeps its download link and Web Share. Settings' "Back up all
+  Margins" takes the same route (`saveFile` in `src/app/download.ts`), and a backup `.zip` opened with the app or
+  shared to the installed web app unpacks its packets as a picked one does (`packetsToOpen`).
 - **Transcription in the app.** The worker fetches the model with the WebView's own `fetch` (CapacitorHttp stays
   off), which Hugging Face allows from any origin. It needs a WebView with WebAssembly SIMD (Chrome 91 or later)
   and Cache Storage, which current Android System WebView has. Not tried on a device.

@@ -47,12 +47,18 @@ export function base64ToBytes(base64: string): Uint8Array {
   return bytes;
 }
 
-/** A name safe to write in the app's cache folder; the share sheet shows it as the file's name. */
+/** The two kinds of file the app hands over: a packet, and a Settings backup `.zip` of packets (#3012). */
+const KEPT_EXTENSIONS = /\.(spokenmargins|zip)$/i;
+
+/**
+ * A name safe to write in the app's cache folder; the share sheet shows it as the file's name. A backup keeps its
+ * `.zip`: renamed `.spokenmargins`, no app would open it as the archive of packets it is.
+ */
 export function cacheFileName(fileName: string): string {
   const base = fileName.split(/[\\/]/).pop() ?? '';
   const cleaned = base.replace(/[\u0000-\u001f\u007f:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').replace(/^\.+/, '').trim();
   const named = cleaned || 'Margins';
-  return named.toLowerCase().endsWith('.spokenmargins') ? named : `${named}.spokenmargins`;
+  return KEPT_EXTENSIONS.test(named) ? named : `${named}.spokenmargins`;
 }
 
 /** Packets waiting in the share sheet live here, inside the app's cache folder, which Android may clear. */
@@ -108,7 +114,8 @@ export function fileNameFromUri(uri: string): string | undefined {
     name = last;
   }
   name = name.split(/[\\/:]/).pop() ?? '';
-  return /\.spokenmargins$/i.test(name) ? name : undefined;
+  // A backup's `.zip` name too, so opening it unpacks its packets.
+  return KEPT_EXTENSIONS.test(name) ? name : undefined;
 }
 
 /** Reads a file another app opened or shared with Spoken Margins (`content://` or `file://`). */

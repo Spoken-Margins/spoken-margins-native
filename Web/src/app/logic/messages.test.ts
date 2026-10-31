@@ -40,6 +40,22 @@ test('feed failures read as what happened and what to do, never a status code', 
   }
 });
 
+test('an unreachable relay says so, and says “offline” only when the browser is offline', () => {
+  // The common case: the site answered but doesn't allow browser reads, and the relay is down or not deployed.
+  // Telling an online listener to check their connection sends them the wrong way.
+  const original = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  const setOnline = (onLine: boolean) => Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { onLine } });
+  try {
+    setOnline(true);
+    assert.equal(plainError(new RelayUnreachable()), MESSAGES.relayUnreachable);
+    assert.doesNotMatch(MESSAGES.relayUnreachable, /online|connection/i);
+    setOnline(false);
+    assert.equal(plainError(new RelayUnreachable()), MESSAGES.offline);
+  } finally {
+    if (original) Object.defineProperty(globalThis, 'navigator', original);
+  }
+});
+
 test('packet and recording errors keep their own plain words', () => {
   const packet = new PacketError('notAPacket', 'file name x.txt has the wrong extension');
   assert.equal(plainError(packet), packet.message);
