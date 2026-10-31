@@ -210,7 +210,9 @@ private struct Gate2LiveActivitySmallView: View {
     }
 }
 
-private struct Gate2LiveActivityView: View {
+/// The Lock Screen card. Internal, and compiled into the app as well as the widget, so an app-hosted test can lay it
+/// out at real text sizes (#1940, LiveActivityLayoutTests).
+struct Gate2LiveActivityView: View {
     let state: Gate2LiveActivityAttributes.ContentState
     let isStale: Bool
 
@@ -588,13 +590,5 @@ private extension View {
         padding(.vertical, vertical)
             .contentShape(Rectangle())
             .padding(.vertical, -vertical)
-    }
-}
-
-@main
-struct SpokenMarginsGate2WidgetBundle: WidgetBundle {
-    var body: some Widget {
-        Gate2LiveActivityWidget()
-        LiveSessionActivityWidget()
     }
 }
