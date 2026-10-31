@@ -146,6 +146,7 @@ Apple build numbers identify uploads, not milestones: each replacement upload ne
    `PATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH" xcodebuild -exportArchive -archivePath artifacts/SpokenMargins-<build>.xcarchive -exportOptionsPlist scripts/TestFlightUploadOptions.plist -exportPath artifacts/export-<build> -allowProvisioningUpdates`
    The PATH prefix matters: Homebrew's rsync breaks Xcode's packaging step. A warning that onnxruntime.framework has no dSYM is expected and harmless.
    Check App Store Connect does not mark the uploaded build `Internal`, and confirm its version, build number and group assignment before calling the upload complete.
+   Before external assignment, run `scripts/release_gate.py` (#2236).
 5. Tag the archived commit `testflight/0.1-build-N`, and push the tag.
 6. Delete the archive and export folders unless the owner wants them kept.
 
