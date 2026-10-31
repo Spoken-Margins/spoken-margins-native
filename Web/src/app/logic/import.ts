@@ -4,6 +4,7 @@
 // Margins land in Following under the person who sent them (owner, 2026-10-17, #1507) and can play at once.
 // Plain TypeScript, so `npm run test:web` covers it (import.test.ts).
 import type { Episode, Margin, Show } from '../../shared/model.ts';
+import { sharedWords } from '../../packet/write.ts';
 import { samePage } from '../../sources/substack.ts';
 import type { PacketRead } from '../ports.ts';
 
@@ -23,9 +24,13 @@ export interface PlacedImport {
   duplicates: number;
 }
 
-/** The same Margin: same episode, the same moment to the half second, and the same words. */
-export function sameMargin(a: Margin, b: Margin): boolean {
-  return a.episodeId === b.episodeId && Math.abs(a.atSeconds - b.atSeconds) < 0.5 && (a.text ?? '').trim() === (b.text ?? '').trim();
+/**
+ * The same Margin: same episode, the same moment to the half second, and the same words. With the episode's title,
+ * a voice Margin here without words matches its own copy from a packet, which carries placeholder words (#3025).
+ */
+export function sameMargin(a: Margin, b: Margin, episodeTitle?: string): boolean {
+  const words = (m: Margin): string => (episodeTitle === undefined ? (m.text ?? '').trim() : sharedWords(m, episodeTitle));
+  return a.episodeId === b.episodeId && Math.abs(a.atSeconds - b.atSeconds) < 0.5 && words(a) === words(b);
 }
 
 export const SHARED_SHOW_PREFIX = 'shared:';
@@ -81,7 +86,7 @@ export function placeImport(
     };
   }
   const placed = read.margins.map((m) => ({ ...m, episodeId: episode.id }));
-  const margins = placed.filter((m) => !existing.some((e) => sameMargin(e, m)));
+  const margins = placed.filter((m) => !existing.some((e) => sameMargin(e, m, episode.title)));
   const landAt = placed.length ? Math.min(...placed.map((m) => m.atSeconds)) : undefined;
   return { episode, newEpisode: !own, ...(show && { show }), margins, landAt, skipped: read.textMarginCount, duplicates: placed.length - margins.length };
 }

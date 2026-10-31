@@ -2,6 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Episode, Margin, Show } from '../../shared/model.ts';
 import type { PacketRead } from '../ports.ts';
+import { episode as fixtureEpisode, voiceMargins } from '../../packet/fixtures.ts';
+import { readPacket } from '../../packet/read.ts';
+import { writePacket } from '../../packet/write.ts';
 import { findEpisode, importSummary, placeImport, sharedShowFor } from './import.ts';
 
 const show: Show = { id: 'feed:https://feeds.test/show.rss', kind: 'podcast', title: 'Show', feedUrl: 'https://feeds.test/show.rss', followedAt: 'T0' };
@@ -102,4 +105,17 @@ test('opening a backup of Margins already here adds none of them again', () => {
 
   const some = placeImport(read({ title: 'Ep', guid: 'g-1' }), [show], [mine], 'NOW', here.slice(0, 1));
   assert.equal(importSummary(some, 'Ada'), 'Opened 1 Margin from Ada on “Episode 1”. 1 Margin was already here.');
+});
+
+test('a voice Margin without words, backed up and opened again, is not added twice (#3025)', async () => {
+  const [, voice] = voiceMargins();
+  const own: Margin = { ...voice, text: undefined };
+  const packet = await readPacket((await writePacket(fixtureEpisode, [own])).bytes);
+  assert.ok(packet.margins[0]?.text?.startsWith('Voice Margin at 2:05'), 'the packet carries placeholder words');
+  const again = placeImport(packet, [], [fixtureEpisode], 'NOW', [own]);
+  assert.deepEqual(again.margins, []);
+  assert.equal(again.duplicates, 1);
+  // A voice Margin at the same moment with words of its own is still a new Margin.
+  const worded = { ...packet, margins: packet.margins.map((m) => ({ ...m, text: 'Mine, out loud.' })) };
+  assert.equal(placeImport(worded, [], [fixtureEpisode], 'NOW', [own]).margins.length, 1);
 });

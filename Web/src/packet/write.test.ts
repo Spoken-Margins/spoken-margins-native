@@ -5,7 +5,8 @@ import { test } from 'node:test';
 import { PacketError } from './errors.ts';
 import { episode, show, voiceMargins, writeVoice, writeWritten, writtenMargins } from './fixtures.ts';
 import { packetMarginId, readPacket } from './read.ts';
-import { conversationId, writePacket } from './write.ts';
+import { conversationId, sharedWords, writePacket } from './write.ts';
+import { voicePlaceholder } from '../shared/placeholder.ts';
 import { listZip, readZip } from './zip.ts';
 
 const fixtures = new URL('../../../Contracts/fixtures/web-packets/', import.meta.url);
@@ -64,13 +65,51 @@ test('a voice Margin travels as a plain AAC m4a with its length', async () => {
   assert.equal(voiced.text, 'This is a web Margin, recorded for the packet test.');
 });
 
-test('a voice Margin with no words is left out with the app notice', async () => {
+test('a voice Margin with no words travels with placeholder words in its transcript (#3025)', async () => {
   const [text, voice] = voiceMargins();
-  const written = await writePacket(episode, [text, { ...voice, text: '  ' }]);
+  for (const words of ['  ', undefined]) {
+    const written = await writePacket(episode, [text, { ...voice, text: words }]);
+    assert.deepEqual(written.included, [text.id, voice.id]);
+    assert.deepEqual(written.leftOut, []);
+    assert.equal(written.notice, undefined);
+    const read = await readPacket(written.bytes);
+    const voiced = read.margins.find((m) => m.voice);
+    assert.ok(voiced?.voice, 'the voice audio travels');
+    const expected = voicePlaceholder({ atSeconds: voice.atSeconds, title: episode.title, recordedAt: new Date(voice.createdAt) });
+    assert.equal(voiced.text, expected);
+    assert.match(expected, /^Voice Margin at 2:05 in “Episode 1 \(example episode\)”, recorded \d{1,2} Oct 2026$/);
+  }
+  // A packet of only that Margin is written too, rather than refused.
+  const alone = await writePacket(episode, [{ ...voice, text: undefined }]);
+  assert.deepEqual(alone.included, [voice.id]);
+  // No new key: the record and its representation have the same keys as a voice Margin with its own words.
+  const firstRecord = async (bytes: Uint8Array) => {
+    const files = await readZip(bytes, unlimited);
+    return JSON.parse(new TextDecoder().decode(files.get('artifacts/commentary-layer.json'))).interjections[0];
+  };
+  const keys = (record: Record<string, unknown>): string[] => Object.keys(record).sort();
+  const own = await firstRecord((await writePacket(episode, [voice])).bytes);
+  const placed = await firstRecord(alone.bytes);
+  assert.deepEqual(keys(placed), keys(own));
+  assert.deepEqual(keys(placed.representations[0]), keys(own.representations[0]));
+  assert.equal(placed.representations[0].kind, 'original_audio_and_text');
+});
+
+test('a voice Margin keeps its own words over the placeholder', () => {
+  const [, voice] = voiceMargins();
+  assert.equal(sharedWords(voice, episode.title), 'This is a web Margin, recorded for the packet test.');
+  assert.equal(sharedWords({ ...voice, text: '  Mine.  ' }, episode.title), 'Mine.');
+  assert.equal(sharedWords({ ...writtenMargins()[0], text: ' ' }, episode.title), '', 'a written Margin gets no placeholder');
+});
+
+test('a written Margin with no words is still left out with the app notice', async () => {
+  const [text] = voiceMargins();
+  const empty = { ...writtenMargins()[0], id: 'empty', text: '  ' };
+  const written = await writePacket(episode, [text, empty]);
   assert.deepEqual(written.included, [text.id]);
-  assert.deepEqual(written.leftOut, [voice.id]);
+  assert.deepEqual(written.leftOut, ['empty']);
   assert.equal(written.notice, "1 Margin has no transcript and wasn't included.");
-  await assert.rejects(writePacket(episode, [{ ...voice, text: undefined }]), (error: unknown) =>
+  await assert.rejects(writePacket(episode, [{ ...empty, text: undefined }]), (error: unknown) =>
     error instanceof PacketError && error.outcome === 'cannotShare');
 });
 
