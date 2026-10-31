@@ -80,6 +80,19 @@ ok "rerun on its own output changes nothing"
 grep -q '127.0.0.1:8796' "${work}/c3" && ! grep -q '127.0.0.1:8795' "${work}/c3" || die "port change not applied"
 ok "rerun with another port replaces the managed blocks"
 
+# The web app's block (#3020): added once, at the end, exactly as the
+# template has it, and replaced in place on a rerun.
+[[ "$(grep -c '^app.spokenmargins.proximitytoprogress.com {$' "${work}/c1")" == 1 ]] || die "web app block not added exactly once"
+cmp -s <(sed -n '/^app.spokenmargins.proximitytoprogress.com {$/,/^}$/p' "${work}/c1") "${here}/caddy-web.caddy" ||
+  die "web app block differs from caddy-web.caddy"
+[[ "$(tail -n "$(wc -l <"${here}/caddy-web.caddy")" "${work}/c1")" == "$(cat "${here}/caddy-web.caddy")" ]] || die "web app block not at the end"
+grep -q '^other.proximitytoprogress.com {$' "${work}/c1" || die "other site lost when the web block was added"
+! sed -n '/^app.spokenmargins.proximitytoprogress.com {$/,/^}$/p' "${work}/c1" | grep -qE '^[[:space:]]*log' || die "web app block must not write an access log"
+sed 's|max-age=31536000|max-age=1|' "${work}/c1" >"${work}/web-old"
+edit "${work}/web-old" "${work}/web-new" || die "managed web block refused"
+cmp -s "${work}/c1" "${work}/web-new" || { diff -u "${work}/c1" "${work}/web-new"; die "managed web block not replaced in place"; }
+ok "web app block added at the end once, and replaced in place on a rerun"
+
 # A refusal is exit status 2 with the "refusing:" message and no candidate
 # file; a crash (any other status) or a half-written candidate is a failure.
 expect_refusal() {
@@ -99,6 +112,10 @@ grep -v '^spokenmargins' "${work}/live" | sed '/^  root \* \/srv\/www\/spokenmar
 expect_refusal "no site block" "${work}/nosite"
 { cat "${work}/live"; printf '\nspokenmargins.proximitytoprogress.com {\n  file_server\n}\n'; } >"${work}/twice"
 expect_refusal "two site blocks" "${work}/twice"
+{ cat "${work}/live"; printf '\napp.spokenmargins.proximitytoprogress.com {\n\trespond "someone else"\n}\n'; } >"${work}/webforeign"
+expect_refusal "a web app block it didn't write" "${work}/webforeign"
+{ cat "${work}/c1"; printf '\n'; cat "${here}/caddy-web.caddy"; } >"${work}/webtwice"
+expect_refusal "two web app blocks" "${work}/webtwice"
 rm -f "${work}/out"
 status=0
 "${here}/edit-caddyfile.sh" "${work}/live" "${work}/out" '8795; rm -rf /' /srv/x 2>"${work}/err" || status=$?
@@ -111,19 +128,27 @@ ok "refuses: a server root that isn't a plain absolute path"
 
 if [[ -n "${CADDY:-}" && -n "${SMSERVER:-}" ]]; then
   # Serve the candidate on loopback: same blocks, site address swapped.
-  root="${work}/server-root" site="${work}/site"
-  mkdir -p "${site}"
+  root="${work}/server-root" site="${work}/site" web="${work}/web"
+  mkdir -p "${site}" "${web}/assets"
   echo "site index" >"${site}/index.html"
+  echo "web index" >"${web}/index.html"
+  echo "self.x=1" >"${web}/sw.js"
+  echo "a=1" >"${web}/assets/index-abc123.js"
   "${SMSERVER}" switch -public "${root}" attest on >/dev/null
   sed -e 's|^spokenmargins.proximitytoprogress.com {|http://127.0.0.1:18443 {|' \
     -e "s|/srv/www/spokenmargins-server|${root}|" -e "s|root \* /srv/www/spokenmargins\$|root * ${site}|" \
     -e 's|^proximitytoprogress.com {|http://127.0.0.1:18444 {|' -e 's|^other.proximitytoprogress.com {|http://127.0.0.1:18445 {|' \
+    -e 's|^app.spokenmargins.proximitytoprogress.com {|http://127.0.0.1:18446 {|' -e "s|/srv/www/spokenmargins-web\$|${web}|" \
     -e 's|^{$|{\n\tadmin off|' "${work}/c1" >"${work}/local"
   "${CADDY}" run --adapter caddyfile --config "${work}/local" >"${work}/caddy.log" 2>&1 &
   sleep 1.5
   code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
   [[ "$(code http://127.0.0.1:18443/api/v1/config.json)" == 200 ]] || die "config.json not served while smserver is down"
   [[ "$(code http://127.0.0.1:18443/)" == 200 ]] || die "site root not served"
+  [[ "$(curl -s http://127.0.0.1:18446/)" == "web index" ]] || die "web app not served"
+  curl -sI http://127.0.0.1:18446/sw.js | grep -qi '^cache-control: no-cache' || die "sw.js must be no-cache"
+  curl -sI http://127.0.0.1:18446/assets/index-abc123.js | grep -qi '^cache-control: public, max-age=31536000, immutable' || die "hashed assets must be immutable"
+  ! curl -sI http://127.0.0.1:18446/ | grep -qi '^server:' || die "web app sends a Server header"
   curl -s -X POST -H 'X-SM-Key-Id: SECRETKEYID' http://127.0.0.1:18443/api/v1/ping >/dev/null
   linkid=8badf00d8badf00d8badf00d8badf00d
   [[ "$(code http://127.0.0.1:18443/l/${linkid})" == 502 ]] || die "link should 502 with smserver down"

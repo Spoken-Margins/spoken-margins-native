@@ -2,18 +2,23 @@
 # edit-caddyfile.sh LIVE CANDIDATE PORT SERVER_ROOT
 #
 # Writes CANDIDATE: LIVE with (1) the spokenmargins-server global options
-# block at the top and (2) the spokenmargins.proximitytoprogress.com site
-# block replaced. Every other line is copied unchanged. It refuses (exit 2)
-# unless the site block is either the plain block the site deploy script
-# creates, or one this script wrote earlier; and unless there is no global
-# block yet, or only one this script wrote. Run by deploy.sh on the VPS;
-# tested locally by test-edit-caddyfile.sh.
+# block at the top, (2) the spokenmargins.proximitytoprogress.com site
+# block replaced, and (3) the web app's site block
+# (app.spokenmargins.proximitytoprogress.com, caddy-web.caddy) replaced, or
+# added at the end when there is none. Every other line is copied unchanged.
+# It refuses (exit 2) unless the site block is either the plain block the
+# site deploy script creates, or one this script wrote earlier; unless there
+# is no global block yet, or only one this script wrote; and unless the web
+# app's block is missing or one this script wrote. Run by deploy.sh on the
+# VPS; tested locally by test-edit-caddyfile.sh.
 set -euo pipefail
 
 live="$1" candidate="$2" port="$3" server_root="$4"
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 marker="# managed-by: spokenmargins-server"
 site_open="spokenmargins.proximitytoprogress.com {"
+web_marker="# managed-by: spokenmargins-web"
+web_open="app.spokenmargins.proximitytoprogress.com {"
 
 refuse() { echo "edit-caddyfile: refusing: $*" >&2; exit 2; }
 
@@ -77,6 +82,27 @@ if ((!managed)); then
     refuse "the site block isn't the plain root/encode/file_server block this script expects; edit it by hand"
 fi
 
+# 3. The web app's block: none yet, or exactly one this script wrote.
+web_start=-1 web_end=-1
+for ((i = 0; i < n; i++)); do
+  if [[ "$(trim "${lines[i]}")" == "${web_open}" ]]; then
+    ((web_start < 0)) || refuse "more than one '${web_open}' block"
+    [[ "${lines[i]}" == "${web_open}" ]] || refuse "web app block is indented; expected it at column 0"
+    web_start=$i
+    for ((j = i + 1; j < n; j++)); do
+      if [[ "${lines[j]}" == "}" ]]; then web_end=$j; break; fi
+    done
+    ((web_end >= 0)) || refuse "web app block has no closing brace at column 0"
+  fi
+done
+if ((web_start >= 0)); then
+  web_managed=0
+  for ((k = web_start + 1; k < web_end; k++)); do
+    [[ "$(trim "${lines[k]}")" == "${web_marker}"* ]] && web_managed=1
+  done
+  ((web_managed)) || refuse "a '${web_open}' block exists that this script didn't write; edit it by hand"
+fi
+
 render() { sed -e "s|@PORT@|${port}|g" -e "s|@SERVER_ROOT@|${server_root}|g" "$1"; }
 
 {
@@ -95,6 +121,15 @@ render() { sed -e "s|@PORT@|${port}|g" -e "s|@SERVER_ROOT@|${server_root}|g" "$1
       i=${site_end}
       continue
     fi
+    if ((i == web_start)); then
+      cat "${here}/caddy-web.caddy"
+      i=${web_end}
+      continue
+    fi
     printf '%s\n' "${lines[i]}"
   done
+  if ((web_start < 0)); then
+    echo
+    cat "${here}/caddy-web.caddy"
+  fi
 } >"${candidate}"
