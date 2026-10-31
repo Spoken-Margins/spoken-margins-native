@@ -82,6 +82,14 @@ link immediately. Data files are private (0600 under 0700 directories), separate
 from the public web root. Pending uploads are unpublished and cleaned on failure;
 the daily sweep also removes interrupted uploads older than an hour.
 
+A link reported to the CyberTipline is the one exception to the 30 days (#2235):
+`smserver hold -state DIR -report REPORTID [-link-file FILE|-] ID` takes it down,
+moves its packet, preview and the reported full link into `links-held` beside the
+links folder (0700, no read call in the server), and the daily sweep deletes it one
+year later, logging each event without content in `links-held/access.log`.
+`smserver release-hold -state DIR -reason TEXT ID` ends a hold early. The owner's
+steps are in `docs/legal/cybertipline-runbook.md`.
+
 Privacy-page wording is an unpublished HTML-comment draft in
 `Site/privacy/index.html`. No server deployment or site publication is part of
 this change.
