@@ -35,7 +35,7 @@ final class ListeningSignalMergeIntegrationTests: XCTestCase {
     func testAllSpokenMarginCompletionRoutesShareTheSignalHook() throws {
         for (file, start, end) in [
             ("Gate1AppModel+MarginCapture.swift", "func finishInterjection()", "func cancelInterjection()"),
-            ("Gate1AppModel.swift", "func performGate2CompactCommand(", "private func compactSkipUnit(")
+            ("Gate1AppModel.swift", "func performGate2CompactCommand(", "func synchronizeStreamingSpeechAnchorIfNeeded(")
         ] {
             let route = try body(appSource(file), from: start, to: end)
             XCTAssertTrue(route.contains("transcribeAndRecordSavedSpokenMargin()"), start)

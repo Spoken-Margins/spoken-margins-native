@@ -1,25 +1,40 @@
-/* Spoken Margins web. Blue carries action and progress; orange marks Margins. Neither carries meaning
-   alone: every state also has a label, an icon or a position (the owner is red-green colourblind).
-   The listener's own words, Margins, are set in a serif; everything else is the system's sans. */
+/* Spoken Margins web, dressed like the iPhone app (#3040). The colours are the app's own semantic colours
+   (Packages/SessionKit/Sources/SessionKit/ExperienceColorContrast.swift), checked by src/app/theme.test.ts:
+   bone pages, white panels with a hairline, and evergreen for actions and the current tab. Blue and orange carry
+   status, never red and green (Design/brief.md rule 3): blue tags say what is playing or where to resume, orange
+   marks Margins. Neither carries meaning alone: every state also has a label, an icon or a position (the owner
+   is red-green colourblind). Screen titles are set in the system serif, bold, as the app's large titles are; the
+   listener's own words, Margins, are in a reading serif; everything else is the system's sans. */
 
 :root {
-  --page: #f3f5f8;
+  /* bone, panel, text, secondaryText */
+  --page: #f7f2e3;
   --surface: #ffffff;
-  --ink: #17202e;
-  --muted: #586274;
-  --rule: #dde2ea;
-  /* Edges a control needs to be seen by: field borders, the switch, the scrubber track (3:1 or more). */
-  --field: #6b7686;
-  --blue: #0b5cad;
-  --blue-soft: #e3eefa;
-  --on-blue: #ffffff;
-  /* Darker than Okabe-Ito's #e69f00 so a Margin's post on the timeline reaches 3:1 on the page. */
+  --ink: #17211c;
+  --muted: #5e6e66;
+  /* border: the hairline around panels, faint by design. */
+  --rule: #d6decf;
+  /* borderIncreased: edges a control needs to be seen by (field borders, the switch, the scrubber track), 3:1. */
+  --field: #758275;
+  /* evergreen, softGreen, onEvergreen: actions, the current tab, progress. */
+  --tint: #144d36;
+  --tint-soft: #e8f0e0;
+  --on-tint: #ffffff;
+  /* Status: what is playing, where to resume. */
+  --status: #0b5cad;
+  --status-soft: #e3eefa;
+  /* Margins. The app's ochre (#c28529) is 2.8:1 on bone, short of the 3:1 a timeline post needs, so the posts
+     use a deeper ochre; dark mode takes the app's own. */
   --orange-mark: #b86e00;
   --orange-ink: #8f4a00;
-  --orange-soft: #fdf0d9;
-  --shadow: 0 10px 30px rgb(15 25 45 / 0.16);
+  --orange-soft: #fbefd8;
+  --shadow: 0 10px 30px rgb(23 33 28 / 0.14);
   --ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
+  /* The app's large titles: New York on Apple devices. */
+  --display: ui-serif, 'New York', 'Iowan Old Style', Charter, Georgia, serif;
   --note: 'Iowan Old Style', Charter, 'Palatino Linotype', Palatino, Georgia, serif;
+  --panel-radius: 18px;
+  --control-radius: 10px;
   --tabbar-h: 64px;
   --mini-h: 60px;
   --gutter: 16px;
@@ -28,19 +43,28 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --page: #0f141c;
-    --surface: #18202b;
-    --ink: #e9edf3;
-    --muted: #9aa5b5;
-    --rule: #2a3442;
-    --field: #7d8aa0;
-    --blue: #6aaef5;
-    --blue-soft: #16314f;
-    --on-blue: #0b1522;
-    --orange-mark: #f0a830;
+    --page: #141a17;
+    --surface: #212924;
+    --ink: #ebf2e8;
+    --muted: #a8b8ad;
+    --rule: #47574d;
+    --field: #85998c;
+    --tint: #7ad69e;
+    --tint-soft: #2e4033;
+    --on-tint: #121714;
+    --status: #6aaef5;
+    --status-soft: #16314f;
+    --orange-mark: #f0b852;
     --orange-ink: #f5b75a;
     --orange-soft: #3a2a10;
     --shadow: 0 10px 30px rgb(0 0 0 / 0.5);
+  }
+}
+
+/* Increase Contrast: the hairline becomes an edge, as the app's borderIncreased does. */
+@media (prefers-contrast: more) {
+  :root {
+    --rule: var(--field);
   }
 }
 
@@ -94,7 +118,7 @@ button:disabled {
 }
 
 :focus-visible {
-  outline: 3px solid var(--blue);
+  outline: 3px solid var(--tint);
   outline-offset: 2px;
   border-radius: 6px;
 }
@@ -164,7 +188,7 @@ button:disabled {
 }
 
 .tab[aria-current='page'] {
-  color: var(--blue);
+  color: var(--tint);
   font-weight: 700;
 }
 
@@ -195,10 +219,11 @@ button:disabled {
 .screen-header h1 {
   min-width: 0;
   overflow-wrap: anywhere;
-  font-size: 2rem;
+  font-family: var(--display);
+  font-size: 2.125rem;
   line-height: 1.1;
-  font-weight: 750;
-  letter-spacing: -0.02em;
+  font-weight: 700;
+  letter-spacing: -0.01em;
 }
 
 .screen-header-sub {
@@ -218,11 +243,14 @@ button:disabled {
 .rows {
   list-style: none;
   margin: 0;
-  padding: 0;
+  padding: 0 16px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--panel-radius);
 }
 
-.rows > li {
-  border-bottom: 1px solid var(--rule);
+.rows > li + li {
+  border-top: 1px solid var(--rule);
 }
 
 .row {
@@ -247,13 +275,13 @@ button:disabled {
   height: 40px;
   margin-top: 2px;
   border-radius: 50%;
-  background: var(--blue-soft);
-  color: var(--blue);
+  background: var(--tint-soft);
+  color: var(--tint);
 }
 
 .episode-row.is-current .row-play {
-  background: var(--blue);
-  color: var(--on-blue);
+  background: var(--tint);
+  color: var(--on-tint);
 }
 
 .row-main {
@@ -298,7 +326,7 @@ button:disabled {
 .progress > span {
   display: block;
   height: 100%;
-  background: var(--blue);
+  background: var(--tint);
 }
 
 .tag {
@@ -312,14 +340,14 @@ button:disabled {
   white-space: nowrap;
 }
 
-.tag-blue {
-  background: var(--blue-soft);
-  color: var(--blue);
+.tag-status {
+  background: var(--status-soft);
+  color: var(--status);
 }
 
 .tag-outline {
-  box-shadow: inset 0 0 0 1.5px var(--blue);
-  color: var(--blue);
+  box-shadow: inset 0 0 0 1.5px var(--tint);
+  color: var(--tint);
 }
 
 .tag-quiet {
@@ -361,13 +389,13 @@ button:disabled {
   height: 48px;
   border-radius: 10px;
   object-fit: cover;
-  background: var(--blue-soft);
+  background: var(--tint-soft);
 }
 
 .artwork-letter {
   display: grid;
   place-items: center;
-  color: var(--blue);
+  color: var(--tint);
   font-weight: 750;
   font-size: 1.25rem;
 }
@@ -386,7 +414,8 @@ button:disabled {
 }
 
 .show-head h1 {
-  font-size: 1.5rem;
+  font-family: var(--display);
+  font-size: 1.625rem;
   line-height: 1.2;
 }
 
@@ -403,7 +432,7 @@ button:disabled {
   gap: 2px;
   min-height: 44px;
   padding-right: 8px;
-  color: var(--blue);
+  color: var(--tint);
   font-weight: 600;
 }
 
@@ -420,15 +449,16 @@ button:disabled {
   gap: 8px;
   min-height: 44px;
   padding: 0 18px;
-  border-radius: 12px;
+  border-radius: var(--control-radius);
   font-weight: 650;
-  background: var(--surface);
-  box-shadow: inset 0 0 0 1.5px var(--field);
+  background: var(--tint-soft);
+  color: var(--tint);
+  box-shadow: inset 0 0 0 1px var(--rule);
 }
 
 .button-primary {
-  background: var(--blue);
-  color: var(--on-blue);
+  background: var(--tint);
+  color: var(--on-tint);
   box-shadow: none;
 }
 
@@ -439,7 +469,7 @@ button:disabled {
   width: 44px;
   height: 44px;
   border-radius: 50%;
-  color: var(--blue);
+  color: var(--tint);
 }
 
 .icon-button-spacer {
@@ -447,7 +477,7 @@ button:disabled {
 }
 
 .play-newest {
-  background: var(--blue-soft);
+  background: var(--tint-soft);
 }
 
 /* ---------- Margins ---------- */
@@ -493,7 +523,8 @@ button:disabled {
   gap: 4px;
   padding-left: 14px;
   background: var(--surface);
-  border-radius: 4px 12px 12px 4px;
+  border-radius: 4px var(--panel-radius) var(--panel-radius) 4px;
+  box-shadow: inset 0 0 0 1px var(--rule);
 }
 
 .margin::before {
@@ -521,7 +552,7 @@ button:disabled {
 .margin-time {
   flex: none;
   min-width: 3.4em;
-  color: var(--blue);
+  color: var(--tint);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   font-size: 0.9375rem;
@@ -556,8 +587,8 @@ button:disabled {
   margin-right: 6px;
   padding: 0 12px 0 8px;
   border-radius: 999px;
-  background: var(--blue-soft);
-  color: var(--blue);
+  background: var(--tint-soft);
+  color: var(--tint);
   font-weight: 650;
   font-size: 0.9375rem;
 }
@@ -622,7 +653,7 @@ button:disabled {
   display: flex;
   align-items: center;
   min-height: 44px;
-  color: var(--blue);
+  color: var(--tint);
   font-weight: 650;
   cursor: pointer;
 }
@@ -637,9 +668,10 @@ button:disabled {
   justify-content: space-between;
   gap: 16px;
   min-height: 56px;
-  padding: 10px 14px;
-  border-radius: 12px;
+  padding: 10px 16px;
+  border-radius: var(--panel-radius);
   background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--rule);
   cursor: pointer;
 }
 
@@ -657,7 +689,7 @@ button:disabled {
 }
 
 .switch-state[data-state='on'] {
-  color: var(--blue);
+  color: var(--tint);
   font-weight: 650;
 }
 
@@ -689,12 +721,12 @@ button:disabled {
 }
 
 .switch:checked {
-  background: var(--blue);
+  background: var(--tint);
   box-shadow: none;
 }
 
 .switch:checked::after {
-  background: var(--on-blue);
+  background: var(--on-tint);
 }
 
 .switch:checked::after {
@@ -734,7 +766,7 @@ button:disabled {
 .mini-progress > span {
   display: block;
   height: 100%;
-  background: var(--blue);
+  background: var(--tint);
 }
 
 .mini-open {
@@ -792,16 +824,23 @@ button:disabled {
 }
 
 .np-title {
-  font-size: 1.5rem;
+  font-family: var(--display);
+  font-size: 1.625rem;
   line-height: 1.2;
-  font-weight: 750;
-  letter-spacing: -0.01em;
+  font-weight: 700;
   overflow-wrap: anywhere;
 }
 
 .np-status {
   text-align: center;
   font-size: 0.875rem;
+}
+
+/* After a Margin file opens and the browser waits for a tap (#3039). */
+.landing-offer {
+  display: flex;
+  justify-content: center;
+  margin: 0;
 }
 
 /* The timeline: Margins stand above the track as orange posts you can tap; the track fills blue. */
@@ -863,13 +902,13 @@ button:disabled {
 .scrubber::-webkit-slider-runnable-track {
   height: 6px;
   border-radius: 3px;
-  background: linear-gradient(to right, var(--blue) var(--fill), var(--field) var(--fill));
+  background: linear-gradient(to right, var(--tint) var(--fill), var(--field) var(--fill));
 }
 
 .scrubber::-moz-range-track {
   height: 6px;
   border-radius: 3px;
-  background: linear-gradient(to right, var(--blue) var(--fill), var(--field) var(--fill));
+  background: linear-gradient(to right, var(--tint) var(--fill), var(--field) var(--fill));
 }
 
 .scrubber::-webkit-slider-thumb {
@@ -878,7 +917,7 @@ button:disabled {
   height: 22px;
   margin-top: -8px;
   border-radius: 50%;
-  background: var(--blue);
+  background: var(--tint);
   border: 3px solid var(--page);
 }
 
@@ -886,7 +925,7 @@ button:disabled {
   width: 18px;
   height: 18px;
   border-radius: 50%;
-  background: var(--blue);
+  background: var(--tint);
   border: 3px solid var(--page);
 }
 
@@ -923,8 +962,8 @@ button:disabled {
   width: 72px;
   height: 72px;
   border-radius: 50%;
-  background: var(--blue);
-  color: var(--on-blue);
+  background: var(--tint);
+  color: var(--on-tint);
 }
 
 .speed-button {
@@ -1016,6 +1055,15 @@ button:disabled {
   }
 }
 
+/* After Stop: the Margin is already kept (#3038). The word "Saved" carries it, not a colour. */
+.saved-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-weight: 650;
+}
+
 .np-margins {
   display: grid;
   gap: 10px;
@@ -1092,7 +1140,7 @@ button:disabled {
   height: 14px;
   border-radius: 50%;
   border: 2px solid var(--rule);
-  border-top-color: var(--blue);
+  border-top-color: var(--tint);
   animation: spin 0.9s linear infinite;
 }
 
@@ -1169,7 +1217,7 @@ button:disabled {
   max-width: 22em;
   padding: 20px 24px;
   border-radius: 14px;
-  border: 2px dashed var(--blue);
+  border: 2px dashed var(--tint);
   background: var(--surface);
   color: var(--ink);
   font-weight: 650;
@@ -1301,8 +1349,8 @@ button:disabled {
   border-radius: 50%;
   font-size: 0.8125rem;
   font-weight: 800;
-  background: var(--blue);
-  color: var(--on-blue);
+  background: var(--tint);
+  color: var(--on-tint);
 }
 
 .toast-problem .toast-mark,
@@ -1383,7 +1431,7 @@ body:not(:has(.mini-player)) .toasts {
   }
 
   .tab[aria-current='page'] {
-    background: var(--blue-soft);
+    background: var(--tint-soft);
   }
 
   .tab[aria-current='page']::before {

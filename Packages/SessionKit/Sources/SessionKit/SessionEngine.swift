@@ -2162,7 +2162,7 @@ public final class SessionEngine {
         let item = try? repository.loadItem(id: session.itemId)
         let shouldCapturePostResumePodcastEvidence = targetType == .item
             && anchor.mediaTimeMs != nil
-            && item.map(isNativeAudioSource) == true
+            && item.map(Self.isNativeAudioSource) == true
         let interjection = Interjection(
             id: Interjection.makeId(number: count, targetType: targetType),
             itemId: session.itemId,
@@ -3213,6 +3213,87 @@ public final class SessionEngine {
         var sourceTimeline: LazyTimeline
         var allInterjections: [Interjection]
         var allTurns: [ConversationTurn]
+        /// Read beforehand, off the main thread (#2505); nil means "read it when the export needs it".
+        var listeningMap: ListeningMap?? = nil
+        var pageDocument: StructuredDocument?? = nil
+    }
+
+    /// What `buildExportReadingOffMain` reads on a background thread: everything the export would otherwise read
+    /// from the store while it shapes the document. `nil` fields were not needed by the options asked for.
+    struct ExportInputs: Sendable {
+        var session: Session
+        var item: Item
+        var allInterjections: [Interjection]
+        var allTurns: [ConversationTurn]
+        var timeline: TranscriptTimeline??
+        var listeningMap: ListeningMap??
+        var pageDocument: StructuredDocument??
+    }
+
+    /// The export the Export screen shows, with its store reads off the main thread (#2505): the item's whole text,
+    /// the session's Margins and turns, and, when the options use them, the transcript timeline (megabytes for a
+    /// podcast), the Listening Map and a paper's structured document. Only the shaping runs on the caller's thread,
+    /// and its result is what `buildExport(options:)` gives. Without a stored session id it is `buildExport(options:)`.
+    @MainActor
+    public func buildExportReadingOffMain(options: ExportOptions) async throws -> SessionExport {
+        guard let sessionId = options.sessionId else { return try buildExport(options: options) }
+        let repository = repository
+        let includeFullText = options.includeFullText, includeListeningMap = options.includeListeningMap
+        let inputs = try await Task.detached(priority: .userInitiated) {
+            try Self.readExportInputs(sessionId: sessionId, includeFullText: includeFullText,
+                                      includeListeningMap: includeListeningMap, repository: repository)
+        }.value
+        guard let inputs else { return try buildExport(options: options) } // not stored: the engine's own session
+        let itemId = inputs.item.id
+        let sourceTimeline = inputs.timeline.map { timeline in LazyTimeline { timeline } }
+            ?? LazyTimeline { [repository] in try repository.loadTranscriptTimeline(itemId: itemId)?.timeline }
+        return try buildExport(options: options, source: ExportSource(
+            session: inputs.session, item: inputs.item, sourceTimeline: sourceTimeline,
+            allInterjections: inputs.allInterjections, allTurns: inputs.allTurns,
+            listeningMap: inputs.listeningMap, pageDocument: inputs.pageDocument))
+    }
+
+    /// The reads `loadExportSource` and `buildExport(options:source:)` make, done ahead in one go. The timeline is
+    /// read when any export these options could shape needs it: a superset of `buildExport`'s own test, since the
+    /// Margins' scope isn't applied yet. nil when the session isn't stored.
+    nonisolated static func readExportInputs(
+        sessionId: String, includeFullText: Bool, includeListeningMap: Bool, repository: SessionRepository
+    ) throws -> ExportInputs? {
+        guard let session = try repository.loadSession(id: sessionId) else { return nil }
+        let item = try repository.loadItem(id: session.itemId)
+        let interjections = try activeExportInterjections(repository.loadInterjections(sessionId: session.id))
+        let turns = try exportTurns(repository.loadTurns(sessionId: session.id), activeInterjections: interjections)
+        let needsTimeline = includeFullText || includeListeningMap
+            || (isNativeAudioSource(item) && interjections.contains { $0.targetType == .item && $0.anchor.mediaTimeMs != nil })
+        let timeline: TranscriptTimeline?? = needsTimeline ? .some(try repository.loadTranscriptTimeline(itemId: item.id)?.timeline) : nil
+        let map: ListeningMap?? = includeListeningMap
+            ? .some(try ListeningMapExportResolver.resolve(item: item, repository: repository, durationMs: timeline??.durationMs))
+            : nil
+        let pageDocument: StructuredDocument?? = item.documentStructure?.bibliography != nil
+            && interjections.contains { $0.targetType == .item }
+            ? .some(pageDocument(for: item, repository: repository))
+            : nil
+        return ExportInputs(session: session, item: item, allInterjections: interjections, allTurns: turns,
+                            timeline: timeline, listeningMap: map, pageDocument: pageDocument)
+    }
+
+    private nonisolated static func activeExportInterjections(_ all: [Interjection]) -> [Interjection] {
+        all.filter { $0.status == "active" }
+    }
+
+    /// Turns minus summaries of Margins that are no longer active.
+    private nonisolated static func exportTurns(_ all: [ConversationTurn], activeInterjections: [Interjection]) -> [ConversationTurn] {
+        let activeInterjectionIDs = Set(activeInterjections.map(\.id))
+        return all.filter { turn in
+            guard turn.turnType == "interjection_summary", !turn.sourceInterjectionIds.isEmpty else { return true }
+            return Set(turn.sourceInterjectionIds).isSubset(of: activeInterjectionIDs)
+        }
+    }
+
+    private nonisolated static func pageDocument(for item: Item, repository: SessionRepository) -> StructuredDocument? {
+        (repository as? StructuredDocumentRepository)
+            .flatMap { try? $0.loadStructuredDocument(itemId: item.id) }
+            .flatMap { $0.text == item.text ? $0 : nil }
     }
 
     /// A transcript timeline read at most once, and only when something asks for it.
@@ -3238,15 +3319,8 @@ public final class SessionEngine {
         let item = try repository.loadItem(id: session.itemId)
         let itemId = item.id
         let sourceTimeline = LazyTimeline { [repository] in try repository.loadTranscriptTimeline(itemId: itemId)?.timeline }
-        let allInterjections = try repository.loadInterjections(sessionId: session.id)
-            .filter { $0.status == "active" }
-        let activeInterjectionIDs = Set(allInterjections.map(\.id))
-        let allTurns = try repository.loadTurns(sessionId: session.id).filter { turn in
-            guard turn.turnType == "interjection_summary", !turn.sourceInterjectionIds.isEmpty else {
-                return true
-            }
-            return Set(turn.sourceInterjectionIds).isSubset(of: activeInterjectionIDs)
-        }
+        let allInterjections = Self.activeExportInterjections(try repository.loadInterjections(sessionId: session.id))
+        let allTurns = Self.exportTurns(try repository.loadTurns(sessionId: session.id), activeInterjections: allInterjections)
         return ExportSource(session: session, item: item, sourceTimeline: sourceTimeline,
                             allInterjections: allInterjections, allTurns: allTurns)
     }
@@ -3254,12 +3328,12 @@ public final class SessionEngine {
     func buildExport(options: ExportOptions, source: ExportSource) throws -> SessionExport {
         let session = source.session, item = source.item
         let allInterjections = source.allInterjections, allTurns = source.allTurns
-        let exposesFullSourceText = options.includeFullText && !isNativeAudioSource(item)
+        let exposesFullSourceText = options.includeFullText && !Self.isNativeAudioSource(item)
         let interjections = options.includeInterjections ? scopedExportInterjections(options: options, session: session, interjections: allInterjections) : []
         // Read only when this export uses it (#2506): the full text of a transcribed source, the words around a
         // recording's Margins, or the Listening Map's length. An article's Margin note needs none of them.
         let needsTimeline = exposesFullSourceText || options.includeListeningMap
-            || (isNativeAudioSource(item) && interjections.contains { $0.targetType == .item && $0.anchor.mediaTimeMs != nil })
+            || (Self.isNativeAudioSource(item) && interjections.contains { $0.targetType == .item && $0.anchor.mediaTimeMs != nil })
         let sourceTimeline = try needsTimeline ? source.sourceTimeline.value() : nil
         let sourceTranscript = exposesFullSourceText
             ? sourceTimeline?.segments
@@ -3272,7 +3346,7 @@ public final class SessionEngine {
         // read for an item that has one. Margins anchor into Item.text, so the page is only
         // known when the document's text is exactly that text.
         let pageDocument = interjections.contains { $0.targetType == .item } && item.documentStructure?.bibliography != nil
-            ? exportPageDocument(for: item)
+            ? source.pageDocument ?? exportPageDocument(for: item)
             : nil
         let export = SessionExport(
             item: ExportItem(
@@ -3289,13 +3363,13 @@ public final class SessionEngine {
             ),
             session: ExportSession(id: session.id, status: session.status, completionPercent: session.completionPercent),
             listeningMap: options.includeListeningMap
-                ? try ListeningMapExportResolver.resolve(item: item, repository: repository, durationMs: sourceTimeline?.durationMs)
+                ? try source.listeningMap ?? ListeningMapExportResolver.resolve(item: item, repository: repository, durationMs: sourceTimeline?.durationMs)
                 : nil,
             turns: turns,
             timeline: exportTimeline(interjections: interjections, turns: turns),
             interjections: interjections.map { interjection in
                 let resolvedContext: SourceAnchorContext?
-                let shouldResolveNativeContext = isNativeAudioSource(item)
+                let shouldResolveNativeContext = Self.isNativeAudioSource(item)
                     && interjection.targetType == .item
                     && interjection.anchor.mediaTimeMs != nil
                     && sourceTimeline != nil
@@ -3355,14 +3429,12 @@ public final class SessionEngine {
         if let cache = exportPageDocumentCache, cache.itemId == item.id, cache.text == item.text {
             return cache.document
         }
-        let document = (repository as? StructuredDocumentRepository)
-            .flatMap { try? $0.loadStructuredDocument(itemId: item.id) }
-            .flatMap { $0.text == item.text ? $0 : nil }
+        let document = Self.pageDocument(for: item, repository: repository)
         exportPageDocumentCache = (item.id, item.text, document)
         return document
     }
 
-    private func isNativeAudioSource(_ item: Item) -> Bool {
+    private nonisolated static func isNativeAudioSource(_ item: Item) -> Bool {
         switch item.media?.sourceType {
         case .nativeMediaFile, .remoteStream:
             return true

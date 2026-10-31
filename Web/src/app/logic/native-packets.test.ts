@@ -172,3 +172,14 @@ test('opened files: a bridge with no listener support is a no-op', () => {
   const stop = listenForOpenedFiles(bridge, () => assert.fail('no file should arrive'));
   stop();
 });
+
+test('on an iPhone or iPad the file picker shows every file, so a Margin file is never greyed out', () => {
+  const iphone = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Mobile/15E148 Safari/604.1';
+  const ipad = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Safari/605.1.15';
+  const mac = ipad;
+  assert.equal(packetPickerAccept('browser', { userAgent: iphone, maxTouchPoints: 5 }), undefined);
+  // iPadOS asks for desktop pages with a Mac user agent; its touch screen gives it away.
+  assert.equal(packetPickerAccept('browser', { userAgent: ipad, maxTouchPoints: 5 }), undefined);
+  assert.equal(packetPickerAccept('browser', { userAgent: mac, maxTouchPoints: 0 }), BROWSER_PACKET_ACCEPT);
+  assert.equal(packetPickerAccept('native', { userAgent: mac, maxTouchPoints: 0 }), undefined);
+});

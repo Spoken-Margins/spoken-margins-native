@@ -10,29 +10,37 @@ function Icon({ children, size = 24 }: { children: ReactNode; size?: number }) {
   );
 }
 
+// The four tabs follow the SF Symbols the iPhone app's tab bar uses (#3040): books.vertical,
+// dot.radiowaves.left.and.right, quote.bubble and gearshape.
 export const LibraryIcon = () => (
   <Icon>
-    <path d="M5 4v16M9.5 4v16" />
-    <path d="M14 5.2l3.6-1 3.4 15.6-3.6 1z" />
+    <rect x="3" y="4" width="4.2" height="16" rx="1" />
+    <rect x="9.2" y="4" width="4.2" height="16" rx="1" />
+    <path d="M15.4 5.6l3.9-1.1 3.4 14.9-3.9 1.1z" />
   </Icon>
 );
 export const FollowingIcon = () => (
   <Icon>
-    <path d="M4 11a9 9 0 0 1 9 9M4 5a15 15 0 0 1 15 15" />
-    <circle cx="5" cy="19" r="1.4" fill="currentColor" stroke="none" />
+    <circle cx="12" cy="12" r="1.9" fill="currentColor" stroke="none" />
+    <path d="M8.6 8.6a4.8 4.8 0 0 0 0 6.8M15.4 8.6a4.8 4.8 0 0 1 0 6.8" />
+    <path d="M5.5 5.5a9.2 9.2 0 0 0 0 13M18.5 5.5a9.2 9.2 0 0 1 0 13" />
   </Icon>
 );
 export const MarginsIcon = () => (
   <Icon>
-    <path d="M6 4v16" strokeWidth="2.6" />
-    <path d="M10.5 7h8M10.5 12h8M10.5 17h5" />
+    <path d="M5 4.5h14a2 2 0 0 1 2 2v8.5a2 2 0 0 1-2 2h-7.5L7 20.5V17H5a2 2 0 0 1-2-2V6.5a2 2 0 0 1 2-2z" />
+    <path d="M9.6 8.6l-1 3.2M13.4 8.6l-1 3.2" strokeWidth="2.2" />
   </Icon>
 );
 export const SettingsIcon = () => (
   <Icon>
-    <path d="M4 7h9M17 7h3M4 17h3M11 17h9" />
-    <circle cx="15" cy="7" r="2" />
-    <circle cx="9" cy="17" r="2" />
+    <circle cx="12" cy="12" r="6.4" />
+    <circle cx="12" cy="12" r="2.4" />
+    <path
+      d="M12 2.6v3M12 18.4v3M2.6 12h3M18.4 12h3M5.35 5.35l2.1 2.1M16.55 16.55l2.1 2.1M5.35 18.65l2.1-2.1M16.55 7.45l2.1-2.1"
+      strokeWidth="2.6"
+      strokeLinecap="butt"
+    />
   </Icon>
 );
 export const PlayIcon = ({ size }: { size?: number }) => (

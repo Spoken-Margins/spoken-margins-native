@@ -5,7 +5,7 @@ import type { PacketRead } from '../ports.ts';
 import { episode as fixtureEpisode, voiceMargins } from '../../packet/fixtures.ts';
 import { readPacket } from '../../packet/read.ts';
 import { writePacket } from '../../packet/write.ts';
-import { findEpisode, importSummary, placeImport, sharedShowFor } from './import.ts';
+import { findEpisode, importSummary, landingOffer, placeImport, sharedShowFor } from './import.ts';
 
 const show: Show = { id: 'feed:https://feeds.test/show.rss', kind: 'podcast', title: 'Show', feedUrl: 'https://feeds.test/show.rss', followedAt: 'T0' };
 const mine: Episode = {
@@ -118,4 +118,14 @@ test('a voice Margin without words, backed up and opened again, is not added twi
   // A voice Margin at the same moment with words of its own is still a new Margin.
   const worded = { ...packet, margins: packet.margins.map((m) => ({ ...m, text: 'Mine, out loud.' })) };
   assert.equal(placeImport(worded, [], [fixtureEpisode], 'NOW', [own]).margins.length, 1);
+});
+
+test('after a file opens, Now Playing offers to start at the first Margin until it plays (#3039)', () => {
+  const landing = { episodeId: 'e1', at: 83.6 };
+  const waiting = { episodeId: 'e1', playing: false, loading: false };
+  assert.equal(landingOffer(landing, waiting), 'Play from the first Margin, at 1:23');
+  assert.equal(landingOffer(landing, { ...waiting, playing: true }), undefined);
+  assert.equal(landingOffer(landing, { ...waiting, loading: true }), undefined);
+  assert.equal(landingOffer(landing, { ...waiting, episodeId: 'e2' }), undefined);
+  assert.equal(landingOffer(undefined, waiting), undefined);
 });
