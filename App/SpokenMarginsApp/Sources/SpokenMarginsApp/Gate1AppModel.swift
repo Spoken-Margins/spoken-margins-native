@@ -2304,10 +2304,7 @@ final class Gate1AppModel: ObservableObject {
                 playbackRate: normalizedPlaybackRate,
                 origin: origin
             )
-            if result.isAlreadyInRequestedState { // a card tap drawn before the state moved on: nothing to do, nothing failed (#2965)
-                recordDeveloperDiagnostic("transport.no_op", ["command": command.rawValue, "origin": origin, "reason": result.rejectedReason ?? ""])
-                return
-            }
+            if result.isAlreadyInRequestedState { return noteCompactCommandNoOp(command, origin: origin, result: result) }
             if let engine {
                 snapshot = engine.snapshot
             } else {
@@ -2349,18 +2346,6 @@ final class Gate1AppModel: ObservableObject {
             }
             if command == .beginInterjection, !snapshot.isRecording { resumeHeldMarginVoice(heldMarginVoice) } // no recording came of it (#1672)
             reportFailure(error, context: "Compact control failed")
-        }
-    }
-
-    private func compactSkipUnit(for command: CompactControlCommand) -> String? {
-        guard isMediaPlaybackSnapshot else { return nil }
-        switch command {
-        case .skipBack:
-            return mediaSkipUnit(seconds: mediaSkipBackSeconds)
-        case .skipForward:
-            return mediaSkipUnit(seconds: mediaSkipForwardSeconds)
-        default:
-            return nil
         }
     }
 

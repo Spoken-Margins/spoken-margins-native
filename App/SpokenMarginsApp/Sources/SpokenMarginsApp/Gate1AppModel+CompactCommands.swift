@@ -93,6 +93,24 @@ extension Gate1AppModel {
         performGate2CompactCommand(command, chapterId: chapterId, mediaTimeMs: mediaTimeMs, playbackRate: playbackRate, origin: origin)
     }
 
+    func compactSkipUnit(for command: CompactControlCommand) -> String? {
+        guard isMediaPlaybackSnapshot else { return nil }
+        switch command {
+        case .skipBack:
+            return mediaSkipUnit(seconds: mediaSkipBackSeconds)
+        case .skipForward:
+            return mediaSkipUnit(seconds: mediaSkipForwardSeconds)
+        default:
+            return nil
+        }
+    }
+
+    /// A card tap drawn before the state moved on: Play on a playing source, Pause on a paused one. Nothing to do,
+    /// and nothing failed, so no "Compact control failed" (#2965).
+    func noteCompactCommandNoOp(_ command: CompactControlCommand, origin: String, result: CompactControlResult) {
+        recordDeveloperDiagnostic("transport.no_op", ["command": command.rawValue, "origin": origin, "reason": result.rejectedReason ?? ""])
+    }
+
     /// The Margin is recording from a Bluetooth headset's hands-free port (#2182).
     private var recordingInputIsBluetoothHandsFree: Bool {
         #if canImport(AVFoundation) && os(iOS)
