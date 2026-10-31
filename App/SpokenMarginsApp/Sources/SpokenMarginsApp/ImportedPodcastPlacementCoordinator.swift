@@ -105,44 +105,46 @@ final class ImportedPodcastPlacementCoordinator {
     /// Admitted only for a readable file, outside the cooldown (measured from the last attempt's start), with the slot free.
     /// A refused request changes nothing, including the cooldown clock.
     @discardableResult
-    func scheduleTransientTranscript(for item: Item, localSourceURL: URL) -> Bool {
+    func scheduleTransientTranscript(for item: some LibraryItemFields, localSourceURL: URL) -> Bool {
+        let itemId = item.id
+        let durationMs = item.media?.durationMs
         guard let sourceFile = try? PodcastPlacementFile(url: localSourceURL) else { return false }
         let now = deps.now()
         guard ImportedPodcastPlacementPolicy.transientTranscriptMayStart(
-            lastStart: lastTransientStart[item.id], now: now, slotIsFree: admission[item.id] == nil) else { return false }
-        admission[item.id] = .transient(sourceFile)
-        lastTransientStart[item.id] = now
-        deps.recordDiagnostic("recipientAlignmentTranscript:\(item.id)", "transcribing_transiently")
-        passes.begin(.transcript, itemId: item.id)
+            lastStart: lastTransientStart[itemId], now: now, slotIsFree: admission[itemId] == nil) else { return false }
+        admission[itemId] = .transient(sourceFile)
+        lastTransientStart[itemId] = now
+        deps.recordDiagnostic("recipientAlignmentTranscript:\(itemId)", "transcribing_transiently")
+        passes.begin(.transcript, itemId: itemId)
         Task { [weak self] in
             guard let self else { return }
             // The model stays alive until the transcript is in, as it did when this task belonged to the model.
             let host = self.deps.retainHost()
             defer {
-                self.passes.end(.transcript, itemId: item.id)
+                self.passes.end(.transcript, itemId: itemId)
                 withExtendedLifetime(host) {}
             }
             do {
                 let timeline = try await self.deps.transcriber.transcribeSourceAudio(
                     url: localSourceURL,
-                    itemId: item.id,
-                    durationMs: item.media?.durationMs
+                    itemId: itemId,
+                    durationMs: durationMs
                 )
                 MainThreadOperationLabels.shared.scoped("transientTranscriptResolve") {
-                    self.admission[item.id] = nil
-                    if self.requestedURL[item.id] == localSourceURL,
+                    self.admission[itemId] = nil
+                    if self.requestedURL[itemId] == localSourceURL,
                        (try? PodcastPlacementFile(url: localSourceURL)) == sourceFile {
-                        self.resolve(itemId: item.id, localURL: localSourceURL, recipientTranscriptOverride: timeline)
+                        self.resolve(itemId: itemId, localURL: localSourceURL, recipientTranscriptOverride: timeline)
                     }
                 }
                 // The purge deletes the exported audio chunks of the whole episode; it runs off the main thread (#2510).
-                try? await self.deps.purgeTransientCaches(item.id)
-                self.deps.recordDiagnostic("recipientAlignmentTranscript:\(item.id)", "consumed_and_deleted")
+                try? await self.deps.purgeTransientCaches(itemId)
+                self.deps.recordDiagnostic("recipientAlignmentTranscript:\(itemId)", "consumed_and_deleted")
             } catch {
-                self.admission[item.id] = nil
-                try? await self.deps.purgeTransientCaches(item.id)
+                self.admission[itemId] = nil
+                try? await self.deps.purgeTransientCaches(itemId)
                 self.deps.recordDiagnostic(
-                    "recipientAlignmentTranscript:\(item.id)", "failed_and_deleted:\(error.localizedDescription)")
+                    "recipientAlignmentTranscript:\(itemId)", "failed_and_deleted:\(error.localizedDescription)")
             }
         }
         return true
