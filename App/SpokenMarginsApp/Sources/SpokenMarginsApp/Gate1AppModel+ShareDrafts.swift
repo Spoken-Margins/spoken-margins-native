@@ -58,13 +58,14 @@ extension Gate1AppModel {
         sharingState = InterjectionSharingState(isPreparing: true)
         sharingState.draftFilter = hasStarredCandidates ? .starred : .all
         isSharingInterjectionsPresented = true
-        if let item = try? requireStore().loadItem(id: selectedItem.id) {
+        // The summary: the sheet needs the address, the type and whether there is text, not the article (#2506).
+        if let item = try? requireStore().loadItemSummary(id: selectedItem.id) {
             let reference = secureSharedItemURL(for: item)
             sharingState.itemReferenceURL = reference
             sharingState.isAppAuthoredItem = item.id == Self.welcomeSampleItemId
             sharingState.canEmbedLinklessItem = reference == nil
                 && sharedItemType(for: item) != .podcast
-                && !(item.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && item.hasListenableText
             sharingState.confirmsPrivateSharingRights = sharingState.isAppAuthoredItem
         }
         sharingState.drafts = candidates.map { interjection in

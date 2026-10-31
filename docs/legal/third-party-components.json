@@ -87,6 +87,48 @@
       }
     },
     {
+      "id": "react",
+      "name": "React",
+      "version": "19.3.1",
+      "license": "MIT",
+      "distribution": "bundled",
+      "by": "Meta Platforms, Inc. and affiliates",
+      "source": "https://github.com/facebook/react",
+      "paths": [
+        "Web"
+      ],
+      "licenseUrl": "https://github.com/facebook/react/blob/main/LICENSE",
+      "note": "Ships in the web app (Web/), compiled by Vite into the JavaScript that the page serves to browsers. Not in the iOS app. Listed in Web/package.json; the web app tools entry claims that manifest."
+    },
+    {
+      "id": "react-dom",
+      "name": "React DOM",
+      "version": "19.3.1",
+      "license": "MIT",
+      "distribution": "bundled",
+      "by": "Meta Platforms, Inc. and affiliates",
+      "source": "https://github.com/facebook/react",
+      "paths": [
+        "Web"
+      ],
+      "licenseUrl": "https://github.com/facebook/react/blob/main/LICENSE",
+      "note": "Ships in the web app (Web/), compiled by Vite into the JavaScript that the page serves to browsers. Not in the iOS app. Listed in Web/package.json."
+    },
+    {
+      "id": "scheduler",
+      "name": "scheduler",
+      "version": "0.28.0",
+      "license": "MIT",
+      "distribution": "bundled",
+      "by": "Meta Platforms, Inc. and affiliates",
+      "source": "https://github.com/facebook/react",
+      "paths": [
+        "Web"
+      ],
+      "licenseUrl": "https://github.com/facebook/react/blob/main/LICENSE",
+      "note": "Ships in the web app (Web/), compiled by Vite into the JavaScript that the page serves to browsers. Not in the iOS app. React DOM depends on it (Web/package-lock.json); Web/package.json does not list it itself."
+    },
+    {
       "id": "turndown",
       "name": "turndown",
       "version": "7.2.4",
@@ -186,6 +228,22 @@
       "note": "Stands in for a browser page in the page-reading tests. Not shipped.",
       "tracks": {
         "npm": "linkedom"
+      }
+    },
+    {
+      "id": "web-app-tools",
+      "name": "Web app build and test tools (npm)",
+      "license": "MIT (Vite, @vitejs/plugin-react, @types/node, @types/react, @types/react-dom); Apache-2.0 (TypeScript, Playwright)",
+      "distribution": "tool",
+      "by": "Their authors",
+      "paths": [
+        "Web"
+      ],
+      "note": "Web/package.json's devDependencies, installed by npm from Web/package-lock.json and never copied into this repository: Vite 8.3.5 (MIT, VoidZero Inc. and Vite contributors) and @vitejs/plugin-react 6.1.2 (MIT) build the page; TypeScript 5.9.3 (Apache-2.0, Microsoft) and the @types/node 24.19.2, @types/react 19.3.0 and @types/react-dom 19.3.0 type packages (MIT, DefinitelyTyped) check it; @playwright/test 1.64.1 (Apache-2.0, Microsoft) runs its journey tests. What the page itself ships is in the React, React DOM and scheduler entries.",
+      "tracks": {
+        "manifests": [
+          "Web/package.json"
+        ]
       }
     },
     {
