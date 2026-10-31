@@ -2469,7 +2469,7 @@ final class Gate1AppModel: ObservableObject {
                     ))
                     let store = try requireStore()
                     let id = "read-later-" + ListeningEdition.digest(document.url + "\n" + handoff.text)
-                    if (try? store.loadItem(id: id)) != nil {
+                    if (try? store.loadItemSummary(id: id)) != nil {
                         reportConfirmation("This article is already in your Library.")
                         return
                     }
@@ -2483,7 +2483,7 @@ final class Gate1AppModel: ObservableObject {
                     var handoff = try await readablePageExtractor.extract(url: url)
                     let id = "read-later-" + ListeningEdition.digest(document.url + "\n" + handoff.text)
                     let store = try requireStore()
-                    if (try? store.loadItem(id: id)) != nil {
+                    if (try? store.loadItemSummary(id: id)) != nil {
                         reportConfirmation("This article is already in your Library."); return
                     }
                     handoff.itemId = id
