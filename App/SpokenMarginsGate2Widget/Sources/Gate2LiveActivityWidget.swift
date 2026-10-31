@@ -328,18 +328,30 @@ private struct Gate2LiveActivityView: View {
                 }
                 Spacer()
                 if state.canRun("beginInterjection") || state.canRun("finishInterjection") {
-                    Link(destination: Gate2CompactCommandURL.url(command: state.isRecording ? "finishInterjection" : "beginInterjection")) {
-                        Image(systemName: state.isRecording ? "checkmark" : "mic.fill")
-                            .font(.title2.weight(.semibold))
-                            .frame(width: 56, height: 56)
-                            .foregroundStyle(.white)
-                            .background(Color.white.opacity(0.16))
-                            .clipShape(Circle())
+                    #if SM_LOCKED_MARGIN_SPIKE
+                    // Phone builds only: record in place, without opening the app (#3086).
+                    Button(intent: Gate2RecordMarginIntent(finish: state.isRecording)) {
+                        marginButtonImage(isRecording: state.isRecording)
                     }
                     .accessibilityLabel(state.isRecording ? "Finish Margin" : "Add a Margin")
+                    #else
+                    Link(destination: Gate2CompactCommandURL.url(command: state.isRecording ? "finishInterjection" : "beginInterjection")) {
+                        marginButtonImage(isRecording: state.isRecording)
+                    }
+                    .accessibilityLabel(state.isRecording ? "Finish Margin" : "Add a Margin")
+                    #endif
                 }
             }
             .buttonStyle(.plain)
+    }
+
+    private func marginButtonImage(isRecording: Bool) -> some View {
+        Image(systemName: isRecording ? "checkmark" : "mic.fill")
+            .font(.title2.weight(.semibold))
+            .frame(width: 56, height: 56)
+            .foregroundStyle(.white)
+            .background(Color.white.opacity(0.16))
+            .clipShape(Circle())
     }
 
     @ViewBuilder
