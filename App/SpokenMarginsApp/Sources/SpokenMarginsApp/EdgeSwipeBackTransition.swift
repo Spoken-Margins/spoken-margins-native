@@ -54,7 +54,7 @@ private struct EdgeSwipeBackModifier<Underlay: View>: ViewModifier {
                     .accessibilityHidden(true)
                 }
             }
-            .gesture(EdgePanGesture(stripWidth: Self.stripWidth, topClearance: Self.topClearance) { handle($0) }, isEnabled: enabled)
+            .gesture(EdgePanGesture(enabled: enabled, stripWidth: Self.stripWidth, topClearance: Self.topClearance) { handle($0) })
             .onChange(of: enabled) { _, isEnabled in
                 if !isEnabled { resetImmediately() }
             }
@@ -158,12 +158,13 @@ private struct EdgePanGesture: UIGestureRecognizerRepresentable {
     /// DragGesture's old minimum distance: smaller movements are taps and wobble, not the start of a swipe.
     private static let minimumDistance: CGFloat = 18
 
+    let enabled: Bool
     let stripWidth: CGFloat
     let topClearance: CGFloat
     let send: (Event) -> Void
 
     func makeCoordinator(converter: CoordinateSpaceConverter) -> Coordinator {
-        Coordinator(stripWidth: stripWidth, topClearance: topClearance)
+        Coordinator(enabled: enabled, stripWidth: stripWidth, topClearance: topClearance)
     }
 
     func makeUIGestureRecognizer(context: Context) -> UIPanGestureRecognizer {
@@ -177,19 +178,22 @@ private struct EdgePanGesture: UIGestureRecognizerRepresentable {
     }
 
     func updateUIGestureRecognizer(_ recognizer: UIPanGestureRecognizer, context: Context) {
+        recognizer.isEnabled = enabled
+        context.coordinator.enabled = enabled
         context.coordinator.stripWidth = stripWidth
         context.coordinator.topClearance = topClearance
     }
 
     func handleUIGestureRecognizerAction(_ recognizer: UIPanGestureRecognizer, context: Context) {
-        let point = recognizer.translation(in: recognizer.view)
+        // Window coordinates (`nil`): the view the recognizer sits on moves with the screen while it follows the finger.
+        let point = recognizer.translation(in: nil)
         let translation = CGSize(width: point.x, height: point.y)
         switch recognizer.state {
         case .began, .changed:
             guard hypot(point.x, point.y) >= Self.minimumDistance else { return }
             send(.moved(translation: translation))
         case .ended:
-            send(.ended(translation: translation, velocity: Double(recognizer.velocity(in: recognizer.view).x)))
+            send(.ended(translation: translation, velocity: Double(recognizer.velocity(in: nil).x)))
         case .cancelled, .failed:
             send(.cancelled)
         default:
@@ -198,18 +202,20 @@ private struct EdgePanGesture: UIGestureRecognizerRepresentable {
     }
 
     final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        var enabled: Bool
         var stripWidth: CGFloat
         var topClearance: CGFloat
 
-        init(stripWidth: CGFloat, topClearance: CGFloat) {
+        init(enabled: Bool, stripWidth: CGFloat, topClearance: CGFloat) {
+            self.enabled = enabled
             self.stripWidth = stripWidth
             self.topClearance = topClearance
         }
 
         func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
-            guard let view = gestureRecognizer.view else { return false }
-            let point = touch.location(in: view)
-            return point.x >= 0 && point.x < stripWidth && point.y >= view.safeAreaInsets.top + topClearance
+            guard enabled, let window = gestureRecognizer.view?.window else { return false }
+            let point = touch.location(in: nil)
+            return point.x >= 0 && point.x < stripWidth && point.y >= window.safeAreaInsets.top + topClearance
         }
 
         func gestureRecognizer(
