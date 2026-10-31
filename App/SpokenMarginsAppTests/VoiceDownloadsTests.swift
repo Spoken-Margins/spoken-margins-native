@@ -93,8 +93,10 @@ final class VoiceDownloadsTests: XCTestCase {
         await voices.reload()
 
         voices.download(entry.id)
-        try await waitUntil { voices.activity[entry.id] == .preparing }
-        XCTAssertTrue(preparer.started)
+        // The installer reports `.preparing` just before it calls the preparer, and the report reaches the model
+        // through its own main-actor hop, so the row can say "Preparing" before `prepare` has run (#3068).
+        // Wait for both instead of asserting the preparer's start the instant the row changes.
+        try await waitUntil { voices.activity[entry.id] == .preparing && preparer.started }
         XCTAssertEqual(voices.rows.first?.state, .notInstalled, "not installed until preparation finishes")
         preparer.release()
         try await waitUntil { voices.activity[entry.id] == .idle && voices.rows.first?.state != .notInstalled }
