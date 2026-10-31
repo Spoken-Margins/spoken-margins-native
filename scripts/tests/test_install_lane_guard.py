@@ -34,6 +34,7 @@ class InstallLaneGuardTests(unittest.TestCase):
         self.assertTrue((self.hooks / INSTALLED[1]).exists())
         self.assertFalse((self.hooks / INSTALLED[2]).exists())
         self.assertEqual(self.run_install('--check').returncode, 1)
+        self.assertIn('is missing', result.stdout)
 
     def test_a_plain_install_does_not_overwrite_a_different_live_handoff_hook(self):
         self.hooks.mkdir(parents=True)

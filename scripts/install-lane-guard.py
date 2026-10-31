@@ -67,7 +67,8 @@ def main():
     for (source, target), ok in zip(pairs, matches):
         if source == HANDOFF_SOURCE and not args.context_handoff:
             if not ok:
-                print(f'Left {target} as it is: it differs from {source}. Re-run with --context-handoff once the '
+                state = 'differs from' if target.exists() else 'is missing; the source is'
+                print(f'Left {target} as it is: it {state} {source}. Re-run with --context-handoff once the '
                       'owner has approved changing the live hook.')
             continue
         subprocess.run([PYTHON, '-m', 'py_compile', str(source)], check=True)

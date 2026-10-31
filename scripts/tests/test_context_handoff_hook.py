@@ -72,9 +72,12 @@ class HookRunTests(unittest.TestCase):
         self.state = Path(self.home, '.claude/hooks/state/context-handoff')
         self.transcript = Path(self.home, 'spoken-margins-native-session.jsonl')
 
-    def run_hook(self, context_tokens, name='PostToolUse', session='s1', tool='Read'):
-        self.transcript.write_text(json.dumps({'type': 'assistant',
-                                               'message': {'usage': {'input_tokens': context_tokens}}}) + '\n')
+    def run_hook(self, context_tokens, name='PostToolUse', session='s1', tool='Read', opener=None):
+        lines = []
+        if opener:
+            lines.append({'type': 'user', 'message': {'content': opener}})
+        lines.append({'type': 'assistant', 'message': {'usage': {'input_tokens': context_tokens}}})
+        self.transcript.write_text(''.join(json.dumps(line) + '\n' for line in lines))
         event = {'hook_event_name': name, 'session_id': session, 'tool_name': tool,
                  'transcript_path': str(self.transcript), 'cwd': '/x/spoken-margins-native'}
         done = subprocess.run([sys.executable, str(SCRIPTS / 'context_handoff_hook.py')], input=json.dumps(event),
@@ -91,6 +94,14 @@ class HookRunTests(unittest.TestCase):
         out = self.run_hook(310_000, name='PreToolUse', tool='WebSearch')
         self.assertEqual(out['hookSpecificOutput']['permissionDecision'], 'deny')
         self.assertIsNone(self.run_hook(310_000, name='PreToolUse', tool='Read'), 'reading stays allowed')
+
+    def test_a_session_the_owner_started_gets_the_higher_lines(self):
+        owner = 'please fix the thing'
+        self.assertIsNone(self.run_hook(310_000, name='PreToolUse', tool='WebSearch', opener=owner))
+        self.assertIsNone(self.run_hook(310_000, session='s2', opener=owner), 'no nudge below 400k')
+        self.assertIn('hand-off line', self.run_hook(410_000, session='s3', opener=owner)['hookSpecificOutput']['additionalContext'])
+        denied = self.run_hook(510_000, name='PreToolUse', tool='WebSearch', session='s3', opener=owner)
+        self.assertEqual(denied['hookSpecificOutput']['permissionDecision'], 'deny')
 
     def test_writing_state_prunes_the_stale_files_beside_it(self):
         self.state.mkdir(parents=True)
