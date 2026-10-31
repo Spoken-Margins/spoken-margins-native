@@ -4,9 +4,14 @@
 //
 // A Substack post page is read only when the listener taps that post (owner, 2026-10-21), so `readUrl` refuses a
 // post page unless the caller passes `reason: 'listener-tap'`.
+//
+// Inside the Android app (#2981) the direct read is native HTTP (`native-http.ts`), which no CORS rule blocks, so a
+// failed read there is the network's and never offers the relay.
 
 import { parseFeed } from './feed.ts';
 import type { ParseFeedOptions, ParsedFeed } from './feed.ts';
+import { pickReadTransport } from './native-http.ts';
+import type { ReadTransport } from './native-http.ts';
 import type { FetchLike } from './search.ts';
 import { findSubstackVoice, isSubstackPostUrl } from './substack.ts';
 import type { SubstackVoice } from './substack.ts';
@@ -63,8 +68,10 @@ export class RelayNotConfigured extends Error {
 }
 
 export interface ReadOptions {
-  /** Injected in tests. Defaults to the global `fetch`. */
+  /** Injected in tests: a browser-style `fetch`. Without it (and without `transport`) the read path picks one. */
   fetch?: FetchLike;
+  /** Injected in tests. Defaults to native HTTP inside the Android app and the browser's `fetch` elsewhere. */
+  transport?: ReadTransport;
   /** True once the listener agreed to read through the server. Without it a blocked direct read throws `NeedsRelayConsent`. */
   consent?: boolean;
   /** The share-link server's base address, such as `https://example.org`. The relay is `GET <base>/api/v1/relay?url=…`. */
@@ -78,8 +85,26 @@ export interface ReadOptions {
 export interface ReadResult {
   body: string;
   via: 'direct' | 'relay';
-  /** Where a direct read ended after redirects. Unset through the relay, which doesn't report it. */
+  /**
+   * Where the read ended after redirects: `Response.url` on a direct read, the relay's `X-Final-URL` through the
+   * relay (#2979). Unset only when a relay doesn't send a usable one.
+   */
   finalUrl?: string;
+}
+
+/** The header the relay names the address after redirects in (`research/B4/server/internal/relay`, #2979). */
+export const RELAY_FINAL_URL_HEADER = 'x-final-url';
+
+/** An http(s) address the relay reported, or undefined for a missing or unusable one. */
+function relayFinalUrl(response: Response): string | undefined {
+  const raw = response.headers.get(RELAY_FINAL_URL_HEADER)?.trim();
+  if (!raw) return undefined;
+  try {
+    const url = new URL(raw);
+    return url.protocol === 'https:' || url.protocol === 'http:' ? url.href : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export const DEFAULT_MAX_BYTES = 4 * 1024 * 1024;
@@ -103,13 +128,17 @@ async function readBody(response: Response, maxBytes: number): Promise<string> {
  */
 export async function readUrl(url: string, options: ReadOptions = {}): Promise<ReadResult> {
   if (isSubstackPostUrl(url) && options.reason !== 'listener-tap') throw new PostPageReadRefused(url);
-  const doFetch: FetchLike = options.fetch ?? ((input, init) => fetch(input, init));
+  const transport: ReadTransport = options.transport ?? (options.fetch ? { kind: 'browser', fetch: options.fetch } : pickReadTransport());
+  const doFetch = transport.fetch;
   const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
 
   let direct: Response | undefined;
   try {
     direct = await doFetch(url, { credentials: 'omit' });
-  } catch {
+  } catch (error) {
+    // Native HTTP meets no CORS block, so its failure is the network's: the relay would not help, and asking for
+    // consent would be a pop-up the Android app promises not to show.
+    if (transport.kind === 'native') throw error;
     direct = undefined;
   }
   if (direct) {
@@ -124,16 +153,23 @@ export async function readUrl(url: string, options: ReadOptions = {}): Promise<R
   if (!options.relayBase) throw new RelayNotConfigured();
   const relayed = await doFetch(relayUrl(options.relayBase, url), { credentials: 'omit' });
   if (!relayed.ok) throw new ReadHttpError(relayed.status, 'relay');
-  return { body: await readBody(relayed, maxBytes), via: 'relay' };
+  const finalUrl = relayFinalUrl(relayed);
+  // The same rule as a direct read: a redirect can land on a post page the listener never tapped.
+  if (finalUrl && finalUrl !== url && isSubstackPostUrl(finalUrl) && options.reason !== 'listener-tap') throw new PostPageReadRefused(finalUrl);
+  const body = await readBody(relayed, maxBytes);
+  return finalUrl ? { body, via: 'relay', finalUrl } : { body, via: 'relay' };
 }
 
-/** Reads a feed and parses it. `feedUrl` for the parser is the address asked for. */
+/**
+ * Reads a feed and parses it. The show keeps the address asked for (`feedUrl`, what the listener follows); relative
+ * links resolve against where the read ended after redirects.
+ */
 export async function readFeed(
   url: string,
   options: ReadOptions & Pick<ParseFeedOptions, 'maxItems' | 'followedAt'> = {},
 ): Promise<ParsedFeed> {
-  const { body } = await readUrl(url, options);
-  return parseFeed(body, { feedUrl: url, maxItems: options.maxItems, followedAt: options.followedAt });
+  const { body, finalUrl } = await readUrl(url, options);
+  return parseFeed(body, { feedUrl: url, baseUrl: finalUrl, maxItems: options.maxItems, followedAt: options.followedAt });
 }
 
 /**
