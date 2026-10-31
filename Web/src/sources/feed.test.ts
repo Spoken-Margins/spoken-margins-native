@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { FeedParseError, parseDuration, parseFeed, parsePubDate } from './feed.ts';
+import { discoverFeedUrl, FeedParseError, parseDuration, parseFeed, parsePubDate } from './feed.ts';
 import { feedFixture } from './fixtures.ts';
 
 const FEED = 'https://example.com/feed.xml';
@@ -274,4 +274,33 @@ test('awkward feed inputs', async (t) => {
     const xml = wrap('<a>'.repeat(50000) + item(`<title>x</title>${audio}`));
     assert.doesNotThrow(() => first(xml));
   });
+});
+
+// Real Substack home pages (checked 2026-10-30 on four publications) name their feed in the head as
+// `<link rel="alternate" type="application/rss+xml" href="/feed" title="…"/>`. These pages are synthetic, same shape.
+test('discoverFeedUrl finds the RSS feed a page names for itself', async (t) => {
+  const page = (head: string, body = '') => `<!DOCTYPE html><html><head><meta charset="utf-8">${head}</head><body>${body}</body></html>`;
+  const HOME = 'https://www.example-letter.com/';
+  const rows: Array<[string, string, string | undefined]> = [
+    ['Substack home page: relative /feed', page('<link rel="alternate" type="application/rss+xml" href="/feed" title="A Letter"/>'), 'https://www.example-letter.com/feed'],
+    ['attributes in another order', page('<link href="/feed" title="A Letter" type="application/rss+xml" rel="alternate">'), 'https://www.example-letter.com/feed'],
+    ['single quotes and upper case', page("<LINK REL='Alternate' TYPE='Application/RSS+XML' HREF='https://feeds.example.org/show.rss'>"), 'https://feeds.example.org/show.rss'],
+    ['unquoted href', page('<link rel=alternate type=application/rss+xml href=/feed>'), 'https://www.example-letter.com/feed'],
+    ['a type with parameters', page('<link rel="alternate" type="application/rss+xml; charset=utf-8" href="/feed">'), 'https://www.example-letter.com/feed'],
+    ['more than one rel word', page('<link rel="alternate nofollow" type="application/rss+xml" href="/feed">'), 'https://www.example-letter.com/feed'],
+    ['an encoded ampersand in the address', page('<link rel="alternate" type="application/rss+xml" href="/feed?a=1&amp;b=2">'), 'https://www.example-letter.com/feed?a=1&b=2'],
+    ['the first RSS link wins', page('<link rel="alternate" type="application/rss+xml" href="/one"><link rel="alternate" type="application/rss+xml" href="/two">'), 'https://www.example-letter.com/one'],
+    ['an Atom feed only: parseFeed doesn\'t read Atom, so none', page('<link rel="alternate" type="application/atom+xml" href="/atom">'), undefined],
+    ['Atom first, then RSS: the RSS one', page('<link rel="alternate" type="application/atom+xml" href="/atom"><link rel="alternate" type="application/rss+xml" href="/rss">'), 'https://www.example-letter.com/rss'],
+    ['a stylesheet is not a feed', page('<link rel="stylesheet" type="text/css" href="/feed.css">'), undefined],
+    ['rel is not alternate', page('<link rel="canonical" type="application/rss+xml" href="/feed">'), undefined],
+    ['a javascript: address is refused', page('<link rel="alternate" type="application/rss+xml" href="javascript:alert(1)">'), undefined],
+    ['an empty href', page('<link rel="alternate" type="application/rss+xml" href="">'), undefined],
+    ['a feed link in the body is someone else\'s', page('', '<link rel="alternate" type="application/rss+xml" href="https://other.example/feed">'), undefined],
+    ['no head element, link near the top', '<link rel="alternate" type="application/rss+xml" href="/feed">', 'https://www.example-letter.com/feed'],
+    ['empty', '', undefined],
+  ];
+  for (const [name, html, want] of rows) {
+    await t.test(name, () => assert.equal(discoverFeedUrl(html, HOME), want));
+  }
 });
