@@ -18,7 +18,7 @@ collect reads, from `Spoken-Margins/spoken-margins-native` (SM_STATUS_REPO), wit
 
 Events (kind): `lane` (one per lane report), `test-failure` (one per failing test named in a failing report),
 `run` and `job` (Actions), `catch` (one per line of test-catches.jsonl), `escape` (a revert or a regression
-issue). Every event has an `id`, so collecting again replaces an event instead of adding a second one, and the
+issue), `slow` (per day, the slowest tests the lane-event lines named: the day's longest seconds for each; #2379). Every event has an `id`, so collecting again replaces an event instead of adding a second one, and the
 events are written sorted: the same inputs give the same file. An event holds only ids, enums and numbers: every string passes a short pattern or is dropped, so no
 failure message, log text or local path can get in (the same rule as lane_event.py).
 
@@ -279,6 +279,37 @@ def job_event(job: dict, run: dict) -> dict:
             'seconds': _seconds(job.get('started_at'), job.get('completed_at')),
             'queue_seconds': _seconds(job.get('created_at'), job.get('started_at')),
             'failed_step': failed_step if isinstance(failed_step, str) and JOB.fullmatch(failed_step) else None}
+
+
+# ---- Slow tests -------------------------------------------------------------------------------------
+
+SLOW_PER_DAY = 30  # the slowest tests kept for a day; the dashboard ranks across days
+
+
+def slow_events(comments: list[dict]) -> list[dict]:
+    """`slow` events: for each day, the longest seconds a test took in any trusted report's lane-event line (the line
+    lists its 20 slowest tests), and in how many reports it was among them. The day's event is replaced whole by a
+    later collect that covers the day, so a collect must start at a day's beginning to see all of it. Only the
+    line carries test seconds; a prose-only report has none."""
+    best: dict = {}
+    for comment in comments:
+        body = comment.get('body') or ''
+        day = (comment.get('created_at') or '')[:10]
+        if not body.startswith('Lane report') or not comment_trust.trusted(comment) \
+                or not re.fullmatch(r'\d{4}-\d{2}-\d{2}', day):
+            continue
+        found = lane_event.collect(body)
+        if not found or found.get('source') != 'line':
+            continue
+        for name, took in found['slowest']:
+            entry = best.setdefault((day, name), [0, 0])
+            entry[0], entry[1] = max(entry[0], took), entry[1] + 1
+    days = collections.defaultdict(list)
+    for (day, name), (took, reports) in best.items():
+        days[day].append((took, name, reports))
+    return [{'kind': 'slow', 'id': f'slow:{day}:{name}', 'at': f'{day}T00:00:00Z', 'test': name, 'seconds': took,
+             'reports': reports}
+            for day, found in sorted(days.items()) for took, name, reports in sorted(found, key=lambda x: (-x[0], x[1]))[:SLOW_PER_DAY]]
 
 
 # ---- test-catches.jsonl ---------------------------------------------------------------------------
@@ -548,6 +579,7 @@ def collect_events(comments: list[dict], runs: list[tuple], catches: list[str], 
             fresh.append(summary)
             fresh += [job_event(job, summary) for job in jobs]
     fresh += [e for e in catch_events(catches) if e['at'] >= since]
+    fresh += [e for e in slow_events(comments) if e['at'] >= since]
     fresh += [e for e in escape_events(*escapes) if e['at'] >= since]
     return label(merge(existing, fresh))
 
