@@ -81,8 +81,28 @@ export interface PacketPort {
   writePacket(episode: Episode, margins: readonly Margin[], show?: Show): Promise<PacketWritten>;
 }
 
+/**
+ * On-device speech-to-text for voice Margins (`src/transcribe/`). The recording is decoded and transcribed in this
+ * browser; the only request is the model's one download from Hugging Face, after the listener says yes.
+ */
+export interface TranscriberPort {
+  /** Whether this browser can run the model at all. */
+  supported(): boolean;
+  /** What the listener downloads once, such as "28 MB". */
+  readonly sizeLabel: string;
+  /** Whether the model is already kept in this browser. */
+  isDownloaded(): Promise<boolean>;
+  /** Loads the model, downloading it the first time; progress is bytes of the known total. */
+  prepare(onProgress?: (loaded: number, total: number) => void): Promise<'webgpu' | 'wasm'>;
+  /** The words in a recording, or '' when none were heard. */
+  transcribe(voice: Blob): Promise<{ text: string; ms: number; device: 'webgpu' | 'wasm' }>;
+  /** Forgets the downloaded model. */
+  remove(): Promise<void>;
+}
+
 export interface Services {
   sources: SourcesPort;
   recorder: RecorderPort;
   packets: PacketPort;
+  transcriber: TranscriberPort;
 }

@@ -16,6 +16,9 @@ import { linkPreview, linkUploadMessage } from '../logic/share-link.ts';
 import { SHARE_LINKS_OFFERED, services, uploadShareLink } from '../services.ts';
 import { shortDate } from '../format.ts';
 import { useUi } from '../ui.tsx';
+import { voicePlaceholder } from '../../shared/placeholder.ts';
+import { isPlaceholder, prefillOverPlaceholder, wordsToSave } from '../logic/voice-words.ts';
+import { TranscriptionNote, useTranscription } from '../transcription.tsx';
 import { MarginRow } from './Margins.tsx';
 
 function newId(): string {
@@ -371,7 +374,29 @@ function RecordMargin({
   const [elapsed, setElapsed] = useState(0);
   const [problem, setProblem] = useState<string>();
   const [recorded, setRecorded] = useState<RecordedVoice>();
+  // When the recording stopped: the Margin's createdAt, and the day its placeholder words name (#3025).
+  const [recordedAt, setRecordedAt] = useState<Date>();
+  const title = data.episodes.find((e) => e.id === episodeId)?.title;
+  // The same words the packet writer gives a voice Margin saved without any, so what the listener sees is what's sent.
+  const placeholder = recordedAt ? voicePlaceholder({ atSeconds: at, ...(title !== undefined && { title }), recordedAt }) : '';
+  const placeholderRef = useRef(placeholder);
+  placeholderRef.current = placeholder;
   const [words, setWords] = useState('');
+  // Whether the listener has typed in the words box since the recording stopped: the transcript never overwrites that.
+  const edited = useRef(false);
+  const wordsRef = useRef(words);
+  wordsRef.current = words;
+  const [prefilled, setPrefilled] = useState(false);
+  const [suggestion, setSuggestion] = useState<string>();
+  const showingPlaceholder = recorded !== undefined && isPlaceholder(words, placeholder);
+  const transcription = useTranscription(recorded?.blob, (transcript) => {
+    const result = prefillOverPlaceholder(wordsRef.current, edited.current, transcript, placeholderRef.current);
+    if (result.words !== wordsRef.current) {
+      setWords(result.words);
+      setPrefilled(true);
+    }
+    setSuggestion(result.suggestion);
+  });
   const resumeAfter = useRef(false);
   const started = useRef(false);
   const live = useRef<VoiceRecording | null>(null);
@@ -428,7 +453,14 @@ function RecordMargin({
     if (!recording) return;
     live.current = null;
     try {
-      setRecorded(await recording.stop());
+      const voice = await recording.stop();
+      const stoppedAt = new Date();
+      setRecordedAt(stoppedAt);
+      // The words box starts with the placeholder; a transcript or the listener's own words replace it.
+      if (!edited.current && wordsRef.current === '') {
+        setWords(voicePlaceholder({ atSeconds: at, ...(title !== undefined && { title }), recordedAt: stoppedAt }));
+      }
+      setRecorded(voice);
       setRecording(null);
     } catch (error) {
       setRecording(null);
@@ -438,12 +470,13 @@ function RecordMargin({
 
   const save = async () => {
     if (!recorded) return;
-    const text = words.trim();
+    // The placeholder isn't stored as the Margin's words: the packet writer writes the same words at export.
+    const text = wordsToSave(words, placeholder);
     try {
       await data.addMargin({
-        id: newId(), episodeId, atSeconds: at, createdAt: new Date().toISOString(), voice: recorded, ...(text && { text }),
+        id: newId(), episodeId, atSeconds: at, createdAt: (recordedAt ?? new Date()).toISOString(), voice: recorded, ...(text && { text }),
       });
-      toast(`Voice Margin saved at ${formatClock(at)}.${text ? '' : ' It has no words, so it stays out of shared files.'}`);
+      toast(`Voice Margin saved at ${formatClock(at)}.${text ? '' : ' It shares with placeholder words naming the episode, the moment and the day.'}`);
       close();
     } catch (error) {
       // The recording stays here, so the listener can free space or back up and then save it again.
@@ -478,8 +511,9 @@ function RecordMargin({
   }
 
   if (recorded) {
-    // The iPhone app shares a voice Margin only with words (a transcript), and the web app has no speech
-    // recognition, so the listener types a few. Optional: without them the Margin stays here.
+    // The iPhone app shares a voice Margin only with words (a transcript). The box starts with placeholder words
+    // (#3025), shown muted; the listener types their own, or, with transcription on, gets them written out on this
+    // device and can edit them. Left as it is, the Margin shares with the placeholder.
     return (
       <form
         className="composer"
@@ -490,9 +524,41 @@ function RecordMargin({
       >
         <label htmlFor="voice-words">Words to go with your voice Margin at {formatClock(at)}</label>
         <p className="muted composer-hint" id="voice-words-hint">
-          Friends read these alongside your voice. A voice Margin is shared only with words.
+          {showingPlaceholder ? (
+            <>
+              <span className="placeholder-tag">Placeholder</span> Replace with your own words. Friends read them alongside your voice.
+            </>
+          ) : (
+            'Friends read these alongside your voice.'
+          )}
         </p>
-        <textarea id="voice-words" aria-describedby="voice-words-hint" rows={2} value={words} onChange={(event) => setWords(event.target.value)} />
+        <textarea
+          id="voice-words"
+          aria-describedby="voice-words-hint"
+          rows={2}
+          value={words}
+          placeholder={placeholder}
+          className={showingPlaceholder ? 'words-placeholder' : undefined}
+          data-placeholder={showingPlaceholder ? 'true' : undefined}
+          onFocus={(event) => {
+            // One tap and typing replaces the placeholder whole; the listener can still click to edit it instead.
+            if (isPlaceholder(event.target.value, placeholder) && event.target.value) event.target.select();
+          }}
+          onChange={(event) => {
+            edited.current = true;
+            setWords(event.target.value);
+          }}
+        />
+        <TranscriptionNote
+          transcription={transcription}
+          prefilled={prefilled}
+          {...(suggestion !== undefined && { suggestion })}
+          onUseSuggestion={() => {
+            if (suggestion) setWords(suggestion);
+            setSuggestion(undefined);
+            setPrefilled(true);
+          }}
+        />
         <div className="composer-actions">
           <button type="button" className="button" onClick={close}>
             Discard

@@ -1035,6 +1035,73 @@ button:disabled {
   min-height: 64px;
 }
 
+/* Placeholder words in a voice Margin's box (#3025): muted, italic and named by a "Placeholder" tag, never colour alone. */
+.composer textarea.words-placeholder,
+.composer textarea#voice-words::placeholder {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.placeholder-tag {
+  display: inline-block;
+  margin-right: 4px;
+  padding: 0 6px;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  font-size: 0.8125rem;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+/* Writing out a voice Margin's words on the device: a quiet note under the words box, never a colour alone. */
+.transcribe-note {
+  display: grid;
+  gap: 8px;
+  padding-left: 12px;
+  border-left: 3px solid var(--rule);
+  color: var(--muted);
+  font-size: 0.9375rem;
+}
+
+.transcribe-note q {
+  color: var(--ink);
+  font-family: var(--note);
+}
+
+.transcribe-note .button,
+.transcribe-actions {
+  justify-self: start;
+}
+
+.transcribe-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.transcribe-working {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.transcribe-spinner {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--rule);
+  border-top-color: var(--blue);
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 /* The Margins tab's two ways in: a file, or a friend's link (#3003). */
 .header-actions {
   display: flex;
