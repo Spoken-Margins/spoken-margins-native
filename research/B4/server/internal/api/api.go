@@ -27,6 +27,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -38,6 +39,7 @@ import (
 	"spokenmargins.dev/bridge/internal/config"
 	"spokenmargins.dev/bridge/internal/links"
 	"spokenmargins.dev/bridge/internal/maps"
+	"spokenmargins.dev/bridge/internal/relay"
 	"spokenmargins.dev/bridge/internal/store"
 	"spokenmargins.dev/bridge/internal/tokens"
 )
@@ -105,10 +107,15 @@ type Server struct {
 	Links          *links.Store
 	LinkInstallURL string
 
+	// Relay fetches feeds and pages for the web app (#2985). Nil, or no
+	// origins, answers 503 like the switch being off.
+	Relay *relay.Relay
+
 	// Per-hour limits. Zero means the defaults below.
 	ChallengesPerIPPerHour  int
 	RequestsPerInstallPerHr int
 	MapUploadsPerIPPerHour  int
+	RelayPerIPPerHour       int
 
 	once             sync.Once
 	ipSecret         []byte
@@ -117,6 +124,7 @@ type Server struct {
 	ipWindow         window
 	mapWindow        window
 	linkWindow       window
+	relayWindow      window
 	linkReportWindow window
 	linkSlots        chan struct{}
 	linkReports      map[linkReportKey]int
@@ -146,6 +154,9 @@ func (s *Server) init() {
 		}
 		if s.MapUploadsPerIPPerHour == 0 {
 			s.MapUploadsPerIPPerHour = 30
+		}
+		if s.RelayPerIPPerHour == 0 {
+			s.RelayPerIPPerHour = 120
 		}
 		s.uploadSlots = make(chan struct{}, maxConcurrentUploads)
 		s.linkSlots = make(chan struct{}, 1)
@@ -190,6 +201,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /l/{id}", s.getLink)
 	mux.HandleFunc("GET /l/{id}/packet", s.getLinkPacket)
 	mux.HandleFunc("POST /l/{id}/report", s.reportLink)
+	mux.HandleFunc("GET "+PathRelay, s.relay)
 	return s.logRequests(mux)
 }
 
@@ -199,6 +211,7 @@ var loggedRoutes = map[string]bool{
 	"/api/v1/health": true, PathConfig: true, PathManifest: true,
 	"/api/v1/attest/challenge": true, "/api/v1/attest/register": true, "/api/v1/ping": true,
 	PathLinks: true, PathMapTranscripts: true, PathTokens: true, PathTokenKeys: true,
+	PathRelay: true,
 }
 
 // logRoute is the route name the request log may record for path.
@@ -389,8 +402,25 @@ func (s *Server) clientKey(r *http.Request) string {
 		}
 	}
 	m := hmac.New(sha256.New, s.ipSecret)
-	m.Write([]byte(host))
+	m.Write([]byte(clientNet(host)))
 	return hex.EncodeToString(m.Sum(nil))
+}
+
+// clientNet is what one client controls: an IPv4 address, or an IPv6
+// address's /64, the standard size of one subscriber's network. Keying an
+// IPv6 client per address gave it a fresh hourly budget for every address
+// it picked (#2988). Spellings of one address (case, zero padding,
+// IPv4-mapped) are one key. A host that doesn't parse is used as it is.
+func clientNet(host string) string {
+	a, err := netip.ParseAddr(host)
+	if err != nil {
+		return host
+	}
+	a = a.Unmap().WithZone("")
+	if a.Is6() {
+		return netip.PrefixFrom(a, 64).Masked().String()
+	}
+	return a.String()
 }
 
 func (s *Server) challenge(w http.ResponseWriter, r *http.Request) {
