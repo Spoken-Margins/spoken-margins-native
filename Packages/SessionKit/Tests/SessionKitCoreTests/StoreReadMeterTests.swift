@@ -427,7 +427,8 @@ final class StoreReadMeterTests: XCTestCase {
         "quarantinedRecordCount", "quarantinedMarginAudioPaths",   // nothing is quarantined in a healthy Library
         "importedCommentaryRecordsMention",   // a miss is the common answer: it scans every record
         "marginNoteChanges", "itemRevision", "isLiveImportedCommentaryLayer", "transcriptTimelineStamp",
-        "listDeletedItems"                    // the trash starts empty
+        "listDeletedItems",                   // the trash starts empty
+        "latestPendingSummaryTurnId"          // no summary is waiting in a healthy Library; a miss is the common answer
     ]
 
     /// Answered from memory, not SQLite: nothing for the meter to see.

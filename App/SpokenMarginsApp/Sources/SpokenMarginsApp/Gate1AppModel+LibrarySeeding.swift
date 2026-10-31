@@ -228,7 +228,7 @@ extension Gate1AppModel {
                 UserDefaults.standard.set(1, forKey: Self.guidedOnboardingSeedVersionKey)
                 UserDefaults.standard.removeObject(forKey: Self.guidedOnboardingTombstoneKey)
                 try refreshLibraryRows(store: store)
-            } else if try store.loadListeningMap(itemId: Self.guidedOnboardingItemId) == nil {
+            } else if try store.listeningMapId(itemId: Self.guidedOnboardingItemId) == nil { // whether there is one (#2506)
                 try store.saveListeningMap(Self.makeBundledGuidedOnboardingMap())
             }
             if engine == nil {

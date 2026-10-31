@@ -185,8 +185,13 @@ public enum CommunityMapUploadPolicy {
     /// Whether publisher chapters are stored for the item, as a map from
     /// `attachPublisherChapters` or as chapters in its timeline.
     public static func hasPublisherChapters(map: ListeningMap?, timeline: TranscriptTimeline?) -> Bool {
-        if let map, map.id.contains("-publisher-") { return true }
-        return timeline?.chapters.contains { $0.id.hasPrefix("ch-publisher-") } ?? false
+        hasPublisherChapters(mapId: map?.id, chapters: timeline?.chapters ?? [])
+    }
+
+    /// The same answer from the map's id and the timeline's chapters alone, for a caller that reads only those (#2506).
+    public static func hasPublisherChapters(mapId: String?, chapters: [MediaTimelineChapter]) -> Bool {
+        if let mapId, mapId.contains("-publisher-") { return true }
+        return chapters.contains { $0.id.hasPrefix("ch-publisher-") }
     }
 
     /// The episode's own length, from the feed or playback, or else measured from the downloaded

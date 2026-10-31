@@ -61,6 +61,8 @@ public struct LibraryItemSummary: LibraryItemFields, Equatable, Sendable {
     public var sourceCompletedAt: Date?
     public var hasListenableText: Bool
     public var textCharacterCount: Int?
+    /// The source transcript the item carries (`Item.transcriptId`): the yes or no a caller asks before it looks for one (#2506).
+    public var transcriptId: String?
 
     public init(
         id: String,
@@ -78,7 +80,8 @@ public struct LibraryItemSummary: LibraryItemFields, Equatable, Sendable {
         publishedAt: String? = nil,
         sourceCompletedAt: Date? = nil,
         hasListenableText: Bool,
-        textCharacterCount: Int?
+        textCharacterCount: Int?,
+        transcriptId: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -96,6 +99,7 @@ public struct LibraryItemSummary: LibraryItemFields, Equatable, Sendable {
         self.sourceCompletedAt = sourceCompletedAt
         self.hasListenableText = hasListenableText
         self.textCharacterCount = textCharacterCount
+        self.transcriptId = transcriptId
     }
 
     /// The summary of a whole item. A summary read from the store answers the same.
@@ -105,6 +109,7 @@ public struct LibraryItemSummary: LibraryItemFields, Equatable, Sendable {
             externalReference: item.externalReference, externalReferenceType: item.externalReferenceType,
             media: item.media, deletedAt: item.deletedAt, author: item.author, sourceTitle: item.sourceTitle,
             sourceURL: item.sourceURL, createdAt: item.createdAt, publishedAt: item.publishedAt,
-            sourceCompletedAt: item.sourceCompletedAt, hasListenableText: item.hasListenableText, textCharacterCount: item.textCharacterCount)
+            sourceCompletedAt: item.sourceCompletedAt, hasListenableText: item.hasListenableText, textCharacterCount: item.textCharacterCount,
+            transcriptId: item.transcriptId)
     }
 }
