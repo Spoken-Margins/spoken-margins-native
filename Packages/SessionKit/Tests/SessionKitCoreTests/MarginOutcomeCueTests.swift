@@ -11,7 +11,7 @@ final class MarginOutcomeCueTests: XCTestCase {
         XCTAssertEqual(Set(MarginCaptureSupervisor.SaveVerdict.allCasesForTest.map { MarginOutcomeCue(verdict: $0) }).count, 3)
     }
 
-    func testTheFourSoundsAllDiffer() {
+    func testEverySoundDiffers() {
         let waves = MarginOutcomeCue.allCases.map { $0.wavData() }
         XCTAssertEqual(Set(waves).count, MarginOutcomeCue.allCases.count, "two endings must never sound alike")
     }
@@ -35,6 +35,29 @@ final class MarginOutcomeCueTests: XCTestCase {
 
     func testOnlyTheDeadMicrophoneRepeats() {
         XCTAssertEqual(MarginOutcomeCue.allCases.filter(\.repeats), [.micStopped])
+    }
+
+    /// #3085: a Margin that cannot start says so, once, in a sound no ending uses.
+    func testCouldNotStartIsShortOneShotAndOwnsItsSound() {
+        let cue = MarginOutcomeCue.couldNotStart
+        XCTAssertFalse(cue.repeats)
+        XCTAssertLessThan(cue.soundSeconds, MarginOutcomeCue.maxSoundSeconds)
+        XCTAssertEqual(cue.rawValue, "could_not_start")
+        let others = MarginOutcomeCue.allCases.filter { $0 != cue }.map { $0.wavData() }
+        XCTAssertFalse(others.contains(cue.wavData()))
+    }
+
+    func testCompactBeginFailureRecordKeepsWhyAndStaysOneLine() {
+        let record = CompactBeginFailureRecord(
+            appState: "background", protectedDataAvailable: .no, origin: "now_playing_next_track",
+            error: "AVAudioSession\nerror=561145187;extra", cue: "played")
+        XCTAssertEqual(record.diagnosticsLine,
+            "appState=background;protectedData=no;origin=now_playing_next_track;error=AVAudioSession error:561145187,extra;cue=played")
+        XCTAssertEqual(record.eventFields["protectedData"], "no")
+        XCTAssertEqual(record.eventFields["error"], "AVAudioSession error:561145187,extra")
+        let long = CompactBeginFailureRecord(appState: "foreground", protectedDataAvailable: .unknown, origin: "x",
+                                             error: String(repeating: "a", count: 500), cue: "skipped:other_audio")
+        XCTAssertLessThan(long.diagnosticsLine.count, 300)
     }
 }
 

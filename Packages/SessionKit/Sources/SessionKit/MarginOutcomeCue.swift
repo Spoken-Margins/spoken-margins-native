@@ -13,11 +13,14 @@ import Foundation
 /// - `emptyDiscarded`: one low note sliding down, B4 to E4: nothing was kept.
 /// - `micStopped`: two low notes, G4 then E4, then silence to the end of a four-second period. The app loops it
 ///   quietly from the moment the microphone dies until the listener saves or cancels.
+/// - `couldNotStart`: two short low E4 notes with a gap, played once when a Margin started from a headphone or compact
+///   control could not start recording (#3085), such as a locked phone that iOS won't open the microphone on.
 public enum MarginOutcomeCue: String, CaseIterable, Equatable, Sendable {
     case saved
     case savedMaybeCut = "saved_maybe_cut"
     case emptyDiscarded = "empty_discarded"
     case micStopped = "mic_stopped"
+    case couldNotStart = "could_not_start"
 
     public static let sampleRate = 22_050
     /// Below the ready cue's level: these play after the recorder has stopped, so nothing has to out-shout the room.
@@ -57,6 +60,9 @@ public enum MarginOutcomeCue: String, CaseIterable, Equatable, Sendable {
             [Note(from: 493.88, to: 329.63, seconds: 0.3, peak: 0.26)]
         case .micStopped:
             [Note(from: 392, to: 392, seconds: 0.12, peak: 0.22), Note(from: 329.63, to: 329.63, seconds: 0.16, peak: 0.22)]
+        case .couldNotStart:
+            [Note(from: 329.63, to: 329.63, seconds: 0.09, peak: 0.26), Note(from: 329.63, to: 329.63, seconds: 0.05, peak: 0),
+             Note(from: 329.63, to: 329.63, seconds: 0.09, peak: 0.26)]
         }
     }
 

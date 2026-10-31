@@ -2341,6 +2341,7 @@ final class Gate1AppModel: ObservableObject {
                 streamingSpeechQueue.resumeAfterInterjection()
             }
             if command == .beginInterjection, !snapshot.isRecording { resumeHeldMarginVoice(heldMarginVoice) } // no recording came of it (#1672)
+            if command == .beginInterjection, !snapshot.isRecording { noteCompactBeginFailure(error, origin: origin) } // #3085
             reportFailure(error, context: "Compact control failed")
         }
     }
