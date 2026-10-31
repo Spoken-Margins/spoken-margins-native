@@ -3907,14 +3907,18 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
         let reportedMs = max(capturedHighWaterMs, Int((recorder.currentTime * 1_000).rounded()))
         isCaptureActive = false
         dropCueHold()
-        finalizedIntegrity = RecordingFileFinalizer.finish(url: currentURL, reportedMs: reportedMs) { recorder.stop() }
+        finalizedIntegrity = RecordingFileFinalizer.finish(url: currentURL, reportedMs: reportedMs) {
+            MainThreadOperationLabels.shared.scoped("recorder.stop") { recorder.stop() }
+        }
         recorderDelegate = nil
         self.recorder = nil
         self.currentURL = nil
         recordingEnded()
         #if os(iOS) || os(watchOS)
         if deactivateSessionOnFinish || shouldNotifyOtherAudioOnFinish {
-            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+            MainThreadOperationLabels.shared.scoped("audioSession.deactivate") {
+                _ = try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+            }
             releasedSessionAtEnd = true
         }
         shouldNotifyOtherAudioOnFinish = false

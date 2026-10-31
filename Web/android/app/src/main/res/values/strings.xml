@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Spoken Margins</string>
+    <string name="title_activity_main">Spoken Margins</string>
+    <string name="package_name">com.spokenmargins.android</string>
+    <string name="custom_url_scheme">com.spokenmargins.android</string>
+</resources>

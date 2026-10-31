@@ -199,7 +199,11 @@ func TestLinkTakedownCommand(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now()
-	id, _, err := st.Put([]byte("opaque packet"), []byte(`{"source":{"title":"Title","show":"Show","url":"https://example.org"},"margins":[{"text":"Margin","before":"Before","after":"After"}]}`), now)
+	// Parts sealed on the phone (#805): the header, nonce and tag of each, with opaque bytes between.
+	sealed := func(part byte) []byte {
+		return append([]byte{'S', 'M', 'L', 'I', 'N', 'K', 1, part}, []byte("twelve-nonce opaque ciphertext sixteen-byte-tag")...)
+	}
+	id, _, err := st.Put(sealed(links.PartPacket), sealed(links.PartPreview), now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,7 +213,7 @@ func TestLinkTakedownCommand(t *testing.T) {
 	if _, err := st.Packet(id, now); !errors.Is(err, links.ErrGone) {
 		t.Fatal("CLI did not delete link")
 	}
-	for _, name := range []string{"packet", "preview.json"} {
+	for _, name := range []string{"packet", "preview", "preview.json"} {
 		if _, err := os.Stat(filepath.Join(dir, "links", id, name)); !errors.Is(err, os.ErrNotExist) {
 			t.Fatal("CLI left content")
 		}
@@ -219,5 +223,33 @@ func TestLinkTakedownCommand(t *testing.T) {
 	}
 	if err := takedownLink([]string{"-state", dir}); err == nil {
 		t.Fatal("missing id")
+	}
+}
+
+// A bad -relay-origins entry stops the server instead of being skipped.
+func TestParseRelayOrigins(t *testing.T) {
+	got, err := parseRelayOrigins("https://web.example.com, http://localhost:5173")
+	if err != nil || len(got) != 2 || got[0] != "https://web.example.com" || got[1] != "http://localhost:5173" {
+		t.Fatalf("got %v %v", got, err)
+	}
+	for _, bad := range []string{"https://web.example.com,*", "https://web.example.com/", "http://web.example.com", "https://ok.example,"} {
+		if _, err := parseRelayOrigins(bad); err == nil {
+			t.Errorf("%q should be refused", bad)
+		}
+	}
+}
+
+// A bad -link-origins entry stops the server before it opens anything,
+// instead of being skipped (#3013).
+func TestServeRefusesBadLinkOrigins(t *testing.T) {
+	for _, bad := range []string{"*", "https://web.example.com/", "null", "https://web.example.com,", "HTTPS://web.example.com"} {
+		dir := t.TempDir()
+		err := serve([]string{"-state", filepath.Join(dir, "state"), "-public", filepath.Join(dir, "public"), "-link-origins", bad})
+		if err == nil || !strings.Contains(err.Error(), "-link-origins") {
+			t.Errorf("%q: %v", bad, err)
+		}
+		if _, err := os.Stat(filepath.Join(dir, "state")); !os.IsNotExist(err) {
+			t.Errorf("%q: state directory made before the flag was checked", bad)
+		}
 	}
 }

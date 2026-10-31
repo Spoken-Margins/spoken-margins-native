@@ -12,7 +12,10 @@ research/B4/scripts/demo.sh                                 # health, one attest
 CADDY=caddy SMSERVER=smserver research/B4/deploy/test-edit-caddyfile.sh   # Caddyfile edit, validate, local routing
 research/B4/deploy/test-server-rollback.sh   # deploy keeps the old smserver and puts it back on rollback
 research/B4/deploy/deploy.sh --dry-run root@<vps>           # from the Mac: show every change on the box, change nothing
+research/B4/deploy/deploy-web.sh --dry-run root@<vps>       # from the Mac: build Web/ and list what would change, change nothing
 ```
+
+The web app (`Web/`, #3020) is served by the same Caddy from `https://app.spokenmargins.proximitytoprogress.com`: `deploy.sh` adds that site block (`deploy/caddy-web.caddy`, no access log) and an empty `/srv/www/spokenmargins-web`, and `deploy-web.sh` builds the committed `Web/` with `VITE_RELAY_ORIGIN` set to this server and copies it there. The unit lists that origin in `-relay-origins` and `-link-origins`; the relay still answers 503 until `smserver switch ... relay on`.
 
 `deploy/deploy.sh` without `--dry-run` deploys; the owner approves the dry-run diff first. Admin on the box runs as the service user, e.g. `runuser -u smserver -- smserver switch -public /srv/www/spokenmargins-server attest off`.
 
@@ -22,6 +25,10 @@ Anonymous tokens (#737, DESIGN.md §11) stay off until the owner runs `smserver 
 
 Map uploads can require one of those tokens (#743, DESIGN.md §10): `smserver switch ... mapUploadToken on`, with `tokens` also on. Leave it off until an app build sends tokens with its uploads; until then it would refuse every upload.
 
+## Feed relay (#2985)
+
+`GET /api/v1/relay?url=<http(s) URL>` fetches one feed or page for the web app when the publisher sends no CORS header, and keeps nothing: no URL in any log (the request log names the route only), no cache, and no cookies or listener headers in either direction. It answers the upstream body with its content type, or `{"error": code}`. It needs both `serve -relay-origins https://<web app origin>[,…]` (the origins that get `Access-Control-Allow-Origin`; a request with any other `Origin`, or none, is refused before the hourly limit counts it, so a cross-site `<img>` can't drive the relay, and the web app must be served from a listed origin other than this host) and `smserver switch ... relay on`; with either missing it answers 503 `disabled`. Limits, all in `internal/relay`: ports 80 and 443, public addresses only after resolution (the checked address is the one dialed, and every redirect is re-checked, at most 5), 10 s, 5 MB, feed and HTML types only, 4 fetches in flight, and 120 per client per hour. Caddy already proxies `/api/*`. Its error log (a 502 while smserver is down) drops every query string, so the fetched URL never reaches journald; that filter is in `deploy/caddy-global.caddy`, so deploy it before switching the relay on.
+
 ## Share links (#486)
 
 The `links` service is off by default. Deployment and enabling it stay with the
@@ -30,25 +37,39 @@ owner. Set `serve -links-install-url https://testflight.apple.com/join/INVITATIO
 install URL the link routes fail closed with 503. Existing config files missing
 `links` remain off; `smserver switch -public DIR links on|off` adds the entry.
 
-`POST /api/v1/links` accepts `multipart/form-data` with exactly two parts:
-`packet` (opaque, nonempty, at most 20 MiB) and `preview` (UTF-8 JSON, at most
-16 KiB), in either order. Preview shape:
+`POST /api/v1/links` accepts `multipart/form-data` with exactly two parts,
+`packet` (at most 20 MiB) and `preview` (at most 16 KiB), in either order. Both
+are sealed on the phone (#805, SessionKit's `ShareLinkSealing`): each is
+`"SMLINK"`, version 1, the part number (1 preview, 2 packet), a 12-byte nonce,
+the AES-256-GCM ciphertext and its 16-byte tag, under a key that travels only in
+the link's `#` part. The server checks only that header and the minimum length,
+and stores both parts unread; a readable or swapped part is refused (400
+`bad_preview` or `bad_packet`). Extra or duplicate parts are rejected. The
+response is 201 with `id` (16 random bytes in lowercase hex), `path` (`/l/<id>`)
+and `expiresAt` (UTC deadline). Upload attempts are limited to 30 per client
+address per hour in memory. The sealing vector both sides test against is
+`contracts/fixtures/share-link-sealing-vector.json`.
 
-```json
-{"source":{"title":"Episode title","show":"Show name","url":"https://publisher.example/episode"},"margins":[{"text":"My Margin","before":"Source excerpt before","after":"Source excerpt after"}]}
-```
+`GET /l/<id>` serves a page shell with the install link and the report form,
+and no Margin, title or excerpt. Its module (`/l/share-link-page.mjs`, with
+`/l/share-link-open.mjs`, both embedded in the binary) fetches the sealed bytes
+from `GET /l/<id>/preview`, opens them with the key from `location.hash`, and
+shows the Margins as text. The page checks what the server can no longer read:
+a source title, at least one Margin, and the excerpt ceilings of 500 code points
+before a Margin and 120 after it (the app's `ExcerptCapRule`, #2237). It leaves
+out a source URL with a query, credentials or fragment. `GET /l/<id>/packet`
+downloads the unchanged sealed packet, which the app opens with the same key.
+No source audio is served or fetched.
 
-The excerpt before a Margin is limited to 500 Unicode code points and the one after it to 120 (the app's `ExcerptCapRule`, #2237). At least one Margin and a
-source title are required. Unknown fields, trailing JSON, extra or duplicate
-parts are rejected. The response is 201 with `id` (16 random bytes in lowercase
-hex), `path` (`/l/<id>`) and `expiresAt` (UTC deadline). Upload attempts are
-limited to 30 per client address per hour in memory. This contract stores the
-preview as readable JSON as requested by #486; it does **not** wire #805's sealed
-preview/browser decryption. Resolve that privacy difference before enabling it.
-
-`GET /l/<id>` serves an escaped, self-contained HTML page, and
-`GET /l/<id>/packet` downloads the unchanged bytes. No source audio is served or
-fetched. Source URLs containing queries, credentials or fragments are omitted.
+A web app on another origin reads the packet and preview only if the server is
+started with `serve -link-origins https://web.example.com[,…]` (#3013). Empty,
+the default, sends no CORS headers anywhere. A listed origin, matched exactly as
+the browser sends it, gets `Access-Control-Allow-Origin` on those two GET routes
+(errors included, so the app can tell 410 from a network failure), and their
+`OPTIONS` preflight allows `GET` with no extra headers. Every answer on them says
+`Vary: Origin`. Credentials are never allowed, and uploads, reports and the page
+itself never answer CORS. A bad entry (a wildcard, a path, upper case, a default
+port, `null`) stops the server rather than being skipped.
 The report form posts one fixed reason (`privacy`, `copyright`, `harmful`, `spam`
 or `other`) to `/l/<id>/report`; reports join the existing hourly abuse log with
 an `id` field, without a reporter address. Request logs use `/l/*` for all link

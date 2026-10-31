@@ -1,6 +1,7 @@
 import Foundation
 import XCTest
 @testable import SessionKit
+import SessionKitSharing
 @testable import SpokenMarginsApp
 
 @MainActor
@@ -179,6 +180,37 @@ final class Build23SenderSharingExperienceTests: XCTestCase {
         XCTAssertEqual(leftOut.first?.reviewedText, "")
     }
 
+    /// #3027: a voice Margin with no words used to be left out. It now goes with placeholder words, marked as
+    /// such, which the listener can replace; clearing their words brings the placeholder back.
+    func testAVoiceMarginWithoutWordsIsSharedWithReplaceablePlaceholderWords() throws {
+        let (model, coordinator) = makeModelAndCoordinator(marginCount: 2, voiceMarginsWithoutWords: [0])
+        coordinator.send(.begin)
+        let id = "margin-build-23-sender-0"
+        let placeholder = SharedMarginPlaceholder.words(
+            mediaTimeMs: nil, itemTitle: model.selectedItem.title, recordedAt: Date(timeIntervalSince1970: 1)
+        )
+
+        XCTAssertEqual(coordinator.snapshot.selectionSummary.packetCount, 2)
+        XCTAssertNil(coordinator.snapshot.selectionSummary.notice)
+        var voice = try XCTUnwrap(coordinator.snapshot.margins.first { $0.id == id })
+        XCTAssertEqual(voice.reviewedText, placeholder)
+        XCTAssertEqual(voice.placeholderText, placeholder)
+        XCTAssertTrue(voice.isShowingPlaceholder)
+        XCTAssertFalse(voice.isLeftOutForMissingText)
+        XCTAssertNil(voice.warning)
+        XCTAssertEqual(voice.spokenWordsDescription, "placeholder words: \(placeholder)")
+
+        coordinator.send(.setReviewedWords(id: id, text: "My own words."))
+        voice = try XCTUnwrap(coordinator.snapshot.margins.first { $0.id == id })
+        XCTAssertEqual(voice.reviewedText, "My own words.")
+        XCTAssertFalse(voice.isShowingPlaceholder)
+
+        coordinator.send(.setReviewedWords(id: id, text: ""))
+        voice = try XCTUnwrap(coordinator.snapshot.margins.first { $0.id == id })
+        XCTAssertEqual(voice.reviewedText, placeholder)
+        XCTAssertTrue(voice.isShowingPlaceholder)
+    }
+
     /// #1185 audit: the export screen prepares drafts from the session picked there; opening the
     /// sheet must keep them, so the count on the Share Margins button is the count in the sheet.
     func testBeginKeepsDraftsTheExportScreenAlreadyPrepared() {
@@ -203,7 +235,8 @@ final class Build23SenderSharingExperienceTests: XCTestCase {
 
     private func makeModelAndCoordinator(
         marginCount: Int = 1,
-        marginsWithoutTranscript: Set<Int> = []
+        marginsWithoutTranscript: Set<Int> = [],
+        voiceMarginsWithoutWords: Set<Int> = []
     ) -> (model: Gate1AppModel, coordinator: Build23SharingCoordinator) {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
@@ -225,7 +258,15 @@ final class Build23SenderSharingExperienceTests: XCTestCase {
                 anchorBefore: "Before \(index)",
                 anchorAfter: "After \(index)"
             )
-            let transcript: String = marginsWithoutTranscript.contains(index) ? "" : "Reviewed Margin \(index)."
+            let isWordlessVoice = voiceMarginsWithoutWords.contains(index)
+            let transcript: String = marginsWithoutTranscript.contains(index) || isWordlessVoice ? "" : "Reviewed Margin \(index)."
+            var audioPath: String?
+            if isWordlessVoice {
+                let audio = FileManager.default.temporaryDirectory.appending(path: "build23-voice-\(UUID().uuidString).m4a")
+                FileManager.default.createFile(atPath: audio.path, contents: Data([0, 0, 0, 0x18]))
+                addTeardownBlock { try? FileManager.default.removeItem(at: audio) }
+                audioPath = audio.path
+            }
             let interjection = Interjection(
                 id: marginID,
                 itemId: itemID,
@@ -235,9 +276,9 @@ final class Build23SenderSharingExperienceTests: XCTestCase {
                 createdAt: createdAt,
                 roughPercent: roughPercent,
                 anchor: anchor,
-                audioPath: nil,
-                audioStatus: "none",
-                transcriptionStatus: "transcribed",
+                audioPath: audioPath,
+                audioStatus: isWordlessVoice ? "saved" : "none",
+                transcriptionStatus: isWordlessVoice ? "failed" : "transcribed",
                 transcript: transcript,
                 cleanedTranscript: nil,
                 displayText: nil,

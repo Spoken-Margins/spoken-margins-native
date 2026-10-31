@@ -97,7 +97,8 @@ public enum SharedItemIdentityBuilder {
         )
     }
 
-    public static func itemType(for item: Item) -> SharedItemType {
+    /// Reads only fields a Library summary also has, so a caller that holds a summary need not decode the text (#2506).
+    public static func itemType<Fields: LibraryItemFields>(for item: Fields) -> SharedItemType {
         if item.mediaType == "audiobook" { return .other }
         if isPodcast(item) { return .podcast }
         let extensionName = URL(fileURLWithPath: item.externalReference ?? "").pathExtension.lowercased()
@@ -117,7 +118,7 @@ public enum SharedItemIdentityBuilder {
         return components.string
     }
 
-    private static func isPodcast(_ item: Item) -> Bool {
+    private static func isPodcast<Fields: LibraryItemFields>(_ item: Fields) -> Bool {
         item.media?.sourceType == .remoteStream || item.media?.sourceType == .nativeMediaFile
     }
 

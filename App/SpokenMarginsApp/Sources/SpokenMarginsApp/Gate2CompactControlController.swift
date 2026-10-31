@@ -319,6 +319,7 @@ final class Gate2CompactControlController {
     private var latestSkimDestinations: (forward: Int?, backward: Int?) = (nil, nil)
     /// Whether the microphone is really taking in sound, for the Live Activity's REC indicator (#937).
     private(set) var microphone = Gate2LiveActivityMicrophone.capturing
+    private var liveSessionCardsObserver: NSObjectProtocol?
     private(set) var lastCommand: CompactControlCommand?
     private(set) var lastCommandOrigin = "none"
     private(set) var lastApplicationCommand = "none"
@@ -351,6 +352,16 @@ final class Gate2CompactControlController {
             onBackground: { [weak self] in self?.startBackgroundWatchIfNeeded() },
             onForeground: { [weak self] in self?.handleAppReturnedToForeground() }
         )
+        // The item's card was held back while a live session ran (#2962). When the session's card goes, or turns into
+        // "Ended · Resume", it comes back even though the item's own state has not changed. (The live session's start ends the item's
+        // cards directly, so the controller can't tell by its own status whether one was taken away.)
+        liveSessionCardsObserver = notificationCenter.addObserver(
+            forName: LiveSessionActivities.cardsChanged, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.publishCurrentSnapshot(force: true)
+            }
+        }
     }
 
     var snapshot: CompactControlSnapshot? {
@@ -543,6 +554,11 @@ final class Gate2CompactControlController {
         endWatchBackgroundTask = nil
     }
 
+    /// Call before a recording takes the audio session (#2967).
+    func recordingWillTakeAudioSession() {
+        liveSpeechNowPlaying.cancelAudioSessionActivation()
+    }
+
     func setNowPlayingEnabled(_ enabled: Bool) {
         guard nowPlayingEnabled != enabled else { return }
         nowPlayingEnabled = enabled
@@ -572,6 +588,7 @@ final class Gate2CompactControlController {
             "gate2LastRemoteCommandDetail": liveSpeechNowPlaying.lastRemoteCommandDetail,
             "gate2LiveActivity": liveActivity.status,
             "gate2LiveActivityLifecycle": liveActivityLifecycleStatus,
+            "gate2LiveSessionActivityStart": LiveSessionActivities.lastStartOutcome,
             "gate2LastCommand": lastCommand?.rawValue ?? "none",
             "gate2LastCommandOrigin": lastCommandOrigin,
             "gate2LastApplicationCommand": lastApplicationCommand,
@@ -739,9 +756,18 @@ struct Gate2LiveActivitySystem: Sendable {
         _ state: Gate2LiveActivityAttributes.ContentState,
         _ staleDate: Date?
     ) throws -> String
+    /// Whether a live session's running card is up (#2962). Its card takes the Lock Screen, so the item's stays off.
+    var isLiveSessionCardShowing: @Sendable () -> Bool = { false }
+
+    /// ActivityKit's permission check asks a system daemon, and every status change of a play tap
+    /// asked it on the main thread (#2967, #2195). The answer is read off the main thread and refreshed every few
+    /// seconds; until the first answer lands it is yes, and a card that cannot start reports `failed`.
+    private static let activitiesEnabledFlag = RefreshedSystemFlag(
+        initial: true, maxAge: 5, label: "spoken-margins.live-activity-enabled"
+    ) { ActivityAuthorizationInfo().areActivitiesEnabled }
 
     static let activityKit = Gate2LiveActivitySystem(
-        areActivitiesEnabled: { ActivityAuthorizationInfo().areActivitiesEnabled },
+        areActivitiesEnabled: { activitiesEnabledFlag.value },
         activities: { Activity<Gate2LiveActivityAttributes>.activities.map(ActivityKitLiveActivityCard.init) },
         request: { sessionId, state, staleDate in
             try Activity<Gate2LiveActivityAttributes>.request(
@@ -749,6 +775,11 @@ struct Gate2LiveActivitySystem: Sendable {
                 content: ActivityContent(state: state, staleDate: staleDate),
                 pushType: nil
             ).id
+        },
+        isLiveSessionCardShowing: {
+            Activity<LiveSessionActivityAttributes>.activities.contains {
+                !$0.content.state.hasEnded && $0.activityState != .ended && $0.activityState != .dismissed
+            }
         }
     )
 
@@ -964,6 +995,13 @@ final class Gate2LiveActivityController: Gate2LiveActivityControlling {
         state: Gate2LiveActivityAttributes.ContentState,
         staleDate: Date?
     ) async -> (activityId: String?, status: String) {
+        // A running live session owns the Lock Screen (#2962): iOS picks which of an app's cards shows first, and the
+        // item's was staying on top. Nothing is requested or updated until the session ends; the next publish after
+        // that (the app coming forward, or the item's state changing) puts the card back.
+        if system.isLiveSessionCardShowing() {
+            for card in system.activities() { await card.endImmediately() }
+            return (nil, "held_for_live_session")
+        }
         var matchingCards: [any Gate2LiveActivityCard] = []
         var endedCount = 0
         for card in system.activities() {
@@ -1148,6 +1186,8 @@ private final class Gate2LiveSpeechNowPlayingController {
     private(set) var lastRemoteCommandDetail = "none"
     private(set) var status = "media_coordinator"
     private var ownsNowPlayingInfo = false
+    private let audioSessionActivation = LatestOnlyBackgroundWork(label: "spoken-margins.now-playing-audio-session")
+    private var lastAudioSessionFailure: String?
     #if canImport(MediaPlayer)
     private var remoteCommandTargets: [(command: MPRemoteCommand, target: Any)] = []
     #endif
@@ -1162,6 +1202,8 @@ private final class Gate2LiveSpeechNowPlayingController {
             }
             Gate2EndedSessionNowPlaying.clearPlayerCard(for: snapshot)
             uninstallRemoteCommandHandlers()
+            audioSessionActivation.cancelPending()
+            lastAudioSessionFailure = nil
             ownsNowPlayingInfo = false
             status = "inactive"
             return
@@ -1172,14 +1214,15 @@ private final class Gate2LiveSpeechNowPlayingController {
             }
             Gate2EndedSessionNowPlaying.clearPlayerCard(for: snapshot)
             uninstallRemoteCommandHandlers()
+            audioSessionActivation.cancelPending()
+            lastAudioSessionFailure = nil
             ownsNowPlayingInfo = false
             status = "inactive"
             return
         }
-        var audioSessionFailure: String?
         if publishesLiveSpeech {
-            installRemoteCommandHandlersIfNeeded()
-            audioSessionFailure = activatePlaybackAudioSessionIfNeeded(for: snapshot)
+            MainThreadOperationLabels.shared.scoped("nowPlaying.installCommands") { installRemoteCommandHandlersIfNeeded() }
+            activatePlaybackAudioSessionIfNeeded(for: snapshot)
         } else {
             // The native AVPlayer route remains the transport-command owner. This
             // controller republishes metadata so its system Now Playing card does
@@ -1187,10 +1230,10 @@ private final class Gate2LiveSpeechNowPlayingController {
             uninstallRemoteCommandHandlers()
         }
         #if canImport(UIKit)
-        UIApplication.shared.beginReceivingRemoteControlEvents()
+        MainThreadOperationLabels.shared.scoped("nowPlaying.remoteEvents") { UIApplication.shared.beginReceivingRemoteControlEvents() }
         #endif
         if publishesLiveSpeech {
-            configureRemoteCommandAvailability(for: snapshot)
+            MainThreadOperationLabels.shared.scoped("nowPlaying.commandAvailability") { configureRemoteCommandAvailability(for: snapshot) }
         }
         let timeline = Gate2NowPlayingTimelineMetadata(snapshot: snapshot)
         // A pending start publishes rate 0 and a loading line: iOS runs the clock from a nonzero rate (#943).
@@ -1218,17 +1261,18 @@ private final class Gate2LiveSpeechNowPlayingController {
         let ledger = NowPlayingInfoOwnership.shared
         let ledgerDetail = "\(publishesLiveSpeech ? "live_speech" : "native_media") phase=\(snapshot.phase)"
         if publishesLiveSpeech {
-            ledger.write(info, as: .compactControls, detail: ledgerDetail)
+            MainThreadOperationLabels.shared.scoped("nowPlaying.infoWrite") { ledger.write(info, as: .compactControls, detail: ledgerDetail) }
             ownsNowPlayingInfo = true
         } else {
             // The player owns a native media card and refreshes it every second. This fills the card only when the
             // player has none, so it never overwrites the player's or takes a card the player is keeping (#2181).
-            ownsNowPlayingInfo = ledger.writeIfUnheld(info, as: .compactControls, detail: ledgerDetail)
+            ownsNowPlayingInfo = MainThreadOperationLabels.shared.scoped("nowPlaying.infoWrite") {
+                ledger.writeIfUnheld(info, as: .compactControls, detail: ledgerDetail)
+            }
         }
-        if let audioSessionFailure {
-            status = "live_speech_audio_session_failed:\(audioSessionFailure)"
-        } else if publishesLiveSpeech {
-            status = "live_speech_published"
+        if publishesLiveSpeech {
+            // A failed activation lands later (it runs off the main thread) and replaces this status then.
+            status = lastAudioSessionFailure.map { "live_speech_audio_session_failed:\($0)" } ?? "live_speech_published"
         } else {
             status = ownsNowPlayingInfo ? "native_media_metadata_published" : "native_media_deferred_to_player"
         }
@@ -1306,20 +1350,48 @@ private final class Gate2LiveSpeechNowPlayingController {
         #endif
     }
 
-    private func activatePlaybackAudioSessionIfNeeded(for snapshot: CompactControlSnapshot) -> String? {
+    /// Takes the playback route for live speech. `setActive(true)` waits on the audio daemon, and a play tap's status
+    /// changes asked for it several times on the main thread: one tap froze the app for 4.3 s (#2967). It now runs on
+    /// its own queue. A newer request replaces one still waiting, and a pause or end drops it.
+    private func activatePlaybackAudioSessionIfNeeded(for snapshot: CompactControlSnapshot) {
         #if canImport(AVFoundation) && os(iOS)
-        guard snapshot.status.isPlaybackActive || snapshot.status == .paused else { return nil }
-        do {
-            let session = AVAudioSession.sharedInstance()
-            try PlaybackAudioSessionPolicy.ensurePlaybackCategory(options: [], session: session)
-            try session.setActive(true)
-            return nil
-        } catch {
-            return error.localizedDescription
+        guard snapshot.status.isPlaybackActive || snapshot.status == .paused else {
+            audioSessionActivation.cancelPending()
+            return
         }
-        #else
-        return nil
+        audioSessionActivation.submit { [weak self] in
+            let failure: String?
+            do {
+                let session = AVAudioSession.sharedInstance()
+                // A Margin may have started recording while this job waited: its category is the recorder's now.
+                let current = AudioSessionConfiguration(
+                    category: session.category.rawValue, mode: session.mode.rawValue, optionsRawValue: session.categoryOptions.rawValue
+                )
+                guard !current.isCapturing else { return }
+                try PlaybackAudioSessionPolicy.ensurePlaybackCategory(options: [], session: session)
+                try session.setActive(true)
+                failure = nil
+            } catch {
+                failure = error.localizedDescription
+            }
+            Task { @MainActor [weak self] in self?.noteAudioSessionActivation(failure: failure) }
+        }
         #endif
+    }
+
+    /// A recording is about to take the audio session: a job still waiting to activate it for speech must not run.
+    func cancelAudioSessionActivation() {
+        audioSessionActivation.cancelPending()
+    }
+
+    private func noteAudioSessionActivation(failure: String?) {
+        guard status != "inactive" else { return } // the controller let go of the route while the call was out
+        lastAudioSessionFailure = failure
+        if let failure {
+            status = "live_speech_audio_session_failed:\(failure)"
+        } else if status.hasPrefix("live_speech_audio_session_failed") {
+            status = "live_speech_published"
+        }
     }
 
     #if canImport(MediaPlayer)

@@ -19,6 +19,8 @@ export interface Show {
   /** iTunes collection id, when the show came from search. */
   itunesId?: number;
   followedAt: string;
+  /** When the feed was last read successfully by a refresh (#2977). Unset until the first refresh after following. */
+  refreshedAt?: string;
 }
 
 /** Where an episode's audio comes from. Substack posts play the publisher's or Substack's own voice. */

@@ -64,12 +64,21 @@ struct Build23SharingMarginSnapshot: Identifiable, Equatable {
     let hasCleanedVoice: Bool
     let originalVoiceURL: URL?
     let cleanedVoiceURL: URL?
+    /// The stand-in words a word-less voice Margin starts with (#3027); `nil` when it had words of its own.
+    var placeholderText: String? = nil
+    /// The words that will be sent are still the placeholder.
+    var isShowingPlaceholder = false
 }
 
 extension Build23SharingMarginSnapshot {
     /// Included, but with no reviewed words, so the packet can't carry it (#1185).
     var isLeftOutForMissingText: Bool {
         isIncluded && !SharedMarginTextRequirement.hasReviewedText(reviewedText)
+    }
+
+    /// The words VoiceOver reads for the Margin, saying when they are only the placeholder (#3027).
+    var spokenWordsDescription: String {
+        isShowingPlaceholder ? "placeholder words: \(reviewedText)" : reviewedText
     }
 
     /// What VoiceOver says about the Margin's place in the packet; matches the visible status.
@@ -202,6 +211,7 @@ enum Build23SenderAction: Equatable {
     case setRepresentation(id: String, choice: ShareMarginRepresentationChoice)
     case setAnchorBefore(id: String, text: String)
     case setAnchorAfter(id: String, text: String)
+    case setReviewedWords(id: String, text: String)
     case prepareCleanup(id: String)
     case setCleanupDecision(draftID: String, decisionID: String, accepted: Bool)
     case toggleTranscriptWord(draftID: String, segmentID: String)
@@ -327,7 +337,9 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
                 hasOriginalVoice: originalVoiceURL != nil,
                 hasCleanedVoice: draft.cleanedAudioURL != nil,
                 originalVoiceURL: originalVoiceURL,
-                cleanedVoiceURL: draft.cleanedAudioURL
+                cleanedVoiceURL: draft.cleanedAudioURL,
+                placeholderText: draft.placeholderText,
+                isShowingPlaceholder: draft.isShowingPlaceholder
             )
         }
         let hasReviewedSelection = margins.contains {
@@ -479,6 +491,12 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
             mutatePackage { model.setShareDraftAnchorBefore(id, value: text) }
         case .setAnchorAfter(let id, let text):
             mutatePackage { model.setShareDraftAnchorAfter(id, value: text) }
+        case .setReviewedWords(let id, let text):
+            // Replaces a word-less voice Margin's placeholder words (#3027); the draft keeps the rule.
+            mutatePackage {
+                guard let index = model.sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
+                model.sharingState.drafts[index].setReviewedWords(text)
+            }
         case .prepareCleanup(let id):
             mutatePackage { model.prepareCleanup(forShareDraft: id) }
         case .setCleanupDecision(let draftID, let decisionID, let accepted):

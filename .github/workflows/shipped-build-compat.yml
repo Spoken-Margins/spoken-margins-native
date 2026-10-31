@@ -52,6 +52,9 @@ on:
       - 'Packages/SessionKit/Sources/SessionKit/WatchMediaAvailability.swift'
       - 'Packages/SessionKit/Sources/SessionKit/WatchMediaStore.swift'
       - 'Packages/SessionKit/Tests/ShippedReader/**'
+      # Packets made outside SessionKit: the web app's (#2984), which WebPacketImportTests keeps for each shipped build.
+      - 'Contracts/fixtures/web-packets/**'
+      - 'Packages/SessionKit/Tests/*/WebPacketImportTests.swift'
       - 'Packages/SessionKit/Tests/*/Build29DatabaseFixtureTests.swift'
       - 'scripts/check-build29-database.sh'
       - 'scripts/build29-db-reader/**'

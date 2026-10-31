@@ -171,9 +171,9 @@ class MessageAndReadTests(unittest.TestCase):
             with self.assertRaises(urllib.error.HTTPError):
                 watch.read_limit('o/r', 't')
 
-    def test_the_fallback_date_is_still_the_one_in_agents_md(self):
+    def test_the_fallback_date_is_still_the_one_in_the_workflow(self):
         root = SCRIPTS.parent
-        self.assertIn('2027-04-21', (root / 'AGENTS.md').read_text())
+        self.assertIn('2027-04-21', (root / '.github' / 'workflows' / 'interaction-limit-watch.yml').read_text())
         self.assertTrue(watch.FALLBACK_EXPIRY.startswith('2027-04-21'))
 
 
