@@ -117,6 +117,9 @@ test('the first time, the composer offers transcription with its size, and nothi
   const words = nowPlaying.getByLabel(/Words to go with your voice Margin at/);
   await expect.poll(async () => normalized(await words.inputValue()), { timeout: 90_000 }).toContain(SPOKEN);
   await expect(nowPlaying.getByTestId('transcribe-status')).toContainText('Check the words before you save.');
+  // The transcript replaced the placeholder words rather than joining them.
+  expect(await words.inputValue()).not.toContain('Voice Margin at');
+  await expect(words).not.toHaveAttribute('data-placeholder', 'true');
   await shot(page, info, '41-transcribe-prefilled');
 
   // The words are the listener's to edit before saving; the saved Margin carries the edited text.
@@ -174,9 +177,11 @@ test('“No thanks” keeps the plain words box, downloads nothing, and is remem
   await recordClip(page, nowPlaying);
   await nowPlaying.getByTestId('transcribe-offer').getByRole('button', { name: 'No thanks' }).click();
   await expect(nowPlaying.getByTestId('transcribe-offer')).toHaveCount(0);
+  // Without a transcript the box keeps its placeholder words (#3025), and typing replaces them.
   const words = nowPlaying.getByLabel(/Words to go with your voice Margin at/);
-  await expect(words).toHaveValue('');
+  await expect(words).toHaveValue(/^Voice Margin at \d+:\d\d in “.+”, recorded \d{1,2} [A-Z][a-z]{2} \d{4}$/);
   await words.fill('Typed by hand.');
+  await expect(words).not.toHaveAttribute('data-placeholder', 'true');
   await nowPlaying.getByRole('button', { name: 'Save Margin' }).click();
   await expect(page.getByText(/Voice Margin saved at [\d:]+\.$/)).toBeVisible();
 

@@ -6,7 +6,7 @@ import SessionKitTestInputs
 import ShippedPacketReader
 import XCTest
 
-/// The web app writes `.spokenmargins` packets in TypeScript (`Web/src/packet/write.ts`, #2984). These are its two
+/// The web app writes `.spokenmargins` packets in TypeScript (`Web/src/packet/write.ts`, #2984). These are its three
 /// fixtures, made by `node Web/src/packet/fixtures.ts`; each must import through this build's reader and importer and
 /// through Build 29's frozen one, with the Margins at the sender's times and the voice audio readable at its length.
 /// With `SM_SHIPPED_PACKETS_DIR` set, Builds 32 and 34 open them too (`keepForLaterShippedBuilds`).
@@ -65,5 +65,17 @@ final class WebPacketImportTests: XCTestCase {
         XCTAssertGreaterThan(decodedMs, 2_500)
         XCTAssertLessThanOrEqual(abs(decodedMs - declared), 150, "declared \(declared) ms, decoded \(decodedMs) ms")
         XCTAssertEqual(contents.manifest.assets.map(\.mimeType), ["audio/mp4"])
+    }
+
+    /// A voice Margin the web listener left without words travels with placeholder words in its transcript (#3025),
+    /// so every reader back to Build 29, which rejects an empty transcript, imports it with its voice.
+    func testWordlessVoiceMarginImportsWithPlaceholderWordsAndItsVoice() throws {
+        let (_, margins) = try importFixture("web-voice-placeholder.spokenmargins")
+        XCTAssertEqual(margins.count, 1)
+        let voice = try XCTUnwrap(margins.first)
+        XCTAssertEqual(voice.approvedTranscript, "Voice Margin at 0:45 in “Episode 1 (example episode)”, recorded 30 Oct 2026")
+        XCTAssertEqual(voice.anchorEvidence.mediaTimeMs, 45_000)
+        let file = try AVAudioFile(forReading: URL(fileURLWithPath: XCTUnwrap(voice.audioPath)))
+        XCTAssertEqual(file.fileFormat.settings[AVFormatIDKey] as? UInt32, kAudioFormatMPEG4AAC)
     }
 }

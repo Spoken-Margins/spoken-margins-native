@@ -170,9 +170,14 @@ test('record a voice Margin with the microphone', async ({ page }, info) => {
   await shot(page, info, '10-recording');
   await page.waitForTimeout(1200);
   await nowPlaying.getByRole('button', { name: 'Stop', exact: true }).click();
-  // Words are optional; without them the Margin stays out of shared files, and the listener is told so.
+  // Words are optional: the box starts with placeholder words, marked as such, which the Margin shares with (#3025).
+  const words = nowPlaying.getByLabel(/Words to go with your voice Margin at/);
+  await expect(words).toHaveValue(/^Voice Margin at \d+:\d\d in “.+”, recorded \d{1,2} [A-Z][a-z]{2} \d{4}$/);
+  await expect(words).toHaveAttribute('data-placeholder', 'true');
+  await expect(nowPlaying.getByText('Replace with your own words.', { exact: false })).toBeVisible();
+  await shot(page, info, '10b-voice-placeholder');
   await nowPlaying.getByRole('button', { name: 'Save Margin' }).click();
-  await expect(page.getByText(/Voice Margin saved at .* It has no words/)).toBeVisible();
+  await expect(page.getByText(/Voice Margin saved at .* It shares with placeholder words/)).toBeVisible();
   // And resumes afterwards.
   await expect(nowPlaying.getByRole('button', { name: 'Pause' })).toBeVisible();
 
