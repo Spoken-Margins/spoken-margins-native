@@ -94,10 +94,10 @@ final class WebPacketImportTests: XCTestCase {
             queries: queries, recipientAudioURL: listenersCopy, senderExactEditionSHA256: layer.itemIdentity.exactEditionSHA256,
             senderDurationMs: layer.itemIdentity.durationMs, strongSourceIdentity: true)
         let fused = ImportedPodcastPlacement.fuse(
-            queries: queries, records: records, acoustic: acoustic, recipientTranscript: nil,
-            layer: layer, recipientDurationMs: 3_600_000)
+            queries: queries, records: records, acoustic: acoustic, recipientTranscript: nil)
         let placed = ImportedPodcastPlacement.apply(
-            fused, to: records, layer: &layer, recipientDigest: String(repeating: "c", count: 64), hasTranscript: false)
+            fused, to: records, layer: &layer, recipientDigest: String(repeating: "c", count: 64), hasTranscript: false,
+            recipientDurationMs: 3_600_000)
 
         XCTAssertEqual(placed.map(\.resolution.evidenceClass), [.timestampFallback, .timestampFallback])
         XCTAssertEqual(placed.map(\.resolution.localMediaTimeMs), [30_000, 125_250])
