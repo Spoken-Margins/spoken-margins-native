@@ -1,0 +1,39 @@
+spokenmargins.proximitytoprogress.com {
+	# managed-by: spokenmargins-server (research/B4/deploy/deploy.sh)
+	# The product moved to spokenmargins.com (#3062). This old host stays up.
+	# Anything a shipped build, Apple or an old share link fetches is still
+	# SERVED here, never redirected: the app pins this host and follows no
+	# redirects, Apple's link check follows none either, and a browser fetch
+	# of the relay or a link packet that follows a 301 can fail its CORS check.
+	# Only human pages (the home page, /join, /privacy, /support, /terms and
+	# anything new) answer a permanent redirect, with the path kept.
+	# Keep the served paths in step with caddy-site.caddy.
+	encode gzip
+
+	@smpublic path /api/v1/config.json /bridge/v1/manifest.json
+	@machine path /api/* /l/* /bridge/* /onboarding/* /voices/* /assets/* /.well-known/*
+
+	route {
+		handle @smpublic {
+			root * @SERVER_ROOT@
+			header Cache-Control "public, max-age=300"
+			file_server
+		}
+		handle /l/* {
+			reverse_proxy 127.0.0.1:@PORT@
+		}
+		handle /api/* {
+			reverse_proxy 127.0.0.1:@PORT@
+		}
+		handle @machine {
+			root * /srv/www/spokenmargins
+			# Apple fetches this extensionless file and wants application/json (#488).
+			@aasa path /.well-known/apple-app-site-association
+			header @aasa Content-Type application/json
+			file_server
+		}
+		handle {
+			redir https://spokenmargins.com{uri} permanent
+		}
+	}
+}

@@ -14,12 +14,18 @@ caddyfile="${SM_CADDYFILE:-/etc/caddy/Caddyfile}"
 unit="${SM_UNIT:-/etc/systemd/system/smserver.service}"
 jconf="${SM_JOURNALD_CONF:-/etc/systemd/journald@smserver.conf}"
 bin="${SM_BIN:-/usr/local/bin/smserver}"
+# The product moved to spokenmargins.com (#3062). The old host keeps serving
+# the API, link and static machine paths, so it is the one whose answers can
+# roll a deploy back: it already has a certificate. The new hosts may still be
+# waiting for theirs (DNS, then a certificate, can lag the reload), so they are
+# reported, never a reason to roll back.
 site_host="spokenmargins.proximitytoprogress.com"
+new_site_host="spokenmargins.com"
 # The web app's files (#3020): deploy-web.sh fills this folder; Caddy serves
-# it as app.spokenmargins.proximitytoprogress.com (caddy-web.caddy).
-web_host="app.spokenmargins.proximitytoprogress.com"
+# it as app.spokenmargins.com (caddy-web.caddy).
+web_host="app.spokenmargins.com"
 web_root="${SM_WEB_ROOT:-/srv/www/spokenmargins-web}"
-check_urls=("https://proximitytoprogress.com/" "https://${site_host}/")
+check_urls=("https://proximitytoprogress.com/")
 
 say() { printf '== %s\n' "$*"; }
 die() { printf 'remote-install: %s\n' "$*" >&2; exit 1; }
@@ -137,7 +143,8 @@ echo "-- directories: ${server_root}/api/v1 and ${server_root}/bridge/v1 (owner 
 [[ -f "${server_root}/api/v1/config.json" ]] && echo "-- config.json: exists, kept as is" || echo "-- config.json: will be created (attest on, bridge on)"
 [[ -x "${bin}" ]] && echo "-- ${bin}: will be replaced" || echo "-- ${bin}: will be installed"
 echo "-- then: enable and (re)start smserver, check 127.0.0.1:${port}/api/v1/health, back up ${caddyfile}, install the candidate, reload (not restart) Caddy"
-echo "-- then check, resolving to this box: ${check_urls[*]} ${check_urls[1]}api/v1/health ${check_urls[1]}api/v1/config.json; roll back the Caddyfile if any fails"
+echo "-- then check, resolving to this box: ${check_urls[*]} (must not change), https://${site_host}/api/v1/health and /api/v1/config.json; roll back the Caddyfile if any fails"
+echo "-- not a rollback condition, reported: https://${new_site_host}/, its /api/v1/health, https://www.${new_site_host}/ and https://${web_host}/"
 for u in "${check_urls[@]}"; do echo "   now: $(status "${u}") ${u}"; done
 
 if [[ "${mode}" == dry-run ]]; then
@@ -197,7 +204,8 @@ reload_caddy || rollback "caddy reload"
 sleep 1
 for u in "${check_urls[@]}"; do
   now="$(status "${u}")"
-  [[ "${now}" == "${before[${u}]}" && "${now}" != 000 && "${now}" -lt 500 ]] || rollback "${u} answered ${now}, was ${before[${u}]}"
+  [[ "${now}" != 000 && "${now}" -lt 500 ]] || rollback "${u} answered ${now}, was ${before[${u}]}"
+  [[ "${now}" == "${before[${u}]}" ]] || rollback "${u} answered ${now}, was ${before[${u}]}"
   echo "ok ${now} ${u}"
 done
 body="$(curl -s --noproxy '*' --max-time 15 --resolve "${site_host}:443:127.0.0.1" "https://${site_host}/api/v1/health" || true)"
@@ -207,5 +215,7 @@ echo "ok 200 https://${site_host}/api/v1/health"
 echo "ok 200 https://${site_host}/api/v1/config.json"
 # Not a rollback condition: the web app's certificate may still be on its way,
 # and its folder is empty until deploy-web.sh runs.
-echo "web app (not checked for rollback): $(status "https://${web_host}/") https://${web_host}/"
+for u in "https://${new_site_host}/" "https://${new_site_host}/api/v1/health" "https://www.${new_site_host}/" "https://${web_host}/" "https://${site_host}/"; do
+  echo "new hosts (not checked for rollback): $(status "${u}") ${u}"
+done
 say "deployed"

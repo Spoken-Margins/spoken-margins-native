@@ -2,23 +2,22 @@
 # edit-caddyfile.sh LIVE CANDIDATE PORT SERVER_ROOT
 #
 # Writes CANDIDATE: LIVE with (1) the spokenmargins-server global options
-# block at the top, (2) the spokenmargins.proximitytoprogress.com site
-# block replaced, and (3) the web app's site block
-# (app.spokenmargins.proximitytoprogress.com, caddy-web.caddy) replaced, or
-# added at the end when there is none. Every other line is copied unchanged.
-# It refuses (exit 2) unless the site block is either the plain block the
-# site deploy script creates, or one this script wrote earlier; unless there
-# is no global block yet, or only one this script wrote; and unless the web
-# app's block is missing or one this script wrote. Run by deploy.sh on the
+# block at the top and (2) five site blocks replaced in place, or added at
+# the end when missing (#3062): the product host spokenmargins.com, www
+# (redirects to it), the web listener app.spokenmargins.com, and the two old
+# proximitytoprogress.com hosts, which keep serving what shipped builds fetch
+# and redirect the rest. Every other line is copied unchanged. It refuses
+# (exit 2) unless the old site block is either the plain block the site
+# deploy script creates, or one this script wrote earlier; unless there is
+# no global block yet, or only one this script wrote; and unless each of the
+# other four is missing or one this script wrote. Run by deploy.sh on the
 # VPS; tested locally by test-edit-caddyfile.sh.
 set -euo pipefail
 
 live="$1" candidate="$2" port="$3" server_root="$4"
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 marker="# managed-by: spokenmargins-server"
-site_open="spokenmargins.proximitytoprogress.com {"
 web_marker="# managed-by: spokenmargins-web"
-web_open="app.spokenmargins.proximitytoprogress.com {"
 
 refuse() { echo "edit-caddyfile: refusing: $*" >&2; exit 2; }
 
@@ -53,55 +52,54 @@ for ((i = 0; i < n; i++)); do
   break
 done
 
-# 2. The site block: exactly one, closed by "}" at column 0.
-site_start=-1 site_end=-1
-for ((i = 0; i < n; i++)); do
-  if [[ "$(trim "${lines[i]}")" == "${site_open}" ]]; then
-    ((site_start < 0)) || refuse "more than one '${site_open}' block"
-    [[ "${lines[i]}" == "${site_open}" ]] || refuse "site block is indented; expected it at column 0"
-    site_start=$i
-    for ((j = i + 1; j < n; j++)); do
-      if [[ "${lines[j]}" == "}" ]]; then site_end=$j; break; fi
-    done
-    ((site_end >= 0)) || refuse "site block has no closing brace at column 0"
-  fi
-done
-((site_start >= 0)) || refuse "no '${site_open}' block"
-
-body=()
-managed=0
-for ((k = site_start + 1; k < site_end; k++)); do
-  t="$(trim "${lines[k]}")"
-  [[ -z "${t}" ]] && continue
-  [[ "${t}" == "${marker}"* ]] && managed=1
-  body+=("${t}")
-done
-if ((!managed)); then
-  expected=("root * /srv/www/spokenmargins" "encode gzip" "file_server")
-  [[ "${#body[@]}" -eq 3 && "${body[0]}" == "${expected[0]}" && "${body[1]}" == "${expected[1]}" && "${body[2]}" == "${expected[2]}" ]] ||
-    refuse "the site block isn't the plain root/encode/file_server block this script expects; edit it by hand"
-fi
-
-# 3. The web app's block: none yet, or exactly one this script wrote.
-web_start=-1 web_end=-1
-for ((i = 0; i < n; i++)); do
-  if [[ "$(trim "${lines[i]}")" == "${web_open}" ]]; then
-    ((web_start < 0)) || refuse "more than one '${web_open}' block"
-    [[ "${lines[i]}" == "${web_open}" ]] || refuse "web app block is indented; expected it at column 0"
-    web_start=$i
-    for ((j = i + 1; j < n; j++)); do
-      if [[ "${lines[j]}" == "}" ]]; then web_end=$j; break; fi
-    done
-    ((web_end >= 0)) || refuse "web app block has no closing brace at column 0"
-  fi
-done
-if ((web_start >= 0)); then
-  web_managed=0
-  for ((k = web_start + 1; k < web_end; k++)); do
-    [[ "$(trim "${lines[k]}")" == "${web_marker}"* ]] && web_managed=1
+# 2. The site blocks. Five are ours (#3062), each exactly one, closed by "}"
+# at column 0, and each either absent or written by this script. The
+# exception is the old host's block, which must exist and may also be the
+# plain block the site deploy script creates.
+#   0 old host        spokenmargins.proximitytoprogress.com      caddy-legacy-site.caddy
+#   1 product host    spokenmargins.com                          caddy-site.caddy
+#   2 www             www.spokenmargins.com                      caddy-www.caddy
+#   3 web listener    app.spokenmargins.com                      caddy-web.caddy
+#   4 old web host    app.spokenmargins.proximitytoprogress.com  caddy-legacy-web.caddy
+opens=("spokenmargins.proximitytoprogress.com {" "spokenmargins.com {" "www.spokenmargins.com {" "app.spokenmargins.com {" "app.spokenmargins.proximitytoprogress.com {")
+files=("caddy-legacy-site.caddy" "caddy-site.caddy" "caddy-www.caddy" "caddy-web.caddy" "caddy-legacy-web.caddy")
+markers=("${marker}" "${marker}" "${marker}" "${web_marker}" "${web_marker}")
+starts=() ends=()
+for ((b = 0; b < ${#opens[@]}; b++)); do
+  open="${opens[b]}" bs=-1 be=-1
+  for ((i = 0; i < n; i++)); do
+    if [[ "$(trim "${lines[i]}")" == "${open}" ]]; then
+      ((bs < 0)) || refuse "more than one '${open}' block"
+      [[ "${lines[i]}" == "${open}" ]] || refuse "'${open}' block is indented; expected it at column 0"
+      bs=$i
+      for ((j = i + 1; j < n; j++)); do
+        if [[ "${lines[j]}" == "}" ]]; then be=$j; break; fi
+      done
+      ((be >= 0)) || refuse "'${open}' block has no closing brace at column 0"
+    fi
   done
-  ((web_managed)) || refuse "a '${web_open}' block exists that this script didn't write; edit it by hand"
-fi
+  starts+=("${bs}") ends+=("${be}")
+  if ((bs >= 0)); then
+    body=() managed=0
+    for ((k = bs + 1; k < be; k++)); do
+      t="$(trim "${lines[k]}")"
+      [[ -z "${t}" ]] && continue
+      [[ "${t}" == "${markers[b]}"* ]] && managed=1
+      body+=("${t}")
+    done
+    if ((!managed)); then
+      if ((b == 0)); then
+        expected=("root * /srv/www/spokenmargins" "encode gzip" "file_server")
+        [[ "${#body[@]}" -eq 3 && "${body[0]}" == "${expected[0]}" && "${body[1]}" == "${expected[1]}" && "${body[2]}" == "${expected[2]}" ]] ||
+          refuse "the site block isn't the plain root/encode/file_server block this script expects; edit it by hand"
+      else
+        refuse "a '${open}' block exists that this script didn't write; edit it by hand"
+      fi
+    fi
+  elif ((b == 0)); then
+    refuse "no '${open}' block"
+  fi
+done
 
 render() { sed -e "s|@PORT@|${port}|g" -e "s|@SERVER_ROOT@|${server_root}|g" "$1"; }
 
@@ -116,20 +114,23 @@ render() { sed -e "s|@PORT@|${port}|g" -e "s|@SERVER_ROOT@|${server_root}|g" "$1
       fi
       continue
     fi
-    if ((i == site_start)); then
-      render "${here}/caddy-site.caddy"
-      i=${site_end}
-      continue
-    fi
-    if ((i == web_start)); then
-      cat "${here}/caddy-web.caddy"
-      i=${web_end}
-      continue
-    fi
+    replaced=0
+    for ((b = 0; b < ${#opens[@]}; b++)); do
+      if ((i == starts[b])); then
+        render "${here}/${files[b]}"
+        i=${ends[b]}
+        replaced=1
+        break
+      fi
+    done
+    ((replaced)) && continue
     printf '%s\n' "${lines[i]}"
   done
-  if ((web_start < 0)); then
-    echo
-    cat "${here}/caddy-web.caddy"
-  fi
+  # Blocks not in the file yet go at the end, in table order.
+  for ((b = 1; b < ${#opens[@]}; b++)); do
+    if ((starts[b] < 0)); then
+      echo
+      render "${here}/${files[b]}"
+    fi
+  done
 } >"${candidate}"

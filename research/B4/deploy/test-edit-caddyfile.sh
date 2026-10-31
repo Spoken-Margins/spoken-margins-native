@@ -65,7 +65,7 @@ grep -q 'reverse_proxy 127.0.0.1:8795' "${work}/c1" || die "port not rendered"
 grep -q 'root \* /srv/www/spokenmargins-server' "${work}/c1" || die "server root not rendered"
 grep -q 'handle /l/\*' "${work}/c1" || die "share link routing missing"
 grep -Fq 'request>uri regexp (^/api/v1/maps/|^/l/|[?]).* $1*' "${work}/c1" || die "share link, episode and query privacy filter missing"
-# Everything outside the two managed blocks is byte-for-byte unchanged.
+# Everything outside the managed blocks is byte-for-byte unchanged.
 diff <(sed -n '/^proximitytoprogress.com {/,/^}/p;/^other.proximitytoprogress.com {/,/^}/p' "${work}/live") \
   <(sed -n '/^proximitytoprogress.com {/,/^}/p;/^other.proximitytoprogress.com {/,/^}/p' "${work}/c1") >/dev/null ||
   die "other site blocks changed"
@@ -80,18 +80,65 @@ ok "rerun on its own output changes nothing"
 grep -q '127.0.0.1:8796' "${work}/c3" && ! grep -q '127.0.0.1:8795' "${work}/c3" || die "port change not applied"
 ok "rerun with another port replaces the managed blocks"
 
-# The web app's block (#3020): added once, at the end, exactly as the
-# template has it, and replaced in place on a rerun.
-[[ "$(grep -c '^app.spokenmargins.proximitytoprogress.com {$' "${work}/c1")" == 1 ]] || die "web app block not added exactly once"
-cmp -s <(sed -n '/^app.spokenmargins.proximitytoprogress.com {$/,/^}$/p' "${work}/c1") "${here}/caddy-web.caddy" ||
-  die "web app block differs from caddy-web.caddy"
-[[ "$(tail -n "$(wc -l <"${here}/caddy-web.caddy")" "${work}/c1")" == "$(cat "${here}/caddy-web.caddy")" ]] || die "web app block not at the end"
-grep -q '^other.proximitytoprogress.com {$' "${work}/c1" || die "other site lost when the web block was added"
-! sed -n '/^app.spokenmargins.proximitytoprogress.com {$/,/^}$/p' "${work}/c1" | grep -qE '^[[:space:]]*log' || die "web app block must not write an access log"
+# The managed site blocks (#3062): the product host, www, the web listener
+# and the old web host are added at the end once, exactly as their templates
+# have them; the old host's block is replaced in place.
+block() { awk -v open="$1 {" '$0 == open { on = 1 } on { print } on && $0 == "}" { exit }' "$2"; }
+render_old() { sed -e 's|@PORT@|8795|g' -e 's|@SERVER_ROOT@|/srv/www/spokenmargins-server|g' "$1"; }
+for pair in "spokenmargins.com:caddy-site.caddy" "www.spokenmargins.com:caddy-www.caddy" \
+  "app.spokenmargins.com:caddy-web.caddy" "app.spokenmargins.proximitytoprogress.com:caddy-legacy-web.caddy"; do
+  name="${pair%%:*}" template="${pair#*:}"
+  [[ "$(grep -cxF -e "${name} {" "${work}/c1")" == 1 ]] || die "${name} block not added exactly once"
+  cmp -s <(block "${name}" "${work}/c1") <(render_old "${here}/${template}") || die "${name} block differs from ${template}"
+done
+cmp -s <(block spokenmargins.proximitytoprogress.com "${work}/c1") <(render_old "${here}/caddy-legacy-site.caddy") || die "old host block differs from caddy-legacy-site.caddy"
+grep -q '^other.proximitytoprogress.com {$' "${work}/c1" || die "other site lost when the blocks were added"
+! block app.spokenmargins.com "${work}/c1" | grep -qE '^[[:space:]]*log' || die "web app block must not write an access log"
+# Old host: what a shipped build or Apple fetches is served, never redirected;
+# only human pages redirect, to the new host with the path kept.
+old_block="$(block spokenmargins.proximitytoprogress.com "${work}/c1")"
+for served in 'handle /l/\*' 'handle /api/\*' 'handle @smpublic' 'handle @machine' '@aasa path /.well-known/apple-app-site-association'; do
+  grep -q -e "${served}" <<<"${old_block}" || die "old host must still serve: ${served}"
+done
+grep -qF '@machine path /api/* /l/* /bridge/* /onboarding/* /voices/* /assets/* /.well-known/*' <<<"${old_block}" || die "old host machine paths changed"
+grep -qF 'redir https://spokenmargins.com{uri} permanent' <<<"${old_block}" || die "old host must 301 other paths to spokenmargins.com with the path kept"
+grep -qF 'redir https://spokenmargins.com{uri} permanent' <(block www.spokenmargins.com "${work}/c1") || die "www must 301 to spokenmargins.com"
+grep -qF 'redir https://app.spokenmargins.com{uri} permanent' <(block app.spokenmargins.proximitytoprogress.com "${work}/c1") || die "old web host must 301 to app.spokenmargins.com"
+# The product host serves the same machine routes and never redirects.
+new_block="$(block spokenmargins.com "${work}/c1")"
+for served in 'handle /l/\*' 'handle /api/\*' 'handle @smpublic'; do
+  grep -q -e "${served}" <<<"${new_block}" || die "product host must serve: ${served}"
+done
+! grep -q 'redir' <<<"${new_block}" || die "product host must not redirect"
 sed 's|max-age=31536000|max-age=1|' "${work}/c1" >"${work}/web-old"
 edit "${work}/web-old" "${work}/web-new" || die "managed web block refused"
 cmp -s "${work}/c1" "${work}/web-new" || { diff -u "${work}/c1" "${work}/web-new"; die "managed web block not replaced in place"; }
-ok "web app block added at the end once, and replaced in place on a rerun"
+ok "managed blocks: new hosts added once, old hosts keep machine paths and redirect the rest, rerun replaces in place"
+
+# A deployed pre-move Caddyfile (old site and old web blocks written by the
+# previous script) migrates in place: the old blocks become the legacy ones.
+cat >"${work}/premove" <<'OLD'
+proximitytoprogress.com {
+	respond "home"
+}
+
+spokenmargins.proximitytoprogress.com {
+	# managed-by: spokenmargins-server (research/B4/deploy/deploy.sh)
+	encode gzip
+	file_server
+}
+
+app.spokenmargins.proximitytoprogress.com {
+	# managed-by: spokenmargins-web (research/B4/deploy/deploy.sh)
+	root * /srv/www/spokenmargins-web
+	file_server
+}
+OLD
+edit "${work}/premove" "${work}/postmove" || die "pre-move managed blocks refused"
+[[ "$(grep -c '^app.spokenmargins.proximitytoprogress.com {$' "${work}/postmove")" == 1 ]] || die "old web block duplicated by the move"
+grep -qF 'redir https://app.spokenmargins.com{uri} permanent' "${work}/postmove" || die "old web block not turned into a redirect"
+grep -q '^spokenmargins.com {$' "${work}/postmove" && grep -q '^www.spokenmargins.com {$' "${work}/postmove" || die "new hosts not added"
+ok "a deployed pre-move Caddyfile migrates in place"
 
 # A refusal is exit status 2 with the "refusing:" message and no candidate
 # file; a crash (any other status) or a half-written candidate is a failure.
@@ -112,8 +159,10 @@ grep -v '^spokenmargins' "${work}/live" | sed '/^  root \* \/srv\/www\/spokenmar
 expect_refusal "no site block" "${work}/nosite"
 { cat "${work}/live"; printf '\nspokenmargins.proximitytoprogress.com {\n  file_server\n}\n'; } >"${work}/twice"
 expect_refusal "two site blocks" "${work}/twice"
-{ cat "${work}/live"; printf '\napp.spokenmargins.proximitytoprogress.com {\n\trespond "someone else"\n}\n'; } >"${work}/webforeign"
+{ cat "${work}/live"; printf '\napp.spokenmargins.com {\n\trespond "someone else"\n}\n'; } >"${work}/webforeign"
 expect_refusal "a web app block it didn't write" "${work}/webforeign"
+{ cat "${work}/live"; printf '\nspokenmargins.com {\n\trespond "someone else"\n}\n'; } >"${work}/siteforeign"
+expect_refusal "a product host block it didn't write" "${work}/siteforeign"
 { cat "${work}/c1"; printf '\n'; cat "${here}/caddy-web.caddy"; } >"${work}/webtwice"
 expect_refusal "two web app blocks" "${work}/webtwice"
 rm -f "${work}/out"
@@ -135,10 +184,10 @@ if [[ -n "${CADDY:-}" && -n "${SMSERVER:-}" ]]; then
   echo "self.x=1" >"${web}/sw.js"
   echo "a=1" >"${web}/assets/index-abc123.js"
   "${SMSERVER}" switch -public "${root}" attest on >/dev/null
-  sed -e 's|^spokenmargins.proximitytoprogress.com {|http://127.0.0.1:18443 {|' \
+  sed -e 's|^spokenmargins.com {|http://127.0.0.1:18443 {|' \
     -e "s|/srv/www/spokenmargins-server|${root}|" -e "s|root \* /srv/www/spokenmargins\$|root * ${site}|" \
     -e 's|^proximitytoprogress.com {|http://127.0.0.1:18444 {|' -e 's|^other.proximitytoprogress.com {|http://127.0.0.1:18445 {|' \
-    -e 's|^app.spokenmargins.proximitytoprogress.com {|http://127.0.0.1:18446 {|' -e "s|/srv/www/spokenmargins-web\$|${web}|" \
+    -e 's|^app.spokenmargins.com {|http://127.0.0.1:18446 {|' -e "s|/srv/www/spokenmargins-web\$|${web}|" \
     -e 's|^{$|{\n\tadmin off|' "${work}/c1" >"${work}/local"
   "${CADDY}" run --adapter caddyfile --config "${work}/local" >"${work}/caddy.log" 2>&1 &
   sleep 1.5

@@ -106,7 +106,7 @@ function uploadableServer(url: URL): boolean {
 }
 
 export interface UploadOptions {
-  /** The Spoken Margins server, e.g. `https://spokenmargins.proximitytoprogress.com`. */
+  /** The Spoken Margins server, e.g. `https://spokenmargins.com`. */
   server: string;
   fetch?: typeof fetch;
 }

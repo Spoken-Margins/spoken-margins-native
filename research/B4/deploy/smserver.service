@@ -12,11 +12,14 @@
 # monthly spending cap and prices are the -maps-* flags below; they are
 # private and never in config.json.
 #
-# The web app (#3020) is served from https://app.spokenmargins.proximitytoprogress.com.
-# -relay-origins lets that origin, and only it, use the feed relay (#2985);
+# The web app (#3020) is served from https://app.spokenmargins.com (#3062). During
+# the move the old origin, https://app.spokenmargins.proximitytoprogress.com, stays
+# listed beside it, because a page loaded there or an installed copy of the old app
+# still calls this server; drop it once nothing uses that host.
+# -relay-origins lets those origins, and only them, use the feed relay (#2985);
 # the relay still answers 503 until the owner runs
 #   runuser -u smserver -- smserver switch -public @SERVER_ROOT@ relay on
-# and "relay off" stops it at once. -link-origins lets that origin read
+# and "relay off" stops it at once. -link-origins lets those origins read
 # sealed share-link packets and previews (#3013); it creates no links, and
 # with the links switch off those routes answer 503 anyway.
 [Unit]
@@ -27,7 +30,7 @@ Wants=network-online.target
 [Service]
 User=smserver
 Group=smserver
-ExecStart=/usr/local/bin/smserver serve -listen 127.0.0.1:@PORT@ -state /var/lib/smserver -public @SERVER_ROOT@ -behind-proxy -maps-cap-usd 10 -maps-model claude-haiku-5-5 -maps-input-usd-per-mtok 0.10 -maps-output-usd-per-mtok 0.50 -relay-origins https://app.spokenmargins.proximitytoprogress.com -link-origins https://app.spokenmargins.proximitytoprogress.com
+ExecStart=/usr/local/bin/smserver serve -listen 127.0.0.1:@PORT@ -state /var/lib/smserver -public @SERVER_ROOT@ -behind-proxy -maps-cap-usd 10 -maps-model claude-haiku-5-5 -maps-input-usd-per-mtok 0.10 -maps-output-usd-per-mtok 0.50 -relay-origins https://app.spokenmargins.com,https://app.spokenmargins.proximitytoprogress.com -link-origins https://app.spokenmargins.com,https://app.spokenmargins.proximitytoprogress.com
 EnvironmentFile=-/etc/smserver/maps.env
 StateDirectory=smserver
 StateDirectoryMode=0700

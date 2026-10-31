@@ -36,7 +36,7 @@ export class ShareLinkError extends Error {
 }
 
 export interface ShareLinkRef {
-  /** The link server's origin, e.g. `https://spokenmargins.proximitytoprogress.com`. */
+  /** The link server's origin, e.g. `https://spokenmargins.com`. */
   origin: string;
   id: string;
   key: Uint8Array;

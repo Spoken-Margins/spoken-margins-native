@@ -77,6 +77,34 @@ final class ShareLinkOpeningTests: XCTestCase {
         }
     }
 
+    /// #3062: links made under either address open; a lookalike, an unlisted subdomain or plain http never do.
+    func testShareHostTableCoversOldNewWwwCaseDotAndLookalikes() {
+        let oldHost = "spokenmargins.proximitytoprogress.com"
+        let table: [(url: String, accepted: Bool)] = [
+            ("https://spokenmargins.com/l/\(id)", true),
+            ("https://\(oldHost)/l/\(id)", true),
+            ("https://SpokenMargins.COM/l/\(id)", true),
+            ("https://\(oldHost.uppercased())/l/\(id)", true),
+            ("https://spokenmargins.com:443/l/\(id)", true),
+            ("https://www.spokenmargins.com/l/\(id)", false),
+            ("https://app.spokenmargins.com/l/\(id)", false),
+            ("https://spokenmargins.com./l/\(id)", false),
+            ("https://spokenmargins.com.evil.com/l/\(id)", false),
+            ("https://evilspokenmargins.com/l/\(id)", false),
+            ("https://notspokenmargins.com/l/\(id)", false),
+            ("https://spokenmargins.com@evil.com/l/\(id)", false),
+            ("https://evil.com/spokenmargins.com/l/\(id)", false),
+            ("http://spokenmargins.com/l/\(id)", false),
+            ("http://\(oldHost)/l/\(id)", false),
+            ("https://spokenmargins.com:8443/l/\(id)", false),
+        ]
+        for row in table {
+            let url = URL(string: row.url)!
+            XCTAssertEqual(ShareLinkURL.isOnShareHost(url), row.accepted, row.url)
+            XCTAssertEqual(ShareLinkURL(url: url) != nil, row.accepted, row.url)
+        }
+    }
+
     func testTheShareHostIsRecognisedForLinksTheAppCannotOpen() {
         XCTAssertTrue(ShareLinkURL.isOnShareHost(URL(string: "https://\(host)/l/\(id)/packet")!))
         XCTAssertFalse(ShareLinkURL.isOnShareHost(URL(string: "https://example.com/l/\(id)")!))

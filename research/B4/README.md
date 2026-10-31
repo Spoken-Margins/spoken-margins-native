@@ -1,6 +1,6 @@
 # B4 bridge: server (M1)
 
-**Deployed** to the Spoken Margins VPS on 2026-09-28 (details on #190): `https://spokenmargins.proximitytoprogress.com/api/v1/health`. Deploys run from the Mac with the owner's OK, never from a cloud session.
+**Deployed** to the Spoken Margins VPS on 2026-09-28 (details on #190): `https://spokenmargins.proximitytoprogress.com/api/v1/health`. The product moved to `spokenmargins.com` (#3062): `deploy.sh` now serves the site, `/l/`, `/api/` and the bridge manifest on `https://spokenmargins.com` (`www` redirects to it), and keeps the old host serving everything a shipped build, Apple or an old share link fetches (`/api/`, `/l/`, `/bridge/`, `/onboarding/`, `/voices/`, `/assets/`, `/.well-known/`, which are served, not redirected, because the app pins that host and follows no redirects and a redirected cross-origin fetch can fail CORS) while its human pages answer a 301 to the new host with the path kept (`deploy/caddy-legacy-site.caddy`). The app's own server host (`ProductServer.productionHost`) is still the old one until a later build moves it. Deploys run from the Mac with the owner's OK, never from a cloud session.
 
 Design and privacy rules: [DESIGN.md](DESIGN.md). Tracking issue #190.
 
@@ -15,7 +15,7 @@ research/B4/deploy/deploy.sh --dry-run root@<vps>           # from the Mac: show
 research/B4/deploy/deploy-web.sh --dry-run root@<vps>       # from the Mac: build Web/ and list what would change, change nothing
 ```
 
-The web app (`Web/`, #3020) is served by the same Caddy from `https://app.spokenmargins.proximitytoprogress.com`: `deploy.sh` adds that site block (`deploy/caddy-web.caddy`, no access log) and an empty `/srv/www/spokenmargins-web`, and `deploy-web.sh` builds the committed `Web/` with `VITE_RELAY_ORIGIN` set to this server and copies it there. The unit lists that origin in `-relay-origins` and `-link-origins`; the relay still answers 503 until `smserver switch ... relay on`.
+The web app (`Web/`, #3020) is served by the same Caddy from `https://app.spokenmargins.com` (the old `app.spokenmargins.proximitytoprogress.com` answers a 301 to it, `deploy/caddy-legacy-web.caddy`): `deploy.sh` adds that site block (`deploy/caddy-web.caddy`, no access log) and an empty `/srv/www/spokenmargins-web`, and `deploy-web.sh` builds the committed `Web/` with `VITE_RELAY_ORIGIN` set to this server and copies it there. The unit lists both app origins, new and old, in `-relay-origins` and `-link-origins` during the move; the relay still answers 503 until `smserver switch ... relay on`.
 
 `deploy/deploy.sh` without `--dry-run` deploys; the owner approves the dry-run diff first. Admin on the box runs as the service user, e.g. `runuser -u smserver -- smserver switch -public /srv/www/spokenmargins-server attest off`.
 
