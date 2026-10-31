@@ -1,12 +1,15 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { FeedParseError } from './feed.ts';
 import { feedFixture, stubFetch } from './fixtures.ts';
 import {
   NeedsRelayConsent,
+  PaidPostNoVoice,
   PostPageReadRefused,
   ReadHttpError,
   ReadTooLarge,
   RelayNotConfigured,
+  RelayUnreachable,
   readFeed,
   readSubstackVoice,
   RELAY_FINAL_URL_HEADER,
@@ -79,6 +82,91 @@ test('an error from the relay is reported as the relay\'s', async () => {
   });
 });
 
+// The relay (#2985) answers 503 `{"error":"disabled"}` when switched off and 503 `{"error":"busy"}` when full: seen
+// from a local build of it on 2026-10-30. The code is what tells a listener which.
+test('a relay error keeps the relay\'s own reason', async () => {
+  const relayed = relayUrl(RELAY, FEED_URL);
+  const rows: Array<[string, number, string | undefined]> = [
+    ['{"error":"disabled"}', 503, 'disabled'],
+    ['{"error":"busy"}', 503, 'busy'],
+    ['{"error":"rate_limited"}', 429, 'rate_limited'],
+    ['<html>Bad gateway</html>', 502, undefined],
+    ['{"error":42}', 503, undefined],
+    ['{"error":"<script>"}', 503, undefined],
+    ['', 503, undefined],
+  ];
+  for (const [body, status, code] of rows) {
+    const fetch = stubFetch({ [relayed]: { body, status } });
+    await assert.rejects(readUrl(FEED_URL, { fetch, relayBase: RELAY, consent: true }), (error: unknown) => {
+      assert.ok(error instanceof ReadHttpError, body);
+      assert.equal(error.status, status);
+      assert.equal(error.code, code, body);
+      return true;
+    });
+  }
+});
+
+// A relay that is down, or that doesn't list this web app's origin, fails in a browser the way a blocked site does:
+// `fetch` throws. That used to surface as the raw TypeError, which the app words as "No connection".
+test('a relay that cannot be reached says so, not a raw fetch error', async () => {
+  const calls: string[] = [];
+  await assert.rejects(readUrl(FEED_URL, { fetch: stubFetch({}, calls), relayBase: RELAY, consent: true }), RelayUnreachable);
+  assert.deepEqual(calls, [FEED_URL, relayUrl(RELAY, FEED_URL)]);
+});
+
+// What a listener pastes for "a Substack address" is the publication's home page. On 2026-10-30 that said "isn't a
+// podcast or Substack feed" in Chrome. The home page is synthetic here, in the shape real ones have.
+const HOME = 'https://www.example-letter.com';
+const HOME_FEED = 'https://www.example-letter.com/feed';
+const HOME_PAGE = `<!DOCTYPE html><html><head><title>A Letter</title><link rel="alternate" type="application/rss+xml" href="/feed" title="A Letter"/></head><body><p>Posts</p></body></html>`;
+
+test('readFeed follows a home page to the feed it names, and the show follows that feed', async () => {
+  const calls: string[] = [];
+  const fetch = stubFetch(
+    { [HOME]: { body: HOME_PAGE, url: `${HOME}/` }, [HOME_FEED]: { body: feedFixture('substack-zvi-generated-voice.rss') } },
+    calls,
+  );
+  const feed = await readFeed(HOME, { fetch });
+  assert.equal(feed.show.feedUrl, HOME_FEED, 'a refresh reads the feed, not the page');
+  assert.equal(feed.show.id, `feed:${HOME_FEED}`);
+  assert.equal(feed.show.kind, 'substack');
+  assert.ok(feed.episodes.length > 0);
+  assert.deepEqual(calls, [HOME, HOME_FEED]);
+});
+
+test('readFeed through the relay: the home page and its feed both go the same way, after consent', async () => {
+  const calls: string[] = [];
+  const fetch = stubFetch(
+    {
+      [relayUrl(RELAY, HOME)]: { body: HOME_PAGE, headers: { [RELAY_FINAL_URL_HEADER]: `${HOME}/` } },
+      [relayUrl(RELAY, HOME_FEED)]: { body: feedFixture('substack-zvi-generated-voice.rss') },
+    },
+    calls,
+  );
+  await assert.rejects(readFeed(HOME, { fetch, relayBase: RELAY }), NeedsRelayConsent);
+  const feed = await readFeed(HOME, { fetch, relayBase: RELAY, consent: true });
+  assert.equal(feed.show.feedUrl, HOME_FEED);
+  assert.deepEqual(calls.slice(1), [HOME, relayUrl(RELAY, HOME), HOME_FEED, relayUrl(RELAY, HOME_FEED)]);
+});
+
+test('readFeed: a page with no feed link, or one whose feed link is another page, is not a feed', async () => {
+  const bare = stubFetch({ [HOME]: { body: '<html><head><title>x</title></head><body></body></html>' } });
+  await assert.rejects(readFeed(HOME, { fetch: bare }), FeedParseError);
+  const calls: string[] = [];
+  const loop = stubFetch({ [HOME]: { body: HOME_PAGE }, [HOME_FEED]: { body: HOME_PAGE } }, calls);
+  await assert.rejects(readFeed(HOME, { fetch: loop }), FeedParseError);
+  assert.deepEqual(calls, [HOME, HOME_FEED], 'one hop only');
+  const self = stubFetch({ [HOME_FEED]: { body: HOME_PAGE } });
+  await assert.rejects(readFeed(HOME_FEED, { fetch: self }), FeedParseError, 'a page naming itself is read once');
+});
+
+test('readFeed never follows a feed link to a Substack post page without a tap', async () => {
+  const page = '<html><head><link rel="alternate" type="application/rss+xml" href="/p/a-post"></head></html>';
+  const calls: string[] = [];
+  await assert.rejects(readFeed(HOME, { fetch: stubFetch({ [HOME]: { body: page } }, calls) }), PostPageReadRefused);
+  assert.deepEqual(calls, [HOME]);
+});
+
 test('a body over the cap is refused', async () => {
   const fetch = stubFetch({ [FEED_URL]: { body: 'x'.repeat(2000) } });
   await assert.rejects(readUrl(FEED_URL, { fetch, maxBytes: 1000 }), ReadTooLarge);
@@ -129,10 +217,29 @@ test('readSubstackVoice finds the voice for a tapped post, and only for that pos
   assert.equal(await readSubstackVoice(POST_URL, { fetch: other }), null);
 });
 
-test('readSubstackVoice for a paid post is null, not an error', async () => {
+// On 2026-10-30 a real paid post tapped in Chrome said "neither the writer nor Substack offers one", though its page
+// listed Substack's voice as `paywalled`. Most paid posts on the publications checked that day were like it.
+test('readSubstackVoice for a paid post says it is for paid subscribers, not that it has no voice', async () => {
   const url = 'https://captured.example/p/paid-post';
   const fetch = stubFetch({ [url]: { body: feedFixture('substack-paid-post-page.html'), url } });
-  assert.equal(await readSubstackVoice(url, { fetch }), null);
+  await assert.rejects(readSubstackVoice(url, { fetch }), (error: unknown) => {
+    assert.ok(error instanceof PaidPostNoVoice);
+    assert.equal(error.url, url);
+    return true;
+  });
+});
+
+test('readSubstackVoice: a free post whose automatic voice failed has no voice, and is not called paid', async () => {
+  const url = 'https://captured.example/p/failed';
+  const post = { type: 'newsletter', audience: 'everyone', id: 7, canonical_url: url, audio_items: [{ post_id: 7, type: 'tts', status: 'failed', audio_url: null }] };
+  const html = `<script>window._preloads = JSON.parse(${JSON.stringify(JSON.stringify({ post }))});</script>`;
+  assert.equal(await readSubstackVoice(url, { fetch: stubFetch({ [url]: { body: html, url } }) }), null);
+});
+
+test('readSubstackVoice: a redirect to another post\'s paid page neither plays nor blames the paywall', async () => {
+  const url = 'https://captured.example/p/asked-for';
+  const fetch = stubFetch({ [url]: { body: feedFixture('substack-paid-post-page.html'), url: 'https://captured.example/p/elsewhere' } });
+  assert.equal(await readSubstackVoice(url, { fetch, consent: false }).catch((e: unknown) => e), null);
 });
 
 test('readSubstackVoice still asks consent before the relay', async () => {

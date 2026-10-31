@@ -71,6 +71,37 @@ export function resolveWebUrl(raw: string | undefined, base: string): string | u
   }
 }
 
+const FEED_LINK_TYPES = new Set(['application/rss+xml', 'application/x-rss+xml']);
+
+/** A tag's attributes, names lower-cased, values with their quotes taken off and `&amp;` decoded. */
+function tagAttributes(tag: string): Record<string, string> {
+  const attrs: Record<string, string> = {};
+  for (const match of tag.matchAll(/([a-zA-Z_:][-\w:.]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/g)) {
+    const name = (match[1] as string).toLowerCase();
+    if (!(name in attrs)) attrs[name] = (match[2] ?? match[3] ?? match[4] ?? '').replace(/&amp;/gi, '&');
+  }
+  return attrs;
+}
+
+/**
+ * The RSS feed a web page names for itself (`<link rel="alternate" type="application/rss+xml" href="/feed">`, which
+ * every Substack home page and most podcast sites carry), resolved against `pageUrl`. Undefined for a page that names
+ * none, or only an Atom feed, which `parseFeed` doesn't read. The first RSS link wins, as browsers pick it.
+ */
+export function discoverFeedUrl(html: string, pageUrl: string): string | undefined {
+  // Only the head: a feed link in a post's body is someone else's feed.
+  const head = /<head\b[\s\S]*?(?:<\/head\s*>|<body\b)/i.exec(html)?.[0] ?? html.slice(0, 200_000);
+  for (const match of head.matchAll(/<link\b[^>]*>/gi)) {
+    const attrs = tagAttributes(match[0]);
+    const rel = (attrs.rel ?? '').toLowerCase().split(/\s+/);
+    const type = (attrs.type ?? '').trim().toLowerCase().split(';')[0] as string;
+    if (!rel.includes('alternate') || !FEED_LINK_TYPES.has(type)) continue;
+    const url = resolveWebUrl(attrs.href, pageUrl);
+    if (url) return url;
+  }
+  return undefined;
+}
+
 function isSubstackFeed(channel: XmlElement, feedUrl: string): boolean {
   if (childText(channel, 'generator')?.toLowerCase() === 'substack') return true;
   try {

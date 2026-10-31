@@ -108,13 +108,37 @@ export function samePage(a: string, b: string): boolean {
  * else null.
  */
 export function findSubstackVoice(html: string, options: FindVoiceOptions = {}): SubstackVoice | null {
+  return inspectSubstackPost(html, options).voice;
+}
+
+/** What a post page says about its voice. */
+export interface SubstackPostVoice {
+  voice: SubstackVoice | null;
+  /**
+   * True when the post is for paid subscribers and its page, read without anyone's sign-in, holds no playable
+   * voice: Substack marks the audio `paywalled`, or the post's audience is paid only. Then "no voice" would be the
+   * wrong thing to tell the listener: the writer or Substack may well offer one, behind the paywall.
+   */
+  paidOnly: boolean;
+}
+
+const PAID_AUDIENCES = new Set(['only_paid', 'founding']);
+
+/** `findSubstackVoice`, and whether a missing voice is because the post is for paid subscribers. */
+export function inspectSubstackPost(html: string, options: FindVoiceOptions = {}): SubstackPostVoice {
   const root = preloads(html);
   const post = root?.post;
-  if (!isObject(post)) return null;
+  if (!isObject(post)) return { voice: null, paidOnly: false };
+  // A page for another post (a redirect elsewhere) lends neither its voice nor its paywall.
+  if (options.finalUrl !== undefined && (typeof post.canonical_url !== 'string' || !samePage(post.canonical_url, options.finalUrl))) {
+    return { voice: null, paidOnly: false };
+  }
   const voice = completedRecording(post, 'voiceover', true) ?? completedRecording(post, 'tts', false);
-  if (!voice) return null;
-  if (options.finalUrl !== undefined && !samePage(voice.canonicalUrl, options.finalUrl)) return null;
-  return voice;
+  if (voice) return { voice, paidOnly: false };
+  const items = Array.isArray(post.audio_items) ? post.audio_items : [];
+  const paywalled = items.some((item) => isObject(item) && item.status === 'paywalled');
+  const paidAudience = typeof post.audience === 'string' && PAID_AUDIENCES.has(post.audience);
+  return { voice: null, paidOnly: paywalled || paidAudience };
 }
 
 /** `/p/<slug>`, with an optional trailing slash: Substack's post path on every publication's domain. */
