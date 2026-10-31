@@ -141,6 +141,10 @@ class ThirdPartyNoticesTests(unittest.TestCase):
         project.write_text(original.replace(APP_FIXTURES, APP_FIXTURES + '      - path: Contracts/fixtures/feeds/x.rss\n'
                                             '        buildPhase: resources\n'))
         self.assertProblem(root, 'project.yml bundles Contracts/fixtures/feeds/x.rss in SpokenMarginsApp')
+        for line in ('      - path: "Contracts/traces"  # quoted, with a comment\n        type: folder\n',
+                     '      - Contracts/fixtures/feeds\n', '      - path: Contracts\n        type: folder\n'):
+            project.write_text(original.replace(APP_FIXTURES, APP_FIXTURES + line))
+            self.assertProblem(root, 'in SpokenMarginsApp, but no app source reads')
 
     def test_a_bundled_fixture_folder_fails_once_its_reader_is_gone(self):
         root = self.tree()

@@ -177,7 +177,9 @@ def shipped_contract_resources(root):
             target, kind = match.group(1), None
         elif match := re.match(r'    type: (\S+)', line):
             kind = match.group(1)
-        elif match := re.match(r'(\s*)- path: (Contracts/(?:fixtures|traces)(?:/\S*)?)\s*$', line):
+        # Quoted or not, with or without `path:` or a trailing comment; plain `Contracts` bundles both folders.
+        elif match := re.match(r'''(\s*)- (?:path:\s*)?["']?(Contracts(?:/(?:fixtures|traces)(?:/[^\s"'#]*)?)?)/?["']?\s*(?:#.*)?$''',
+                               line):
             if kind in TEST_TARGET_TYPES:
                 continue
             body = []
