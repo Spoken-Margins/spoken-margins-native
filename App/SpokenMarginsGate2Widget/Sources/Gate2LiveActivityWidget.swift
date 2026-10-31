@@ -210,7 +210,9 @@ private struct Gate2LiveActivitySmallView: View {
     }
 }
 
-private struct Gate2LiveActivityView: View {
+/// The Lock Screen card. Internal, and compiled into the app as well as the widget, so an app-hosted test can lay it
+/// out at real text sizes (#1940, LiveActivityLayoutTests).
+struct Gate2LiveActivityView: View {
     let state: Gate2LiveActivityAttributes.ContentState
     let isStale: Bool
 
@@ -291,7 +293,7 @@ private struct Gate2LiveActivityView: View {
     }
 
     /// The five circles and the mic always share one row, so the card keeps its height (#1940). At the default size
-    /// they total about 304 pt against the Lock Screen's roughly 327 pt of content, and the circles are fixed-size
+    /// they total about 308 pt against the Lock Screen's roughly 327 pt of content, and the circles are fixed-size
     /// controls (all at least 44 pt), not text. The next-chapter action sits in the header instead of this row,
     /// because a second row would push the card past the 160 pt the Lock Screen allows.
     private var transportControls: some View {
@@ -352,7 +354,7 @@ private struct Gate2LiveActivityView: View {
     }
 
     /// Skips to the next chapter or Shared Margin: a small "Next" chip in the header's trailing corner, under the state
-    /// word. The listener hears the next title through its VoiceOver label. The chip is 28 pt tall and its tap area
+    /// word. The listener hears the next title through its VoiceOver label. The chip is 24 pt tall and its tap area
     /// grows to 44 pt toward the progress bar, which is not tappable, and never over the titles or the transport row.
     @ViewBuilder
     private var nextNavigation: some View {
@@ -409,7 +411,7 @@ private struct Gate2LiveActivityView: View {
         .frame(minHeight: Gate2ControlSize.nextChipHeight)
         .background(Color.white.opacity(0.12))
         .clipShape(Capsule())
-        .expandedHitArea(top: 4, bottom: 12)
+        .expandedHitArea(top: 4, bottom: 16)
     }
 }
 
@@ -544,16 +546,18 @@ private struct CompactActionIntentButton: View {
 }
 
 /// Sizes of the round controls (#1940). They are fixed-size controls, every one at least the 44 pt touch target. At
-/// the default text size the five transport circles and the mic total 284 pt, plus five 4 pt gaps, so they share one
-/// row of the Lock Screen's roughly 327 pt of content (311 pt on a 375 pt-wide phone). Text inside a circle follows the
-/// text size up to a ceiling, because the circle does not grow.
+/// the default text size the five transport circles and the mic total 284 pt, plus six 4 pt gaps (the spacer before
+/// the mic takes one on each side), so they share one row of the Lock Screen's roughly 327 pt of content (311 pt on a
+/// 375 pt-wide phone). Text inside a circle follows the text size up to a ceiling, because the circle does not grow.
 enum Gate2ControlSize {
     static let skim: CGFloat = 44
     static let skip: CGFloat = 48
     static let play: CGFloat = 56
     static let record: CGFloat = 44
     static let rowSpacing: CGFloat = 4
-    static let nextChipHeight: CGFloat = 28
+    /// 24 pt, not 28: under the state word (about 16 pt) it keeps the header column no taller than the titles (22 + 2 +
+    /// 16 pt), which keeps a paused card with a next chapter under 160 pt (LiveActivityLayoutTests).
+    static let nextChipHeight: CGFloat = 24
     /// A glyph inside a circle stops growing at this size.
     static let glyphCeiling: DynamicTypeSize = .accessibility1
     /// A skim circle also holds its destination time under the icon, so its contents stop sooner.
@@ -588,13 +592,5 @@ private extension View {
         padding(.vertical, vertical)
             .contentShape(Rectangle())
             .padding(.vertical, -vertical)
-    }
-}
-
-@main
-struct SpokenMarginsGate2WidgetBundle: WidgetBundle {
-    var body: some Widget {
-        Gate2LiveActivityWidget()
-        LiveSessionActivityWidget()
     }
 }
