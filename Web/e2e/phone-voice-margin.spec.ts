@@ -11,8 +11,9 @@ const FEED = `${FEED_ORIGIN}/enclosure-only-episodes.rss`;
 const EPISODE = 'Episode 3: No link, GUID and audio';
 
 // Playwright's usual WebKit context is ephemeral, like Safari's private browsing, where IndexedDB refuses to store a
-// Blob, so no voice Margin could be kept at all. WebKit runs in a context with a real profile instead, as Safari on
-// the owner's phone does. Chrome takes the fake microphone from its launch switches.
+// Blob. The voice Margin is stored as bytes now (#3043), so the last test here runs in that default context; the
+// others keep a context with a real profile, as Safari on the owner's phone has. Chrome takes the fake microphone
+// from its launch switches.
 test.beforeEach(async ({ page }) => {
   await serveFixtures(page);
 });
@@ -91,4 +92,23 @@ test('Stop saves the voice Margin, Undo takes it away, and later words are kept'
   await nowPlaying.getByRole('button', { name: 'Close Now Playing' }).click();
   await expect.poll(() => storedVoiceMargins(page)).toEqual([{ text: 'The bit about tides.' }]);
   await done();
+});
+
+test.describe('a browser that refuses to store a Blob', () => {
+  test.use({ permissions: ['microphone'] });
+  test('a voice Margin saves in a browser that refuses to store a Blob, such as Safari private browsing (#3043)', async ({ page }, info) => {
+    // The default page: ephemeral in WebKit, so IndexedDB refuses a Blob there.
+    const nowPlaying = await openEpisode(page);
+    await record(page, nowPlaying);
+    await expect(nowPlaying.getByTestId('voice-saved')).toHaveText(/^Saved Voice Margin at \d+:\d\d\.$/);
+    await expect(page.getByText(/wasn.t saved/)).toHaveCount(0);
+    expect(await storedVoiceMargins(page)).toEqual([{ text: undefined }]);
+    await shot(page, info, '3043-saved-without-blob-storage');
+
+    // It is there after a reload, with its audio rebuilt for the Hear button.
+    await page.reload();
+    expect(await storedVoiceMargins(page)).toEqual([{ text: undefined }]);
+    await page.getByRole('navigation', { name: 'Sections' }).getByRole('button', { name: 'Margins' }).click();
+    await expect(page.getByRole('button', { name: /Hear this voice Margin/ })).toHaveCount(1);
+  });
 });
