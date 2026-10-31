@@ -12,9 +12,8 @@ extension Gate1AppModel {
     func startOfflineServices(store: SQLiteSessionStore, ledger: OfflineStorageLedger) {
         offlineServicesStartupTasks.append(Task { [weak self] in
             guard let limitGB = self?.offlineStorageLimitGB, !Task.isCancelled else { return }
-            try? store.saveOfflineStorageBudget(OfflineStorageBudget(
-                limitBytes: Int64(limitGB) * OfflineStorageBudget.bytesPerGigabyte
-            ))
+            let budget = OfflineStorageBudget(limitBytes: Int64(limitGB) * OfflineStorageBudget.bytesPerGigabyte)
+            try? await StoreReader(store).readInOrder(OfflineStorageBudget.saveOrderKey) { try $0.saveOfflineStorageBudget(budget) }
             try? await ledger.adoptExistingAssets()
             guard !Task.isCancelled else { return }
             let residualOverage = try? await ledger.enforceBudget()

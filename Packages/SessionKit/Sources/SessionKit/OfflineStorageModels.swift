@@ -38,6 +38,8 @@ public enum OfflineAssetIntegrity: String, Codable, Equatable, Sendable {
 public struct OfflineStorageBudget: Codable, Equatable, Sendable {
     public static let allowedGigabytes = [1, 2, 5, 10, 20]
     public static let bytesPerGigabyte: Int64 = 1_000_000_000
+    /// The key saves of the budget are ordered under, so a quick second change can't be overwritten by the first (#2509).
+    public static let saveOrderKey = "offline-storage-budget"
     public var limitBytes: Int64
 
     public init(limitBytes: Int64 = 5 * bytesPerGigabyte) {
