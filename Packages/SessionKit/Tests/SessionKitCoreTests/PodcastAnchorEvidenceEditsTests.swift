@@ -152,4 +152,43 @@ final class PodcastAnchorEvidenceEditsTests: XCTestCase {
         XCTAssertEqual(stored.podcastAnchorEvidence?.map(\.id), ["anchor-pre"], "the evidence survived the engine's save")
         XCTAssertEqual(stored.podcastAnchorEvidenceCaptureStatus, .ready)
     }
+
+    /// The star, the sharing note and the reply link change a Margin through `updateInterjection(id:sessionId:)`.
+    /// An evidence merge that commits on another thread while that change is open waits and is kept (the second audit
+    /// of #3080 found the star path saving a stale copy).
+    func testAStoreUpdateDoesNotEraseEvidenceSavedMeanwhile() throws {
+        let store = try makeStore()
+        try store.saveInterjection(margin())
+        let entered = DispatchSemaphore(value: 0)
+        let merged = expectation(description: "the evidence edit finished")
+        let piece = evidence("anchor-pre", role: .preInterjection)
+        DispatchQueue.global().async {
+            entered.wait()
+            _ = try? PodcastAnchorEvidenceEdits.apply(
+                .merge([piece], sourceExactEditionSHA256: "abc"),
+                interjectionId: "m1", itemId: "ep", sessionId: "s1", in: store
+            )
+            merged.fulfill()
+        }
+        let starred = try store.updateInterjection(id: "m1", sessionId: "s1") { margin in
+            entered.signal()
+            Thread.sleep(forTimeInterval: 0.3)
+            margin.isStarredForSharing = true
+        }
+        wait(for: [merged], timeout: 10)
+
+        XCTAssertEqual(starred?.isStarredForSharing, true)
+        let stored = try XCTUnwrap(store.loadInterjection(id: "m1", sessionId: "s1"))
+        XCTAssertEqual(stored.isStarredForSharing, true)
+        XCTAssertEqual(stored.podcastAnchorEvidence?.map(\.id), ["anchor-pre"], "the evidence survived the star")
+        XCTAssertEqual(stored.podcastAnchorEvidenceCaptureStatus, .ready)
+    }
+
+    func testAStoreUpdateOfAMissingMarginWritesNothing() throws {
+        let store = try makeStore()
+        try store.saveInterjection(margin())
+        XCTAssertNil(try store.updateInterjection(id: "nope", sessionId: "s1") { $0.isStarredForSharing = true })
+        XCTAssertNil(try store.updateInterjection(id: "m1", sessionId: "s1", itemId: "another") { $0.isStarredForSharing = true })
+        XCTAssertNil(try store.loadInterjection(id: "m1", sessionId: "s1")?.isStarredForSharing)
+    }
 }

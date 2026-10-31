@@ -29,22 +29,17 @@ public enum PodcastAnchorEvidenceEdits {
         sessionId: String,
         in store: SQLiteSessionStore
     ) throws -> Interjection? {
-        try store.withSessionTransaction {
-            guard let stored = try store.loadInterjection(id: interjectionId, sessionId: sessionId),
-                  stored.itemId == itemId else { return nil }
-            let changed: Interjection
+        try store.updateInterjection(id: interjectionId, sessionId: sessionId, itemId: itemId) { stored in
             switch change {
             case .merge(let evidence, let sha):
-                changed = PodcastAnchorEvidenceRecord.merging(evidence, sourceExactEditionSHA256: sha, into: stored)
+                stored = PodcastAnchorEvidenceRecord.merging(evidence, sourceExactEditionSHA256: sha, into: stored)
             case .markUnavailable(let reason):
-                changed = PodcastAnchorEvidenceRecord.markingUnavailable(stored, reason: reason)
+                stored = PodcastAnchorEvidenceRecord.markingUnavailable(stored, reason: reason)
             case .markPendingLocalCapture:
-                changed = PodcastAnchorEvidenceRecord.markingPendingLocalCapture(stored)
+                stored = PodcastAnchorEvidenceRecord.markingPendingLocalCapture(stored)
             case .recordFailureReason(let reason):
-                changed = PodcastAnchorEvidenceRecord.recordingFailureReason(reason, on: stored)
+                stored = PodcastAnchorEvidenceRecord.recordingFailureReason(reason, on: stored)
             }
-            try store.saveInterjection(changed)
-            return changed
         }
     }
 }
