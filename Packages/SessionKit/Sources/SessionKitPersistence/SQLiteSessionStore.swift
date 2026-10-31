@@ -854,6 +854,23 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         try loadBySession(kind: "turn", sessionId: sessionId)
     }
 
+    /// The id (the turn's own, not the record key `session::turn`) of the session's newest summary turn that has not completed, or nil: what the pending-summary check wants
+    /// from `loadTurns(sessionId:)` without decoding every turn of the session (#2506). The same order as that read
+    /// (`updated_at`, then `id`), newest first. A turn whose payload isn't valid JSON is skipped here; the whole read
+    /// would have refused it.
+    public func latestPendingSummaryTurnId(sessionId: String) throws -> String? {
+        var found: String?
+        try readTexts(
+            """
+            SELECT json_extract(payload, '$.id') FROM records WHERE kind = 'turn' AND session_id = ? AND json_valid(payload)
+              AND json_extract(payload, '$.turnType') = 'interjection_summary'
+              AND json_extract(payload, '$.status') IS NOT 'complete'
+            ORDER BY updated_at DESC, id DESC LIMIT 1;
+            """, [sessionId], name: "latest_pending_summary_turn_id"
+        ) { found = $0 }
+        return found
+    }
+
     public func saveAIJob(_ job: AIJob) throws {
         try save(kind: "ai_job", id: job.id, sessionId: job.sessionId, itemId: job.itemId, value: job)
     }
@@ -1197,6 +1214,16 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
     public func loadEditionFingerprintSpine(itemId: String) throws -> EditionFingerprintSpineArtifact? {
         let values: [EditionFingerprintSpineArtifact] = try loadByItem(kind: "edition_fingerprint_spine", itemId: itemId)
         return values.last
+    }
+
+    /// Whether the item has a fingerprint spine, without reading or decoding it (#2506): a spine is megabytes for a long
+    /// episode, and a caller that only branches on "is there one" asked `loadEditionFingerprintSpine` for all of it. A
+    /// spine this build can't decode counts as present, so a cleanup keeps what it can't read instead of deleting it.
+    public func hasEditionFingerprintSpine(itemId: String) throws -> Bool {
+        var found = false
+        try readTexts("SELECT id FROM records WHERE kind = 'edition_fingerprint_spine' AND item_id = ? LIMIT 1;", [itemId],
+                      name: "has_edition_fingerprint_spine") { _ in found = true }
+        return found
     }
 
     public func saveTranscriptPhraseSketch(_ sketch: TranscriptPhraseSketchArtifact) throws {
