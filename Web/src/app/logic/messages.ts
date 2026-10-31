@@ -19,7 +19,9 @@ export const MESSAGES = Object.freeze({
   relayLimit: 'Our server has read a lot of feeds for you this hour. Try again later.',
   relayOff: 'Reading feeds through our server isn’t available right now.',
   relayFailed: 'Our server couldn’t read that feed. Its site may be down, or the feed may not be a podcast or Substack feed.',
-  relayUnreachable: 'Neither this site nor our server could be reached. Check you’re online, then try again later.',
+  // The usual case is a site that answered but doesn't let browsers read it, so "check you're online" would be wrong;
+  // offline gets `offline` instead (plainError).
+  relayUnreachable: 'This feed needs our server, and our server couldn’t be reached. Try again later.',
   offline: 'No connection. Check you’re online, then try again.',
   paidPost: 'This post is for paid subscribers. The web app reads posts without your Substack sign-in, so it can’t play this one.',
   searchFailed: 'Search isn’t answering right now. Try again, or paste the show’s feed address.',
@@ -34,6 +36,12 @@ function errorName(error: unknown): string | undefined {
   return typeof error === 'object' && error !== null && 'name' in error && typeof (error as { name: unknown }).name === 'string'
     ? (error as { name: string }).name
     : undefined;
+}
+
+/** True only when the browser says it has no network; node (tests) and unknown count as online. */
+function isOffline(): boolean {
+  const nav = (globalThis as { navigator?: { onLine?: unknown } }).navigator;
+  return nav?.onLine === false;
 }
 
 function relayStatus(status: number, code: string | undefined): string {
@@ -60,7 +68,7 @@ export function plainError(error: unknown, context?: 'microphone'): string {
   if (error instanceof FeedParseError) return MESSAGES.notAFeed;
   if (error instanceof ReadTooLarge) return MESSAGES.tooLarge;
   if (error instanceof RelayNotConfigured) return MESSAGES.noRelay;
-  if (error instanceof RelayUnreachable) return MESSAGES.relayUnreachable;
+  if (error instanceof RelayUnreachable) return isOffline() ? MESSAGES.offline : MESSAGES.relayUnreachable;
   if (error instanceof PaidPostNoVoice) return MESSAGES.paidPost;
   if (error instanceof PostPageReadRefused) return MESSAGES.postNeedsTap;
   if (error instanceof SearchError) return MESSAGES.searchFailed;
