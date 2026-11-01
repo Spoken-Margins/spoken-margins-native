@@ -1006,7 +1006,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.sharingState.drafts[0].approvedTranscript, "Keep words.")
     }
 
-    func testTimelineShareCurationPersistsAndCreatesAStarredSenderShortlist() throws {
+    func testTimelineShareCurationPersistsAndCreatesAStarredSenderShortlist() async throws {
         let root = FileManager.default.temporaryDirectory
             .appending(path: "share-curation-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -1055,6 +1055,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertTrue(InterjectionSharingView.transcriptRequiresExpansion(fullHeight: 440, limitedHeight: 220))
 
         reopened.setInterjectionStarredForSharing("margin-starred", starred: false)
+        await reopened.settleItemReload() // the item detail reloads off the main thread after the star (#2505)
         reopened.prepareShareInterjections()
         XCTAssertEqual(reopened.sharingState.draftFilter, .all)
         XCTAssertTrue(reopened.sharingState.drafts.allSatisfy(\.isIncluded))
