@@ -206,3 +206,26 @@ Tracked in uncomposed/spoken-margins-native#2060.
 
 The owner wants Haiku to write summaries for episodes that already have publisher chapters, treating each chapter as its own item (like a book's chapters), and to find scenes inside long chapters. The upload rule in #552 skips episodes with publisher chapters, so this is not covered. It needs an upload that carries the chapter boundaries and a prompt that writes summaries for them instead of choosing scenes.
 
+
+## 14. If the server were breached (#2842 item 5)
+
+Plain statement, to check against the code before each new server feature ships. It is an engineering note, not legal advice; whether any law or contract requires a notice is a question for counsel, and nothing here promises a notice.
+
+**What an attacker would get from the server's disk and logs** (sections 2, 5, 10, 11 and the share-link pages on the site):
+
+- Per install: the public half of a random key, a counter, and the dates it was made and last used (deleted after 90 days unused). No name, account, email, device model, phone number or IP address. Deleting the app deletes the private half.
+- Hourly request counts per route, kept 14 days; the abuse log (hour, install tag, reason), kept 30 days. No IPs and no per-request lines.
+- Listening maps made from public episodes. Transcripts are held in memory only and never written to disk.
+- Token signing keys (one per month) and spent-token nonces. A token carries no install identity, so the keys cannot be used to link a token back to an install.
+- Share links: ciphertext only. The key travels in the part of the link after the `#`, which the server never receives, so a breach of the server alone does not reveal what a link held.
+
+**What the server does not hold:** listeners' names, accounts, Libraries, Margins, recordings, reading or listening history, or the key that opens a share link.
+
+**So whom would we notify?** There is no list of people to notify: the server holds no identities, and a stolen install record names nobody. If the server were breached anyway, the steps are:
+
+1. The owner stops `smserver` and takes the box off the network (the kill switch keeps the static documents up), then rotates the token keys and the maps API key.
+2. Every install key becomes untrusted: delete the install store. Apps told `unknown_key` simply attest a new key, so this costs listeners nothing.
+3. Post a dated notice on the Support page and the privacy page saying what was exposed (from the list above) and what was done. The app shows a short banner pointing to it on next launch (not built yet; a follow-up if a feature needs it).
+4. Anyone who sent a copyright notice or a report in the past 90 days wrote to the designated agent's mailbox, not to the server; if that mailbox were involved, its senders are the one group we could email directly.
+
+**Check on change:** a feature that makes the server hold anything linkable to a person (an email address, an account, an IP, content in the clear) must update this section in the same PR, and it needs the owner's call first (AGENTS.md "Default on only when it costs the listener nothing").
