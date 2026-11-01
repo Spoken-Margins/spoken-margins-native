@@ -14,13 +14,20 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 SOURCES = ROOT / "App" / "SpokenMarginsApp" / "Sources" / "SpokenMarginsApp"
 
-# The snapshot fields `SessionSnapshot.tickPosition` holds, read through the model.
-POSITION_FIELDS = r"model\.snapshot\.(?:currentMediaTimeMs|currentTextStart|currentTextEnd|currentTranscriptSegmentId)\b"
+# The snapshot fields `SessionSnapshot.tickPosition` holds, read through the model (`model.snapshot.x`), through a
+# local copy (`let snapshot = model.snapshot` ... `snapshot.x`), or from the clock itself (`playbackClock.position`).
+# Mark complete read `snapshot.currentMediaTimeMs` through a local copy, which a `model.snapshot.` pattern missed, and
+# stayed hidden past 75% on the owner's phone (#2968).
+POSITION_FIELDS = (
+    r"\bsnapshot\.(?:currentMediaTimeMs|currentTextStart|currentTextEnd|currentTranscriptSegmentId)\b"
+    r"|\bplaybackClock\.position\b"
+)
 # Model properties and functions that read those fields, so a view reading them reads the position too.
 POSITION_DERIVED = (
     "marginMomentPositionMs", "currentChapter", "playbackHeaderTitle", "playbackChapterHeaderTitle",
     "isCurrentTimelineChapter", "isCurrentTimelineListeningMapScene", "nextPlaybackMediaChapter",
     "nextPlaybackChapter", "canJumpToNextChapter", "chapterRowForwardControl", "canUseEndOfChapterSleepTimer",
+    "playbackCompletionPresence",
 )
 POSITION_READ = re.compile(POSITION_FIELDS + r"|model\.(?:" + "|".join(POSITION_DERIVED) + r")\b")
 VIEW_START = re.compile(r"^(?:(?:private|fileprivate|public|internal)\s+)?struct\s+(\w+)\s*:\s*[^{]*\bView\b[^{]*\{", re.M)
@@ -71,6 +78,30 @@ private struct Unrelated: View {
 }
 """
         self.assertEqual(["Screen.swift: Child"], views_missing_the_clock({"Screen.swift": parent}))
+
+    def test_the_scan_finds_a_view_that_reads_the_playhead_through_a_local_copy_of_the_snapshot(self):
+        # Mark complete before #2968: a stateless child read the position through `let snapshot = model.snapshot`, so
+        # it tested 75% only when something unrelated redrew it, and stayed hidden through the end of the episode.
+        button = """
+struct PlaybackMarkCompleteButton: View {
+    @EnvironmentObject private var model: Gate1AppModel
+    var body: some View {
+        if let row = offeredRow { Button("Mark complete") {} }
+    }
+    private var offeredRow: LibraryItemRow? {
+        let snapshot = model.snapshot
+        guard PlaybackCompletionOffer.isOffered(mediaTimeMs: snapshot.currentMediaTimeMs ?? 0, durationMs: 1) else { return nil }
+        return nil
+    }
+}
+
+struct ClockReader: View {
+    var body: some View { Text("\\(model.playbackClock.position.mediaTimeMs ?? 0)") }
+}
+"""
+        self.assertEqual(
+            ["Button.swift: PlaybackMarkCompleteButton", "Button.swift: ClockReader"],
+            views_missing_the_clock({"Button.swift": button}))
 
     def test_the_scan_sees_the_known_playhead_views(self):
         sources = {path.name: re.sub(r"//[^\n]*", "", path.read_text()) for path in SOURCES.rglob("*.swift")}
