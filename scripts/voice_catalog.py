@@ -721,18 +721,22 @@ def render_page(catalog: dict, sources: dict) -> str:
     site_host = urllib.parse.urlsplit(sources["site"]["baseURL"]).netloc
     cards = []
     for voice in catalog["voices"]:
+        # A file carried as text has no URL, and an archive member comes from its archive's (#2086).
+        urls = [url for file in voice["files"] for url in file.get("sources", [])]
+        urls += [url for archive in voice.get("archives", []) for url in archive["sources"]]
         hosts: list[str] = []
-        for file in voice["files"]:
-            for url in file["sources"]:
-                host = urllib.parse.urlsplit(url).netloc
-                label = f"{host} (our own mirror)" if host == site_host else host
-                if label not in hosts:
-                    hosts.append(label)
+        for url in urls:
+            host = urllib.parse.urlsplit(url).netloc
+            label = f"{host} (our own mirror)" if host == site_host else host
+            if label not in hosts:
+                hosts.append(label)
         if voice["bundled"]:
             where = "Ships inside the app. Nothing is downloaded."
             size = "Included in the app"
         else:
-            where = "Downloads from " + " and ".join(hosts) + ". For each file the app tries the publisher first where it has that file, then our mirror, and checks it against the size and SHA-256 listed below."
+            fallback = "tries the publisher first where it has that file, then our mirror, and checks" if any(
+                urllib.parse.urlsplit(url).netloc == site_host for url in urls) else "checks"
+            where = "Downloads from " + " and ".join(hosts) + f". For each file the app {fallback} it against the size and SHA-256 listed below."
             size = format_bytes(sum(f["byteCount"] for f in voice["files"]))
         status = {"available": "", "withdrawn": " <strong>Withdrawn:</strong> the app no longer offers it.",
                   "superseded": f" <strong>Superseded</strong> by <code>{_esc(voice.get('supersededBy', ''))}</code>."}[voice["status"]]
@@ -759,8 +763,8 @@ def render_page(catalog: dict, sources: dict) -> str:
         "<body><main><header><div class=\"mark\"><a href=\"/\">Spoken Margins</a></div><h1>Voices</h1>"
         f"<p class=\"meta\">Catalog version {_esc(catalog['catalogVersion'])}, issued {_esc(catalog['issuedAt'])}</p></header>\n"
         "<p class=\"lede\">These are the voices the Spoken Margins app can read with, where each one comes from, and the licence it is under. "
-        "The app reads the signed list at <a href=\"/voices/v1/catalog.json\">/voices/v1/catalog.json</a> and refuses anything whose signature or file checks do not match. "
-        "The request carries no account and no identifier; it is the same for every listener.</p>\n"
+        "The app ships with its own reviewed copy of this list, downloads each file straight from where it is listed, and refuses any file whose size or SHA-256 does not match. "
+        "The signed list is at <a href=\"/voices/v1/catalog.json\">/voices/v1/catalog.json</a>.</p>\n"
         + "\n".join(cards)
         + "\n<footer><a href=\"/privacy/\">Privacy Policy</a> | <a href=\"/terms/\">Terms of Use</a> | <a href=\"/support/\">Support</a> | <a href=\"/\">Home</a></footer></main></body></html>\n")
 

@@ -169,6 +169,33 @@ class TheShippedSources(unittest.TestCase):
                     self.assertFalse(file.get("mirrored"))
                     self.assertFalse(any(url.startswith(site) for url in vc.file_source_urls(sources, voice, file)))
 
+    def test_the_committed_site_catalog_downloads_nothing_from_the_owners_server(self):
+        # #2086: catalog version 1 (Site/voices/v1/) sent every Supertonic file to voices/files/ on the owner's server,
+        # long after sources.json stopped mirroring it, because nobody re-signed it.
+        sources = vc.load_sources()
+        site = sources["site"]["baseURL"]
+        catalog = vc.published_payload(vc.SITE_DIR)
+        self.assertIsNotNone(catalog)
+        for voice in catalog["voices"]:
+            urls = [url for file in voice["files"] for url in file.get("sources", [])]
+            urls += [url for archive in voice.get("archives", []) for url in archive["sources"]]
+            with self.subTest(voice=voice["id"]):
+                self.assertEqual([url for url in urls if url.startswith(site)], [])
+
+    def test_the_committed_site_manifest_describes_the_committed_catalog(self):
+        catalog_bytes = (vc.SITE_DIR / vc.CATALOG_REL).read_bytes()
+        manifest = json.loads((vc.SITE_DIR / vc.MANIFEST_REL).read_text(encoding="utf-8"))
+        self.assertEqual(manifest["contentVersion"], vc.published_payload(vc.SITE_DIR)["catalogVersion"])
+        self.assertEqual(manifest["catalogChecksumSHA256"], vc.sha256_hex(catalog_bytes))
+        self.assertEqual(manifest["catalogByteCount"], len(catalog_bytes))
+
+    @unittest.skipUnless(HAVE_CRYPTO, "cryptography is not installed")
+    def test_the_committed_site_catalog_is_signed_by_a_key_the_app_trusts(self):
+        envelope = json.loads((vc.SITE_DIR / vc.CATALOG_REL).read_text(encoding="utf-8"))
+        keys = vc.trusted_keys()
+        self.assertIn(envelope["keyId"], keys)
+        self.assertTrue(vc.envelope_signature_ok(envelope, keys[envelope["keyId"]]))
+
     def test_the_four_int8_graphs_come_from_the_pinned_sherpa_onnx_hugging_face_repo(self):
         sources = vc.load_sources()
         voice = next(v for v in sources["voices"] if v["id"] == "supertonic-3-int8")
@@ -790,6 +817,25 @@ class TheSitePage(unittest.TestCase):
 
     def test_the_same_catalog_always_renders_the_same_page(self):
         self.assertEqual(vc.render_page(self.catalog, self.sources), vc.render_page(copy.deepcopy(self.catalog), self.sources))
+
+    def test_a_file_carried_as_text_or_taken_from_an_archive_is_listed_and_its_archive_host_named(self):
+        # #2086: the page read every file's "sources", so catalog version 2 (Supertonic's MODIFIED.txt carried as text,
+        # Phonon's files inside a pinned archive) could not be rendered at all.
+        voice = self.catalog["voices"][0]
+        voice["files"][1] = {"path": "MODIFIED.txt", "byteCount": 5, "sha256": "0" * 64, "content": "note\n"}
+        voice["files"].append({"path": "inside.onnx", "byteCount": 7, "sha256": "1" * 64, "archiveMember": {"archive": "pack", "member": "x/inside.onnx"}})
+        voice["archives"] = [{"id": "pack", "format": "tar.bz2", "byteCount": 9, "sha256": "2" * 64, "sources": ["https://archives.example/pack.tar.bz2"]}]
+        page = vc.render_page(self.catalog, self.sources)
+        for expected in ("MODIFIED.txt", "inside.onnx", "archives.example"):
+            self.assertIn(expected, page)
+
+    def test_a_voice_with_no_mirrored_file_does_not_mention_a_mirror(self):
+        for voice in self.catalog["voices"]:
+            for file in voice["files"]:
+                file["sources"] = [url for url in file.get("sources", []) if not url.startswith(self.sources["site"]["baseURL"])] or ["https://publisher.example/f"]
+        page = vc.render_page(self.catalog, self.sources)
+        self.assertNotIn("mirror", page)
+        self.assertIn("publisher.example", page)
 
 
 @unittest.skipUnless(HAVE_CRYPTO, "needs the cryptography package")
