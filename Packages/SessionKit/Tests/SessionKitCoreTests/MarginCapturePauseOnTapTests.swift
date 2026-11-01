@@ -111,7 +111,7 @@ final class MarginCapturePauseOnTapTests: XCTestCase {
         XCTAssertFalse(rig.audio.playing)
         XCTAssertEqual(snapshot.status, .paused, "the screen and the Lock Screen stop saying Playing")
         XCTAssertEqual(rig.recorder.begins, 0)
-        XCTAssertTrue(rig.engine.hasPendingInterjectionPause)
+        XCTAssertTrue(rig.engine.isSourcePausedOnTap)
         XCTAssertEqual(try rig.journal.load().drafts.count, 0, "no recording draft before the recorder is asked for")
     }
 
@@ -123,7 +123,7 @@ final class MarginCapturePauseOnTapTests: XCTestCase {
         _ = try rig.engine.beginInterjection(request: MarginCaptureRequest())
 
         XCTAssertEqual(rig.recorder.begins, 1)
-        XCTAssertFalse(rig.engine.hasPendingInterjectionPause, "the start took the pause over")
+        XCTAssertFalse(rig.engine.isSourcePausedOnTap, "the start took the pause over")
         let draft = try XCTUnwrap(try rig.journal.load().drafts.first)
         XCTAssertEqual(draft.anchor.mediaTimeMs, 3_969_000)
     }
@@ -164,14 +164,14 @@ final class MarginCapturePauseOnTapTests: XCTestCase {
         _ = try rig.engine.abandonPendingInterjection()
 
         XCTAssertEqual(rig.audio.events, [], "it already plays; Cancel doesn't restart it")
-        XCTAssertFalse(rig.engine.hasPendingInterjectionPause)
+        XCTAssertFalse(rig.engine.isSourcePausedOnTap)
     }
 
     func testACancelThatFindsThePauseStillPendingClearsIt() throws {
         let rig = try rig(item: episode)
         rig.engine.pauseSourceForInterjection(request: MarginCaptureRequest())
         _ = try rig.engine.cancelInterjection()
-        XCTAssertFalse(rig.engine.hasPendingInterjectionPause, "a stale pause would be taken for the next Margin's")
+        XCTAssertFalse(rig.engine.isSourcePausedOnTap, "a stale pause would be taken for the next Margin's")
         XCTAssertTrue(rig.audio.playing)
     }
 
@@ -185,7 +185,7 @@ final class MarginCapturePauseOnTapTests: XCTestCase {
         XCTAssertEqual(rig.audio.events, ["pause", "play@3969000"], "back from where it stopped, not 16 s on")
         XCTAssertTrue(rig.audio.playing)
         XCTAssertTrue(snapshot.status.isPlaybackActive)
-        XCTAssertFalse(rig.engine.hasPendingInterjectionPause)
+        XCTAssertFalse(rig.engine.isSourcePausedOnTap)
         XCTAssertEqual(rig.recorder.begins, 0, "the recorder was never asked for")
         XCTAssertEqual(try rig.journal.load().drafts.count, 0, "Cancel leaves no draft to recover")
         XCTAssertFalse(snapshot.isRecording)
@@ -200,14 +200,14 @@ final class MarginCapturePauseOnTapTests: XCTestCase {
         XCTAssertThrowsError(try rig.engine.beginInterjection(request: MarginCaptureRequest()))
 
         XCTAssertTrue(rig.audio.playing, "the microphone wouldn't start, so the podcast plays on")
-        XCTAssertFalse(rig.engine.hasPendingInterjectionPause)
+        XCTAssertFalse(rig.engine.isSourcePausedOnTap)
         XCTAssertEqual(try rig.journal.load().drafts.count, 0)
     }
 
     func testCancelWhenTheTapPausedNothingChangesNothing() throws {
         let rig = try rig(item: episode, playing: false)
         XCTAssertFalse(rig.engine.pauseSourceForInterjection(request: MarginCaptureRequest()).status.isPlaybackActive)
-        XCTAssertFalse(rig.engine.hasPendingInterjectionPause, "a paused podcast has nothing to put back")
+        XCTAssertFalse(rig.engine.isSourcePausedOnTap, "a paused podcast has nothing to put back")
 
         _ = try rig.engine.abandonPendingInterjection()
 
@@ -221,7 +221,7 @@ final class MarginCapturePauseOnTapTests: XCTestCase {
         let capture = try rig.engine.beginWrittenInterjection()
 
         XCTAssertTrue(capture.wasPlaying, "the podcast was playing before the tap, so saving the written Margin resumes it")
-        XCTAssertFalse(rig.engine.hasPendingInterjectionPause)
+        XCTAssertFalse(rig.engine.isSourcePausedOnTap)
         rig.audio.events.removeAll()
         _ = try rig.engine.saveWrittenInterjection(captureId: capture.id, text: "A thought")
         XCTAssertTrue(rig.audio.playing)
@@ -233,7 +233,7 @@ final class MarginCapturePauseOnTapTests: XCTestCase {
 
         rig.engine.pauseSourceForInterjection(request: MarginCaptureRequest())
 
-        XCTAssertFalse(rig.engine.hasPendingInterjectionPause, "its position is read before it is paused, so only the engine start does both")
+        XCTAssertFalse(rig.engine.isSourcePausedOnTap, "its position is read before it is paused, so only the engine start does both")
         XCTAssertEqual(rig.audio.events, [])
     }
 

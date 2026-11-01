@@ -2,28 +2,22 @@
  "about": "Resume-decision state known when the guard landed (#3032). scripts/resume_owners.py fails on a declaration not listed here or one declared or written in more places. --update only removes rows and lowers counts.",
  "rows": [
   {
-   "key": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+MarginCapture.swift::hasPendingInterjectionPause",
-   "decls": 1,
-   "writes": 0,
-   "why": "retired by the capture/relaunch resume owner (#3144, #3032 slice 3)"
-  },
-  {
    "key": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+MarginVoicePlayback.swift::shouldResume",
    "decls": 2,
    "writes": 0,
-   "why": "retired by the capture/relaunch resume owner (#3144, #3032 slice 3)"
+   "why": "holds the answer of SharedMarginReturnClaim, which owns who returns the source after a shared Margin (#997); a local copy of its answer, not a second decision (#3144)"
   },
   {
    "key": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+MarginVoicePlayback.swift::shouldResumeSource",
    "decls": 1,
    "writes": 0,
-   "why": "retired by the capture/relaunch resume owner (#3144, #3032 slice 3)"
+   "why": "holds the answer of SharedMarginReturnClaim, which owns who returns the source after a shared Margin (#997); a local copy of its answer, not a second decision (#3144)"
   },
   {
    "key": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate2CompactControlController.swift::shouldResume",
    "decls": 2,
    "writes": 0,
-   "why": "retired by the capture/relaunch resume owner (#3144, #3032 slice 3)"
+   "why": "carries what iOS reported (AVAudioSession interruption options) to LiveActivityLifecycle, which decides whether the card stays, not whether the source resumes (#3144); a report, not a second decision"
   },
   {
    "key": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/SupertonicSpeechPlaybackClient.swift::SystemPauseHandler",
@@ -50,112 +44,34 @@
    "why": "carries or logs what iOS reported to SystemInterruptionResume, which owns the decision (#3032 slice 2); a report, not a second decision"
   },
   {
+   "key": "Packages/SessionKit/Sources/SessionKit/HandsFreeMarginCoordinator.swift::resumesAfter",
+   "decls": 1,
+   "writes": 8,
+   "why": "the hands-free Margin's own copy of the resume decision; moves into MarginCaptureResume (#3170, #3032 slice 4)"
+  },
+  {
    "key": "Packages/SessionKit/Sources/SessionKit/HandsFreeMarginCoordinator.swift::shouldResume",
    "decls": 1,
    "writes": 0,
-   "why": "retired by the capture/relaunch resume owner (#3144, #3032 slice 3)"
+   "why": "carries iOS's report into the hands-free coordinator, MarginCaptureResume's remaining caller (#3170, #3032 slice 4); a report, not a second decision"
   },
   {
    "key": "Packages/SessionKit/Sources/SessionKit/LibraryAudioPreparationQueue.swift::foregroundShouldResume",
    "decls": 1,
    "writes": 0,
-   "why": "the audio-preparation queue, not the playing source; outside the system-interruption path, listed so it stays visible (#3032); follow-up #3144 only if it grows"
+   "why": "the audio-preparation queue, not the playing source; outside the resume paths, listed so it stays visible (#3032); follow-up #3171 only if it grows"
   },
   {
    "key": "Packages/SessionKit/Sources/SessionKit/LiveActivityLifecycle.swift::shouldResume",
    "decls": 1,
    "writes": 0,
-   "why": "retired by the capture/relaunch resume owner (#3144, #3032 slice 3)"
-  },
-  {
-   "key": "Packages/SessionKit/Sources/SessionKit/MarginRecordingInterruption.swift::PendingResume",
-   "decls": 1,
-   "writes": 0,
-   "why": "retired by the capture/relaunch resume owner (#3144, #3032 slice 3)"
-  },
-  {
-   "key": "Packages/SessionKit/Sources/SessionKit/MarginRecordingInterruption.swift::pendingResume",
-   "decls": 1,
-   "writes": 5,
-   "why": "retired by the capture/relaunch resume owner (#3144, #3032 slice 3)"
+   "why": "carries what iOS reported to the Live Activity card, which decides whether the card stays, not whether the source resumes (#3144); a report, not a second decision"
   },
   {
    "key": "Packages/SessionKit/Sources/SessionKit/MarginRecordingInterruption.swift::shouldResume",
    "decls": 2,
    "writes": 0,
-   "why": "retired by the capture/relaunch resume owner (#3144, #3032 slice 3)"
-  },
-  {
-   "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::PendingInterjectionPause",
-   "decls": 1,
-   "writes": 0,
-   "why": "retired by the capture/relaunch resume owner (#3144, #3032 slice 3)"
-  },
-  {
-   "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::PendingPlaybackPosition",
-   "decls": 1,
-   "writes": 0,
-   "why": "retired by the capture/relaunch resume owner (#3144, #3032 slice 3)"
-  },
-  {
-   "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::hasPendingInterjectionPause",
-   "decls": 1,
-   "writes": 0,
-   "why": "retired by the capture/relaunch resume owner (#3144, #3032 slice 3)"
-  },
-  {
-   "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::hasPendingPlaybackPosition",
-   "decls": 1,
-   "writes": 0,
-   "why": "retired by the capture/relaunch resume owner (#3144, #3032 slice 3)"
-  },
-  {
-   "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::pendingInterjectionPause",
-   "decls": 1,
-   "writes": 6,
-   "why": "retired by the capture/relaunch resume owner (#3144, #3032 slice 3)"
-  },
-  {
-   "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::pendingPlaybackPosition",
-   "decls": 3,
-   "writes": 8,
-   "why": "retired by the capture/relaunch resume owner (#3144, #3032 slice 3)"
-  },
-  {
-   "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::previousPendingPlaybackPosition",
-   "decls": 1,
-   "writes": 0,
-   "why": "retired by the capture/relaunch resume owner (#3144, #3032 slice 3)"
-  },
-  {
-   "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::priorPhase",
-   "decls": 1,
-   "writes": 3,
-   "why": "retired by the capture/relaunch resume owner (#3144, #3032 slice 3)"
-  },
-  {
-   "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::priorPhaseForResume",
-   "decls": 1,
-   "writes": 0,
-   "why": "retired by the capture/relaunch resume owner (#3144, #3032 slice 3)"
-  },
-  {
-   "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::recordingOnFinishedSource",
-   "decls": 1,
-   "writes": 3,
-   "why": "retired by the capture/relaunch resume owner (#3144, #3032 slice 3)"
-  },
-  {
-   "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::rejoinAttempted",
-   "decls": 1,
-   "writes": 1,
-   "why": "retired by the capture/relaunch resume owner (#3144, #3032 slice 3)"
-  },
-  {
-   "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::systemPause",
-   "decls": 1,
-   "writes": 4,
-   "why": "retired by the capture/relaunch resume owner (#3144, #3032 slice 3)"
+   "why": "carries what iOS reported into MarginCaptureResume (InterruptedCaptureResume), which owns whether the source resumes after a call that cut a Margin short (#3144); a report, not a second decision"
   },
   {
    "key": "Packages/SessionKit/Sources/SessionKit/SpeechSystemPause.swift::SpeechSystemPause",
