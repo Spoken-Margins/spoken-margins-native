@@ -118,6 +118,20 @@ final class EpisodeMapPreparerTests: XCTestCase {
         XCTAssertTrue(try store.loadOwnedOfflineAssets().filter { $0.itemId == itemId }.isEmpty, "no asset rows are left for the item")
     }
 
+    // MARK: an item that is not there
+
+    /// The start reads the item's summary now, not the whole item (#2507); a missing item must still fail the same way
+    /// (`loadItem` threw), with no job saved and no run started.
+    func testAnItemThatIsNotThereFailsTheStartAndSavesNoJob() throws {
+        let fixture = try makeFixture()
+
+        fixture.model.prepareEpisodeMap(itemId: "p957-no-such-item")
+
+        XCTAssertEqual(fixture.model.episodeMapPreparationStatus, "Failed")
+        XCTAssertNil(fixture.model.episodeMapPreparationTask)
+        XCTAssertEqual(try fixture.store.loadEpisodeMapPreparationJobs(), [], "no job is saved for an item that does not exist")
+    }
+
     // MARK: cancellation and restart
 
     func testCancellingAnotherItemLeavesTheRunAloneAndCancellingTheItemRecordsACancelledJob() async throws {
