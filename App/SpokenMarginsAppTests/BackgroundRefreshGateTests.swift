@@ -413,6 +413,7 @@ final class BackgroundRefreshGateTests: XCTestCase {
         await model.settleLibraryReload()
         model.beginWrittenMargin()
         model.saveWrittenMargin(text: "A thought to transcribe")
+        await model.settleItemReload() // the save reloads the item off the main thread (#2505)
         let margin = try XCTUnwrap(model.selectedItem.interjections.first)
         model.selectedItem.interjections = []
 
@@ -443,6 +444,45 @@ final class BackgroundRefreshGateTests: XCTestCase {
         XCTAssertFalse(model.activeItemId.isEmpty)
         XCTAssertEqual(model.selectedItem.id, model.activeItemId, "the background read selects the replacement")
         XCTAssertNil(model.lastError)
+    }
+
+    /// Saving or cancelling a written Margin used to read the whole item on the main thread before the sheet could
+    /// close (#2505). The Margin's row still appears at once through the Margin rows; the item screen follows from
+    /// the background read, which a test can wait for.
+    func testSavingAWrittenMarginReloadsTheItemInTheBackground() async throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        await model.settleItemReload()
+        model.selectedItem.interjections = []
+        model.beginWrittenMargin()
+
+        model.saveWrittenMargin(text: "Typed while listening")
+        XCTAssertTrue(model.selectedItem.interjections.isEmpty, "the save must not read the item before it returns")
+
+        await model.settleItemReload()
+        XCTAssertEqual(model.selectedItem.interjections.map(\.displayText), ["Typed while listening"],
+                       "the background read shows the saved Margin")
+    }
+
+    func testCancellingAWrittenMarginReloadsTheItemInTheBackground() async throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        await model.settleItemReload()
+        model.beginWrittenMargin()
+        model.saveWrittenMargin(text: "Kept")
+        await model.settleItemReload()
+        let kept = model.selectedItem.interjections
+        XCTAssertEqual(kept.count, 1)
+        model.selectedItem.interjections = []
+        model.beginWrittenMargin()
+
+        model.cancelWrittenMargin()
+        XCTAssertTrue(model.selectedItem.interjections.isEmpty, "the cancel must not read the item before it returns")
+
+        await model.settleItemReload()
+        XCTAssertEqual(model.selectedItem.interjections.map(\.id), kept.map(\.id), "the background read restores the stored Margins")
     }
 
     func testATranscriptForAnotherItemNeverRetargetsThePlaybackScreen() async throws {

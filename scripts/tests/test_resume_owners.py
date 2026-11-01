@@ -102,6 +102,33 @@ class WhatIsAWrite(unittest.TestCase):
         self.assertEqual(writes('var shouldResume: Bool = false', 'shouldResume'), 0)
         self.assertEqual(writes('var shouldResume = false', 'shouldResume'), 0)
 
+    def test_a_typed_declaration_with_a_starting_value_does_not_cancel_a_real_write(self):
+        # #3105's audit: the typed form was subtracted as an initial value although it was never counted as a write.
+        source = 'var shouldResume: Bool = false\nfunc a() { shouldResume = true }'
+        self.assertEqual(writes(source, 'shouldResume'), 1)
+        self.assertEqual(writes('var shouldResume: Bool = false\nfunc a() { shouldResume = true; shouldResume = false }',
+                                'shouldResume'), 2)
+
+    def test_a_write_through_the_value_or_a_tuple_assignment_is_a_write(self):
+        source = '''
+        var systemPause: Pause?
+        var pendingResume = Info()
+        var rejoinAttempted = false
+        var other = 0
+        func a() { systemPause?.reason = nil }
+        func b() { systemPause!.reason = nil }
+        func c() { pendingResume.items[0] = 1 }
+        func d() { pendingResume.count += 1 }
+        func e() { (other, rejoinAttempted) = (1, true) }
+        func f() { let (x, rejoinAttempted) = pair }
+        var typed: (rejoinAttempted: Bool, at: Int) = (true, 1)
+        func h() { systemPause?.a?.b = 1; pendingResume.x!.y = 2 }
+        func g() { if systemPause?.reason == nil && pendingResume.count >= 1 && pendingResume.count != 2 {} }
+        '''
+        self.assertEqual(writes(source, 'systemPause'), 3)
+        self.assertEqual(writes(source, 'pendingResume'), 3)
+        self.assertEqual(writes(source, 'rejoinAttempted'), 1)
+
     def test_a_compound_assignment_is_a_write(self):
         self.assertEqual(writes('var pendingPlaybackPosition = 0.0\nfunc a() { pendingPlaybackPosition += 1 }', 'pendingPlaybackPosition'), 1)
 
@@ -204,12 +231,20 @@ class TheGuardOnTheRealTree(unittest.TestCase):
     def test_the_baseline_names_the_flags_the_audit_listed(self):
         keys = set(ro.load_baseline())
         for needle in ('SessionEngine.swift::priorPhase', 'SessionEngine.swift::systemPause',
-                       'SupertonicSpeechPlaybackClient.swift::shouldResumeAfterInterruption',
                        'MarginRecordingInterruption.swift::PendingResume',
-                       'AudioAdapters.swift::AudioPlaybackInterruptionResumePolicy',
                        'HandsFreeMarginCoordinator.swift::shouldResume'):
             with self.subTest(needle):
                 self.assertTrue(any(k.endswith(needle) for k in keys), needle)
+
+    def test_the_system_interruption_owner_is_exempt_and_exists(self):
+        owner = ro.ROOT / 'Packages/SessionKit/Sources/SessionKit/SystemInterruptionResume.swift'
+        self.assertIn(owner.relative_to(ro.ROOT).as_posix(), ro.OWNING_FILES)
+        self.assertTrue(owner.exists())
+
+    def test_every_baseline_row_has_a_reason_that_names_its_follow_up(self):
+        for row in ro.load_baseline().values():
+            with self.subTest(row['key']):
+                self.assertRegex(row['why'], r'#\d+')
 
     def test_every_baseline_row_still_exists_or_the_baseline_is_tightened(self):
         stale = sorted(set(ro.load_baseline()) - {ro.key(row) for row in ro.scan_tree()})

@@ -304,6 +304,7 @@ final class FeedbackBannerTests: XCTestCase {
         model.pause()
         model.beginWrittenMargin()
         model.saveWrittenMargin(text: "Does this premise support the conclusion?")
+        await model.settleItemReload() // the item detail reloads off the main thread after a save (#2505)
         XCTAssertTrue(model.canSummarizeInterjections)
         model.openTimeline()
         XCTAssertEqual(model.screen, .timeline)

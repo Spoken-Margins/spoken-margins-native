@@ -1,0 +1,63 @@
+import Foundation
+
+/// The one owner of "does playback resume by itself after a system interruption" (#3032).
+///
+/// The question used to be answered twice, by the AVPlayer client (`AudioPlaybackInterruptionResumePolicy`) and by the
+/// Supertonic client (`shouldResumeAfterInterruption`, a bare flag written in eight places), and the two disagreed at
+/// the edges. Both clients now only report events here and obey the answer; neither keeps a resume flag of its own.
+///
+/// The rules, in one place:
+/// - An interruption (a call, Siri, an alarm) that finds the source playing and pauses it arms an automatic resume.
+/// - An interruption that finds nothing playing changes nothing: if an earlier interruption already paused the source,
+///   its resume stays armed, because that interruption is still going on.
+/// - A lost route (headphones unplugged, Bluetooth gone) never resumes by itself, whether or not it paused anything:
+///   resuming out of the phone's speaker after the listener pulled the plug is not what they asked for.
+/// - The interruption ending resumes only when it is armed and iOS says the app should resume. Any end spends the
+///   arming, so a late second end cannot resume twice.
+/// - The listener's own Play, Pause, Stop or a new item cancels the arming.
+/// - When the other audio stops without iOS reporting an end (a message announcement, #1434), that counts as an end
+///   with "should resume", as long as the source is still paused.
+public struct SystemInterruptionResume: Equatable, Sendable {
+    public enum Cause: Equatable, Sendable {
+        /// An audio-session interruption began.
+        case interruption
+        /// The output in use went away.
+        case routeLost
+    }
+
+    /// Whether an automatic resume is waiting for the interruption to end.
+    public private(set) var isArmed = false
+
+    public init() {}
+
+    /// A system pause arrived. Returns `wasPlaying`, which is whether the source was playing and so was paused by it.
+    @discardableResult
+    public mutating func began(_ cause: Cause, wasPlaying: Bool) -> Bool {
+        switch cause {
+        case .interruption:
+            if wasPlaying { isArmed = true }
+        case .routeLost:
+            isArmed = false
+        }
+        return wasPlaying
+    }
+
+    /// The interruption ended. True when playback should resume now. Spends the arming either way.
+    public mutating func ended(shouldResume: Bool) -> Bool {
+        defer { isArmed = false }
+        return isArmed && shouldResume
+    }
+
+    /// The other audio stopped without iOS reporting an end. True when playback should resume now: armed, and the
+    /// source is still paused (a client that can see its transport passes false once the listener took over).
+    /// Spends the arming either way.
+    public mutating func otherAudioStopped(sourceStillPaused: Bool = true) -> Bool {
+        defer { isArmed = false }
+        return isArmed && sourceStillPaused
+    }
+
+    /// The listener took over, or a new item started: the automatic resume no longer applies.
+    public mutating func cancelAutomaticResume() {
+        isArmed = false
+    }
+}

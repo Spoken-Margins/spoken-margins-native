@@ -274,6 +274,7 @@ final class MarginCaptureHealthTests: XCTestCase {
         XCTAssertFalse(harness.model.snapshot.isRecording)
         XCTAssertEqual(recorder.finishCount, 1)
         XCTAssertEqual(recorder.cancelCount, 0)
+        await harness.model.settleItemReload() // the item detail reloads off the main thread after the save (#2505)
         XCTAssertEqual(harness.model.selectedItem.interjections.count, marginCount + 1)
         XCTAssertEqual(harness.model.diagnostics["lastVoiceCapture"]?.contains("outcome=save_cut_short;"), true)
     }

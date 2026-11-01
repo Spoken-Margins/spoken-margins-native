@@ -379,7 +379,7 @@ extension Gate1AppModel {
         recordFinalCaptureDiagnostics("cancelled")
         run { engine in
             snapshot = try engine.cancelInterjection(resumesSource: held == nil)
-            refreshSelectedItem()
+            refreshSelectedItemInBackground()
             AppHaptics.play(feeling)
             reportSuccess("Cancelled Margin.")
         }
@@ -480,7 +480,7 @@ extension Gate1AppModel {
             marginCapture.closeDraft()
             clearWrittenMarginJournal(captureId: draft.capture.id)
             if draft.priorWasPlaying { streamingSpeechQueue.resumeAfterInterjection() }
-            refreshSelectedItem()
+            refreshSelectedItemInBackground()
             refreshMarginRowsInBackground(forItem: draft.capture.itemId)
             if draft.priorWasPlaying && snapshot.status == .paused {
                 AppHaptics.play(.warning)
@@ -502,7 +502,7 @@ extension Gate1AppModel {
             marginCapture.closeDraft()
             clearWrittenMarginJournal(captureId: draft.capture.id)
             if draft.priorWasPlaying { streamingSpeechQueue.resumeAfterInterjection() }
-            refreshSelectedItem()
+            refreshSelectedItemInBackground()
         } catch {
             reportFailure(error, context: "Written Margin could not be cancelled")
         }

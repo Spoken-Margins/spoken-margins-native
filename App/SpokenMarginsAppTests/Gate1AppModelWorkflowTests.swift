@@ -4214,6 +4214,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
 
         recorder.onInterruption?(.interruptionBegan, 5)
         for _ in 0..<50 where model.snapshot.isRecording { try await Task.sleep(for: .milliseconds(10)) }
+        await model.settleItemReload() // the item detail reloads off the main thread after a save (#2505)
 
         XCTAssertFalse(model.snapshot.isRecording, "the recording screen closes")
         XCTAssertEqual(model.snapshot.status, .paused, "the source waits through the call")
@@ -4270,6 +4271,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.beginInterjection()
         recorder.onInterruption?(.routeLost, 4)
         for _ in 0..<50 where model.snapshot.isRecording { try await Task.sleep(for: .milliseconds(10)) }
+        await model.settleItemReload() // the item detail reloads off the main thread after a save (#2505)
         XCTAssertFalse(model.snapshot.isRecording)
         XCTAssertEqual(model.snapshot.status, .paused)
         XCTAssertEqual(audio.playCount, playsBefore)
@@ -4278,6 +4280,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.beginInterjection()
         recorder.onInterruption?(.interruptionBegan, 0.3)
         for _ in 0..<50 where model.snapshot.isRecording { try await Task.sleep(for: .milliseconds(10)) }
+        await model.settleItemReload() // the item detail reloads off the main thread after a save (#2505)
         XCTAssertFalse(model.snapshot.isRecording)
         XCTAssertEqual(model.selectedItem.interjections.count, marginCount + 1, "a stray start isn't kept")
         XCTAssertEqual(audio.playCount, playsBefore)
@@ -5050,7 +5053,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         }
     }
 
-    func testAssistantMarginCaptureRetainsTurnPositionAcrossReloadAndExport() throws {
+    func testAssistantMarginCaptureRetainsTurnPositionAcrossReloadAndExport() async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "turn-anchors-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -5076,6 +5079,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
                 model.seekText(toCharOffset: offset)
                 model.beginWrittenMargin()
                 model.saveWrittenMargin(text: "Note \(responseIndex)-\(percent)")
+                await model.settleItemReload() // the item detail reloads off the main thread after a save (#2505)
                 let note = try XCTUnwrap(model.selectedItem.interjections.first { $0.displayText == "Note \(responseIndex)-\(percent)" })
                 XCTAssertEqual(note.targetType, .assistantTurn)
                 XCTAssertEqual(note.targetId, turn.id)
