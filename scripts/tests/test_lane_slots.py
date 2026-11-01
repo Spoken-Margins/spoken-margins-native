@@ -336,7 +336,7 @@ class StaleSimulatorHoldTests(unittest.TestCase):
 
         def release(udid, out):
             note = json.loads((self.state / self.slots.SIMULATOR_SLOT).read_text())
-            note.update(started=datetime.datetime.now().isoformat(timespec='seconds'), watcher_pid=12345)
+            note.update(started=datetime.datetime.now(datetime.timezone.utc).astimezone().isoformat(timespec='seconds'), watcher_pid=12345)
             (self.state / self.slots.SIMULATOR_SLOT).write_text(json.dumps(note))
             fresh.append(udid)
 
@@ -361,7 +361,8 @@ class StaleSimulatorHoldTests(unittest.TestCase):
         handle = open(path, 'a+')
         self.addCleanup(handle.close)
         fcntl.flock(handle, fcntl.LOCK_EX)
-        started = (datetime.datetime.now() - datetime.timedelta(hours=9)).isoformat(timespec='seconds')
+        started = ((datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=9))
+                   .astimezone().isoformat(timespec='seconds'))
         path.write_text(json.dumps({'pid': os.getpid(), 'cwd': '/x', 'label': 'runner T3', 'started': started,
                                     'udid': 'DEVICE-2', 'watcher_pid': os.getpid()}))
         released = []
@@ -438,7 +439,7 @@ class StaleSimulatorHoldTests(unittest.TestCase):
             released.append(udid)
             path = self.state / self.slots.SIMULATOR_SLOTS[1]  # the new job's note on slot 2
             note = json.loads(path.read_text())
-            note.update(started=datetime.datetime.now().isoformat(timespec='seconds'), watcher_pid=12345)
+            note.update(started=datetime.datetime.now(datetime.timezone.utc).astimezone().isoformat(timespec='seconds'), watcher_pid=12345)
             path.write_text(json.dumps(note))
             first.kill()
             first.wait()
