@@ -1026,9 +1026,9 @@ final class Gate1AppModel: ObservableObject {
             guard let self else { return }
             do {
                 let store = try self.requireStore()
-                try store.saveOfflineStorageBudget(OfflineStorageBudget(
-                    limitBytes: Int64(self.offlineStorageLimitGB) * OfflineStorageBudget.bytesPerGigabyte
-                ))
+                let budget = OfflineStorageBudget(limitBytes: Int64(self.offlineStorageLimitGB) * OfflineStorageBudget.bytesPerGigabyte)
+                // Off the main actor, in line with an earlier change's save (#2509).
+                try await StoreReader(store).readInOrder(OfflineStorageBudget.saveOrderKey) { try $0.saveOfflineStorageBudget(budget) }
                 _ = try await self.offlineStorageLedger?.enforceBudget()
                 self.tryRefreshOfflineStorageUsage()
             } catch {
