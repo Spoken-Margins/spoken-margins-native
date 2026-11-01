@@ -1,5 +1,6 @@
 import Foundation
 import SessionKit
+import SessionKitPersistence
 import XCTest
 
 /// #2818, twice: the full `--plan app` run ran out of file descriptors in the test app (iOS gives an app 256), and
@@ -22,6 +23,7 @@ final class OpenDescriptorGuard: NSObject, XCTestObservation, @unchecked Sendabl
     private var ledger = DescriptorLedger()
     private var currentClass: String?
     private var reportedOverBudget = false
+    private var releasedStoreCount = 0
 
     override init() {
         super.init()
@@ -51,12 +53,18 @@ final class OpenDescriptorGuard: NSObject, XCTestObservation, @unchecked Sendabl
         if currentClass == nil, name != "ZZOpenDescriptorBudgetTests" { try? FileManager.default.removeItem(at: Self.markerURL) }
         if currentClass == nil { Self.log("start: \(OpenDescriptorCensus.current().count) open, soft limit \(OpenDescriptorCensus.softLimit()), budget \(Self.budget)") }
         currentClass = name
+        SQLiteSessionStore.trackOpenStores() // only stores opened during a test, never the host app's own
     }
 
     func testCaseDidFinish(_ testCase: XCTestCase) {
         let name = String(describing: type(of: testCase))
+        // #2818, the leak the guard named: a test that builds an app model leaves the model alive (its startup tasks
+        // and observers keep it), and the model keeps its SQLite store, which holds a database, `-wal` and `-shm`
+        // descriptor. Close the stores this test opened, as a store does in `deinit`, before counting.
+        let released = SQLiteSessionStore.releaseTrackedStores()
         let open = OpenDescriptorCensus.current()
         lock.lock(); defer { lock.unlock() }
+        releasedStoreCount += released
         let before = ledger.entries.last(where: { $0.group != name })?.count ?? 0
         ledger.record(group: name, count: open.count)
         guard open.count > Self.budget, !reportedOverBudget else { return }
@@ -69,6 +77,7 @@ final class OpenDescriptorGuard: NSObject, XCTestObservation, @unchecked Sendabl
     func testBundleDidFinish(_ testBundle: Bundle) {
         let ledger = snapshot()
         let growth = ledger.biggestGrowth(atLeast: 3).prefix(12).map { "\($0.group) +\($0.growth)" }.joined(separator: ", ")
+        Self.log("released \(releasedStoreCount) test stores that outlived their test")
         Self.log("done: peak \(ledger.peak?.count ?? 0) after \(ledger.peak?.group ?? "-"); biggest growth: \(growth.isEmpty ? "none" : growth)")
     }
 }
