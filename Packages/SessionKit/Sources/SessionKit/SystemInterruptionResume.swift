@@ -61,3 +61,27 @@ public struct SystemInterruptionResume: Equatable, Sendable {
         isArmed = false
     }
 }
+
+/// The place the system paused a podcast or recording at, and when, until it is resumed or the listener moves it
+/// (#1975). Where the source resumes from after the interruption is decided here: a step back from the place,
+/// by how long the pause lasted (#3144, #3032 slice 3). `SessionEngine` reports the pause and asks.
+struct InterruptionResumePoint {
+    private var mark: (sessionId: String, mediaTimeMs: Int, at: Date)?
+
+    /// The system paused the source at `mediaTimeMs` of the session. Text, read from a character, passes nil.
+    mutating func paused(sessionId: String, mediaTimeMs: Int?, at: Date) {
+        mark = mediaTimeMs.map { (sessionId, $0, at) }
+    }
+
+    /// The listener played, paused, moved it, or the interruption was resumed: no step back applies.
+    mutating func forget() {
+        mark = nil
+    }
+
+    /// How far back to step now, or nil when the source is not where the system left it (the listener or another
+    /// event moved it, or it is another session). 0 means resume as it is.
+    func rewindMs(sessionId: String, mediaTimeMs: Int?, now: () -> Date) -> (pausedAtMs: Int, rewindMs: Int)? {
+        guard let mark, mark.sessionId == sessionId, mediaTimeMs == mark.mediaTimeMs else { return nil }
+        return (mark.mediaTimeMs, InterruptionRewind.rewindMs(pausedForSeconds: now().timeIntervalSince(mark.at)))
+    }
+}

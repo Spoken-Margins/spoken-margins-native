@@ -228,18 +228,31 @@ class TheGuardOnTheRealTree(unittest.TestCase):
         found = ro.problems(ro.scan_tree(), ro.load_baseline())
         self.assertEqual(found, [], '\n'.join(found))
 
-    def test_the_baseline_names_the_flags_the_audit_listed(self):
+    def test_the_baseline_names_the_flags_the_audit_listed_that_are_still_to_move(self):
         keys = set(ro.load_baseline())
-        for needle in ('SessionEngine.swift::priorPhase', 'SessionEngine.swift::systemPause',
-                       'MarginRecordingInterruption.swift::PendingResume',
+        for needle in ('HandsFreeMarginCoordinator.swift::resumesAfter',
                        'HandsFreeMarginCoordinator.swift::shouldResume'):
             with self.subTest(needle):
                 self.assertTrue(any(k.endswith(needle) for k in keys), needle)
 
-    def test_the_system_interruption_owner_is_exempt_and_exists(self):
-        owner = ro.ROOT / 'Packages/SessionKit/Sources/SessionKit/SystemInterruptionResume.swift'
-        self.assertIn(owner.relative_to(ro.ROOT).as_posix(), ro.OWNING_FILES)
-        self.assertTrue(owner.exists())
+    def test_the_flags_the_capture_owner_retired_stay_out_of_the_engine_and_the_policy(self):
+        # #3144: these lived in SessionEngine and MarginRecordingInterruptionPolicy; MarginCaptureResume owns them now.
+        # A scan row for one of them, in any file outside an owner, means an old copy came back.
+        retired = ('priorPhase', 'priorPhaseForResume', 'pendingInterjectionPause', 'PendingInterjectionPause',
+                   'hasPendingInterjectionPause', 'recordingOnFinishedSource', 'rejoinAttempted', 'systemPause',
+                   'pendingPlaybackPosition', 'PendingPlaybackPosition', 'hasPendingPlaybackPosition',
+                   'previousPendingPlaybackPosition', 'pendingResume', 'PendingResume')
+        declared = {row['name'] for row in ro.scan_tree()}
+        for name in retired:
+            with self.subTest(name):
+                self.assertNotIn(name, declared)
+
+    def test_the_owners_are_exempt_and_exist(self):
+        for relative in ('Packages/SessionKit/Sources/SessionKit/SystemInterruptionResume.swift',
+                         'Packages/SessionKit/Sources/SessionKit/MarginCaptureResume.swift'):
+            with self.subTest(relative):
+                self.assertIn(relative, ro.OWNING_FILES)
+                self.assertTrue((ro.ROOT / relative).exists())
 
     def test_every_baseline_row_has_a_reason_that_names_its_follow_up(self):
         for row in ro.load_baseline().values():

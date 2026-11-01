@@ -58,14 +58,8 @@ public struct MarginRecordingInterruptionPolicy: Equatable, Sendable {
     /// Less than this is a stray start, not a Margin.
     public static let minimumSecondsToKeep: TimeInterval = 1
 
-    private enum PendingResume: Equatable, Sendable {
-        case none
-        /// A call stopped a Margin; the save or discard hasn't settled where the source is yet.
-        case awaitingMark
-        case at(InterruptedSourceMark)
-    }
-
-    private var pendingResume = PendingResume.none
+    /// Whether the source resumes when the call ends is decided by `InterruptedCaptureResume` (#3144).
+    private var callResume = InterruptedCaptureResume()
 
     public init() {}
 
@@ -81,28 +75,25 @@ public struct MarginRecordingInterruptionPolicy: Equatable, Sendable {
         case .interruptionBegan:
             // A later interruption with no Margin recording replaces the one whose end never came.
             guard let recordedSeconds else {
-                pendingResume = .none
+                callResume.cancel()
                 return .none
             }
-            pendingResume = .awaitingMark
+            callResume.marginCutShort()
             return Self.keeps(recordedSeconds) ? .saveCutShort : .discard
         case .routeLost:
             // Lost headphones cancel a resume still waiting on a call, recording or not.
-            pendingResume = .none
+            callResume.cancel()
             guard let recordedSeconds else { return .none }
             return Self.keeps(recordedSeconds) ? .saveCutShort : .discard
         case .interruptionEnded(let shouldResume):
-            defer { pendingResume = .none }
-            guard case .at(let mark) = pendingResume, shouldResume, recordedSeconds == nil,
-                  let pausedSource, pausedSource == mark else { return .none }
-            return .resumeSource
+            return callResume.ended(shouldResume: shouldResume, recordedSeconds: recordedSeconds, pausedSource: pausedSource)
+                ? .resumeSource : .none
         }
     }
 
     /// Records where the save or discard left the source, so the call's end resumes only that.
     public mutating func sourceSettled(at mark: InterruptedSourceMark?) {
-        guard pendingResume == .awaitingMark else { return }
-        pendingResume = mark.map { .at($0) } ?? .none
+        callResume.sourceSettled(at: mark)
     }
 
     static func keeps(_ seconds: TimeInterval) -> Bool {
