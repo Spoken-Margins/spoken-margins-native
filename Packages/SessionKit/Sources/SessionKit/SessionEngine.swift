@@ -89,24 +89,16 @@ public final class SessionEngine {
         var capturesPostResumeEvidence: Bool
         var evidenceHandled = false
         var transcriptionScheduled = false
-        /// Stepping a podcast back is not idempotent, so it runs once even if saving the session after it fails.
-        var rejoinAttempted = false
     }
     private var recordingTargetId: String?
-    private var priorPhase: SessionPhase?
-    /// A playing podcast that Add a Margin paused on the tap, before the recorder was asked for (#1696). The next
-    /// `beginInterjection` (or written Margin) takes it over, so the source resumes on Cancel as it would have had
-    /// it been paused later; `abandonPendingInterjection` is the Cancel that comes first.
-    private var pendingInterjectionPause: PendingInterjectionPause?
-    private struct PendingInterjectionPause {
-        var timing: MarginCaptureTiming
-    }
+    /// Whether the source resumes after a Margin capture, and in which phase, is `MarginCaptureResume`'s to say (#3144).
+    /// It holds the playing podcast that Add a Margin paused on the tap (#1696), the phase the recording began in,
+    /// whether the source had finished (#142) and whether the step back over the saved Margin ran (#776).
+    private var captureResume = MarginCaptureResume()
     /// The newest decoded transcript timeline of the item being played and the stamp of the stored record it was
     /// read from (#1696). A long episode's timeline is several MB of JSON, and the progress tick, `publish` and
     /// Add a Margin each read it a handful of times; decoding it every time kept the main actor busy.
     private var transcriptTimelineCache: (itemId: String, stamp: String, timeline: TranscriptTimeline)?
-    /// The Margin being recorded started on a finished source, at its end (#142).
-    private var recordingOnFinishedSource = false
     private var streamingBuffers: [String: String] = [:]
     private var spokenPrefixes: [String: Int] = [:]
     private var externallyStreamedTurnId: String?
@@ -124,21 +116,13 @@ public final class SessionEngine {
     private var transcriptsDeletedSinceRequest: Set<String> = []
     /// How the last saved Margin chose where its source resumes (#806), for diagnostics.
     private var lastMarginRejoin: String?
-    /// The place the system paused a podcast or recording at, and when, until it is resumed or the listener moves it
-    /// (#1975). Resuming after the interruption steps back from here by how long it lasted.
-    private var systemPause: (sessionId: String, mediaTimeMs: Int, at: Date)?
+    /// Where the system paused a podcast or recording, until it is resumed or the listener moves it (#1975).
+    private var interruptionResumePoint = InterruptionResumePoint()
     /// Where the last Back tap in text landed, so the next one can tell it is a repeat (#1102). Only listening on
     /// from there keeps it: every other change of position calls `forgetBackTapLanding()` (#1122).
     private var lastBackTapLanding: (targetKey: String, charOffset: Int)?
-    private var pendingPlaybackPosition: PendingPlaybackPosition?
+    private var protectedPosition = ProtectedResumePosition()
     private var pendingWrittenInterjection: WrittenInterjectionCapture?
-
-    private struct PendingPlaybackPosition {
-        var targetId: String
-        var targetType: TargetType
-        var position: Position
-        var mediaSeekRequest: MediaSeekRequest?
-    }
 
     private struct PlaybackPlan {
         var text: String
@@ -329,7 +313,7 @@ public final class SessionEngine {
         guard var session = currentSession else {
             throw SessionKitError.invalidCommandForState("pause")
         }
-        systemPause = nil
+        interruptionResumePoint.forget()
         session = try syncCurrentPositionFromAudio(session)
         currentSession = session
         try persistSession(session)
@@ -351,7 +335,11 @@ public final class SessionEngine {
         session = try syncCurrentPositionFromAudio(session)
         currentSession = session
         try persistSession(session)
-        systemPause = Self.isTimeBased(session) ? session.position.mediaTimeMs.map { (session.id, $0, now()) } : nil
+        interruptionResumePoint.paused(
+            sessionId: session.id,
+            mediaTimeMs: Self.isTimeBased(session) ? session.position.mediaTimeMs : nil,
+            at: now()
+        )
         publish(status: .paused, phase: session.phase)
         return snapshot
     }
@@ -362,19 +350,19 @@ public final class SessionEngine {
     /// stepped-back place (#1975).
     @discardableResult
     public func resumePlaybackAfterInterruption() throws -> SessionSnapshot {
-        defer { systemPause = nil }
-        guard let pause = systemPause, var session = currentSession, snapshot.status == .paused,
-              session.id == pause.sessionId, session.position.mediaTimeMs == pause.mediaTimeMs else {
+        defer { interruptionResumePoint.forget() }
+        guard var session = currentSession, snapshot.status == .paused,
+              let pause = interruptionResumePoint.rewindMs(sessionId: session.id, mediaTimeMs: session.position.mediaTimeMs, now: now) else {
             return try resumePlayback()
         }
-        let rewindMs = InterruptionRewind.rewindMs(pausedForSeconds: now().timeIntervalSince(pause.at))
+        let rewindMs = pause.rewindMs
         // An episode that ended as the call came in is finished, not replayed from its tail (#2097).
         if rewindMs > 0, !startsInTheLastInstantOfMedia(session) {
             forgetBackTapLanding()
             // Never into a chapter the listener skipped: a tap on chapter 3 followed by a call must not resume in chapter 2.
             let timeline = currentWatchPackage?.timeline ?? sourceTranscriptTimeline(for: session)
-            let chapterStartMs = timeline.flatMap { mediaChapter(at: pause.mediaTimeMs, timeline: $0)?.startMs } ?? 0
-            session = mediaSession(session, movedTo: max(chapterStartMs, pause.mediaTimeMs - rewindMs))
+            let chapterStartMs = timeline.flatMap { mediaChapter(at: pause.pausedAtMs, timeline: $0)?.startMs } ?? 0
+            session = mediaSession(session, movedTo: max(chapterStartMs, pause.pausedAtMs - rewindMs))
             currentSession = session
             try persistSession(session)
             protectPlaybackPosition(for: session)
@@ -390,7 +378,7 @@ public final class SessionEngine {
     @discardableResult
     public func resumePlayback() throws -> SessionSnapshot {
         playbackRequestedAt = now(); defer { playbackRequestedAt = nil } // time to first audio counts from here (#357)
-        systemPause = nil
+        interruptionResumePoint.forget()
         try requireNavigationAllowed("resumePlayback")
         try requirePlayback("resumePlayback")
         guard var session = currentSession else {
@@ -568,7 +556,7 @@ public final class SessionEngine {
             return snapshot
         }
         let mediaSeekFailure = try reconcilePendingMediaSeek(for: &session)
-        let positionIsPending = hasPendingPlaybackPosition(for: session)
+        let positionIsPending = protectedPosition.holdsPosition(for: session)
         var playbackCompleted = positionIsPending ? false : audio.isPlaybackComplete(targetId: session.currentTargetId)
         let transportState = audio.playbackTransportState(targetId: session.currentTargetId)
         var updated = try syncCurrentPositionFromAudio(session)
@@ -582,7 +570,7 @@ public final class SessionEngine {
             && audio.isPlaybackComplete(targetId: session.currentTargetId)
         if endedBeforeStartConfirmed {
             clearPlaybackStartPending()
-            pendingPlaybackPosition = nil
+            protectedPosition.release()
             playbackCompleted = true
             updated = try syncCurrentPositionFromAudio(session)
             // The client still counts itself as playing (Lock Screen included) until told.
@@ -1526,7 +1514,7 @@ public final class SessionEngine {
             throw SessionKitError.invalidCommandForState("inspectSession")
         }
         forgetFailure(unlessItemIs: session.itemId)
-        pendingPlaybackPosition = nil
+        protectedPosition.release()
         if (session.phase == .finished || session.status == "finished"), session.completionPercent < 100 {
             if session.phase == .finished {
                 session.phase = .itemPlayback
@@ -1567,16 +1555,16 @@ public final class SessionEngine {
         }
         guard var session = currentSession else { throw SessionKitError.invalidCommandForState("beginInterjection") }
         // Left in place until the steps that can throw have passed, so a failure here still leaves the app
-        // something to put back (`hasPendingInterjectionPause`).
-        let pendingPause = pendingInterjectionPause
-        marginCaptureTiming = pendingPause?.timing ?? MarginCaptureTiming(request: request)
+        // something to put back (`isSourcePausedOnTap`).
+        let pendingPause = captureResume.tapPause
+        marginCaptureTiming = pendingPause ?? MarginCaptureTiming(request: request)
         marginCaptureTiming?.engineEntered(at: ProcessInfo.processInfo.systemUptime)
         // The tap already paused it (#1696), so the snapshot no longer says it was playing.
         let wasPlaying = pendingPause != nil || snapshot.status.isPlaybackActive
         let usesNativeMediaClock = session.currentTargetType == .transcriptBackedMedia
             || session.currentTargetType == .browserOwnedMedia
-        recordingOnFinishedSource = isFinishedAtEnd(session)
-        if recordingOnFinishedSource {
+        captureResume.captureStarting(finishedAtEnd: isFinishedAtEnd(session))
+        if captureResume.startedOnFinishedSource {
             // A recap Margin on a finished item (#142). The saved end position is
             // authoritative: a stopped speech player reports a reset offset, so
             // neither the session nor the anchor may sample it.
@@ -1597,7 +1585,7 @@ public final class SessionEngine {
         marginCaptureTiming?.sourcePaused(at: ProcessInfo.processInfo.systemUptime)
         currentSession = session
         try persistSession(session)
-        priorPhase = session.phase
+        captureResume.sourcePaused(in: session.phase)
         let target = currentInterjectionTarget(for: session)
         recordingTargetType = target.type
         recordingTargetId = target.id
@@ -1606,7 +1594,7 @@ public final class SessionEngine {
         closedRecordingRef = nil
         storedMarginFinish = nil
         marginCaptureTiming?.anchorReady(at: ProcessInfo.processInfo.systemUptime)
-        pendingInterjectionPause = nil // from here a failure puts the source back itself, below
+        captureResume.takeOverTapPause() // from here a failure puts the source back itself, below
         do {
             marginCaptureTiming?.recorderRequested(at: ProcessInfo.processInfo.systemUptime)
             try recorder.beginRecording()
@@ -1629,13 +1617,12 @@ public final class SessionEngine {
     /// recording target and put the transport back as the listener left it, the way `cancelInterjection` does:
     /// a source that was playing plays on, anything else stays stopped, and the snapshot says which.
     private func abandonInterjectionStart(_ session: Session, wasPlaying: Bool) {
-        let resumes = wasPlaying && !recordingOnFinishedSource
+        let resumes = captureResume.resumesAfterFailedStart(sourceWasPlaying: wasPlaying)
         recordingAnchor = nil
         recordingTargetType = nil
         recordingTargetId = nil
         recordingReplyTo = nil
-        priorPhase = nil
-        recordingOnFinishedSource = false
+        captureResume.captureAbandoned()
         guard resumes else {
             publish(status: .paused, phase: session.phase)
             return
@@ -1662,7 +1649,7 @@ public final class SessionEngine {
     /// `abandonPendingInterjection` puts the podcast back; `beginInterjection` and `beginWrittenInterjection` take it over.
     @discardableResult
     public func pauseSourceForInterjection(request: MarginCaptureRequest) -> SessionSnapshot {
-        guard pendingInterjectionPause == nil, pendingWrittenInterjection == nil,
+        guard !captureResume.isSourcePausedOnTap, pendingWrittenInterjection == nil,
               snapshot.status.isPlaybackActive,
               let session = currentSession,
               session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia,
@@ -1673,13 +1660,13 @@ public final class SessionEngine {
         var timing = MarginCaptureTiming(request: request)
         do { try audio.pause() } catch { return snapshot } // `beginInterjection` pauses again and reports it
         timing.sourcePaused(at: ProcessInfo.processInfo.systemUptime)
-        pendingInterjectionPause = PendingInterjectionPause(timing: timing)
+        captureResume.tapPaused(timing)
         publish(status: .paused, phase: session.phase)
         return snapshot
     }
 
     /// True between `pauseSourceForInterjection` and the `beginInterjection` that takes it over.
-    public var hasPendingInterjectionPause: Bool { pendingInterjectionPause != nil }
+    public var isSourcePausedOnTap: Bool { captureResume.isSourcePausedOnTap }
 
     /// The recorder, when it can switch the audio session for recording off the main thread before
     /// `beginInterjection` (#2511). Nil for recorders that can't (tests' fakes, the watch).
@@ -1689,8 +1676,7 @@ public final class SessionEngine {
     /// goes on from where it stopped (#1696). Does nothing when the tap did not pause anything.
     @discardableResult
     public func abandonPendingInterjection() throws -> SessionSnapshot {
-        guard pendingInterjectionPause != nil else { return snapshot }
-        pendingInterjectionPause = nil
+        guard captureResume.takeOverTapPause() != nil else { return snapshot }
         marginCaptureTiming = nil
         // Play from the Lock Screen or Now Playing in the meantime already did the job; don't seek it again.
         guard !snapshot.status.isPlaybackActive else { return snapshot }
@@ -1803,8 +1789,7 @@ public final class SessionEngine {
             throw SessionKitError.invalidCommandForState("beginWrittenInterjection")
         }
         // Add a Margin may already have paused it on the tap (#1696), when the listener switched to writing.
-        let wasPlaying = pendingInterjectionPause != nil || snapshot.status.isPlaybackActive
-        pendingInterjectionPause = nil
+        let wasPlaying = captureResume.takeOverTapPause() != nil || snapshot.status.isPlaybackActive
         // Resolve the immutable target before changing transport. The native
         // media clock still has to be sampled after pause, but every other
         // fallible part of the transaction happens before audio is stopped.
@@ -2078,7 +2063,7 @@ public final class SessionEngine {
         let previousItem = currentItem
         let previousMap = currentMap
         let previousSnapshot = snapshot
-        let previousPendingPlaybackPosition = pendingPlaybackPosition
+        let previousProtectedPosition = protectedPosition
         let previousExternallyStreamedTurnId = externallyStreamedTurnId
 
         do {
@@ -2102,7 +2087,7 @@ public final class SessionEngine {
             currentSession = previousSession
             currentItem = previousItem
             currentMap = previousMap
-            pendingPlaybackPosition = previousPendingPlaybackPosition
+            protectedPosition = previousProtectedPosition
             externallyStreamedTurnId = previousExternallyStreamedTurnId
             snapshot = previousSnapshot
             if let previousSession {
@@ -2154,7 +2139,7 @@ public final class SessionEngine {
             lastQueuedWatchSyncEvent = event
             snapshot.lastInterjectionAnchorType = anchor.anchorType
             snapshot.lastInterjectionTargetType = targetType
-            session.phase = priorPhaseForResume(targetType: targetType)
+            session.phase = MarginCaptureResume.phase(afterSavingOn: targetType)
             session = applyMediaRollback(session, package: package)
             currentSession = session
             try persistSession(session)
@@ -2257,18 +2242,17 @@ public final class SessionEngine {
         lastScheduledTranscriptionInterjectionId = pending.interjection.id
         snapshot.lastInterjectionAnchorType = anchor.anchorType
         snapshot.lastInterjectionTargetType = targetType
-        if returnsToFinishedSource(targetType: targetType) {
+        if captureResume.returnsToFinishedSource(targetType: targetType) {
             let settled = try settleFinishedSourceAfterInterjection(session)
             storedMarginFinish = nil
             return settled
         }
-        session.phase = priorPhaseForResume(targetType: targetType)
+        session.phase = MarginCaptureResume.phase(afterSavingOn: targetType)
         // beginInterjection already captured and persisted the authoritative
         // source position before pausing, and the anchor above was built from it.
         // The source rejoins a little earlier (#776); the step is idempotent at a
         // sentence start, so repeated Margins never drift into the sentence before.
-        if !pending.rejoinAttempted {
-            pending.rejoinAttempted = true
+        if captureResume.claimRejoin(forMargin: pending.interjection.id, inSession: session.id) {
             storedMarginFinish = pending
             session = try rejoiningAfterSavedMargin(session)
         }
@@ -2299,11 +2283,11 @@ public final class SessionEngine {
         }
         // The Margin is in the Library already (#1121). A Cancel now would tell the listener it was not saved.
         if let pending = storedMarginFinish, pending.interjection.sessionId == session.id { throw SessionKitError.invalidCommandForState(Self.marginAlreadyStored) }
-        pendingInterjectionPause = nil // a Cancel that finds the tap's pause still pending resumes below like any other
+        captureResume.takeOverTapPause() // a Cancel that finds the tap's pause still pending resumes below like any other
         removeRecordingDraft() // first: a kill between the two leaves a file nobody recovers, so a Cancel stays cancelled
         try recorder.cancelRecording()
-        let returnsToFinished = returnsToFinishedSource(targetType: recordingTargetType ?? .item)
-        session.phase = priorPhase ?? priorPhaseForResume(targetType: recordingTargetType ?? .item)
+        let returnsToFinished = captureResume.returnsToFinishedSource(targetType: recordingTargetType ?? .item)
+        session.phase = captureResume.phase(afterCancellingOn: recordingTargetType ?? .item)
         // Cancellation follows the same exact-resume policy as completion.
         // The captured position is already present in the session.
         recordingAnchor = nil
@@ -2356,7 +2340,8 @@ public final class SessionEngine {
         if storedMarginFinish != nil || closedRecordingRef != nil {
             throw SessionKitError.invalidCommandForState(Self.marginAlreadyStored)
         }
-        let returnsToFinished = returnsToFinishedSource(targetType: targetType)
+        let outcome = captureResume.outcome(targetType: targetType, resumesSource: resumesSource)
+        let returnsToFinished = outcome == .settleFinished
         let capture = WrittenInterjectionCapture(
             id: UUID().uuidString,
             sessionId: session.id,
@@ -2365,12 +2350,12 @@ public final class SessionEngine {
             targetId: targetId,
             anchor: anchor,
             roughPercent: interjectionPercent(for: session, targetType: targetType, targetId: targetId, anchor: anchor),
-            wasPlaying: resumesSource && !returnsToFinished,
+            wasPlaying: outcome == .resumePlaying,
             replyTo: recordingReplyTo
         )
         removeRecordingDraft() // first, as for Cancel: a kill between the two leaves a file nobody recovers
         try recorder.cancelRecording()
-        session.phase = returnsToFinished ? .finished : (priorPhase ?? priorPhaseForResume(targetType: targetType))
+        session.phase = returnsToFinished ? .finished : captureResume.phase(afterCancellingOn: targetType)
         recordingAnchor = nil
         recordingTargetType = nil
         recordingTargetId = nil
@@ -3127,12 +3112,10 @@ public final class SessionEngine {
         recordingReplyTo = nil
         closedRecordingRef = nil
         storedMarginFinish = nil
-        priorPhase = nil
-        pendingInterjectionPause = nil
-        recordingOnFinishedSource = false
+        captureResume.sessionEnded()
         // A protected position belongs to the session that just ended. Left set, it would
         // pin a replay of the same target to this session's end until playback confirms.
-        pendingPlaybackPosition = nil
+        protectedPosition.release()
         externallyStreamedTurnId = nil
         streamingBuffers.removeAll()
         spokenPrefixes.removeAll()
@@ -4180,9 +4163,7 @@ public final class SessionEngine {
         switch audio.playbackStartStatus(targetId: targetId) {
         case .confirmed:
             clearPlaybackStartPending()
-            if pendingPlaybackPosition?.targetId == targetId {
-                pendingPlaybackPosition = nil
-            }
+            protectedPosition.playbackConfirmed(targetId: targetId)
             return .confirmed
         case .failed(let message):
             return recoverPlaybackStart(targetId: targetId, attemptId: attemptId, failure: message)
@@ -4473,7 +4454,7 @@ public final class SessionEngine {
 
     private func playbackPosition(for session: Session) -> PlaybackPosition {
         let audioPosition = audio.currentPlaybackPosition()
-        let protectedPosition = protectedPlaybackPosition(for: session)
+        let protectedPosition = protectedPosition.position(for: session)
         let positionIsPending = protectedPosition != nil
         switch session.currentTargetType {
         case .itemTextTTS:
@@ -4711,12 +4692,6 @@ public final class SessionEngine {
             && session.currentTargetType != .summaryTurnTTS && session.currentTargetType != .assistantTurnTTS
     }
 
-    /// A Margin recorded on the finished source returns to the finished state instead of
-    /// resuming: there is nothing left to play, and playing again would restart or re-finish it.
-    private func returnsToFinishedSource(targetType: InterjectionTargetType) -> Bool {
-        targetType == .item && recordingOnFinishedSource
-    }
-
     private func settleFinishedSourceAfterInterjection(_ session: Session) throws -> SessionSnapshot {
         var session = session
         session.phase = .finished
@@ -4724,14 +4699,6 @@ public final class SessionEngine {
         try persistSession(session)
         publish(status: .paused, phase: .finished)
         return snapshot
-    }
-
-    private func priorPhaseForResume(targetType: InterjectionTargetType) -> SessionPhase {
-        switch targetType {
-        case .assistantTurn: return .aiResponsePlayback
-        case .summaryTurn: return .summaryPlayback
-        case .item: return .itemPlayback
-        }
     }
 
     func buildAnchor(for session: Session, targetType: InterjectionTargetType, targetId: String) -> Anchor {
@@ -5705,10 +5672,7 @@ public final class SessionEngine {
     }
 
     private func reconcilePendingMediaSeek(for session: inout Session) throws -> String? {
-        guard let pendingPlaybackPosition,
-              pendingPlaybackPosition.targetId == session.currentTargetId,
-              pendingPlaybackPosition.targetType == session.currentTargetType,
-              let request = pendingPlaybackPosition.mediaSeekRequest else {
+        guard let request = protectedPosition.mediaSeekRequest(for: session) else {
             return nil
         }
         let resolution = audio.mediaSeekResolution(for: request)
@@ -5718,10 +5682,10 @@ public final class SessionEngine {
         case .pending:
             return nil
         case .accepted:
-            self.pendingPlaybackPosition = nil
+            self.protectedPosition.release()
             return nil
         case .failed(let actualMediaTimeMs, let reason):
-            self.pendingPlaybackPosition = nil
+            self.protectedPosition.release()
             if let actualMediaTimeMs,
                (session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia) {
                 session = mediaSession(session, movedTo: actualMediaTimeMs)
@@ -5733,7 +5697,7 @@ public final class SessionEngine {
     }
 
     private func syncCurrentPositionFromAudio(_ session: Session) throws -> Session {
-        guard !hasPendingPlaybackPosition(for: session) else {
+        guard !protectedPosition.holdsPosition(for: session) else {
             return session
         }
         switch session.currentTargetType {
@@ -5750,25 +5714,7 @@ public final class SessionEngine {
         for session: Session,
         mediaSeekRequest: MediaSeekRequest? = nil
     ) {
-        pendingPlaybackPosition = PendingPlaybackPosition(
-            targetId: session.currentTargetId,
-            targetType: session.currentTargetType,
-            position: session.position,
-            mediaSeekRequest: mediaSeekRequest
-        )
-    }
-
-    private func hasPendingPlaybackPosition(for session: Session) -> Bool {
-        protectedPlaybackPosition(for: session) != nil
-    }
-
-    private func protectedPlaybackPosition(for session: Session) -> Position? {
-        guard let pendingPlaybackPosition else { return nil }
-        guard pendingPlaybackPosition.targetId == session.currentTargetId,
-              pendingPlaybackPosition.targetType == session.currentTargetType else {
-            return nil
-        }
-        return pendingPlaybackPosition.position
+        protectedPosition.protect(session, mediaSeekRequest: mediaSeekRequest)
     }
 
     private func markPlaybackComplete(_ session: Session, item: Item?) -> Session {
@@ -6287,7 +6233,7 @@ public final class SessionEngine {
             "toMs": "\(newMs)",
             "playerMs": audio.currentMediaTimeMs().map(String.init) ?? "none",
             "status": snapshot.status.rawValue,
-            "positionPending": hasPendingPlaybackPosition(for: session) ? "yes" : "no"
+            "positionPending": protectedPosition.holdsPosition(for: session) ? "yes" : "no"
         ]
         lastBackwardPositionWrite = fields.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: " ")
         positionDiagnosticHandler?(fields)

@@ -247,7 +247,7 @@ extension Gate1AppModel {
     /// The Margin ended before the recorder was asked for (Cancel, or a start that failed): a podcast the tap
     /// paused plays on from where it stopped. Nothing to do when the tap paused nothing.
     private func resumeSourcePausedOnTap() {
-        guard let engine, engine.hasPendingInterjectionPause else { return }
+        guard let engine, engine.isSourcePausedOnTap else { return }
         run { snapshot = try $0.abandonPendingInterjection() }
     }
 
