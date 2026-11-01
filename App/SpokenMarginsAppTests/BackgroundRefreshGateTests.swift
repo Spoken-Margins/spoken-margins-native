@@ -424,6 +424,28 @@ final class BackgroundRefreshGateTests: XCTestCase {
         XCTAssertEqual(model.selectedItem.interjections.map(\.id), [margin.id], "the background read shows the Margin")
     }
 
+    /// Deleting the open item used to decode the replacement item on the main thread before the tap returned (#2505).
+    /// The screen is Home meanwhile; the replacement's detail follows from a background read, and a newer selection wins.
+    func testDeletingTheOpenItemReadsTheReplacementInTheBackground() async throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.importTitle = "Second Item"
+        model.importText = "A second article that stays on the shelf."
+        model.importTextItem(startListening: false)
+        model.openItem(id: "item-pill")
+        await model.settleLibraryReload()
+        XCTAssertEqual(model.activeItemId, "item-pill")
+
+        model.moveItemToTrash(id: "item-pill")
+        XCTAssertNotEqual(model.activeItemId, "item-pill")
+        XCTAssertTrue(model.selectedItem.id.isEmpty, "the delete must not read the replacement before it returns")
+
+        await model.settleItemReload()
+        XCTAssertFalse(model.activeItemId.isEmpty)
+        XCTAssertEqual(model.selectedItem.id, model.activeItemId, "the background read selects the replacement")
+        XCTAssertNil(model.lastError)
+    }
+
     /// Saving or cancelling a written Margin used to read the whole item on the main thread before the sheet could
     /// close (#2505). The Margin's row still appears at once through the Margin rows; the item screen follows from
     /// the background read, which a test can wait for.

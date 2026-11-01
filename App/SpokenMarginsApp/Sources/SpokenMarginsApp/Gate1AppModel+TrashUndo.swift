@@ -25,9 +25,11 @@ extension Gate1AppModel {
             // discard another item's live session just because its detail page was open when Delete was tapped.
             if snapshot.itemId == id { snapshot = SessionSnapshot() }
             if activeItemId == id {
-                activeItemId = libraryItems.first?.id ?? "item-pill"
+                let fallbackId = libraryItems.first?.id
+                activeItemId = fallbackId ?? "item-pill"
                 exportPreview = ""
-                selectedItem = libraryItems.first.map { (try? loadItemDetail(id: $0.id, store: store)) ?? ItemDetailState() } ?? ItemDetailState()
+                selectedItem = ItemDetailState() // the screen is Home; the replacement's detail arrives from a background read (#2505)
+                if let fallbackId { selectFallbackItemInBackground(id: fallbackId, store: store) }
             }
             screen = .home
             withdrawFeedback(aboutItem: id)
@@ -36,6 +38,18 @@ extension Gate1AppModel {
         } catch {
             reportFailure(error, context: "Move to Recently Deleted failed")
         }
+    }
+
+    /// The detail of the item the listener lands on after deleting the one they had open, read off the main thread. The
+    /// delete used to decode that whole item before returning (#2505). It is dropped if the selection moved on meanwhile,
+    /// and it offers no follow suggestion: the listener did not choose this item.
+    private func selectFallbackItemInBackground(id: String, store: SQLiteSessionStore) {
+        let generation = backgroundRefresh.beginItem()
+        backgroundRefresh.holdItem(Task { [weak self] in
+            guard let self, let detail = try? await self.loadItemDetailOffMain(id: id, store: store) else { return }
+            guard !Task.isCancelled, self.backgroundRefresh.isCurrentItem(generation), self.activeItemId == id else { return }
+            self.backgroundRefresh.publishItem { if self.selectedItem != detail { self.selectedItem = detail } }
+        })
     }
 
     /// Moves one row from the Library to Recently Deleted on the spot, then lets a background reload confirm it (#2505).
