@@ -4957,9 +4957,25 @@ public final class SessionEngine {
         )
     }
 
-    private func updateInterjection(
+    /// Loads a Margin, changes it and saves it whole, in one transaction when the store has them. Another thread's
+    /// save of the same Margin (the anchor-evidence edits run off the main thread, #2509) then waits for this one
+    /// instead of landing between the load and the save and being written over by the stale copy.
+    func updateInterjection(
         _ id: String,
         sessionId: String? = nil,
+        mutate: (inout Interjection) -> Void
+    ) throws {
+        try inRepositoryTransaction { try updateInterjectionUnlocked(id, sessionId: sessionId, mutate: mutate) }
+    }
+
+    private func inRepositoryTransaction<T>(_ operation: () throws -> T) throws -> T {
+        if let store = repository as? any SessionRepositoryTransaction { return try store.withSessionTransaction(operation) }
+        return try operation()
+    }
+
+    private func updateInterjectionUnlocked(
+        _ id: String,
+        sessionId: String?,
         mutate: (inout Interjection) -> Void
     ) throws {
         if let sessionId {
@@ -5673,14 +5689,16 @@ public final class SessionEngine {
         }
         guard forceNotes || lastMediaPercentageRepair?.sessionId != session.id
                 || lastMediaPercentageRepair?.durationMs != durationMs else { return updatedSession }
-        for var interjection in try repository.loadInterjections(sessionId: session.id)
-        where interjection.targetType == .item {
-            guard let mediaTimeMs = interjection.anchor.mediaTimeMs else { continue }
-            let percent = mediaPercent(mediaTimeMs, durationMs: durationMs)
-            guard percent != interjection.roughPercent else { continue }
-            interjection.roughPercent = percent
-            try repository.saveInterjection(interjection)
-            lastMediaPercentageRepair = nil
+        try inRepositoryTransaction {
+            for var interjection in try repository.loadInterjections(sessionId: session.id)
+            where interjection.targetType == .item {
+                guard let mediaTimeMs = interjection.anchor.mediaTimeMs else { continue }
+                let percent = mediaPercent(mediaTimeMs, durationMs: durationMs)
+                guard percent != interjection.roughPercent else { continue }
+                interjection.roughPercent = percent
+                try repository.saveInterjection(interjection)
+                lastMediaPercentageRepair = nil
+            }
         }
         lastMediaPercentageRepair = (session.id, durationMs)
         return updatedSession

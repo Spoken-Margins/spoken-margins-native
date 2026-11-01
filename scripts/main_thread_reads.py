@@ -358,8 +358,8 @@ def classify(header: str, after: str) -> Scope:
         scope.loop = bool(re.match(r'^(?:\w+:\s*)?(for|while|repeat)\b', h))
         return scope
     # closures and everything else
-    # `offMain` is the app's wrapper around Task.detached, `onRowQueue` the podcast coordinator's wrapper around its row queue; `StoreReader(store).read { }` is SessionKit's (#2507)
-    if re.search(r'\bTask\s*\.\s*detached\b|\b(?:offMain|onRowQueue)\b|\bStoreReader\b|\b\w*[rR]eader\s*\.\s*(?:read|readLatest)\b', h):
+    # `offMain` is the app's wrapper around Task.detached, `onRowQueue` the podcast coordinator's wrapper around its row queue, `preparationWrite` the audio-preparation pass's wrapper around `StoreReader(store).readInOrder` (#2509); `StoreReader(store).read { }` is SessionKit's (#2507)
+    if re.search(r'\bTask\s*\.\s*detached\b|\b(?:offMain|onRowQueue|preparationWrite)\b|\bStoreReader\b|\b\w*[rR]eader\s*\.\s*(?:read|readLatest)\b', h):
         scope.kind, scope.iso = 'task', 'off'
     elif TASK_HEADER.search(h):
         scope.kind = 'task'

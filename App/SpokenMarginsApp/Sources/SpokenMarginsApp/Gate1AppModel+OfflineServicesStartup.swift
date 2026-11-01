@@ -40,7 +40,7 @@ extension Gate1AppModel {
             let refreshed: Result<GuidedOnboardingPayload, Error>
             do { refreshed = .success(try await coordinator.refresh()) } catch { refreshed = .failure(error) }
             guard !Task.isCancelled else { return }
-            self?.applyGuidedOnboardingRefresh(refreshed)
+            await self?.applyGuidedOnboardingRefresh(refreshed)
         })
     }
 }

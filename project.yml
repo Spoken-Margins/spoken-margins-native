@@ -44,6 +44,9 @@ targets:
       # The Lock Screen Mark inbox (#2481), host-tested in SessionKit; LiveSessionActivity.swift uses it in the
       # app and the widget, which doesn't link SessionKit.
       - path: Packages/SessionKit/Sources/SessionKit/LiveSessionMarkInbox.swift
+      # The Live Activity's Lock Screen card, so LiveActivityLayoutTests can lay it out at real text sizes (#1940).
+      # The widget's `@main` bundle stays in its own file, which the app does not compile.
+      - path: App/SpokenMarginsGate2Widget/Sources/Gate2LiveActivityWidget.swift
       # Supertonic's licences and modification notice only; the model is a download from Settings › Voices (#1820).
       - path: App/SpokenMarginsApp/Resources/Supertonic
         type: folder
@@ -72,9 +75,14 @@ targets:
         buildPhase: resources
       - path: Site/onboarding/catalog/v1/catalog.json
         buildPhase: resources
-      - path: Contracts/fixtures
+      # Only the fixture folders the app reads at run time (Gate1AppModel's loadFixtureItem, loadFixtureMap and
+      # loadProfile). Saved feeds, search responses and traces stay in the repository for tests (#3075);
+      # scripts/third_party_notices.py fails if an app target bundles a Contracts folder no app source reads.
+      - path: Contracts/fixtures/items
         type: folder
-      - path: Contracts/traces
+      - path: Contracts/fixtures/maps
+        type: folder
+      - path: Contracts/fixtures/capabilities
         type: folder
     dependencies:
       - target: SpokenMarginsGate2Widget

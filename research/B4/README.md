@@ -82,6 +82,27 @@ link immediately. Data files are private (0600 under 0700 directories), separate
 from the public web root. Pending uploads are unpublished and cleaned on failure;
 the daily sweep also removes interrupted uploads older than an hour.
 
+`smserver reports -state DIR [-since 24h] [-category C]` lists the filed report
+records (reference, date, category, link id, what the link is now, written reason)
+so the owner can see them; it flags a reported link that is `STILL SERVED`, never
+opens content, and shows a pasted key as `[link removed]` (#2846).
+
+A link reported to the CyberTipline is the one exception to the 30 days (#2235):
+`smserver hold -state DIR -report REPORTID [-link-file FILE|-] ID` takes it down,
+moves its packet, preview and the reported full link into `links-held` beside the
+links folder (0700, no read call in the server), and the daily sweep deletes it one
+year later, logging each event without content in `links-held/access.log`.
+`smserver release-hold -state DIR -reason TEXT ID` ends a hold early. The owner's
+steps are in `docs/legal/cybertipline-runbook.md`.
+
+The report form is public, so holds are bounded (#3120): a held link keeps up to
+five different reported links (`reported-link`, `reported-link-2` ...), and the
+form's holds are capped at 500 items, 5 GiB, 50 a UTC day and 5 a day per client
+network. Past a cap the link is disabled (`Store.Disable`: dark at once, content
+and the reported link kept for 30 days), the server log says `HOLD CAP REACHED` and
+`links-held/access.log` gets a `cap` line, and the owner runs `smserver hold`,
+which the caps do not limit.
+
 Privacy-page wording is an unpublished HTML-comment draft in
 `Site/privacy/index.html`. No server deployment or site publication is part of
 this change.

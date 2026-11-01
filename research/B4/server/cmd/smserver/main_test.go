@@ -20,6 +20,8 @@ import (
 	"spokenmargins.dev/bridge/internal/config"
 	"spokenmargins.dev/bridge/internal/links"
 	"spokenmargins.dev/bridge/internal/maps"
+	"spokenmargins.dev/bridge/internal/reportrules"
+	"spokenmargins.dev/bridge/internal/reports"
 )
 
 const secretKey = "sk-ant-test-0123456789-SECRET"
@@ -223,6 +225,172 @@ func TestLinkTakedownCommand(t *testing.T) {
 	}
 	if err := takedownLink([]string{"-state", dir}); err == nil {
 		t.Fatal("missing id")
+	}
+}
+
+func TestHoldAndReleaseHoldCommands(t *testing.T) {
+	dir := t.TempDir()
+	st, err := links.OpenStore(filepath.Join(dir, "links"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed := func(part byte) []byte {
+		return append([]byte{'S', 'M', 'L', 'I', 'N', 'K', 1, part}, []byte("twelve-nonce opaque ciphertext sixteen-byte-tag")...)
+	}
+	id, _, err := st.Put(sealed(links.PartPacket), sealed(links.PartPreview), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	reported := filepath.Join(t.TempDir(), "reported-link.txt")
+	if err := os.WriteFile(reported, []byte("https://share.example/l/"+id+"#k=KEY"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := holdLink([]string{"-state", dir, id}); err == nil {
+		t.Fatal("a hold without a report id must be refused")
+	}
+	if err := holdLink([]string{"-state", dir, "-report", "NCMEC-1", "-link-file", reported, id}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Packet(id, time.Now()); !errors.Is(err, links.ErrGone) {
+		t.Fatal("a held link is still served")
+	}
+	held := filepath.Join(dir, "links-held", id)
+	for _, name := range []string{"packet", "preview", "reported-link", "hold.json"} {
+		if _, err := os.Stat(filepath.Join(held, name)); err != nil {
+			t.Fatalf("held copy lacks %s: %v", name, err)
+		}
+	}
+	if err := releaseHold([]string{"-state", dir, id}); err == nil {
+		t.Fatal("a release without a reason must be refused")
+	}
+	if _, err := os.Stat(held); err != nil {
+		t.Fatal("a refused release deleted the held copy")
+	}
+	if err := releaseHold([]string{"-state", dir, "-reason", "law-enforcement request", id}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(held); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("release left the held copy")
+	}
+}
+
+// The owner's `reports` command (#2846): a filed report reaches the owner with its category, date,
+// link state and written reason, and a link that a report did not take down is flagged.
+func TestReportsCommandShowsWhatWasReportedAndWhatIsStillServed(t *testing.T) {
+	dir := t.TempDir()
+	st, err := links.OpenStore(filepath.Join(dir, "links"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rs, err := reports.Open(filepath.Join(dir, "reports"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed := func(part byte) []byte {
+		return append([]byte{'S', 'M', 'L', 'I', 'N', 'K', 1, part}, []byte("twelve-nonce opaque ciphertext sixteen-byte-tag")...)
+	}
+	now := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+	put := func() string {
+		id, _, err := st.Put(sealed(links.PartPacket), sealed(links.PartPreview), now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	downID, heldID, liveID, parkedID := put(), put(), put(), put()
+	expiredID, _, err := st.Put(sealed(links.PartPacket), sealed(links.PartPreview), now.Add(-40*24*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	file := func(ref, id string, cat reportrules.Category, at time.Time, reason string) {
+		if err := rs.Add(reports.Record{Ref: ref, LinkID: id, Category: cat, At: at, Reason: reason}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const key = "KEYKEYKEYSECRETKEY"
+	file("AAAAAAAAAAAA", downID, reportrules.Harassment, now.Add(-72*time.Hour), "he is\nbullying me\x1b[2J\rFAKE")
+	file("BBBBBBBBBBBB", heldID, reportrules.AbuseMaterial, now.Add(-time.Hour), "see https://spokenmargins.com/l/"+heldID+"#"+key+" please")
+	file("CCCCCCCCCCCC", liveID, reportrules.Other, now.Add(-30*time.Minute), "")
+	file("DDDDDDDDDDDD", parkedID, reportrules.AbuseMaterial, now.Add(-20*time.Minute), "UPPER https://spokenmargins.com/l/"+strings.ToUpper(parkedID)+"%23"+key+" \u202eevil\u2066")
+	file("EEEEEEEEEEEE", expiredID, reportrules.Other, now.Add(-10*time.Minute), "")
+	if err := st.Disable(parkedID, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Takedown(downID); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.HoldByOwner(heldID, "NCMEC-1", []byte("https://spokenmargins.com/l/"+heldID+"#"+key), now); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	if err := listReports([]string{"-state", dir}, &out, now); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	for _, want := range []string{
+		"AAAAAAAAAAAA", "harassment", "link " + downID + "  taken down",
+		"BBBBBBBBBBBB", "abuse_material", "link " + heldID + "  taken down, held",
+		"CCCCCCCCCCCC", "link " + liveID + "  STILL SERVED",
+		"link " + parkedID + "  disabled, NOT held yet",
+		"link " + expiredID + "  expired",
+		"5 report(s)",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("output lacks %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, key) {
+		t.Errorf("a key reached the owner's screen:\n%s", got)
+	}
+	if !strings.Contains(got, "[link removed]") {
+		t.Errorf("the pasted link should show as removed:\n%s", got)
+	}
+	if strings.ContainsAny(got, "\x1b\r\u202e\u2066") || strings.Contains(got, "bullying me\n") {
+		t.Errorf("a reason broke out of its line:\n%q", got)
+	}
+	if strings.Index(got, "AAAAAAAAAAAA") > strings.Index(got, "BBBBBBBBBBBB") {
+		t.Error("reports should come oldest first")
+	}
+
+	out.Reset()
+	if err := listReports([]string{"-state", dir, "-since", "2h"}, &out, now); err != nil {
+		t.Fatal(err)
+	}
+	if got := out.String(); strings.Contains(got, "AAAAAAAAAAAA") || !strings.Contains(got, "4 report(s)") {
+		t.Errorf("-since 2h should hide the three-day-old report:\n%s", got)
+	}
+	out.Reset()
+	if err := listReports([]string{"-state", dir, "-category", "other"}, &out, now); err != nil {
+		t.Fatal(err)
+	}
+	if got := out.String(); !strings.Contains(got, "CCCCCCCCCCCC") || strings.Contains(got, "BBBBBBBBBBBB") || !strings.Contains(got, "2 report(s)") {
+		t.Errorf("-category other:\n%s", got)
+	}
+	if err := listReports([]string{"-state", dir, "-since", "-5h"}, &out, now); err == nil {
+		t.Error("a negative -since should be refused, not show everything")
+	}
+	if err := listReports([]string{"-state", dir, "-category", "spam"}, &out, now); err == nil {
+		t.Error("an unknown category should be refused, not match nothing")
+	}
+	if err := listReports([]string{"-state", dir, "extra"}, &out, now); err == nil {
+		t.Error("a stray argument should be refused")
+	}
+}
+
+func TestReportsCommandWithNoReportsSaysSoAndMakesNoRecords(t *testing.T) {
+	dir := t.TempDir()
+	var out bytes.Buffer
+	if err := listReports([]string{"-state", dir}, &out, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "0 report(s)") {
+		t.Errorf("got %q", out.String())
+	}
+	for _, name := range []string{"reports", "links", "links-held"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); !os.IsNotExist(err) {
+			t.Errorf("reading reports made the %s folder", name)
+		}
 	}
 }
 

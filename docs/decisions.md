@@ -222,6 +222,7 @@ How it is used:
   - **The repo moves to a free organization he owns, after a readiness check.** He is creating it as "My personal account" on the Free plan (#2169). The transfer is his tap.
   - **Every PR names its issue.** "please do" (#2167). See "Small, verified commits".
   - **One board.** He said "sure" to a single Project board. It already exists: "Spoken Margins areas" (#6, Status and Area, kept by `scripts/sm_project_sync.py`). His boards #1 to #5 belong to other repos; leave them alone.
+  - **The board's Area field replaces the `area:` labels.** Asked "should the board's Area field replace the `area:` labels?", he said "sounds good" (#2173). The five labels were copied onto the field and deleted on 2026-10-31; an issue's area is set on the board, by [docs/areas.md](areas.md).
   - **Paced work may run 10 points ahead of the straight-line pace.** Asked how far ahead of the trend line the Mac worker may run (10 points to match the usage breaker, no limit tonight, or keep 5), he answered "1": 10 points (#2190). On 2026-10-19 the worker held from about 12:19 to 20:15 CDT at 44% against a 36% line, with 11 armed PRs waiting on fixes. `TREND_SLACK` is 10 in `ops/claude/sm_claude_worker.py` and `ops/dial/dial_gate.py` (#2191).
 
 ## 2026-10-20
@@ -318,3 +319,8 @@ How it is used:
     - Review new Margins stays as the second path. It jumps to the lead-in before each Margin, then plays the Margin. Skip goes to the next Margin's lead-in, and a second skip goes straight to the Margin.
     - The review lead-in is 20 seconds: "if we just did 10 seconds, it's not giving you any context."
     - The playback screen's Margins tab already lists the friend's Margins in place. The work is drawing the eye to it: "we need to draw their attention to the margins tab in the playback screen so they know that's where they can navigate."
+
+- **Owner's standing call (2026-10-31).** Don't ask again:
+  - **A headphone double-press set to Add a Margin always tries to add a Margin; when it cannot start, a tone plays. No rule looks at whether the phone is locked or the app is in the background.** After a double-press failed with the phone locked (iOS lets an app begin recording only while it is in the foreground), he read the research on recording intents and said: "I trust you and don't really feel the need to chase this down. I think that what you've done is enough." and "when the setting is configured, so the double tap adds a margin, it adds a margin, and then when the screen is locked, it just plays a tone. I'd also like you to add some diagnostics to be able to know when that happens. I don't think we need to worry about adding a feature that is state-based on whether the phone is locked or background, the app is backgrounded. That's really complicated, and I think would just confuse users a lot." The earlier failure-tone ask: "it plays a failure noise at the very least when that happens. This is not an issue that blocks release."
+    - The tone and the export record (`lastCompactBeginFailure`: app state, protected-data hint, origin, raw error) are #3085.
+    - Not pursued: starting a recording from a locked phone through `AudioRecordingIntent` and the Lock Screen mic (spike #3086, closed as not planned). #2698 (Lock Screen and Action button control) must not assume locked recording.

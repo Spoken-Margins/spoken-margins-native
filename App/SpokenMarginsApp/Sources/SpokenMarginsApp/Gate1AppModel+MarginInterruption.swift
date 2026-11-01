@@ -78,7 +78,7 @@ extension Gate1AppModel {
         // A call's end resumes only the session and place this save or discard left.
         holder.policy.sourceSettled(at: .paused(in: snapshot))
         if !snapshot.isRecording {
-            marginCapture.clearPresentationContext()
+            clearRecordingPresentation()
             refreshMarginRowsInBackground(forItem: snapshot.itemId)
         }
     }

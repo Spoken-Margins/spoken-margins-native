@@ -1,7 +1,7 @@
 {
   "schemaVersion": "voice-model-catalog.v1",
   "catalogVersion": 1,
-  "issuedAt": "2026-10-26T23:39:36Z",
+  "issuedAt": "2026-11-01T02:20:16Z",
   "voices": [
     {
       "id": "supertonic-3-int8",
@@ -1483,8 +1483,8 @@
           "id": "kokoro-coreml-apache-2-0",
           "name": "Apache License 2.0 (Kokoro-82M and its Core ML build)",
           "spdxId": "Apache-2.0",
-          "textURL": "https://www.apache.org/licenses/LICENSE-2.0.txt",
-          "textSHA256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+          "textURL": "https://huggingface.co/mattmireles/kokoro-coreml/resolve/0c1d78b47d19f39be6bc0cf0d07316822ae879d4/LICENSE",
+          "textSHA256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
           "requiresAcceptance": false
         }
       ]

@@ -1,5 +1,6 @@
 import Foundation
 import SessionKit
+import SessionKitPersistence
 
 /// The bundled guided tour's item and listening map, moved out of the model to keep it under its line ceiling (#540).
 extension Gate1AppModel {
@@ -38,32 +39,27 @@ extension Gate1AppModel {
     }
 
     /// Saves a downloaded tour over the bundled one. The download happens in `startOfflineServices` without holding
-    /// the model, so a model dropped meanwhile is never kept alive for these writes (#2195).
-    func applyGuidedOnboardingRefresh(_ refreshed: Result<GuidedOnboardingPayload, Error>) {
+    /// the model, so a model dropped meanwhile is never kept alive for these writes (#2195). The item read and the
+    /// three saves run off the main actor in one transaction (#2509); the rest is the main actor's.
+    func applyGuidedOnboardingRefresh(_ refreshed: Result<GuidedOnboardingPayload, Error>) async {
         guard let store else { return }
         do {
             let payload = try refreshed.get()
             let priorChecksum = UserDefaults.standard.string(forKey: "guidedOnboardingAudioChecksum")
-            var item = (try? store.loadItem(id: Self.guidedOnboardingItemId)) ?? Self.makeBundledGuidedOnboardingItem()
-            item.title = payload.manifest.title
-            item.sourceTitle = "Spoken Margins"
-            item.media = ItemMedia(
-                sourceType: .nativeMediaFile,
-                url: payload.audioURL.absoluteString,
-                nativeMediaId: "guided-onboarding-audio"
-            )
-            try store.saveItem(item)
-            try store.saveAudioAsset(AudioAsset(
+            let title = payload.manifest.title
+            let audioURL = payload.audioURL.absoluteString
+            let bundled = Self.makeBundledGuidedOnboardingItem()
+            let asset = AudioAsset(
                 id: "guided-onboarding-audio",
-                itemId: item.id,
+                itemId: bundled.id,
                 audioSourceType: .nativeMediaFile,
                 availability: .localPhone,
-                url: payload.audioURL.absoluteString,
-                title: payload.manifest.title
-            ))
-            try store.saveTranscriptTimeline(SourceTranscriptTimeline(
+                url: audioURL,
+                title: title
+            )
+            let timeline = SourceTranscriptTimeline(
                 id: "timeline-guided-onboarding",
-                itemId: item.id,
+                itemId: bundled.id,
                 createdAt: Date(),
                 timeline: TranscriptTimeline(
                     segments: [],
@@ -76,14 +72,24 @@ extension Gate1AppModel {
                         )
                     ]
                 )
-            ))
+            )
+            let item = try await StoreReader(store).read { store in
+                try OnboardingAndOfflineAssetWrites.applyGuidedTour(
+                    itemId: bundled.id, fallback: bundled,
+                    edit: {
+                        $0.title = title
+                        $0.sourceTitle = "Spoken Margins"
+                        $0.media = ItemMedia(sourceType: .nativeMediaFile, url: audioURL, nativeMediaId: "guided-onboarding-audio")
+                    },
+                    asset: asset, timeline: timeline, in: store)
+            }
             UserDefaults.standard.set(payload.manifest.audioChecksumSHA256, forKey: "guidedOnboardingAudioChecksum")
             if payload.audioChanged, priorChecksum != nil, snapshot.itemId == item.id {
                 _ = try? engine?.stopPlayback()
                 snapshot = SessionSnapshot()
                 diagnostics["guidedOnboardingProgress"] = "reset_for_audio_change"
             }
-            try refreshLibraryRows(store: store)
+            try await reloadLibraryRowsOffMain(store: store)
             diagnostics["guidedOnboardingRemote"] = "ready:v\(payload.manifest.contentVersion)"
         } catch {
             diagnostics["guidedOnboardingRemote"] = "fallback:\(String(describing: type(of: error)))"

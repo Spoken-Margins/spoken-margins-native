@@ -26,13 +26,14 @@
 		5CB55322C5E78BE68FC70E90 /* WatchContractState.swift in Sources */ = {isa = PBXBuildFile; fileRef = C35CC3A6D5622D241C4A34DB /* WatchContractState.swift */; };
 		5CDAE601AA8B28F47829D3C6 /* substack-shared-text-feed.xml in Resources */ = {isa = PBXBuildFile; fileRef = 50026D96CAC3D753625277E0 /* substack-shared-text-feed.xml */; };
 		5D420626A6A49CF830E8B408 /* SessionKitAudio in Frameworks */ = {isa = PBXBuildFile; productRef = 9547A66336D57411F645B986 /* SessionKitAudio */; };
+		5D95BA749F6192AADE344274 /* items in Resources */ = {isa = PBXBuildFile; fileRef = C715B5A788ED6FA76A27C38E /* items */; };
 		5E894548E5C48572F8F55264 /* icon-512.png in Resources */ = {isa = PBXBuildFile; fileRef = 57C1F61B420E53CF05698E57 /* icon-512.png */; };
+		60CCBE5FA9DA3D41F34CEE77 /* capabilities in Resources */ = {isa = PBXBuildFile; fileRef = 24A38466A3585C2A50A7F79A /* capabilities */; };
 		619015F5E8AF963DD2866EE3 /* licenses in Resources */ = {isa = PBXBuildFile; fileRef = 1FB65F7C5B34151CFB025D14 /* licenses */; };
 		65126FD4AD9AE90D96C36EC7 /* icon-256.png in Resources */ = {isa = PBXBuildFile; fileRef = 742BEE6988765C9B1F078C8B /* icon-256.png */; };
 		684EA2C33191BCFF763905E3 /* catalog.json in Resources */ = {isa = PBXBuildFile; fileRef = 454A82B2CAACCCAED5C33E03 /* catalog.json */; };
 		6868081D16F070053E862F47 /* browserTextCapture.js in Resources */ = {isa = PBXBuildFile; fileRef = 98C26CB68BDFFFA8A1B7578B /* browserTextCapture.js */; };
 		68EFC63296D10802FDE30831 /* substack-shared-text-post.html in Resources */ = {isa = PBXBuildFile; fileRef = AA3E54540069285190E19D1B /* substack-shared-text-post.html */; };
-		6C3AD65F618F4FBE42AB6A31 /* fixtures in Resources */ = {isa = PBXBuildFile; fileRef = F8F6B4F91AA36C9513801753 /* fixtures */; };
 		76005D25F3CFA0070E96DA24 /* ClipboardIntakeClassifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCF082C6D01456C6743B188A /* ClipboardIntakeClassifier.swift */; };
 		78065128412B4F94A3B7B6FD /* LiveSessionMarkInbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4862005D70FCAAD37CE521AA /* LiveSessionMarkInbox.swift */; };
 		7F0A333F40F542B3E4C42E1A /* Defuddle-LICENSE.txt in Resources */ = {isa = PBXBuildFile; fileRef = 8C1BFB86196C5C1BE2E52BEF /* Defuddle-LICENSE.txt */; };
@@ -42,12 +43,13 @@
 		87FAE6509C5B1511C6555EA9 /* SpokenMarginsWatchApp.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = F4D18E57D6973BBFE094E993 /* SpokenMarginsWatchApp.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		8B40FCEFB4AFABF3E3B52486 /* SessionKitEPUB in Frameworks */ = {isa = PBXBuildFile; productRef = DAEA68EE26E46DA752778D6D /* SessionKitEPUB */; };
 		8D06E1D632D0ED8160FED0A4 /* icon-128.png in Resources */ = {isa = PBXBuildFile; fileRef = 56AD3FBAE5A4EBD7B16F6BFC /* icon-128.png */; };
+		8ED0B846808331F1F9812086 /* maps in Resources */ = {isa = PBXBuildFile; fileRef = E0ABF1D829406CA5F06567CD /* maps */; };
 		907083EA86D05BC58D2D3A79 /* SessionKitAI in Frameworks */ = {isa = PBXBuildFile; productRef = E7C7184F382A54BFB372015B /* SessionKitAI */; };
 		93BDBE3759E50512647FCCB2 /* Defuddle-LICENSE.txt in Resources */ = {isa = PBXBuildFile; fileRef = 3D2052181FEAFB56EB0856FA /* Defuddle-LICENSE.txt */; };
 		A2D0366161FA302E7139746D /* SharedTextIntake.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45170E0354730F22BB2E258A /* SharedTextIntake.swift */; };
 		A391E3C44188F2FE5A49C93B /* KokoroPipeline in Frameworks */ = {isa = PBXBuildFile; productRef = 54900B4C14FBCE4EEBA05420 /* KokoroPipeline */; };
+		A5242E161454F038B466BAE4 /* Gate2LiveActivityWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7145068260B70B5F88F4D76 /* Gate2LiveActivityWidget.swift */; };
 		A978B4713391C8A80029DD08 /* SessionKit in Frameworks */ = {isa = PBXBuildFile; productRef = 857D6087011D0775305B56B7 /* SessionKit */; };
-		AAB68653F4DD558C2D9EC643 /* traces in Resources */ = {isa = PBXBuildFile; fileRef = DA64F144F04CC7A9F436B28E /* traces */; };
 		AB149D16A2A0482B581B0847 /* SessionKitSharing in Frameworks */ = {isa = PBXBuildFile; productRef = 03B12E07A60683D31E17A8FC /* SessionKitSharing */; };
 		B401E3D73FFFC3B4CCD67491 /* SessionKitAudio in Frameworks */ = {isa = PBXBuildFile; productRef = 34C621C37AF71E6ED22B1045 /* SessionKitAudio */; };
 		BF4CD875E4DFA95B3AB14636 /* SourceLinkHandoff.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69050C3D4931DF4FF8E80364 /* SourceLinkHandoff.swift */; };
@@ -151,6 +153,7 @@
 		13B8FED93087CC3C8B2ABB2B /* VoiceCatalog */ = {isa = PBXFileReference; lastKnownFileType = folder; name = VoiceCatalog; path = App/SpokenMarginsApp/Resources/VoiceCatalog; sourceTree = SOURCE_ROOT; };
 		1EF39AB56D81B9CC450B08A2 /* emoji-article-crash-regression.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "emoji-article-crash-regression.txt"; sourceTree = "<group>"; };
 		1FB65F7C5B34151CFB025D14 /* licenses */ = {isa = PBXFileReference; lastKnownFileType = folder; name = licenses; path = "Contracts/voice-models/licenses"; sourceTree = SOURCE_ROOT; };
+		24A38466A3585C2A50A7F79A /* capabilities */ = {isa = PBXFileReference; lastKnownFileType = folder; name = capabilities; path = Contracts/fixtures/capabilities; sourceTree = SOURCE_ROOT; };
 		319720F5D1C48499C77B9EE3 /* WatchContract.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchContract.swift; sourceTree = "<group>"; };
 		36E0E49E13407DED3533C291 /* Signing.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Signing.xcconfig; sourceTree = "<group>"; };
 		3D2052181FEAFB56EB0856FA /* Defuddle-LICENSE.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Defuddle-LICENSE.txt"; sourceTree = "<group>"; };
@@ -181,15 +184,16 @@
 		C271766FC941B68CA12F2DAC /* SessionKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = SessionKit; path = Packages/SessionKit; sourceTree = SOURCE_ROOT; };
 		C35CC3A6D5622D241C4A34DB /* WatchContractState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchContractState.swift; sourceTree = "<group>"; };
 		C52D1CADC5773F67C398A2B2 /* SourceLinkPreprocessor.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = SourceLinkPreprocessor.js; sourceTree = "<group>"; };
+		C715B5A788ED6FA76A27C38E /* items */ = {isa = PBXFileReference; lastKnownFileType = folder; name = items; path = Contracts/fixtures/items; sourceTree = SOURCE_ROOT; };
 		D8F75089EB72A10C4E2E79E1 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
-		DA64F144F04CC7A9F436B28E /* traces */ = {isa = PBXFileReference; lastKnownFileType = folder; name = traces; path = Contracts/traces; sourceTree = SOURCE_ROOT; };
 		DCF082C6D01456C6743B188A /* ClipboardIntakeClassifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipboardIntakeClassifier.swift; sourceTree = "<group>"; };
+		E0ABF1D829406CA5F06567CD /* maps */ = {isa = PBXFileReference; lastKnownFileType = folder; name = maps; path = Contracts/fixtures/maps; sourceTree = SOURCE_ROOT; };
 		E253416A15B5108380F819E8 /* Legal */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Legal; path = App/SpokenMarginsApp/Resources/Legal; sourceTree = SOURCE_ROOT; };
 		E3D5265FADF5995640D6FB31 /* SpokenMarginsGate2Widget.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = SpokenMarginsGate2Widget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		E7145068260B70B5F88F4D76 /* Gate2LiveActivityWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate2LiveActivityWidget.swift; sourceTree = "<group>"; };
 		EE29274792FFFC88EA74C157 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		F2A6CC7522887307C67D46AE /* SpokenMarginsBrowserTextExtension.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = SpokenMarginsBrowserTextExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		F4D18E57D6973BBFE094E993 /* SpokenMarginsWatchApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SpokenMarginsWatchApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		F8F6B4F91AA36C9513801753 /* fixtures */ = {isa = PBXFileReference; lastKnownFileType = folder; name = fixtures; path = Contracts/fixtures; sourceTree = SOURCE_ROOT; };
 		FB45D701E0D00156BD56A177 /* pdf-outline-collected-stories.pdf */ = {isa = PBXFileReference; lastKnownFileType = image.pdf; path = "pdf-outline-collected-stories.pdf"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -360,13 +364,14 @@
 		2C09E31BE15AEAD39C04886B = {
 			isa = PBXGroup;
 			children = (
-				F8F6B4F91AA36C9513801753 /* fixtures */,
+				24A38466A3585C2A50A7F79A /* capabilities */,
+				C715B5A788ED6FA76A27C38E /* items */,
 				79C73610A77492D5B579839B /* Kitten */,
 				8F3CB8553EF550E6A50DC56F /* Kokoro */,
 				E253416A15B5108380F819E8 /* Legal */,
 				1FB65F7C5B34151CFB025D14 /* licenses */,
+				E0ABF1D829406CA5F06567CD /* maps */,
 				0B8C44619E7FAF16175EC2D7 /* Supertonic */,
-				DA64F144F04CC7A9F436B28E /* traces */,
 				13B8FED93087CC3C8B2ABB2B /* VoiceCatalog */,
 				309AFF0A8DEE6F55779150C3 /* App/Gate2Shared/Sources */,
 				80D99F51C549D6610240142C /* App/SharedSources */,
@@ -384,10 +389,20 @@
 				61E0A1E977F3456236F0C7D9 /* SessionKit */,
 				EE2767B5F5BD53E79758E8D4 /* SharedResources */,
 				5B74E9616092FD1489F4F709 /* Sources */,
+				34447A1CD52ADC20F1369A5C /* Sources */,
 				CA56E872559E3D6C366F3C1B /* TestFixtures */,
 				089BEE7203E243E68BBEEA0F /* v1 */,
 				FD1F64C96AF6992C79DA59C5 /* Products */,
 			);
+			sourceTree = "<group>";
+		};
+		34447A1CD52ADC20F1369A5C /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				E7145068260B70B5F88F4D76 /* Gate2LiveActivityWidget.swift */,
+			);
+			name = Sources;
+			path = App/SpokenMarginsGate2Widget/Sources;
 			sourceTree = "<group>";
 		};
 		460250240FDC5A068A5D5EA9 /* Resources */ = {
@@ -810,10 +825,11 @@
 				BFAB396D17668E220C6104D8 /* Supertonic in Resources */,
 				CD45496AF323E47A44B24DB1 /* VoiceCatalog in Resources */,
 				6868081D16F070053E862F47 /* browserTextCapture.js in Resources */,
+				60CCBE5FA9DA3D41F34CEE77 /* capabilities in Resources */,
 				684EA2C33191BCFF763905E3 /* catalog.json in Resources */,
-				6C3AD65F618F4FBE42AB6A31 /* fixtures in Resources */,
+				5D95BA749F6192AADE344274 /* items in Resources */,
 				619015F5E8AF963DD2866EE3 /* licenses in Resources */,
-				AAB68653F4DD558C2D9EC643 /* traces in Resources */,
+				8ED0B846808331F1F9812086 /* maps in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -875,6 +891,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A5242E161454F038B466BAE4 /* Gate2LiveActivityWidget.swift in Sources */,
 				78065128412B4F94A3B7B6FD /* LiveSessionMarkInbox.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

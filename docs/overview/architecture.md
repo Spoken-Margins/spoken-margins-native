@@ -55,7 +55,7 @@ Some of these build on Linux as well as macOS. The list is at the bottom of `Pac
 
 ## Contracts
 
-`Contracts/` holds the formats the app and its tests agree on: JSON schemas (`Contracts/schemas/`), example files (`Contracts/fixtures/`), recorded session traces (`Contracts/traces/`) and design notes (`Contracts/docs/`). The app bundles the fixtures and traces; SessionKit's tests read the whole folder. A change to a format changes a schema and a fixture together, and a validator (`scripts/validate-contracts.py`) checks the pair.
+`Contracts/` holds the formats the app and its tests agree on: JSON schemas (`Contracts/schemas/`), example files (`Contracts/fixtures/`), recorded session traces (`Contracts/traces/`) and design notes (`Contracts/docs/`). The app bundles only the fixture folders it reads at run time (`items`, `maps`, `capabilities`); SessionKit's tests read the whole folder. A change to a format changes a schema and a fixture together, and a validator (`scripts/validate-contracts.py`) checks the pair.
 
 ## Where data lives
 

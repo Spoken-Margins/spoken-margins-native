@@ -35,6 +35,15 @@ def manifest(tests: dict, interrupted=False, probation=None, retried=()):
     return {'status': 'failed_or_incomplete' if failed or interrupted else 'verified', 'steps': [step]}
 
 
+SCREENS = ['01-library-light.png', '01-library-dark.png', '02-item-light.png']
+
+
+def tour_manifest(tests=None, screens=SCREENS):
+    """What verify-tests.py --plan tour writes: the plan's UI test and the exported screenshot names (#381)."""
+    done = manifest(tests or {'SpokenMarginsUISeamsUITests/ScreenTourTests/testTour': 'passed'})
+    return dict(done, screenshots=list(screens))
+
+
 def report_comment(sha7, verdict, by='SM integration run'):
     return f'```text\nLane report integration-{sha7} — {verdict}\ncommit {sha7}\nrun by: {by}\n```\n'
 
@@ -725,7 +734,7 @@ class TickTests(unittest.TestCase):
         listing = {'gating': [], 'probation': [{'test': JOURNEY, 'journey': 'J1'}]}
         passing = manifest({}, probation={f'{JOURNEY}/testOpen': 'passed'})
         passing['status'] = 'verified'
-        plans = [manifest({TEST: 'passed'}), passing, manifest({TEST: 'passed'}), passing]
+        plans = [manifest({TEST: 'passed'}), passing, tour_manifest(), manifest({TEST: 'passed'}), passing, tour_manifest()]
         with tempfile.TemporaryDirectory() as tmp, mac_with_room():
             ops = FakeOps(tmp, plans, bodies=[report_comment(OLD[:7], 'PASS')], listing=listing)
             self.assertEqual(run.tick(ops), 'PASS')
@@ -1567,3 +1576,56 @@ class MacDefersToHostedTests(unittest.TestCase):
             ops, verdict, state = self.tick(tmp, [], bodies, ops=ops)
         self.assertEqual(verdict, 'deferred')
         self.assertEqual(state['hosted_handled'][SHA[:7]]['confirm'], 'stopped before completion')
+
+
+class ScreenTourTests(unittest.TestCase):
+    """#381: the integration run tours the screens after a PASS; the tour is never verdict input."""
+
+    def tick(self, plans):
+        with tempfile.TemporaryDirectory() as tmp, mac_with_room():
+            ops = FakeOps(tmp, plans, bodies=[report_comment(OLD[:7], 'PASS')])
+            verdict = run.tick(ops)
+        return ops, verdict
+
+    def tour_calls(self, ops):
+        return [c for c in ops.calls if c[:2] == ['test_plan', 'tour']]
+
+    def test_a_pass_runs_the_tour_and_the_report_lists_its_screens(self):
+        ops, verdict = self.tick([manifest({TEST: 'passed'}), tour_manifest()])
+        self.assertEqual(verdict, 'PASS')
+        self.assertEqual(len(self.tour_calls(ops)), 1)
+        self.assertIn('screen tour (not verdict input): 3 screenshots in tour/screens of the evidence folder: '
+                      '01-library-light.png, 01-library-dark.png, 02-item-light.png', ops.posted[0])
+
+    def test_a_failing_tour_is_one_report_line_and_the_verdict_stays_pass(self):
+        failed = tour_manifest({'SpokenMarginsUISeamsUITests/ScreenTourTests/testTour': 'failed'}, screens=[])
+        ops, verdict = self.tick([manifest({TEST: 'passed'}), failed])
+        self.assertEqual(verdict, 'PASS')
+        self.assertIn('screen tour (not verdict input): failed: ', ops.posted[0])
+        self.assertIn('(failed: SpokenMarginsUISeamsUITests/ScreenTourTests/testTour)', ops.posted[0])
+
+    def test_a_tour_that_passed_but_exported_nothing_is_not_called_captured(self):
+        ops, verdict = self.tick([manifest({TEST: 'passed'}), tour_manifest(screens=[])])
+        self.assertEqual(verdict, 'PASS')
+        self.assertIn('screen tour (not verdict input): inconclusive: no screenshot was exported', ops.posted[0])
+        self.assertNotIn('screenshots in tour/screens', ops.posted[0])
+
+    def test_a_tour_that_cannot_start_never_blocks_the_report(self):
+        ops, verdict = self.tick([manifest({TEST: 'passed'})])  # FakeOps has no plan left to give the tour
+        self.assertEqual(verdict, 'PASS')
+        self.assertIn('screen tour (not verdict input): not run: ', ops.posted[0])
+
+    def test_no_tour_after_a_fail_or_an_inconclusive_app_plan(self):
+        for plans in ([manifest({TEST: 'failed'})] * 3, [manifest({}, interrupted=True)]):
+            with self.subTest(first=plans[0]['steps'][0]['exit_code']):
+                ops, _ = self.tick(list(plans))
+                self.assertEqual(self.tour_calls(ops), [])
+                self.assertNotIn('screen tour', ops.posted[0])
+
+    def test_a_long_tour_names_the_first_screens_and_counts_the_rest(self):
+        names = [f'{n:02d}-screen.png' for n in range(30)]
+        line = run.tour_line({'status': 'captured', 'detail': '', 'screens': names})
+        self.assertIn('30 screenshots', line)
+        self.assertIn(names[run.TOUR_NAMES_SHOWN - 1], line)
+        self.assertNotIn(names[run.TOUR_NAMES_SHOWN], line)
+        self.assertTrue(line.endswith('and 6 more'))

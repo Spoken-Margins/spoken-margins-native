@@ -20,7 +20,9 @@ public enum SpokenMarginsPackageHandoffStoreError: Error, Equatable, LocalizedEr
 /// Moves a package received by the Share extension into an app-group inbox.
 /// The main app copies the exact bytes into its verified import staging area
 /// before deleting the inbox entry.
-public struct SpokenMarginsPackageHandoffStore {
+/// Holds a folder URL and `FileManager.default`, which is safe to use from any thread; the app lists and deletes
+/// inbox files off the main actor (#2510).
+public struct SpokenMarginsPackageHandoffStore: @unchecked Sendable {
     #if SPOKEN_MARGINS_LEGACY
     public static let appGroupIdentifier = "group.com.spokenmargins.native.legacy"
     #else

@@ -95,6 +95,7 @@ extension Gate1AppModel {
         marginCapture.setPresentationContext(RecordingPresentationContext(snapshot: snapshot, startedAt: Date()))
         suggestSharedMarginReply()
         engine?.changeReplyOfCurrentCapture(to: marginCapture.pendingReply?.link)
+        startJustHeardPeek()
     }
 
     /// Switches the Margin being recorded or written between a reply and an independent Margin.

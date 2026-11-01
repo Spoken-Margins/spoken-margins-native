@@ -113,4 +113,37 @@ final class JustHeardCueTests: XCTestCase {
         _ = try engine.beginInterjection()
         XCTAssertNil(JustHeardCue.excerpt(from: engine.recordingContextBefore))
     }
+
+    // #2966: a podcast's words arrive a second or two after recording starts.
+    func testPeekWordsShowOnlyForTheRecordingThatAskedForThem() {
+        var peek = JustHeardPeekState()
+        let first = peek.begin()
+        XCTAssertNil(peek.text)
+        XCTAssertTrue(peek.deliver("The heard words.", ticket: first))
+        XCTAssertEqual(peek.text, "The heard words.")
+        XCTAssertFalse(peek.deliver("The heard words.", ticket: first), "the same words again change nothing")
+
+        // The next Margin starts before a slow peek for the first one finishes: the late words never show on it.
+        let second = peek.begin()
+        XCTAssertNil(peek.text, "a new recording starts with an empty card")
+        XCTAssertFalse(peek.deliver("Late words.", ticket: first))
+        XCTAssertNil(peek.text)
+        XCTAssertTrue(peek.deliver("Its own words.", ticket: second))
+        XCTAssertEqual(peek.text, "Its own words.")
+    }
+
+    func testPeekWordsAreGoneOnceTheRecordingEnds() {
+        var peek = JustHeardPeekState()
+        let ticket = peek.begin()
+        XCTAssertTrue(peek.deliver("Shown while recording.", ticket: ticket))
+        peek.end()
+        XCTAssertNil(peek.text)
+
+        let next = peek.begin()
+        peek.end()
+        XCTAssertFalse(peek.deliver("Arrived after Save.", ticket: next), "words for a saved Margin never show")
+        XCTAssertNil(peek.text)
+        XCTAssertFalse(peek.deliver(nil, ticket: next))
+        XCTAssertFalse(peek.deliver("", ticket: next))
+    }
 }

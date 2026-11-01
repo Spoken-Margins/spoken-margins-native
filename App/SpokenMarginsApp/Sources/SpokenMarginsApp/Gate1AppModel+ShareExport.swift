@@ -23,24 +23,46 @@ extension Gate1AppModel {
         SharedMarginExport.anchorWarning(for: interjection, isNativeAudio: selectedItem.isNativeAudio)
     }
 
-    func exportSharedInterjections(presentsReadySheet: Bool = true) {
+    /// Builds the packet for the included drafts. The Margin voice files' durations are read, and the whole archive
+    /// is written, off the main thread (#2510, #2256); everything else stays on it, and the result lands on the
+    /// model exactly as before. A second call while one is running does nothing. Returns the packet's file, or nil
+    /// when none was written by this call (the reason, when there is one, is in `sharingState.errorMessage`).
+    @discardableResult
+    func exportSharedInterjections(presentsReadySheet: Bool = true) async -> URL? {
+        guard !sharingState.isExporting else { return nil }
         guard !sharingState.isBulkPreparing else {
             sharingState.errorMessage = "Finish or cancel bulk preparation before sharing."
-            return
+            return nil
         }
         let (drafts, omission) = SharedMarginTextRequirement.shareable(sharingState.drafts.filter(\.isIncluded), text: \.approvedTranscript)
         guard !drafts.isEmpty else {
             sharingState.errorMessage = omission ?? "Select at least one Margin with reviewed text."
-            return
+            return nil
         }
         sharingState.isExporting = true
         sharingState.errorMessage = nil
+        // The settings are read once, before the first suspension, so a toggle changed mid-build cannot mix into this packet.
+        let includesAcousticEvidence = sharingState.includesAcousticEvidence
+        let isAppAuthoredItem = sharingState.isAppAuthoredItem
+        let confirmsPrivateSharingRights = sharingState.confirmsPrivateSharingRights
+        let senderDisplayLabel = sharingState.senderDisplayLabel
+        // Open each included voice Margin's audio header away from main. Only the paths resolve here.
+        let startedItemID = selectedItem.id
+        let originalVoiceURLs = drafts.compactMap { draft -> URL? in
+            guard draft.representationChoice == .original else { return nil }
+            return draft.interjection.audioPath.flatMap(resolvedInterjectionAudioURL(for:))
+        }
+        let originalVoiceDurations = await Self.audioDurationsMs(of: originalVoiceURLs)
+        guard selectedItem.id == startedItemID else { // the listener moved to another item while the headers were read
+            sharingState.isExporting = false
+            return nil
+        }
         var prepared: PreparedSpokenMarginsPackage?
         do {
             let store = try requireStore()
             let item = try store.loadItem(id: selectedItem.id)
             let itemIdentity = sharedItemIdentity(for: item, drafts: drafts)
-            let itemTransport = SharedMarginExport.itemTransport(item: item, identity: itemIdentity, isAppAuthored: sharingState.isAppAuthoredItem, confirmsPrivateRights: sharingState.confirmsPrivateSharingRights)
+            let itemTransport = SharedMarginExport.itemTransport(item: item, identity: itemIdentity, isAppAuthored: isAppAuthoredItem, confirmsPrivateRights: confirmsPrivateSharingRights)
             var machineEvidence: [ReviewedMachineEvidenceAsset] = []
             var selections: [ReviewedInterjectionSelection] = []
 
@@ -63,7 +85,7 @@ extension Gate1AppModel {
                 )
                 try store.saveInterjectionShareRevision(revision)
 
-                let evidence = sharingState.includesAcousticEvidence
+                let evidence = includesAcousticEvidence
                     ? (draft.interjection.podcastAnchorEvidence ?? []).filter { FileManager.default.fileExists(atPath: $0.localPath) }
                     : []
                 machineEvidence.append(contentsOf: evidence.map {
@@ -87,7 +109,7 @@ extension Gate1AppModel {
                 switch draft.representationChoice {
                 case .original:
                     guard let url = draft.interjection.audioPath.flatMap(resolvedInterjectionAudioURL(for:)),
-                          let duration = audioDurationMs(at: url) else {
+                          let duration = originalVoiceDurations[url] else {
                         throw SessionKitError.persistenceFailed("selected_original_margin_audio_unavailable")
                     }
                     representation = .originalAudio(sourceURL: url, durationMs: duration)
@@ -111,7 +133,7 @@ extension Gate1AppModel {
                 try store.loadPortableListeningMapProposals(itemId: item.id),
                 currentProposalID: try store.loadResolvedListeningMapProjection(itemId: item.id)?.proposalId
             )
-            let fingerprintSpines = sharingState.includesAcousticEvidence
+            let fingerprintSpines = includesAcousticEvidence
                 ? try store.loadEditionFingerprintSpine(itemId: item.id).map { [$0] } ?? []
                 : []
             let phraseSketches = try store.loadTranscriptPhraseSketch(itemId: item.id).map { [$0] } ?? []
@@ -143,16 +165,20 @@ extension Gate1AppModel {
                 fingerprintSpines: fingerprintSpines,
                 phraseSketches: phraseSketches,
                 machineEvidence: machineEvidence,
-                senderDisplayLabel: sharingState.senderDisplayLabel.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+                senderDisplayLabel: senderDisplayLabel.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
             )
             prepared = package
             let directory = try applicationSupportDirectory()
                 .appending(path: "SpokenMargins/SharedPackages", directoryHint: .isDirectory)
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             let destination = directory.appending(path: "\(SharedMarginExport.fileName(item.title))-\(packageID.suffix(8)).spokenmargins")
-            let writtenManifest = try SpokenMarginsPackageArchive.write(package, to: destination); try? SpokenMarginsPackageExportRecord.recordExport(manifest: writtenManifest, selections: selections, repository: store) // replies link back through the recorded identity; the share still succeeds without it (#473)
+            // The archive reads every asset and zips it; the write creates the folder itself, atomically (#2510).
+            let writtenManifest = try await Self.offMain {
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                return try SpokenMarginsPackageArchive.write(package, to: destination)
+            }
+            try? SpokenMarginsPackageExportRecord.recordExport(manifest: writtenManifest, selections: selections, repository: store) // replies link back through the recorded identity; the share still succeeds without it (#473)
             listeningSignals.export(itemId: item.id, packetId: packageID, marginCount: drafts.count, packetURL: destination)
-            UserDefaults.standard.set(sharingState.senderDisplayLabel, forKey: "sharingSenderDisplayLabel")
+            UserDefaults.standard.set(senderDisplayLabel, forKey: "sharingSenderDisplayLabel")
             sharedSpokenMarginsPackageURL = destination
             sharingState.isExporting = false
             if presentsReadySheet {
@@ -161,11 +187,13 @@ extension Gate1AppModel {
             }
             diagnostics["lastSharedPackage"] = "margins=\(drafts.count);evidence=\(machineEvidence.count);map=\(mapProposals.isEmpty ? "preparing_or_unavailable" : "included")"
             if let omission { reportWarning(omission) }
+            return destination
         } catch {
             sharingState.isExporting = false
             let failure = SharedPacketExportFailure(error: error, prepared: prepared)
             sharingState.errorMessage = failure.listenerMessage
             diagnostics["lastSharedPackageFailure"] = failure.diagnostic
+            return nil
         }
     }
 
@@ -192,8 +220,16 @@ extension Gate1AppModel {
         SharedPacketItemMatcher.itemType(for: item)
     }
 
-    private func audioDurationMs(at url: URL) -> Int? {
-        guard let file = try? AVAudioFile(forReading: url), file.processingFormat.sampleRate > 0 else { return nil }
-        return max(1, Int((Double(file.length) / file.processingFormat.sampleRate * 1_000).rounded()))
+    /// The length of each audio file, by URL; a file that will not open is left out. Opens each header off the main thread.
+    private nonisolated static func audioDurationsMs(of urls: [URL]) async -> [URL: Int] {
+        guard !urls.isEmpty else { return [:] }
+        return await Task.detached(priority: .userInitiated) { () -> [URL: Int] in
+            var durations: [URL: Int] = [:]
+            for url in urls {
+                guard let file = try? AVAudioFile(forReading: url), file.processingFormat.sampleRate > 0 else { continue }
+                durations[url] = max(1, Int((Double(file.length) / file.processingFormat.sampleRate * 1_000).rounded()))
+            }
+            return durations
+        }.value
     }
 }

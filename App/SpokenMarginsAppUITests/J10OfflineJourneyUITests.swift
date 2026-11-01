@@ -144,13 +144,20 @@ final class J10OfflineJourneyUITests: XCTestCase {
             // (ShareLinkOpeningTests pins this exact link).
             let link = try XCTUnwrap(URL(string:
                 "https://spokenmargins.proximitytoprogress.com/l/0123456789abcdef0123456789abcdef#AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"))
-            app.open(link)
-            guard app.wait(for: .runningForeground, timeout: 5) else {
-                // J10: if Safari takes the link, the universal link didn't route; neither a pass nor a fail.
-                throw XCTSkip("The share link opened outside the app, so this simulator didn't route it")
-            }
+            // `XCUIApplication.open(_:)` launches the app again (the hosted run's log shows "Launch" and a new
+            // automation session at this step, #2919), which ends the article and lands on a fresh Library, so it
+            // can't show playback surviving a failed link. The system opens the link, as a tap in another app would,
+            // and hands it to the app that is already running.
+            XCUIDevice.shared.system.open(link)
             let banner = element("app.feedback.banner")
-            XCTAssertTrue(banner.waitForExistence(timeout: 20), "The share link showed no message")
+            guard banner.waitForExistence(timeout: 20) else {
+                // J10: if Safari takes the link, the universal link didn't route; neither a pass nor a fail.
+                // The app is still foreground when `open` returns, so only a missing message tells the two apart.
+                if app.state != .runningForeground {
+                    throw XCTSkip("The share link opened outside the app, so this simulator didn't route it")
+                }
+                return XCTFail("The share link showed no message")
+            }
             screenshot("J10 share link with the server unreachable")
             // "offline" means the fetch went to the swapped host; the real server would answer with a not-found.
             XCTAssertTrue(banner.label.localizedCaseInsensitiveContains("offline"),
@@ -185,15 +192,21 @@ final class J10OfflineJourneyUITests: XCTestCase {
         screenshot("J10 article playing offline")
     }
 
-    /// Scrolls the sender flow until `identifier` sits clear of its pinned footer, as Gate1FlowUITests does.
+    /// Scrolls the sender flow until `identifier` sits clear of whatever is pinned at its bottom, as Gate1FlowUITests does.
+    ///
+    /// What is pinned depends on the stage: Review on the select stage, Share on the review stage (#2920), and the
+    /// Debug "Create recipient test session" tool once a verified packet exists. The drag must start above all of
+    /// them, or it lands on the pinned bar and the list never moves (the hosted run's video shows exactly that).
     private func senderElement(_ identifier: String) -> XCUIElement {
         let candidate = element(identifier)
         let sender = element("build23.sender.experience")
         XCTAssertTrue(sender.waitForExistence(timeout: 5), "The sender flow is missing")
-        let footer = element("build23.sender.recipient-test-session")
+        let pinned = ["build23.sender.recipient-test-session", "build23.sender.review.share", "build23.sender.select.continue"]
+            .filter { $0 != identifier }
+            .map { element($0) }
         func visibleBottom() -> CGFloat {
             let screenBottom = min(sender.frame.maxY - 8, app.windows.firstMatch.frame.maxY - 34)
-            return footer.exists ? min(screenBottom, footer.frame.minY - 12) : screenBottom
+            return pinned.filter { $0.exists && !$0.frame.isEmpty }.reduce(screenBottom) { min($0, $1.frame.minY - 12) }
         }
         func reachable() -> Bool {
             candidate.exists && candidate.isHittable

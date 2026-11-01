@@ -45,7 +45,7 @@ extension Gate1AppModel {
         ))
     }
 
-    func scheduleTransientRecipientAlignmentTranscript(for item: Item, localSourceURL: URL) {
+    func scheduleTransientRecipientAlignmentTranscript(for item: some LibraryItemFields, localSourceURL: URL) {
         importedPodcastPlacement.scheduleTransientTranscript(for: item, localSourceURL: localSourceURL)
     }
 
