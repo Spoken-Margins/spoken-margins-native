@@ -221,6 +221,10 @@ func (s *Store) Sweep(now time.Time) (int, error) {
 func (s *Store) Takedown(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.takedownLocked(id)
+}
+
+func (s *Store) takedownLocked(id string) error {
 	if !ValidID(id) {
 		return ErrNotFound
 	}
