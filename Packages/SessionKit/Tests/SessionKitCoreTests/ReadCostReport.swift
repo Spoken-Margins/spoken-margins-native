@@ -38,6 +38,7 @@ struct ReadCostReport {
             ("loadListeningMap(mapped)", { _ = try store.loadListeningMap(itemId: mapped) }),
             ("listeningMapId(mapped)", { _ = try store.listeningMapId(itemId: mapped) }),
             ("loadTranscriptTimeline(itemId: mapped)", { _ = try store.loadTranscriptTimeline(itemId: mapped) }),
+            ("storedSourceContextWindow(mapped)", { _ = try store.storedSourceContextWindow(itemId: mapped, anchorMediaTimeMs: 0, windowBeforeMs: 10_000, windowAfterMs: 10_000) }),
             ("loadTranscriptTimelineSummary(mapped)", { _ = try store.loadTranscriptTimelineSummary(itemId: mapped) }),
             ("transcriptTimelineStamp(mapped)", { _ = try store.transcriptTimelineStamp(itemId: mapped) }),
             ("sourceTranscriptSizes()", { _ = try store.sourceTranscriptSizes() }),
