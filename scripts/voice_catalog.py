@@ -763,10 +763,10 @@ def render_page(catalog: dict, sources: dict) -> str:
         "<body><main><header><div class=\"mark\"><a href=\"/\">Spoken Margins</a></div><h1>Voices</h1>"
         f"<p class=\"meta\">Catalog version {_esc(catalog['catalogVersion'])}, issued {_esc(catalog['issuedAt'])}</p></header>\n"
         "<p class=\"lede\">These are the voices the Spoken Margins app can read with, where each one comes from, and the licence it is under. "
-        "The app ships with its own reviewed copy of this list, downloads each file straight from where it is listed, and refuses any file whose size or SHA-256 does not match. "
+        "The app ships with its own reviewed list of voices, downloads each file straight from its publisher, and refuses any file whose size or SHA-256 does not match. "
         "The signed list is at <a href=\"/voices/v1/catalog.json\">/voices/v1/catalog.json</a>.</p>\n"
         + "\n".join(cards)
-        + "\n<footer><a href=\"/privacy/\">Privacy Policy</a> | <a href=\"/terms/\">Terms of Use</a> | <a href=\"/support/\">Support</a> | <a href=\"/\">Home</a></footer></main></body></html>\n")
+        + "\n<footer><a href=\"/privacy/\">Privacy Policy</a> | <a href=\"/terms/\">Terms of Use</a> | <a href=\"/support/\">Support</a> | <a href=\"../copyright/\">Copyright and DMCA</a> | <a href=\"/\">Home</a></footer></main></body></html>\n")
 
 
 def write_page(sources: dict, site_dir: Path, out=print) -> Path:

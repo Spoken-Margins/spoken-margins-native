@@ -189,6 +189,12 @@ class TheShippedSources(unittest.TestCase):
         self.assertEqual(manifest["catalogChecksumSHA256"], vc.sha256_hex(catalog_bytes))
         self.assertEqual(manifest["catalogByteCount"], len(catalog_bytes))
 
+    def test_the_committed_site_page_is_what_the_tool_renders(self):
+        # `page` rewrites Site/voices/index.html whole, so a hand edit there is lost at the next publish: #3063's
+        # "Copyright and DMCA" footer link was. Change render_page instead, then run `page`.
+        catalog = vc.published_payload(vc.SITE_DIR)
+        self.assertEqual((vc.SITE_DIR / vc.PAGE_REL).read_text(encoding="utf-8"), vc.render_page(catalog, vc.load_sources()))
+
     @unittest.skipUnless(HAVE_CRYPTO, "cryptography is not installed")
     def test_the_committed_site_catalog_is_signed_by_a_key_the_app_trusts(self):
         envelope = json.loads((vc.SITE_DIR / vc.CATALOG_REL).read_text(encoding="utf-8"))
