@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"spokenmargins.dev/bridge/internal/api"
+	"spokenmargins.dev/bridge/internal/links"
 )
 
 const reportKey = "KEYKEYKEYSECRETKEY"
@@ -293,5 +294,107 @@ func TestAKeyPastedIntoAReasonDoesNotReachTheReportRecord(t *testing.T) {
 		if bytes.Contains(data, []byte(reportKey)) {
 			t.Fatalf("the key reached %s", path)
 		}
+	}
+}
+
+// #3120: a junk link posted first by a stranger must not lock out the real reporter's link.
+func TestAJunkReportedLinkPostedFirstDoesNotDisplaceTheRealOne(t *testing.T) {
+	s, _ := enabledLinks(t)
+	h := s.Handler()
+	id := createdLink(t, h)
+	junk := "https://spokenmargins.com/l/" + id + "#junk"
+	real := "https://spokenmargins.com/l/" + id + "#" + reportKey
+	if code, body := postReport(h, id, "category=abuse_material&link="+junk, "203.0.113.7"); code != 200 {
+		t.Fatalf("junk report: %d %s", code, body)
+	}
+	// The link is already down; the real reporter's report must still reach the hold.
+	if code, body := postReport(h, id, "category=abuse_material&link="+real, "203.0.113.8"); code != 200 && code != 410 {
+		t.Fatalf("real report: %d %s", code, body)
+	}
+	held := filepath.Join(stateDirOf(s), "links-held", id)
+	found := false
+	for _, name := range []string{"reported-link", "reported-link-2", "reported-link-3"} {
+		if data, err := os.ReadFile(filepath.Join(held, name)); err == nil && string(data) == real {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("the real reporter's link was not kept next to the junk one")
+	}
+}
+
+// A cap must alert and keep, never fall back to a plain takedown, which deletes the ciphertext.
+func TestHoldsPastTheClientCapDisableTheLinkKeepItsContentAndLeaveALine(t *testing.T) {
+	s, _ := enabledLinks(t)
+	s.HoldsPerClientPerDay = 2
+	h := s.Handler()
+	var ids []string
+	for i := 0; i < 3; i++ {
+		ids = append(ids, createdLink(t, h))
+	}
+	for i, id := range ids {
+		full := "https://spokenmargins.com/l/" + id + "#" + reportKey
+		if code, body := postReport(h, id, "category=abuse_material&link="+full, "203.0.113.7"); code != 200 {
+			t.Fatalf("report %d: %d %s", i, code, body)
+		}
+		if !linkIsDown(h, id) {
+			t.Fatalf("link %d still served", i)
+		}
+	}
+	for i, id := range ids {
+		_, heldErr := os.Stat(filepath.Join(stateDirOf(s), "links-held", id, "packet"))
+		live, liveErr := os.ReadFile(filepath.Join(stateDirOf(s), "links", id, "packet"))
+		if i < 2 {
+			if heldErr != nil {
+				t.Fatalf("hold %d under the cap missing: %v", i, heldErr)
+			}
+			continue
+		}
+		if heldErr == nil {
+			t.Fatal("a hold past the client cap was made")
+		}
+		if liveErr != nil || !bytes.Equal(live, linkPacket) {
+			t.Fatalf("the capped link's ciphertext was deleted: %v", liveErr)
+		}
+		logText, _ := os.ReadFile(filepath.Join(stateDirOf(s), "links-held", "access.log"))
+		if !strings.Contains(string(logText), `"event":"cap"`) || !strings.Contains(string(logText), id) {
+			t.Fatalf("the cap left no line for the owner: %s", logText)
+		}
+	}
+	// Another client network is not held back by the first one's count.
+	other := createdLink(t, h)
+	if code, _ := postReport(h, other, "category=abuse_material&link=https://spokenmargins.com/l/"+other+"%23"+reportKey, "198.51.100.9"); code != 200 {
+		t.Fatalf("other client: %d", code)
+	}
+	if _, err := os.Stat(filepath.Join(stateDirOf(s), "links-held", other, "packet")); err != nil {
+		t.Fatalf("another client's report was refused a hold: %v", err)
+	}
+}
+
+func TestAHoldPastTheStoreCapDisablesTheLinkAndKeepsItsContent(t *testing.T) {
+	s, _ := enabledLinks(t)
+	s.Links.HoldLimits = links.HoldLimits{MaxItems: 1}
+	h := s.Handler()
+	a, b := createdLink(t, h), createdLink(t, h)
+	for _, id := range []string{a, b} {
+		if code, body := postReport(h, id, "category=abuse_material", "203.0.113.7"); code != 200 {
+			t.Fatalf("report: %d %s", code, body)
+		}
+		if !linkIsDown(h, id) {
+			t.Fatal("link still served")
+		}
+	}
+	if _, err := os.Stat(filepath.Join(stateDirOf(s), "links-held", b)); err == nil {
+		t.Fatal("a hold past the store cap was made")
+	}
+	if data, err := os.ReadFile(filepath.Join(stateDirOf(s), "links", b, "packet")); err != nil || !bytes.Equal(data, linkPacket) {
+		t.Fatalf("the capped link's ciphertext was deleted: %v", err)
+	}
+	// The owner can still hold it by hand, and it has its ciphertext to keep.
+	if err := s.Links.HoldByOwner(b, "NCMEC-1", nil, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(stateDirOf(s), "links-held", b, "packet")); err != nil {
+		t.Fatalf("hold by hand after the cap: %v", err)
 	}
 }

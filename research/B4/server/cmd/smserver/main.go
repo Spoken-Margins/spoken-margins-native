@@ -530,7 +530,7 @@ func holdLink(args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := st.Hold(fs.Arg(0), *report, full, time.Now()); err != nil {
+	if err := st.HoldByOwner(fs.Arg(0), *report, full, time.Now()); err != nil {
 		return err
 	}
 	fmt.Println("link taken down and held for one year")
