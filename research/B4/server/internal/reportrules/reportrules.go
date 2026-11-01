@@ -222,18 +222,21 @@ func (s Step) ReportingAllowed(ch Channel) bool {
 }
 
 // ReportedLink is a link id and the time its first report was filed. The
-// sender's state keeps nothing else about a report.
+// sender's state keeps nothing else about a report. Used is true once a strike
+// has taken the link; it is kept until the link ages out of the strike window so
+// the same link, reported again, is still counted once.
 type ReportedLink struct {
-	ID string
-	At time.Time
+	ID   string
+	At   time.Time
+	Used bool
 }
 
 // SenderState is everything the ladder needs about one sender (kept under a
 // keyed hash of the install key, never the key itself). It holds no category.
 type SenderState struct {
 	Step Step
-	// Pending are reported links not yet used up by a strike.
-	Pending []ReportedLink
+	// Links are the reported links inside the strike window, used or not.
+	Links []ReportedLink
 	// PausedUntil is zero unless a week or month pause is running.
 	PausedUntil time.Time
 }
@@ -257,11 +260,12 @@ type StrikeResult struct {
 }
 
 // RecordReportedLink adds one report to the sender's state at `at` and returns
-// the new state. A link counts once however often or by whomever it is reported.
-// When StrikeLinks distinct links sit inside StrikeWindow, that is a strike: the
-// step rises, the pending links are used up, and a pause starts (permanent at the
-// third). Reports for a sender's links keep counting during a pause, because
-// links made earlier stay live until they expire; they build the next strike.
+// the new state. A link counts once however often or by whomever it is reported,
+// including after a strike has used it. When StrikeLinks unused links sit inside
+// StrikeWindow, that is a strike: the step rises, those links are marked used,
+// and a pause starts (permanent at the third). Reports for a sender's links keep
+// counting during a pause, because links made earlier stay live until they
+// expire; they build the next strike.
 //
 // The input state is not modified.
 func (c Config) RecordReportedLink(st SenderState, linkID string, at time.Time) (SenderState, StrikeResult) {
@@ -269,20 +273,27 @@ func (c Config) RecordReportedLink(st SenderState, linkID string, at time.Time) 
 	if st.Step == StepEnded {
 		return out, StrikeResult{}
 	}
-	for _, p := range st.Pending {
-		if p.ID == linkID {
-			out.Pending = append([]ReportedLink(nil), st.Pending...)
+	unused := 0
+	for _, l := range st.Links {
+		if !within(l.At, at, c.StrikeWindow) {
+			continue
+		}
+		if l.ID == linkID {
+			out.Links = append([]ReportedLink(nil), st.Links...)
 			return out, StrikeResult{}
 		}
-		if within(p.At, at, c.StrikeWindow) {
-			out.Pending = append(out.Pending, p)
+		out.Links = append(out.Links, l)
+		if !l.Used {
+			unused++
 		}
 	}
-	out.Pending = append(out.Pending, ReportedLink{ID: linkID, At: at})
-	if len(out.Pending) < c.StrikeLinks {
+	out.Links = append(out.Links, ReportedLink{ID: linkID, At: at})
+	if unused+1 < c.StrikeLinks {
 		return out, StrikeResult{Counted: true}
 	}
-	out.Pending = nil
+	for i := range out.Links {
+		out.Links[i].Used = true
+	}
 	switch st.Step {
 	case StepClean:
 		out.Step, out.PausedUntil = StepStrike1, at.Add(c.PauseAfterStrike1)

@@ -200,8 +200,8 @@ func TestTwoReportedLinksInNinetyDaysAreAStrikeWithAWeekPause(t *testing.T) {
 	if want := at.Add(7 * day); !st.PausedUntil.Equal(want) {
 		t.Errorf("PausedUntil = %v, want %v", st.PausedUntil, want)
 	}
-	if len(st.Pending) != 0 {
-		t.Errorf("the two links are used up by the strike: %+v", st.Pending)
+	if unusedLinks(st) != 0 {
+		t.Errorf("the two links are used up by the strike: %+v", st.Links)
 	}
 	if st.SharingAllowed(at) || st.SharingAllowed(at.Add(7*day-time.Nanosecond)) {
 		t.Error("sharing must be paused for the whole week")
@@ -222,8 +222,8 @@ func TestLinksFarApartAreNotAStrike(t *testing.T) {
 	if res.Struck || st2.Step != StepClean {
 		t.Errorf("past 90 days: %+v %+v", st2, res)
 	}
-	if len(st2.Pending) != 1 || st2.Pending[0].ID != "b" {
-		t.Errorf("the aged-out link must drop out: %+v", st2.Pending)
+	if len(st2.Links) != 1 || st2.Links[0].ID != "b" {
+		t.Errorf("the aged-out link must drop out: %+v", st2.Links)
 	}
 }
 
@@ -237,8 +237,8 @@ func TestTheSameLinkReportedAgainCountsOnce(t *testing.T) {
 			t.Fatalf("repeat %d: %+v %+v", i, st, res)
 		}
 	}
-	if len(st.Pending) != 1 {
-		t.Errorf("pending = %+v, want one link", st.Pending)
+	if len(st.Links) != 1 {
+		t.Errorf("links = %+v, want one link", st.Links)
 	}
 }
 
@@ -279,25 +279,48 @@ func TestLadderIsWeekThenMonthThenPermanent(t *testing.T) {
 	}
 	// An ended sender does not climb further or collect pending links.
 	after, res := report(t, cfg, st, "4a", now)
-	if res.Counted || res.Struck || after.Step != StepEnded || len(after.Pending) != 0 {
+	if res.Counted || res.Struck || after.Step != StepEnded || len(after.Links) != 0 {
 		t.Errorf("after the end: %+v %+v", after, res)
 	}
 }
 
-func TestEveryRecordedReportCountsWhateverItsCategory(t *testing.T) {
-	// The ladder is fed link ids and times only, so no category can change it.
-	// This checks the rule from the caller's side: every category's Intake says
-	// the report counts, and the strike lands on the second link.
+func unusedLinks(st SenderState) int {
+	n := 0
+	for _, l := range st.Links {
+		if !l.Used {
+			n++
+		}
+	}
+	return n
+}
+
+// The ladder takes link ids and times only, never a category, so no category can
+// change it. What can differ by category is whether Intake says the report counts.
+func TestEveryCategoryCountsTowardTheSenderLadder(t *testing.T) {
 	cfg := DefaultConfig()
 	for _, c := range Categories() {
-		d := cfg.Intake(Submission{Category: string(c)}, nil, t0)
-		if !d.CountsForSender {
-			t.Fatalf("%s must count toward the sender", c)
+		if d := cfg.Intake(Submission{Category: string(c)}, nil, t0); !d.CountsForSender {
+			t.Errorf("%s must count toward the sender", c)
 		}
-		st, _ := report(t, cfg, SenderState{}, "a", t0)
-		if st, res := report(t, cfg, st, "b", t0.Add(time.Minute)); !res.Struck || st.Step != StepStrike1 {
-			t.Errorf("%s: %+v %+v", c, st, res)
-		}
+	}
+}
+
+// A link that took part in a strike must not count a second time when it is
+// reported again after the strike (found in review).
+func TestALinkUsedByAStrikeIsNotCountedAgain(t *testing.T) {
+	cfg := DefaultConfig()
+	st, _ := report(t, cfg, SenderState{}, "a", t0)
+	st, _ = report(t, cfg, st, "b", t0.Add(time.Hour)) // strike 1
+	st, res := report(t, cfg, st, "a", t0.Add(2*time.Hour))
+	if res.Counted || res.Struck {
+		t.Fatalf("re-report of a used link: %+v", res)
+	}
+	st, res = report(t, cfg, st, "c", t0.Add(3*time.Hour))
+	if !res.Counted || res.Struck || st.Step != StepStrike1 {
+		t.Fatalf("one new link after a strike is not a strike: %+v %+v", st, res)
+	}
+	if st, res = report(t, cfg, st, "d", t0.Add(4*time.Hour)); !res.Struck || st.Step != StepStrike2 {
+		t.Fatalf("two new links are: %+v %+v", st, res)
 	}
 }
 
@@ -317,43 +340,35 @@ func TestReportsDuringAPauseBuildTheNextStrike(t *testing.T) {
 
 func TestRecordReportedLinkDoesNotModifyItsInput(t *testing.T) {
 	cfg := DefaultConfig()
-	in := SenderState{Pending: []ReportedLink{{ID: "a", At: t0}}}
-	snapshot := SenderState{Pending: append([]ReportedLink(nil), in.Pending...)}
+	in := SenderState{Links: []ReportedLink{{ID: "a", At: t0}}}
+	snapshot := SenderState{Links: append([]ReportedLink(nil), in.Links...)}
 	out, _ := cfg.RecordReportedLink(in, "b", t0.Add(time.Hour))
 	if !reflect.DeepEqual(in, snapshot) {
 		t.Errorf("input changed: %+v", in)
 	}
-	out.Pending = append(out.Pending, ReportedLink{ID: "z"})
+	out.Links = append(out.Links, ReportedLink{ID: "z"})
 	if !reflect.DeepEqual(in, snapshot) {
 		t.Error("output shares storage with the input")
 	}
 }
 
-func TestSenderNoticeIsTheSameForEveryCategory(t *testing.T) {
-	cfg := DefaultConfig()
-	var first SenderView
-	for i, c := range Categories() {
-		if d := cfg.Intake(Submission{Category: string(c)}, nil, t0); d.Err != nil {
-			t.Fatal(d.Err)
-		}
-		// The sender's side never sees the category: build the same history with
-		// each category in turn and compare what the app is shown.
-		st, _ := report(t, cfg, SenderState{}, "a", t0)
-		st, _ = report(t, cfg, st, "b", t0.Add(time.Minute))
-		v := ViewFor(st, true, t0.Add(time.Hour))
-		if i == 0 {
-			first = v
-		} else if !reflect.DeepEqual(v, first) {
-			t.Errorf("%s: view %+v differs from %+v", c, v, first)
-		}
-		if v.Notice != "A link you shared was taken down after a report" {
-			t.Errorf("%s: notice %q", c, v.Notice)
-		}
+// ViewFor takes the sender's state, which holds no category, so the notice
+// cannot depend on one. This pins the exact text and that it names no category.
+func TestSenderNoticeIsGenericAndNamesNoCategory(t *testing.T) {
+	if SenderNotice != "A link you shared was taken down after a report" {
+		t.Errorf("notice text changed: %q", SenderNotice)
 	}
 	for _, c := range Categories() {
 		if strings.Contains(strings.ToLower(SenderNotice), strings.ToLower(string(c))) {
 			t.Errorf("the notice must not name %q", c)
 		}
+	}
+	st := SenderState{Links: []ReportedLink{{ID: "a", At: t0}}}
+	if v := ViewFor(st, true, t0); v.Notice != SenderNotice {
+		t.Errorf("view notice = %q", v.Notice)
+	}
+	if v := ViewFor(st, false, t0); v.Notice != "" {
+		t.Errorf("no takedown, no notice: %q", v.Notice)
 	}
 }
 
