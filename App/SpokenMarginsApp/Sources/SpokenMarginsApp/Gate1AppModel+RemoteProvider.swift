@@ -5,27 +5,10 @@ import SessionKitPersistence
 /// AI job recovery and local summary execution. Moved out of `Gate1AppModel.swift` (#960). Nothing here talks to a
 /// remote AI service (#2845); the file keeps its name so the main-thread-reads baseline paths stay stable.
 extension Gate1AppModel {
-    func recoverInterruptedAIJobs(store: SQLiteSessionStore, rows: [LibraryItemRow]) throws {
-        var recovered = 0
-        for row in rows {
-            for session in try store.loadSessions(itemId: row.id) {
-                for var job in try store.loadAIJobs(sessionId: session.id) where job.status == "pending" || job.status == "streaming" {
-                    let remoteJobDisabled = job.providerType != "apple_foundation_on_device"
-                    job.status = remoteJobDisabled ? "failed" : "retryable"
-                    job.lastError = remoteJobDisabled
-                        ? "remote_provider_disabled_by_feature_flag"
-                        : "app_terminated_during_stream"
-                    try store.updateAIJob(job)
-                    if let turnId = job.turnId,
-                       var turn = try store.loadTurns(sessionId: session.id).first(where: { $0.id == turnId && $0.status == "streaming" }) {
-                        turn.status = "failed_partial"
-                        try store.saveTurn(turn)
-                    }
-                    recovered += 1
-                }
-            }
-        }
-        diagnostics["recoveredInterruptedAIJobs"] = "\(recovered)"
+    /// Settles the AI jobs a killed run left in flight. One store query names the sessions that hold one (#2506); the
+    /// settling itself is `SQLiteSessionStore.settleInterruptedAIJobs()`.
+    func recoverInterruptedAIJobs(store: SQLiteSessionStore) throws {
+        diagnostics["recoveredInterruptedAIJobs"] = "\(try store.settleInterruptedAIJobs())"
     }
 
     func submitLocalSummary(itemId: String, turnId: String, contexts: [String], retryContext: LocalSummaryRetryContext) {

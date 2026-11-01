@@ -90,7 +90,7 @@ extension Gate1AppModel {
             rows = LibraryRowBuilder.rows(from: launchData, context: startupAudioContext)
             let deletedRows = Self.recentlyDeletedRows(from: launchData)
             try reconcileOnboardingEvidence(items: launchData.liveItems, store: store)
-            try recoverInterruptedAIJobs(store: store, rows: rows); settleOrphanedTranscriptions(store: store)
+            try recoverInterruptedAIJobs(store: store); settleOrphanedTranscriptions(store: store)
             libraryItems = rows
             recentlyDeletedItems = deletedRows
             let availableItemIDs = Set(rows.map(\.id))
