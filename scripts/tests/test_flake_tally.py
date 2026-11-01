@@ -97,7 +97,12 @@ class Report(unittest.TestCase):
 
     def test_dry_run_files_nothing_and_file_issues_files_one_per_test(self):
         comments = self.comments(3) + self.comments(4, OTHER)
-        with mock.patch.object(report, 'fetch_comments', return_value=comments), \
+        # main() reads the clock; the comments are dated against NOW, so pin it or the 7-day window drifts past them.
+        clock = mock.Mock(wraps=dt)
+        clock.datetime = mock.Mock(wraps=dt.datetime)
+        clock.datetime.now.return_value = NOW
+        with mock.patch.object(report, 'dt', clock), \
+                mock.patch.object(report, 'fetch_comments', return_value=comments), \
                 mock.patch.object(report, 'fetch_open_issues', return_value=[issue(OTHER)]), \
                 mock.patch.object(report, 'fetch_closed_issues', return_value=[]), \
                 mock.patch.object(report, 'open_issue', return_value='url') as opener, \
