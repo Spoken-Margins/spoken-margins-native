@@ -99,40 +99,73 @@ extension Gate1AppModel {
     /// Builds one Markdown file per selected session in a temporary folder and hands them to the system share
     /// sheet (#1528). Nothing is written to a remembered folder, and nothing is called "shared" until the
     /// sheet reports a completed share.
-    func prepareSelectedSessionsForSharing() {
-        guard batchExportShare == nil else { return }
+    ///
+    /// Each session's store reads and the file writes run off the main actor (#2510, #2256): only the shaping of
+    /// one export and the final hand-off to the sheet happen here, so the tap returns at once. The button is
+    /// disabled while the files are built (`isPreparingBatchShare`). Leaving the screen first drops the result.
+    @discardableResult
+    func prepareSelectedSessionsForSharing() -> Task<Void, Never>? {
+        guard batchExportShare == nil, !isPreparingBatchShare else { return nil }
         guard !selectedBatchExportSessionIds.isEmpty else {
             reportFailure("Choose at least one session to export.")
-            return
+            return nil
         }
+        let engine: SessionEngine
         do {
-            if engine == nil {
+            if self.engine == nil {
                 let store = try requireStore()
                 installEngine(try makeEngine(store: store))
             }
-            guard let engine else {
+            guard let installed = self.engine else {
                 reportFailure("Session export is unavailable.")
-                return
+                return nil
             }
-            persistExportSettings()
-            let sources = batchExportRows.filter { selectedBatchExportSessionIds.contains($0.id) }.map {
-                SessionShareFiles.Source(sessionId: $0.id, itemTitle: $0.itemTitle,
-                                         sessionDate: $0.session.createdAt ?? $0.session.updatedAt)
-            }
-            let files = SessionShareFiles.build(sources, root: SessionShareFiles.shareRoot()) { source in
-                SessionExportMarkdownRenderer.render(try engine.buildExport(options: currentExportOptions(sessionId: source.sessionId)))
-            }
-            batchExportResult = files.failures.isEmpty ? nil
-                : BatchSessionExportResult(sharedFileNames: [], failures: files.failures, activityType: nil)
-            diagnostics["batchExportLastResult"] = "prepared=\(files.fileURLs.count);failed=\(files.failures.count)"
-            guard !files.fileURLs.isEmpty else {
-                reportFailure("No sessions could be prepared. Review the export result for details.")
-                return
-            }
-            batchExportShare = files
+            engine = installed
         } catch {
             reportFailure(error, context: "Batch export failed")
+            return nil
         }
+        persistExportSettings()
+        let sources = batchExportRows.filter { selectedBatchExportSessionIds.contains($0.id) }.map {
+            SessionShareFiles.Source(sessionId: $0.id, itemTitle: $0.itemTitle,
+                                     sessionDate: $0.session.createdAt ?? $0.session.updatedAt)
+        }
+        // The options are read once, before the first suspension, so a toggle changed mid-build can't mix into this share.
+        let options = currentExportOptions(sessionId: nil)
+        let startedOn = screen
+        isPreparingBatchShare = true
+        return Task { @MainActor [weak self] in
+            let files = await SessionShareFiles.buildOffMain(sources, root: SessionShareFiles.shareRoot()) { source in
+                var sessionOptions = options
+                sessionOptions.sessionId = source.sessionId
+                return SessionExportMarkdownRenderer.render(try await engine.buildExportReadingOffMain(options: sessionOptions))
+            }
+            guard let self else {
+                Self.discardOffMain(files)
+                return
+            }
+            hangTelemetry.labels.scoped("batchExport.publish") {
+                isPreparingBatchShare = false
+                // The listener left Export Sessions while the files were built: nothing is waiting for the sheet.
+                guard screen == startedOn else {
+                    Self.discardOffMain(files)
+                    return
+                }
+                batchExportResult = files.failures.isEmpty ? nil
+                    : BatchSessionExportResult(sharedFileNames: [], failures: files.failures, activityType: nil)
+                diagnostics["batchExportLastResult"] = "prepared=\(files.fileURLs.count);failed=\(files.failures.count)"
+                guard !files.fileURLs.isEmpty else {
+                    reportFailure("No sessions could be prepared. Review the export result for details.")
+                    return
+                }
+                batchExportShare = files
+            }
+        }
+    }
+
+    /// Removes a share's folder away from the main actor; nothing waits for it.
+    private nonisolated static func discardOffMain(_ files: SessionShareFiles) {
+        Task.detached(priority: .utility) { files.discard() }
     }
 
     /// The share sheet reported its outcome (`completed` is false when the listener cancelled). Removes the

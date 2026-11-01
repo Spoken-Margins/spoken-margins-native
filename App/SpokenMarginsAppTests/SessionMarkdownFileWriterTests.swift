@@ -119,7 +119,7 @@ final class BatchSessionExportWorkflowTests: XCTestCase {
         model.exportIncludesListeningMap = false
         model.exportIncludesInterjections = true
         model.exportIncludesTurns = true
-        model.prepareSelectedSessionsForSharing()
+        await model.prepareSelectedSessionsForSharing()?.value
 
         // #1528: the files are built for the share sheet; nothing is written to a remembered folder or
         // called shared yet.
@@ -147,7 +147,7 @@ final class BatchSessionExportWorkflowTests: XCTestCase {
         XCTAssertFalse(model.statusMessage.hasPrefix("Shared"))
 
         // Completed: "Shared 1 file" naming the activity iOS gives, and the onboarding step is marked.
-        model.prepareSelectedSessionsForSharing()
+        await model.prepareSelectedSessionsForSharing()?.value
         let again = try XCTUnwrap(model.batchExportShare)
         model.batchShareSheetFinished(completed: true, activityType: "com.apple.UIKit.activity.AirDrop")
         let result = try XCTUnwrap(model.batchExportResult)

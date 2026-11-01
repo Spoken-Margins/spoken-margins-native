@@ -212,11 +212,11 @@ struct BatchExportScreen: View {
                         Text("The share sheet opens with the files. Choose AirDrop, Save to Files or another app each time.")
                             .font(.subheadline)
                     }
-                    Button(action: model.prepareSelectedSessionsForSharing) {
+                    Button { model.prepareSelectedSessionsForSharing() } label: {
                         Label("Export \(model.selectedBatchExportSessionIds.count) Session\(model.selectedBatchExportSessionIds.count == 1 ? "" : "s")", systemImage: "square.and.arrow.up")
                     }
                     .buttonStyle(PrimaryButtonStyle())
-                    .disabled(model.batchExportShare != nil)
+                    .disabled(model.batchExportShare != nil || model.isPreparingBatchShare)
                     .accessibilityIdentifier("batchExport.export.button")
                 }
             }
