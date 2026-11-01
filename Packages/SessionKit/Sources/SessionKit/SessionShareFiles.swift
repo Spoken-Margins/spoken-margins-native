@@ -54,6 +54,49 @@ public struct SessionShareFiles: Equatable, Sendable {
         return SessionShareFiles(directory: urls.isEmpty ? nil : directory, fileURLs: urls, failures: failures)
     }
 
+    /// `build`, with the file work off the caller's actor (#2510). The folder is made and each file is written on a
+    /// background task; `render` runs on the caller's actor, where a caller can read the store with an async
+    /// read. Sources are rendered and written one at a time, in order, so a failure lists the same text as `build`
+    /// and the files are named the same. A caller that is cancelled between sources stops there: what was written
+    /// is removed and every unbuilt source is listed as cancelled, so no half share is left behind.
+    public static func buildOffMain(_ sources: [Source], root: URL,
+                                    isolation: isolated (any Actor)? = #isolation,
+                                    render: (Source) async throws -> String) async -> SessionShareFiles {
+        let directory = root.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        do {
+            try await Task.detached(priority: .userInitiated) {
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            }.value
+        } catch {
+            return SessionShareFiles(directory: nil, fileURLs: [],
+                                     failures: sources.map { "\($0.itemTitle): \(error.localizedDescription)" })
+        }
+        var urls: [URL] = []
+        var failures: [String] = []
+        for source in sources {
+            if Task.isCancelled {
+                failures.append("\(source.itemTitle): cancelled")
+                continue
+            }
+            do {
+                let markdown = try await render(source)
+                let url = try await Task.detached(priority: .userInitiated) {
+                    try SessionMarkdownFileWriter().write(markdown: markdown, itemTitle: source.itemTitle,
+                                                          sessionDate: source.sessionDate, sessionId: source.sessionId,
+                                                          to: directory)
+                }.value
+                urls.append(url)
+            } catch {
+                failures.append("\(source.itemTitle): \(error.localizedDescription)")
+            }
+        }
+        if urls.isEmpty || Task.isCancelled {
+            _ = await Task.detached(priority: .utility) { try? FileManager.default.removeItem(at: directory) }.value
+            return SessionShareFiles(directory: nil, fileURLs: [], failures: failures)
+        }
+        return SessionShareFiles(directory: directory, fileURLs: urls, failures: failures)
+    }
+
     /// Removes this share's folder once its sheet has closed. Leaves any folder outside `root` alone.
     public func discard(root: URL = SessionShareFiles.shareRoot()) {
         guard let directory,

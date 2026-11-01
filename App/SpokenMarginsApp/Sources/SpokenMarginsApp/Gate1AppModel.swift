@@ -187,6 +187,9 @@ final class Gate1AppModel: ObservableObject {
     @Published var batchExportFolderName = SavedFolderSetting.sessionExport.name() ?? "No folder selected"
     @Published var batchExportResult: BatchSessionExportResult?
     @Published var batchExportShare: SessionShareFiles?
+    /// True while the batch export's files are built off main (#2510); the Export button waits.
+    @Published var isPreparingBatchShare = false
+    var batchExportPrepare: (id: UUID, task: Task<Void, Never>)?
     @Published var retryingInterjectionTranscriptionIds: Set<String> = []
     var libraryPresentationRevision = 0
     var navigationRefreshTask: Task<Void, Never>?
@@ -287,23 +290,6 @@ final class Gate1AppModel: ObservableObject {
         if marginMomentConductor?.isPlayingVoice == true { return !marginMomentVoiceIsPaused }
         if ownMarginVoiceHasTransport { return !ownMarginVoiceIsPaused }
         return snapshot.skimBridgeState?.status == .playing || snapshot.status.isPlaybackActive
-    }
-
-    var displayedExportPreview: String {
-        guard exportPreview.count > Self.exportPreviewCharacterLimit else { return exportPreview }
-        return String(exportPreview.prefix(Self.exportPreviewCharacterLimit))
-            + "\n\n… Preview truncated. Copy or Share uses the complete export."
-    }
-
-    var exportPreviewIsTruncated: Bool {
-        exportPreview.count > Self.exportPreviewCharacterLimit
-    }
-
-    var exportPreviewSizeDescription: String {
-        ByteCountFormatter.string(
-            fromByteCount: Int64(exportPreview.utf8.count),
-            countStyle: .file
-        )
     }
     let quickAccess = QuickAccessFolderState() // the Quick Folder; its changes are relayed in init (#981)
     @Published var sourceImportProgressMessage: String?

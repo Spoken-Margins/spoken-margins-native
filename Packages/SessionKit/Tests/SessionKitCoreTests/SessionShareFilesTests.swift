@@ -64,6 +64,72 @@ final class SessionShareFilesTests: XCTestCase {
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: root.path), [])
     }
 
+    // The off-main build (#2510): same files, same failure text, but the folder and the file writes leave the
+    // calling thread.
+
+    @MainActor
+    func testOffMainBuildMakesTheSameFilesAsTheSynchronousBuild() async throws {
+        let sync = SessionShareFiles.build(sources(), root: root) { "# " + $0.itemTitle }
+        let off = await SessionShareFiles.buildOffMain(sources(), root: root) { "# " + $0.itemTitle }
+
+        XCTAssertEqual(off.fileURLs.map(\.lastPathComponent), sync.fileURLs.map(\.lastPathComponent))
+        XCTAssertEqual(try off.fileURLs.map { try String(contentsOf: $0, encoding: .utf8) }, ["# First article", "# Second article"])
+        XCTAssertTrue(off.failures.isEmpty)
+        let directory = try XCTUnwrap(off.directory)
+        XCTAssertEqual(directory.deletingLastPathComponent().standardizedFileURL.path, root.standardizedFileURL.path)
+    }
+
+    @MainActor
+    func testOffMainBuildRendersOnTheCallersActorAndWritesAwayFromIt() async throws {
+        var renderedOnMain: [Bool] = []
+        let files = await SessionShareFiles.buildOffMain(sources(), root: root) { _ in
+            MainActor.preconditionIsolated() // traps if the build ran this on a background thread
+            renderedOnMain.append(true)
+            // A render that suspends (the app's store read) lets the main actor run other work in between.
+            await Task.yield()
+            return "text"
+        }
+        XCTAssertEqual(renderedOnMain, [true, true])
+        XCTAssertEqual(files.fileURLs.count, 2)
+    }
+
+    @MainActor
+    func testOffMainBuildListsAFailureAndStillBuildsTheOthers() async throws {
+        struct Broken: LocalizedError { var errorDescription: String? { "export failed" } }
+        let files = await SessionShareFiles.buildOffMain(sources(), root: root) {
+            if $0.sessionId == "session-a" { throw Broken() }
+            return "ok"
+        }
+        XCTAssertEqual(files.fileURLs.count, 1)
+        XCTAssertEqual(files.failures, ["First article: export failed"])
+        XCTAssertNotNil(files.directory)
+    }
+
+    @MainActor
+    func testOffMainBuildLeavesNoFolderWhenEverySessionFails() async throws {
+        struct Broken: Error {}
+        let files = await SessionShareFiles.buildOffMain(sources(), root: root) { _ in throw Broken() }
+        XCTAssertTrue(files.fileURLs.isEmpty)
+        XCTAssertEqual(files.failures.count, 2)
+        XCTAssertNil(files.directory)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: root.path), [])
+    }
+
+    @MainActor
+    func testOffMainBuildCancelledPartWayRemovesWhatItWroteAndListsTheRest() async throws {
+        let task = Task { @MainActor in
+            await SessionShareFiles.buildOffMain(self.sources(), root: self.root) { source in
+                if source.sessionId == "session-a" { withUnsafeCurrentTask { $0?.cancel() } }
+                return "text"
+            }
+        }
+        let files = await task.value
+        XCTAssertNil(files.directory)
+        XCTAssertTrue(files.fileURLs.isEmpty)
+        XCTAssertEqual(files.failures, ["Second article: cancelled"])
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: root.path), [], "no half share is left behind")
+    }
+
     func testDiscardRemovesOnlyThisSharesFolder() throws {
         let one = SessionShareFiles.build(sources(), root: root) { _ in "one" }
         let other = SessionShareFiles.build(sources(), root: root) { _ in "other" }
