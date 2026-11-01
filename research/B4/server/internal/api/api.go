@@ -128,6 +128,10 @@ type Server struct {
 	RequestsPerInstallPerHr int
 	MapUploadsPerIPPerHour  int
 	RelayPerIPPerHour       int
+	// HoldsPerClientPerDay caps abuse-material reports per client network and UTC day that may begin a
+	// year-long hold (#3120). Zero means 5. Past it the link is disabled with its content kept for the
+	// owner to hold by hand, and the owner is alerted in the log; it is never silently taken down.
+	HoldsPerClientPerDay int
 
 	once             sync.Once
 	ipSecret         []byte
@@ -144,6 +148,7 @@ type Server struct {
 	keyWindow        window
 	logMu            sync.Mutex
 	tokenQuota       dayQuota
+	holdQuota        dayQuota
 	requestCounts    map[logKey]int
 	abuseCounts      map[abuseKey]int
 }

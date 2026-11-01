@@ -9,6 +9,7 @@ import (
 	"mime"
 	"mime/multipart"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -288,23 +289,64 @@ func (s *Server) reportLink(w http.ResponseWriter, r *http.Request) {
 		if len(fulls) == 1 && len(fulls[0]) <= maxReportLink && strings.Contains(fulls[0], "/l/"+id) {
 			full = []byte(strings.TrimSpace(fulls[0]))
 		}
-		if err := s.Links.Hold(id, "form-"+ref, full, now); err != nil {
-			if errors.Is(err, links.ErrNotFound) {
-				linkFailure(w, err)
+		perClient := s.HoldsPerClientPerDay
+		if perClient <= 0 {
+			perClient = 5
+		}
+		// Only a link that exists, and is not already held, can use up a client's allowance or raise a cap
+		// alert: a made-up id must not forge an alert for the owner, and a re-report of a held link begins no
+		// new hold (its link is added to the held ones, up to the per-item cap).
+		if err := s.Links.Live(id, now); errors.Is(err, links.ErrNotFound) {
+			linkFailure(w, err)
+			return
+		}
+		var holdErr error
+		if !s.Links.IsHeld(id) {
+			if _, ok := s.holdQuota.reserve(s.clientKey(r), 1, perClient, now); !ok {
+				holdErr = links.ErrHoldCap
+				if err := s.Links.NoteHoldRefused(id, "holds today from one client network at the cap of "+strconv.Itoa(perClient), now); err != nil {
+					log.Print("reports: cap line could not be written")
+				}
+			}
+		}
+		if holdErr == nil {
+			holdErr = s.Links.Hold(id, "form-"+ref, full, now)
+		}
+		if holdErr != nil {
+			if errors.Is(holdErr, links.ErrNotFound) {
+				linkFailure(w, holdErr)
 				return
 			}
-			// The hold did its work if the link is already down (only its log line failed). Otherwise the
-			// link goes dark now and keeps its content, so a retry can still hold it; the reporter is told
-			// to try again and the owner's runbook command holds it by hand.
-			if !errors.Is(s.Links.Live(id, now), links.ErrGone) {
+			if errors.Is(holdErr, links.ErrHoldCap) {
+				// Not a plain takedown, which would delete the ciphertext a real report needs. The link goes
+				// dark and keeps its content until its own 30 days are up. The owner is alerted and decides
+				// (docs/legal/cybertipline-runbook.md, "The hold cap"). The reporter did nothing wrong, so
+				// they see the normal page.
+				log.Print("reports: HOLD CAP REACHED, link disabled and its content kept 30 days; the owner must hold it by hand (see the access log)")
+				// The key goes beside the ciphertext, or the owner's hold by hand could not open it.
+				if len(full) > 0 {
+					if err := s.Links.ParkLink(id, full); err != nil {
+						log.Print("reports: reported link could not be parked")
+					}
+				}
+				if err := s.Links.Disable(id, now); err != nil {
+					log.Print("reports: link could not be disabled")
+					fail(w, http.StatusInternalServerError, "internal")
+					return
+				}
+			} else if !errors.Is(s.Links.Live(id, now), links.ErrGone) {
+				// The hold did its work if the link is already down (only its log line failed). Otherwise the
+				// link goes dark now and keeps its content, so a retry can still hold it; the reporter is told
+				// to try again and the owner's runbook command holds it by hand.
 				log.Print("reports: hold failed, link disabled without a hold")
-				if s.Links.Disable(id) != nil {
+				if s.Links.Disable(id, now) != nil {
 					log.Print("reports: link could not be disabled")
 				}
 				fail(w, http.StatusInternalServerError, "internal")
 				return
+			} else {
+				log.Print("reports: hold finished with an error")
 			}
-			log.Print("reports: hold finished with an error")
 		}
 	} else {
 		if err := s.Links.Live(id, now); err != nil {

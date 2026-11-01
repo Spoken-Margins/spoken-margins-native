@@ -272,3 +272,267 @@ func TestSweepHeldKeepsGoingPastABadRecordAndClearsStaleTempFolders(t *testing.T
 		t.Fatal("a stale .hold- folder outlived the sweep")
 	}
 }
+
+// #3120, part 1. The report form is public, so the first link posted for an id must not be the only one
+// kept: a junk link posted ahead of the real reporter would lock the real key out of the tip.
+func TestEveryDistinctReportedLinkIsKeptUpToTheCapAndCopiesAreNot(t *testing.T) {
+	for _, order := range []string{"first run brings the junk link", "first run brought none"} {
+		t.Run(order, func(t *testing.T) {
+			st, id, _, _ := putLink(t)
+			var first []byte
+			if order == "first run brings the junk link" {
+				first = []byte("https://share.example/l/" + id + "#junk")
+			}
+			if err := st.Hold(id, "R1", first, holdNow); err != nil {
+				t.Fatal(err)
+			}
+			real := []byte("https://share.example/l/" + id + "#k=REALKEY")
+			for i := 0; i < 3; i++ { // the same real link again must not take another slot
+				if err := st.Hold(id, "R2", real, holdNow.Add(time.Hour)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			found := false
+			for n := 1; n <= MaxReportedLinks; n++ {
+				if data, err := os.ReadFile(heldFile(st, id, reportedLinkName(n))); err == nil && bytes.Equal(data, real) {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatal("the real link was displaced by the junk one")
+			}
+			count := 0
+			for n := 1; n <= 10; n++ {
+				if _, err := os.Stat(heldFile(st, id, reportedLinkName(n))); err == nil {
+					count++
+				}
+			}
+			want := 2
+			if first == nil {
+				want = 1
+			}
+			if count != want {
+				t.Fatalf("kept %d reported links, want %d (a copy must not take a slot)", count, want)
+			}
+		})
+	}
+}
+
+func TestReportedLinksStopAtTheCapAndTheLogSaysSoButTheOwnerCanAddMore(t *testing.T) {
+	st, id, _, _ := putLink(t)
+	for i := 0; i < MaxReportedLinks+2; i++ {
+		link := []byte("link-" + string(rune('a'+i)))
+		if err := st.Hold(id, "R1", link, holdNow); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := os.Stat(heldFile(st, id, reportedLinkName(MaxReportedLinks+1))); err == nil {
+		t.Fatal("a public report kept more links than the cap")
+	}
+	if data, _ := os.ReadFile(heldFile(st, id, reportedRef)); string(data) != "link-a" {
+		t.Fatalf("the first link changed: %q", data)
+	}
+	logText, _ := os.ReadFile(filepath.Join(st.heldDir(), accessLog))
+	if strings.Count(string(logText), `"event":"link-dropped"`) != 2 {
+		t.Fatalf("each dropped link should be logged: %s", logText)
+	}
+	if strings.Contains(string(logText), "link-f") {
+		t.Fatal("the log carries a reported link")
+	}
+	// The owner's own run adds the real link even when the slots are full.
+	if err := st.HoldByOwner(id, "R9", []byte("the-real-one"), holdNow); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(heldFile(st, id, reportedLinkName(MaxReportedLinks+1))); err != nil || string(data) != "the-real-one" {
+		t.Fatalf("owner hold did not add past the cap: %q, %v", data, err)
+	}
+}
+
+// Disable promised to keep the content for a hold by hand, but wrote the takedown tombstone, so the next
+// daily sweep deleted it. The cap path depends on the promise.
+func TestDisabledLinkIsDarkAtOnceAndKeepsItsContentUntilItsOwnExpiry(t *testing.T) {
+	st, id, _, _ := putLink(t)
+	if err := st.Disable(id, holdNow); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Live(id, holdNow); !errors.Is(err, ErrGone) {
+		t.Fatalf("Live after Disable = %v, want ErrGone", err)
+	}
+	if _, err := st.Packet(id, holdNow); !errors.Is(err, ErrGone) {
+		t.Fatalf("Packet after Disable = %v, want ErrGone", err)
+	}
+	if n, err := st.Sweep(holdNow.Add(Lifetime - time.Hour)); err != nil || n != 0 {
+		t.Fatalf("Sweep inside the original lifetime = %d, %v; want 0, nil", n, err)
+	}
+	// A hold by hand still works and has the ciphertext.
+	if err := st.HoldByOwner(id, "R1", nil, holdNow.Add(24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(heldFile(st, id, "packet")); err != nil {
+		t.Fatalf("the disabled link's ciphertext was gone: %v", err)
+	}
+
+	st2, id2, _, _ := putLink(t)
+	if err := st2.Disable(id2, holdNow); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := st2.Sweep(holdNow.Add(Lifetime)); err != nil || n != 1 {
+		t.Fatalf("Sweep at the original expiry = %d, %v; want 1, nil", n, err)
+	}
+	if _, err := os.Stat(filepath.Join(st2.dir, id2, "packet")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("a disabled link's content outlived its 30 days")
+	}
+	if err := st2.Disable(strings.Repeat("0", 32), holdNow); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Disable of an unknown id = %v", err)
+	}
+}
+
+// #3120, part 2.
+func putMore(t *testing.T, st *Store, n int) []string {
+	t.Helper()
+	preview, packet, _, _ := loadVector(t)
+	var ids []string
+	for i := 0; i < n; i++ {
+		id, _, err := st.Put(packet, preview, holdNow)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+func TestHoldRefusesPastACapKeepsTheContentAndLogsTheRefusal(t *testing.T) {
+	_, _, packet, preview := putLink(t)
+	one := int64(len(packet) + len(preview))
+	for name, row := range map[string]struct {
+		limits HoldLimits
+		when   func(i int) time.Time
+	}{
+		"items in total":    {HoldLimits{MaxItems: 2, MaxBytes: 1 << 40, MaxItemsPerDay: 100}, func(i int) time.Time { return holdNow.Add(time.Duration(i) * 24 * time.Hour) }},
+		"bytes in total":    {HoldLimits{MaxItems: 100, MaxBytes: 2*one + one/2, MaxItemsPerDay: 100}, func(i int) time.Time { return holdNow.Add(time.Duration(i) * 24 * time.Hour) }},
+		"new holds per day": {HoldLimits{MaxItems: 100, MaxBytes: 1 << 40, MaxItemsPerDay: 2}, func(i int) time.Time { return holdNow.Add(time.Duration(i) * time.Minute) }},
+	} {
+		t.Run(name, func(t *testing.T) {
+			st, first, _, _ := putLink(t)
+			st.HoldLimits = row.limits
+			ids := append([]string{first}, putMore(t, st, 3)...)
+			for i := 0; i < 2; i++ {
+				if err := st.Hold(ids[i], "R", []byte("link"), row.when(i)); err != nil {
+					t.Fatalf("hold %d under the cap: %v", i, err)
+				}
+			}
+			err := st.Hold(ids[2], "R", []byte("link"), row.when(2))
+			if !errors.Is(err, ErrHoldCap) {
+				t.Fatalf("hold past the cap = %v, want ErrHoldCap", err)
+			}
+			// Refused means refused whole: not held, not taken down, nothing half-written.
+			if _, err := os.Stat(filepath.Join(st.heldDir(), ids[2])); err == nil {
+				t.Fatal("a refused hold left a held folder")
+			}
+			if _, err := os.Stat(filepath.Join(st.dir, ids[2], "packet")); err != nil {
+				t.Fatalf("a refused hold lost the content: %v", err)
+			}
+			if err := st.Live(ids[2], row.when(2)); err != nil {
+				t.Fatalf("a refused hold must leave the decision to the caller, got %v", err)
+			}
+			logText, _ := os.ReadFile(filepath.Join(st.heldDir(), accessLog))
+			if !strings.Contains(string(logText), `"event":"cap"`) || !strings.Contains(string(logText), ids[2]) {
+				t.Fatalf("the refusal is not in the access log: %s", logText)
+			}
+			// Holding again what is already held is not a new hold, so the cap never blocks it.
+			if err := st.Hold(ids[0], "R", []byte("another link"), row.when(2)); err != nil {
+				t.Fatalf("re-hold of a held link refused: %v", err)
+			}
+			// The owner's own run is not capped.
+			if err := st.HoldByOwner(ids[2], "R-owner", nil, row.when(2)); err != nil {
+				t.Fatalf("owner hold refused: %v", err)
+			}
+			if _, err := os.Stat(heldFile(st, ids[2], "packet")); err != nil {
+				t.Fatal("owner hold did not keep the packet")
+			}
+		})
+	}
+}
+
+func TestDailyHoldCapResetsAtTheNextUTCDay(t *testing.T) {
+	st, first, _, _ := putLink(t)
+	st.HoldLimits = HoldLimits{MaxItemsPerDay: 1}
+	ids := append([]string{first}, putMore(t, st, 1)...)
+	late := time.Date(2026, 11, 1, 23, 59, 0, 0, time.UTC)
+	if err := st.Hold(ids[0], "R", nil, late); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Hold(ids[1], "R", nil, late.Add(time.Second)); !errors.Is(err, ErrHoldCap) {
+		t.Fatalf("second hold the same day = %v", err)
+	}
+	if err := st.Hold(ids[1], "R", nil, late.Add(2*time.Minute)); err != nil {
+		t.Fatalf("hold the next UTC day: %v", err)
+	}
+}
+
+func TestDefaultHoldLimitsAreFiniteAndAnUnreadableRecordCountsAgainstTheDay(t *testing.T) {
+	if l := (HoldLimits{}).withDefaults(); l != DefaultHoldLimits || l.MaxItems <= 0 || l.MaxBytes <= 0 || l.MaxItemsPerDay <= 0 {
+		t.Fatalf("zero limits = %+v", l)
+	}
+	st, first, _, _ := putLink(t)
+	st.HoldLimits = HoldLimits{MaxItemsPerDay: 1}
+	ids := append([]string{first}, putMore(t, st, 1)...)
+	if err := st.Hold(ids[0], "R", nil, holdNow); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(heldFile(st, ids[0], holdMeta), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Hold(ids[1], "R", nil, holdNow.Add(24*time.Hour)); !errors.Is(err, ErrHoldCap) {
+		t.Fatalf("a record that cannot be read must count against the cap, got %v", err)
+	}
+}
+
+// A link reported on day 29 must still give the owner a full Lifetime to hold it by hand, and a key parked
+// beside the content must reach the hold and must not outlive the content.
+func TestDisableLateGivesAFullLifetimeAndAParkedKeyReachesTheHold(t *testing.T) {
+	st, id, _, _ := putLink(t)
+	late := holdNow.Add(29 * 24 * time.Hour)
+	if err := st.ParkLink(id, []byte("parked-key-link")); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ParkLink(id, []byte("parked-key-link")); err != nil { // a copy takes no slot
+		t.Fatal(err)
+	}
+	if err := st.Disable(id, late); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := st.Sweep(holdNow.Add(Lifetime + 2*time.Hour)); err != nil || n != 0 {
+		t.Fatalf("a link disabled on day 29 was swept a day later: %d, %v", n, err)
+	}
+	if err := st.HoldByOwner(id, "R1", []byte("owner-link"), late.Add(24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]string{reportedRef: "parked-key-link", reportedLinkName(2): "owner-link"} {
+		if got, err := os.ReadFile(heldFile(st, id, name)); err != nil || string(got) != want {
+			t.Fatalf("%s = %q, %v; want %q", name, got, err, want)
+		}
+	}
+	if _, err := os.Stat(heldFile(st, id, reportedLinkName(3))); err == nil {
+		t.Fatal("a parked copy took a slot")
+	}
+
+	// Without a hold the parked key goes with the content, never on its own.
+	st2, id2, _, _ := putLink(t)
+	if err := st2.ParkLink(id2, []byte("parked-key-link")); err != nil {
+		t.Fatal(err)
+	}
+	if err := st2.Disable(id2, holdNow); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st2.Sweep(holdNow.Add(Lifetime)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(st2.dir, id2, reportedRef)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("a parked key outlived its link's content")
+	}
+	if err := st2.ParkLink(strings.Repeat("0", 32), []byte("x")); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("ParkLink of an unknown id = %v", err)
+	}
+}

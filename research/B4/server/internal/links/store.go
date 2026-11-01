@@ -30,16 +30,29 @@ var (
 // that name so no readable copy outlives its link.
 const previewFile = "preview"
 
-var contentFiles = []string{"packet", previewFile, "preview.json"}
+// A parked link (ParkLink) can also hold reported full links, key included, in the same slots a hold uses.
+// They are content: takedown and the sweep delete them with the packet, so no key outlives its link.
+var contentFiles = func() []string {
+	names := []string{"packet", previewFile, "preview.json"}
+	for n := 1; n <= MaxReportedLinks; n++ {
+		names = append(names, reportedLinkName(n))
+	}
+	return names
+}()
 
 // Only expiry metadata survives deletion, so previously issued links still
 // answer 410 after a sweep or takedown. No content or client address survives.
 type Store struct {
 	dir string
 	mu  sync.RWMutex
+	// HoldLimits caps what Hold will keep (hold.go). Zero fields mean DefaultHoldLimits.
+	HoldLimits HoldLimits
 }
 type metadata struct {
 	ExpiresAt time.Time `json:"expiresAt"`
+	// Disabled means the link is no longer served but its content stays until ExpiresAt, so a hold that
+	// could not be made (or was refused at a cap) can still be made by hand. Disable sets it.
+	Disabled bool `json:"disabled,omitempty"`
 }
 
 func OpenStore(dir string) (*Store, error) {
@@ -118,10 +131,21 @@ func (s *Store) live(id string, now time.Time) error {
 	if err := json.Unmarshal(data, &meta); err != nil {
 		return err
 	}
-	if !now.Before(meta.ExpiresAt) {
+	if meta.Disabled || !now.Before(meta.ExpiresAt) {
 		return ErrGone
 	}
 	return nil
+}
+
+// parked reports whether a disabled link's content is still inside its original lifetime, so the sweep
+// must leave it for a hold to be made by hand.
+func (s *Store) parked(id string, now time.Time) bool {
+	data, err := os.ReadFile(filepath.Join(s.dir, id, "meta.json"))
+	if err != nil {
+		return false
+	}
+	var meta metadata
+	return json.Unmarshal(data, &meta) == nil && meta.Disabled && now.Before(meta.ExpiresAt)
 }
 
 // Live answers nil while the link can be opened, ErrNotFound or ErrGone otherwise.
@@ -197,6 +221,9 @@ func (s *Store) Sweep(now time.Time) (int, error) {
 			continue
 		}
 		if err := s.live(e.Name(), now); errors.Is(err, ErrGone) {
+			if s.parked(e.Name(), now) {
+				continue
+			}
 			stored := false
 			for _, name := range contentFiles {
 				if _, err := os.Stat(filepath.Join(s.dir, e.Name(), name)); err == nil {
@@ -224,13 +251,39 @@ func (s *Store) Takedown(id string) error {
 	return s.takedownLocked(id)
 }
 
-// Disable stops a link being served and keeps its content, for when a hold could not be made: the
-// link goes dark at once and the ciphertext stays for the hold to be retried. The daily sweep still
-// deletes the content when the link would have expired anyway.
-func (s *Store) Disable(id string) error {
+// Disable stops a link being served and keeps its content, for when a hold could not be made or was
+// refused at a cap: the link goes dark at once and the ciphertext stays for a hold to be made by hand.
+// It stays for a full Lifetime from now (longer if the link had longer left), so a link reported on day 29
+// still gives the owner thirty days. The daily sweep deletes it then and not before. (Until #3120 this
+// wrote the same epoch tombstone as a takedown, so the next sweep deleted the content the comment said
+// it kept.)
+func (s *Store) Disable(id string, now time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.tombstoneLocked(id)
+	if !ValidID(id) {
+		return ErrNotFound
+	}
+	dir := filepath.Join(s.dir, id)
+	data, err := os.ReadFile(filepath.Join(dir, "meta.json"))
+	if errors.Is(err, os.ErrNotExist) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	var meta metadata
+	if err := json.Unmarshal(data, &meta); err != nil {
+		// Unreadable expiry: fall back to a takedown rather than leave the link served.
+		return s.tombstoneLocked(id)
+	}
+	if meta.Disabled {
+		return nil
+	}
+	meta.Disabled = true
+	if keep := now.UTC().Add(Lifetime); keep.After(meta.ExpiresAt) {
+		meta.ExpiresAt = keep
+	}
+	return s.writeMetaLocked(dir, meta)
 }
 
 func (s *Store) takedownLocked(id string) error {
@@ -251,12 +304,17 @@ func (s *Store) tombstoneLocked(id string) error {
 	} else if err != nil {
 		return err
 	}
+	return s.writeMetaLocked(dir, metadata{ExpiresAt: time.Unix(0, 0).UTC()})
+}
+
+// writeMetaLocked replaces meta.json atomically.
+func (s *Store) writeMetaLocked(dir string, meta metadata) error {
 	f, err := os.CreateTemp(dir, ".meta-")
 	if err != nil {
 		return err
 	}
 	defer os.Remove(f.Name())
-	data, _ := json.Marshal(metadata{ExpiresAt: time.Unix(0, 0).UTC()})
+	data, _ := json.Marshal(meta)
 	_, err = f.Write(data)
 	closeErr := f.Close()
 	if err != nil {
