@@ -19,11 +19,21 @@ settings:
     # without the setting, so nothing listed here reaches testers or App Review (2026-10-17: gates are build-time).
     SM_PHONE_BUILD_CONDITIONS_YES: SM_LOCKED_MARGIN_SPIKE
     SM_PHONE_BUILD_CONDITIONS_NO: ""
+    # Share-link creation (#2236), set when the app is built, never at run time (2026-10-17). It writes the app's
+    # Info.plist key SMShareLinkCreation ("YES" or "NO"), which scripts/release_gate.py reads before a build goes to
+    # the external TestFlight group, and the Swift condition SM_SHARE_LINK_CREATION for the code that makes links.
+    # Debug turns it on so the lane compiles that code. A Release archive leaves it off; an internal upload with
+    # links on passes SM_SHARE_LINK_CREATION=YES to the archive command (owner's call, 2026-10-20). The condition
+    # reaches the app and its tests only, not SessionKit, so the `#if` belongs in app code.
+    SM_SHARE_LINK_CREATION_CONDITIONS_YES: SM_SHARE_LINK_CREATION
+    SM_SHARE_LINK_CREATION_CONDITIONS_NO: ""
   configs:
     Debug:
       SM_PHONE_BUILD: YES
+      SM_SHARE_LINK_CREATION: YES
     Release:
       SM_PHONE_BUILD: NO
+      SM_SHARE_LINK_CREATION: NO
 packages:
   SessionKit:
     path: Packages/SessionKit
@@ -134,7 +144,7 @@ targets:
         MARKETING_VERSION: "0.1"
         REMOVE_STATIC_EXECUTABLES_FROM_EMBEDDED_BUNDLES: YES
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) $(SM_PHONE_BUILD_CONDITIONS_$(SM_PHONE_BUILD))
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) $(SM_PHONE_BUILD_CONDITIONS_$(SM_PHONE_BUILD)) $(SM_SHARE_LINK_CREATION_CONDITIONS_$(SM_SHARE_LINK_CREATION))
         SWIFT_VERSION: "6.0"
         TARGETED_DEVICE_FAMILY: "1,2"
     postBuildScripts:
@@ -151,6 +161,7 @@ targets:
         CFBundleShortVersionString: "0.1"
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         SMBuildCommit: $(SM_BUILD_COMMIT)
+        SMShareLinkCreation: $(SM_SHARE_LINK_CREATION)
         CFBundleURLTypes:
           - CFBundleURLName: SpokenMarginsCompactControls
             CFBundleURLSchemes:
@@ -382,7 +393,7 @@ targets:
       base:
         GENERATE_INFOPLIST_FILE: YES
         PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native.tests
-        SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) $(SM_PHONE_BUILD_CONDITIONS_$(SM_PHONE_BUILD))
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) $(SM_PHONE_BUILD_CONDITIONS_$(SM_PHONE_BUILD)) $(SM_SHARE_LINK_CREATION_CONDITIONS_$(SM_SHARE_LINK_CREATION))
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/SpokenMarginsApp.app/SpokenMarginsApp"
         BUNDLE_LOADER: "$(TEST_HOST)"
 schemes:

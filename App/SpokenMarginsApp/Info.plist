@@ -78,6 +78,8 @@
 	<true/>
 	<key>SMBuildCommit</key>
 	<string>$(SM_BUILD_COMMIT)</string>
+	<key>SMShareLinkCreation</key>
+	<string>$(SM_SHARE_LINK_CREATION)</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
