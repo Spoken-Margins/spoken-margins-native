@@ -153,8 +153,7 @@ extension Gate1AppModel {
         }
         // Acoustic evidence can fail before note transcription even starts. That
         // fallback must not race the note for the speech-recognition service.
-        let saved = try? store.loadInterjections(sessionId: interjection.sessionId)
-            .first(where: { $0.id == interjection.id })
+        let saved = try? store.loadInterjection(id: interjection.id, sessionId: interjection.sessionId) // one row, not every Margin of the session (#2506)
         guard saved?.transcriptionStatus != "pending",
               !pendingSourceContextInterjectionIds.contains(Self.marginIdentity(interjection)) else { return false }
         switch item.media?.sourceType {
@@ -297,16 +296,15 @@ extension Gate1AppModel {
 
     func retrySourceWindowContexts(itemId: String) {
         guard let store else { return }
-        let sessions = (try? store.loadSessions(itemId: itemId)) ?? []
-        for session in sessions {
-            let interjections = (try? store.loadInterjections(sessionId: session.id)) ?? []
-            for interjection in interjections where interjection.targetType == .item
-                && interjection.anchor.mediaTimeMs != nil
-                && interjection.status != "deleted"
-                && interjection.anchorContextStatus != .ready
-                && !pendingSourceContextInterjectionIds.contains(Self.marginIdentity(interjection)) {
-                scheduleSourceWindowContextIfNeeded(for: interjection)
-            }
+        // The item's Margins in one read: every Margin filed under it, as `deleteItem` counts them. The loop this replaced
+        // opened each session of the item and then each session's Margins (#2506).
+        let interjections = (try? store.loadInterjections(itemId: itemId)) ?? []
+        for interjection in interjections where interjection.targetType == .item
+            && interjection.anchor.mediaTimeMs != nil
+            && interjection.status != "deleted"
+            && interjection.anchorContextStatus != .ready
+            && !pendingSourceContextInterjectionIds.contains(Self.marginIdentity(interjection)) {
+            scheduleSourceWindowContextIfNeeded(for: interjection)
         }
     }
 
