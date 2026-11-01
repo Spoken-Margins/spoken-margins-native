@@ -212,6 +212,7 @@ final class LocalAudioListeningPackageTests: XCTestCase {
         let projection = try XCTUnwrap(fixture.store.loadResolvedListeningMapProjection(itemId: fixture.itemId))
         XCTAssertEqual(projection.proposalId, "friend-map", "Skim reads this projection and the layer's proposal")
         XCTAssertEqual(projection.projectedRecipientTime(for: 5_000), 5_000)
+        fixture.model.openItem(id: fixture.itemId) // the refusal is read from the open item's detail (#2506)
         XCTAssertNil(fixture.model.sharedListeningMapRefusal(itemId: fixture.itemId))
     }
 
@@ -288,18 +289,21 @@ final class LocalAudioListeningPackageTests: XCTestCase {
         defer { fixture.cleanup() }
         XCTAssertNil(try fixture.store.loadResolvedListeningMapProjection(itemId: fixture.itemId),
                      "The publisher's chapters stay the item's map")
+        fixture.model.openItem(id: fixture.itemId)
         XCTAssertNil(fixture.model.sharedListeningMapRefusal(itemId: fixture.itemId))
     }
 
     func testSharedMapThatCannotBePlacedOnYourCopySaysWhy() async throws {
         let fixture = try await importSharedPodcastMap(senderEdition: .differentWithoutEvidence, listenerMap: .none)
         defer { fixture.cleanup() }
+        fixture.model.openItem(id: fixture.itemId)
         XCTAssertEqual(
             fixture.model.sharedListeningMapRefusal(itemId: fixture.itemId),
             "The shared map has no audio to match near scene 1 (Opening)."
         )
         let reopened = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: fixture.databaseURL)
         reopened.bootstrapLibraryIfNeeded()
+        reopened.openItem(id: fixture.itemId)
         XCTAssertEqual(reopened.sharedListeningMapRefusal(itemId: fixture.itemId),
                        "The shared map has no audio to match near scene 1 (Opening).", "The reason survives a restart")
         XCTAssertNil(try fixture.store.loadResolvedListeningMapProjection(itemId: fixture.itemId)?.proposalId,

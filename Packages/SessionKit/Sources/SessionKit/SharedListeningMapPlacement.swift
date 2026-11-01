@@ -269,6 +269,12 @@ public enum SharedListeningMapPlacement {
         return Activation(projection: nil, refusal: outcomes.lazy.compactMap(\.refusal).first)
     }
 
+    /// Whether the listener has a map a friend's never replaces: their own or the publisher's chapters. A community
+    /// map never blocks a friend's (#553). Takes ids and a yes/no, so a caller reads neither the maps nor a timeline (#2506).
+    public static func listenerHasMap(proposalIds: [String], hasTimelineChapters: Bool) -> Bool {
+        proposalIds.contains { !CommunityMapConverter.isCommunityProposal(id: $0) } || hasTimelineChapters
+    }
+
     /// The reason to show on the item, from what the last resolution stored on each packet:
     /// the earliest imported packet's, unless the listener now has a map of their own.
     public static func storedRefusalReason(layers: [ImportedCommentaryLayer], listenerHasMap: Bool) -> String? {

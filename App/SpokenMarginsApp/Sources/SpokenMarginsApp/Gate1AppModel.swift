@@ -1588,16 +1588,18 @@ final class Gate1AppModel: ObservableObject {
     }
 
     /// Why a friend's shared map couldn't be placed on this item's copy, as stored on its packets (#481).
+    /// Read from the open item's detail, which worked it out when it loaded: the Item screen asks on every render, and
+    /// this used to read the layers, the proposal ids and the timeline's chapters from the store each time (#2506).
+    /// Nil for an item that isn't the open one; the Item screen is the only caller.
     func sharedListeningMapRefusal(itemId: String) -> String? {
-        guard let store, let layers = try? store.loadImportedCommentaryLayers(itemId: itemId),
-              let hasMap = try? Self.listenerHasListeningMap(itemId: itemId, store: store) else { return nil }
-        return SharedListeningMapPlacement.storedRefusalReason(layers: layers, listenerHasMap: hasMap)
+        selectedItem.id == itemId ? selectedItem.sharedMapRefusalReason : nil
     }
 
     /// The listener's own map or the publisher's chapters, which a friend's map never replaces.
     static func listenerHasListeningMap(itemId: String, store: SQLiteSessionStore) throws -> Bool {
-        try store.portableListeningMapProposalIds(itemId: itemId).contains { !CommunityMapConverter.isCommunityProposal(id: $0) } // a community map never blocks a friend's (#553); ids only, not the maps (#2506)
-            || store.loadTranscriptTimelineChapters(itemId: itemId).isEmpty == false // chapters only: this runs from the Item screen's body (#2073)
+        SharedListeningMapPlacement.listenerHasMap(
+            proposalIds: try store.portableListeningMapProposalIds(itemId: itemId), // ids only, not the maps (#2506)
+            hasTimelineChapters: try store.loadTranscriptTimelineChapters(itemId: itemId).isEmpty == false)
     }
 
     lazy var skimBridge = SkimBridgeController(host: self) // the Skim bridge's player, poll, resources and destinations (#954)
