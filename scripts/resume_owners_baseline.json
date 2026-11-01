@@ -98,18 +98,6 @@
    "why": "retired by the capture/relaunch resume owner (#3144, #3032 slice 3)"
   },
   {
-   "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::activePlaybackStartAttemptId",
-   "decls": 1,
-   "writes": 2,
-   "why": "retired by the capture/relaunch resume owner (#3144, #3032 slice 3)"
-  },
-  {
-   "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::clearPlaybackStartPending",
-   "decls": 1,
-   "writes": 0,
-   "why": "retired by the capture/relaunch resume owner (#3144, #3032 slice 3)"
-  },
-  {
    "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::hasPendingInterjectionPause",
    "decls": 1,
    "writes": 0,
@@ -131,30 +119,6 @@
    "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::pendingPlaybackPosition",
    "decls": 3,
    "writes": 8,
-   "why": "retired by the capture/relaunch resume owner (#3144, #3032 slice 3)"
-  },
-  {
-   "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::playbackStartAttemptId",
-   "decls": 1,
-   "writes": 1,
-   "why": "retired by the capture/relaunch resume owner (#3144, #3032 slice 3)"
-  },
-  {
-   "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::playbackStartDeadline",
-   "decls": 2,
-   "writes": 5,
-   "why": "retired by the capture/relaunch resume owner (#3144, #3032 slice 3)"
-  },
-  {
-   "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::playbackStartPendingAttemptId",
-   "decls": 1,
-   "writes": 4,
-   "why": "retired by the capture/relaunch resume owner (#3144, #3032 slice 3)"
-  },
-  {
-   "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::playbackStartPendingTargetId",
-   "decls": 1,
-   "writes": 4,
    "why": "retired by the capture/relaunch resume owner (#3144, #3032 slice 3)"
   },
   {

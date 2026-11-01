@@ -52,7 +52,11 @@ RESUME_NAMES = (
 # Repo-relative paths of the type that owns the decision: `SystemInterruptionResume` owns "does playback resume by
 # itself after a system interruption" for both playback clients (#3032). Other kinds of resume (a Margin capture, a
 # hands-free capture, a relaunch) are still baseline rows until they move into an owner of their own.
-OWNING_FILES: tuple = ('Packages/SessionKit/Sources/SessionKit/SystemInterruptionResume.swift',)
+OWNING_FILES: tuple = (
+    'Packages/SessionKit/Sources/SessionKit/SystemInterruptionResume.swift',
+    # `PlaybackStartAttempt` owns "a start is pending, which attempt, until when" (#3171, #3032 slice 4).
+    'Packages/SessionKit/Sources/SessionKit/PlaybackStartAttempt.swift',
+)
 SCAN_DIRS = ('App', 'Packages')
 SKIP_PARTS = ('Tests', 'UITests', '.build', 'Fixtures')  # test targets and build output are not production code
 DECLARATION = re.compile(r'\b(?:func|struct|enum|class|actor|protocol|typealias|case)\s+(`?\w+`?)')
