@@ -318,6 +318,7 @@ struct SettingsScreen: View {
                     .accessibilityIdentifier("settings.help.button")
                     Link("Privacy Policy", destination: AppLinks.privacy)
                     Link("Support", destination: AppLinks.support)
+                    Link("Copyright and DMCA", destination: AppLinks.copyright)
                     Toggle(isOn: $helpsMakeListeningMaps) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Help make listening maps")
