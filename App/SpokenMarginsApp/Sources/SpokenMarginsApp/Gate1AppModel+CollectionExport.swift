@@ -20,6 +20,10 @@ extension Gate1AppModel {
         // A share whose sheet was torn down with the screen: remove its files and let Export work again.
         batchExportShare?.discard()
         batchExportShare = nil
+        // A build of the previous share still running is dropped; its files are removed when it ends.
+        batchExportPrepare?.task.cancel()
+        batchExportPrepare = nil
+        isPreparingBatchShare = false
         let store: SQLiteSessionStore
         do {
             store = try requireStore()

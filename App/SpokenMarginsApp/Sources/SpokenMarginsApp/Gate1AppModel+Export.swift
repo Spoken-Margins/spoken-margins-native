@@ -134,7 +134,8 @@ extension Gate1AppModel {
         let options = currentExportOptions(sessionId: nil)
         let startedOn = screen
         isPreparingBatchShare = true
-        return Task { @MainActor [weak self] in
+        let buildID = UUID()
+        let task = Task { @MainActor [weak self] in
             let files = await SessionShareFiles.buildOffMain(sources, root: SessionShareFiles.shareRoot()) { source in
                 var sessionOptions = options
                 sessionOptions.sessionId = source.sessionId
@@ -144,7 +145,13 @@ extension Gate1AppModel {
                 Self.discardOffMain(files)
                 return
             }
+            // Export Sessions was opened again meanwhile (`openBatchExport` cleared this build): its files are not wanted.
+            guard batchExportPrepare?.id == buildID else {
+                Self.discardOffMain(files)
+                return
+            }
             hangTelemetry.labels.scoped("batchExport.publish") {
+                batchExportPrepare = nil
                 isPreparingBatchShare = false
                 // The listener left Export Sessions while the files were built: nothing is waiting for the sheet.
                 guard screen == startedOn else {
@@ -161,6 +168,8 @@ extension Gate1AppModel {
                 batchExportShare = files
             }
         }
+        batchExportPrepare = (buildID, task)
+        return task
     }
 
     /// Removes a share's folder away from the main actor; nothing waits for it.

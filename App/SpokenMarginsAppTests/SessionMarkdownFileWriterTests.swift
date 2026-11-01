@@ -158,4 +158,30 @@ final class BatchSessionExportWorkflowTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: try XCTUnwrap(again.fileURLs.first).path))
         XCTAssertEqual(defaults.data(forKey: bookmarkKey), priorBookmark)
     }
+
+    /// #2510: the files are built off main. If Export Sessions is opened again while a build runs, that build's files
+    /// are dropped (no sheet for sessions the listener no longer has selected) and the button works again.
+    func testReopeningExportSessionsDropsABuildStillRunning() async throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.declineCurrentTerms()
+        model.importTitle = "Reopen Export Article"
+        model.importText = "A source passage for the reopened export."
+        model.importTextItem()
+        model.pause()
+        let sessionId = try XCTUnwrap(model.snapshot.sessionId)
+
+        await model.openBatchExport().value
+        model.batchExportFilter = .all
+        model.toggleBatchExportSelection(sessionId: sessionId)
+        let build = try XCTUnwrap(model.prepareSelectedSessionsForSharing())
+        XCTAssertTrue(model.isPreparingBatchShare, "the button waits while the files are built")
+        XCTAssertNil(model.prepareSelectedSessionsForSharing(), "a second tap starts no second build")
+
+        await model.openBatchExport().value
+        await build.value
+
+        XCTAssertNil(model.batchExportShare, "the old build's files are not offered for the new screen")
+        XCTAssertFalse(model.isPreparingBatchShare)
+    }
 }

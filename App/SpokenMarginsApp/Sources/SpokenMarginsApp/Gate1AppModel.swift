@@ -189,6 +189,7 @@ final class Gate1AppModel: ObservableObject {
     @Published var batchExportShare: SessionShareFiles?
     /// True while the batch export's files are built off main (#2510); the Export button waits.
     @Published var isPreparingBatchShare = false
+    var batchExportPrepare: (id: UUID, task: Task<Void, Never>)?
     @Published var retryingInterjectionTranscriptionIds: Set<String> = []
     var libraryPresentationRevision = 0
     var navigationRefreshTask: Task<Void, Never>?

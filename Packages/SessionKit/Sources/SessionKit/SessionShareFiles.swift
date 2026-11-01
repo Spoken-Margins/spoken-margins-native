@@ -91,7 +91,7 @@ public struct SessionShareFiles: Equatable, Sendable {
             }
         }
         if urls.isEmpty || Task.isCancelled {
-            await Task.detached(priority: .utility) { try? FileManager.default.removeItem(at: directory) }.value
+            _ = await Task.detached(priority: .utility) { try? FileManager.default.removeItem(at: directory) }.value
             return SessionShareFiles(directory: nil, fileURLs: [], failures: failures)
         }
         return SessionShareFiles(directory: directory, fileURLs: urls, failures: failures)
