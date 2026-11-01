@@ -40,7 +40,7 @@ extension Gate1AppModel {
             }
             do {
                 snapshot = try engine.reconcileSystemInitiatedPause()
-                refreshSelectedItem()
+                refreshSelectedItemInBackground()
                 diagnostics["mediaPlaybackInterruption"] = "paused"
             } catch {
                 diagnostics["mediaPlaybackInterruption"] = "pause_failed:\(error.localizedDescription)"
@@ -53,7 +53,7 @@ extension Gate1AppModel {
             }
             do {
                 snapshot = try engine.resumePlaybackAfterInterruption()
-                refreshSelectedItem()
+                refreshSelectedItemInBackground()
                 diagnostics["mediaPlaybackInterruption"] = "resumed"
             } catch {
                 diagnostics["mediaPlaybackInterruption"] = "resume_failed:\(InterruptionResumeRetrier.describe(error))"
@@ -80,7 +80,7 @@ extension Gate1AppModel {
             attempt: { [weak self] in
                 guard let self else { return }
                 snapshot = try engine.resumePlaybackAfterInterruption()
-                refreshSelectedItem()
+                refreshSelectedItemInBackground()
             },
             report: { [weak self] outcome in
                 guard let self else { return }
@@ -112,7 +112,7 @@ extension Gate1AppModel {
             }
             do {
                 snapshot = try engine.reconcileSystemInitiatedPause()
-                refreshSelectedItem()
+                refreshSelectedItemInBackground()
                 diagnostics["speechPlaybackInterruption"] = "paused"
             } catch {
                 diagnostics["speechPlaybackInterruption"] = "pause_failed:\(error.localizedDescription)"
@@ -125,7 +125,7 @@ extension Gate1AppModel {
             }
             do {
                 snapshot = try engine.resumePlayback()
-                refreshSelectedItem()
+                refreshSelectedItemInBackground()
                 noteSpeechInterruptionResumeReturned()
             } catch {
                 noteSpeechInterruptionResume(.failed(reason: error.localizedDescription))

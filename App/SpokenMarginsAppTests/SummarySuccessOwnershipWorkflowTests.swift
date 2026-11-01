@@ -40,6 +40,7 @@ final class SummarySuccessOwnershipWorkflowTests: XCTestCase {
         model.startItem(id: "item-pill")
         model.beginWrittenMargin()
         model.saveWrittenMargin(text: "Remember this original argument.")
+        await model.settleItemReload() // the item detail reloads off the main thread after a save (#2505)
         let session = try XCTUnwrap(model.snapshot.sessionId)
         model.summarize()
         try await waitForRequests(1, provider: provider)
@@ -83,6 +84,7 @@ final class SummarySuccessOwnershipWorkflowTests: XCTestCase {
         let a = try XCTUnwrap(model.snapshot.sessionId)
         model.beginWrittenMargin()
         model.saveWrittenMargin(text: "A_ORIGINAL_NOTE: compare this argument with its evidence.")
+        await model.settleItemReload() // the item detail reloads off the main thread after a save (#2505)
         let noteA = try XCTUnwrap(store.loadInterjections(sessionId: a).last?.id)
         model.summarize()
         try await waitForRequests(1, provider: provider)
@@ -106,6 +108,7 @@ final class SummarySuccessOwnershipWorkflowTests: XCTestCase {
         if bHasSummary {
             model.beginWrittenMargin()
             model.saveWrittenMargin(text: "B_ONLY_NOTE: this request must remain independently pending.")
+            await model.settleItemReload() // the item detail reloads off the main thread after a save (#2505)
             let noteB = try XCTUnwrap(store.loadInterjections(sessionId: b).last?.id)
             model.summarize()
             try await waitForRequests(2, provider: provider)
