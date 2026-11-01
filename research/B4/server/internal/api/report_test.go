@@ -433,3 +433,26 @@ func TestOnlyANewHoldOfARealLinkSpendsTheClientAllowanceOrRaisesTheAlert(t *test
 		t.Fatalf("a re-report of a held link raised a cap alert: %s", logText)
 	}
 }
+
+// The published policies (#2238) are linked from the share page, the acknowledgement and the reason page.
+func TestSharePageAndReportPagesLinkThePublishedPolicies(t *testing.T) {
+	s, _ := enabledLinks(t)
+	h := s.Handler()
+	first, second := createdLink(t, h), createdLink(t, h)
+	wants := []string{`href="/content-policy/"`, `href="/intimate-images/"`, `href="/copyright/"`, `href="/privacy/"`, `href="/terms/"`}
+	check := func(name, page string) {
+		for _, want := range wants {
+			if !strings.Contains(page, want) {
+				t.Errorf("%s lacks %s", name, want)
+			}
+		}
+	}
+	check("share page", linkRequest(h, "GET", "/l/"+first, "", nil, "198.51.100.1").Body.String())
+	_, ack := postReport(h, first, "category=other", "203.0.113.7")
+	check("acknowledgement", ack)
+	_, ackWithReason := postReport(h, second, "category=other", "203.0.113.7")
+	ref := regexp.MustCompile(`name="ref" value="([A-Z2-9]{12})"`).FindStringSubmatch(ackWithReason)[1]
+	check("acknowledgement asking for a reason", ackWithReason)
+	w := linkRequest(h, "POST", "/l/"+second+"/report/reason", "application/x-www-form-urlencoded", []byte("ref="+ref+"&reason=x"), "203.0.113.7")
+	check("reason page", w.Body.String())
+}
