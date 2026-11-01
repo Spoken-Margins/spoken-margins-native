@@ -2990,7 +2990,7 @@ final class Gate1AppModel: ObservableObject {
                 layer.revealMode = enabled ? .guided : .companion
                 try store.saveImportedCommentaryLayer(layer)
             }
-            refreshSelectedItemInBackground()
+            refreshSelectedItem()
             reportConfirmation(enabled
                 ? "Shared Margins will play automatically after their cue."
                 : "Shared Margins will wait for you to choose Listen or Dismiss.")
@@ -3008,7 +3008,7 @@ final class Gate1AppModel: ObservableObject {
             guard var layer = try store.loadImportedCommentaryLayer(id: layerID) else { return }
             mutation(&layer)
             try store.saveImportedCommentaryLayer(layer)
-            refreshSelectedItemInBackground()
+            refreshSelectedItem()
         } catch {
             reportFailure(error, context: "Shared Margin settings could not be saved")
         }

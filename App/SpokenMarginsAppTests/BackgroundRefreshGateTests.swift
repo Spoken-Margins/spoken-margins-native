@@ -520,6 +520,8 @@ final class BackgroundRefreshGateTests: XCTestCase {
     func testUndoingAMarginDeleteReloadsTheItemInTheBackground() async throws {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        await model.settleItemReload()
         model.beginWrittenMargin()
         model.saveWrittenMargin(text: "Deleted, then brought back")
         await model.settleItemReload()
