@@ -7,6 +7,23 @@ import UIKit
 
 /// Session export, batch export and copying. Moved out of `Gate1AppModel.swift` unchanged (#983).
 extension Gate1AppModel {
+    var displayedExportPreview: String {
+        guard exportPreview.count > Self.exportPreviewCharacterLimit else { return exportPreview }
+        return String(exportPreview.prefix(Self.exportPreviewCharacterLimit))
+            + "\n\n… Preview truncated. Copy or Share uses the complete export."
+    }
+
+    var exportPreviewIsTruncated: Bool {
+        exportPreview.count > Self.exportPreviewCharacterLimit
+    }
+
+    var exportPreviewSizeDescription: String {
+        ByteCountFormatter.string(
+            fromByteCount: Int64(exportPreview.utf8.count),
+            countStyle: .file
+        )
+    }
+
     @discardableResult
     func buildExport() -> Task<Void, Never>? {
         refreshExportPreview(reportStatus: true)

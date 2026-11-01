@@ -291,23 +291,6 @@ final class Gate1AppModel: ObservableObject {
         if ownMarginVoiceHasTransport { return !ownMarginVoiceIsPaused }
         return snapshot.skimBridgeState?.status == .playing || snapshot.status.isPlaybackActive
     }
-
-    var displayedExportPreview: String {
-        guard exportPreview.count > Self.exportPreviewCharacterLimit else { return exportPreview }
-        return String(exportPreview.prefix(Self.exportPreviewCharacterLimit))
-            + "\n\n… Preview truncated. Copy or Share uses the complete export."
-    }
-
-    var exportPreviewIsTruncated: Bool {
-        exportPreview.count > Self.exportPreviewCharacterLimit
-    }
-
-    var exportPreviewSizeDescription: String {
-        ByteCountFormatter.string(
-            fromByteCount: Int64(exportPreview.utf8.count),
-            countStyle: .file
-        )
-    }
     let quickAccess = QuickAccessFolderState() // the Quick Folder; its changes are relayed in init (#981)
     @Published var sourceImportProgressMessage: String?
     @Published var importInbox: [ImportInboxEntry] = []
