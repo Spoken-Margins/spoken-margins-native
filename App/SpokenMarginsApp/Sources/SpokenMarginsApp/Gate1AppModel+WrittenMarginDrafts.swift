@@ -64,7 +64,7 @@ extension Gate1AppModel {
         for record in candidates {
             do {
                 if record.sessionId != restoredSessionId {
-                    guard try store.loadSessions().contains(where: { $0.id == record.sessionId }) else { continue }
+                    guard try store.loadSession(id: record.sessionId) != nil else { continue } // one by-id row, not every session (#2507)
                     let detail = try loadItemDetail(id: record.itemId, store: store)
                     snapshot = try engine.inspectSession(sessionId: record.sessionId)
                     activeItemId = record.itemId
