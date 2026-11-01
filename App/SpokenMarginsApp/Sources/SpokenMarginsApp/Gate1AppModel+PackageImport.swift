@@ -316,6 +316,7 @@ extension SpokenMarginsPackageImportCoordinator.Environment {
                 model.activeItemId = itemId
                 model.libraryItems = try model.loadLibraryRows(store: store)
                 model.selectedItem = try model.loadItemDetail(id: itemId, store: store)
+                model.updateSkimAvailability() // a map added from a packet reaches Skim even where the chapters read the same (#1471)
                 model.screen = .item
             },
             recordPacketImport: { [weak model] itemId, packetId, marginCount in

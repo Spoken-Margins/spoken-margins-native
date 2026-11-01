@@ -111,4 +111,33 @@ final class NextChapterSummaryTests: XCTestCase {
         XCTAssertEqual(Rule.backwardControl(skimRowShown: false, canSkimBackward: false), .hidden)
         XCTAssertEqual(Rule.backwardControl(skimRowShown: false, canSkimBackward: true), .hidden)
     }
+    // MARK: text chapters count characters (#1471)
+
+    func testTextChapterSummaryLandsOnTheChapterStartWithinACharacterTolerance() {
+        let tolerance = Rule.alignmentToleranceChars
+        // A scene that starts where the chapter does reads its summary, then lands at the chapter start.
+        XCTAssertEqual(
+            Rule.press(playing: nil, hasNextChapter: true, nextChapterStartMs: 4_000, summaryLandsAtMs: 4_000, tolerance: tolerance),
+            .summaryThenJump(landingMs: 4_000))
+        XCTAssertEqual(
+            Rule.press(playing: nil, hasNextChapter: true, nextChapterStartMs: 4_000, summaryLandsAtMs: 4_000 + tolerance, tolerance: tolerance),
+            .summaryThenJump(landingMs: 4_000))
+        // 900 characters apart is far past a boundary; 900 ms would have counted as aligned, so the unit matters.
+        XCTAssertEqual(
+            Rule.press(playing: nil, hasNextChapter: true, nextChapterStartMs: 4_000, summaryLandsAtMs: 4_900, tolerance: tolerance),
+            .jump)
+        XCTAssertEqual(
+            Rule.press(playing: nil, hasNextChapter: true, nextChapterStartMs: 4_000, summaryLandsAtMs: 4_900),
+            .summaryThenJump(landingMs: 4_000), "the default stays the media tolerance")
+    }
+
+    func testASecondPressOnTextSkipsTheSummaryOnlyWhenItHeadsForTheNextChapter() {
+        let tolerance = Rule.alignmentToleranceChars
+        let heading = Rule.PlayingSummary(direction: .forward, landsAtMs: 4_000)
+        let elsewhere = Rule.PlayingSummary(direction: .forward, landsAtMs: 4_900)
+        XCTAssertEqual(Rule.press(playing: heading, hasNextChapter: true, nextChapterStartMs: 4_000, summaryLandsAtMs: nil, tolerance: tolerance), .skipSummary)
+        XCTAssertEqual(Rule.press(playing: elsewhere, hasNextChapter: true, nextChapterStartMs: 4_000, summaryLandsAtMs: nil, tolerance: tolerance), .unavailable)
+        XCTAssertTrue(Rule.isAvailable(playing: heading, hasNextChapter: true, nextChapterStartMs: 4_000, tolerance: tolerance))
+        XCTAssertFalse(Rule.isAvailable(playing: elsewhere, hasNextChapter: true, nextChapterStartMs: 4_000, tolerance: tolerance))
+    }
 }

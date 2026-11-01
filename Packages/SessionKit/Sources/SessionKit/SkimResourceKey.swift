@@ -13,6 +13,8 @@ import Foundation
 public struct SkimResourceKey: Equatable, Sendable {
     public let itemId: String
     let scenes: [MediaTimelineChapter]
+    /// A text item's chapters, which a map added from a packet or an edition changes (#1471).
+    let textChapters: [Chapter]
     let summarySpans: [SceneSummarySpan]
     let layers: [Layer]
 
@@ -26,6 +28,7 @@ public struct SkimResourceKey: Equatable, Sendable {
     public init(_ item: ItemDetailState) {
         itemId = item.id
         scenes = item.listeningMapScenes
+        textChapters = item.chapters
         summarySpans = item.listeningMapSummarySpans
         layers = item.importedCommentaryLayers.map {
             Layer(id: $0.id, deletedAt: $0.deletedAt, sourceResolutionStatus: $0.sourceResolutionStatus,

@@ -168,6 +168,7 @@ extension Gate1AppModel {
     @discardableResult
     func seekText(toCharOffset charOffset: Int) -> Bool {
         marginMomentConductor?.sourceMoved()
+        restoreSkimOriginBeforeCanonicalTransport() // a tap in the reader ends a Skim summary, as a media seek does (#1471)
         if playingImportedCommentary != nil, heldMarginVoice?.kind != .shared { stopImportedCommentaryPlayback(resumeSource: false) } // Add a Margin holds the voice and moves the source under it (#1672)
         recordDeveloperDiagnostic("seek.text.request", ["offset": String(charOffset)])
         synchronizeStreamingSpeechAnchorIfNeeded()

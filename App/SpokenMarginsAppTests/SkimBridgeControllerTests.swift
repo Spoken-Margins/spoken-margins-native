@@ -338,6 +338,109 @@ final class SkimBridgeControllerTests: XCTestCase {
         XCTAssertEqual(host.warnings, [SkimUnavailableReason.movedOn.message])
     }
 
+    // MARK: a text item skims by characters (#1471)
+
+    /// A store holding a two-scene map placed by character, as a map packet leaves it: scene 0 from 0 and scene 1 from
+    /// 400, each with a summary, and no media projection at all.
+    private func textMappedHost(_ directory: URL, position: Int = 100) throws -> ScriptedSkimHost {
+        let host = ScriptedSkimHost()
+        let store = try SQLiteSessionStore(path: directory.appending(path: "store.sqlite").path)
+        let bounds = [0, 400, 900]
+        try store.savePortableListeningMapProposal(PortableListeningMapProposalArtifact(
+            id: "text-map", createdAt: Date(), generator: "test", scenes: (0..<2).map { index in
+                PortableListeningMapScene(
+                    id: "scene-\(index)", order: index, title: "Scene \(index)", summaryText: "A short recap.",
+                    eligibility: .eligible,
+                    startAnchor: PortableAnchorEvidence(anchorType: .text, startChar: bounds[index], endChar: bounds[index] + 5),
+                    endAnchor: PortableAnchorEvidence(anchorType: .text, startChar: bounds[index + 1] - 5, endChar: bounds[index + 1]))
+            }), itemId: "article")
+        host.store = store
+        host.source = SkimSource(itemId: "article", durationMs: nil, usesTextPositions: true)
+        host.textPositions = true
+        host.currentPosition = position
+        return host
+    }
+
+    func testATextItemWithAMapIsOfferedSkimByCharacterAndThePressPreparesItsSummary() async throws {
+        let host = try textMappedHost(try temporaryDirectory())
+        let controller = makeController(host)
+        controller.updateAvailability()
+        await controller.settleResources()
+        XCTAssertTrue(controller.itemHasMap, "no media projection is needed")
+        XCTAssertTrue(host.available.forward)
+        XCTAssertFalse(host.available.backward, "nothing is before the first scene")
+        XCTAssertEqual(controller.forwardDestinationMs, 400, "a character offset, which the model never shows as a time")
+
+        controller.perform(direction: .forward)
+        try await waitForRecords(host, count: 2)
+        XCTAssertEqual(host.prepared, ["article/text-map/scene-0"], "the summary of the scene being left, under the map's id")
+    }
+
+    func testSkimBackFromTheSecondSceneLandsAtItsStartAndTheLastSceneCanSkimForward() async throws {
+        let host = try textMappedHost(try temporaryDirectory(), position: 500)
+        let controller = makeController(host)
+        controller.updateAvailability()
+        await controller.settleResources()
+        XCTAssertEqual(controller.backwardDestinationMs, 400)
+        XCTAssertTrue(host.available.forward, "the last scene's summary is still ahead of the listener")
+        guard case .needsSummaryAudio(let request) = controller.resolve(direction: .backward, at: 500) else {
+            return XCTFail("the scene being left has a summary and no audio")
+        }
+        XCTAssertEqual(request.scene.id, "scene-0")
+        XCTAssertEqual(request.destinationMediaTimeMs, 400)
+    }
+
+    func testAMediaProposalGivesATextItemNoMapAndATextProposalGivesAMediaItemNone() async throws {
+        let media = try mappedHost(try temporaryDirectory())
+        media.source = SkimSource(itemId: "episode", durationMs: nil, usesTextPositions: true)
+        media.textPositions = true
+        let mediaController = makeController(media)
+        mediaController.updateAvailability()
+        await mediaController.settleResources()
+        XCTAssertFalse(mediaController.itemHasMap, "a proposal placed by time says nothing about where to read")
+        XCTAssertEqual(mediaController.forwardUnavailableReason, .noMap)
+
+        let text = try textMappedHost(try temporaryDirectory())
+        text.source = SkimSource(itemId: "article", durationMs: 10_000)
+        text.textPositions = false
+        let textController = makeController(text)
+        textController.updateAvailability()
+        await textController.settleResources()
+        XCTAssertFalse(textController.itemHasMap, "without a media projection a media item has no map")
+        XCTAssertEqual(textController.forwardUnavailableReason, .noMap)
+    }
+
+    func testAnItemThatSwitchesBetweenReadingAndNarrationReadsItsMapAgain() async throws {
+        let host = try textMappedHost(try temporaryDirectory())
+        let controller = makeController(host)
+        controller.updateAvailability(refreshResources: false)
+        await controller.settleResources()
+        XCTAssertEqual(controller.resourceLoadCount, 1)
+        host.source = SkimSource(itemId: "article", durationMs: 10_000)
+        host.textPositions = false
+        controller.updateAvailability(refreshResources: false)
+        await controller.settleResources()
+        XCTAssertEqual(controller.resourceLoadCount, 2, "positions in characters and in milliseconds are different maps")
+        XCTAssertFalse(controller.itemHasMap)
+    }
+
+    func testCompletingATextSkimSeeksToTheCharacterAndResumes() {
+        let host = ScriptedSkimHost()
+        host.textPositions = true
+        host.bridge = makeBridge(wasSourcePlaying: true, destination: 400)
+        makeController(host).complete()
+        XCTAssertEqual(host.log, ["state:completing", "state:nil", "seek:400", "resume", "finished"])
+    }
+
+    func testCompletingTheLastTextSceneLeavesTheReaderWhereItWasAndPauses() {
+        let host = ScriptedSkimHost()
+        host.textPositions = true
+        host.bridge = makeBridge(destinationSceneId: nil, wasSourcePlaying: true, destination: 901)
+        makeController(host).complete()
+        XCTAssertEqual(host.log, ["state:completing", "state:nil", "pause", "confirmed:Finished the final scene summary.", "finished"],
+                       "there is no later place in the text to move to")
+    }
+
     // MARK: completion order
 
     func testCompletingResumesASourceThatWasPlaying() {
@@ -478,7 +581,10 @@ private final class ScriptedSkimHost: SkimBridgeHost {
     }
 
     var skimSourceIsPlaying: Bool { true }
-    var skimCurrentMediaTimeMs: Int? { 1_000 }
+    var currentPosition: Int? = 1_000
+    var textPositions = false
+    var skimCurrentMediaTimeMs: Int? { currentPosition }
+    var skimUsesTextPositions: Bool { textPositions }
     var source: SkimSource?
     var store: SQLiteSessionStore?
     var skimSource: SkimSource? { source }

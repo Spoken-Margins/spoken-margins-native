@@ -224,4 +224,41 @@ final class SceneStartsTests: XCTestCase {
         XCTAssertEqual(starts.chapters.map(\.startMs), [0, 400])
         XCTAssertEqual(starts.summarySpans.map(\.endMs), [400, 900])
     }
+    // MARK: text proposal and plan (#1471)
+
+    func testTextProposalIsTheFirstOneWithCharacterStartsAndNeverAMediaOnlyOne() {
+        func proposal(_ id: String, _ scenes: [PortableListeningMapScene]) -> PortableListeningMapProposalArtifact {
+            PortableListeningMapProposalArtifact(id: id, createdAt: Date(timeIntervalSince1970: 0), generator: "test", scenes: scenes)
+        }
+        let media = proposal("media", [scene(0, start: 0), scene(1, start: 5_000)])
+        let text = proposal("text", [textScene(0, start: 0, end: 400)])
+        let negative = proposal("negative", [textScene(0, start: -3, end: 400)])
+        XCTAssertEqual(SceneStarts.textProposal(in: [media, negative, text])?.id, "text")
+        XCTAssertNil(SceneStarts.textProposal(in: [media, negative]))
+        XCTAssertNil(SceneStarts.textProposal(in: []))
+    }
+
+    func testTextSkimPlanLetsTheLastSceneSkimForwardWithoutATextLength() throws {
+        let starts = SceneStarts(textScenes: [textScene(0, start: 0, end: 400), textScene(1, start: 400, end: 900)])
+        let middle = try XCTUnwrap(starts.textSkimPlan(direction: .forward, at: 100))
+        XCTAssertEqual(middle.summaryScene.id, "scene-0")
+        XCTAssertEqual(middle.destinationSceneId, "scene-1")
+        XCTAssertEqual(middle.destinationMediaTimeMs, 400)
+        let last = try XCTUnwrap(starts.textSkimPlan(direction: .forward, at: 500))
+        XCTAssertEqual(last.summaryScene.id, "scene-1")
+        XCTAssertNil(last.destinationSceneId, "past the last scene there is nowhere to read on to")
+        XCTAssertEqual(last.destinationMediaTimeMs, 900)
+        let back = try XCTUnwrap(starts.textSkimPlan(direction: .backward, at: 500))
+        XCTAssertEqual(back.summaryScene.id, "scene-0")
+        XCTAssertEqual(back.destinationSceneId, "scene-1")
+        XCTAssertNil(starts.textSkimPlan(direction: .backward, at: 100), "nothing before the first scene")
+    }
+
+    func testTextSkimPlanStillPlansTheLastSceneWhenItsEndIsUnknown() throws {
+        let starts = SceneStarts(textScenes: [textScene(0, start: 0, end: 400), textScene(1, start: 400, end: nil)])
+        let last = try XCTUnwrap(starts.textSkimPlan(direction: .forward, at: 450))
+        XCTAssertNil(last.destinationSceneId)
+        XCTAssertGreaterThan(last.destinationMediaTimeMs, 400)
+        XCTAssertNil(SceneStarts(textScenes: []).textSkimPlan(direction: .forward, at: 0))
+    }
 }

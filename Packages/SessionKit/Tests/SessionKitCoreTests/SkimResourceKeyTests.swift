@@ -48,7 +48,10 @@ final class SkimResourceKeyTests: XCTestCase {
         var deletedLayer = mappedEpisode(); deletedLayer.importedCommentaryLayers[0].deletedAt = Date()
         var placedLayer = mappedEpisode(); placedLayer.importedCommentaryLayers[0].sourceResolutionStatus = .resolved
         var matchedEdition = mappedEpisode(); matchedEdition.importedCommentaryLayers[0].resolvedRecipientEditionSHA256 = "abc"
+        var newTextMap = mappedEpisode()
+        newTextMap.chapters = [Chapter(id: "scene-1", title: "Opening", startChar: 0, endChar: 400, percent: 0)]
         let rows: [(String, ItemDetailState)] = [
+            ("a text map was added", newTextMap),
             ("another item", otherItem), ("a scene moved", moved), ("the map went away", noMap),
             ("a summary changed", newSummary), ("a friend's layer arrived", addedLayer),
             ("a layer was deleted", deletedLayer), ("a layer was placed", placedLayer),

@@ -170,6 +170,24 @@ public enum EditionError: Error, LocalizedError {
 }
 
 extension ListeningEdition {
+    /// The edition's scenes as a map proposal placed by character, for Skim on a text item that has no prepared
+    /// audio (#1471). An edition read aloud by text-to-speech has its scenes only in the edition file; this is the
+    /// same map `audioMap` builds once the narration exists, without the audio times. Scene ids match
+    /// `listeningMap()`'s chapters, so a Skim destination is also a chapter.
+    public func textMapProposal() throws -> PortableListeningMapProposalArtifact {
+        _ = try validated()
+        let chapters = listeningMap().chapters
+        let records = scenes.enumerated().map { index, scene in
+            PortableListeningMapScene(id: chapters[index].id, order: index, title: scene.title,
+                summaryText: scene.summary, summaryProvenance: .senderAuthored, eligibility: .eligible,
+                eligibilityReason: "User-supplied summary; source bound to prepared text.",
+                startAnchor: PortableAnchorEvidence(anchorType: .text, startChar: chapters[index].startChar),
+                endAnchor: PortableAnchorEvidence(anchorType: .text, endChar: chapters[index].endChar))
+        }
+        return PortableListeningMapProposalArtifact(
+            id: ListeningEditionMap.proposalIDPrefix + revision, createdAt: Date(), generator: generator, scenes: records)
+    }
+
     /// Only activates Skim on a complete prepared representation. Text offsets
     /// snap to real segment boundaries; no guessed words-per-minute timestamps.
     public func audioMap(timeline: TranscriptTimeline) throws -> (PortableListeningMapProposalArtifact, ResolvedListeningMapProjection) {

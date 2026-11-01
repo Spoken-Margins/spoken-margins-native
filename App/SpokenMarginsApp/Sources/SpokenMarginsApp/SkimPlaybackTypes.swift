@@ -1,6 +1,7 @@
 import Foundation
 import SessionKit
 
+/// On a text item (#1471) the `...MediaTimeMs` fields below hold character offsets in the text, not milliseconds.
 struct ResolvedSkimPlaybackPlan {
     let direction: SkimDirection
     let itemId: String
@@ -26,11 +27,14 @@ struct SkimResourceContext: Sendable {
     let projection: ResolvedListeningMapProjection?
     let proposal: PortableListeningMapProposalArtifact?
     let assets: [OwnedOfflineAsset]
+    /// Read for a text item (#1471): the map is the proposal alone, placed by character, with no media projection.
+    let usesTextPositions: Bool
 }
 
 extension SkimResourceContext {
     /// A resolved map and the proposal it places: the item has Skim, whether or not a scene can be skimmed from here.
-    var hasMap: Bool { projection != nil && proposal?.scenes.isEmpty == false }
+    /// A text item's map is placed by the proposal's own character positions.
+    var hasMap: Bool { (usesTextPositions || projection != nil) && proposal?.scenes.isEmpty == false }
 }
 
 /// A scene whose summary has text but no saved audio in the current voice (#2185): Skim prepares it, then plays it.

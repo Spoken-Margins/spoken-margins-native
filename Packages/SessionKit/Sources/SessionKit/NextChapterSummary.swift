@@ -23,6 +23,10 @@ public enum NextChapterSummaryRule {
     /// that don't line up keep the plain jump rather than read a summary of something else.
     public static let alignmentToleranceMs = 1_000
 
+    /// The same rule on a text item, where positions are characters, not milliseconds (#1471): a scene and the
+    /// chapter it matches start at the same character, so this only absorbs a stray space at a boundary.
+    public static let alignmentToleranceChars = 16
+
     /// The summary playing now, if any.
     public struct PlayingSummary: Equatable, Sendable {
         public var direction: SkimDirection
@@ -35,9 +39,11 @@ public enum NextChapterSummaryRule {
     /// Whether Next chapter is offered at all. It stays offered while a summary heading for the
     /// next chapter plays, so a second press can skip it; other summaries (Skim back, or a Skim
     /// forward to a scene inside the chapter) hide it, as before.
-    public static func isAvailable(playing: PlayingSummary?, hasNextChapter: Bool, nextChapterStartMs: Int?) -> Bool {
+    public static func isAvailable(
+        playing: PlayingSummary?, hasNextChapter: Bool, nextChapterStartMs: Int?, tolerance: Int = alignmentToleranceMs
+    ) -> Bool {
         guard let playing else { return hasNextChapter }
-        return isHeadingForNextChapter(playing, nextChapterStartMs: nextChapterStartMs)
+        return isHeadingForNextChapter(playing, nextChapterStartMs: nextChapterStartMs, tolerance: tolerance)
     }
 
     /// What fills one side of the chapter row above the scrubber (#1666, which replaced #1628's hide-the-button rule).
@@ -77,27 +83,32 @@ public enum NextChapterSummaryRule {
     /// - Parameters:
     ///   - playing: the summary bridge playing now, if any.
     ///   - hasNextChapter: whether the item has a chapter after the current one.
-    ///   - nextChapterStartMs: the next chapter's media start; nil for text chapters.
+    ///   - nextChapterStartMs: the next chapter's start: its media time, or on a text item its start character (#1471).
+    ///     nil when the item has no next chapter to land at.
     ///   - summaryLandsAtMs: where a forward Skim from here would land after its summary;
     ///     nil when the current scene has no ready summary audio.
+    ///   - tolerance: how far the summary's landing may sit from the chapter start; `alignmentToleranceChars` on text.
     public static func press(
         playing: PlayingSummary?,
         hasNextChapter: Bool,
         nextChapterStartMs: Int?,
-        summaryLandsAtMs: Int?
+        summaryLandsAtMs: Int?,
+        tolerance: Int = alignmentToleranceMs
     ) -> NextChapterPress {
         if let playing {
-            return isHeadingForNextChapter(playing, nextChapterStartMs: nextChapterStartMs) ? .skipSummary : .unavailable
+            return isHeadingForNextChapter(playing, nextChapterStartMs: nextChapterStartMs, tolerance: tolerance)
+                ? .skipSummary : .unavailable
         }
         guard hasNextChapter else { return .unavailable }
-        guard let nextChapterStartMs, let summaryLandsAtMs, aligned(summaryLandsAtMs, nextChapterStartMs) else { return .jump }
+        guard let nextChapterStartMs, let summaryLandsAtMs,
+              aligned(summaryLandsAtMs, nextChapterStartMs, tolerance: tolerance) else { return .jump }
         return .summaryThenJump(landingMs: nextChapterStartMs)
     }
 
-    private static func isHeadingForNextChapter(_ playing: PlayingSummary, nextChapterStartMs: Int?) -> Bool {
+    private static func isHeadingForNextChapter(_ playing: PlayingSummary, nextChapterStartMs: Int?, tolerance: Int) -> Bool {
         guard playing.direction == .forward, let nextChapterStartMs else { return false }
-        return aligned(playing.landsAtMs, nextChapterStartMs)
+        return aligned(playing.landsAtMs, nextChapterStartMs, tolerance: tolerance)
     }
 
-    private static func aligned(_ a: Int, _ b: Int) -> Bool { abs(a - b) <= alignmentToleranceMs }
+    private static func aligned(_ a: Int, _ b: Int, tolerance: Int) -> Bool { abs(a - b) <= tolerance }
 }

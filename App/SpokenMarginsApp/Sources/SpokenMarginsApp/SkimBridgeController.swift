@@ -10,8 +10,17 @@ import AVFoundation
 /// (not a media item, a recording in progress, no store).
 struct SkimSource {
     let itemId: String
-    /// The playing duration, or the item's own when the snapshot has none yet.
+    /// The playing duration, or the item's own when the snapshot has none yet. Nil for a text item, which has none.
     let durationMs: Int?
+    /// A text item read aloud (#1471): every position Skim handles, the playhead and the destinations, is a character
+    /// offset in the text, not a media time, and the map is read from the scenes' character positions.
+    let usesTextPositions: Bool
+
+    init(itemId: String, durationMs: Int?, usesTextPositions: Bool = false) {
+        self.itemId = itemId
+        self.durationMs = durationMs
+        self.usesTextPositions = usesTextPositions
+    }
 }
 
 /// What the Skim bridge asks of the model that owns it (#954). The controller holds its host weakly and never
@@ -26,7 +35,11 @@ protocol SkimBridgeHost: AnyObject {
     /// the controller for `updateAvailability(refreshResources: false)` again; the controller's guard closes that loop.
     var skimAvailability: (forward: Bool, backward: Bool) { get set }
     var skimSourceIsPlaying: Bool { get }
+    /// The playhead: a media time, or a character offset on a text item (`skimUsesTextPositions`).
     var skimCurrentMediaTimeMs: Int? { get }
+    /// The playing item is a text item: Skim's positions are characters, a bridge to the last scene leaves the reader
+    /// where it was, and a seek moves the reader, not a media player (#1471).
+    var skimUsesTextPositions: Bool { get }
     var skimSource: SkimSource? { get }
     var skimStore: SQLiteSessionStore? { get }
     var skimHasEngine: Bool { get }
@@ -65,6 +78,10 @@ protocol SkimBridgeHost: AnyObject {
     func skimFailed(_ error: Error, context: String)
 }
 
+extension SkimBridgeHost {
+    var skimUsesTextPositions: Bool { false }
+}
+
 /// Skim forward and back, and the summary bridge audio that plays between: its player, its poll task,
 /// the resources it resolves against and the two destinations the controls show (#954).
 ///
@@ -97,7 +114,7 @@ final class SkimBridgeController {
     private var resourcesAreStale = false
     /// Bumped by every invalidation, so a read that started before one is never installed as current.
     private var resourceGeneration = 0
-    private var resourceLoad: (token: UUID, itemId: String, task: Task<Void, Never>)?
+    private var resourceLoad: (token: UUID, itemId: String, usesTextPositions: Bool, task: Task<Void, Never>)?
     private var isUpdatingAvailability = false
     /// A summary being prepared for a press (#2185). A press for the same summary meanwhile is told to wait; a press
     /// for another one replaces it, and the replaced result is ignored.
@@ -196,15 +213,19 @@ final class SkimBridgeController {
     /// one being reloaded. The controls and the press path ask on every tick and tap, so none of them may wait on the store.
     private func loadedResources(for source: SkimSource) -> SkimResourceContext? {
         guard host?.skimStore != nil else { return nil }
-        if resourceContext?.itemId != source.itemId || resourcesAreStale { loadResources(itemId: source.itemId) }
-        guard let context = resourceContext, context.itemId == source.itemId else { return nil }
+        if resourceContext?.itemId != source.itemId || resourceContext?.usesTextPositions != source.usesTextPositions
+            || resourcesAreStale {
+            loadResources(itemId: source.itemId, usesTextPositions: source.usesTextPositions)
+        }
+        guard let context = resourceContext, context.itemId == source.itemId,
+              context.usesTextPositions == source.usesTextPositions else { return nil }
         return context
     }
 
     /// Reads `itemId`'s resources off the main actor, installs them unless something invalidated them meanwhile
     /// (then reads again), and asks for another availability pass. One load runs per item at a time.
-    private func loadResources(itemId: String) {
-        if let load = resourceLoad, load.itemId == itemId { return }
+    private func loadResources(itemId: String, usesTextPositions: Bool) {
+        if let load = resourceLoad, load.itemId == itemId, load.usesTextPositions == usesTextPositions { return }
         guard let store = host?.skimStore else { return }
         resourceLoad?.task.cancel()
         let token = UUID()
@@ -216,7 +237,7 @@ final class SkimBridgeController {
                 self.resourceLoadCount += 1
                 #endif
                 let context = await Task.detached(priority: .userInitiated) {
-                    Self.readResources(store: store, itemId: itemId)
+                    Self.readResources(store: store, itemId: itemId, usesTextPositions: usesTextPositions)
                 }.value
                 guard self.resourceLoad?.token == token else { return }
                 guard generation == self.resourceGeneration else { continue }
@@ -227,10 +248,23 @@ final class SkimBridgeController {
                 return
             }
         }
-        resourceLoad = (token, itemId, task)
+        resourceLoad = (token, itemId, usesTextPositions, task)
     }
 
-    nonisolated private static func readResources(store: SQLiteSessionStore, itemId: String) -> SkimResourceContext {
+    nonisolated private static func readResources(
+        store: SQLiteSessionStore, itemId: String, usesTextPositions: Bool
+    ) -> SkimResourceContext {
+        if usesTextPositions {
+            // A text item has no media projection: its map is the proposal placed by character (#1471). An edition read
+            // aloud keeps its scenes only in its file until audio is prepared, so the file stands in for the proposal.
+            let committed = (try? store.loadPortableListeningMapProposals(itemId: itemId)) ?? []
+            return SkimResourceContext(
+                itemId: itemId, projection: nil,
+                proposal: SceneStarts.textProposal(in: committed) ?? editionTextProposal(itemId: itemId),
+                assets: (try? store.loadOwnedOfflineAssets(itemId: itemId)) ?? [],
+                usesTextPositions: true
+            )
+        }
         let projection = try? store.loadResolvedListeningMapProjection(itemId: itemId)
         return SkimResourceContext(
             itemId: itemId,
@@ -238,22 +272,38 @@ final class SkimBridgeController {
             proposal: SharedListeningMapPlacement.proposal(
                 for: projection, committed: (try? store.loadPortableListeningMapProposals(itemId: itemId)) ?? [],
                 layers: (try? store.loadImportedCommentaryLayers(itemId: itemId)) ?? []),
-            assets: (try? store.loadOwnedOfflineAssets(itemId: itemId)) ?? []
+            assets: (try? store.loadOwnedOfflineAssets(itemId: itemId)) ?? [],
+            usesTextPositions: false
         )
     }
 
+    nonisolated private static func editionTextProposal(itemId: String) -> PortableListeningMapProposalArtifact? {
+        guard itemId.hasPrefix(ListeningEdition.itemIDPrefix),
+              let edition = try? ListeningEditionStore.application().load(itemID: itemId) else { return nil }
+        return try? edition.textMapProposal()
+    }
+
     /// What a Skim from here does: play saved summary audio, prepare the summary first, or nothing, and why (#2185).
+    /// `recipientMediaTimeMs` is a character offset on a text item (#1471), as are the plan's destinations.
     func resolve(direction: SkimDirection, at recipientMediaTimeMs: Int) -> SkimResolution {
         guard let host, let source = host.skimSource else { return .unavailable(.noSource) }
         guard let resources = loadedResources(for: source) else {
             return .unavailable(host.skimStore == nil ? .noSource : .loading)
         }
-        guard let projection = resources.projection, let proposal = resources.proposal else { return .unavailable(.noMap) }
-        let plan = SceneStarts(scenes: proposal.scenes, projection: projection).skimPlan(
-            direction: direction, at: recipientMediaTimeMs,
-            durationMs: source.durationMs
-        )
-        let proposalId = SharedListeningMapPlacement.isSharedProjection(id: projection.id) ? projection.id : proposal.id
+        guard let proposal = resources.proposal else { return .unavailable(.noMap) }
+        let plan: SceneStarts.SkimPlan?
+        let proposalId: String
+        if source.usesTextPositions {
+            plan = SceneStarts(textScenes: proposal.scenes).textSkimPlan(direction: direction, at: recipientMediaTimeMs)
+            proposalId = proposal.id
+        } else {
+            guard let projection = resources.projection else { return .unavailable(.noMap) }
+            plan = SceneStarts(scenes: proposal.scenes, projection: projection).skimPlan(
+                direction: direction, at: recipientMediaTimeMs,
+                durationMs: source.durationMs
+            )
+            proposalId = SharedListeningMapPlacement.isSharedProjection(id: projection.id) ? projection.id : proposal.id
+        }
         let assetID = plan.map {
             host.summaryBridgeAssetID(
                 itemId: source.itemId, proposalId: proposalId,
@@ -387,7 +437,7 @@ final class SkimBridgeController {
     private func reloadResources(itemId: String) async {
         if resourceContext?.itemId == itemId || resourceLoad?.itemId == itemId { invalidateResources() }
         guard host?.skimSource?.itemId == itemId else { return }
-        loadResources(itemId: itemId)
+        if let source = host?.skimSource { loadResources(itemId: itemId, usesTextPositions: source.usesTextPositions) }
         await settleResources()
     }
 
@@ -498,7 +548,10 @@ final class SkimBridgeController {
         protectSummaryBridgeAsset(bridge.summaryAssetId, protected: false)
         do {
             host.skimBridgeState = nil
-            try host.skimSeekOrStage(toMediaTimeMs: bridge.destinationMediaTimeMs)
+            // The last scene of a text item has no later place to read from: the reader stays where it was and pauses.
+            if !(host.skimUsesTextPositions && bridge.destinationSceneId == nil) {
+                try host.skimSeekOrStage(toMediaTimeMs: bridge.destinationMediaTimeMs)
+            }
             if bridge.destinationSceneId == nil {
                 try host.skimPauseEngine()
                 host.skimConfirmed("Finished the final scene summary.")
