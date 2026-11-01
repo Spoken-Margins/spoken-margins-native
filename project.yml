@@ -392,6 +392,8 @@ targets:
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
+        # Names the file-descriptor guard (OpenDescriptorGuard.swift) as the bundle's NSPrincipalClass (#2818).
+        INFOPLIST_FILE: Config/SpokenMarginsAppTestsInfo.plist
         PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native.tests
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) $(SM_PHONE_BUILD_CONDITIONS_$(SM_PHONE_BUILD)) $(SM_SHARE_LINK_CREATION_CONDITIONS_$(SM_SHARE_LINK_CREATION))
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/SpokenMarginsApp.app/SpokenMarginsApp"
