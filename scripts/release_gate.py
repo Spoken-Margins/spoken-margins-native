@@ -20,6 +20,15 @@ step 3 and must use exactly this name. Builds up to Build 34 predate it, so a mi
 a CFBundleVersion of 34 or lower; a newer build without the key, or with a key that isn't a boolean, is
 refused, so a renamed key can't open the gate. A build with creation off is always allowed, and so is any
 build for the internal group. Exit 0 allowed, 1 refused, 2 the inputs couldn't be read. Stdlib only.
+
+The agent's registration lasts three years, so a second mode gives the owner a reminder before it lapses (#2236
+step 5). The Mac tick runs it and posts the line it prints when it exits 1:
+
+  scripts/release_gate.py --renewal-notice
+
+It prints one line and exits 0 when nothing is due (not yet registered, or more than 90 days before the lapse),
+1 when the owner should act (inside the 90 days, lapsed, or registered with no usable date recorded), 2 when the
+record can't be read.
 Tests set SM_RELEASE_GATE_TODAY (YYYY-MM-DD) to pin today's date; release runs never do.
 """
 from __future__ import annotations
@@ -37,6 +46,7 @@ from xml.parsers.expat import ExpatError
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_RECORD = ROOT / "docs" / "legal" / "gate-record.json"
 PLIST_KEY = "SMShareLinkCreation"
+RENEWAL_LEAD_DAYS = 90  # the reminder starts this long before the registration lapses
 TESTER_LIMIT = 100  # the waiver holds below this many external testers
 LAST_BUILD_WITHOUT_KEY = 34  # Build 34 (testflight/0.1-build-34) predates the build setting
 ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
@@ -121,6 +131,24 @@ def registration_expires(registered_on: datetime.date) -> datetime.date:
         return datetime.date(registered_on.year + 3, 3, 1)
 
 
+def renewal_notice(record: dict, today: datetime.date) -> tuple[bool, str]:
+    """(the owner should act, one line). Nothing is due before the agent is registered, or until the lead window opens."""
+    agent = _section(record, "dmca_agent")
+    if agent.get("registered") is not True:
+        return False, "DMCA agent renewal: not registered yet, nothing to renew"
+    registered_on = _date(agent.get("registered_on"))
+    if registered_on is None or registered_on > today:
+        return True, ("DMCA agent renewal: the agent is recorded as registered but the registration date in "
+                      "docs/legal/gate-record.json is missing or invalid; record it so the renewal date is known")
+    expires = registration_expires(registered_on)
+    days = (expires - today).days
+    if days <= 0:
+        return True, f"DMCA agent renewal: the registration lapsed on {expires}; renew it in the Copyright Office's DMCA Directory now"
+    if days <= RENEWAL_LEAD_DAYS:
+        return True, f"DMCA agent renewal: the registration lapses on {expires} ({days} days); renew it in the Copyright Office's DMCA Directory"
+    return False, f"DMCA agent renewal: not due; the registration lapses on {expires} ({days} days)"
+
+
 def missing_items(record: dict, today: datetime.date) -> list[str]:
     """What keeps the gate closed. Empty means complete. Anything unclear counts as missing."""
     missing = []
@@ -173,18 +201,33 @@ def decide(destination: str, plist: dict, record: dict, today: datetime.date) ->
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("build", type=Path, help="an .xcarchive, a .app bundle or an Info.plist")
-    parser.add_argument("--destination", required=True, choices=["external", "internal"],
+    parser.add_argument("build", type=Path, nargs="?", help="an .xcarchive, a .app bundle or an Info.plist")
+    parser.add_argument("--destination", choices=["external", "internal"],
                         help="the TestFlight group the build is about to be assigned to")
+    parser.add_argument("--renewal-notice", action="store_true",
+                        help="print whether the agent registration is near its three-year lapse; takes no build")
     parser.add_argument("--record", type=Path, default=DEFAULT_RECORD, help="the gate record (default: %(default)s)")
     args = parser.parse_args(argv)
+    today = datetime.date.fromisoformat(os.environ.get("SM_RELEASE_GATE_TODAY") or datetime.date.today().isoformat())
+    if args.renewal_notice:
+        if args.build is not None or args.destination is not None:
+            parser.error("--renewal-notice takes no build or destination")
+        try:
+            record = read_record(args.record)
+        except InputError as error:
+            print(f"release gate: {error}", file=sys.stderr)
+            return 2
+        act, line = renewal_notice(record, today)
+        print(line)
+        return 1 if act else 0
+    if args.build is None or args.destination is None:
+        parser.error("a build and --destination are required (or use --renewal-notice)")
     try:
         plist = read_plist(args.build)
         record = read_record(args.record)
     except InputError as error:
         print(f"release gate: {error}", file=sys.stderr)
         return 2
-    today = datetime.date.fromisoformat(os.environ.get("SM_RELEASE_GATE_TODAY") or datetime.date.today().isoformat())
     allowed, reasons = decide(args.destination, plist, record, today)
     stream = sys.stdout if allowed else sys.stderr
     print(("release gate: allowed. " if allowed else "release gate: REFUSED. ") + reasons[0], file=stream)
