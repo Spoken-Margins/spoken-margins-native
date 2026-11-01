@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"errors"
+	"html"
 	"io"
 	"log"
 	"mime"
@@ -217,7 +218,8 @@ func (s *Server) getLinkPacket(w http.ResponseWriter, r *http.Request) {
 // year unread (links.Store.Hold, #2235) before the link comes down. For every other category a "link"
 // field is dropped unread, so the key is never stored.
 const (
-	maxReportForm = 8 << 10
+	// Room for a 2048-byte link and a 6000-byte reason, each percent-encoded.
+	maxReportForm = 32 << 10
 	maxReportLink = 2048
 	// The reporter's handle is kept for the 7-day reason window and the record for the 90-day strike
 	// window, no longer (reports.Store.Sweep).
@@ -268,11 +270,7 @@ func (s *Server) reportLink(w http.ResponseWriter, r *http.Request) {
 	now := s.Now()
 	cfg := s.reportConfig()
 	handle := s.Reports.Handle("net", s.clientNetOf(r))
-	prior, err := s.Reports.Prior(handle, now, cfg.ReasonWindow)
-	if err != nil {
-		fail(w, http.StatusInternalServerError, "internal")
-		return
-	}
+	prior := s.Reports.Note(handle, now, cfg.ReasonWindow)
 	d := cfg.Intake(reportrules.Submission{Category: categories[0], Reason: reason, Channel: reportrules.ChannelForm}, prior, now)
 	if d.Err != nil {
 		fail(w, http.StatusBadRequest, "bad_category")
@@ -291,8 +289,22 @@ func (s *Server) reportLink(w http.ResponseWriter, r *http.Request) {
 			full = []byte(strings.TrimSpace(fulls[0]))
 		}
 		if err := s.Links.Hold(id, "form-"+ref, full, now); err != nil {
-			linkFailure(w, err)
-			return
+			if errors.Is(err, links.ErrNotFound) {
+				linkFailure(w, err)
+				return
+			}
+			// The hold did its work if the link is already down (only its log line failed). Otherwise the
+			// link goes dark now and keeps its content, so a retry can still hold it; the reporter is told
+			// to try again and the owner's runbook command holds it by hand.
+			if !errors.Is(s.Links.Live(id, now), links.ErrGone) {
+				log.Print("reports: hold failed, link disabled without a hold")
+				if s.Links.Disable(id) != nil {
+					log.Print("reports: link could not be disabled")
+				}
+				fail(w, http.StatusInternalServerError, "internal")
+				return
+			}
+			log.Print("reports: hold finished with an error")
 		}
 	} else {
 		if err := s.Links.Live(id, now); err != nil {
@@ -306,7 +318,7 @@ func (s *Server) reportLink(w http.ResponseWriter, r *http.Request) {
 	}
 	s.countLinkReport(linkReportKey{hour: now.UTC().Format("2006-01-02T15"), id: id, reason: string(d.Category)})
 	// The link is already down. A record that fails to save must not turn that into an error page.
-	filed := s.Reports.Add(reports.Record{Ref: ref, LinkID: id, Category: d.Category, At: now, Reason: reason, Reporter: handle}) == nil
+	filed := s.Reports.Add(reports.Record{Ref: ref, LinkID: id, Category: d.Category, At: now, Reason: reason}) == nil
 	if !filed {
 		log.Print("reports: record not saved")
 	}
@@ -356,6 +368,7 @@ func (s *Server) reportReason(w http.ResponseWriter, r *http.Request) {
 
 // writeReportPage is the acknowledgement. ref is letters and digits only, so it needs no escaping.
 func writeReportPage(w http.ResponseWriter, id, ref string, filed, askReason bool) {
+	id, ref = html.EscapeString(id), html.EscapeString(ref)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	var b strings.Builder
 	b.WriteString(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Link reported</title><p>Thank you. This link has been taken down.</p>`)

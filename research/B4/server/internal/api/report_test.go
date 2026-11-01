@@ -222,7 +222,7 @@ func TestReasonGivenWithTheReportIsNotAskedForAgain(t *testing.T) {
 	}
 }
 
-func TestReportRecordHoldsNoAddressAndEndsWithTheWindows(t *testing.T) {
+func TestReportRecordHoldsNoReporterAtAll(t *testing.T) {
 	s, _ := enabledLinks(t)
 	now := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
 	s.Now = func() time.Time { return now }
@@ -236,7 +236,7 @@ func TestReportRecordHoldsNoAddressAndEndsWithTheWindows(t *testing.T) {
 			t.Fatalf("record holds an address: %s", data)
 		}
 	}
-	if !bytes.Contains(data, []byte(`"reporter":"`)) || !bytes.Contains(data, []byte(`"category":"copyright"`)) {
+	if bytes.Contains(data, []byte("reporter")) || !bytes.Contains(data, []byte(`"category":"copyright"`)) {
 		t.Fatalf("record %s", data)
 	}
 }
@@ -248,5 +248,50 @@ func TestReportsOffAnswers503AndLeavesTheLinkUp(t *testing.T) {
 	id := createdLink(t, h)
 	if code, _ := postReport(h, id, "category=other", "203.0.113.7"); code != 503 {
 		t.Fatalf("no store: %d", code)
+	}
+}
+
+// If the year-long hold cannot be made (disk trouble), the link still goes dark at once, its content
+// stays so the hold can be retried, and the retry works.
+func TestAbuseMaterialHoldFailureStillDisablesTheLinkAndCanBeRetried(t *testing.T) {
+	s, _ := enabledLinks(t)
+	h := s.Handler()
+	id := createdLink(t, h)
+	blocker := filepath.Join(stateDirOf(s), "links-held")
+	if err := os.WriteFile(blocker, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	full := "https://spokenmargins.com/l/" + id + "#" + reportKey
+	if code, _ := postReport(h, id, "category=abuse_material&link="+full, "203.0.113.7"); code != 500 {
+		t.Fatalf("a failed hold should say so: %d", code)
+	}
+	if !linkIsDown(h, id) {
+		t.Fatal("link still served after a failed hold")
+	}
+	if data, err := os.ReadFile(filepath.Join(stateDirOf(s), "links", id, "packet")); err != nil || !bytes.Equal(data, linkPacket) {
+		t.Fatalf("content was destroyed before it could be held: %v", err)
+	}
+	os.Remove(blocker)
+	if code, body := postReport(h, id, "category=abuse_material&link="+full, "203.0.113.8"); code != 200 {
+		t.Fatalf("retry: %d %s", code, body)
+	}
+	if data, err := os.ReadFile(filepath.Join(stateDirOf(s), "links-held", id, "packet")); err != nil || !bytes.Equal(data, linkPacket) {
+		t.Fatalf("retry did not hold the ciphertext: %v", err)
+	}
+}
+
+func TestAKeyPastedIntoAReasonDoesNotReachTheReportRecord(t *testing.T) {
+	s, _ := enabledLinks(t)
+	h := s.Handler()
+	a, b := createdLink(t, h), createdLink(t, h)
+	pasted := "https://spokenmargins.com/l/" + a + "#" + reportKey
+	postReport(h, a, "category=harassment&reason="+pasted, "203.0.113.7")
+	_, body := postReport(h, b, "category=other", "203.0.113.7")
+	ref := regexp.MustCompile(`name="ref" value="([A-Z2-9]{12})"`).FindStringSubmatch(body)[1]
+	linkRequest(h, "POST", "/l/"+b+"/report/reason", "application/x-www-form-urlencoded", []byte("ref="+ref+"&reason="+pasted), "203.0.113.7")
+	for path, data := range everythingUnder(t, stateDirOf(s)) {
+		if bytes.Contains(data, []byte(reportKey)) {
+			t.Fatalf("the key reached %s", path)
+		}
 	}
 }

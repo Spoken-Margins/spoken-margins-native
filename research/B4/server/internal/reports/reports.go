@@ -1,12 +1,13 @@
 // Package reports keeps the record of "Report this link" submissions (#2239, requirement 9):
-// the link id, the category, the date, the reporter's written reason when one was given, and a keyed
-// hash of the reporter's handle. Nothing else about the reporter is kept, and nothing about the
-// reported content: the server cannot read it and nobody opens it.
+// the link id, the category, the date, and the reporter's written reason when one was given. Nothing
+// else about the reporter is kept, and nothing about the reported content: the server cannot read it
+// and nobody opens it.
 //
-// The handle hash exists so the "second report within 7 days owes a written reason" rule can be
-// counted. It is an HMAC under a key generated on first start and kept beside the records, so the same
-// phone or network is the same hash across restarts but the hash means nothing without the key. It is
-// cleared from a record once the 7-day window has passed, and the whole record goes after 90 days.
+// The "second report within 7 days owes a written reason" rule needs to tell one reporter's reports
+// apart. That is done in memory only: a keyed hash of the reporter's network, under a key made at start,
+// with the report times kept for the window. None of it is written to disk, so no address, and nothing
+// that could be turned back into one, is ever stored. The cost is that a restart forgets the window: a
+// reporter's second report just after a restart does not owe a reason. Records on disk go after 90 days.
 package reports
 
 import (
@@ -18,6 +19,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -27,11 +29,11 @@ import (
 
 const (
 	recordsFile = "reports.json"
-	keyFile     = "reporter.key"
 
 	// MaxReasonBytes bounds a written reason. Any length counts, even one character; this is only a
-	// ceiling so a form post cannot fill the disk.
-	MaxReasonBytes = 2000
+	// ceiling so a form post cannot fill the disk. The form's 2000-character box fits under it even
+	// in three-byte characters.
+	MaxReasonBytes = 6000
 )
 
 var (
@@ -41,54 +43,44 @@ var (
 	ErrReasonTooLong = errors.New("reports: reason too long")
 )
 
-// Record is one filed report. Reporter is empty once the handle window has passed.
+// Record is one filed report.
 type Record struct {
 	Ref      string               `json:"ref"`
 	LinkID   string               `json:"link"`
 	Category reportrules.Category `json:"category"`
 	At       time.Time            `json:"at"`
 	Reason   string               `json:"reason,omitempty"`
-	Reporter string               `json:"reporter,omitempty"`
 }
 
-// Store is a small JSON file of records. Reports are rare and the file is bounded by the 90-day
-// sweep and the per-client rate limit, so it is rewritten whole, atomically, on every change.
+// Store is a small JSON file of records plus the in-memory reporter windows. Reports are rare and the
+// file is bounded by the 90-day sweep and the per-client rate limit, so it is rewritten whole,
+// atomically, on every change.
 type Store struct {
-	dir string
-	key []byte
-	mu  sync.Mutex
+	dir    string
+	key    []byte // memory only
+	mu     sync.Mutex
+	recent map[string][]time.Time // handle -> times of its reports; memory only
 }
 
-// Open creates the directory (mode 0700) and the handle key on first use.
+// Open creates the directory (mode 0700) and checks any records already there.
 func Open(dir string) (*Store, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
-	path := filepath.Join(dir, keyFile)
-	key, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		key = make([]byte, 32)
-		if _, err := rand.Read(key); err != nil {
-			return nil, err
-		}
-		if err := writeAtomic(dir, keyFile, key); err != nil {
-			return nil, err
-		}
-	} else if err != nil {
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
 		return nil, err
 	}
-	if len(key) != 32 {
-		return nil, errors.New("reports: unreadable handle key")
-	}
-	s := &Store{dir: dir, key: key}
+	s := &Store{dir: dir, key: key, recent: map[string][]time.Time{}}
 	if _, err := s.load(); err != nil {
 		return nil, err
 	}
 	return s, nil
 }
 
-// Handle is the keyed hash of what identifies a reporter (a client network, or a reply email).
-// Kind separates the two so an address and an email cannot collide.
+// Handle is the keyed hash of what identifies a reporter (a client network, or a reply email), under
+// a key that exists only in this process. Kind separates the two so an address and an email cannot
+// collide.
 func (s *Store) Handle(kind, value string) string {
 	m := hmac.New(sha256.New, s.key)
 	m.Write([]byte(kind))
@@ -118,25 +110,20 @@ func NewRef() (string, error) {
 	return string(out), nil
 }
 
-// Prior returns the times of this handle's earlier reports that are still inside window, for
-// reportrules.Config.Intake. It never returns content.
-func (s *Store) Prior(handle string, now time.Time, window time.Duration) ([]time.Time, error) {
-	if handle == "" {
-		return nil, nil
-	}
+// Note returns the times of this handle's earlier reports that are still inside window, for
+// reportrules.Config.Intake, and records one at now, in one step, so reports sent at the same moment
+// cannot each see an empty history. Memory only.
+func (s *Store) Note(handle string, now time.Time, window time.Duration) []time.Time {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	recs, err := s.load()
-	if err != nil {
-		return nil, err
-	}
-	var out []time.Time
-	for _, r := range recs {
-		if r.Reporter == handle && !now.Before(r.At) && now.Sub(r.At) <= window {
-			out = append(out, r.At)
+	var prior []time.Time
+	for _, t := range s.recent[handle] {
+		if !now.Before(t) && now.Sub(t) <= window {
+			prior = append(prior, t)
 		}
 	}
-	return out, nil
+	s.recent[handle] = append(append([]time.Time(nil), prior...), now)
+	return prior
 }
 
 // Add files a record.
@@ -147,7 +134,7 @@ func (s *Store) Add(r Record) error {
 	if err != nil {
 		return err
 	}
-	r.Reason = strings.TrimSpace(r.Reason)
+	r.Reason = cleanReason(r.Category, r.Reason)
 	return s.save(append(recs, r))
 }
 
@@ -155,11 +142,11 @@ func (s *Store) Add(r Record) error {
 // match, so a ref from one link's page cannot be used on another's.
 func (s *Store) AddReason(ref, linkID, reason string) error {
 	reason = strings.TrimSpace(reason)
-	if reason == "" {
-		return ErrReasonMissing
-	}
 	if len(reason) > MaxReasonBytes {
 		return ErrReasonTooLong
+	}
+	if reason == "" {
+		return ErrReasonMissing
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -172,50 +159,61 @@ func (s *Store) AddReason(ref, linkID, reason string) error {
 			if recs[i].Reason != "" {
 				return ErrReasonGiven
 			}
-			recs[i].Reason = reason
+			recs[i].Reason = cleanReason(recs[i].Category, reason)
 			return s.save(recs)
 		}
 	}
 	return ErrNotFound
 }
 
-// Sweep clears reporter handles older than handleKeep and deletes records older than recordKeep.
+// Sweep deletes records older than recordKeep and forgets reporter windows older than handleKeep.
 // It returns how many records it deleted.
 func (s *Store) Sweep(now time.Time, handleKeep, recordKeep time.Duration) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	for h, times := range s.recent {
+		kept := times[:0:0]
+		for _, t := range times {
+			if now.Sub(t) <= handleKeep {
+				kept = append(kept, t)
+			}
+		}
+		if len(kept) == 0 {
+			delete(s.recent, h)
+		} else {
+			s.recent[h] = kept
+		}
+	}
 	recs, err := s.load()
 	if err != nil {
 		return 0, err
 	}
 	kept := recs[:0:0]
 	for _, r := range recs {
-		age := now.Sub(r.At)
-		if age > recordKeep {
-			continue
+		if now.Sub(r.At) <= recordKeep {
+			kept = append(kept, r)
 		}
-		if age > handleKeep {
-			r.Reporter = ""
-		}
-		kept = append(kept, r)
 	}
-	deleted := len(recs) - len(kept)
-	if deleted == 0 && !changedHandles(recs, kept) {
+	if len(kept) == len(recs) {
 		return 0, nil
 	}
-	return deleted, s.save(kept)
+	return len(recs) - len(kept), s.save(kept)
 }
 
-func changedHandles(a, b []Record) bool {
-	if len(a) != len(b) {
-		return true
+// linkWithKey matches a pasted share link or its tail: anything ending in /l/<32 hex> followed by # and
+// the key. A reason is free text, so outside the abuse-material category a link pasted into it must not
+// carry the key to disk.
+var linkWithKey = regexp.MustCompile(`\S*/l/[0-9a-f]{32}#\S*`)
+
+// cleanReason trims a reason and, for every category but abuse-material, replaces a pasted link that
+// carries a key with a marker. Only an abuse-material report may keep the key, and it keeps it in the
+// hold, not here.
+func cleanReason(c reportrules.Category, reason string) string {
+	reason = strings.TrimSpace(reason)
+	if c.CarriesKey() {
+		return reason
 	}
-	for i := range a {
-		if a[i].Reporter != b[i].Reporter {
-			return true
-		}
-	}
-	return false
+	return linkWithKey.ReplaceAllString(reason, "[link removed]")
 }
 
 func (s *Store) load() ([]Record, error) {

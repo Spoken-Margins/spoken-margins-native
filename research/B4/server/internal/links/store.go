@@ -224,7 +224,24 @@ func (s *Store) Takedown(id string) error {
 	return s.takedownLocked(id)
 }
 
+// Disable stops a link being served and keeps its content, for when a hold could not be made: the
+// link goes dark at once and the ciphertext stays for the hold to be retried. The daily sweep still
+// deletes the content when the link would have expired anyway.
+func (s *Store) Disable(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.tombstoneLocked(id)
+}
+
 func (s *Store) takedownLocked(id string) error {
+	if err := s.tombstoneLocked(id); err != nil {
+		return err
+	}
+	return s.deleteContent(id)
+}
+
+// tombstoneLocked publishes the expired metadata, so every later request is refused.
+func (s *Store) tombstoneLocked(id string) error {
 	if !ValidID(id) {
 		return ErrNotFound
 	}
@@ -248,8 +265,5 @@ func (s *Store) takedownLocked(id string) error {
 	if closeErr != nil {
 		return closeErr
 	}
-	if err := os.Rename(f.Name(), filepath.Join(dir, "meta.json")); err != nil {
-		return err
-	}
-	return s.deleteContent(id)
+	return os.Rename(f.Name(), filepath.Join(dir, "meta.json"))
 }

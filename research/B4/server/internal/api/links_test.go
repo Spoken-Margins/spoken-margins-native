@@ -376,7 +376,7 @@ func TestLinkReportsRejectUnboundedInput(t *testing.T) {
 		"", "category=", "category=203.0.113.7", "category=%3Cscript%3E", "category=" + strings.Repeat("x", 2000),
 		"category=Copyright", "category=copyright%20", "category=copyright&category=other",
 		"reason=privacy", // the form's old field: no category, so nothing is filed
-		"category=copyright&reason=" + strings.Repeat("x", 2001),
+		"category=copyright&reason=" + strings.Repeat("x", 6001),
 	} {
 		w := linkRequest(h, "POST", "/l/"+id+"/report", "application/x-www-form-urlencoded", []byte(body), "203.0.113.7")
 		if w.Code != 400 {
