@@ -463,6 +463,53 @@ final class BackgroundRefreshGateTests: XCTestCase {
         XCTAssertEqual(model.selectedItem.interjections.map(\.id), kept.map(\.id), "the background read restores the stored Margins")
     }
 
+    /// Starring, annotating, deleting and restoring a Margin used to read the whole item on the main thread before the
+    /// tap returned (#2505). The Margin's row is patched at once; the item screen follows from the background read.
+    func testCuratingAMarginReloadsTheItemInTheBackground() async throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        await model.settleItemReload()
+        model.beginWrittenMargin()
+        model.saveWrittenMargin(text: "Worth keeping")
+        await model.settleItemReload()
+        let margin = try XCTUnwrap(model.selectedItem.interjections.first)
+        XCTAssertNotEqual(margin.isStarredForSharing, true)
+
+        model.setInterjectionStarredForSharing(margin.id, starred: true)
+        XCTAssertNotEqual(model.selectedItem.interjections.first?.isStarredForSharing, true,
+                          "the star must not read the item before it returns")
+        await model.settleItemReload()
+        XCTAssertEqual(model.selectedItem.interjections.first?.isStarredForSharing, true, "the background read shows the star")
+
+        model.setInterjectionPrivateSharingNote(margin.id, note: "For Sam")
+        XCTAssertNil(model.selectedItem.interjections.first?.privateSharingNote, "the note must not read the item before it returns")
+        await model.settleItemReload()
+        XCTAssertEqual(model.selectedItem.interjections.first?.privateSharingNote, "For Sam")
+
+        model.deleteInterjection(margin)
+        XCTAssertEqual(model.selectedItem.interjections.map(\.id), [margin.id], "the delete must not read the item before it returns")
+        await model.settleItemReload()
+        XCTAssertTrue(model.selectedItem.interjections.isEmpty, "the background read drops the deleted Margin")
+    }
+
+    /// Importing a pasted assistant response used to read the whole item on the main thread before playback started
+    /// (#2505). The turn shows on the item screen when the background read lands.
+    func testImportingAPastedResponseReloadsTheItemInTheBackground() async throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        await model.settleItemReload()
+        let turnsBefore = model.selectedItem.turns
+
+        model.pastedAssistantResponse = "A pasted response that is long enough to become a turn."
+        model.importPastedAssistantResponse(autoPlay: false)
+        XCTAssertEqual(model.selectedItem.turns, turnsBefore, "the import must not read the item before it returns")
+
+        await model.settleItemReload()
+        XCTAssertGreaterThan(model.selectedItem.turns.count, turnsBefore.count, "the background read shows the imported turn")
+    }
+
     func testATranscriptForAnotherItemNeverRetargetsThePlaybackScreen() async throws {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
