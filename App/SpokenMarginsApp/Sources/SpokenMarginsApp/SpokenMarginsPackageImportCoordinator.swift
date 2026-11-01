@@ -173,6 +173,12 @@ final class SpokenMarginsPackageImportCoordinator {
         }.value
     }
 
+    /// Removes a staging folder on a background thread and returns when it is gone, so a rejected or duplicate packet
+    /// leaves nothing behind by the time `stage` reports (#2510). It holds the same order as the main-thread delete did.
+    nonisolated private static func removeFolder(_ url: URL) async {
+        await Task.detached(priority: .utility) { try? FileManager.default.removeItem(at: url) }.value
+    }
+
     /// Copies the packet into its own folder under Application Support, verifies it and either opens an item it
     /// already belongs to or shows it for review. `releaseSource` runs once the packet no longer needs the file it
     /// came from: now for a packet already in the library, otherwise when its review is imported or cancelled. A
@@ -215,7 +221,7 @@ final class SpokenMarginsPackageImportCoordinator {
                 }
                 environment.reportSuccess("These shared Margins are already in your library. Playback has not started.")
                 environment.recordDiagnostic("lastSpokenMarginsPackageImport", "duplicate:\(digest)")
-                try? FileManager.default.removeItem(at: root)
+                await Self.removeFolder(root) // the duplicate's copy and extracted assets, off the main actor (#2510)
                 return .staged
             }
             let staged = try await makeReview(packageURL: copiedPackage, extractionDirectory: root, contents: contents,
@@ -230,7 +236,7 @@ final class SpokenMarginsPackageImportCoordinator {
                 duplicateCheck == .review(isRepair: true) ? "repair_previewed:\(digest)" : "previewed:\(digest)")
             return .staged
         } catch {
-            if let workingDirectory { try? FileManager.default.removeItem(at: workingDirectory) }
+            if let workingDirectory { await Self.removeFolder(workingDirectory) } // off the main actor (#2510)
             // The caller went away while the Library was searched (a replaced share link): nothing to tell the listener.
             if error is CancellationError { return .rejected(needsNewerApp: false) }
             environment.recordDiagnostic("lastSpokenMarginsPackageImport", "rejected:\(SharedMarginsImportMessage.diagnosticDetail(error))")
