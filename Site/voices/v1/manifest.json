@@ -1,10 +1,10 @@
 {
   "schemaVersion": "voice-catalog-manifest.v1",
   "catalogId": "voice-models",
-  "contentVersion": 1,
-  "generatedAt": "2026-10-19T02:33:24Z",
+  "contentVersion": 2,
+  "generatedAt": "2026-11-01T00:31:21Z",
   "catalogURL": "https://spokenmargins.proximitytoprogress.com/voices/v1/catalog.json",
-  "catalogByteCount": 28225,
-  "catalogChecksumSHA256": "9f0a04982bd59860c6b17eb8e9e63c2a062b9ee9090a9def1ce44ed94f18de4e",
-  "entryCount": 3
+  "catalogByteCount": 51881,
+  "catalogChecksumSHA256": "2c49282a49a04c23ba1c702cc6702d06861b820c9706111113257040a9715691",
+  "entryCount": 4
 }
