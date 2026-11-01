@@ -1992,7 +1992,7 @@ def build(sha: str) -> int:
         started = datetime.datetime.now()
         if run_logged([*lane, *project, '-configuration', 'Release', '-destination', 'generic/platform=iOS',
                        '-derivedDataPath', str(derived), '-allowProvisioningUpdates',
-                       f'SM_BUILD_COMMIT={sha}', 'build'], src, log) != 0:
+                       f'SM_BUILD_COMMIT={sha}', 'SM_PHONE_BUILD=YES', 'build'], src, log) != 0:
             advice = signing_advice(log.read_text(errors='replace'))
             raise BuildFailed('the iPhone build failed' + (f'. Signing needs the owner: {advice}' if advice else ''))
         seconds = int((datetime.datetime.now() - started).total_seconds())

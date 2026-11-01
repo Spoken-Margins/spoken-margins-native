@@ -623,6 +623,8 @@ RUNNER_TEST_READERS = ('test_filled_button_contrast', 'test_filled_button_labels
                        'test_task_cost_map',
                        # The container-identifier guard scans App/ Swift files (#2898).
                        'test_container_identifiers',
+                       # The phone-build switch guard reads project.yml (#3086).
+                       'test_phone_build_gate',
                        # The resume-owner guard scans App/ and Packages/ Swift files (#3032).
                        'test_resume_owners')
 RUNNER_TEST_INPUTS = ('App/', 'Packages/', 'Contracts/', 'TestPlans/', 'validation/', 'research/', 'project.yml',
