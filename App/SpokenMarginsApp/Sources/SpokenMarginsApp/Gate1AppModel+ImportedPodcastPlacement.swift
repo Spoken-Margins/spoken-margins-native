@@ -28,17 +28,17 @@ extension Gate1AppModel {
             updateSkimAvailability: { [weak self] in self?.updateSkimAvailability() },
             refreshAfterInvalidation: { [weak self] itemId in
                 guard let self else { return }
-                if self.selectedItem.id == itemId { self.refreshSelectedItem() }
+                if self.selectedItem.id == itemId { self.refreshSelectedItemInBackground() }
                 self.refreshMarginRowsInBackground(forItem: itemId)
             },
             refreshSelectedItemIfShowing: { [weak self] itemId in
                 guard let self else { return }
-                if self.selectedItem.id == itemId { self.refreshSelectedItem() }
+                if self.selectedItem.id == itemId { self.refreshSelectedItemInBackground() }
             },
             recordDiagnostic: { [weak self] key, value in self?.diagnostics[key] = value },
             passesDidChange: { [weak self] old, new in
                 guard let self else { return }
-                if old.pass(itemId: self.activeItemId) != new.pass(itemId: self.activeItemId) { self.refreshSelectedItem() }
+                if old.pass(itemId: self.activeItemId) != new.pass(itemId: self.activeItemId) { self.refreshSelectedItemInBackground() }
                 if old != new { self.refreshMarginRowsInBackground() }
             },
             retainHost: { [weak self] in self }

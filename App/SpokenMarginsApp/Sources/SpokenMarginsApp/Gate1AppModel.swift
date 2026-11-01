@@ -2416,7 +2416,7 @@ final class Gate1AppModel: ObservableObject {
             let (proposal, projection) = try edition.audioMap(timeline: timeline)
             try store.savePortableListeningMapProposal(proposal, itemId: itemId)
             try store.saveResolvedListeningMapProjection(projection)
-            if selectedItem.id == itemId { refreshSelectedItem() }
+            if selectedItem.id == itemId { refreshSelectedItemInBackground() }
             prepareImportedLocalAudioBridges(itemId: itemId)
             Task { await ListeningReadyNotifications.notify(itemID: itemId, title: edition.title, revision: edition.revision) }
         } catch { diagnostics["listeningEditionAudio"] = "not_ready" }
@@ -2990,7 +2990,7 @@ final class Gate1AppModel: ObservableObject {
                 layer.revealMode = enabled ? .guided : .companion
                 try store.saveImportedCommentaryLayer(layer)
             }
-            refreshSelectedItem()
+            refreshSelectedItemInBackground()
             reportConfirmation(enabled
                 ? "Shared Margins will play automatically after their cue."
                 : "Shared Margins will wait for you to choose Listen or Dismiss.")
@@ -3008,7 +3008,7 @@ final class Gate1AppModel: ObservableObject {
             guard var layer = try store.loadImportedCommentaryLayer(id: layerID) else { return }
             mutation(&layer)
             try store.saveImportedCommentaryLayer(layer)
-            refreshSelectedItem()
+            refreshSelectedItemInBackground()
         } catch {
             reportFailure(error, context: "Shared Margin settings could not be saved")
         }

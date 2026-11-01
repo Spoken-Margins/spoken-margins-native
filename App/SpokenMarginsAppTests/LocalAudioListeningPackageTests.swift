@@ -69,6 +69,7 @@ final class LocalAudioListeningPackageTests: XCTestCase {
         let layer = try XCTUnwrap(store.loadImportedCommentaryLayer(packageDigest: try XCTUnwrap(manifest.contentDigest)))
         XCTAssertEqual(layer.sourceResolutionStatus, .resolved)
         XCTAssertEqual(try store.loadImportedCommentaryInterjections(layerId: layer.id).first?.resolution.localMediaTimeMs, 1_000)
+        await model.settleItemReload() // the placement reloads the item off the main thread (#2505)
         XCTAssertEqual(model.selectedItem.listeningMapScenes.map(\.startMs), [0, 5_000])
         XCTAssertNil(model.snapshot.sessionId, "Import must not autoplay")
         XCTAssertEqual(try store.loadResolvedListeningMapProjection(itemId: item.id)?.projectedRecipientTime(for: 5_000), 5_000)

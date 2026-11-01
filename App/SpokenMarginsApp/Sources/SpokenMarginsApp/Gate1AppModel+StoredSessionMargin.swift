@@ -13,7 +13,7 @@ extension Gate1AppModel {
         let saved = try StoredSessionMargin.addWritten(text: text, itemId: itemId, repository: store)
         listeningSignals.writtenMargin(itemId: itemId, text: saved.interjection.displayText ?? text)
         refreshMarginRowsInBackground(forItem: itemId)
-        if activeItemId == itemId { refreshSelectedItem() }
+        if activeItemId == itemId { refreshSelectedItemInBackground() }
         return saved.itemTitle
     }
 
