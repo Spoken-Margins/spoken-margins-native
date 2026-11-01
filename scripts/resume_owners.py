@@ -57,6 +57,8 @@ RESUME_NAMES = (
 OWNING_FILES: tuple = (
     'Packages/SessionKit/Sources/SessionKit/SystemInterruptionResume.swift',
     'Packages/SessionKit/Sources/SessionKit/MarginCaptureResume.swift',
+    # `PlaybackStartAttempt` owns "a start is pending, which attempt, until when" (#3171, #3032 slice 4).
+    'Packages/SessionKit/Sources/SessionKit/PlaybackStartAttempt.swift',
 )
 SCAN_DIRS = ('App', 'Packages')
 SKIP_PARTS = ('Tests', 'UITests', '.build', 'Fixtures')  # test targets and build output are not production code

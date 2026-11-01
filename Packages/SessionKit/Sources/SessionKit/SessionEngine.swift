@@ -59,10 +59,8 @@ public final class SessionEngine {
     private let aiProvider: AIProviderClient
     private let linkResolver: LinkResolutionClient
     private let textAudio: TextAudioPreparationClient?
-    private let playbackStartTimeout: TimeInterval
     /// However long rendered audio takes, a start ends by then (#235).
-    private var playbackStartWaitCap: TimeInterval { playbackStartTimeout * 4 }
-    private var playbackStartFirstPendingAt: Date?
+    private var startAttempt: PlaybackStartAttempt
     private let now: () -> Date
     /// Set when a listener's start command arrives; the next published start carries it (#357).
     private var playbackRequestedAt: Date?
@@ -103,11 +101,6 @@ public final class SessionEngine {
     private var spokenPrefixes: [String: Int] = [:]
     private var externallyStreamedTurnId: String?
     private var playbackStartRecoveryAttemptId: Int?
-    private var playbackStartAttemptId = 0
-    private var activePlaybackStartAttemptId: Int?
-    private var playbackStartPendingAttemptId: Int?
-    private var playbackStartPendingTargetId: String?
-    private var playbackStartDeadline: Date?
     private var playbackURLOverrides: [String: String] = [:]
     private var pinnedMediaTransport: (sessionId: String, targetId: String, playbackURL: String?)?
     private var lastMediaPercentageRepair: (sessionId: String, durationMs: Int)?
@@ -169,7 +162,7 @@ public final class SessionEngine {
         self.aiProvider = aiProvider
         self.linkResolver = linkResolver
         self.textAudio = textAudio
-        self.playbackStartTimeout = playbackStartTimeout
+        self.startAttempt = PlaybackStartAttempt(timeout: playbackStartTimeout)
         self.now = now
     }
 
@@ -569,7 +562,7 @@ public final class SessionEngine {
             && (session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia)
             && audio.isPlaybackComplete(targetId: session.currentTargetId)
         if endedBeforeStartConfirmed {
-            clearPlaybackStartPending()
+            startAttempt.clear()
             protectedPosition.release()
             playbackCompleted = true
             updated = try syncCurrentPositionFromAudio(session)
@@ -577,7 +570,7 @@ public final class SessionEngine {
             try audio.pause()
             snapshot.status = .paused
         } else if snapshot.status == .starting {
-            let startStatus = playbackStartStatus(for: session.currentTargetId, attemptId: activePlaybackStartAttemptId ?? playbackStartAttemptId)
+            let startStatus = playbackStartStatus(for: session.currentTargetId, attemptId: startAttempt.currentAttemptId)
             if let recovered = currentSession, recovered.currentTargetId != session.currentTargetId {
                 // Start recovery moved playback to another target (#237); don't persist the old one.
                 session = recovered
@@ -3119,7 +3112,7 @@ public final class SessionEngine {
         externallyStreamedTurnId = nil
         streamingBuffers.removeAll()
         spokenPrefixes.removeAll()
-        clearPlaybackStartPending()
+        startAttempt.clear()
         snapshot = SessionSnapshot()
         return snapshot
     }
@@ -4085,7 +4078,7 @@ public final class SessionEngine {
 
     private func publish(status: PlaybackStatus, phase: SessionPhase) {
         if status != .starting {
-            clearPlaybackStartPending()
+            startAttempt.clear()
         }
         // A start carries its request's time: a listener command stamps it, and a start from a stop or on another
         // item gets the publish time. Seeks and the engine's own target switches (narration falling back to live
@@ -4137,9 +4130,8 @@ public final class SessionEngine {
     }
 
     private func publishPlaybackStart(for session: Session, phase: SessionPhase) {
-        playbackStartAttemptId += 1
-        activePlaybackStartAttemptId = playbackStartAttemptId
-        switch playbackStartStatus(for: session.currentTargetId, attemptId: playbackStartAttemptId) {
+        let attemptId = startAttempt.begin()
+        switch playbackStartStatus(for: session.currentTargetId, attemptId: attemptId) {
         case .confirmed:
             forgetStartFailure()
             publish(status: .playing, phase: phase)
@@ -4162,32 +4154,26 @@ public final class SessionEngine {
     private func playbackStartStatus(for targetId: String, attemptId: Int) -> PlaybackStartStatus {
         switch audio.playbackStartStatus(targetId: targetId) {
         case .confirmed:
-            clearPlaybackStartPending()
+            startAttempt.clear()
             protectedPosition.playbackConfirmed(targetId: targetId)
             return .confirmed
         case .failed(let message):
             return recoverPlaybackStart(targetId: targetId, attemptId: attemptId, failure: message)
         case .pending:
-            if playbackStartPendingTargetId != targetId || playbackStartPendingAttemptId != attemptId {
-                playbackStartPendingTargetId = targetId
-                playbackStartPendingAttemptId = attemptId
-                playbackStartDeadline = now().addingTimeInterval(playbackStartTimeout)
-                playbackStartFirstPendingAt = now()
+            // A slow on-device render isn't a stalled start: the client's own render deadline and fallback
+            // cover it. The cap still ends a start that never resolves (#235).
+            let verdict = startAttempt.observePending(
+                targetId: targetId, attemptId: attemptId, now: now(),
+                awaitingRenderedAudio: { audio.isAwaitingRenderedAudio(targetId: targetId) }
+            )
+            switch verdict {
+            case .waiting:
                 return .pending
-            }
-            if let playbackStartDeadline, now() >= playbackStartDeadline {
-                // A slow on-device render isn't a stalled start: the client's own render deadline
-                // and fallback cover it. The cap still ends a start that never resolves (#235).
-                if audio.isAwaitingRenderedAudio(targetId: targetId),
-                   now().timeIntervalSince(playbackStartFirstPendingAt ?? now()) < playbackStartWaitCap {
-                    self.playbackStartDeadline = now().addingTimeInterval(playbackStartTimeout)
-                    return .pending
-                }
+            case .expired:
                 return recoverPlaybackStart(
                     targetId: targetId, attemptId: attemptId, failure: "playback_start_timeout"
                 )
             }
-            return .pending
         }
     }
 
@@ -4220,12 +4206,10 @@ public final class SessionEngine {
             snapshot.lastFailure = "\(publisherAudio ? "publisher_audio_unavailable" : "prepared_audio_unavailable"):\(failure)"
             try playCurrentTarget(reading)
         } catch {
-            clearPlaybackStartPending()
+            startAttempt.clear()
             return .failed("\(failure); text_fallback_failed:\(error.localizedDescription)")
         }
-        playbackStartPendingTargetId = nil
-        playbackStartPendingAttemptId = nil
-        playbackStartDeadline = nil
+        startAttempt.movedToAnotherTarget()
         return playbackStartStatus(for: item.id, attemptId: attemptId)
     }
 
@@ -4313,7 +4297,7 @@ public final class SessionEngine {
               context.sourceType == .remoteStream,
               let url = URL(string: context.playbackURL ?? targetId),
               ["http", "https"].contains(url.scheme?.lowercased() ?? "") else {
-            clearPlaybackStartPending()
+            startAttempt.clear()
             return .failed(failure)
         }
         playbackStartRecoveryAttemptId = attemptId
@@ -4321,12 +4305,10 @@ public final class SessionEngine {
             try audio.stop()
             protectPlaybackPosition(for: session)
             try playCurrentTarget(session)
-            playbackStartPendingTargetId = targetId
-            playbackStartPendingAttemptId = attemptId
-            playbackStartDeadline = now().addingTimeInterval(playbackStartTimeout)
+            startAttempt.restarted(targetId: targetId, attemptId: attemptId, now: now())
             return .pending
         } catch {
-            clearPlaybackStartPending()
+            startAttempt.clear()
             return .failed("\(failure); recovery_failed:\(error.localizedDescription)")
         }
     }
@@ -4337,14 +4319,6 @@ public final class SessionEngine {
         if snapshot.lastFailure?.hasPrefix("playback_start_failed:") == true {
             snapshot.lastFailure = nil
         }
-    }
-
-    private func clearPlaybackStartPending() {
-        activePlaybackStartAttemptId = nil
-        playbackStartPendingAttemptId = nil
-        playbackStartPendingTargetId = nil
-        playbackStartDeadline = nil
-        playbackStartFirstPendingAt = nil
     }
 
     private func preparedTextAudioStatus(for item: Item?) -> String? {

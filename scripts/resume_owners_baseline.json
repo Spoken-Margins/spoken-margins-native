@@ -74,42 +74,6 @@
    "why": "carries what iOS reported into MarginCaptureResume (InterruptedCaptureResume), which owns whether the source resumes after a call that cut a Margin short (#3144); a report, not a second decision"
   },
   {
-   "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::activePlaybackStartAttemptId",
-   "decls": 1,
-   "writes": 2,
-   "why": "the playback-start attempt tracker, not a resume decision; moves into its own type (#3171, #3032 slice 4)"
-  },
-  {
-   "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::clearPlaybackStartPending",
-   "decls": 1,
-   "writes": 0,
-   "why": "the playback-start attempt tracker, not a resume decision; moves into its own type (#3171, #3032 slice 4)"
-  },
-  {
-   "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::playbackStartAttemptId",
-   "decls": 1,
-   "writes": 1,
-   "why": "the playback-start attempt tracker, not a resume decision; moves into its own type (#3171, #3032 slice 4)"
-  },
-  {
-   "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::playbackStartDeadline",
-   "decls": 2,
-   "writes": 5,
-   "why": "the playback-start attempt tracker, not a resume decision; moves into its own type (#3171, #3032 slice 4)"
-  },
-  {
-   "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::playbackStartPendingAttemptId",
-   "decls": 1,
-   "writes": 4,
-   "why": "the playback-start attempt tracker, not a resume decision; moves into its own type (#3171, #3032 slice 4)"
-  },
-  {
-   "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::playbackStartPendingTargetId",
-   "decls": 1,
-   "writes": 4,
-   "why": "the playback-start attempt tracker, not a resume decision; moves into its own type (#3171, #3032 slice 4)"
-  },
-  {
    "key": "Packages/SessionKit/Sources/SessionKit/SpeechSystemPause.swift::SpeechSystemPause",
    "decls": 1,
    "writes": 0,
