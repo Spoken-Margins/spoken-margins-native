@@ -405,7 +405,8 @@ func (s *Server) reportReason(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	io.WriteString(w, `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Report received</title><p>Thank you. Your reason has been added to the report.</p></html>`)
+	io.WriteString(w, `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Report received</title><p>Thank you. Your reason has been added to the report.</p>`)
+	io.WriteString(w, policyFooter()+`</html>`)
 }
 
 // writeReportPage is the acknowledgement. ref is letters and digits only, so it needs no escaping.
@@ -420,8 +421,23 @@ func writeReportPage(w http.ResponseWriter, id, ref string, filed, askReason boo
 	if askReason {
 		b.WriteString(`<form method="post" action="/l/` + id + `/report/reason"><input type="hidden" name="ref" value="` + ref + `"><p><label for="reason">Please tell us briefly why you are reporting this link. A few words are enough.</label></p><p><textarea id="reason" name="reason" rows="4" cols="40" maxlength="2000" required></textarea></p><button type="submit">Send</button></form>`)
 	}
-	b.WriteString(`</html>`)
+	b.WriteString(policyFooter() + `</html>`)
 	io.WriteString(w, b.String())
+}
+
+// policyFooter links the published policies from the report pages (#2238). The titles and paths are
+// constants in the links package, so they need no escaping.
+func policyFooter() string {
+	var b strings.Builder
+	b.WriteString(`<footer><p>`)
+	for i, l := range links.PolicyLinks {
+		if i > 0 {
+			b.WriteString(` · `)
+		}
+		b.WriteString(`<a href="` + l.Path + `">` + l.Title + `</a>`)
+	}
+	b.WriteString(`</p></footer>`)
+	return b.String()
 }
 
 type linkReportKey struct{ hour, id, reason string }

@@ -178,6 +178,15 @@ struct SpokenMarginsApp: App {
                 .task {
                     model.importPendingSourceLinkHandoffs()
                 }
+                #if DEBUG
+                .overlay {
+                    // The screen tour's Live Activity card (#1940); only a UI-test launch names a text size.
+                    if let name = UITestingHooks.liveActivityPreviewTextSize,
+                       let preview = LiveActivityTourPreview(textSizeName: name) {
+                        preview
+                    }
+                }
+                #endif
         }
     }
 }
