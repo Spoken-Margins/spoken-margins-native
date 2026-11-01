@@ -109,7 +109,10 @@ final class EpisodeMapPreparer {
         }
         do {
             let store = try host.requireStore()
-            let item = try store.loadItem(id: requestedItemId)
+            // A summary carries the id, media and external reference the run reads; the article text stays on disk (#2507).
+            guard let item = try store.loadItemSummary(id: requestedItemId) else {
+                throw SessionKitError.missingFixture("item:\(requestedItemId)") // what `loadItem` threw for a missing item
+            }
             guard item.media?.sourceType == .nativeMediaFile || item.media?.sourceType == .remoteStream else {
                 throw SessionKitError.invalidCommandForState("episode_map_requires_native_audio")
             }
@@ -159,7 +162,7 @@ final class EpisodeMapPreparer {
     }
 
     private func run(
-        item: Item,
+        item: LibraryItemSummary,
         localURL: URL,
         job initialJob: EpisodeMapPreparationJob,
         trigger: EpisodeMapPreparationTrigger
