@@ -501,7 +501,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private var preparedAudioAssemblyStarted = false
     private var generationState = RenderedSpeechGenerationState.inactive
     private var generationStopReason: String?
-    private var shouldResumeAfterInterruption = false
+    /// Whether this client resumes by itself when an interruption ends. The decision belongs to
+    /// `SystemInterruptionResume` (#3032); this client reports events to it and obeys the answer. Guarded by `lock`.
+    private var interruptionResume = SystemInterruptionResume()
     private var activeRenderControl: RenderTaskControl?
     /// The last measured chunk's render speed over the listening speed, for `RenderAheadPolicy.resumeMark` (#2703). It
     /// counts only under the voice, app state and generation it was measured in, so a foreground or other-voice value
@@ -712,7 +714,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         }
         restoreOnDeviceRenderingIfConditionCleared(targetId: targetId)
         let usesStoppedGeneration = lock.withLock {
-            shouldResumeAfterInterruption = false
+            interruptionResume.cancelAutomaticResume()
             // The iOS voice holding the item keeps it after a stop cleared the reasons below, too.
             return generationDisabledReasons[targetId] != nil
                 || (fallbackIsActive && currentTargetId == targetId)
@@ -1160,7 +1162,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         forgetActivatedSession()
         let snapshot = lock.withLock { () -> (Bool, AVPlayer?) in
             transportIntent = .paused
-            shouldResumeAfterInterruption = false
+            interruptionResume.cancelAutomaticResume()
             handOverGaps.discardPending()
             return (fallbackIsActive, player)
         }
@@ -1227,7 +1229,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             startedTargetId = nil
             playbackFailure = nil
             transportIntent = .stopped
-            shouldResumeAfterInterruption = false
+            interruptionResume.cancelAutomaticResume()
             handOverAwaitingStart = nil
             generationDisabledReasons.removeAll()
             resourceFallbackTargetIds.removeAll()
@@ -1314,7 +1316,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             initialPlaybackOffset = nil
             initialRequestedSpokenOffset = nil
             preparedAudioAssemblyStarted = false
-            shouldResumeAfterInterruption = false
+            interruptionResume.cancelAutomaticResume()
             return (Array(urls), renderControl)
         }
         stopped.renderControl?.cancel()
@@ -2739,7 +2741,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             let paused = lock.withLock { () -> Bool in
                 guard transportIntent == .playing else { return false }
                 transportIntent = .paused
-                shouldResumeAfterInterruption = false
+                interruptionResume.cancelAutomaticResume()
                 return true
             }
             guard paused else { return }
@@ -4005,9 +4007,11 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private func pauseForSystemInterruption(allowsAutomaticResume: Bool, cause: SpeechSystemPause) {
         forgetActivatedSession()
         let state = lock.withLock { () -> (didPause: Bool, usesFallback: Bool, activePlayer: AVPlayer?) in
-            guard transportIntent == .playing else { return (false, false, nil) }
+            let wasPlaying = transportIntent == .playing
+            guard interruptionResume.began(allowsAutomaticResume ? .interruption : .routeLost, wasPlaying: wasPlaying) else {
+                return (false, false, nil)
+            }
             transportIntent = .paused
-            shouldResumeAfterInterruption = allowsAutomaticResume
             handOverGaps.discardPending()
             return (true, fallbackIsActive, player)
         }
@@ -4042,9 +4046,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// The interruption's other audio stopped without iOS reporting an end (#1434): resume as an end with
     /// "should resume" would, unless the listener's own Play, Pause or Stop cleared the request since.
     private func resumeBecauseOtherAudioStopped() {
-        let requestsResume = lock.withLock { () -> Bool in
-            defer { shouldResumeAfterInterruption = false }
-            return shouldResumeAfterInterruption && transportIntent == .paused
+        let requestsResume = lock.withLock {
+            interruptionResume.otherAudioStopped(sourceStillPaused: transportIntent == .paused)
         }
         guard requestsResume else { return }
         interruptionHandler?(.endedShouldResume)
@@ -4064,10 +4067,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
 
     private func finishSystemInterruption(shouldResume: Bool) {
         interruptionWaitEnded(.ended)
-        let requestsResume = lock.withLock { () -> Bool in
-            defer { shouldResumeAfterInterruption = false }
-            return shouldResumeAfterInterruption && shouldResume
-        }
+        let requestsResume = lock.withLock { interruptionResume.ended(shouldResume: shouldResume) }
         recordSystemPause(.interruptionEnded(shouldResume: shouldResume), acted: requestsResume)
         guard requestsResume else { return }
         interruptionHandler?(.endedShouldResume)
@@ -4147,7 +4147,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             player = nil
             transportIntent = .paused
             // The listener's pause or play, and a system interruption that already asked to resume, keep their say.
-            if announcesPause { shouldResumeAfterInterruption = false }
+            if announcesPause { interruptionResume.cancelAutomaticResume() }
             handOverGaps.discardPending()
             playbackFailure = nil
             pendingStartTargetId = nil

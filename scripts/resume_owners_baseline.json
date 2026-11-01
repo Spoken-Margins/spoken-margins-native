@@ -5,235 +5,217 @@
    "key": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+MarginCapture.swift::hasPendingInterjectionPause",
    "decls": 1,
    "writes": 0,
-   "why": "known when the guard landed (#3032); retired by the one-owner type"
+   "why": "retired by the capture/relaunch resume owner (#3144, #3032 slice 3)"
   },
   {
    "key": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+MarginVoicePlayback.swift::shouldResume",
    "decls": 2,
    "writes": 0,
-   "why": "known when the guard landed (#3032); retired by the one-owner type"
+   "why": "retired by the capture/relaunch resume owner (#3144, #3032 slice 3)"
   },
   {
    "key": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+MarginVoicePlayback.swift::shouldResumeSource",
    "decls": 1,
    "writes": 0,
-   "why": "known when the guard landed (#3032); retired by the one-owner type"
+   "why": "retired by the capture/relaunch resume owner (#3144, #3032 slice 3)"
   },
   {
    "key": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate2CompactControlController.swift::shouldResume",
    "decls": 2,
    "writes": 0,
-   "why": "known when the guard landed (#3032); retired by the one-owner type"
+   "why": "retired by the capture/relaunch resume owner (#3144, #3032 slice 3)"
   },
   {
    "key": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/SupertonicSpeechPlaybackClient.swift::SystemPauseHandler",
    "decls": 1,
    "writes": 1,
-   "why": "known when the guard landed (#3032); retired by the one-owner type"
+   "why": "carries or logs what iOS reported to SystemInterruptionResume, which owns the decision (#3032 slice 2); a report, not a second decision"
   },
   {
    "key": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/SupertonicSpeechPlaybackClient.swift::onSystemPause",
    "decls": 3,
    "writes": 1,
-   "why": "known when the guard landed (#3032); retired by the one-owner type"
+   "why": "carries or logs what iOS reported to SystemInterruptionResume, which owns the decision (#3032 slice 2); a report, not a second decision"
   },
   {
    "key": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/SupertonicSpeechPlaybackClient.swift::recordSystemPause",
    "decls": 1,
    "writes": 0,
-   "why": "known when the guard landed (#3032); retired by the one-owner type"
+   "why": "carries or logs what iOS reported to SystemInterruptionResume, which owns the decision (#3032 slice 2); a report, not a second decision"
   },
   {
    "key": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/SupertonicSpeechPlaybackClient.swift::shouldResume",
    "decls": 1,
    "writes": 0,
-   "why": "known when the guard landed (#3032); retired by the one-owner type"
-  },
-  {
-   "key": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/SupertonicSpeechPlaybackClient.swift::shouldResumeAfterInterruption",
-   "decls": 1,
-   "writes": 9,
-   "why": "known when the guard landed (#3032); retired by the one-owner type"
+   "why": "carries or logs what iOS reported to SystemInterruptionResume, which owns the decision (#3032 slice 2); a report, not a second decision"
   },
   {
    "key": "Packages/SessionKit/Sources/SessionKit/HandsFreeMarginCoordinator.swift::shouldResume",
    "decls": 1,
    "writes": 0,
-   "why": "known when the guard landed (#3032); retired by the one-owner type"
+   "why": "retired by the capture/relaunch resume owner (#3144, #3032 slice 3)"
   },
   {
    "key": "Packages/SessionKit/Sources/SessionKit/LibraryAudioPreparationQueue.swift::foregroundShouldResume",
    "decls": 1,
    "writes": 0,
-   "why": "the audio-preparation queue, not the playing source; outside the system-interruption path, listed so it stays visible (#3032)"
+   "why": "the audio-preparation queue, not the playing source; outside the system-interruption path, listed so it stays visible (#3032); follow-up #3144 only if it grows"
   },
   {
    "key": "Packages/SessionKit/Sources/SessionKit/LiveActivityLifecycle.swift::shouldResume",
    "decls": 1,
    "writes": 0,
-   "why": "known when the guard landed (#3032); retired by the one-owner type"
+   "why": "retired by the capture/relaunch resume owner (#3144, #3032 slice 3)"
   },
   {
    "key": "Packages/SessionKit/Sources/SessionKit/MarginRecordingInterruption.swift::PendingResume",
    "decls": 1,
    "writes": 0,
-   "why": "known when the guard landed (#3032); retired by the one-owner type"
+   "why": "retired by the capture/relaunch resume owner (#3144, #3032 slice 3)"
   },
   {
    "key": "Packages/SessionKit/Sources/SessionKit/MarginRecordingInterruption.swift::pendingResume",
    "decls": 1,
    "writes": 5,
-   "why": "known when the guard landed (#3032); retired by the one-owner type"
+   "why": "retired by the capture/relaunch resume owner (#3144, #3032 slice 3)"
   },
   {
    "key": "Packages/SessionKit/Sources/SessionKit/MarginRecordingInterruption.swift::shouldResume",
    "decls": 2,
    "writes": 0,
-   "why": "known when the guard landed (#3032); retired by the one-owner type"
+   "why": "retired by the capture/relaunch resume owner (#3144, #3032 slice 3)"
   },
   {
    "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::PendingInterjectionPause",
    "decls": 1,
    "writes": 0,
-   "why": "known when the guard landed (#3032); retired by the one-owner type"
+   "why": "retired by the capture/relaunch resume owner (#3144, #3032 slice 3)"
   },
   {
    "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::PendingPlaybackPosition",
    "decls": 1,
    "writes": 0,
-   "why": "known when the guard landed (#3032); retired by the one-owner type"
+   "why": "retired by the capture/relaunch resume owner (#3144, #3032 slice 3)"
   },
   {
    "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::activePlaybackStartAttemptId",
    "decls": 1,
    "writes": 2,
-   "why": "known when the guard landed (#3032); retired by the one-owner type"
+   "why": "retired by the capture/relaunch resume owner (#3144, #3032 slice 3)"
   },
   {
    "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::clearPlaybackStartPending",
    "decls": 1,
    "writes": 0,
-   "why": "known when the guard landed (#3032); retired by the one-owner type"
+   "why": "retired by the capture/relaunch resume owner (#3144, #3032 slice 3)"
   },
   {
    "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::hasPendingInterjectionPause",
    "decls": 1,
    "writes": 0,
-   "why": "known when the guard landed (#3032); retired by the one-owner type"
+   "why": "retired by the capture/relaunch resume owner (#3144, #3032 slice 3)"
   },
   {
    "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::hasPendingPlaybackPosition",
    "decls": 1,
    "writes": 0,
-   "why": "known when the guard landed (#3032); retired by the one-owner type"
+   "why": "retired by the capture/relaunch resume owner (#3144, #3032 slice 3)"
   },
   {
    "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::pendingInterjectionPause",
    "decls": 1,
    "writes": 6,
-   "why": "known when the guard landed (#3032); retired by the one-owner type"
+   "why": "retired by the capture/relaunch resume owner (#3144, #3032 slice 3)"
   },
   {
    "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::pendingPlaybackPosition",
    "decls": 3,
    "writes": 8,
-   "why": "known when the guard landed (#3032); retired by the one-owner type"
+   "why": "retired by the capture/relaunch resume owner (#3144, #3032 slice 3)"
   },
   {
    "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::playbackStartAttemptId",
    "decls": 1,
    "writes": 1,
-   "why": "known when the guard landed (#3032); retired by the one-owner type"
+   "why": "retired by the capture/relaunch resume owner (#3144, #3032 slice 3)"
   },
   {
    "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::playbackStartDeadline",
    "decls": 2,
    "writes": 5,
-   "why": "known when the guard landed (#3032); retired by the one-owner type"
+   "why": "retired by the capture/relaunch resume owner (#3144, #3032 slice 3)"
   },
   {
    "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::playbackStartPendingAttemptId",
    "decls": 1,
    "writes": 4,
-   "why": "known when the guard landed (#3032); retired by the one-owner type"
+   "why": "retired by the capture/relaunch resume owner (#3144, #3032 slice 3)"
   },
   {
    "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::playbackStartPendingTargetId",
    "decls": 1,
    "writes": 4,
-   "why": "known when the guard landed (#3032); retired by the one-owner type"
+   "why": "retired by the capture/relaunch resume owner (#3144, #3032 slice 3)"
   },
   {
    "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::previousPendingPlaybackPosition",
    "decls": 1,
    "writes": 0,
-   "why": "known when the guard landed (#3032); retired by the one-owner type"
+   "why": "retired by the capture/relaunch resume owner (#3144, #3032 slice 3)"
   },
   {
    "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::priorPhase",
    "decls": 1,
    "writes": 3,
-   "why": "known when the guard landed (#3032); retired by the one-owner type"
+   "why": "retired by the capture/relaunch resume owner (#3144, #3032 slice 3)"
   },
   {
    "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::priorPhaseForResume",
    "decls": 1,
    "writes": 0,
-   "why": "known when the guard landed (#3032); retired by the one-owner type"
+   "why": "retired by the capture/relaunch resume owner (#3144, #3032 slice 3)"
   },
   {
    "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::recordingOnFinishedSource",
    "decls": 1,
    "writes": 3,
-   "why": "known when the guard landed (#3032); retired by the one-owner type"
+   "why": "retired by the capture/relaunch resume owner (#3144, #3032 slice 3)"
   },
   {
    "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::rejoinAttempted",
    "decls": 1,
    "writes": 1,
-   "why": "known when the guard landed (#3032); retired by the one-owner type"
+   "why": "retired by the capture/relaunch resume owner (#3144, #3032 slice 3)"
   },
   {
    "key": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift::systemPause",
    "decls": 1,
    "writes": 4,
-   "why": "known when the guard landed (#3032); retired by the one-owner type"
+   "why": "retired by the capture/relaunch resume owner (#3144, #3032 slice 3)"
   },
   {
    "key": "Packages/SessionKit/Sources/SessionKit/SpeechSystemPause.swift::SpeechSystemPause",
    "decls": 1,
    "writes": 0,
-   "why": "known when the guard landed (#3032); retired by the one-owner type"
+   "why": "carries or logs what iOS reported to SystemInterruptionResume, which owns the decision (#3032 slice 2); a report, not a second decision"
   },
   {
    "key": "Packages/SessionKit/Sources/SessionKit/SpeechSystemPause.swift::shouldResume",
    "decls": 2,
    "writes": 0,
-   "why": "known when the guard landed (#3032); retired by the one-owner type"
-  },
-  {
-   "key": "Packages/SessionKit/Sources/SessionKitAudio/AudioAdapters.swift::AudioPlaybackInterruptionResumePolicy",
-   "decls": 1,
-   "writes": 0,
-   "why": "known when the guard landed (#3032); retired by the one-owner type"
+   "why": "carries or logs what iOS reported to SystemInterruptionResume, which owns the decision (#3032 slice 2); a report, not a second decision"
   },
   {
    "key": "Packages/SessionKit/Sources/SessionKitAudio/AudioAdapters.swift::endedShouldResume",
    "decls": 1,
    "writes": 0,
-   "why": "known when the guard landed (#3032); retired by the one-owner type"
-  },
-  {
-   "key": "Packages/SessionKit/Sources/SessionKitAudio/AudioAdapters.swift::interruptionResumePolicy",
-   "decls": 1,
-   "writes": 0,
-   "why": "known when the guard landed (#3032); retired by the one-owner type"
+   "why": "carries or logs what iOS reported to SystemInterruptionResume, which owns the decision (#3032 slice 2); a report, not a second decision"
   },
   {
    "key": "Packages/SessionKit/Sources/SessionKitAudio/AudioAdapters.swift::shouldResume",
-   "decls": 3,
+   "decls": 2,
    "writes": 0,
-   "why": "known when the guard landed (#3032); retired by the one-owner type"
+   "why": "carries or logs what iOS reported to SystemInterruptionResume, which owns the decision (#3032 slice 2); a report, not a second decision"
   }
  ]
 }
