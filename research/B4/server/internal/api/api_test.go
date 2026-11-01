@@ -45,6 +45,7 @@ type harness struct {
 	t          *testing.T
 	ca         *fakeattest.CA
 	store      *store.Store
+	stateDir   string
 	srv        *api.Server
 	http       *httptest.Server
 	configPath string
@@ -60,7 +61,8 @@ func newHarness(t *testing.T) *harness {
 	}
 	pool, _ := appattest.PoolFromPEM(ca.RootPEM())
 	dir := t.TempDir()
-	st, err := store.Open(filepath.Join(dir, "state"))
+	stateDir := filepath.Join(dir, "state")
+	st, err := store.Open(stateDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +78,7 @@ func newHarness(t *testing.T) *harness {
 	os.MkdirAll(filepath.Join(public, "bridge", "v1"), 0o755)
 	os.WriteFile(filepath.Join(public, "bridge", "v1", "manifest.json"), manifest, 0o644)
 
-	h := &harness{t: t, ca: ca, store: st, configPath: configPath, reqLog: &syncBuffer{}, abuseLog: &syncBuffer{}}
+	h := &harness{t: t, ca: ca, store: st, stateDir: stateDir, configPath: configPath, reqLog: &syncBuffer{}, abuseLog: &syncBuffer{}}
 	h.srv = &api.Server{
 		Verifier:                &appattest.Verifier{Roots: pool, AppID: appID},
 		Store:                   st,
