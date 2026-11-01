@@ -203,9 +203,10 @@ final class PlaybackDockHitAreaUITests: XCTestCase {
 
         XCTContext.runActivity(named: "The chapter title opens the item from the far end of its row") { _ in
             let chapter = app.buttons["playback.dock.chapter.button"]
-            // The dock re-lays out after a chapter change; a frame read mid-move tapped where the row used to be (#2884).
-            let frame = settledFrame(of: chapter)
-            tap(CGPoint(x: frame.maxX - 4, y: frame.midY))
+            // The dock re-lays out after a chapter change, and on a slow runner it moved 48 pt up after a settled read
+            // and before the tap, so a tap at the frame read earlier hit empty space (#2884, #3152). The coordinate
+            // is relative to the button, so it is worked out when the tap is made, not before.
+            tapTrailingEnd(of: chapter)
             XCTAssertTrue(element("item.screen").waitForExistence(timeout: 5)
                           && waitFor(element("playback.screen"), "exists == false"),
                           "A tap at the end of the chapter row, past a short title, did not open the item")
@@ -251,6 +252,13 @@ final class PlaybackDockHitAreaUITests: XCTestCase {
             frame = next
         }
         return frame
+    }
+
+    /// Taps 4 pt in from the element's trailing edge, at its vertical middle. XCTest resolves the element's frame
+    /// when the tap is made, so a dock that moved since the last read cannot send the tap to where it used to be.
+    private func tapTrailingEnd(of element: XCUIElement, inset: CGFloat = 4) {
+        element.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 0.5))
+            .withOffset(CGVector(dx: -inset, dy: 0)).tap()
     }
 
     private func tap(_ point: CGPoint) {
