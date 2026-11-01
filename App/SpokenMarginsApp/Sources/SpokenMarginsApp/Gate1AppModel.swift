@@ -2416,7 +2416,7 @@ final class Gate1AppModel: ObservableObject {
             let (proposal, projection) = try edition.audioMap(timeline: timeline)
             try store.savePortableListeningMapProposal(proposal, itemId: itemId)
             try store.saveResolvedListeningMapProjection(projection)
-            if selectedItem.id == itemId { refreshSelectedItem() }
+            if selectedItem.id == itemId { refreshSelectedItemInBackground() }
             prepareImportedLocalAudioBridges(itemId: itemId)
             Task { await ListeningReadyNotifications.notify(itemID: itemId, title: edition.title, revision: edition.revision) }
         } catch { diagnostics["listeningEditionAudio"] = "not_ready" }

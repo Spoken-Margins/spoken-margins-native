@@ -15,7 +15,7 @@ extension Gate1AppModel {
 
     /// The scenes show on the item page now, and Skim's summaries are rendered like any stored map's.
     private func communityMapStored(itemId: String) {
-        if itemId == activeItemId { refreshSelectedItem() }
+        if itemId == activeItemId { refreshSelectedItemInBackground() }
         prepareImportedLocalAudioBridges(itemId: itemId)
         if itemId == activeItemId { updateSkimAvailability() }
     }

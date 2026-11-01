@@ -25,7 +25,7 @@ extension Gate1AppModel {
         }
         run { engine in
             snapshot = try engine.restoreInterjection(interjectionId: interjection.id, sessionId: interjection.sessionId)
-            refreshSelectedItem()
+            refreshSelectedItemInBackground()
             reportConfirmation("Margin restored.")
         }
         // A podcast Margin deleted while its context was pending would otherwise stay pending.

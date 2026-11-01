@@ -515,6 +515,42 @@ final class BackgroundRefreshGateTests: XCTestCase {
         XCTAssertTrue(model.selectedItem.interjections.isEmpty, "the background read drops the deleted Margin")
     }
 
+    /// Undoing a deleted Margin and adding one from Shortcuts used to read the whole item on the main thread before the
+    /// tap or the intent returned (#2505). The Margins list is patched at once; the item screen follows.
+    func testUndoingAMarginDeleteReloadsTheItemInTheBackground() async throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        await model.settleItemReload()
+        model.beginWrittenMargin()
+        model.saveWrittenMargin(text: "Deleted, then brought back")
+        await model.settleItemReload()
+        let margin = try XCTUnwrap(model.selectedItem.interjections.first)
+        model.deleteInterjection(margin)
+        await model.settleItemReload()
+        XCTAssertTrue(model.selectedItem.interjections.isEmpty)
+
+        model.restoreDeletedMargin(margin)
+        XCTAssertTrue(model.selectedItem.interjections.isEmpty, "the undo must not read the item before it returns")
+
+        await model.settleItemReload()
+        XCTAssertEqual(model.selectedItem.interjections.map(\.id), [margin.id], "the background read shows the restored Margin")
+    }
+
+    func testAddingAMarginFromShortcutsReloadsTheOpenItemInTheBackground() async throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        await model.settleItemReload()
+        model.selectedItem.interjections = []
+
+        _ = try model.addWrittenMarginToStoredItem(id: "item-pill", text: "Added from Shortcuts")
+        XCTAssertTrue(model.selectedItem.interjections.isEmpty, "the intent must not read the item before it returns")
+
+        await model.settleItemReload()
+        XCTAssertEqual(model.selectedItem.interjections.map(\.displayText), ["Added from Shortcuts"])
+    }
+
     /// Importing a pasted assistant response used to read the whole item on the main thread before playback started
     /// (#2505). The turn shows on the item screen when the background read lands.
     func testImportingAPastedResponseReloadsTheItemInTheBackground() async throws {

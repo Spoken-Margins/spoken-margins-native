@@ -292,7 +292,7 @@ extension Gate1AppModel: EpisodeMapPreparerHost {
 
     func episodeMapPreparationDidComplete(itemId: String, status: String) {
         if itemId == activeItemId {
-            refreshSelectedItem()
+            refreshSelectedItemInBackground()
             updateSkimAvailability()
             reportConfirmation(status)
         }

@@ -68,7 +68,7 @@ extension Gate1AppModel {
             self.run { _ in
                 self.snapshot = try engine.attachPublisherChapters(itemId: itemId, collection: collection)
                 if self.activeItemId == itemId {
-                    self.refreshSelectedItem()
+                    self.refreshSelectedItemInBackground()
                 }
                 self.diagnostics["publisherChaptersEmbedded:\(itemId)"] = "imported_\(collection.chapters.count)"
             }
