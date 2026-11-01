@@ -53,8 +53,9 @@ func TestReinstallGetsAFreshKeyThatNothingLinksToTheOldOne(t *testing.T) {
 	r, err = before.Send(req)
 	expect(t, "old key's signature under the new key's id", r, err, 401, "invalid_assertion")
 
-	// On disk: two records of the five declared fields, and no value that
-	// appears in both except what every record shares (the environment).
+	// On disk: two records of the five declared fields, neither holding a key id
+	// in any common encoding, and different public keys. (They may share the
+	// environment, the days and the counter; those say nothing about a person.)
 	if err := h.store.Flush(); err != nil {
 		t.Fatal(err)
 	}

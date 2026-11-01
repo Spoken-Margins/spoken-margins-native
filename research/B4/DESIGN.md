@@ -239,10 +239,10 @@ The server does not trust the app's word that a key is genuine. `appattest.Verif
 | --- | --- |
 | Chain to Apple's root, nonce bound to our challenge, key id, App ID, zero counter, environment, credential id | `TestRejectsBadAttestations` (ten wrong objects, each refused), `TestValidAttestationAndAssertions` |
 | The pinned Apple root is the real one | `TestAppleRootIsEmbedded` (fingerprint) |
-| A malformed object is refused, not half read: wrong format, missing or reordered certificates, non-DER, short or altered `authData`, bad key id, empty challenge | `TestRejectsMalformedAttestationObjects` |
+| A malformed object is refused: wrong format, missing or reordered certificates, non-DER, bad key id, empty challenge. Short or altered `authData` is refused by the nonce binding, which covers all of it; the parser's own length checks are not reached by these cases | `TestRejectsMalformedAttestationObjects` |
 | Every request is signed by an attested key, once: wrong body, wrong path or time, another key, another app, a replayed counter, a damaged or missing signature | `TestValidAttestationAndAssertions`, `TestRejectsMalformedAssertions`, `TestSkeletonEndToEnd`, `TestAssertionIsBoundToItsPathAndTime`, `TestAssertionTimestampMustBeWithinFiveMinutesEitherWay` |
 | A challenge works once | `TestChallengeIsSingleUse` |
-| A reinstall is a new key that registers as a stranger, a block on the old key does not follow it, and the two records share no key id or public key | `TestReinstallGetsAFreshKeyThatNothingLinksToTheOldOne` |
+| A reinstall is a new key that registers as a stranger, a block on the old key does not follow it, and the two records hold no key id (an install's file is named by the hash of its key id) and no shared public key | `TestReinstallGetsAFreshKeyThatNothingLinksToTheOldOne` |
 | An install record holds exactly the declared fields, with days not times | `TestInstallRecordFileHoldsExactlyTheDeclaredFields` |
 
 **What this does not prove.** Every one of these tests runs against `fakeattest`, which is written from the same reading of Apple's documentation as the verifier. A misreading shared by both would pass. The one test that uses bytes Apple produced, `TestVerifierAcceptsARealDeviceCaptureUnderApplesRoot`, skips until `testdata/device-capture.json` exists (#1593, needs the owner's phone). Until it passes, section 5.2 of Apple's agreement is met in code and tests but not yet checked against a real device.

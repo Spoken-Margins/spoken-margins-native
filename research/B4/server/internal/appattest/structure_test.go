@@ -79,10 +79,10 @@ func TestRejectsMalformedAttestationObjects(t *testing.T) {
 		{"certificate is not DER", func(_, stmt map[string]any) {
 			stmt["x5c"] = []any{[]byte("leaf"), []byte("intermediate")}
 		}},
-		{"authData cut short", func(top, _ map[string]any) {
+		{"authData cut short (refused by the nonce binding)", func(top, _ map[string]any) {
 			top["authData"] = top["authData"].([]byte)[:36]
 		}},
-		{"authData cut before the credential id ends", func(top, _ map[string]any) {
+		{"authData cut inside the credential data (refused by the nonce binding)", func(top, _ map[string]any) {
 			top["authData"] = top["authData"].([]byte)[:60]
 		}},
 		{"authData with a flipped byte", func(top, _ map[string]any) {
