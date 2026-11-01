@@ -222,6 +222,7 @@ How it is used:
   - **The repo moves to a free organization he owns, after a readiness check.** He is creating it as "My personal account" on the Free plan (#2169). The transfer is his tap.
   - **Every PR names its issue.** "please do" (#2167). See "Small, verified commits".
   - **One board.** He said "sure" to a single Project board. It already exists: "Spoken Margins areas" (#6, Status and Area, kept by `scripts/sm_project_sync.py`). His boards #1 to #5 belong to other repos; leave them alone.
+  - **The board's Area field replaces the `area:` labels.** Asked "should the board's Area field replace the `area:` labels?", he said "sounds good" (#2173). The five labels were copied onto the field and deleted on 2026-10-31; an issue's area is set on the board, by [docs/areas.md](areas.md).
   - **Paced work may run 10 points ahead of the straight-line pace.** Asked how far ahead of the trend line the Mac worker may run (10 points to match the usage breaker, no limit tonight, or keep 5), he answered "1": 10 points (#2190). On 2026-10-19 the worker held from about 12:19 to 20:15 CDT at 44% against a 36% line, with 11 armed PRs waiting on fixes. `TREND_SLACK` is 10 in `ops/claude/sm_claude_worker.py` and `ops/dial/dial_gate.py` (#2191).
 
 ## 2026-10-20

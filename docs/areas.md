@@ -1,6 +1,6 @@
 # Product areas
 
-Spoken Margins does four things for a listener, in order: it gets content in, plays it well, lets them answer it, and lets them pass it on. Each issue belongs to one of these areas, or to Groundwork. The owner sees them as columns on the GitHub Project "Spoken Margins areas", where the Area field is the record. Streams ([workstreams/](workstreams/README.md)) and milestones still decide what gets worked on and when; an area says what "excellent" means for the work.
+Spoken Margins does four things for a listener, in order: it gets content in, plays it well, lets them answer it, and lets them pass it on. Each issue belongs to one of these areas, or to Groundwork. The owner sees them as columns on the GitHub Project "Spoken Margins areas", where the Area field is the record; there are no `area:` labels (retired 2026-10-31, #2173). Streams ([workstreams/](workstreams/README.md)) and milestones still decide what gets worked on and when; an area says what "excellent" means for the work.
 
 The areas come from the owner's voice memo of 2026-10-05 (about 21:50–38:30), regrouped on 2026-10-12. In the memo, review and co-op share one backbone, so they share an area here. Social work is only what passing things between people adds.
 
