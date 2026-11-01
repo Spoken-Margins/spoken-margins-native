@@ -214,3 +214,59 @@ struct InterruptedCaptureResume: Equatable {
         return true
     }
 }
+
+/// What a hands-free Margin does to the source afterwards (#3170, #3032 slice 4). It was `resumesAfter` and
+/// `awaitingInterruptionEnd` inside `HandsFreeMarginCoordinator`, each assigned at a different edge: a press after a call
+/// that iOS never ended, headphones removed during the closing tone, a call during the rejoin (#1705 fixed these one
+/// copy at a time). The coordinator now reports what happened and obeys `resumesSource`.
+///
+/// The rules, in one place:
+/// - A hands-free Margin resumes the source when it ends, unless the headphones were removed (nothing should play from
+///   the phone speaker) or the listener pressed again after a call iOS never reported ending.
+/// - A call that cut the Margin short holds the answer until it ends; the source then resumes only if iOS says it should,
+///   and only if nothing earlier ruled it out.
+/// - Headphones removed at any later point rule the resume out, even in the closing tone or while a call is pending.
+struct HandsFreeCaptureResume: Equatable {
+    /// Whether the source resumes once the closing tone, or the wait for a call, is over.
+    private(set) var resumesSource = true
+    /// A call took the audio session and has not been reported ended; the answer waits for it.
+    private(set) var isWaitingForCallToEnd = false
+
+    /// A new hands-free Margin begins: resume by default, no call pending.
+    mutating func reset() {
+        resumesSource = true
+        isWaitingForCallToEnd = false
+    }
+
+    /// The Margin closes and the source should (or should not) resume: a flag or a saved Margin (`resume: true`), or a save
+    /// after removed headphones (`resume: false`).
+    mutating func closing(resume: Bool) {
+        resumesSource = resume
+    }
+
+    /// A call or Siri took the audio session.
+    mutating func callBegan() {
+        isWaitingForCallToEnd = true
+    }
+
+    /// The call ended. Returns false when no call was being waited for (nothing changes). Otherwise the wait is spent and
+    /// the source resumes only if it still would have and iOS says it should.
+    mutating func callEnded(shouldResume: Bool) -> Bool {
+        guard isWaitingForCallToEnd else { return false }
+        isWaitingForCallToEnd = false
+        resumesSource = resumesSource && shouldResume
+        return true
+    }
+
+    /// The listener pressed again while the call's end was still awaited: iOS does not always report it, and the press
+    /// means they are back. The wait is spent and the source stays paused.
+    mutating func pressedAfterCallThatNeverEnded() {
+        isWaitingForCallToEnd = false
+        resumesSource = false
+    }
+
+    /// The headphones came out: nothing resumes from the phone speaker.
+    mutating func headphonesRemoved() {
+        resumesSource = false
+    }
+}

@@ -241,4 +241,55 @@ final class MarginCaptureResumeTests: XCTestCase {
         point.paused(sessionId: "s1", mediaTimeMs: nil, at: paused) // text, read from a character
         XCTAssertNil(point.rewindMs(sessionId: "s1", mediaTimeMs: nil, now: { paused }), "text has no clock to step back on")
     }
+
+    // MARK: Hands-free Margin (#3170, #3032 slice 4)
+
+    func testHandsFreeResumeTableForEveryEdgeThatUsedToCarryItsOwnCopy() {
+        struct Row {
+            let edge: String
+            let steps: (inout HandsFreeCaptureResume) -> Void
+            let resumes: Bool
+            let waitingForCall: Bool
+        }
+        let rows: [Row] = [
+            Row(edge: "a new Margin resumes by default", steps: { $0.reset() }, resumes: true, waitingForCall: false),
+            Row(edge: "a saved Margin closes with the source resuming", steps: { $0.closing(resume: true) }, resumes: true, waitingForCall: false),
+            Row(edge: "a save after headphones came out", steps: { $0.closing(resume: false) }, resumes: false, waitingForCall: false),
+            Row(edge: "a call is awaited", steps: { $0.callBegan() }, resumes: true, waitingForCall: true),
+            Row(edge: "press after a call iOS never ended", steps: { $0.callBegan(); $0.pressedAfterCallThatNeverEnded() },
+                resumes: false, waitingForCall: false),
+            Row(edge: "headphones during the closing tone", steps: { $0.closing(resume: true); $0.headphonesRemoved() },
+                resumes: false, waitingForCall: false),
+            Row(edge: "headphones while a call is awaited", steps: { $0.callBegan(); $0.headphonesRemoved() },
+                resumes: false, waitingForCall: true),
+            Row(edge: "a call during the rejoin, iOS says resume", steps: { $0.closing(resume: true); $0.callBegan(); _ = $0.callEnded(shouldResume: true) },
+                resumes: true, waitingForCall: false),
+            Row(edge: "a call that iOS ends with shouldResume false", steps: { $0.callBegan(); _ = $0.callEnded(shouldResume: false) },
+                resumes: false, waitingForCall: false),
+            Row(edge: "iOS says resume after headphones came out", steps: { $0.callBegan(); $0.headphonesRemoved(); _ = $0.callEnded(shouldResume: true) },
+                resumes: false, waitingForCall: false),
+            Row(edge: "a new Margin forgets a stale answer", steps: { $0.callBegan(); $0.headphonesRemoved(); $0.reset() },
+                resumes: true, waitingForCall: false),
+        ]
+        for row in rows {
+            var intent = HandsFreeCaptureResume()
+            row.steps(&intent)
+            XCTAssertEqual(intent.resumesSource, row.resumes, row.edge)
+            XCTAssertEqual(intent.isWaitingForCallToEnd, row.waitingForCall, row.edge)
+        }
+    }
+
+    func testACallEndWithNoWaitChangesNothing() {
+        var intent = HandsFreeCaptureResume()
+        XCTAssertFalse(intent.callEnded(shouldResume: false))
+        XCTAssertTrue(intent.resumesSource, "a call end nobody waited for must not rule the resume out")
+    }
+
+    func testACallsEndSpendsTheHandsFreeWait() {
+        var intent = HandsFreeCaptureResume()
+        intent.callBegan()
+        XCTAssertTrue(intent.callEnded(shouldResume: true))
+        XCTAssertFalse(intent.callEnded(shouldResume: false), "a second end report finds nothing waiting")
+        XCTAssertTrue(intent.resumesSource)
+    }
 }
