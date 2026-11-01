@@ -64,4 +64,22 @@ final class PreparedAudioStillCurrentTests: XCTestCase {
         }
         XCTAssertTrue(current)
     }
+
+    /// A cancelled background pass must see the cancel, not "no longer current": the app keeps the job to retry on a
+    /// cancel and drops it on a stale preparation (audit on #3166).
+    func testACancelledCheckThrowsInsteadOfAnsweringNotCurrent() async throws {
+        let (store, item, manifest, cleanup) = try makeStore()
+        defer { cleanup() }
+        let text = item.text
+        let task = Task {
+            try await StoreReader(store).read { [manifest, text] in
+                PreparedAudioEnqueue.isStillCurrent(manifest, itemText: text, sourceText: text!, repository: $0)
+            }
+        }
+        task.cancel()
+        do {
+            _ = try await task.value
+            XCTFail("a cancelled check must throw")
+        } catch is CancellationError {}
+    }
 }
