@@ -103,6 +103,9 @@ struct SpokenMarginsApp: App {
         #if !SPOKEN_MARGINS_LEGACY
         ListeningEditionShortcutBridge.model = model
         #endif
+        #if SM_LOCKED_MARGIN_SPIKE
+        model.installLockedMarginIntentBridge() // phone builds only (#3086)
+        #endif
         #if canImport(BackgroundTasks) && canImport(UIKit)
         // The same refresh as in the foreground, with the same six-hour staleness (#170).
         FollowedSourceBackgroundRefreshController.shared.install { [weak model] in await model?.performFollowedSourceRefresh(force: false) }
