@@ -33,6 +33,7 @@ final class ScreenTourTests: XCTestCase {
     /// the simulator, so the app lays the real card out at the narrowest Lock Screen width in place of its screens,
     /// with its measured size printed under it.
     func testLiveActivityCardAtDefaultAndLargestTextSize() throws {
+        XCUIDevice.shared.appearance = .dark
         appearance = "dark"
         for size in ["large", "accessibility5"] {
             app.terminate()
@@ -40,7 +41,15 @@ final class ScreenTourTests: XCTestCase {
             launch()
             XCTAssertTrue(element("liveActivityPreview.screen").waitForExistence(timeout: 10),
                           "The Live Activity card did not appear at \(size)")
-            XCTAssertTrue(element("liveActivityPreview.size.paused").exists, "The paused card's size is missing at \(size)")
+            for status in ["paused", "playing"] {
+                // The caption reads 0 × 0 until the card has been laid out and measured.
+                let caption = element("liveActivityPreview.size.\(status)")
+                let measured = XCTNSPredicateExpectation(
+                    predicate: NSPredicate(format: "exists == true AND NOT (label CONTAINS %@)", ": 0 × 0 pt"), object: caption
+                )
+                XCTAssertEqual(XCTWaiter().wait(for: [measured], timeout: 5), .completed,
+                               "The \(status) card was not measured at \(size)")
+            }
             capture("10-live-activity-\(size)")
         }
     }

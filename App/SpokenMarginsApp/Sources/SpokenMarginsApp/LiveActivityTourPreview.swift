@@ -68,25 +68,27 @@ private struct MeasuredCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Gate2LiveActivityView(state: state, isStale: false)
-                .environment(\.dynamicTypeSize, textSize)
-                .fixedSize(horizontal: false, vertical: true)
-                // Measured and filled before the frame, so a card wider than the Lock Screen shows past the outline.
-                .background(Color(red: 0.08, green: 0.09, blue: 0.12), in: .rect(cornerRadius: 22))
-                .onGeometryChange(for: CGSize.self) { $0.size } action: { size = $0 }
-                .frame(width: LiveActivityTourPreview.cardWidth, alignment: .leading)
-                .overlay(alignment: .topLeading) {
-                    // The space the Lock Screen gives the card: 343 pt wide, 160 pt tall.
-                    RoundedRectangle(cornerRadius: 22)
-                        .strokeBorder(Color.orange, style: StrokeStyle(lineWidth: 1, dash: [5, 4]))
-                        .frame(width: LiveActivityTourPreview.cardWidth, height: LiveActivityTourPreview.heightLimit)
-                        .allowsHitTesting(false)
-                }
+            // Above the card, so the outline below never crosses it.
             Text(verbatim: "\(state.status): \(Int(size.width.rounded())) × \(Int(size.height.rounded())) pt "
                 + "(limit \(Int(LiveActivityTourPreview.cardWidth)) × \(Int(LiveActivityTourPreview.heightLimit)))")
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.white)
                 .accessibilityIdentifier("liveActivityPreview.size.\(state.status)")
+            ZStack(alignment: .topLeading) {
+                Gate2LiveActivityView(state: state, isStale: false)
+                    .environment(\.dynamicTypeSize, textSize)
+                    .fixedSize(horizontal: false, vertical: true)
+                    // Measured and filled before the frame, so a card wider than the Lock Screen shows past the outline.
+                    .background(Color(red: 0.08, green: 0.09, blue: 0.12), in: .rect(cornerRadius: 22))
+                    .onGeometryChange(for: CGSize.self) { $0.size } action: { size = $0 }
+                    .frame(width: LiveActivityTourPreview.cardWidth, alignment: .leading)
+                // The space the Lock Screen gives the card, 343 pt wide and 160 pt tall, drawn over it. It takes up
+                // layout space, so a shorter card's outline doesn't run into the next card.
+                RoundedRectangle(cornerRadius: 22)
+                    .strokeBorder(Color.orange, style: StrokeStyle(lineWidth: 1, dash: [5, 4]))
+                    .frame(width: LiveActivityTourPreview.cardWidth, height: LiveActivityTourPreview.heightLimit)
+                    .allowsHitTesting(false)
+            }
         }
     }
 }
