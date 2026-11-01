@@ -30,6 +30,7 @@ from zoneinfo import ZoneInfo
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'dial'))
 import dial_gate  # noqa: E402  (the Dial's own parsers, so both read #589 and #337 the same way)
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'scripts'))
+from sm_paths import ops_home  # noqa: E402  (#1844)
 from trunk import trunk_branch  # noqa: E402  (#1492)
 
 REPO = dial_gate.REPO
@@ -352,13 +353,22 @@ GUIDE_FILES = ('AGENTS.md', 'docs/decisions.md')
 
 
 def agents_md(ref: str) -> str:
-    """The guide and the decisions record on `ref`, joined, each under a heading that names its file."""
+    """The guide and the decisions record on `ref`, joined, each under a heading that names its file; then the
+    owner overlay when it is on this machine (#1854).
+
+    The overlay holds Current focus and the rest of the owner's private text, so holds written there are scanned
+    too. Without it the scan sees only the files in the repository."""
     parts = []
     for path in GUIDE_FILES:
         text = subprocess.run(
             ['gh', 'api', '-H', 'Accept: application/vnd.github.raw', f'repos/{REPO}/contents/{path}?ref={ref}'],
             check=True, capture_output=True, text=True).stdout
         parts.append(f'# {path}\n\n{text}')
+    overlay = ops_home() / 'ops' / 'OWNER.md'
+    if overlay.is_file():
+        parts.append(f'# {overlay.name}\n\n{overlay.read_text()}')
+    else:
+        print(f'note: {overlay} not found; holds in the owner overlay were not scanned', file=sys.stderr)
     return '\n\n'.join(parts)
 
 

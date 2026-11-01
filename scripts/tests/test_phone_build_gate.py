@@ -5,10 +5,14 @@ the two phone builds, which pass it on the command line. An upload is a Release 
 at build time, never switched on remotely (owner, 2026-10-17), so these checks keep the switch where it is.
 """
 import re
+import sys
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / 'scripts'))
+from sm_paths import ops_home  # noqa: E402
+
 PHONE_BUILDS = {'scripts/phone-build', '.github/workflows/phone-build.yml'}
 
 
@@ -68,11 +72,20 @@ class PhoneBuildGateTests(unittest.TestCase):
         self.assertIn('scripts/phone-build', turned_on)
 
     def test_the_upload_steps_never_pass_the_switch(self):
-        """The upload steps are prose in AGENTS.md that agents follow by hand; this keeps the prose clean."""
-        guide = (ROOT / 'AGENTS.md').read_text()
-        upload = guide[guide.index('## Releasing a build'):]
-        self.assertIn('-configuration Release', upload)
-        self.assertNotIn('SM_PHONE_BUILD', upload)
+        """The upload steps are prose that agents follow by hand; this keeps the prose clean.
+
+        The public guide carries the generic steps; the full ones are in the owner overlay (#1854), which is checked
+        too where it is on the machine."""
+        guides = [ROOT / 'AGENTS.md']
+        overlay = ops_home() / 'ops' / 'OWNER.md'
+        if overlay.is_file():
+            guides.append(overlay)
+        for path in guides:
+            guide = path.read_text()
+            upload = guide[guide.index('## Releasing a build'):]
+            self.assertNotIn('SM_PHONE_BUILD', upload, path.name)
+        if len(guides) > 1:
+            self.assertIn('-configuration Release', guides[1].read_text())
 
 
 if __name__ == '__main__':
