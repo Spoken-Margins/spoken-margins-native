@@ -766,7 +766,7 @@ def render_page(catalog: dict, sources: dict) -> str:
         "The app ships with its own reviewed list of voices, downloads each file straight from its publisher, and refuses any file whose size or SHA-256 does not match. "
         "The signed list is at <a href=\"/voices/v1/catalog.json\">/voices/v1/catalog.json</a>.</p>\n"
         + "\n".join(cards)
-        + "\n<footer><a href=\"/privacy/\">Privacy Policy</a> | <a href=\"/terms/\">Terms of Use</a> | <a href=\"/support/\">Support</a> | <a href=\"../copyright/\">Copyright and DMCA</a> | <a href=\"/\">Home</a></footer></main></body></html>\n")
+        + "\n<footer><a href=\"/privacy/\">Privacy Policy</a> | <a href=\"/terms/\">Terms of Use</a> | <a href=\"/support/\">Support</a> | <a href=\"../copyright/\">Copyright and DMCA</a> | <a href=\"/content-policy/\">Content policy</a> | <a href=\"/intimate-images/\">Removing intimate images</a> | <a href=\"/\">Home</a></footer></main></body></html>\n")
 
 
 def write_page(sources: dict, site_dir: Path, out=print) -> Path:
