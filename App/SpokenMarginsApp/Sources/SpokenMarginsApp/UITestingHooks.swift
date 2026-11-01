@@ -83,6 +83,13 @@ enum UITestingHooks {
         guard isActive else { return nil }
         return environment("SPOKEN_MARGINS_UI_TEST_INTERJECTION")
     }
+
+    /// The text size to show the Live Activity's Lock Screen card at, in place of the app (#1940), as a
+    /// `DynamicTypeSize` case name such as `large` or `accessibility5`.
+    static var liveActivityPreviewTextSize: String? {
+        guard isActive else { return nil }
+        return environment("SPOKEN_MARGINS_UI_TEST_LIVE_ACTIVITY_PREVIEW")
+    }
     #else
     static var isActive: Bool { false }
     static var keepsFirstRun: Bool { false }
@@ -97,5 +104,6 @@ enum UITestingHooks {
     static var speechRate: Double? { nil }
     static var usesSupertonic: Bool { false }
     static var summaryInterjectionNote: String? { nil }
+    static var liveActivityPreviewTextSize: String? { nil }
     #endif
 }
