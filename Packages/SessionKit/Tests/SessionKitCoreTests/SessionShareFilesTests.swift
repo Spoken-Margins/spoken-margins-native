@@ -83,7 +83,8 @@ final class SessionShareFilesTests: XCTestCase {
     func testOffMainBuildRendersOnTheCallersActorAndWritesAwayFromIt() async throws {
         var renderedOnMain: [Bool] = []
         let files = await SessionShareFiles.buildOffMain(sources(), root: root) { _ in
-            renderedOnMain.append(Thread.isMainThread)
+            MainActor.preconditionIsolated() // traps if the build ran this on a background thread
+            renderedOnMain.append(true)
             // A render that suspends (the app's store read) lets the main actor run other work in between.
             await Task.yield()
             return "text"
