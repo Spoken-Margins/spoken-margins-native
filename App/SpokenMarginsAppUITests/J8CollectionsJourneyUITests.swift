@@ -5,6 +5,7 @@ import XCTest
 // Margin J7 writes) after making the collection and before opening the scope.
 // The article is the offline seed (SPOKEN_MARGINS_UI_TEST_SOURCE_TEXT), so no network is involved; opening it to
 // write the Margin starts live speech, which the script neither waits for nor judges.
+// Step 3 taps the collection in the scope menu only once its row is tappable (#3156).
 // Screenshots of the sheet are attached to the test result (kept by the xcresult), so the Add to Collection
 // sheet can be looked at without driving the simulator by hand. Whether the sheet looks right stays with
 // the agent run and the owner.
@@ -88,12 +89,23 @@ final class J8CollectionsJourneyUITests: XCTestCase {
             let choice = app.buttons[collectionName].firstMatch
             XCTAssertTrue(choice.waitForExistence(timeout: 5), "The scope picker does not list the new collection")
             attachScreenshot("margins-scope-picker")
+            // The menu animates open, and a row can exist before a tap on it lands. A tap that misses closes the
+            // menu and changes nothing, which left the scope on "All items" in 3 of 3 flaky hosted runs (#3156).
+            // So tap the row only once it is hittable.
+            let tappable = XCTNSPredicateExpectation(predicate: NSPredicate(format: "isHittable == true"), object: choice)
+            XCTAssertEqual(XCTWaiter().wait(for: [tappable], timeout: 5), .completed,
+                           "The new collection's row in the scope picker never became tappable")
             choice.tap()
             // The picker's value is the chosen scope's title, so this fails if the tap landed on another scope.
             let scoped = XCTNSPredicateExpectation(
                 predicate: NSPredicate(format: "value == %@", collectionName), object: picker)
-            XCTAssertEqual(XCTWaiter().wait(for: [scoped], timeout: 5), .completed,
-                           "The Margins scope did not change to the collection")
+            let scopeResult = XCTWaiter().wait(for: [scoped], timeout: 5)
+            if scopeResult != .completed {
+                // Keep what the screen showed, so the next failure says whether the menu stayed open.
+                attachScreenshot("margins-scope-did-not-change")
+            }
+            XCTAssertEqual(scopeResult, .completed,
+                           "The Margins scope did not change to the collection; the picker reads \(String(describing: picker.value))")
             XCTAssertTrue(element("margins.openItem.\(itemId)").waitForExistence(timeout: 5),
                           "The collection's item has no Margins group in the collection's scope")
             let rows = app.buttons.matching(NSPredicate(
