@@ -33,6 +33,8 @@ final class TrashPlaybackOwnershipTests: XCTestCase {
             XCTAssertEqual(model.snapshot.sessionId, session)
             XCTAssertEqual(model.engine?.currentSession?.id, session)
             XCTAssertEqual(model.engine?.snapshot.itemId, model.snapshot.itemId)
+            XCTAssertEqual(model.selectedItem.id, "", "The replacement's detail is read off the main thread (#2505)")
+            await model.settleItemReload()
             XCTAssertEqual(model.selectedItem.id, fallback.id, "The replacement selection is deliberately not A")
             XCTAssertEqual(model.playbackItemHeaderTitle, "Playing article", "The mini-player must still name A")
             audio.currentOffset = 5
@@ -74,6 +76,7 @@ final class TrashPlaybackOwnershipTests: XCTestCase {
             XCTAssertNil(model.snapshot.sessionId)
             XCTAssertNil(model.engine?.currentSession)
             XCTAssertEqual(model.engine?.snapshot.itemId, model.snapshot.itemId)
+            await model.settleItemReload() // the replacement's detail is read off the main thread (#2505)
             XCTAssertEqual(model.selectedItem.id, "item-pill")
             XCTAssertEqual(model.activeItemId, "item-pill")
             let saved = try XCTUnwrap(SQLiteSessionStore(path: database.path).loadSession(id: session))
@@ -122,6 +125,7 @@ final class TrashPlaybackOwnershipTests: XCTestCase {
             XCTAssertFalse(audio.isPlaying)
             XCTAssertNil(model.snapshot.sessionId)
             XCTAssertNil(model.engine?.currentSession)
+            await model.settleItemReload() // the replacement's detail is read off the main thread (#2505)
             XCTAssertEqual(model.selectedItem.id, "item-pill")
             XCTAssertEqual(audio.playCount, playCount)
         }
