@@ -80,7 +80,7 @@ The owner's words and the detail are in [docs/decisions.md](docs/decisions.md) u
 - **Protect owner data.** Never reset, reseed or delete the owner's Library or recordings. Storage changes must let the previous build still open the database.
 - **Keep evidence local.** `artifacts/` is git-ignored; test output, logs, screenshots and recordings stay there, summarized in the commit or PR. Evidence posted on a PR or issue comes only from fixtures and test simulators, never his Library, Margins, recordings or Diagnostics, as Actions artifacts linked from a comment (2026-10-21).
 - **Don't record instructions as documents.** Owner direction lives in the conversation, issues, Current focus and [docs/decisions.md](docs/decisions.md). Don't append directive logs to other docs.
-- **Use GitHub issues** for bugs and feature requests: one issue per problem, with steps, expected and actual behavior, and the build number. Its area goes in the board's Area field ([docs/areas.md](docs/areas.md)); there are no `area:` labels.
+- **Use GitHub issues** for bugs and feature requests: one issue per problem, with steps, expected and actual behavior, the build number and board Area.
 
 ## Verification
 
