@@ -195,9 +195,10 @@ final class PlaybackDockHitAreaUITests: XCTestCase {
                 let next = app.buttons["playback.nextChapter.button"]
                 XCTAssertTrue(next.waitForExistence(timeout: 5), "Next chapter is missing")
                 let before = chapter.label
-                let point = edgePoints(of: next)[index]
-                tap(point)
-                XCTAssertTrue(waitFor(chapter, "label != %@", before), "A tap at \(point) did not move to the next chapter")
+                // The dock can move after the first chapter change, so the position is worked out at tap time (#3152).
+                let edge = ["leading", "trailing", "top", "bottom"][index]
+                tapEdge(of: next, index)
+                XCTAssertTrue(waitFor(chapter, "label != %@", before), "A tap at the \(edge) edge did not move to the next chapter")
             }
         }
 
@@ -252,6 +253,17 @@ final class PlaybackDockHitAreaUITests: XCTestCase {
             frame = next
         }
         return frame
+    }
+
+    /// Taps near one edge of `edgePoints(of:)`'s area (0 leading, 1 trailing, 2 top, 3 bottom), measured from the
+    /// element's centre when the tap is made. Only the size is read earlier, and a moving dock does not change it.
+    private func tapEdge(of element: XCUIElement, _ index: Int) {
+        let size = element.frame.size
+        let halfWidth = max(size.width, 44) / 2 - 2
+        let halfHeight = max(size.height, 44) / 2 - 2
+        let offsets = [CGVector(dx: -halfWidth, dy: 0), CGVector(dx: halfWidth, dy: 0),
+                       CGVector(dx: 0, dy: -halfHeight), CGVector(dx: 0, dy: halfHeight)]
+        element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).withOffset(offsets[index]).tap()
     }
 
     /// Taps 4 pt in from the element's trailing edge, at its vertical middle. XCTest resolves the element's frame
