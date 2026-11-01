@@ -19,9 +19,10 @@ public enum SpokenNoteSentenceGrouping {
     private static let closers = CharacterSet(charactersIn: "\"'’”)]}»")
     private static let terminators = CharacterSet(charactersIn: ".!?…")
     private static let abbreviations: Set<String> = [
-        "mr.", "mrs.", "ms.", "dr.", "prof.", "sr.", "jr.", "st.", "vs.", "etc.", "e.g.", "i.e.", "no.", "approx.", "fig.",
-        "inc.", "ltd.", "co.", "u.s.", "u.k.",
+        "mr.", "mrs.", "ms.", "dr.", "prof.", "sr.", "jr.", "vs.", "e.g.", "i.e.", "approx.", "fig.",
     ]
+    // Left out on purpose: "no.", "st.", "co.", "inc.", "etc." and "u.s." often really end a sentence ("I said no."),
+    // and a wrong break only splits a sentence in two, while a missed one glues two sentences together.
 
     public static func sentences(from words: [AlignedTranscriptSegment]) -> [SpokenNoteSentence] {
         // Words in spoken order. The sort is stable, so words with the same start keep the order they came in.
@@ -62,11 +63,16 @@ public enum SpokenNoteSentenceGrouping {
         while let last = scalars.last, closers.contains(last) { scalars.removeLast() }
         guard let last = scalars.last, terminators.contains(last) else { return false }
         guard last == "." else { return true }
-        let core = String(String.UnicodeScalarView(scalars)).lowercased()
+        // An opening quote or bracket before an abbreviation or initial ("(Dr.", "“J.") doesn't hide it.
+        let openers = CharacterSet(charactersIn: "\"'‘“([{«")
+        var start = scalars.startIndex
+        while start < scalars.endIndex, openers.contains(scalars[start]) { start = scalars.index(after: start) }
+        let bare = String(String.UnicodeScalarView(scalars[start...]))
+        let core = bare.lowercased()
         if abbreviations.contains(core) { return false }
-        // A single capital letter and a dot is an initial ("J. Smith"), not the end of a sentence.
-        let letters = core.dropLast()
-        if letters.count == 1, let only = letters.first, only.isLetter, word.first?.isUppercase == true { return false }
+        // A single capital letter and a dot is an initial ("J. Smith"), not the end of a sentence. "I." is the pronoun.
+        let letters = bare.dropLast()
+        if letters.count == 1, let only = letters.first, only.isLetter, only.isUppercase, only != "I" { return false }
         return true
     }
 }

@@ -34,6 +34,15 @@ final class SpokenNoteSentenceGroupingTests: XCTestCase {
                        ["Ask J. Smith about Dr. Lee, e.g. Tuesday.", "Pay 3.50 today."])
     }
 
+    func testWordsThatReallyEndSentencesBreakEvenWhenTheyLookLikeAbbreviations() {
+        XCTAssertEqual(group("Are we ready? No. I said no. So did I. Fine.").map(\.text),
+                       ["Are we ready?", "No.", "I said no.", "So did I.", "Fine."])
+    }
+
+    func testAnOpeningBracketOrQuoteDoesNotHideAnAbbreviationOrInitial() {
+        XCTAssertEqual(group("Ask (Dr. Lee) or “J. Smith” today.").map(\.text), ["Ask (Dr. Lee) or “J. Smith” today."])
+    }
+
     func testAPauseBreaksUnpunctuatedDictation() {
         let first = words(["remember", "to", "call"])
         let second = words(["also", "buy", "bread"], from: (first.last?.endMs ?? 0) + SpokenNoteSentenceGrouping.pauseBreakMs)
