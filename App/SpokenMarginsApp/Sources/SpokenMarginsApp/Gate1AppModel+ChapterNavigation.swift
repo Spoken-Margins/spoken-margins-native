@@ -64,6 +64,7 @@ extension Gate1AppModel {
         move: (SessionEngine) throws -> Void
     ) {
         guard !requireTermsDecisionBeforePlayback(action) else { return }
+        restoreSkimOriginBeforeCanonicalTransport() // a chapter tap ends a Skim summary instead of being undone by it (#1471)
         stopSpeechPreviews()
         marginMomentConductor?.sourceMoved() // a chapter jump over a Margin doesn't play it (#1656)
         clearPendingAutoPlayTurns()

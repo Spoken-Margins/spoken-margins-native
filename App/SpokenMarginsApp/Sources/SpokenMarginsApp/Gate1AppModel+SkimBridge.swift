@@ -5,9 +5,14 @@ import SessionKitPersistence
 /// The model's face to `SkimBridgeController` (#954): the names views, tests and the other extensions call,
 /// each forwarding to the controller, and the host the controller asks the model for.
 extension Gate1AppModel {
-    var skimForwardDestinationMs: Int? { skimBridge.forwardDestinationMs }
+    /// A text item read aloud (#1471). Skim's positions on it are character offsets, so no time is ever shown for one.
+    var isTextReadingSnapshot: Bool { snapshot.targetType == TargetType.itemTextTTS.rawValue }
 
-    var skimBackwardDestinationMs: Int? { skimBridge.backwardDestinationMs }
+    /// The times the controls show ("Skim to 18:42", here and on the Lock Screen). A text item has none: its
+    /// destinations are character offsets, and the controls say "Skim Forward" and "Skim Back" (#1471).
+    var skimForwardDestinationMs: Int? { isTextReadingSnapshot ? nil : skimBridge.forwardDestinationMs }
+
+    var skimBackwardDestinationMs: Int? { isTextReadingSnapshot ? nil : skimBridge.backwardDestinationMs }
 
     var skimForwardTitle: String { PlaybackQualityPresentation.skimTitle(destinationMs: skimForwardDestinationMs, backward: false) }
 
@@ -86,11 +91,19 @@ extension Gate1AppModel: SkimBridgeHost {
 
     var skimSourceIsPlaying: Bool { snapshot.status.isPlaybackActive }
 
-    var skimCurrentMediaTimeMs: Int? { snapshot.currentMediaTimeMs }
+    var skimCurrentMediaTimeMs: Int? { isTextReadingSnapshot ? snapshot.currentTextStart : snapshot.currentMediaTimeMs }
+
+    var skimUsesTextPositions: Bool { isTextReadingSnapshot }
 
     var skimSource: SkimSource? {
-        guard isMediaPlaybackSnapshot, !snapshot.isRecording, store != nil else { return nil }
-        return SkimSource(itemId: activeItemId, durationMs: snapshot.currentPlaybackDurationMs ?? selectedItem.mediaDurationMs)
+        guard !snapshot.isRecording, store != nil else { return nil }
+        if isMediaPlaybackSnapshot {
+            return SkimSource(itemId: activeItemId, durationMs: snapshot.currentPlaybackDurationMs ?? selectedItem.mediaDurationMs)
+        }
+        // A text item read aloud skims by the characters its map placed (#1471).
+        // The item that is reading, not the one open on screen: the playhead below is its own (#1471).
+        return isTextReadingSnapshot
+            ? SkimSource(itemId: snapshot.itemId ?? activeItemId, durationMs: nil, usesTextPositions: true) : nil
     }
 
     var skimStore: SQLiteSessionStore? { store }
@@ -102,22 +115,34 @@ extension Gate1AppModel: SkimBridgeHost {
             && heldMarginVoice == nil && marginMomentConductor?.isPlayingVoice != true
     }
 
-    var skimMediaPlaybackRate: Double { mediaPlaybackRate }
+    /// The speed the summary plays at is the one the listener is hearing the source at: the speaking rate on a text
+    /// item, the media speed otherwise (#1471).
+    var skimMediaPlaybackRate: Double { isTextReadingSnapshot ? speechPlaybackRateMultiplier : mediaPlaybackRate }
 
     func skimPauseEngine() throws {
         guard let engine else { return }
+        if isTextReadingSnapshot { synchronizeStreamingSpeechAnchorIfNeeded() } // as Pause does for text (#1471)
         snapshot = try engine.pause()
+        if isTextReadingSnapshot { streamingSpeechQueue.relinquishToCanonicalPlayback() }
     }
 
     func skimResumeEngine() throws {
         guard let engine else { return }
+        if isTextReadingSnapshot { streamingSpeechQueue.relinquishToCanonicalPlayback() } // as Resume does for text (#1471)
         snapshot = try engine.resumePlayback()
     }
 
+    /// On a text item `mediaTimeMs` is a character offset, and the reader is moved to it, paused or not; the
+    /// controller then pauses or resumes it, as it does a media player (#1471).
     func skimSeekOrStage(toMediaTimeMs mediaTimeMs: Int) throws {
         guard let engine else { return }
         marginMomentConductor?.sourceMoved() // the skim lands somewhere new; Margins it passed don't play (#1656)
-        snapshot = try seekOrStageMedia(engine, toMediaTimeMs: mediaTimeMs)
+        if isTextReadingSnapshot {
+            snapshot = try engine.seekText(toCharOffset: mediaTimeMs)
+            streamingSpeechQueue.relinquishToCanonicalPlayback()
+        } else {
+            snapshot = try seekOrStageMedia(engine, toMediaTimeMs: mediaTimeMs)
+        }
     }
 
     func skimBridgeDidFinish() {

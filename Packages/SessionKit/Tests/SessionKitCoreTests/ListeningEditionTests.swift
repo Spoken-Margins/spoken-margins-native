@@ -168,4 +168,19 @@ final class ReadLaterClientTests: XCTestCase {
         XCTAssertNil(page.documents.first?.html)
         XCTAssertNil(page.nextCursor)
     }
+    func testTextMapProposalPlacesEachSceneByCharacterWithTheEditionsOwnSummaries() throws {
+        let edition = try ListeningEdition.decode(TestInputs.data(.contracts, "fixtures/listening-editions/article.json"))
+        let proposal = try edition.textMapProposal()
+        let chapters = edition.listeningMap().chapters
+        XCTAssertEqual(proposal.scenes.map(\.id), chapters.map(\.id), "a Skim destination is also a chapter")
+        XCTAssertEqual(proposal.scenes.map { $0.startAnchor.startChar }, chapters.map { Optional($0.startChar) })
+        XCTAssertEqual(proposal.scenes.map { $0.endAnchor.endChar }, chapters.map { Optional($0.endChar) })
+        XCTAssertEqual(proposal.scenes.map(\.summaryText), edition.scenes.map { Optional($0.summary) })
+        XCTAssertTrue(proposal.scenes.allSatisfy { $0.startAnchor.mediaTimeMs == nil && $0.eligibility == .eligible })
+        XCTAssertTrue(proposal.id.hasPrefix(ListeningEditionMap.proposalIDPrefix))
+        XCTAssertNotNil(SceneStarts.textProposal(in: [proposal]))
+        let starts = SceneStarts(textScenes: proposal.scenes)
+        XCTAssertEqual(starts.sceneStarts, chapters.map { Optional($0.startChar) })
+        XCTAssertNotNil(starts.textSkimPlan(direction: .forward, at: chapters[0].startChar))
+    }
 }

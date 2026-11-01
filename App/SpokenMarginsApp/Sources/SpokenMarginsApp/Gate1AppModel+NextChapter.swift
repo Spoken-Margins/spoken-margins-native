@@ -6,12 +6,20 @@ import SessionKit
 /// in SessionKit; this is the wiring to the model's chapters and Skim bridge.
 extension Gate1AppModel {
     var canJumpToNextChapter: Bool {
-        let mediaChapter = nextPlaybackChapter == nil ? nextPlaybackMediaChapter : nil
+        let textChapter = nextPlaybackChapter
+        let mediaChapter = textChapter == nil ? nextPlaybackMediaChapter : nil
         return !recordingNavigationIsLocked && playingImportedCommentary == nil
             && NextChapterSummaryRule.isAvailable(
                 playing: playingSummaryForNextChapter,
-                hasNextChapter: nextPlaybackChapter != nil || mediaChapter != nil,
-                nextChapterStartMs: mediaChapter?.startMs)
+                hasNextChapter: textChapter != nil || mediaChapter != nil,
+                nextChapterStartMs: textChapter?.startChar ?? mediaChapter?.startMs,
+                tolerance: nextChapterTolerance)
+    }
+
+    /// Text chapters are placed by character and media chapters by time, so the summary-first rule compares them in
+    /// their own unit (#1471).
+    private var nextChapterTolerance: Int {
+        isTextReadingSnapshot ? NextChapterSummaryRule.alignmentToleranceChars : NextChapterSummaryRule.alignmentToleranceMs
     }
 
     /// Whether this item has Skim controls at all (a podcast with a ready map, or a Skim summary playing). The chapter
@@ -19,7 +27,7 @@ extension Gate1AppModel {
     /// A mapped item keeps them even where neither direction can be pressed, so Next chapter is never mistaken for
     /// Skim there (#2185).
     var showsSkimRow: Bool {
-        isMediaPlaybackSnapshot
+        (isMediaPlaybackSnapshot || isTextReadingSnapshot)
             && (snapshot.canSkimBackward || snapshot.canSkimForward || snapshot.skimBridgeState != nil
                 || skimBridge.itemHasMap)
     }
@@ -59,12 +67,15 @@ extension Gate1AppModel {
         guard canJumpToNextChapter else { return }
         let textChapter = nextPlaybackChapter
         let mediaChapter = textChapter == nil ? nextPlaybackMediaChapter : nil
-        let summary = snapshot.skimBridgeState == nil && mediaChapter != nil
-            ? snapshot.currentMediaTimeMs.flatMap { resolvedSkimPlaybackPlan(direction: .forward, at: $0) } : nil
+        // The playhead the summary is resolved from: a character offset on a text item, a media time otherwise (#1471).
+        let playhead = textChapter != nil ? snapshot.currentTextStart : (mediaChapter != nil ? snapshot.currentMediaTimeMs : nil)
+        let summary = snapshot.skimBridgeState == nil
+            ? playhead.flatMap { resolvedSkimPlaybackPlan(direction: .forward, at: $0) } : nil
         switch NextChapterSummaryRule.press(
             playing: playingSummaryForNextChapter,
             hasNextChapter: textChapter != nil || mediaChapter != nil,
-            nextChapterStartMs: mediaChapter?.startMs, summaryLandsAtMs: summary?.destinationMediaTimeMs
+            nextChapterStartMs: textChapter?.startChar ?? mediaChapter?.startMs, summaryLandsAtMs: summary?.destinationMediaTimeMs,
+            tolerance: nextChapterTolerance
         ) {
         case .skipSummary: completeSkimBridge()
         case .summaryThenJump(let landingMs):
@@ -83,8 +94,9 @@ extension Gate1AppModel {
     /// The Live Activity's Next chapter behaves like the app's: summary first, second press skips it (#569).
     /// True when it was that command and has been handled.
     func handlesLiveActivityNextChapter(_ command: CompactControlCommand, chapterId: String?) -> Bool {
-        guard command == .jumpToChapter, isMediaPlaybackSnapshot, canJumpToNextChapter,
-              let chapterId, chapterId == nextPlaybackMediaChapter?.id else { return false }
+        let nextChapterId = isTextReadingSnapshot ? nextPlaybackChapter?.id : nextPlaybackMediaChapter?.id
+        guard command == .jumpToChapter, isMediaPlaybackSnapshot || isTextReadingSnapshot, canJumpToNextChapter,
+              let chapterId, chapterId == nextChapterId else { return false }
         jumpToNextChapter()
         return true
     }

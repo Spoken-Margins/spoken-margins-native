@@ -86,6 +86,12 @@ extension Gate1AppModel {
 
     func setMediaPlaybackRate(_ rate: Double) {
         guard !rejectNavigationOrSessionMutationWhileRecording("set_media_playback_rate") else { return }
+        if isTextReadingSnapshot {
+            // A speed command (the Lock Screen's, say) on a text item sets the speaking rate, never the podcast speed (#1471).
+            speechRate = SpeechRateRule.quarterStepMultiplier(rate) * 0.5
+            playbackSpeechRateChanged()
+            return
+        }
         let clamped = SpeechRateRule.quarterStepMultiplier(rate)
         mediaPlaybackRate = clamped
         UserDefaults.standard.set(clamped, forKey: "mediaPlaybackRate")
@@ -168,6 +174,7 @@ extension Gate1AppModel {
     @discardableResult
     func seekText(toCharOffset charOffset: Int) -> Bool {
         marginMomentConductor?.sourceMoved()
+        restoreSkimOriginBeforeCanonicalTransport() // a tap in the reader ends a Skim summary, as a media seek does (#1471)
         if playingImportedCommentary != nil, heldMarginVoice?.kind != .shared { stopImportedCommentaryPlayback(resumeSource: false) } // Add a Margin holds the voice and moves the source under it (#1672)
         recordDeveloperDiagnostic("seek.text.request", ["offset": String(charOffset)])
         synchronizeStreamingSpeechAnchorIfNeeded()
@@ -178,12 +185,31 @@ extension Gate1AppModel {
         }
     }
 
+    /// Every speaking-rate change reaches the engine through here: the slider, the speed button, a Lock Screen speed
+    /// command on a text item.
     func playbackSpeechRateChanged() {
         guard !rejectNavigationOrSessionMutationWhileRecording("set_speech_playback_rate") else { return }
         saveSpeechSettings()
         guard !isMediaPlaybackSnapshot else {
             return
         }
+        // A Skim summary playing over a text item changes speed with the reading (#1471). The engine's snapshot carries
+        // no summary state, so the engine call below would drop it and the summary could never finish: it is put back.
+        if isTextReadingSnapshot, let bridge = snapshot.skimBridgeState {
+            if bridge.status == .playing { skimBridge.setTransportRate(forPlaybackRate: speechPlaybackRateMultiplier) }
+            let availability = (forward: snapshot.canSkimForward, backward: snapshot.canSkimBackward)
+            applySpeechRateToEngine()
+            if snapshot.skimBridgeState == nil {
+                snapshot.skimBridgeState = bridge
+                snapshot.canSkimForward = availability.forward
+                snapshot.canSkimBackward = availability.backward
+            }
+            return
+        }
+        applySpeechRateToEngine()
+    }
+
+    private func applySpeechRateToEngine() {
         if ttsVoiceSelection.isOnDeviceVoice, audioPlaybackClientOverride == nil {
             applySupertonicPlaybackRate()
             return

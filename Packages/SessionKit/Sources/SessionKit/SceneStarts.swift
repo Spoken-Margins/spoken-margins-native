@@ -39,6 +39,23 @@ public struct SceneStarts: Equatable, Sendable {
         }
     }
 
+    /// The map Skim reads on a text item: the first proposal whose scenes are placed by character (#1471). A proposal
+    /// placed only by media time (a podcast's) says nothing about where to read, so it never counts.
+    public static func textProposal(in proposals: [PortableListeningMapProposalArtifact]) -> PortableListeningMapProposalArtifact? {
+        proposals.first { proposal in
+            proposal.scenes.contains { $0.startAnchor.startChar.map { $0 >= 0 } == true }
+        }
+    }
+
+    /// `skimPlan` for a text item, where there is no duration: the last scene's forward destination is the end of its
+    /// own span, or just past its start when the span is unknown. A last-scene summary then plays and the reader
+    /// pauses where it was, rather than moving (#1471).
+    public func textSkimPlan(direction: SkimDirection, at charOffset: Int) -> SkimPlan? {
+        let lastStart = sceneStarts.compactMap { $0 }.max() ?? 0
+        let end = max(sceneEnds.compactMap { $0 }.max() ?? 0, lastStart + 1)
+        return skimPlan(direction: direction, at: charOffset, durationMs: end)
+    }
+
     public struct SkimPlan: Equatable, Sendable {
         public let currentScene: PortableListeningMapScene
         public let summaryScene: PortableListeningMapScene

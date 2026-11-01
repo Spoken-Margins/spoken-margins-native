@@ -1399,6 +1399,22 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(state.displayedValue(canonicalValue: 0, range: range), 900)
     }
 
+    /// #1471: a Skim summary plays at the speed the listener hears the source at. On a text item that is the speaking
+    /// rate, never the podcast speed they last set.
+    func testASkimSummaryOnATextItemPlaysAtTheSpeakingRateNotThePodcastSpeed() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.mediaPlaybackRate = 2
+        model.speechRate = 0.5 // 1.0x
+        model.snapshot.targetType = TargetType.itemTextTTS.rawValue
+        XCTAssertTrue(model.isTextReadingSnapshot)
+        XCTAssertEqual(model.skimMediaPlaybackRate, model.speechPlaybackRateMultiplier)
+        XCTAssertNotEqual(model.skimMediaPlaybackRate, model.mediaPlaybackRate)
+
+        model.snapshot.targetType = TargetType.transcriptBackedMedia.rawValue
+        XCTAssertFalse(model.isTextReadingSnapshot)
+        XCTAssertEqual(model.skimMediaPlaybackRate, 2)
+    }
+
     func testPartialPreparedTextAudioDoesNotAdvertiseAFullScrubber() {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.snapshot.targetType = TargetType.itemTextTTS.rawValue
@@ -5173,6 +5189,49 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(audio.playedOffsets.last, "One. ".count)
         XCTAssertEqual(try XCTUnwrap(audio.configuredSpeechRates.last), Float(0.65), accuracy: Float(0.001))
         XCTAssertEqual(UserDefaults.standard.double(forKey: "speechRate"), 0.65, accuracy: 0.001)
+    }
+
+    /// #1471 (audit of de04de9): the engine's snapshot carries no Skim state, so a speed change during a text summary
+    /// used to drop it, and the summary then ended without moving the reader on. Every speed entry point ends in
+    /// `playbackSpeechRateChanged`, which now keeps the state, and the summary still completes.
+    func testASpeedChangeDuringATextSummaryKeepsTheSummaryAndItStillCompletes() throws {
+        let voicePreferences = VoicePreferencesSnapshot.capture()
+        addTeardownBlock { voicePreferences.restore() }
+        SpokenMarginsTerms.recordAcceptance()
+        let audio = WorkflowRecordingAudioClient()
+        let model = Gate1AppModel(audioPlaybackClient: audio)
+        model.resetAndSeed()
+        model.importTitle = "Summary Rate"
+        model.importText = "One. Two. Three."
+        model.importTextItem()
+        XCTAssertEqual(model.snapshot.status, .playing)
+        XCTAssertTrue(model.isTextReadingSnapshot)
+
+        // A summary is playing over the paused reader, as a Skim press leaves it.
+        model.pause()
+        XCTAssertEqual(model.snapshot.status, .paused)
+        let itemId = try XCTUnwrap(model.snapshot.itemId)
+        let destination = "One. ".count
+        let bridge = SkimBridgeState(
+            direction: .forward, itemId: itemId, originMediaTimeMs: 0, summarySceneId: "scene-0",
+            destinationSceneId: "scene-1", destinationMediaTimeMs: destination,
+            summaryAssetId: "summary", wasSourcePlaying: true, status: .playing
+        )
+        model.snapshot.skimBridgeState = bridge
+
+        model.speechRate = 0.65
+        model.playbackSpeechRateChanged()
+        XCTAssertEqual(model.snapshot.skimBridgeState, bridge, "the speed button and slider keep the summary")
+        model.setMediaPlaybackRate(1.5)
+        XCTAssertEqual(model.snapshot.skimBridgeState, bridge, "so does a Lock Screen speed command on a text item")
+        model.cyclePlaybackRate()
+        XCTAssertEqual(model.snapshot.skimBridgeState, bridge)
+        XCTAssertEqual(model.snapshot.status, .paused, "the reader does not start under the summary")
+
+        model.completeSkimBridge()
+        XCTAssertNil(model.snapshot.skimBridgeState)
+        XCTAssertEqual(model.snapshot.currentTextStart, destination, "the summary still lands the reader on the next chapter")
+        XCTAssertEqual(model.snapshot.status, .playing)
     }
 
     func testLegacyEmbeddedPiperModeSanitizesToBundledJamesPath() {
