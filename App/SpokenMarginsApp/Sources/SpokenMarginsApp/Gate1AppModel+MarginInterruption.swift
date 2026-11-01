@@ -54,7 +54,7 @@ extension Gate1AppModel {
                 let heldOwn = heldMarginVoice?.kind == .own
                 snapshot = try engine.finishInterjection(audioRef: nil, resumesSource: false)
                 if heldOwn { noteMarginRecordedOverHeldOwnMargin(engine.lastScheduledTranscriptionInterjectionId) }
-                refreshSelectedItem()
+                refreshSelectedItemInBackground()
                 recordSavedInterjectionForOnboarding()
                 let interjection = latestInterjectionNeedingTranscription()
                 transcribeAndRecordSavedSpokenMargin()
@@ -69,7 +69,7 @@ extension Gate1AppModel {
         case .discard:
             run { engine in
                 snapshot = try engine.cancelInterjection(resumesSource: false)
-                refreshSelectedItem()
+                refreshSelectedItemInBackground()
                 reportWarning(emptyRecording
                     ? "The Margin was interrupted and the microphone hadn't picked up any sound, so it wasn't kept."
                     : "The Margin was interrupted before you said anything, so it wasn't kept.")

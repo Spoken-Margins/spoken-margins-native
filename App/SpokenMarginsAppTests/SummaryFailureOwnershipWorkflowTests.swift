@@ -47,6 +47,7 @@ final class SummaryFailureOwnershipWorkflowTests: XCTestCase {
         let a = try XCTUnwrap(model.snapshot.sessionId)
         model.beginWrittenMargin()
         model.saveWrittenMargin(text: originalNote)
+        await model.settleItemReload() // the item detail reloads off the main thread after a save (#2505)
         let noteA = try XCTUnwrap(store.loadInterjections(sessionId: a).last?.id)
         XCTAssertTrue(model.canSummarizeInterjections)
         model.summarize()
@@ -58,6 +59,7 @@ final class SummaryFailureOwnershipWorkflowTests: XCTestCase {
         if bHasSummary {
             model.beginWrittenMargin()
             model.saveWrittenMargin(text: "B_ONLY: keep this request pending while A fails.")
+            await model.settleItemReload() // the item detail reloads off the main thread after a save (#2505)
             noteB = try XCTUnwrap(store.loadInterjections(sessionId: b).last?.id)
             model.summarize()
             try await waitForRequests(2, provider)
@@ -145,6 +147,7 @@ final class SummaryFailureOwnershipWorkflowTests: XCTestCase {
         XCTAssertEqual(f.model.summaryScopeForCurrentTarget(), SummaryScope(targetType: "turn", turnId: turn.id))
         f.model.beginWrittenMargin()
         f.model.saveWrittenMargin(text: otherNote)
+        await f.model.settleItemReload() // the item detail reloads off the main thread after a save (#2505)
         XCTAssertTrue(f.model.canSummarizeInterjections)
         let otherNoteID = try XCTUnwrap(store.loadInterjections(sessionId: f.a).first { $0.displayText == otherNote }?.id)
         let beforeRequests = await f.provider.requests.count
@@ -228,6 +231,7 @@ final class SummaryFailureOwnershipWorkflowTests: XCTestCase {
         let newText = "NEW_NOTE: do not silently add this to an old Retry."
         f.model.beginWrittenMargin()
         f.model.saveWrittenMargin(text: newText)
+        await f.model.settleItemReload() // the item detail reloads off the main thread after a save (#2505)
         let afterNotes = try store.loadInterjections(sessionId: f.a)
         // SQLite orders by second-resolution updated_at, then ID. A tied timestamp
         // can put the original UUID last; enumeration order is not creation order.
@@ -283,6 +287,7 @@ final class SummaryFailureOwnershipWorkflowTests: XCTestCase {
         XCTAssertTrue(isExplicitOriginalScopeRefusal(try XCTUnwrap(f.model.feedbackEvent), itemTitle: try store.loadItem(id: "item-pill").title))
         f.model.beginWrittenMargin()
         f.model.saveWrittenMargin(text: "NEW_AFTER_DELETE: a fresh summary remains possible.")
+        await f.model.settleItemReload() // the item detail reloads off the main thread after a save (#2505)
         let newNote = try XCTUnwrap(store.loadInterjections(sessionId: f.a).last { $0.status == "active" }?.id)
         // The controls answer from records read off the main thread (#2508); ask once they are read for this state.
         await f.model.settleSummaryRecords()
@@ -312,6 +317,7 @@ final class SummaryFailureOwnershipWorkflowTests: XCTestCase {
         f.model.playTurn(other)
         f.model.beginWrittenMargin()
         f.model.saveWrittenMargin(text: otherNote)
+        await f.model.settleItemReload() // the item detail reloads off the main thread after a save (#2505)
         // The controls answer from records read off the main thread (#2508); ask once they are read for this state.
         await f.model.settleSummaryRecords()
         XCTAssertFalse(f.model.canRetryLocalSummary, "Another target's failure must not label this action Retry")
@@ -354,6 +360,7 @@ final class SummaryFailureOwnershipWorkflowTests: XCTestCase {
         XCTAssertEqual(model.snapshot.sessionId, f.a)
         model.beginWrittenMargin()
         model.saveWrittenMargin(text: "AFTER_RELOAD: this new note was not in the failed summary.")
+        await model.settleItemReload() // the item detail reloads off the main thread after a save (#2505)
         // A reloaded model has read no summary records yet (#2508); the label is right once they are read.
         await model.settleSummaryRecords()
         XCTAssertTrue(model.canRetryLocalSummary)

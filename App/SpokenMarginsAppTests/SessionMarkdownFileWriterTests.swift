@@ -102,6 +102,7 @@ final class BatchSessionExportWorkflowTests: XCTestCase {
         let marginText = "A written Margin that must reach the exported file."
         model.beginWrittenMargin()
         model.saveWrittenMargin(text: marginText)
+        await model.settleItemReload() // the item detail reloads off the main thread after a save (#2505)
         XCTAssertEqual(model.selectedItem.interjections.count, 1)
 
         await model.openBatchExport().value
