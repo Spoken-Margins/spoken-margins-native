@@ -1,9 +1,11 @@
 """Host tests for the away check. Run: python3 -m unittest discover -s ops/away"""
 import datetime as dt
 import sys
+import tempfile
 import unittest
 from unittest import mock
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).parent))
 import away_check as a  # noqa: E402
@@ -157,7 +159,7 @@ class GuideTextTests(unittest.TestCase):
             asked.append(cmd[-1])
             return type('R', (), {'stdout': f'body of {cmd[-1].split("/")[-1].split("?")[0]}\n'})()
 
-        with mock.patch.object(a.subprocess, 'run', fake_run):
+        with mock.patch.object(a.subprocess, 'run', fake_run), mock.patch.object(a, 'ops_home', return_value=Path('/nonexistent')):
             text = a.agents_md('main')
         self.assertEqual([x.split('contents/')[1] for x in asked], ['AGENTS.md?ref=main', 'docs/decisions.md?ref=main'])
         self.assertIn('# AGENTS.md\n\nbody of AGENTS.md', text)
@@ -190,6 +192,31 @@ class ReportTests(unittest.TestCase):
         text = a.report(now, 12, dial, q, [], [], [], [], p)
         self.assertIn('the Dial is Off', text)
         self.assertIn('3. Only you: nothing', text)
+
+
+class OverlayTests(unittest.TestCase):
+    """The standing calls moved to the owner overlay (#1854): the scan must still see holds written there."""
+
+    def read(self, overlay_text):
+        with tempfile.TemporaryDirectory() as home:
+            if overlay_text is not None:
+                (Path(home) / 'ops').mkdir()
+                (Path(home) / 'ops' / 'OWNER.md').write_text(overlay_text)
+            run = mock.Mock(return_value=mock.Mock(stdout='A guide with no holds.\n'))
+            with mock.patch.object(a.subprocess, 'run', run), mock.patch.object(a, 'ops_home', return_value=Path(home)):
+                return a.agents_md('main')
+
+    def test_overlay_text_is_appended_when_present(self):
+        text = self.read('## Current focus\n- Held: Co-op waits for the LLC.\n')
+        self.assertIn('# AGENTS.md', text)
+        holds = a.scan_holds(text)
+        self.assertEqual(len(holds), 1)
+        self.assertIn('Co-op waits', holds[0]['text'])
+
+    def test_missing_overlay_leaves_the_public_guide_alone(self):
+        text = self.read(None)
+        self.assertIn('# docs/decisions.md', text)
+        self.assertNotIn('OWNER.md', text)
 
 
 if __name__ == '__main__':
