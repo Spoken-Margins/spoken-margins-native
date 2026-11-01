@@ -222,6 +222,37 @@ extension Gate1AppModel {
         }
     }
 
+    /// Deletes the item's episode-map jobs on a background task, in line with the automatic queueing's saves (#2509).
+    func deleteEpisodeMapPreparationJobsInBackground(itemId: String) {
+        guard let store else { return }
+        Task {
+            _ = try? await StoreReader(store).readInOrder(AutomaticEpisodeMapJobs.orderKey) {
+                EpisodeMapJobCleanup.deleteJobs(itemId: itemId, store: $0)
+            }
+        }
+    }
+
+    /// Launch clean-up of cancelled and week-old episode-map jobs. The job reads and deletes run on a background task,
+    /// in line with the automatic queueing's saves (#2509); the files go first and the rows after, so a crash in
+    /// between leaves a job to try again.
+    func purgeExpiredEpisodeMapPreparationJobs(store: SQLiteSessionStore, now: Date = Date()) {
+        Task { [weak self] in
+            let expired = (try? await StoreReader(store).readInOrder(AutomaticEpisodeMapJobs.orderKey) {
+                EpisodeMapJobCleanup.expiredJobs(now: now, store: $0)
+            }) ?? []
+            guard let self, !expired.isEmpty else { return }
+            for job in expired {
+                // Without a saved map the whole folder goes; with one, only the transient folder (#2510: off the main thread).
+                let directory = try? self.episodeMapDirectory(itemId: job.itemId)
+                let doomed = job.hasMap ? directory?.appending(path: "Transient", directoryHint: .isDirectory) : directory
+                Self.removeEpisodeTranscriptionFilesInBackground(itemId: job.itemId, directories: [doomed].compactMap { $0 })
+            }
+            _ = try? await StoreReader(store).readInOrder(AutomaticEpisodeMapJobs.orderKey) {
+                EpisodeMapJobCleanup.deleteExpired(expired, now: now, store: $0)
+            }
+        }
+    }
+
     func purgeTransientEpisodeTranscriptionCaches(itemId: String) async throws {
         let transientDirectory = try episodeMapDirectory(itemId: itemId)
             .appending(path: "Transient", directoryHint: .isDirectory)
