@@ -32,7 +32,7 @@ final class SharedEpisodeRecovery: ObservableObject {
     struct Services {
         var fetchFeed: @Sendable (URL) async throws -> ParsedFeed
         /// The Library item that already is this episode and that the packet's item will accept, if there is one.
-        var existingEpisode: @MainActor (SharedItemIdentity, FeedEntry, String?) throws -> String?
+        var existingEpisode: @MainActor (SharedItemIdentity, FeedEntry, String?) async throws -> String?
         var addEpisode: @MainActor (FeedEntry, String?) async throws -> String
         /// Called once the episode is in the Library, so the pending import looks for it again.
         var episodeReady: @MainActor () -> Void
@@ -108,7 +108,7 @@ final class SharedEpisodeRecovery: ObservableObject {
         }
         do {
             let itemId: String
-            if let existing = try services.existingEpisode(shared, entry, showTitle) {
+            if let existing = try await services.existingEpisode(shared, entry, showTitle) {
                 itemId = existing
             } else {
                 itemId = try await services.addEpisode(entry, showTitle)
@@ -179,7 +179,7 @@ final class SharedEpisodeRecovery: ObservableObject {
         Services(
             fetchFeed: { try await SharedEpisodeFeedFetcher.fetch($0) },
             existingEpisode: { [weak model] shared, entry, showTitle in
-                try model?.libraryItemID(forRecoveredEpisode: entry, showTitle: showTitle, acceptedBy: shared)
+                try await model?.libraryItemID(forRecoveredEpisode: entry, showTitle: showTitle, acceptedBy: shared)
             },
             addEpisode: { [weak model] entry, showTitle in
                 guard let model else { throw CancellationError() }
