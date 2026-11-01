@@ -86,6 +86,12 @@ extension Gate1AppModel {
 
     func setMediaPlaybackRate(_ rate: Double) {
         guard !rejectNavigationOrSessionMutationWhileRecording("set_media_playback_rate") else { return }
+        if isTextReadingSnapshot {
+            // A speed command (the Lock Screen's, say) on a text item sets the speaking rate, never the podcast speed (#1471).
+            speechRate = SpeechRateRule.quarterStepMultiplier(rate) * 0.5
+            playbackSpeechRateChanged()
+            return
+        }
         let clamped = SpeechRateRule.quarterStepMultiplier(rate)
         mediaPlaybackRate = clamped
         UserDefaults.standard.set(clamped, forKey: "mediaPlaybackRate")
@@ -184,6 +190,10 @@ extension Gate1AppModel {
         saveSpeechSettings()
         guard !isMediaPlaybackSnapshot else {
             return
+        }
+        // A Skim summary playing over a text item changes speed with the reading (#1471).
+        if isTextReadingSnapshot, snapshot.skimBridgeState?.status == .playing {
+            skimBridge.setTransportRate(forPlaybackRate: speechPlaybackRateMultiplier)
         }
         if ttsVoiceSelection.isOnDeviceVoice, audioPlaybackClientOverride == nil {
             applySupertonicPlaybackRate()

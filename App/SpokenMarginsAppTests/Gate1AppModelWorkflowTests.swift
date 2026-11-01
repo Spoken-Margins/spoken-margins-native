@@ -1399,6 +1399,22 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(state.displayedValue(canonicalValue: 0, range: range), 900)
     }
 
+    /// #1471: a Skim summary plays at the speed the listener hears the source at. On a text item that is the speaking
+    /// rate, never the podcast speed they last set.
+    func testASkimSummaryOnATextItemPlaysAtTheSpeakingRateNotThePodcastSpeed() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.mediaPlaybackRate = 2
+        model.speechRate = 0.5 // 1.0x
+        model.snapshot.targetType = TargetType.itemTextTTS.rawValue
+        XCTAssertTrue(model.isTextReadingSnapshot)
+        XCTAssertEqual(model.skimMediaPlaybackRate, model.speechPlaybackRateMultiplier)
+        XCTAssertNotEqual(model.skimMediaPlaybackRate, model.mediaPlaybackRate)
+
+        model.snapshot.targetType = TargetType.transcriptBackedMedia.rawValue
+        XCTAssertFalse(model.isTextReadingSnapshot)
+        XCTAssertEqual(model.skimMediaPlaybackRate, 2)
+    }
+
     func testPartialPreparedTextAudioDoesNotAdvertiseAFullScrubber() {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.snapshot.targetType = TargetType.itemTextTTS.rawValue

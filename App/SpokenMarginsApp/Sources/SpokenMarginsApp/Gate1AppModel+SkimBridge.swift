@@ -115,7 +115,9 @@ extension Gate1AppModel: SkimBridgeHost {
             && heldMarginVoice == nil && marginMomentConductor?.isPlayingVoice != true
     }
 
-    var skimMediaPlaybackRate: Double { mediaPlaybackRate }
+    /// The speed the summary plays at is the one the listener is hearing the source at: the speaking rate on a text
+    /// item, the media speed otherwise (#1471).
+    var skimMediaPlaybackRate: Double { isTextReadingSnapshot ? speechPlaybackRateMultiplier : mediaPlaybackRate }
 
     func skimPauseEngine() throws {
         guard let engine else { return }
