@@ -170,7 +170,8 @@ jobs:
           echo "TEAM=$team" >> "$GITHUB_ENV"
 
       # Signed with `-` (no certificate, no profile), which still embeds each target's entitlements, so the
-      # ad hoc export below keeps the app group and associated domains.
+      # ad hoc export below keeps the app group and associated domains. SM_PHONE_BUILD=YES turns on the
+      # phone-build-only spikes listed in project.yml (#3086); an upload archive never passes it.
       - name: Archive the Release app
         id: archive
         run: |
@@ -186,7 +187,7 @@ jobs:
             SWIFT_ENABLE_PREFIX_MAPPING=YES SWIFT_ENABLE_PROJECT_PREFIX_MAPPING=YES \
             CLANG_ENABLE_PREFIX_MAPPING=YES CLANG_ENABLE_PROJECT_PREFIX_MAPPING=YES \
             SWIFT_OTHER_PREFIX_MAPPINGS="\"$root=/^tree\"" CLANG_OTHER_PREFIX_MAPPINGS="\"$root=/^tree\"" \
-            "SM_BUILD_COMMIT=$GITHUB_SHA" archive 2>&1 | tee "$OUT/build.log" | grep -E 'error:|ARCHIVE|cacheable tasks' || true
+            "SM_BUILD_COMMIT=$GITHUB_SHA" SM_PHONE_BUILD=YES archive 2>&1 | tee "$OUT/build.log" | grep -E 'error:|ARCHIVE|cacheable tasks' || true
           grep -q 'ARCHIVE SUCCEEDED' "$OUT/build.log"
           echo "BUILD_SECONDS=$(( $(date +%s) - started ))" >> "$GITHUB_ENV"
 
