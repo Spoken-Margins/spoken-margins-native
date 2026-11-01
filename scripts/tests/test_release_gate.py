@@ -134,6 +134,56 @@ def gate_record_default():
     return json.loads(gate.DEFAULT_RECORD.read_text(encoding="utf-8"))
 
 
+def agent_record(**agent):
+    record = copy.deepcopy(COMPLETE_WITH_WAIVER)
+    record["dmca_agent"].update(agent)
+    return record
+
+
+class RenewalNoticeTests(unittest.TestCase):
+    """The owner is reminded before the three-year designation lapses (#2236 step 5)."""
+
+    def test_nothing_is_due_before_the_agent_is_registered(self):
+        act, line = gate.renewal_notice({}, TODAY)
+        self.assertFalse(act)
+        self.assertIn("not registered", line)
+        self.assertFalse(gate.renewal_notice(agent_record(registered=False, registered_on=None), TODAY)[0])
+
+    def test_a_date_on_file_keeps_the_reminder_alive_whatever_the_flag_says(self):
+        for flag in (False, "true", "yes", 1):
+            act, line = gate.renewal_notice(agent_record(registered=flag, registered_on="2026-11-20"), datetime.date(2029, 10, 1))
+            self.assertTrue(act, flag)
+            self.assertIn("2029-11-20", line)
+
+    def test_the_reminder_opens_90_days_before_the_lapse_and_stays_open_after_it(self):
+        lapse = datetime.date(2029, 11, 20)  # registered 2026-11-20
+        record = agent_record(registered_on="2026-11-20")
+        before = lapse - datetime.timedelta(days=gate.RENEWAL_LEAD_DAYS + 1)
+        self.assertFalse(gate.renewal_notice(record, before)[0])
+        on_edge = gate.renewal_notice(record, lapse - datetime.timedelta(days=gate.RENEWAL_LEAD_DAYS))
+        self.assertTrue(on_edge[0])
+        self.assertIn("2029-11-20", on_edge[1])
+        self.assertTrue(gate.renewal_notice(record, lapse - datetime.timedelta(days=1))[0])
+        lapsed = gate.renewal_notice(record, lapse)
+        self.assertTrue(lapsed[0])
+        self.assertIn("lapsed", lapsed[1])
+        self.assertTrue(gate.renewal_notice(record, lapse + datetime.timedelta(days=400))[0])
+
+    def test_a_registered_agent_with_no_usable_date_asks_for_the_date(self):
+        for date in (None, "", "11/20/2026", "20261120", "2999-01-01", 7):
+            act, line = gate.renewal_notice(agent_record(registered_on=date), TODAY)
+            self.assertTrue(act, date)
+            self.assertIn("registration date", line)
+
+    def test_a_leap_day_registration_is_dated_like_the_gate(self):
+        record = agent_record(registered_on="2028-02-29")
+        self.assertIn("2031-03-01", gate.renewal_notice(record, datetime.date(2031, 2, 1))[1])
+
+    def test_the_shipped_record_has_nothing_due_yet(self):
+        record = json.loads(gate.DEFAULT_RECORD.read_text(encoding="utf-8"))
+        self.assertFalse(gate.renewal_notice(record, TODAY)[0])
+
+
 class CommandLineTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -190,6 +240,31 @@ class CommandLineTests(unittest.TestCase):
         empty = self.dir / "Empty.xcarchive"
         (empty / "Products" / "Applications").mkdir(parents=True)
         self.assertEqual(self.run_gate(empty, self.record({})).returncode, 2)
+
+    def run_renewal(self, record, *extra):
+        return subprocess.run(
+            [sys.executable, "-I", str(SCRIPT), "--renewal-notice", "--record", str(record), *extra],
+            capture_output=True, text=True, env={**os.environ, "SM_RELEASE_GATE_TODAY": datetime.date(2029, 10, 1).isoformat()})
+
+    def test_renewal_notice_exits_1_with_one_line_inside_the_window_and_0_outside(self):
+        due = self.run_renewal(self.record(agent_record(registered_on="2026-11-20")))
+        self.assertEqual(due.returncode, 1, due.stderr)
+        self.assertEqual(len(due.stdout.strip().splitlines()), 1)
+        self.assertIn("2029-11-20", due.stdout)
+        quiet = self.run_renewal(self.record(agent_record(registered_on="2027-11-20")))
+        self.assertEqual(quiet.returncode, 0, quiet.stderr)
+        self.assertEqual(self.run_renewal(self.record({})).returncode, 0)
+
+    def test_renewal_notice_with_an_unreadable_record_exits_2_and_takes_no_build(self):
+        self.assertEqual(self.run_renewal(self.dir / "no-such-record.json").returncode, 2)
+        self.assertEqual(self.run_renewal(self.record({}), str(self.dir)).returncode, 2)
+
+    def test_a_bad_pinned_date_exits_2_not_1(self):
+        result = subprocess.run(
+            [sys.executable, "-I", str(SCRIPT), "--renewal-notice", "--record", str(self.record({}))],
+            capture_output=True, text=True, env={**os.environ, "SM_RELEASE_GATE_TODAY": "garbage"})
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
 
     def test_the_destination_is_required(self):
         result = subprocess.run([sys.executable, "-I", str(SCRIPT), str(self.dir)], capture_output=True, text=True)
