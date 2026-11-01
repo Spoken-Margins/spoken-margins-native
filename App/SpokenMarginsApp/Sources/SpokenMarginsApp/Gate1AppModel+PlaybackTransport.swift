@@ -185,16 +185,31 @@ extension Gate1AppModel {
         }
     }
 
+    /// Every speaking-rate change reaches the engine through here: the slider, the speed button, a Lock Screen speed
+    /// command on a text item.
     func playbackSpeechRateChanged() {
         guard !rejectNavigationOrSessionMutationWhileRecording("set_speech_playback_rate") else { return }
         saveSpeechSettings()
         guard !isMediaPlaybackSnapshot else {
             return
         }
-        // A Skim summary playing over a text item changes speed with the reading (#1471).
-        if isTextReadingSnapshot, snapshot.skimBridgeState?.status == .playing {
-            skimBridge.setTransportRate(forPlaybackRate: speechPlaybackRateMultiplier)
+        // A Skim summary playing over a text item changes speed with the reading (#1471). The engine's snapshot carries
+        // no summary state, so the engine call below would drop it and the summary could never finish: it is put back.
+        if isTextReadingSnapshot, let bridge = snapshot.skimBridgeState {
+            if bridge.status == .playing { skimBridge.setTransportRate(forPlaybackRate: speechPlaybackRateMultiplier) }
+            let availability = (forward: snapshot.canSkimForward, backward: snapshot.canSkimBackward)
+            applySpeechRateToEngine()
+            if snapshot.skimBridgeState == nil {
+                snapshot.skimBridgeState = bridge
+                snapshot.canSkimForward = availability.forward
+                snapshot.canSkimBackward = availability.backward
+            }
+            return
         }
+        applySpeechRateToEngine()
+    }
+
+    private func applySpeechRateToEngine() {
         if ttsVoiceSelection.isOnDeviceVoice, audioPlaybackClientOverride == nil {
             applySupertonicPlaybackRate()
             return
