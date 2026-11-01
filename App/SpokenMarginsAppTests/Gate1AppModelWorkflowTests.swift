@@ -1006,7 +1006,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.sharingState.drafts[0].approvedTranscript, "Keep words.")
     }
 
-    func testTimelineShareCurationPersistsAndCreatesAStarredSenderShortlist() throws {
+    func testTimelineShareCurationPersistsAndCreatesAStarredSenderShortlist() async throws {
         let root = FileManager.default.temporaryDirectory
             .appending(path: "share-curation-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -1055,6 +1055,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertTrue(InterjectionSharingView.transcriptRequiresExpansion(fullHeight: 440, limitedHeight: 220))
 
         reopened.setInterjectionStarredForSharing("margin-starred", starred: false)
+        await reopened.settleItemReload() // the item detail reloads off the main thread after the star (#2505)
         reopened.prepareShareInterjections()
         XCTAssertEqual(reopened.sharingState.draftFilter, .all)
         XCTAssertTrue(reopened.sharingState.drafts.allSatisfy(\.isIncluded))
@@ -2694,6 +2695,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         Seventh response sentence. Eighth response sentence. Distinctive final appendix sentence.
         """
         model.importPastedAssistantResponse(autoPlay: true)
+        await model.settleItemReload() // the item detail reloads off the main thread after the import (#2505)
         let turn = try XCTUnwrap(model.selectedItem.turns.last(where: { $0.turnType == "assistant_response" }))
 
         model.dispatchGate2CompactCommand(.beginInterjection)
@@ -3741,6 +3743,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         try await waitFor("local summary completion") {
             model.diagnostics["lastSummaryMode"] == "apple_foundation_on_device"
         }
+        await model.settleItemReload() // the item detail reloads off the main thread after the summary (#2505)
         XCTAssertTrue(model.selectedItem.turns.contains {
             $0.turnType == "interjection_summary"
                 && $0.text?.contains("relationship between structure and recall") == true
@@ -3776,6 +3779,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         }
         // The controls read the job table off the main thread, once per session state (#2508).
         await model.settleSummaryRecords()
+        await model.settleItemReload() // the item detail reloads off the main thread after the failure (#2505)
         XCTAssertFalse(model.isSummarizingInterjections)
         XCTAssertTrue(model.canSummarizeInterjections)
         XCTAssertTrue(model.canRetryLocalSummary)
@@ -5070,6 +5074,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         for responseIndex in 0..<2 {
             model.pastedAssistantResponse = String(repeating: "Response \(responseIndex) contains a distinct argument. ", count: 80)
             model.importPastedAssistantResponse()
+            await model.settleItemReload() // the item detail reloads off the main thread after the import (#2505)
             XCTAssertEqual(model.snapshot.targetType, TargetType.assistantTurnTTS.rawValue)
             XCTAssertEqual(model.snapshot.status, .playing)
             model.pause()

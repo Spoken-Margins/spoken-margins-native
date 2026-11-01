@@ -85,7 +85,7 @@ extension Gate1AppModel {
                 interjectionIds: engine.lastSummaryCandidates.map(\.id), contexts: contexts
             )
             submitLocalSummary(itemId: itemId, turnId: turnId, contexts: contexts, retryContext: retryContext)
-            refreshSelectedItem()
+            refreshSelectedItemInBackground()
             reportSuccess("On-device summary started.")
         }
     }
@@ -134,7 +134,7 @@ extension Gate1AppModel {
             }
             snapshot = try engine.retryAIJob(jobId: job.id)
             submitLocalSummary(itemId: original.itemId, turnId: original.turnId, contexts: original.contexts, retryContext: original)
-            refreshSelectedItem()
+            refreshSelectedItemInBackground()
             reportSuccess("On-device summary retry started.")
         } catch {
             // A store read failure is not evidence that the original notes disappeared.
@@ -216,7 +216,7 @@ extension Gate1AppModel {
             }
             snapshot = try engine.importAssistantResponse(text: text, autoPlay: autoPlay)
             pastedAssistantResponse = ""
-            refreshSelectedItem()
+            refreshSelectedItemInBackground()
             screen = .playback
             reportSuccess(autoPlay ? "Imported and playing pasted response." : "Imported pasted response.")
         }

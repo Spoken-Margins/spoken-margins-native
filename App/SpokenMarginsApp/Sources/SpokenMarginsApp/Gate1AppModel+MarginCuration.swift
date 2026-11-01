@@ -108,7 +108,7 @@ extension Gate1AppModel {
     func deleteTranscript(interjection: Interjection) {
         run { engine in
             snapshot = try engine.deleteRepresentation(interjectionId: interjection.id, sessionId: interjection.sessionId, representation: "transcript")
-            refreshSelectedItem()
+            refreshSelectedItemInBackground()
             reportSuccess("Deleted transcript.")
         }
         refreshMarginRow(sessionId: interjection.sessionId, interjectionId: interjection.id)
@@ -117,7 +117,7 @@ extension Gate1AppModel {
     func deleteInterjection(_ interjection: Interjection) {
         run { engine in
             snapshot = try engine.deleteInterjection(interjectionId: interjection.id, sessionId: interjection.sessionId)
-            refreshSelectedItem()
+            refreshSelectedItemInBackground()
             cutShortMarks().clear(sessionId: interjection.sessionId, interjectionId: interjection.id)
             // Its failed-transcription Retry would otherwise outlive it (#430).
             withdrawRetryOffer(Self.transcriptionRetryKey(interjection))
@@ -134,7 +134,7 @@ extension Gate1AppModel {
                   let interjection = try store.updateInterjection(id: interjectionID, sessionId: owningSessionId, { $0.isStarredForSharing = starred ? true : nil }) else {
                 throw SessionKitError.persistenceFailed("share_curation_interjection_missing")
             }
-            refreshSelectedItem()
+            refreshSelectedItemInBackground()
             refreshMarginRow(sessionId: interjection.sessionId, interjectionId: interjection.id)
             diagnostics["shareCuration:\(interjectionID)"] = starred ? "starred" : "unstarred"
         } catch {
@@ -155,7 +155,7 @@ extension Gate1AppModel {
                 throw SessionKitError.persistenceFailed("margin_curation_interjection_missing")
             }
             refreshMarginRow(sessionId: interjection.sessionId, interjectionId: interjection.id)
-            if snapshot.sessionId == row.interjection.sessionId { refreshSelectedItem() }
+            if snapshot.sessionId == row.interjection.sessionId { refreshSelectedItemInBackground() }
             diagnostics["marginCuration:\(row.id)"] = starred ? "starred" : "unstarred"
         } catch {
             reportFailure(error, context: "Margin star could not be saved")
@@ -171,7 +171,7 @@ extension Gate1AppModel {
                   let interjection = try store.updateInterjection(id: interjectionID, sessionId: owningSessionId, { $0.privateSharingNote = bounded.isEmpty ? nil : bounded }) else {
                 throw SessionKitError.persistenceFailed("share_curation_interjection_missing")
             }
-            refreshSelectedItem()
+            refreshSelectedItemInBackground()
             refreshMarginRow(sessionId: interjection.sessionId, interjectionId: interjection.id)
             diagnostics["shareCurationNote:\(interjectionID)"] = bounded.isEmpty ? "empty" : "saved"
         } catch {

@@ -62,7 +62,7 @@ extension Gate1AppModel {
                     completedCurrentAudio: completedCurrentAudio
                 )
                 diagnostics["lastSummaryMode"] = "apple_foundation_on_device"
-                refreshSelectedItem()
+                refreshSelectedItemInBackground()
                 reportConfirmation("On-device summary saved and queued after the current source.")
             } catch is LocalSummaryRequestOrigin.Discarded {
                 diagnostics["lastSummaryMode"] = "apple_foundation_discarded"
@@ -94,7 +94,7 @@ extension Gate1AppModel {
             completedStreamingTurnIds.remove(turnId)
             diagnostics["streamingSpeechPending"] = "\(streamingSpeechQueue.pendingCount)"
             diagnostics["streamingTurnCompleted"] = turnId
-            refreshSelectedItem()
+            refreshSelectedItemInBackground()
         } catch {
             diagnostics["streamingTurnCompletionError"] = String(describing: error)
         }
@@ -129,7 +129,7 @@ extension Gate1AppModel {
         do {
             if let engine {
                 snapshot = try engine.aiProviderFailed(error: error, sessionId: origin?.sessionId, turnId: origin?.turnId)
-                refreshSelectedItem()
+                refreshSelectedItemInBackground()
             }
         } catch {
             diagnostics["providerFailurePersistence"] = String(describing: error)
