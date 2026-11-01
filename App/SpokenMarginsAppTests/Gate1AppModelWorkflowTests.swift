@@ -5845,17 +5845,30 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         }
         try store.saveItem(Item(id: "article", title: "Article", mediaType: "text", text: "Source text.", externalReference: "https://example.com/article", status: "ready"))
         try store.saveSession(Session(id: "session-article", itemId: "article", status: "in_progress", phase: .itemPlayback, currentTargetType: .itemTextTTS, currentTargetId: "article", position: Position(charOffset: 4), completionPercent: 40, playbackRate: 1))
+        let source = SourceIdentity(id: "source", kind: .articleFeed, canonicalURL: "https://example.com/feed", host: "example.com")
+        // Opening an item also starts the Follow button's own discovery, and that one calls the handler without
+        // first reading the stored subscriptions. Whichever reached the handler first would end "discovery
+        // suspended"; when it was the button's, the save below landed before the suggestion check's own read of the
+        // subscriptions, so the check saw the feed already followed, returned before it published, and the test
+        // timed out (#2935). A button offer already on file keeps that discovery from starting, so the handler is
+        // reached only by the suggestion check, after its read.
+        model.followOffers["article"] = try XCTUnwrap(ManualFollowPolicy.offer(
+            itemId: "article", mediaType: "text",
+            candidates: [SourceCandidateEvidence(id: "button-candidate", source: source, evidenceURL: "https://example.com/article", relation: "html_alternate", confidence: 1)]
+        ))
         model.openHome()
         model.openItem(id: "article")
         model.offerFollowSuggestionIfEligible(itemId: "article", store: store)
         try await waitFor("discovery suspended") { pending != nil }
-        let source = SourceIdentity(id: "source", kind: .articleFeed, canonicalURL: "https://example.com/feed", host: "example.com")
         try store.saveFeedSubscription(FeedSubscription(id: "followed", source: source))
         pending?.resume(returning: [SourceCandidateEvidence(id: "candidate", source: source, evidenceURL: "https://example.com/article", relation: "html_alternate", confidence: 1)])
         pending = nil
         // Wait for the check itself to end, not for its side effect: a check that bails out early (stale origin, another
         // item selected) publishes nothing, and waiting for the published list then ran out the clock with no hint why (#2935).
         try await waitFor("suggestion check finished") { !model.sourceSuggestionChecks.contains("article") }
+        // When another reader of the subscriptions started meanwhile, that one publishes, and it may land just after
+        // the check ends (`publishFeedSubscriptions`), so give it a moment before judging.
+        try await waitFor("subscriptions published", timeoutNanoseconds: 2_000_000_000) { model.feedSubscriptions.map(\.id) == ["followed"] }
         XCTAssertEqual(
             model.feedSubscriptions.map(\.id), ["followed"],
             "the check reloads the stored subscriptions before it decides. outcome: \(model.diagnostics["sourceFollowSuggestion"] ?? "none"), selected: \(model.selectedItem.id), screen: \(model.screen)"
