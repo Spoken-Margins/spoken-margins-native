@@ -1597,25 +1597,6 @@ public enum AudioPlaybackInterruptionEvent: Equatable, Sendable {
     case endedShouldResume
 }
 
-struct AudioPlaybackInterruptionResumePolicy: Equatable {
-    private(set) var wasPlayingBeforeInterruption = false
-
-    @discardableResult
-    mutating func began(wasPlaying: Bool) -> Bool {
-        wasPlayingBeforeInterruption = wasPlaying
-        return wasPlaying
-    }
-
-    mutating func ended(shouldResume: Bool) -> Bool {
-        defer { wasPlayingBeforeInterruption = false }
-        return wasPlayingBeforeInterruption && shouldResume
-    }
-
-    mutating func cancelAutomaticResume() {
-        wasPlayingBeforeInterruption = false
-    }
-}
-
 struct MediaSeekLifecycle: Equatable {
     enum Observation: Equatable {
         case playbackSample
@@ -1862,7 +1843,9 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, HeardAudio
         }
     }
     private var remoteCommandHandlingEnabled = true
-    private var interruptionResumePolicy = AudioPlaybackInterruptionResumePolicy()
+    /// Whether this client resumes by itself when the interruption ends. The decision belongs to `SystemInterruptionResume`
+    /// (#3032); this client only reports events to it and obeys the answer.
+    private var interruptionResume = SystemInterruptionResume()
     /// Background time while an interruption waits to end, so a backgrounded app isn't suspended before iOS says
     /// it is over (#1434).
     private let interruptionHold: InterruptionBackgroundHold?
@@ -3051,7 +3034,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, HeardAudio
     /// Internal so host tests can stand in for the iOS-only interruption and route-change notifications.
     func pauseForSystemInterruption(awaitsEnd: Bool) {
         let wasPlaying = activeTargetId != nil && !paused
-        guard interruptionResumePolicy.began(wasPlaying: wasPlaying) else { return }
+        guard interruptionResume.began(awaitsEnd ? .interruption : .routeLost, wasPlaying: wasPlaying) else { return }
         if awaitsEnd {
             // iOS doesn't report the end of a message announcement, so the hold also resumes once the other
             // audio stops (#1434).
@@ -3070,20 +3053,20 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, HeardAudio
 
     private func finishSystemInterruption(shouldResume: Bool) {
         withInterruptionHold { $0.interruptionEnded() }
-        guard interruptionResumePolicy.ended(shouldResume: shouldResume) else { return }
+        guard interruptionResume.ended(shouldResume: shouldResume) else { return }
         interruptionHandler?(.endedShouldResume)
     }
 
     /// The interruption's other audio stopped without iOS reporting an end: resume as an end with "should resume"
     /// would, unless the listener has taken over since (#1434).
     private func resumeBecauseOtherAudioStopped() {
-        guard interruptionResumePolicy.ended(shouldResume: true) else { return }
+        guard interruptionResume.otherAudioStopped() else { return }
         interruptionHandler?(.endedShouldResume)
     }
 
     /// The listener's Play, Pause, Stop or a new item replaces an interruption's automatic resume.
     private func cancelAutomaticInterruptionResume() {
-        interruptionResumePolicy.cancelAutomaticResume()
+        interruptionResume.cancelAutomaticResume()
         withInterruptionHold { $0.listenerActed() }
     }
 

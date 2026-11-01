@@ -5,8 +5,8 @@ Every "playback did or didn't resume" bug (after a system interruption, a Margin
 relaunch, a Live Activity or Watch action) is one instance of the same flaw: the decision whether the source resumes,
 and from where, is computed in several places, each with its own flag, and they disagree at the edges. #1705 took five
 audit rounds because each fix touched one copy. This scanner is the inventory of those copies and the guard that keeps
-a new one out. The end state is one SessionKit type that owns the decision (the audit's "Done when"); until it exists
-the baseline names every remaining instance, and it only shrinks.
+a new one out. The end state is one SessionKit type that owns the decision (the audit's "Done when"); the system-interruption
+path has it (`SystemInterruptionResume`), and the baseline names every remaining instance elsewhere. It only shrinks.
 
   scripts/resume_owners.py             check: fail on a declaration that is not in the baseline, or whose count of
                                        declarations or writes grew
@@ -16,7 +16,7 @@ the baseline names every remaining instance, and it only shrinks.
 A row is a declaration (`var`, `let`, `func`, `struct`, `enum`, `class`, `actor`, `protocol`, `typealias`, `case`, or
 a `func` parameter such as `interruptionEnded(shouldResume:)`) in a
 production Swift file under App/ or Packages/*/Sources whose name contains one of RESUME_NAMES. A file listed in
-OWNING_FILES is the owner and is not scanned; it is empty until the owning type lands. A row's `writes` is the number
+OWNING_FILES is the owner and is not scanned. A row's `writes` is the number
 of assignments to that name in the same file (the audit counted `shouldResumeAfterInterruption` written in eight
 places), so a new write site in a file that already has the flag fails too.
 
@@ -49,8 +49,10 @@ RESUME_NAMES = (
     'recordingOnFinishedSource',
     'playbackStartAttempt', 'playbackStartPending', 'playbackStartDeadline',
 )
-# Repo-relative paths of the type that owns the decision. Nothing is exempt until #3032's one-owner type exists.
-OWNING_FILES: tuple = ()
+# Repo-relative paths of the type that owns the decision: `SystemInterruptionResume` owns "does playback resume by
+# itself after a system interruption" for both playback clients (#3032). Other kinds of resume (a Margin capture, a
+# hands-free capture, a relaunch) are still baseline rows until they move into an owner of their own.
+OWNING_FILES: tuple = ('Packages/SessionKit/Sources/SessionKit/SystemInterruptionResume.swift',)
 SCAN_DIRS = ('App', 'Packages')
 SKIP_PARTS = ('Tests', 'UITests', '.build', 'Fixtures')  # test targets and build output are not production code
 DECLARATION = re.compile(r'\b(?:func|struct|enum|class|actor|protocol|typealias|case)\s+(`?\w+`?)')
@@ -155,6 +157,30 @@ def carries_resume(name: str) -> bool:
     return any(part.lower() in lowered for part in RESUME_NAMES)
 
 
+TUPLE_ASSIGNMENT = re.compile(r'\(([^()\n]*)\)\s*=(?!=)')
+
+
+def count_writes(code: str, name: str) -> int:
+    """How many places in `code` assign to `name`: `name = x`, `self.name = x`, `state.name = x`, `name += x`,
+    `name ??= x`, `name <<= x`, `name.toggle()`, `f(&name)`, a write through the value (`name.field = x`,
+    `name?.field = x`, `name[i] = x`) and a tuple assignment (`(a, name) = pair`). Not `name == x`, `name != x`,
+    `name <= x`, or the initial value of its own `var name = x` / `var name: T = x` declaration."""
+    escaped = re.escape(name)
+    writes = re.compile(r'(?<!\w)' + escaped + r'\s*(?:(?:\?\?|<<|>>|[-+*/%^|&])?=(?!=)|\.toggle\(|\.(?:append|insert|remove\w*)\('
+                        r'|[?!]?(?:\.\w+|\[[^\]\n]*\])+\s*(?:(?:\?\?|<<|>>|[-+*/%^|&])?=(?!=)))'
+                        r'|&' + escaped + r'(?!\w)')
+    # Only the untyped form `var name = x` matches `writes` above; the typed `var name: T = x` never does, so only the
+    # untyped one is taken back off. (A typed declaration with a starting value used to cancel one real write.)
+    initial = re.compile(r'\b(?:var|let)\s+`?' + escaped + r'`?\s*=(?!=)')
+    count = len(writes.findall(code)) - len(initial.findall(code))
+    for match in TUPLE_ASSIGNMENT.finditer(code):
+        if re.search(r'\b(?:var|let)\s*$', code[:match.start()]):
+            continue  # `let (a, name) = pair` declares
+        if name in re.findall(r'\w+', match.group(1)):
+            count += 1
+    return count
+
+
 def scan_source(path: str, original: str):
     """Rows for one file: one per declared name, with its first line and the writes to it in this file."""
     code = blank_literals(original)
@@ -174,13 +200,7 @@ def scan_source(path: str, original: str):
             for name in {n for n in parameter.groups() if n}:
                 add(name, signature.start())
     for name, row in rows.items():
-        # `name = x`, `self.name = x`, `state.name = x`, `name += x`, `name ??= x`, `name <<= x`; `name.toggle()` and
-        # `f(&name)` too. Not `name == x`, `name != x`, `name <= x`, or `var name: T = x` (a declaration).
-        escaped = re.escape(name)
-        writes = re.compile(r'(?<!\w)' + escaped + r'\s*(?:(?:\?\?|<<|>>|[-+*/%^|&])?=(?!=)|\.toggle\(|\.(?:append|insert|remove\w*)\()'
-                            r'|&' + escaped + r'(?!\w)')
-        initial = re.compile(r'\b(?:var|let)\s+`?' + escaped + r'`?\s*(?::[^=\n{]*)?=(?!=)')
-        row['writes'] = max(0, len(writes.findall(code)) - len(initial.findall(code)))
+        row['writes'] = count_writes(code, name)
     return sorted(rows.values(), key=lambda r: r['name'])
 
 
