@@ -242,20 +242,32 @@ extension Gate1AppModel {
                 EpisodeMapJobCleanup.expiredJobs(now: now, store: $0)
             }) ?? []
             guard !found.isEmpty else { return }
+            guard let self else { return }
+            // `prepare` keeps a live job's old `requestedAt`, so the row can't show a re-request. The items being
+            // prepared, or waiting on a download or transcript, are read here on the main actor and kept.
+            let busy = self.busyEpisodeMapItemIds
             let expired = (try? await StoreReader(store).readInOrder(AutomaticEpisodeMapJobs.orderKey) {
-                EpisodeMapJobCleanup.stillExpired(found, now: now, store: $0)
+                EpisodeMapJobCleanup.stillExpired(found, now: now, excluding: busy, store: $0)
             }) ?? []
-            guard let self, !expired.isEmpty else { return }
-            for job in expired {
+            // Another hop passed; ask again, then remove the files in the same turn with no await in between.
+            let busyNow = self.busyEpisodeMapItemIds
+            let doomed = expired.filter { !busyNow.contains($0.itemId) }
+            guard !doomed.isEmpty else { return }
+            for job in doomed {
                 // Without a saved map the whole folder goes; with one, only the transient folder (#2510: off the main thread).
                 let directory = try? self.episodeMapDirectory(itemId: job.itemId)
-                let doomed = job.hasMap ? directory?.appending(path: "Transient", directoryHint: .isDirectory) : directory
-                Self.removeEpisodeTranscriptionFilesInBackground(itemId: job.itemId, directories: [doomed].compactMap { $0 })
+                let target = job.hasMap ? directory?.appending(path: "Transient", directoryHint: .isDirectory) : directory
+                Self.removeEpisodeTranscriptionFilesInBackground(itemId: job.itemId, directories: [target].compactMap { $0 })
             }
             _ = try? await StoreReader(store).readInOrder(AutomaticEpisodeMapJobs.orderKey) {
-                EpisodeMapJobCleanup.deleteExpired(expired, now: now, store: $0)
+                EpisodeMapJobCleanup.deleteExpired(doomed, now: now, excluding: busyNow, store: $0)
             }
         }
+    }
+
+    /// Items whose episode map is being prepared, or is waiting on a download or a transcript.
+    var busyEpisodeMapItemIds: Set<String> {
+        Set([episodeMapPreparationItemId, pendingMapGenerationItemId].compactMap { $0 })
     }
 
     func purgeTransientEpisodeTranscriptionCaches(itemId: String) async throws {

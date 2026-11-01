@@ -97,6 +97,24 @@ final class EpisodeMapJobCleanupTests: XCTestCase {
         XCTAssertEqual(Set(EpisodeMapJobCleanup.stillExpired(expired, now: now, store: store).map(\.itemId)), ["mapped-late"], "a job already deleted is skipped")
     }
 
+    func testAnOldJobThatIsRunningIsKeptEvenThoughPrepareLeavesItsRequestedAtAlone() throws {
+        try job("running", age: 8 * day)
+        try job("idle", age: 8 * day)
+        let expired = EpisodeMapJobCleanup.expiredJobs(now: now, store: store)
+        // What `EpisodeMapPreparer.prepare` does with a live job: save it back unchanged, old `requestedAt` and all.
+        let reused = try XCTUnwrap(store.loadEpisodeMapPreparationJob(id: AutomaticEpisodeMapJobs.jobId(itemId: "running")))
+        try store.saveEpisodeMapPreparationJob(reused)
+
+        XCTAssertEqual(Set(EpisodeMapJobCleanup.stillExpired(expired, now: now, store: store).map(\.itemId)), ["running", "idle"],
+                       "the row alone can't tell a re-request from an abandoned job")
+        let confirmed = EpisodeMapJobCleanup.stillExpired(expired, now: now, excluding: ["running"], store: store)
+        XCTAssertEqual(confirmed.map(\.itemId), ["idle"])
+
+        XCTAssertEqual(EpisodeMapJobCleanup.deleteExpired(expired, now: now, excluding: ["running"], store: store),
+                       [AutomaticEpisodeMapJobs.jobId(itemId: "idle")])
+        XCTAssertEqual(try store.loadEpisodeMapPreparationJobs().map(\.itemId), ["running"])
+    }
+
     func testDeleteJobsRemovesOnlyThatItemsJobsIncludingSimilarlyNamedItems() throws {
         try job("ep-1", age: 0)
         try job("ep-10", age: 0)

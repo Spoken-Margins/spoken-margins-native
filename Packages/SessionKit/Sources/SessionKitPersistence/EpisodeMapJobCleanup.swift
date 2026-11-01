@@ -36,8 +36,18 @@ public enum EpisodeMapJobCleanup {
 
     /// The jobs of `expired` that are still expired, with `hasMap` read again. The app calls it right before it removes
     /// files, so a job asked for again, or a map finished, since `expiredJobs` ran keeps its folder (#2509).
-    public static func stillExpired(_ expired: [ExpiredJob], now: Date, store: SQLiteSessionStore) -> [ExpiredJob] {
+    ///
+    /// Asking for a map again does not change `requestedAt`: `prepare` reuses a job that isn't cancelled and saves it as
+    /// it was, so an old unfinished job stays "expired" while it runs. The app therefore passes `busyItemIds`, the items
+    /// whose map is being prepared or waiting on a download or transcript, read on the main actor, and those are kept.
+    public static func stillExpired(
+        _ expired: [ExpiredJob],
+        now: Date,
+        excluding busyItemIds: Set<String> = [],
+        store: SQLiteSessionStore
+    ) -> [ExpiredJob] {
         expired.compactMap { entry in
+            guard !busyItemIds.contains(entry.itemId) else { return nil }
             guard let job = try? store.loadEpisodeMapPreparationJob(id: entry.jobId), isExpired(job, now: now) else { return nil }
             return ExpiredJob(
                 jobId: job.id,
@@ -50,9 +60,14 @@ public enum EpisodeMapJobCleanup {
     /// Deletes the given jobs and the item's transient-transcript ledger rows. A job the listener asked for again
     /// since `expiredJobs` ran (saved over, so no longer expired) is kept. Returns the ids it deleted.
     @discardableResult
-    public static func deleteExpired(_ expired: [ExpiredJob], now: Date, store: SQLiteSessionStore) -> [String] {
+    public static func deleteExpired(
+        _ expired: [ExpiredJob],
+        now: Date,
+        excluding busyItemIds: Set<String> = [],
+        store: SQLiteSessionStore
+    ) -> [String] {
         var deleted: [String] = []
-        for entry in expired {
+        for entry in expired where !busyItemIds.contains(entry.itemId) {
             guard let job = try? store.loadEpisodeMapPreparationJob(id: entry.jobId) else { continue }
             guard isExpired(job, now: now) else { continue }
             for asset in (try? store.loadOwnedOfflineAssets(itemId: job.itemId)) ?? []
