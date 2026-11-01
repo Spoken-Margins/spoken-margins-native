@@ -1,6 +1,7 @@
 import Foundation
 import SessionKit
 import SessionKitFeeds
+import SessionKitPersistence
 import SessionKitSharing
 
 /// The Library side of recovering a shared Margin's episode from a feed the listener pasted (#454).
@@ -11,30 +12,20 @@ extension Gate1AppModel {
     /// day) filled in so the pending packet can find it. An item the packet would still refuse (one
     /// added by its audio link and titled from the file name, say) is left alone, and recovery adds
     /// the feed's episode beside it instead.
-    func libraryItemID(forRecoveredEpisode entry: FeedEntry, showTitle: String?, acceptedBy shared: SharedItemIdentity) throws -> String? {
+    func libraryItemID(forRecoveredEpisode entry: FeedEntry, showTitle: String?, acceptedBy shared: SharedItemIdentity) async throws -> String? {
         let store = try requireStore()
-        let audioURL = entry.audioURL
-        let guid = entry.episodeGUID
-        let title = entry.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        // The audio link names the episode. A GUID alone does not (some feeds reuse short ones, and
-        // many give every episode the show's page as its link), so it needs the title beside it.
-        // Summaries name the candidates; only those items are read whole, for the GUID and the packet's rule (#2506).
-        let candidateIDs = entry.recoveryCandidateItemIDs(among: try store.listItemSummaries())
-        guard let itemId = try candidateIDs.lazy.compactMap({ try? store.loadItem(id: $0) }).first(where: { item in
-            let sameEpisode: Bool
-            if let audioURL, item.media?.url == audioURL {
-                sameEpisode = true
-            } else if let guid, item.episodeGUID?.trimmingCharacters(in: .whitespacesAndNewlines) == guid {
-                sameEpisode = item.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == title
-            } else {
-                sameEpisode = false
+        // One background read finds the item (the summaries name the candidates, only those are read whole, for the
+        // GUID and the packet's rule) and fills in its identity from the copy it read (#2506). The audio link names the
+        // episode; a GUID alone does not, so it needs the title beside it.
+        guard let found = try await StoreReader(store).read({ store in
+            try store.findRecoveredEpisode(for: entry, showTitle: showTitle) { item in
+                RecoveredEpisodeMatch.accepts(shared, entry: entry, showTitle: showTitle, existing: item)
             }
-            return sameEpisode && RecoveredEpisodeMatch.accepts(shared, entry: entry, showTitle: showTitle, existing: item)
-        })?.id else { return nil }
-        if try completeEpisodeIdentity(itemId: itemId, entry: entry, showTitle: showTitle) {
-            libraryItems = try loadLibraryRows(store: try requireStore())
+        }) else { return nil }
+        if found.identityChanged {
+            try await reloadLibraryRowsOffMain(store: store)
         }
-        return itemId
+        return found.itemId
     }
 
     /// Adds `entry`'s episode through the same path as a followed episode, without playing it and
@@ -49,23 +40,12 @@ extension Gate1AppModel {
         guard let itemId = try await importSourceLinkInBackground(handoff, feedEntry: entry, subscription: nil) else {
             throw SessionKitError.persistenceFailed("shared_episode_not_playable")
         }
-        if try completeEpisodeIdentity(itemId: itemId, entry: entry, showTitle: showTitle) {
-            try await reloadLibraryRowsOffMain(store: try requireStore()) // the rows are on screen when this returns, as before (#2505)
+        let store = try requireStore()
+        let identityChanged = try await StoreReader(store).read { try $0.completeEpisodeIdentity(itemId: itemId, entry: entry, showTitle: showTitle) }
+        if identityChanged {
+            try await reloadLibraryRowsOffMain(store: store) // the rows are on screen when this returns, as before (#2505)
         }
         diagnostics["lastSharedEpisodeRecovery"] = "added:\(itemId)"
         return itemId
-    }
-
-    /// Saves the identity the item was added without. Returns whether the item changed, so the caller reloads the rows.
-    private func completeEpisodeIdentity(itemId: String, entry: FeedEntry, showTitle: String?) throws -> Bool {
-        let store = try requireStore()
-        var item = try store.loadItem(id: itemId)
-        let before = item
-        entry.fillEpisodeIdentity(of: &item, showTitle: showTitle)
-        if item.sourceTitle == nil { item.sourceTitle = item.showTitle }
-        if item.media?.durationMs == nil, let feedDuration = entry.audioDurationMs { item.media?.durationMs = feedDuration }
-        guard item != before else { return false }
-        try store.saveItem(item)
-        return true
     }
 }

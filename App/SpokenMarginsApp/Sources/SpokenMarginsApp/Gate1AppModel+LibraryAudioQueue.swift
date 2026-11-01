@@ -145,11 +145,18 @@ extension Gate1AppModel {
         do {
             try Task.checkCancellation()
             let store = try requireStore()
-            let item = try store.loadItem(id: itemId)
-            guard item.sourceCompletedAt == nil,
-                  !PreparationChunkGate.itemAlreadyListened(try store.loadSessions(itemId: itemId)),
-                  let sourceText = PreparedSpeechHooks.preparedText(of: item, in: store),
-                  LibraryRowBuilder.shouldPrewarmTextAudio(for: item),
+            // The item is read whole because its text is what gets planned, but off the main actor and in one read
+            // with its sessions (#2506): a book is megabytes, and launch queues one of these per unfinished item.
+            let source: (item: Item, text: String)? = try await StoreReader(store).read { store in
+                let item = try store.loadItem(id: itemId)
+                guard item.sourceCompletedAt == nil,
+                      !PreparationChunkGate.itemAlreadyListened(try store.loadSessions(itemId: itemId)),
+                      let text = PreparedSpeechHooks.preparedText(of: item, in: store),
+                      LibraryRowBuilder.shouldPrewarmTextAudio(for: item) else { return nil }
+                return (item, text)
+            }
+            try Task.checkCancellation()
+            guard let (item, sourceText) = source,
                   let voice = ttsVoiceSelection.supertonicVoice,
                   let assets = SupertonicAssetResolver.location() else {
                 updateLibraryStartupAudioState(itemId: itemId, state: .notRequired)
