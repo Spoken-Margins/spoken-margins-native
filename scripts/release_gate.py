@@ -15,10 +15,13 @@ Run it in the release steps before a build is assigned to the external group (AG
   scripts/release_gate.py --destination external path/to/SpokenMargins.xcarchive
 
 The build argument is an archive, an app bundle or an Info.plist. Share-link creation is on when the plist's
-`SMShareLinkCreation` is true. The build setting that writes this key into the app's Info.plist is #2236
-step 3 and must use exactly this name. Builds up to Build 34 predate it, so a missing key means off only for
-a CFBundleVersion of 34 or lower; a newer build without the key, or with a key that isn't a boolean, is
-refused, so a renamed key can't open the gate. A build with creation off is always allowed, and so is any
+`SMShareLinkCreation` is true. The build setting SM_SHARE_LINK_CREATION (project.yml, #2236 step 3) writes
+this key as the string "YES" or "NO", since a build setting can only put text in a plist; a plist boolean
+counts too. Builds up to Build 34 predate it, so a missing key means off only for a CFBundleVersion of 34 or
+lower; a newer build without the key, or with any other value (an unset setting leaves "", and a lowercase
+"no" isn't Xcode's spelling), is refused, so a renamed or mistyped setting can't open the gate. A Release
+archive leaves creation off; a build for the internal group with it on adds SM_SHARE_LINK_CREATION=YES to the
+archive command. A build with creation off is always allowed, and so is any
 build for the internal group. Exit 0 allowed, 1 refused, 2 the inputs couldn't be read. Stdlib only.
 
 The agent's registration lasts three years, so a second mode gives the owner a reminder before it lapses (#2236
@@ -46,6 +49,7 @@ from xml.parsers.expat import ExpatError
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_RECORD = ROOT / "docs" / "legal" / "gate-record.json"
 PLIST_KEY = "SMShareLinkCreation"
+BUILD_SETTING_VALUES = {"YES": True, "NO": False}  # what $(SM_SHARE_LINK_CREATION) becomes in the plist
 RENEWAL_LEAD_DAYS = 90  # the reminder starts this long before the registration lapses
 TESTER_LIMIT = 100  # the waiver holds below this many external testers
 LAST_BUILD_WITHOUT_KEY = 34  # Build 34 (testflight/0.1-build-34) predates the build setting
@@ -66,7 +70,9 @@ def share_links_on(plist: dict) -> tuple[bool, str | None]:
     value = plist[PLIST_KEY]
     if isinstance(value, bool):
         return value, None
-    return True, f"{PLIST_KEY} is {value!r}, not a boolean"
+    if isinstance(value, str) and value in BUILD_SETTING_VALUES:
+        return BUILD_SETTING_VALUES[value], None
+    return True, f"{PLIST_KEY} is {value!r}, not a boolean or the build setting's YES or NO"
 
 
 def find_info_plist(path: Path) -> Path:

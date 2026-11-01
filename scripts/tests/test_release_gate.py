@@ -5,6 +5,7 @@ import importlib.util
 import json
 import os
 import plistlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -60,10 +61,15 @@ class DecideTests(unittest.TestCase):
         self.assertTrue(self.allowed("internal", ON, {}))
 
     def test_a_key_that_is_not_a_boolean_counts_as_on_and_says_why(self):
-        for value in ("NO", "YES", 0, 1, None):
+        for value in ("no", "No", " NO", "NO\n", "false", "0", "", "$(SM_SHARE_LINK_CREATION)", 0, 1, None, ["NO"], {}):
             allowed, reasons = gate.decide("external", {gate.PLIST_KEY: value}, COMPLETE_WITH_INSURANCE, TODAY)
             self.assertFalse(allowed, value)
             self.assertIn("not a boolean", " ".join(reasons))
+
+    def test_the_build_settings_yes_and_no_count_like_booleans(self):
+        self.assertTrue(self.allowed("external", {gate.PLIST_KEY: "NO"}, {}))
+        self.assertFalse(self.allowed("external", {gate.PLIST_KEY: "YES"}, {}))
+        self.assertTrue(self.allowed("external", {gate.PLIST_KEY: "YES"}, COMPLETE_WITH_WAIVER))
 
     def test_a_missing_key_is_off_only_for_builds_that_predate_it(self):
         for build in ("35", "100", "", "34a", "-1", None):
@@ -269,6 +275,52 @@ class CommandLineTests(unittest.TestCase):
     def test_the_destination_is_required(self):
         result = subprocess.run([sys.executable, "-I", str(SCRIPT), str(self.dir)], capture_output=True, text=True)
         self.assertEqual(result.returncode, 2)
+
+
+class BuildSettingTests(unittest.TestCase):
+    """The app's own Info.plist and project.yml carry the key the gate reads (#2236 step 3).
+
+    Xcode expands $(NAME) in the Info.plist from the build settings, an unset one to "". This expands the committed
+    plist with project.yml's settings for each configuration, plus any command-line overrides, as an archive would.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        import yaml
+        cls.project = yaml.safe_load((ROOT / "project.yml").read_text(encoding="utf-8"))
+        cls.info = plistlib.loads((ROOT / "App" / "SpokenMarginsApp" / "Info.plist").read_bytes())
+
+    def built_plist(self, configuration, **overrides):
+        settings = {**self.project["settings"]["base"], **self.project["settings"]["configs"][configuration],
+                    **self.project["targets"]["SpokenMarginsApp"]["settings"]["base"], **overrides}
+        # YAML reads a bare YES as a boolean; XcodeGen writes it back as YES, as the generated project shows.
+        text = lambda setting: {True: "YES", False: "NO"}.get(setting, setting) if isinstance(setting, bool) else str(setting)
+        expand = lambda value: re.sub(r"\$\((\w+)\)", lambda m: text(settings.get(m.group(1), "")), value)
+        return {key: expand(value) if isinstance(value, str) else value for key, value in self.info.items()}
+
+    def test_an_archive_leaves_creation_off_and_reaches_the_external_group(self):
+        plist = self.built_plist("Release")
+        self.assertEqual(plist[gate.PLIST_KEY], "NO")
+        self.assertGreater(int(plist["CFBundleVersion"]), gate.LAST_BUILD_WITHOUT_KEY)
+        self.assertTrue(gate.decide("external", plist, {}, TODAY)[0])
+
+    def test_an_internal_archive_with_creation_on_is_refused_for_the_external_group_until_the_record_is_complete(self):
+        plist = self.built_plist("Release", SM_SHARE_LINK_CREATION="YES")
+        self.assertEqual(plist[gate.PLIST_KEY], "YES")
+        self.assertTrue(gate.decide("internal", plist, {}, TODAY)[0])
+        self.assertFalse(gate.decide("external", plist, gate_record_default(), TODAY)[0])
+        self.assertTrue(gate.decide("external", plist, COMPLETE_WITH_WAIVER, TODAY)[0])
+
+    def test_debug_builds_compile_the_creation_code(self):
+        self.assertEqual(self.built_plist("Debug")[gate.PLIST_KEY], "YES")
+
+    def test_the_swift_condition_follows_the_same_setting(self):
+        base = self.project["settings"]["base"]
+        self.assertEqual(base["SM_SHARE_LINK_CREATION_CONDITIONS_YES"], "SM_SHARE_LINK_CREATION")
+        self.assertEqual(base["SM_SHARE_LINK_CREATION_CONDITIONS_NO"], "")
+        for target in ("SpokenMarginsApp", "SpokenMarginsAppTests"):
+            conditions = self.project["targets"][target]["settings"]["base"]["SWIFT_ACTIVE_COMPILATION_CONDITIONS"]
+            self.assertIn("$(SM_SHARE_LINK_CREATION_CONDITIONS_$(SM_SHARE_LINK_CREATION))", conditions, target)
 
 
 if __name__ == "__main__":
