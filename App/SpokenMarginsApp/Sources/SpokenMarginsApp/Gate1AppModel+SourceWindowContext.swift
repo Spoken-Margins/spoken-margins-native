@@ -162,24 +162,56 @@ extension Gate1AppModel {
         default:
             return false
         }
-        if let storedTimeline = try? store.loadTranscriptTimeline(itemId: item.id)?.timeline,
-           let window = SourceAnchorContextResolver.sourceContextWindow(
-               from: storedTimeline,
-               anchorMediaTimeMs: anchorMediaTimeMs,
-               windowBeforeMs: sourceWindowContextBeforeMs,
-               windowAfterMs: sourceWindowContextAfterMs
-           ) {
-            run { engine in
-                snapshot = try engine.sourceWindowContextCompleted(interjectionId: interjection.id, sessionId: interjection.sessionId, timeline: window)
-                heardSourceWindows.discardInBackground(Self.marginIdentity(interjection)) // #652: the context is ready without it
-                refreshSelectedItemInBackground()
-                refreshMarginRow(sessionId: interjection.sessionId, interjectionId: interjection.id)
-                if reportsResult { reportConfirmation("Source context recovered.") }
-                diagnostics[Self.marginDiagnosticKey("sourceWindowTranscription", interjection)] = "complete:stored_transcript"
-                diagnostics[Self.marginDiagnosticKey("sourceWindowContextProvenance", interjection)] = "stored_transcript"
+        // A stored transcript answers it with no audio work. Cutting the window out decodes the whole timeline (several MB
+        // for a podcast), so that read runs off the main actor (#2506). The stamp says whether there is a timeline
+        // without decoding it; with none, the audio work starts here as before.
+        if (try? store.transcriptTimelineStamp(itemId: item.id)) != nil {
+            let identity = Self.marginIdentity(interjection)
+            // Held while the read runs, so a retry sweep can't start a second schedule for the same Margin.
+            pendingSourceContextInterjectionIds.insert(identity)
+            Task { [weak self, itemId = item.id, beforeMs = sourceWindowContextBeforeMs, afterMs = sourceWindowContextAfterMs] in
+                let window = try? await StoreReader(store).read {
+                    try $0.storedSourceContextWindow(
+                        itemId: itemId, anchorMediaTimeMs: anchorMediaTimeMs, windowBeforeMs: beforeMs, windowAfterMs: afterMs)
+                }
+                guard let self else { return }
+                // The answer lands on the main actor after the read; label it for the hang probe (#2255).
+                self.hangTelemetry.labels.scoped("sourceWindowStoredTranscript") {
+                    self.pendingSourceContextInterjectionIds.remove(identity)
+                    guard let window else {
+                        self.scheduleSourceWindowTranscription(
+                            for: interjection, item: item, canonicalSourceURL: canonicalSourceURL,
+                            anchorMediaTimeMs: anchorMediaTimeMs, reportsResult: reportsResult)
+                        return
+                    }
+                    self.run { engine in
+                        self.snapshot = try engine.sourceWindowContextCompleted(interjectionId: interjection.id, sessionId: interjection.sessionId, timeline: window)
+                        self.heardSourceWindows.discardInBackground(Self.marginIdentity(interjection)) // #652: the context is ready without it
+                        self.refreshSelectedItemInBackground()
+                        self.refreshMarginRow(sessionId: interjection.sessionId, interjectionId: interjection.id)
+                        if reportsResult { self.reportConfirmation("Source context recovered.") }
+                        self.diagnostics[Self.marginDiagnosticKey("sourceWindowTranscription", interjection)] = "complete:stored_transcript"
+                        self.diagnostics[Self.marginDiagnosticKey("sourceWindowContextProvenance", interjection)] = "stored_transcript"
+                    }
+                }
             }
             return true
         }
+        scheduleSourceWindowTranscription(
+            for: interjection, item: item, canonicalSourceURL: canonicalSourceURL,
+            anchorMediaTimeMs: anchorMediaTimeMs, reportsResult: reportsResult)
+        return true
+    }
+
+    /// The rest of `scheduleSourceWindowContextIfNeeded`, once no stored transcript answers it: the Margin's context
+    /// comes from the audio the player heard around it (a stream), or from transcribing a window of the local file.
+    private func scheduleSourceWindowTranscription(
+        for interjection: Interjection,
+        item: LibraryItemSummary,
+        canonicalSourceURL: URL,
+        anchorMediaTimeMs: Int,
+        reportsResult: Bool
+    ) {
         let transcriptionURL = (item.media?.sourceType == .nativeMediaFile ? resolvedOwnedAudiobookURL(for: item) : nil)
             ?? importedPodcastRecipientLocalURLs[item.id]
             ?? podcastDownloadCoordinator?.validatedLocalURL(for: item.id)
@@ -195,7 +227,7 @@ extension Gate1AppModel {
             } else {
                 awaitHeardSourceWindow(for: interjection)
             }
-            return true
+            return
         }
         if reportsResult { reportConfirmation("Recovering source context…") }
         diagnostics[Self.marginDiagnosticKey("sourceWindowTranscription", interjection)] = "scheduled"
@@ -291,7 +323,6 @@ extension Gate1AppModel {
                 // degradation into a global error banner after every Margin.
             }
         }
-        return true
     }
 
     func retrySourceWindowContexts(itemId: String) {

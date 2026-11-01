@@ -186,6 +186,54 @@ final class ItemDetailLoaderTests: XCTestCase {
         }
     }
 
+    /// #2506: the Item screen's `body` asked the store three questions on every render (the layers, the proposal ids,
+    /// the timeline's chapters) to decide whether to show "A shared map couldn't be placed". The loader works the
+    /// answer out once, and the screen reads it from the detail. Each row ends in what the old three reads said.
+    func testTheDetailCarriesWhyASharedMapWasRefusedUntilTheListenerHasAMapOfTheirOwn() throws {
+        enum Own { case none, communityMap, ownMap, publisherChapters }
+        let reason = "The shared map has no audio to match near scene 1 (Opening)."
+        let rows: [(own: Own, refusal: String?, expected: String?)] = [
+            (.none, reason, reason),
+            (.none, nil, nil),
+            (.communityMap, reason, reason),   // a community map never blocks a friend's (#553)
+            (.ownMap, reason, nil),
+            (.publisherChapters, reason, nil)
+        ]
+        for (index, row) in rows.enumerated() {
+            try withFixture { fixture, store, _ in
+                try store.saveItem(item("A"))
+                try store.saveImportedCommentaryLayer(ImportedCommentaryLayer(
+                    id: "layer", itemId: "A", packageDigest: "d", packageId: "p",
+                    itemIdentity: SharedItemIdentity(itemType: .podcast, title: "Episode"),
+                    importedAt: Date(timeIntervalSince1970: 10), sharedMapRefusalReason: row.refusal))
+                func proposal(_ id: String) -> PortableListeningMapProposalArtifact {
+                    PortableListeningMapProposalArtifact(id: id, createdAt: Date(timeIntervalSince1970: 1), generator: "test", scenes: [])
+                }
+                switch row.own {
+                case .none: break
+                case .communityMap:
+                    try store.savePortableListeningMapProposal(proposal(CommunityMapConverter.proposalIdPrefix + "x"), itemId: "A")
+                case .ownMap:
+                    try store.savePortableListeningMapProposal(proposal("my-map"), itemId: "A")
+                case .publisherChapters:
+                    try store.saveTranscriptTimeline(SourceTranscriptTimeline(id: "t", itemId: "A", createdAt: Date(timeIntervalSince1970: 5),
+                        timeline: TranscriptTimeline(segments: [
+                            MediaTimelineSegment(id: "seg", startMs: 0, endMs: 1_000, text: "Hello.")
+                        ], chapters: [MediaTimelineChapter(id: "ch", title: "Intro", startMs: 0, transcriptSegmentId: "seg")])))
+                }
+                let detail = try fixture.load("A", store)
+                XCTAssertEqual(detail.sharedMapRefusalReason, row.expected, "row \(index)")
+                // The same answer the old per-render reads gave.
+                let oldAnswer = SharedListeningMapPlacement.storedRefusalReason(
+                    layers: try store.loadImportedCommentaryLayers(itemId: "A"),
+                    listenerHasMap: SharedListeningMapPlacement.listenerHasMap(
+                        proposalIds: try store.portableListeningMapProposalIds(itemId: "A"),
+                        hasTimelineChapters: try !store.loadTranscriptTimelineChapters(itemId: "A").isEmpty))
+                XCTAssertEqual(detail.sharedMapRefusalReason, oldAnswer, "row \(index)")
+            }
+        }
+    }
+
     func testOptionalTurnReadFailureReturnsNoTurnsAfterAHealthyControl() throws {
         try withFixture { fixture, store, database in
             try seedSessions(store)

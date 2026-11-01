@@ -17,13 +17,13 @@ extension Gate1AppModel {
         coordinator: PreparedAudioCoordinator,
         support: URL
     ) async throws {
-        func stillCurrent() -> Bool {
-            (try? PreparedAudioEnqueue.withCurrentManifest(manifest, repository: store) { _, current in
-                guard current.text == item.text else { return false }
-                return try PreparedAudioEnqueue.preparedText(item: current, repository: store) == sourceText
-            }) == true
+        let itemText = item.text
+        // A small transaction of reads, off the main actor (#2506). A cancelled task throws, so the pass keeps its job to
+        // retry (`waitingForSystem`) instead of reading the cancel as "no longer current" and dropping it.
+        let isCurrent = try await StoreReader(store).read { [manifest, itemText, sourceText] in
+            PreparedAudioEnqueue.isStillCurrent(manifest, itemText: itemText, sourceText: sourceText, repository: $0)
         }
-        guard stillCurrent() else { return }
+        guard isCurrent else { return }
         // A stand-in (iOS voice) chunk waits for a play to retry Supertonic; don't bake it in (#363).
         guard !PreparedAudioCoordinator.hasStandIns(manifest) else { return }
         // Narration replaces Item.text with its own, so it keeps Item.text and maps into it (#336).
@@ -49,12 +49,13 @@ extension Gate1AppModel {
             )
             let assembledURL = prepared.media.url.flatMap(URL.init(string:))
             var refused = false // Stop or a new voice landed while assembling: drop the audio, no failure (#2134)
+            var changed = false // the item's text moved on while assembling: the same, decided inside the attach transaction
             let attached = try PreparedAudioEnqueue.withCurrentManifest(manifest, repository: store) { saved, current in
                 guard PreparedAudioEnqueue.mayComplete(saved.state) else { refused = true; return false }
-                guard current.text == item.text, try PreparedAudioEnqueue.preparedText(item: current, repository: store) == sourceText else { return false }
+                guard current.text == item.text, try PreparedAudioEnqueue.preparedText(item: current, repository: store) == sourceText else { changed = true; return false }
                 return attachPreparedTextAudio(prepared, itemId: item.id, replaceActivePlayback: false)
             }
-            guard attached != nil, !refused, stillCurrent() else {
+            guard attached != nil, !refused, !changed else {
                 await ledger.discardStaleAssembly(assembledURL, reservationId: assemblyReservation.id)
                 return
             }

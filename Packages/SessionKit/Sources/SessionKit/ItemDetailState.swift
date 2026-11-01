@@ -45,6 +45,9 @@ public struct ItemDetailState: Equatable, Sendable {
     public var importedCommentaryLayers: [ImportedCommentaryLayer] = []
     public var importedCommentaryInterjections: [String: [ImportedCommentaryInterjection]] = [:]
     public var sharedMarginPlacement: SharedMarginPlacementPasses.Pass?
+    /// Why a friend's shared map couldn't be placed on this copy, as stored on its packets (#481). Worked out when the
+    /// detail is loaded, so the Item screen's `body` reads this instead of the store on every render (#2506).
+    public var sharedMapRefusalReason: String?
     public var turns: [ConversationTurn] = []
 
     public init(
@@ -72,6 +75,7 @@ public struct ItemDetailState: Equatable, Sendable {
         importedCommentaryLayers: [ImportedCommentaryLayer] = [],
         importedCommentaryInterjections: [String: [ImportedCommentaryInterjection]] = [:],
         sharedMarginPlacement: SharedMarginPlacementPasses.Pass? = nil,
+        sharedMapRefusalReason: String? = nil,
         turns: [ConversationTurn] = []
     ) {
         self.id = id
@@ -98,6 +102,7 @@ public struct ItemDetailState: Equatable, Sendable {
         self.importedCommentaryLayers = importedCommentaryLayers
         self.importedCommentaryInterjections = importedCommentaryInterjections
         self.sharedMarginPlacement = sharedMarginPlacement
+        self.sharedMapRefusalReason = sharedMapRefusalReason
         self.turns = turns
     }
 }

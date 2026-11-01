@@ -23,8 +23,9 @@ public struct ItemDetailLoader {
         let timelineSummary = try store.loadTranscriptTimelineSummary(itemId: id)
         let mediaChapters = timelineSummary?.chapters ?? []
         let projection = try store.loadResolvedListeningMapProjection(itemId: id)
+        let committed = try store.loadPortableListeningMapProposals(itemId: id)
         let proposal = SharedListeningMapPlacement.proposal(
-            for: projection, committed: try store.loadPortableListeningMapProposals(itemId: id),
+            for: projection, committed: committed,
             layers: try store.loadImportedCommentaryLayers(itemId: id))
         let sceneStarts = SceneStarts(scenes: proposal?.scenes ?? [], projection: projection)
         let listeningMapScenes = sceneStarts.chapters
@@ -100,6 +101,11 @@ public struct ItemDetailLoader {
         let importedInterjections = Dictionary(uniqueKeysWithValues: importedLayers.map { layer in
             (layer.id, (try? store.loadImportedCommentaryInterjections(layerId: layer.id)) ?? [])
         })
+        // Worked out here so the Item screen's `body` doesn't read the store for it on every render (#2506).
+        let sharedMapRefusalReason = SharedListeningMapPlacement.storedRefusalReason(
+            layers: importedLayers,
+            listenerHasMap: SharedListeningMapPlacement.listenerHasMap(
+                proposalIds: committed.map(\.id), hasTimelineChapters: !mediaChapters.isEmpty))
         return ItemDetailState(
             id: item.id,
             title: item.title,
@@ -124,6 +130,7 @@ public struct ItemDetailLoader {
             importedCommentaryLayers: importedLayers,
             importedCommentaryInterjections: importedInterjections,
             sharedMarginPlacement: placementPasses.pass(itemId: item.id),
+            sharedMapRefusalReason: sharedMapRefusalReason,
             turns: turns
         ).includingTimelineSource(try? store.loadStructuredDocument(itemId: id))
     }
