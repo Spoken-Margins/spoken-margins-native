@@ -147,7 +147,13 @@ class RenewalNoticeTests(unittest.TestCase):
         act, line = gate.renewal_notice({}, TODAY)
         self.assertFalse(act)
         self.assertIn("not registered", line)
-        self.assertFalse(gate.renewal_notice(agent_record(registered=False, registered_on="2023-12-01"), TODAY)[0])
+        self.assertFalse(gate.renewal_notice(agent_record(registered=False, registered_on=None), TODAY)[0])
+
+    def test_a_date_on_file_keeps_the_reminder_alive_whatever_the_flag_says(self):
+        for flag in (False, "true", "yes", 1):
+            act, line = gate.renewal_notice(agent_record(registered=flag, registered_on="2026-11-20"), datetime.date(2029, 10, 1))
+            self.assertTrue(act, flag)
+            self.assertIn("2029-11-20", line)
 
     def test_the_reminder_opens_90_days_before_the_lapse_and_stays_open_after_it(self):
         lapse = datetime.date(2029, 11, 20)  # registered 2026-11-20
@@ -252,6 +258,13 @@ class CommandLineTests(unittest.TestCase):
     def test_renewal_notice_with_an_unreadable_record_exits_2_and_takes_no_build(self):
         self.assertEqual(self.run_renewal(self.dir / "no-such-record.json").returncode, 2)
         self.assertEqual(self.run_renewal(self.record({}), str(self.dir)).returncode, 2)
+
+    def test_a_bad_pinned_date_exits_2_not_1(self):
+        result = subprocess.run(
+            [sys.executable, "-I", str(SCRIPT), "--renewal-notice", "--record", str(self.record({}))],
+            capture_output=True, text=True, env={**os.environ, "SM_RELEASE_GATE_TODAY": "garbage"})
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
 
     def test_the_destination_is_required(self):
         result = subprocess.run([sys.executable, "-I", str(SCRIPT), str(self.dir)], capture_output=True, text=True)

@@ -134,7 +134,8 @@ def registration_expires(registered_on: datetime.date) -> datetime.date:
 def renewal_notice(record: dict, today: datetime.date) -> tuple[bool, str]:
     """(the owner should act, one line). Nothing is due before the agent is registered, or until the lead window opens."""
     agent = _section(record, "dmca_agent")
-    if agent.get("registered") is not True:
+    # A date on file means the owner believes it is registered, however the flag is spelled: don't stay quiet.
+    if agent.get("registered") is not True and not _text(agent.get("registered_on")):
         return False, "DMCA agent renewal: not registered yet, nothing to renew"
     registered_on = _date(agent.get("registered_on"))
     if registered_on is None or registered_on > today:
@@ -208,7 +209,11 @@ def main(argv=None) -> int:
                         help="print whether the agent registration is near its three-year lapse; takes no build")
     parser.add_argument("--record", type=Path, default=DEFAULT_RECORD, help="the gate record (default: %(default)s)")
     args = parser.parse_args(argv)
-    today = datetime.date.fromisoformat(os.environ.get("SM_RELEASE_GATE_TODAY") or datetime.date.today().isoformat())
+    try:
+        today = datetime.date.fromisoformat(os.environ.get("SM_RELEASE_GATE_TODAY") or datetime.date.today().isoformat())
+    except ValueError as error:
+        print(f"release gate: SM_RELEASE_GATE_TODAY isn't a date: {error}", file=sys.stderr)
+        return 2
     if args.renewal_notice:
         if args.build is not None or args.destination is not None:
             parser.error("--renewal-notice takes no build or destination")
