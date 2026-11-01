@@ -121,10 +121,12 @@ class WhatIsAWrite(unittest.TestCase):
         func d() { pendingResume.count += 1 }
         func e() { (other, rejoinAttempted) = (1, true) }
         func f() { let (x, rejoinAttempted) = pair }
+        var typed: (rejoinAttempted: Bool, at: Int) = (true, 1)
+        func h() { systemPause?.a?.b = 1; pendingResume.x!.y = 2 }
         func g() { if systemPause?.reason == nil && pendingResume.count >= 1 && pendingResume.count != 2 {} }
         '''
-        self.assertEqual(writes(source, 'systemPause'), 2)
-        self.assertEqual(writes(source, 'pendingResume'), 2)
+        self.assertEqual(writes(source, 'systemPause'), 3)
+        self.assertEqual(writes(source, 'pendingResume'), 3)
         self.assertEqual(writes(source, 'rejoinAttempted'), 1)
 
     def test_a_compound_assignment_is_a_write(self):

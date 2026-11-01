@@ -167,15 +167,15 @@ def count_writes(code: str, name: str) -> int:
     `name <= x`, or the initial value of its own `var name = x` / `var name: T = x` declaration."""
     escaped = re.escape(name)
     writes = re.compile(r'(?<!\w)' + escaped + r'\s*(?:(?:\?\?|<<|>>|[-+*/%^|&])?=(?!=)|\.toggle\(|\.(?:append|insert|remove\w*)\('
-                        r'|[?!]?(?:\.\w+|\[[^\]\n]*\])+\s*(?:(?:\?\?|<<|>>|[-+*/%^|&])?=(?!=)))'
+                        r'|(?:[?!]?(?:\.\w+|\[[^\]\n]*\]))+\s*(?:(?:\?\?|<<|>>|[-+*/%^|&])?=(?!=)))'
                         r'|&' + escaped + r'(?!\w)')
     # Only the untyped form `var name = x` matches `writes` above; the typed `var name: T = x` never does, so only the
     # untyped one is taken back off. (A typed declaration with a starting value used to cancel one real write.)
     initial = re.compile(r'\b(?:var|let)\s+`?' + escaped + r'`?\s*=(?!=)')
     count = len(writes.findall(code)) - len(initial.findall(code))
     for match in TUPLE_ASSIGNMENT.finditer(code):
-        if re.search(r'\b(?:var|let)\s*$', code[:match.start()]):
-            continue  # `let (a, name) = pair` declares
+        if re.search(r'(?:\b(?:var|let|case)\s*|:\s*)$', code[:match.start()]):
+            continue  # `let (a, name) = pair`, `var p: (name: T) = x` and `case (a, name) = x` declare or match
         if name in re.findall(r'\w+', match.group(1)):
             count += 1
     return count
