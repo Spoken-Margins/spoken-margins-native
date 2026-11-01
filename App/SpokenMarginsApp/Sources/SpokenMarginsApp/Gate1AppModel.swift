@@ -2392,10 +2392,7 @@ final class Gate1AppModel: ObservableObject {
         do {
             let signature = try await renderFrontierSignature(for: voice)
             let root = try applicationSupportDirectory().appendingPathComponent("PreparedAudio")
-            let item = try store.loadItem(id: itemID)
-            guard let text = PreparedSpeechHooks.preparedText(of: item, in: store), !text.isEmpty else { return }
-            let source = try store.loadCanonicalSource(itemId: itemID)
-            let canonical = source?.segments.map(\.text).joined(separator: "\n\n") ?? ""
+            guard let (text, canonical) = try await renderFrontierTexts(store: store, itemID: itemID) else { return }
             // Quiet once complete; wakes when a manifest is written or invalidated (#2652).
             var poll = RenderFrontierPollPolicy()
             while !Task.isCancelled, renderFrontierKey == key {

@@ -1,6 +1,7 @@
 import XCTest
 import SessionKit
 import UIKit
+import SessionKitPersistence
 @testable import SpokenMarginsApp
 
 final class PlaybackQualityTests: XCTestCase {
@@ -54,5 +55,34 @@ final class PlaybackQualityTests: XCTestCase {
         XCTAssertEqual(PlaybackQualityPresentation.skimTitle(destinationMs: nil, backward: false), "Skim Forward")
         XCTAssertEqual(PlaybackQualityPresentation.skimTitle(destinationMs: 1_122_000, backward: false), "Skim to 18:42")
         XCTAssertEqual(PlaybackQualityPresentation.skimTitle(destinationMs: 3_662_000, backward: true), "Back to 1:01:02")
+    }
+
+    /// The playback screen's frontier needs the article text and the canonical text, and reads them off the main
+    /// thread (#2506). The read gives the same answer the old inline reads did: the item's text, the canonical
+    /// segments joined by blank lines, and nothing for an item with no text.
+    @MainActor
+    func testFrontierTextsMatchTheStoredItem() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try SQLiteSessionStore(path: directory.appending(path: "store.sqlite").path)
+        try store.saveItem(Item(
+            id: "article", title: "Article", mediaType: TargetType.itemTextTTS.rawValue, text: "One.\n\nTwo.",
+            externalReference: nil, status: "ready"
+        ))
+        try store.saveItem(Item(
+            id: "empty", title: "Empty", mediaType: TargetType.itemTextTTS.rawValue, text: "",
+            externalReference: nil, status: "ready"
+        ))
+        let model = Gate1AppModel(databaseURLOverride: directory.appending(path: "model.sqlite"))
+        let article = try await model.renderFrontierTexts(store: store, itemID: "article")
+        XCTAssertEqual(article?.text, "One.\n\nTwo.")
+        XCTAssertEqual(article?.canonical, "", "An item with no canonical source package measures against nothing")
+        let empty = try await model.renderFrontierTexts(store: store, itemID: "empty")
+        XCTAssertNil(empty, "An item with no text has no frontier to measure")
+        do {
+            _ = try await model.renderFrontierTexts(store: store, itemID: "missing")
+            XCTFail("A missing item should throw, as the inline read did")
+        } catch {}
     }
 }
