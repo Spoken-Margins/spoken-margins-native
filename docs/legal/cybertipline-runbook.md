@@ -44,6 +44,18 @@ At a cap the server does not fall back to a plain takedown, because that deletes
 
 The cap cannot tell a real report from a junk one. That is why it alerts you instead of choosing.
 
+## Reading the reports (the owner's daily look)
+
+Every report the form files is a record on the box: reference, date, category, link id and the written reason if one was given. Read them with:
+
+```
+runuser -u smserver -- smserver reports -state /var/lib/smserver -since 24h
+```
+
+`-since` takes hours (`168h` is a week); `-category abuse_material` shows one category. Each report prints on one line, with its reason under it, and ends with a count. The last word on the line says what the link is now: `taken down`, `taken down, held`, `disabled, NOT held yet`, `expired` or `no such link`, or `STILL SERVED`. **`STILL SERVED` means the report did not take the link down.** Run `smserver takedown -state /var/lib/smserver LINKID` on it (for an abuse-material report, `hold` first, as above). **`disabled, NOT held yet`** is an abuse-material link the form could not hold (a failure or a cap): the content is kept 30 days from the report, so make the hold now (see "When the hold cap is reached").
+
+The command never opens a link's content. A link with its key pasted into a reason shows as `[link removed]`, in every category, so reading a report cannot open the link. The key stays in the hold. Records go after 90 days.
+
 ## A law-enforcement request, or ending a hold early
 
 Give law enforcement the folder `/var/lib/smserver/links-held/LINKID` exactly as it is, through the channel they name. Then, only if they ask for the hold to end or you are told to delete it, run:

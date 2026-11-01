@@ -29,6 +29,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode"
 
 	"spokenmargins.dev/bridge/internal/api"
 	"spokenmargins.dev/bridge/internal/appattest"
@@ -80,6 +81,8 @@ func main() {
 		err = holdLink(args)
 	case "release-hold":
 		err = releaseHold(args)
+	case "reports":
+		err = listReports(args, os.Stdout, time.Now())
 	default:
 		usage()
 	}
@@ -90,7 +93,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: smserver serve|block|unblock|switch|purge|validate-manifest|publish-manifest|make-test-ca|takedown|takedown-map|hold|release-hold [flags]")
+	fmt.Fprintln(os.Stderr, "usage: smserver serve|block|unblock|switch|purge|validate-manifest|publish-manifest|make-test-ca|takedown|takedown-map|hold|release-hold|reports [flags]")
 	os.Exit(2)
 }
 
@@ -554,4 +557,70 @@ func releaseHold(args []string) error {
 	}
 	fmt.Println("hold ended and the held copy deleted")
 	return nil
+}
+
+// listReports prints the filed "Report this link" records so the owner can see them (#2846). It shows
+// the report reference, the date, the category, the link id, what the link is now, and the reporter's
+// written reason. It never opens a link's content, and a link pasted into a reason is shown without its
+// key in every category. A reason is a stranger's text, so control characters are dropped and it prints
+// on one line: it cannot move the cursor or fake another report.
+func listReports(args []string, out io.Writer, now time.Time) error {
+	fs := flag.NewFlagSet("reports", flag.ContinueOnError)
+	state := fs.String("state", "state", "state directory")
+	since := fs.Duration("since", 0, "only reports filed in the last DURATION, such as 24h or 168h (default: all kept)")
+	category := fs.String("category", "", "only this category")
+	fs.SetOutput(io.Discard)
+	if err := fs.Parse(args); err != nil {
+		return errors.New("usage: smserver reports -state DIR [-since DURATION] [-category CATEGORY]")
+	}
+	if fs.NArg() != 0 || *since < 0 {
+		return errors.New("usage: smserver reports -state DIR [-since DURATION] [-category CATEGORY]")
+	}
+	if *category != "" {
+		if _, err := reportrules.ParseCategory(*category); err != nil {
+			return fmt.Errorf("unknown category %q (one of %v)", *category, reportrules.Categories())
+		}
+	}
+	recs, err := reports.List(filepath.Join(*state, "reports"))
+	if err != nil {
+		return err
+	}
+	linksDir := filepath.Join(*state, "links")
+	shown := 0
+	for _, r := range recs {
+		if *category != "" && string(r.Category) != *category {
+			continue
+		}
+		if *since > 0 && now.Sub(r.At) > *since {
+			continue
+		}
+		fmt.Fprintf(out, "%s  %s  %-16s  link %s  %s\n", r.Ref, r.At.UTC().Format("2006-01-02 15:04Z"), r.Category, r.LinkID, linkStatus(linksDir, r.LinkID, now))
+		if r.Reason != "" {
+			fmt.Fprintf(out, "    reason: %s\n", oneLine(reports.RedactKeys(r.Reason)))
+		}
+		shown++
+	}
+	fmt.Fprintf(out, "%d report(s)\n", shown)
+	return nil
+}
+
+// linkStatus says what a reported link is now. "STILL SERVED" means the report did not take it down,
+// and "disabled, NOT held yet" is an abuse-material link a cap or failure parked: run `smserver
+// takedown` on the first (and `hold` first for abuse material), and `hold` on the second.
+func linkStatus(dir, id string, now time.Time) string {
+	st, err := links.ReadStatus(dir, id, now)
+	if err != nil {
+		return "unknown (" + err.Error() + ")"
+	}
+	return string(st)
+}
+
+// oneLine drops control characters (newlines and escapes included) so stranger text stays on its line.
+func oneLine(text string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || unicode.Is(unicode.Zl, r) || unicode.Is(unicode.Zp, r) {
+			return ' '
+		}
+		return r
+	}, text)
 }

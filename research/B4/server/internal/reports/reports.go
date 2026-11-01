@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -203,7 +204,7 @@ func (s *Store) Sweep(now time.Time, handleKeep, recordKeep time.Duration) (int,
 // linkWithKey matches a pasted share link or its tail: anything ending in /l/<32 hex> followed by # and
 // the key. A reason is free text, so outside the abuse-material category a link pasted into it must not
 // carry the key to disk.
-var linkWithKey = regexp.MustCompile(`\S*/l/[0-9a-f]{32}#\S*`)
+var linkWithKey = regexp.MustCompile(`(?i)\S*/l/[0-9a-f]{32}(?:#|%23|\x{FF03})\S*`)
 
 // cleanReason trims a reason and, for every category but abuse-material, replaces a pasted link that
 // carries a key with a marker. Only an abuse-material report may keep the key, and it keeps it in the
@@ -214,6 +215,26 @@ func cleanReason(c reportrules.Category, reason string) string {
 		return reason
 	}
 	return linkWithKey.ReplaceAllString(reason, "[link removed]")
+}
+
+// RedactKeys replaces every pasted share link that carries a key with a marker. An owner-facing
+// reader uses it in every category, abuse-material included, so reading a report never puts a key on
+// the owner's screen: the key stays in the hold, which nobody opens.
+func RedactKeys(text string) string { return linkWithKey.ReplaceAllString(text, "[link removed]") }
+
+// List reads the records in dir (the server's "reports" state folder) without creating anything and
+// without the reporter-window key, for the owner's `smserver reports` command. A missing folder or
+// file is no records, not an error. Records come back oldest first.
+func List(dir string) ([]Record, error) {
+	s := &Store{dir: dir}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	recs, err := s.load()
+	if err != nil {
+		return nil, err
+	}
+	sort.SliceStable(recs, func(i, j int) bool { return recs[i].At.Before(recs[j].At) })
+	return recs, nil
 }
 
 func (s *Store) load() ([]Record, error) {
