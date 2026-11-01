@@ -60,7 +60,16 @@ extension Gate1AppModel {
         var prepared: PreparedSpokenMarginsPackage?
         do {
             let store = try requireStore()
-            let item = try store.loadItem(id: selectedItem.id)
+            // The item, its map, fingerprint spine, phrase sketch and stored transcript words are read together,
+            // away from main (#2506); the transcript alone is several MB for a mapped podcast.
+            let source = try await StoreReader(store).read(priority: .userInitiated) {
+                try $0.sharedPacketSource(itemId: startedItemID, includesFingerprintSpine: includesAcousticEvidence)
+            }
+            guard selectedItem.id == startedItemID else { // the listener moved to another item while the store was read
+                sharingState.isExporting = false
+                return nil
+            }
+            let item = source.item
             let itemIdentity = sharedItemIdentity(for: item, drafts: drafts)
             let itemTransport = SharedMarginExport.itemTransport(item: item, identity: itemIdentity, isAppAuthored: isAppAuthoredItem, confirmsPrivateRights: confirmsPrivateSharingRights)
             var machineEvidence: [ReviewedMachineEvidenceAsset] = []
@@ -130,13 +139,11 @@ extension Gate1AppModel {
             }
 
             let mapProposals = SharedMarginExport.mapProposals(
-                try store.loadPortableListeningMapProposals(itemId: item.id),
-                currentProposalID: try store.loadResolvedListeningMapProjection(itemId: item.id)?.proposalId
+                source.mapProposals,
+                currentProposalID: source.currentMapProposalId
             )
-            let fingerprintSpines = includesAcousticEvidence
-                ? try store.loadEditionFingerprintSpine(itemId: item.id).map { [$0] } ?? []
-                : []
-            let phraseSketches = try store.loadTranscriptPhraseSketch(itemId: item.id).map { [$0] } ?? []
+            let fingerprintSpines = source.fingerprintSpine.map { [$0] } ?? []
+            let phraseSketches = source.phraseSketch.map { [$0] } ?? []
             if let spine = fingerprintSpines.first {
                 let directory = try episodeMapDirectory(itemId: item.id)
                 let existingEvidenceIDs = Set(machineEvidence.map(\.id))
@@ -161,7 +168,7 @@ extension Gate1AppModel {
                 item: itemIdentity,
                 itemTransportSelection: itemTransport,
                 selections: selections,
-                mapProposals: mapProposals, localSourceTexts: [item.text, store.loadTranscriptTimeline(itemId: item.id)?.timeline.segments.map(\.text).joined(separator: " ")].compactMap { $0 },
+                mapProposals: mapProposals, localSourceTexts: source.localSourceTexts,
                 fingerprintSpines: fingerprintSpines,
                 phraseSketches: phraseSketches,
                 machineEvidence: machineEvidence,
