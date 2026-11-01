@@ -82,6 +82,11 @@ link immediately. Data files are private (0600 under 0700 directories), separate
 from the public web root. Pending uploads are unpublished and cleaned on failure;
 the daily sweep also removes interrupted uploads older than an hour.
 
+`smserver reports -state DIR [-since 24h] [-category C]` lists the filed report
+records (reference, date, category, link id, what the link is now, written reason)
+so the owner can see them; it flags a reported link that is `STILL SERVED`, never
+opens content, and shows a pasted key as `[link removed]` (#2846).
+
 A link reported to the CyberTipline is the one exception to the 30 days (#2235):
 `smserver hold -state DIR -report REPORTID [-link-file FILE|-] ID` takes it down,
 moves its packet, preview and the reported full link into `links-held` beside the

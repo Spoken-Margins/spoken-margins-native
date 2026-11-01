@@ -325,3 +325,64 @@ func (s *Store) writeMetaLocked(dir string, meta metadata) error {
 	}
 	return os.Rename(f.Name(), filepath.Join(dir, "meta.json"))
 }
+
+// Status is what a link is now, for the owner's read-only `smserver reports` (#2846).
+type Status string
+
+const (
+	StatusServed   Status = "STILL SERVED"
+	StatusDown     Status = "taken down"
+	StatusHeld     Status = "taken down, held"
+	StatusParked   Status = "disabled, NOT held yet"
+	StatusExpired  Status = "expired"
+	StatusNoSuchID Status = "no such link"
+)
+
+// ReadStatus says what the link id is in the links folder dir. It only reads: it makes no folder, so
+// a wrong -state path creates nothing. A takedown leaves an epoch tombstone, so it can be told apart
+// from a link that simply ran out its 30 days.
+func ReadStatus(dir, id string, now time.Time) (Status, error) {
+	if !ValidID(id) {
+		return StatusNoSuchID, nil
+	}
+	held := false
+	if _, err := os.Stat(filepath.Join(dir+heldSuffix, id)); err == nil {
+		held = true
+	}
+	data, err := os.ReadFile(filepath.Join(dir, id, "meta.json"))
+	if errors.Is(err, os.ErrNotExist) {
+		if held {
+			return StatusHeld, nil
+		}
+		return StatusNoSuchID, nil
+	}
+	if err != nil {
+		return "", err
+	}
+	var meta metadata
+	if err := json.Unmarshal(data, &meta); err != nil {
+		return "", err
+	}
+	switch {
+	case meta.Disabled && now.Before(meta.ExpiresAt):
+		if held {
+			return StatusHeld, nil
+		}
+		return StatusParked, nil
+	case now.Before(meta.ExpiresAt) && !meta.Disabled:
+		if _, err := os.Stat(filepath.Join(dir, id, previewFile)); err != nil {
+			return StatusDown, nil // content gone: not served (Live answers 410 too)
+		}
+		return StatusServed, nil
+	case !meta.ExpiresAt.After(time.Unix(0, 0).UTC()):
+		if held {
+			return StatusHeld, nil
+		}
+		return StatusDown, nil
+	default:
+		if held {
+			return StatusHeld, nil
+		}
+		return StatusExpired, nil
+	}
+}
