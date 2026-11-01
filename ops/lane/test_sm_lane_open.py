@@ -311,6 +311,21 @@ class BranchStateTests(unittest.TestCase):
         line, sent = self.go(api)
         self.assertEqual(len(sent), 1, line)
 
+    def test_a_refused_tree_or_commit_is_unreadable_not_a_lost_race(self):
+        # Only the ref POST can mean "another run made the branch"; a 422 on the tree or commit is a refusal, and it
+        # must read as "could not record", never as "another run pinged first" (which would hide it forever).
+        for refused in ('git/trees', 'git/commits'):
+            class Refuses(FakeBranchApi):
+                def send(self, method, path, body, refused=refused):
+                    if path == refused:
+                        raise o.Conflict('422 refused')
+                    return super().send(method, path, body)
+            api = Refuses([runner('a', MAIN)])
+            line, sent = self.go(api)
+            self.assertEqual(sent, [], refused)
+            self.assertIn('could not record the ping', line, refused)
+            self.assertNotIn('another run', line, refused)
+
     def test_a_write_the_token_may_not_make_sends_nothing(self):
         api = FakeBranchApi([runner('a', MAIN)], fail_write='HTTP Error 403')
         line, sent = self.go(api)
