@@ -2,7 +2,7 @@
 
 The site publishes the signed list of voices the app can download, plus a plain page a person can read. `scripts/voice-catalog` builds and checks it. The catalog format and the app's verifier are #1816.
 
-**Since 2026-10-19 the app asks the owner's server for nothing (#2055).** The owner: "Supertonic downloading straight from Hugging Face at pinned revisions and no server." Every file in `sources.json` has a publisher source, none is mirrored, and the app fetches no signed catalog: it uses the snapshot bundled with it (`scripts/voice-catalog app-snapshot`). The signed catalog below needs a home off the server before the app fetches it again; until then, don't `publish --apply`.
+**Since 2026-10-19 the app asks the owner's server for nothing (#2055).** The owner: "Supertonic downloading straight from Hugging Face at pinned revisions and no server." Every file in `sources.json` has a publisher source, none is mirrored, and the app fetches no signed catalog: it uses the snapshot bundled with it (`scripts/voice-catalog app-snapshot`). The signed catalog below needs a home off the server before the app fetches it again. Since catalog version 2 (#2086) it names only publishers' URLs too, and it goes up with the site deploy like any other page; nothing is mirrored, so `publish --apply` uploads no voice file. The Supertonic mirror that version 1 pointed at, `voices/files/supertonic-3-int8/` on the server, is deleted once version 2 is live (the owner, 2026-10-18: "Keep the server copy until the version that downloads from the publisher is merged and working, then delete it from the server").
 
 ## What lives where
 
@@ -12,7 +12,7 @@ The site publishes the signed list of voices the app can download, plus a plain 
 | A committed copy of each licence text as it was reviewed (what a change is diffed against) | `Contracts/voice-models/licenses/` |
 | The tool | `scripts/voice_catalog.py`, run as `scripts/voice-catalog` |
 | The signed catalog, its manifest and the page | `Site/voices/v1/catalog.json`, `Site/voices/v1/manifest.json`, `Site/voices/index.html` (written by the tool, committed after a publish) |
-| Mirror files we may redistribute (Supertonic only) | `voices/files/` on the server. They sit outside `Site/`, and the site deploy leaves that folder alone |
+| Mirror files, a last resort if a publisher's copy disappears (none since #2086) | `voices/files/` on the server. They sit outside `Site/`, and the site deploy leaves that folder alone |
 | The voices' files on this Mac, for the mirror upload and the tests that need the real model | `artifacts/voice-catalog/files/<voice id>/`, written by `fetch`. Supertonic's model files are in neither the repository nor the app (#1820); only its licence copies and the modification notice are, in `App/SpokenMarginsApp/Resources/Supertonic/` |
 | The private signing key | the Mac's login Keychain, service "SpokenMargins voice catalog signing key". Never in the repository, `artifacts/` or a log |
 | Detail from each run | `artifacts/voice-catalog/` (`check.txt`, `check.json`, `licences/`, `changed/`) |
@@ -36,7 +36,7 @@ Each prints one line per voice and writes the detail to `artifacts/voice-catalog
 1. `scripts/voice-catalog keygen`, then put the line it prints into `VoiceCatalogTrust.production` in a PR.
 2. Nothing to pull: `publish` fetches Supertonic's files from the publishers (`fetch`, step 6 above).
 3. `scripts/voice-catalog check && build && sign && page`, then `publish` as a dry run.
-4. Run `publish --apply` only after #1819 ships: the page describes the download flow in the app. Then commit `Site/voices/`.
+4. Run `publish --apply` only after #1819 ships: the page describes the download flow in the app. Then commit `Site/voices/`. (Done: version 1 on 2026-10-19, version 2 in #2086.)
 5. Install the weekly check: `ops/voice-catalog/deploy.sh <ssh-host> --dry-run`, then `--enable`.
 
 ## The weekly check
