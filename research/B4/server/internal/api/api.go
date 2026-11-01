@@ -9,7 +9,7 @@
 //   - The abuse log holds hour, install tag, reason and a count, only for
 //     over-limit installs, so the owner has something to block. It is also
 //     written at the hourly flush. Explicit link reports also hold the
-//     reported link id and a fixed reason, never the reporter address.
+//     reported link id and its category, never the reporter address.
 //   - Public documents (config, bridge manifest) are identical for everyone
 //     and need no attestation, so fetching them reveals nothing but "an app
 //     is running".
@@ -40,6 +40,8 @@ import (
 	"spokenmargins.dev/bridge/internal/links"
 	"spokenmargins.dev/bridge/internal/maps"
 	"spokenmargins.dev/bridge/internal/relay"
+	"spokenmargins.dev/bridge/internal/reportrules"
+	"spokenmargins.dev/bridge/internal/reports"
 	"spokenmargins.dev/bridge/internal/store"
 	"spokenmargins.dev/bridge/internal/tokens"
 )
@@ -106,6 +108,11 @@ type Server struct {
 	// Links stores optional share packets; the install invitation is owner supplied.
 	Links          *links.Store
 	LinkInstallURL string
+
+	// Reports keeps the "Report this link" records (#2239). Nil answers 503 on a report, so a build
+	// that wires links must wire this too. ReportRules zero means reportrules.DefaultConfig.
+	Reports     *reports.Store
+	ReportRules reportrules.Config
 
 	// Relay fetches feeds and pages for the web app (#2985). Nil, or no
 	// origins, answers 503 like the switch being off.
@@ -206,6 +213,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /l/{id}", s.getLink)
 	mux.HandleFunc("GET /l/{id}/packet", s.linkCORS(s.getLinkPacket))
 	mux.HandleFunc("POST /l/{id}/report", s.reportLink)
+	mux.HandleFunc("POST /l/{id}/report/reason", s.reportReason)
 	mux.HandleFunc("GET "+PathRelay, s.relay)
 	if len(s.LinkOrigins) > 0 {
 		// Registered only with origins listed, so an empty list leaves
@@ -400,6 +408,13 @@ func (s *Server) enabled(w http.ResponseWriter) bool {
 }
 
 func (s *Server) clientKey(r *http.Request) string {
+	m := hmac.New(sha256.New, s.ipSecret)
+	m.Write([]byte(s.clientNetOf(r)))
+	return hex.EncodeToString(m.Sum(nil))
+}
+
+// clientNetOf is the network the request came from, as clientNet reduces it. It is only ever hashed.
+func (s *Server) clientNetOf(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		host = r.RemoteAddr
@@ -412,9 +427,7 @@ func (s *Server) clientKey(r *http.Request) string {
 			}
 		}
 	}
-	m := hmac.New(sha256.New, s.ipSecret)
-	m.Write([]byte(clientNet(host)))
-	return hex.EncodeToString(m.Sum(nil))
+	return clientNet(host)
 }
 
 // clientNet is what one client controls: an IPv4 address, or an IPv6

@@ -4,8 +4,8 @@ For #2235 and D18 in [attorney-questions.md](attorney-questions.md). Nothing in 
 
 ## What the server does by itself
 
-1. Taking a link down at once, blind, is #2239's job. Nothing here changes it. **Run `hold` before `smserver takedown`:** a plain takedown deletes the ciphertext, and a `hold` run after it can keep only the reported link.
-2. A link is held only when you run the `hold` command below. Until then the normal 30-day expiry applies.
+1. Taking a link down at once, blind, is #2239's job. **Hold comes before takedown:** a plain takedown deletes the ciphertext, and a `hold` run after it can keep only the reported link. The report form does this itself: an abuse-material report runs the hold, with the full link the form sent, and then takes the link down. The hold's report id in the access log is `form-` and the reporter's reference number; a later `hold` run never changes it, so note the CyberTipline's own id on the issue. You still run `smserver takedown` yourself for anything the form did not catch, and `hold` first if the report came some other way.
+2. A link is held when an abuse-material report comes through the form, or when you run the `hold` command below. Until then the normal 30-day expiry applies.
 3. A held link is moved out of the serving folder (`/var/lib/smserver/links`) into `/var/lib/smserver/links-held`, a folder only the `smserver` user can open (mode 0700). The server has no call that reads it back.
 4. The daily sweep deletes each held link one year after the hold began and writes a line to `/var/lib/smserver/links-held/access.log`. The log has event names, link ids, report ids and dates. It never has content, keys or client addresses.
 5. Packets and previews are already encrypted on the sender's phone. The reported full link, which carries the key, is the sensitive file, so the disk under `/var/lib/smserver` must be encrypted at rest (step A below).
@@ -19,7 +19,7 @@ B. Register as an electronic service provider with the NCMEC CyberTipline and no
 
 1. The abuse-material report form sends the link id and the full link. Do not open the link.
 2. File the CyberTipline report as the tipline asks, forwarding the full link unread. Note the report id it gives you.
-3. On the box, put the full link in a file readable by the `smserver` user only, then hold the link. Replace `REPORTID` and `LINKID`:
+3. The form has already held the link, so the full link is in the held folder; skip to step 4 unless the report came by email or the form held no link (an empty or wrong link field is dropped). In that case put the full link in a file readable by the `smserver` user only, then hold the link. Replace `REPORTID` and `LINKID`:
 
    ```
    runuser -u smserver -- smserver hold -state /var/lib/smserver -report REPORTID -link-file /tmp/reported-link.txt LINKID

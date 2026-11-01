@@ -9,7 +9,6 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,6 +18,7 @@ import (
 	"spokenmargins.dev/bridge/internal/api"
 	"spokenmargins.dev/bridge/internal/config"
 	"spokenmargins.dev/bridge/internal/links"
+	"spokenmargins.dev/bridge/internal/reports"
 	"spokenmargins.dev/bridge/internal/store"
 )
 
@@ -100,6 +100,11 @@ func enabledLinks(t *testing.T) (*api.Server, string) {
 		t.Fatal(err)
 	}
 	s.Links = st
+	rs, err := reports.Open(filepath.Join(filepath.Dir(s.PublicDir), "state", "reports"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Reports = rs
 	s.LinkInstallURL = "https://testflight.apple.com/join/fixture"
 	if _, err := config.Set(path, config.ServiceLinks, true); err != nil {
 		t.Fatal(err)
@@ -214,8 +219,10 @@ func TestLinkHTTPRoundTripReportsExpiryAndLogs(t *testing.T) {
 	if w.Header().Get("Content-Type") != "application/octet-stream" {
 		t.Fatal("packet can render as active content")
 	}
-	// Reports may write the id only to the abuse log, at the hourly flush.
-	w = linkRequest(h, "POST", "/l/"+id+"/report", "application/x-www-form-urlencoded", []byte("reason=privacy"), "203.0.113.7")
+	// Reports may write the id only to the abuse log, at the hourly flush. A report takes its link down
+	// at once, so it files against a second link and the first goes on to expire.
+	reported := createdLink(t, h)
+	w = linkRequest(h, "POST", "/l/"+reported+"/report", "application/x-www-form-urlencoded", []byte("category=copyright"), "203.0.113.7")
 	if w.Code != 200 {
 		t.Fatalf("report: %d %s", w.Code, w.Body)
 	}
@@ -236,7 +243,7 @@ func TestLinkHTTPRoundTripReportsExpiryAndLogs(t *testing.T) {
 			t.Fatalf("request log leaked %q: %s", secret, reqLog.String())
 		}
 	}
-	if !strings.Contains(abuseLog.String(), `"id":"`+id+`"`) || !strings.Contains(abuseLog.String(), `"reason":"privacy"`) || strings.Contains(abuseLog.String(), "203.0.113.7") {
+	if !strings.Contains(abuseLog.String(), `"id":"`+reported+`"`) || !strings.Contains(abuseLog.String(), `"reason":"copyright"`) || strings.Contains(abuseLog.String(), "203.0.113.7") {
 		t.Fatal("report log invalid")
 	}
 	now = now.Add(links.Lifetime)
@@ -359,17 +366,26 @@ func TestLinkAddressLimitIsMemoryOnly(t *testing.T) {
 	})
 }
 
-func TestLinkReportsRejectUnboundedReasons(t *testing.T) {
+func TestLinkReportsRejectUnboundedInput(t *testing.T) {
 	s, _ := enabledLinks(t)
 	var abuse bytes.Buffer
 	s.AbuseLog = &abuse
 	h := s.Handler()
 	id := createdLink(t, h)
-	for _, reason := range []string{"", "203.0.113.7", "<script>", strings.Repeat("x", 2000)} {
-		w := linkRequest(h, "POST", "/l/"+id+"/report", "application/x-www-form-urlencoded", []byte("reason="+url.QueryEscape(reason)), "203.0.113.7")
+	for _, body := range []string{
+		"", "category=", "category=203.0.113.7", "category=%3Cscript%3E", "category=" + strings.Repeat("x", 2000),
+		"category=Copyright", "category=copyright%20", "category=copyright&category=other",
+		"reason=privacy", // the form's old field: no category, so nothing is filed
+		"category=copyright&reason=" + strings.Repeat("x", 2001),
+	} {
+		w := linkRequest(h, "POST", "/l/"+id+"/report", "application/x-www-form-urlencoded", []byte(body), "203.0.113.7")
 		if w.Code != 400 {
-			t.Fatalf("bad reason: %d", w.Code)
+			t.Fatalf("%.40q: %d", body, w.Code)
 		}
+	}
+	// None of that took the link down or was logged.
+	if w := linkRequest(h, "GET", "/l/"+id+"/packet", "", nil, "203.0.113.7"); w.Code != 200 {
+		t.Fatalf("a refused report took the link down: %d", w.Code)
 	}
 	if err := s.Flush(); err != nil {
 		t.Fatal(err)

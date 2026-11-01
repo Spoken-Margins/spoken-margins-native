@@ -4,14 +4,18 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"log"
 	"mime"
 	"mime/multipart"
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"spokenmargins.dev/bridge/internal/config"
 	"spokenmargins.dev/bridge/internal/links"
+	"spokenmargins.dev/bridge/internal/reportrules"
+	"spokenmargins.dev/bridge/internal/reports"
 )
 
 const PathLinks = "/api/v1/links"
@@ -206,11 +210,35 @@ func (s *Server) getLinkPacket(w http.ResponseWriter, r *http.Request) {
 	http.ServeContent(w, r, "", time.Time{}, f)
 }
 
-// Reasons are a fixed vocabulary, so reports cannot put addresses, personal
-// details or attacker-chosen HTML into the existing hourly abuse log.
+// Report this link (#2239). Every report takes the link down at once and blind: nobody reads what it
+// held. The category is required from the first report; the written reason is owed from a reporter's
+// second report within 7 days, in every category, and is collected on a second page so it never holds
+// up the takedown. Only an abuse-material report may send the full link, key included: it is held for a
+// year unread (links.Store.Hold, #2235) before the link comes down. For every other category a "link"
+// field is dropped unread, so the key is never stored.
+const (
+	maxReportForm = 8 << 10
+	maxReportLink = 2048
+	// The reporter's handle is kept for the 7-day reason window and the record for the 90-day strike
+	// window, no longer (reports.Store.Sweep).
+	reportHandleKeep = 7 * 24 * time.Hour
+	reportRecordKeep = 90 * 24 * time.Hour
+)
+
+func (s *Server) reportConfig() reportrules.Config {
+	if s.ReportRules.ReasonWindow == 0 {
+		return reportrules.DefaultConfig()
+	}
+	return s.ReportRules
+}
+
 func (s *Server) reportLink(w http.ResponseWriter, r *http.Request) {
 	linkHeaders(w)
 	if !s.linksOn(w) {
+		return
+	}
+	if s.Reports == nil {
+		fail(w, http.StatusServiceUnavailable, "disabled")
 		return
 	}
 	if !s.linkReportWindow.hit(s.clientKey(r), s.Now(), 30) {
@@ -218,31 +246,127 @@ func (s *Server) reportLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
-	if err := s.Links.Live(id, s.Now()); err != nil {
-		linkFailure(w, err)
-		return
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, 1024)
+	r.Body = http.MaxBytesReader(w, r.Body, maxReportForm)
 	if err := r.ParseForm(); err != nil {
 		fail(w, http.StatusBadRequest, "bad_request")
 		return
 	}
-	// Read the body only: query parameters cannot select a report reason.
-	reasons := r.PostForm["reason"]
-	if len(reasons) != 1 {
+	// Read the body only: query parameters cannot choose a category or a reason.
+	categories, reasons, fulls := r.PostForm["category"], r.PostForm["reason"], r.PostForm["link"]
+	if len(categories) != 1 || len(reasons) > 1 || len(fulls) > 1 {
 		fail(w, http.StatusBadRequest, "bad_request")
 		return
 	}
-	reason := reasons[0]
-	switch reason {
-	case "privacy", "copyright", "harmful", "spam", "other":
-	default:
-		fail(w, http.StatusBadRequest, "bad_reason")
+	reason := ""
+	if len(reasons) == 1 {
+		reason = strings.TrimSpace(reasons[0])
+		if len(reason) > reports.MaxReasonBytes || !utf8.ValidString(reason) {
+			fail(w, http.StatusBadRequest, "bad_reason")
+			return
+		}
+	}
+	now := s.Now()
+	cfg := s.reportConfig()
+	handle := s.Reports.Handle("net", s.clientNetOf(r))
+	prior, err := s.Reports.Prior(handle, now, cfg.ReasonWindow)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "internal")
 		return
 	}
-	s.countLinkReport(linkReportKey{hour: s.Now().UTC().Format("2006-01-02T15"), id: id, reason: reason})
+	d := cfg.Intake(reportrules.Submission{Category: categories[0], Reason: reason, Channel: reportrules.ChannelForm}, prior, now)
+	if d.Err != nil {
+		fail(w, http.StatusBadRequest, "bad_category")
+		return
+	}
+	ref, err := reports.NewRef()
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "internal")
+		return
+	}
+	if d.SendFullLink {
+		// Hold before takedown: a plain takedown deletes the ciphertext the year-long hold has to keep.
+		// The link is used only if it names this link id; a missing or wrong one never stops the takedown.
+		var full []byte
+		if len(fulls) == 1 && len(fulls[0]) <= maxReportLink && strings.Contains(fulls[0], "/l/"+id) {
+			full = []byte(strings.TrimSpace(fulls[0]))
+		}
+		if err := s.Links.Hold(id, "form-"+ref, full, now); err != nil {
+			linkFailure(w, err)
+			return
+		}
+	} else {
+		if err := s.Links.Live(id, now); err != nil {
+			linkFailure(w, err)
+			return
+		}
+		if err := s.Links.Takedown(id); err != nil {
+			linkFailure(w, err)
+			return
+		}
+	}
+	s.countLinkReport(linkReportKey{hour: now.UTC().Format("2006-01-02T15"), id: id, reason: string(d.Category)})
+	// The link is already down. A record that fails to save must not turn that into an error page.
+	filed := s.Reports.Add(reports.Record{Ref: ref, LinkID: id, Category: d.Category, At: now, Reason: reason, Reporter: handle}) == nil
+	if !filed {
+		log.Print("reports: record not saved")
+	}
+	writeReportPage(w, id, ref, filed, d.ReasonOutstanding && filed)
+}
+
+// reportReason is the second page of the form: it adds the written reason to a report already filed.
+func (s *Server) reportReason(w http.ResponseWriter, r *http.Request) {
+	linkHeaders(w)
+	if !s.linksOn(w) {
+		return
+	}
+	if s.Reports == nil {
+		fail(w, http.StatusServiceUnavailable, "disabled")
+		return
+	}
+	if !s.linkReportWindow.hit(s.clientKey(r), s.Now(), 30) {
+		fail(w, http.StatusTooManyRequests, "rate_limited")
+		return
+	}
+	id := r.PathValue("id")
+	r.Body = http.MaxBytesReader(w, r.Body, maxReportForm)
+	if err := r.ParseForm(); err != nil {
+		fail(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	refs, reasons := r.PostForm["ref"], r.PostForm["reason"]
+	if len(refs) != 1 || len(reasons) != 1 {
+		fail(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	switch err := s.Reports.AddReason(refs[0], id, reasons[0]); {
+	case err == nil, errors.Is(err, reports.ErrReasonGiven):
+	case errors.Is(err, reports.ErrReasonMissing), errors.Is(err, reports.ErrReasonTooLong):
+		fail(w, http.StatusBadRequest, "bad_reason")
+		return
+	case errors.Is(err, reports.ErrNotFound):
+		fail(w, http.StatusNotFound, "not_found")
+		return
+	default:
+		fail(w, http.StatusInternalServerError, "internal")
+		return
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	io.WriteString(w, `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Link reported</title><p>Thank you. This link has been reported for review.</p></html>`)
+	io.WriteString(w, `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Report received</title><p>Thank you. Your reason has been added to the report.</p></html>`)
+}
+
+// writeReportPage is the acknowledgement. ref is letters and digits only, so it needs no escaping.
+func writeReportPage(w http.ResponseWriter, id, ref string, filed, askReason bool) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	var b strings.Builder
+	b.WriteString(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Link reported</title><p>Thank you. This link has been taken down.</p>`)
+	if filed {
+		b.WriteString(`<p>Your reference number is <strong>` + ref + `</strong>.</p>`)
+	}
+	if askReason {
+		b.WriteString(`<form method="post" action="/l/` + id + `/report/reason"><input type="hidden" name="ref" value="` + ref + `"><p><label for="reason">Please tell us briefly why you are reporting this link. A few words are enough.</label></p><p><textarea id="reason" name="reason" rows="4" cols="40" maxlength="2000" required></textarea></p><button type="submit">Send</button></form>`)
+	}
+	b.WriteString(`</html>`)
+	io.WriteString(w, b.String())
 }
 
 type linkReportKey struct{ hour, id, reason string }

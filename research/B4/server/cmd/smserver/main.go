@@ -38,6 +38,8 @@ import (
 	"spokenmargins.dev/bridge/internal/manifest"
 	"spokenmargins.dev/bridge/internal/maps"
 	"spokenmargins.dev/bridge/internal/relay"
+	"spokenmargins.dev/bridge/internal/reportrules"
+	"spokenmargins.dev/bridge/internal/reports"
 	"spokenmargins.dev/bridge/internal/store"
 	"spokenmargins.dev/bridge/internal/tokens"
 	"spokenmargins.dev/bridge/internal/weborigin"
@@ -151,6 +153,13 @@ func serve(args []string) error {
 		log.Print("links: unavailable")
 		linkStore = nil
 	}
+	// Links come up only with somewhere to record a report (#2239): a link nobody can report is not served.
+	reportStore, err := reports.Open(filepath.Join(*stateDir, "reports"))
+	if err != nil {
+		log.Print("reports: unavailable, links off")
+		reportStore = nil
+		linkStore = nil
+	}
 	rootPEM := appattest.AppleRootPEM()
 	if *rootPath != "" {
 		data, err := os.ReadFile(*rootPath)
@@ -204,6 +213,7 @@ func serve(args []string) error {
 		Maps:              mapService,
 		Tokens:            issuer,
 		Links:             linkStore,
+		Reports:           reportStore,
 		LinkInstallURL:    *installURL,
 		Relay:             feedRelay,
 		LinkOrigins:       webOrigins,
@@ -251,6 +261,14 @@ func serve(args []string) error {
 					log.Print("links: held-link sweep failed")
 				} else if n > 0 {
 					log.Printf("links: deleted %d held links at one year", n)
+				}
+			}
+			if reportStore != nil {
+				cfg := reportrules.DefaultConfig()
+				if n, err := reportStore.Sweep(time.Now(), cfg.ReasonWindow, cfg.StrikeWindow); err != nil {
+					log.Print("reports: daily sweep failed")
+				} else if n > 0 {
+					log.Printf("reports: deleted %d records past 90 days", n)
 				}
 			}
 			if n, err := st.Purge(time.Now(), *idleDays); err != nil {
