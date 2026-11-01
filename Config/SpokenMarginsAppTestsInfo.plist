@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- XCTest makes this class when the bundle loads: the file-descriptor guard for the full test run (#2818). -->
+	<key>NSPrincipalClass</key>
+	<string>SMOpenDescriptorGuard</string>
+</dict>
+</plist>
