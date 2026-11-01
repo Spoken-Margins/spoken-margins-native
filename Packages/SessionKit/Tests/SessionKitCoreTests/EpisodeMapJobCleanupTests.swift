@@ -77,6 +77,26 @@ final class EpisodeMapJobCleanupTests: XCTestCase {
         XCTAssertEqual(try store.loadEpisodeMapPreparationJobs().count, 1)
     }
 
+    func testStillExpiredDropsAJobAskedForAgainAndRereadsTheMapState() throws {
+        try job("again", age: 8 * day)
+        try job("mapped-late", age: 8 * day)
+        try job("stays", age: 8 * day)
+        let expired = EpisodeMapJobCleanup.expiredJobs(now: now, store: store)
+        XCTAssertEqual(expired.filter(\.hasMap).count, 0)
+
+        try job("again", age: 0) // asked for again after the first read
+        try store.saveEditionFingerprintSpine(EditionFingerprintSpineArtifact(id: "spine-late", itemId: "mapped-late", landmarks: []))
+        try store.deleteEpisodeMapPreparationJob(id: AutomaticEpisodeMapJobs.jobId(itemId: "gone-job"))
+
+        let confirmed = EpisodeMapJobCleanup.stillExpired(expired, now: now, store: store)
+
+        XCTAssertEqual(Set(confirmed.map(\.itemId)), ["mapped-late", "stays"])
+        XCTAssertEqual(confirmed.first { $0.itemId == "mapped-late" }?.hasMap, true, "a map saved since the first read keeps its folder")
+        XCTAssertEqual(confirmed.first { $0.itemId == "stays" }?.hasMap, false)
+        try store.deleteEpisodeMapPreparationJob(id: AutomaticEpisodeMapJobs.jobId(itemId: "stays"))
+        XCTAssertEqual(Set(EpisodeMapJobCleanup.stillExpired(expired, now: now, store: store).map(\.itemId)), ["mapped-late"], "a job already deleted is skipped")
+    }
+
     func testDeleteJobsRemovesOnlyThatItemsJobsIncludingSimilarlyNamedItems() throws {
         try job("ep-1", age: 0)
         try job("ep-10", age: 0)

@@ -237,8 +237,13 @@ extension Gate1AppModel {
     /// between leaves a job to try again.
     func purgeExpiredEpisodeMapPreparationJobs(store: SQLiteSessionStore, now: Date = Date()) {
         Task { [weak self] in
-            let expired = (try? await StoreReader(store).readInOrder(AutomaticEpisodeMapJobs.orderKey) {
+            // Read, then confirm just before the files go, so a job asked for again meanwhile keeps its folder.
+            let found = (try? await StoreReader(store).readInOrder(AutomaticEpisodeMapJobs.orderKey) {
                 EpisodeMapJobCleanup.expiredJobs(now: now, store: $0)
+            }) ?? []
+            guard !found.isEmpty else { return }
+            let expired = (try? await StoreReader(store).readInOrder(AutomaticEpisodeMapJobs.orderKey) {
+                EpisodeMapJobCleanup.stillExpired(found, now: now, store: $0)
             }) ?? []
             guard let self, !expired.isEmpty else { return }
             for job in expired {

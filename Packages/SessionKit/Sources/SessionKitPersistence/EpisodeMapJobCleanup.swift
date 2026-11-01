@@ -34,6 +34,19 @@ public enum EpisodeMapJobCleanup {
             }
     }
 
+    /// The jobs of `expired` that are still expired, with `hasMap` read again. The app calls it right before it removes
+    /// files, so a job asked for again, or a map finished, since `expiredJobs` ran keeps its folder (#2509).
+    public static func stillExpired(_ expired: [ExpiredJob], now: Date, store: SQLiteSessionStore) -> [ExpiredJob] {
+        expired.compactMap { entry in
+            guard let job = try? store.loadEpisodeMapPreparationJob(id: entry.jobId), isExpired(job, now: now) else { return nil }
+            return ExpiredJob(
+                jobId: job.id,
+                itemId: job.itemId,
+                hasMap: (try? store.hasEditionFingerprintSpine(itemId: job.itemId)) == true
+            )
+        }
+    }
+
     /// Deletes the given jobs and the item's transient-transcript ledger rows. A job the listener asked for again
     /// since `expiredJobs` ran (saved over, so no longer expired) is kept. Returns the ids it deleted.
     @discardableResult
