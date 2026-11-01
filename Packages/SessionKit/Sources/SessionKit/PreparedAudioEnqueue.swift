@@ -54,6 +54,18 @@ public enum PreparedAudioEnqueue {
         }
     }
 
+    /// Whether `candidate` is still the saved preparation of an item whose text and speech are the ones it was made
+    /// from. One transaction of small reads (the manifest, the item, its document), so the caller can run it through
+    /// `StoreReader` instead of on the main actor (#2506). An item that is gone, retired or changed answers false.
+    public static func isStillCurrent(
+        _ candidate: PreparedAudioManifest, itemText: String?, sourceText: String, repository: any SessionRepository
+    ) -> Bool {
+        (try? withCurrentManifest(candidate, repository: repository) { _, current in
+            guard current.text == itemText else { return false }
+            return try preparedText(item: current, repository: repository) == sourceText
+        }) == true
+    }
+
     /// Read directly inside the transaction; a cached no-document projection can be stale after re-import.
     public static func preparedText(item: Item, repository: any SessionRepository) throws -> String? {
         let document = try (repository as? any StructuredDocumentRepository)?.loadStructuredDocument(itemId: item.id)

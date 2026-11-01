@@ -17,13 +17,14 @@ extension Gate1AppModel {
         coordinator: PreparedAudioCoordinator,
         support: URL
     ) async throws {
-        func stillCurrent() -> Bool {
-            (try? PreparedAudioEnqueue.withCurrentManifest(manifest, repository: store) { _, current in
-                guard current.text == item.text else { return false }
-                return try PreparedAudioEnqueue.preparedText(item: current, repository: store) == sourceText
-            }) == true
+        let itemText = item.text
+        func stillCurrent() async -> Bool { // small transaction of reads, off the main actor (#2506)
+            let isCurrent = try? await StoreReader(store).read { [manifest, itemText, sourceText] in
+                PreparedAudioEnqueue.isStillCurrent(manifest, itemText: itemText, sourceText: sourceText, repository: $0)
+            }
+            return isCurrent == true
         }
-        guard stillCurrent() else { return }
+        guard await stillCurrent() else { return }
         // A stand-in (iOS voice) chunk waits for a play to retry Supertonic; don't bake it in (#363).
         guard !PreparedAudioCoordinator.hasStandIns(manifest) else { return }
         // Narration replaces Item.text with its own, so it keeps Item.text and maps into it (#336).
@@ -54,7 +55,7 @@ extension Gate1AppModel {
                 guard current.text == item.text, try PreparedAudioEnqueue.preparedText(item: current, repository: store) == sourceText else { return false }
                 return attachPreparedTextAudio(prepared, itemId: item.id, replaceActivePlayback: false)
             }
-            guard attached != nil, !refused, stillCurrent() else {
+            guard attached != nil, !refused, await stillCurrent() else {
                 await ledger.discardStaleAssembly(assembledURL, reservationId: assemblyReservation.id)
                 return
             }
