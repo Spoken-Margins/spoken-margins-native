@@ -55,7 +55,7 @@ Times are UTC unless a zone is named. "Pause" is the way to stop that one job wi
 | Job | Schedule | Reads | Writes | Config owner | Pause |
 |---|---|---|---|---|---|
 | `sm-dial-gate.timer` and `.service` (`ops/dial/`) | `OnCalendar=*:2/15` with up to 60 s of random delay, plus a 3-hour fallback wake-up | The Dial boxes on #589, the tick on #337, the ready queue, claim and stop notes | One status comment on #589; a fire to the Dial relay | Owner, with the Dial boxes | Set Mode to Off on #589, or (my suggestion, not in the repo's README) `systemctl disable --now sm-dial-gate.timer` |
-| Runner `sm-vps` (service name not in repo) | Always on | Queued jobs | Runs the two `lane-open-*` jobs (every other former VPS job moved to GitHub-hosted `ubuntu-latest`, #2442) | Owner | Stop the runner service |
+| Runner `sm-vps` (service name not in repo) | Always on, but no CI job targets it since #2383 | Nothing | Nothing (the `lane-open-*` jobs moved to `ubuntu-latest` and keep their 10-minute limit on the `lane-open-state` branch) | Owner | Stop the runner service (nothing depends on it) |
 | Runner `sm-vps-t1` (not in repo) | Always on, but no CI job targets it since #2442 | Nothing | Nothing | Owner | Stop the runner service (nothing depends on it) |
 | `smserver.service` (`research/B4/deploy/`) | Always on, restarts on failure | Requests, `/etc/smserver/maps.env` | Share links, maps, attestation, an hourly request summary to its own journal namespace | Owner | `systemctl stop smserver` |
 | VPS crontab | Not checked | | | | The repo contains no cron entries |
@@ -64,11 +64,11 @@ Times are UTC unless a zone is named. "Pause" is the way to stop that one job wi
 
 | Workflow | Trigger | Runs on | Does |
 |---|---|---|---|
-| `lane.yml` | `pull_request` into `next` or `lane-check/**` (labels `lane:queued`, `automerge`); `workflow_dispatch` from the lane job after a T3 PASS | `route`, `lane-open-*` on `sm-vps`; `lane`, `automerge`, `release` on the Mac | Tests the PR, merges `automerge` PRs on PASS, pings the Dial when a runner is idle |
+| `lane.yml` | `pull_request` into `next` or `lane-check/**` (labels `lane:queued`, `automerge`); `workflow_dispatch` from the lane job after a T3 PASS | `route`, `lane-open-*` on `ubuntu-latest`; `lane`, `automerge`, `release` on the Mac | Tests the PR, merges `automerge` PRs on PASS, pings the Dial when a runner is idle |
 | `hosted-portable.yml` | `pull_request` into `main` | GitHub-hosted `ubuntu-latest` | The portable fast checks, then the `owner-tap-alert` job (`linux-t1.yml` was retired in #2442) |
 | `shipped-build-compat.yml` | `pull_request` into `next` touching persistence, sharing or stored types | Mac `sm-lane` | Build 29 can still open the database this PR writes |
 | `verify-tests.py` step `shipped-compat` (#1899) | Every automerge run of `--plan fast` or `--plan fast-mac-rest` whose diff matches that workflow's `paths` | Mac `sm-lane` | The same two checks, inside the plan the runner merges on, because a required check can't stand on the merge commit the runner pushes |
-| `merge-audit.yml` | `push` to `next` | `sm-vps` | Labels merges that skipped the merge check |
+| `merge-audit.yml` | `push` to `next` | `ubuntu-latest` | Labels merges that skipped the merge check |
 
 No workflow has a `schedule:`. GitHub runs scheduled workflows only from the default branch, and `main` doesn't carry them. Repo secrets `SM_LANE_OPEN_URL` and `SM_LANE_OPEN_TOKEN` (`ops/lane/README.md`) and runner status **could not be checked**: the cloud proxy blocks the Actions secrets and runners endpoints.
 

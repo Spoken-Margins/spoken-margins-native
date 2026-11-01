@@ -216,6 +216,125 @@ class Run(unittest.TestCase):
         self.assertEqual(self.sent, [])
 
 
+class FakeBranchApi(FakeApi):
+    """The contents and git endpoints the data branch uses, with GitHub's compare-and-swap on a file's sha."""
+
+    def __init__(self, runners, branch_exists=False, file=None, fail_write=None):
+        super().__init__(runners)
+        self.branch_exists, self.file, self.fail_write = branch_exists, file, fail_write
+        self.writes = []
+
+    def get(self, path):
+        if path.startswith('contents/'):
+            if not (self.branch_exists and self.file):
+                raise o.Missing('404')
+            content, sha = self.file
+            return {'content': content, 'sha': sha}
+        return super().get(path)
+
+    def send(self, method, path, body):
+        if self.fail_write:
+            raise o.Unreadable(self.fail_write)
+        self.writes.append((method, path))
+        if path == 'git/trees':
+            assert body == {'tree': []}, 'the state branch must start empty'
+            return {'sha': 'tree1'}
+        if path == 'git/commits':
+            return {'sha': 'commit1'}
+        if path == 'git/refs':
+            if self.branch_exists:
+                raise o.Conflict('422 ref exists')
+            self.branch_exists = True
+            return {}
+        if path == 'contents/state.json':
+            if body.get('sha', None) != (self.file[1] if self.file else None):
+                raise o.Conflict('409')
+            self.file = (body['content'], 'sha%d' % (len(self.writes)))
+            return {}
+        raise AssertionError(path)
+
+
+class BranchStateTests(unittest.TestCase):
+    def go(self, api, now=NOW):
+        sent = []
+        line = o.run(api, now, o.BranchState(api, 'lane-open-state'), 'https://relay', 't',
+                     send=lambda *a: sent.append(a), sleep=lambda _: None)
+        return line, sent
+
+    def stamp(self, when):
+        import base64
+        return base64.b64encode(json.dumps({'last_ping_at': when}).encode()).decode()
+
+    def test_the_first_ping_creates_an_empty_branch_and_the_state_file(self):
+        api = FakeBranchApi([runner('a', MAIN)])
+        line, sent = self.go(api)
+        self.assertEqual(len(sent), 1, line)
+        self.assertEqual([w[1] for w in api.writes], ['git/trees', 'git/commits', 'git/refs', 'contents/state.json'])
+
+    def test_a_ping_ten_minutes_ago_blocks_the_next_and_an_older_one_does_not(self):
+        recent = FakeBranchApi([runner('a', MAIN)], True, (self.stamp('2026-10-09T18:25:00Z'), 's1'))
+        line, sent = self.go(recent)
+        self.assertEqual((sent, recent.writes), ([], []), line)
+        old = FakeBranchApi([runner('a', MAIN)], True, (self.stamp('2026-10-09T18:10:00Z'), 's1'))
+        line, sent = self.go(old)
+        self.assertEqual(len(sent), 1, line)
+        self.assertEqual(old.writes, [('PUT', 'contents/state.json')])
+
+    def test_two_runs_that_read_the_same_state_send_one_ping(self):
+        api = FakeBranchApi([runner('a', MAIN)], True, (self.stamp('2026-10-09T18:00:00Z'), 's1'))
+        first, second = o.BranchState(api, 'b'), o.BranchState(api, 'b')
+        first.load(), second.load()
+        self.assertTrue(first.claim(NOW))
+        self.assertFalse(second.claim(NOW))
+
+    def test_a_lost_race_sends_nothing_and_says_so(self):
+        class Racy(FakeBranchApi):
+            def get(self, path):
+                doc = super().get(path) if path.startswith('contents/') else None
+                if doc is not None:
+                    self.file = (self.stamp('2026-10-09T18:29:00Z'), 'newer')    # someone writes after our read
+                    return doc
+                return super().get(path)
+            stamp = BranchStateTests.stamp
+        api = Racy([runner('a', MAIN)], True, (self.stamp('2026-10-09T18:00:00Z'), 's1'))
+        line, sent = self.go(api)
+        self.assertEqual(sent, [])
+        self.assertIn('another run pinged first', line)
+
+    def test_a_branch_made_by_another_run_a_moment_ago_is_used(self):
+        class Late(FakeBranchApi):
+            def send(self, method, path, body):
+                if path == 'git/trees':
+                    self.branch_exists = True    # the other run won the branch race
+                return super().send(method, path, body)
+        api = Late([runner('a', MAIN)])
+        line, sent = self.go(api)
+        self.assertEqual(len(sent), 1, line)
+
+    def test_a_write_the_token_may_not_make_sends_nothing(self):
+        api = FakeBranchApi([runner('a', MAIN)], fail_write='HTTP Error 403')
+        line, sent = self.go(api)
+        self.assertEqual(sent, [])
+        self.assertIn('could not record the ping', line)
+
+    def test_a_dry_run_writes_nothing(self):
+        api = FakeBranchApi([runner('a', MAIN)])
+        line = o.run(api, NOW, o.BranchState(api, 'lane-open-state'), 'https://relay', 't', dry_run=True,
+                     sleep=lambda _: None)
+        self.assertEqual(api.writes, [])
+        self.assertIn('would send', line)
+
+    def test_a_failed_relay_keeps_the_ten_minutes_rather_than_risking_a_double_ping(self):
+        api = FakeBranchApi([runner('a', MAIN)])
+
+        def boom(*_):
+            raise urllib.error.URLError('down')
+        line = o.run(api, NOW, o.BranchState(api, 'lane-open-state'), 'https://relay', 't', send=boom,
+                     sleep=lambda _: None)
+        self.assertIn('the relay failed', line)
+        self.assertIsNotNone(api.file)
+
+
 class Tokens(unittest.TestCase):
     def test_the_runner_list_uses_the_runners_token_and_the_rest_the_workflow_token(self):
         seen = {}

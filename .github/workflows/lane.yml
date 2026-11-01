@@ -701,24 +701,27 @@ jobs:
 
   # Tell the coordinator when a Mac lane runner is left idle (#1215). One job per Mac job, so the
   # notice comes when either frees its runner, not when both are done (a PR with both labels runs
-  # both). Each runs on the owner's VPS runner (never a Mac runner, so it can't queue behind a lane
-  # job), with sm_lane_open.py taken from the base branch's tip. They stay on the VPS when everything else left it
-  # (#2442): the 10-minute limit is a state file shared by every PR's runs, which hosted runners can't share. The script reads the runner list and
+  # both). Each runs on a GitHub-hosted Linux runner (never a Mac runner, so it can't queue behind a lane
+  # job), with sm_lane_open.py taken from the base branch's tip. The 10-minute limit between pings is one
+  # file on the `lane-open-state` data branch (an empty-tree branch, no source), written as a
+  # compare-and-swap before the ping goes out, so two runs at once send one ping (#2383; it was a state file
+  # on the VPS runner, which hosted runners can't share). The script reads the runner list and
   # the jobs still waiting for a lane runner; if a runner is idle with no job to take it, it sends
   # "Lane open-<time>: <free> free, <queued> queued" through the Dial relay, at most once per 10
-  # minutes (one state file on that runner, so the two jobs share it). With the two secrets unset, or
+  # minutes. With the two secrets unset, or
   # on any doubt, it sends nothing and the step still passes. It is not a gate: the Mac jobs and their
   # Verdict steps don't depend on it.
   lane-open-lane:
     needs: [route, lane]
-    # The same-repo check repeats route's, so this VPS job never depends on another job's `if` alone (#1719).
+    # The same-repo check repeats route's, so this job never depends on another job's `if` alone (#1719).
     if: >-
       !cancelled() && needs.lane.result != 'skipped' &&
       github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: [self-hosted, Linux, sm-vps]
+    runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:
-      contents: read
+      # write: only the `lane-open-state` branch, for the 10-minute limit. The script comes from the base branch.
+      contents: write
       # read: the runs and jobs it counts (the runner list uses RUNNERS_TOKEN below).
       actions: read
     steps:
@@ -733,6 +736,7 @@ jobs:
           RUNNERS_TOKEN: ${{ secrets.SM_LANE_RUNNERS_TOKEN || github.token }}
           SM_LANE_OPEN_URL: ${{ secrets.SM_LANE_OPEN_URL }}
           SM_LANE_OPEN_TOKEN: ${{ secrets.SM_LANE_OPEN_TOKEN }}
+          SM_LANE_OPEN_STATE_BRANCH: lane-open-state
         run: |
           # Base-branch code only. A base without the script (before this reached next) sends nothing.
           if timeout 30s gh api -H 'Accept: application/vnd.github.raw' \
@@ -747,10 +751,10 @@ jobs:
     if: >-
       !cancelled() && needs.automerge.result != 'skipped' &&
       github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: [self-hosted, Linux, sm-vps]
+    runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:
-      contents: read
+      contents: write
       actions: read
     steps:
       - name: Tell the coordinator the lane is open
@@ -762,6 +766,7 @@ jobs:
           RUNNERS_TOKEN: ${{ secrets.SM_LANE_RUNNERS_TOKEN || github.token }}
           SM_LANE_OPEN_URL: ${{ secrets.SM_LANE_OPEN_URL }}
           SM_LANE_OPEN_TOKEN: ${{ secrets.SM_LANE_OPEN_TOKEN }}
+          SM_LANE_OPEN_STATE_BRANCH: lane-open-state
         run: |
           if timeout 30s gh api -H 'Accept: application/vnd.github.raw' \
               "repos/$GH_REPO/contents/ops/lane/sm_lane_open.py?ref=$BASE_REF" > "$RUNNER_TEMP/sm_lane_open.py"; then

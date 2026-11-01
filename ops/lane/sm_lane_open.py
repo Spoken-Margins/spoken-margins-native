@@ -15,17 +15,20 @@ Rules, all of them failing toward quiet:
   about to). Waiting Mac jobs are any jobs of any workflow's runs that are queued for a runner and ask
   for a lane label (so lane.yml's `lane` and `automerge` and shipped-build-compat's `compat` all count);
   each is matched to one idle runner that has all of its labels.
-- At most one ping per 10 minutes (state file), so a burst of finishes is one message.
+- At most one ping per 10 minutes, so a burst of finishes is one message. The time of the last ping is a
+  file on a runner that keeps its disk (SM_LANE_OPEN_STATE), or, on hosted runners that don't, one file on a
+  data branch (SM_LANE_OPEN_STATE_BRANCH, #2383): a run that loses the race to write it sends nothing.
 - No relay URL or token (`SM_LANE_OPEN_URL`, `SM_LANE_OPEN_TOKEN`), an unreadable runner list or
   queue, or a failed POST sends nothing and exits 0: this must never turn a lane run red.
 
 Stdlib only, Python 3.9+. `--dry-run` prints the decision and neither sends nor writes.
 Environment: GH_REPO, GH_TOKEN (runs and jobs), RUNNERS_TOKEN (runner list; falls back to GH_TOKEN),
-SM_LANE_OPEN_STATE.
+SM_LANE_OPEN_STATE or SM_LANE_OPEN_STATE_BRANCH.
 """
 from __future__ import annotations
 
 import argparse
+import base64
 import datetime as dt
 import json
 import os
@@ -47,6 +50,14 @@ PAGE = 100
 
 class Unreadable(Exception):
     """A fact the decision needs couldn't be read; the ping is skipped."""
+
+
+class Missing(Unreadable):
+    """The thing asked for isn't there (HTTP 404)."""
+
+
+class Conflict(Exception):
+    """Another run wrote the same thing first."""
 
 
 def idle_runners(runners: list[dict]) -> list[set[str]]:
@@ -107,6 +118,27 @@ class GitHub:
         try:
             with urllib.request.urlopen(req, timeout=30) as resp:
                 return json.loads(resp.read())
+        except urllib.error.HTTPError as error:
+            if error.code == 404:
+                raise Missing(f'{path}: {error}') from error
+            raise Unreadable(f'{path}: {error}') from error
+        except (urllib.error.URLError, OSError, ValueError) as error:
+            raise Unreadable(f'{path}: {error}') from error
+
+    def send(self, method: str, path: str, body: dict):
+        """A write (the data branch only). 409 and 422 are a lost race, raised as Conflict."""
+        req = urllib.request.Request(
+            f'https://api.github.com/repos/{self.repo}/{path}', data=json.dumps(body).encode(), method=method,
+            headers={'Authorization': f'Bearer {self.token}', 'Accept': 'application/vnd.github+json',
+                     'X-GitHub-Api-Version': '2022-11-28', 'Content-Type': 'application/json',
+                     'User-Agent': 'sm-lane-open'})
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return json.loads(resp.read())
+        except urllib.error.HTTPError as error:
+            if error.code in (409, 422):
+                raise Conflict(f'{path}: {error}') from error
+            raise Unreadable(f'{path}: {error}') from error
         except (urllib.error.URLError, OSError, ValueError) as error:
             raise Unreadable(f'{path}: {error}') from error
 
@@ -173,6 +205,71 @@ def save_last(path: Path, now: dt.datetime) -> None:
     tmp.replace(path)
 
 
+class FileState:
+    """The last ping time in a file, written after the ping goes out. For a runner that keeps its disk."""
+
+    def __init__(self, path: Path):
+        self.path = path
+
+    def load(self) -> dt.datetime | None:
+        return load_last(self.path)
+
+    def claim(self, now: dt.datetime) -> bool:
+        return True
+
+    def done(self, now: dt.datetime) -> None:
+        save_last(self.path, now)
+
+
+class BranchState:
+    """The last ping time in one file on a data branch, for hosted runners that share no disk (#2383).
+
+    The write is a compare-and-swap on the file's blob sha, and it is made BEFORE the ping goes out: of two
+    runs that read the same state, one write wins and the other gets a conflict and sends nothing. A ping that
+    then fails to send keeps its 10 minutes (a missed notice is cheaper than a double one). The branch starts
+    as an empty commit, so it carries no source."""
+
+    def __init__(self, api, branch: str, path: str = 'state.json'):
+        self.api, self.branch, self.path, self.sha = api, branch, path, None
+        self.exists = False
+
+    def load(self) -> dt.datetime | None:
+        try:
+            doc = self.api.get(f'contents/{self.path}?ref={self.branch}')
+        except Missing:
+            return None
+        self.exists, self.sha = True, doc.get('sha')
+        try:
+            return parse_time(json.loads(base64.b64decode(doc['content']))['last_ping_at'])
+        except (ValueError, KeyError, TypeError):
+            return None
+
+    def _create_branch(self) -> None:
+        tree = self.api.send('POST', 'git/trees', {'tree': []})
+        commit = self.api.send('POST', 'git/commits', {'message': 'Lane open ping state (#2383)', 'tree': tree['sha']})
+        self.api.send('POST', 'git/refs', {'ref': f'refs/heads/{self.branch}', 'sha': commit['sha']})
+
+    def claim(self, now: dt.datetime) -> bool:
+        try:
+            if not self.exists:
+                try:
+                    self._create_branch()
+                except Conflict:
+                    pass    # another run made it a moment ago; the write below decides
+            body = {'message': 'Lane open ping', 'branch': self.branch,
+                    'content': base64.b64encode(json.dumps(
+                        {'last_ping_at': now.strftime('%Y-%m-%dT%H:%M:%SZ')}).encode()).decode()}
+            if self.sha:
+                body['sha'] = self.sha
+            self.api.send('PUT', f'contents/{self.path}', body)
+            return True
+        except Conflict:
+            return False
+
+    def done(self, now: dt.datetime) -> None:
+        pass
+
+
 def summary(line: str) -> None:
     print(line)
     target = os.environ.get('GITHUB_STEP_SUMMARY')
@@ -184,27 +281,36 @@ def summary(line: str) -> None:
             pass
 
 
-def run(api, now: dt.datetime, state: Path, url: str, token: str, dry_run=False,
+def run(api, now: dt.datetime, state, url: str, token: str, dry_run=False,
         send=fire_relay, sleep=time.sleep) -> str:
-    """One check. Returns the one line it reports; never raises for a skipped ping."""
+    """One check. Returns the one line it reports; never raises for a skipped ping. `state` is a Path
+    (a FileState) or an object with load(), claim(now) and done(now)."""
+    if isinstance(state, Path):
+        state = FileState(state)
     if not (url and token):
         return 'lane-open: no relay set up (SM_LANE_OPEN_URL / SM_LANE_OPEN_TOKEN); nothing sent.'
     try:
         spare, free, queued = read_idle(api, sleep)
+        last = state.load()
     except Unreadable as error:
         return f'lane-open: could not read the lane ({error}); nothing sent.'
-    ok, why = decide(spare, free, queued, now, load_last(state))
+    ok, why = decide(spare, free, queued, now, last)
     if not ok:
         return f'lane-open: not sent, {why}.'
     text = ping_text(now, free, queued)
     if dry_run:
         return f'lane-open: dry run, would send "{text}".'
     try:
+        if not state.claim(now):
+            return 'lane-open: not sent, another run pinged first.'
+    except Unreadable as error:
+        return f'lane-open: could not record the ping ({error}); nothing sent.'
+    try:
         send(url, token, text)
     except (urllib.error.URLError, OSError, ValueError) as error:
         return f'lane-open: the relay failed ({error}); nothing sent.'
     try:
-        save_last(state, now)
+        state.done(now)
     except OSError as error:
         return f'lane-open: sent "{text}", but could not record it ({error}); the 10-minute limit may not hold.'
     return f'lane-open: sent "{text}".'
@@ -217,8 +323,11 @@ def main(argv=None) -> int:
     token = os.environ.get('GH_TOKEN') or os.environ.get('RUNNERS_TOKEN') or ''
     repo = os.environ.get('GH_REPO', DEFAULT_REPO)
     try:
-        state = Path(os.environ.get('SM_LANE_OPEN_STATE') or Path.home() / '.sm-lane-open' / 'state.json')
-        line = run(GitHub(repo, token, os.environ.get('RUNNERS_TOKEN')), dt.datetime.now(dt.timezone.utc), state,
+        api = GitHub(repo, token, os.environ.get('RUNNERS_TOKEN'))
+        branch = os.environ.get('SM_LANE_OPEN_STATE_BRANCH')
+        state = BranchState(api, branch) if branch else FileState(
+            Path(os.environ.get('SM_LANE_OPEN_STATE') or Path.home() / '.sm-lane-open' / 'state.json'))
+        line = run(api, dt.datetime.now(dt.timezone.utc), state,
                    os.environ.get('SM_LANE_OPEN_URL', ''), os.environ.get('SM_LANE_OPEN_TOKEN', ''),
                    dry_run=args.dry_run)
     except Exception as error:  # noqa: BLE001 - a ping must never turn a lane run red
