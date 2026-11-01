@@ -219,8 +219,32 @@ func (s *Store) hold(id, reportID string, fullLink []byte, now time.Time, public
 				return err
 			}
 		}
+		// Links parked beside the content when the cap refused an earlier hold come first, then this run's.
+		limit := ownerMaxReportedLinks
+		if public {
+			limit = MaxReportedLinks
+		}
+		var kept [][]byte
+		add := func(link []byte) {
+			for _, k := range kept {
+				if bytes.Equal(k, link) {
+					return
+				}
+			}
+			if len(kept) < limit {
+				kept = append(kept, link)
+			}
+		}
+		for n := 1; n <= MaxReportedLinks; n++ {
+			if data, err := os.ReadFile(filepath.Join(src, reportedLinkName(n))); err == nil {
+				add(data)
+			}
+		}
 		if len(fullLink) > 0 {
-			if err := writeFileSynced(filepath.Join(tmp, reportedRef), fullLink); err != nil {
+			add(fullLink)
+		}
+		for i, link := range kept {
+			if err := writeFileSynced(filepath.Join(tmp, reportedLinkName(i+1)), link); err != nil {
 				return err
 			}
 		}
@@ -267,26 +291,71 @@ func (s *Store) addReportedLink(final, id, reportID string, fullLink []byte, now
 	if public {
 		limit = MaxReportedLinks
 	}
+	added, err := addLinkSlot(final, fullLink, limit)
+	switch {
+	case err == errSlotsFull:
+		return s.logAccess("link-dropped", id, "report "+reportID, now)
+	case err != nil:
+		return err
+	case added:
+		return s.logAccess("add-link", id, "report "+reportID, now)
+	}
+	return nil
+}
+
+var errSlotsFull = errors.New("links: all reported-link slots are used")
+
+// addLinkSlot writes link into the first free reported-link slot of dir, unless a slot already holds
+// the same bytes. It reports whether it wrote one.
+func addLinkSlot(dir string, link []byte, limit int) (bool, error) {
 	for n := 1; n <= limit; n++ {
-		path := filepath.Join(final, reportedLinkName(n))
+		path := filepath.Join(dir, reportedLinkName(n))
 		data, err := os.ReadFile(path)
 		if errors.Is(err, os.ErrNotExist) {
-			if err := writeFileSynced(path, fullLink); err != nil {
-				return err
+			if err := writeFileSynced(path, link); err != nil {
+				return false, err
 			}
-			if err := syncDir(final); err != nil {
-				return err
-			}
-			return s.logAccess("add-link", id, "report "+reportID, now)
+			return true, syncDir(dir)
 		}
 		if err != nil {
-			return err
+			return false, err
 		}
-		if bytes.Equal(data, fullLink) {
-			return nil
+		if bytes.Equal(data, link) {
+			return false, nil
 		}
 	}
-	return s.logAccess("link-dropped", id, "report "+reportID, now)
+	return false, errSlotsFull
+}
+
+// ParkLink keeps a reported full link beside a link's content, for a hold that was refused at a cap: the
+// owner's later hold by hand then has the key as well as the ciphertext. It keeps up to MaxReportedLinks
+// and drops the rest. The link goes away with the content.
+func (s *Store) ParkLink(id string, fullLink []byte) error {
+	if !ValidID(id) {
+		return ErrNotFound
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, err := os.Stat(filepath.Join(s.dir, id, "meta.json")); errors.Is(err, os.ErrNotExist) {
+		return ErrNotFound
+	} else if err != nil {
+		return err
+	}
+	if _, err := addLinkSlot(filepath.Join(s.dir, id), fullLink, MaxReportedLinks); err != nil && err != errSlotsFull {
+		return err
+	}
+	return nil
+}
+
+// IsHeld says whether a hold already exists for id. A re-report of a held link begins no new hold.
+func (s *Store) IsHeld(id string) bool {
+	if !ValidID(id) {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	_, err := os.Stat(filepath.Join(s.heldDir(), id))
+	return err == nil
 }
 
 // capReason says which cap a new hold of the link at src would pass, or "" if none. It counts what is

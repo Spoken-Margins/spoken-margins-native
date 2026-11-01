@@ -35,10 +35,10 @@ B. Register as an electronic service provider with the NCMEC CyberTipline and no
 
 The report form is public and anyone can upload a link and report it, so the server caps what it will keep for a year: **500 held links, 5 GiB held in total, 50 new holds a UTC day, and 5 holds a day from one client network.** These numbers are a default taken on #3120, not the owner's final call; they are `DefaultHoldLimits` in `research/B4/server/internal/links/hold.go` and `HoldsPerClientPerDay` in the server.
 
-At a cap the server does not fall back to a plain takedown, because that deletes the ciphertext. It stops serving the link, keeps its content until the link's own 30 days are up, and tells you:
+At a cap the server does not fall back to a plain takedown, because that deletes the ciphertext. It stops serving the link, keeps its content and the reported link (key included) for 30 days from the report, and tells you:
 
 1. The server log has the line `reports: HOLD CAP REACHED`, and `/var/lib/smserver/links-held/access.log` has a line with `"event":"cap"`, the link id and which cap it was. Look for them with `grep '"event":"cap"' /var/lib/smserver/links-held/access.log`. The reporter sees the normal "this link has been taken down" page.
-2. **You have until the link's 30 days are up.** After that the daily sweep deletes the content, and a hold can keep only the reported link. A link uploaded today is safe for 30 days; one uploaded 25 days ago has 5 left.
+2. **You have 30 days from the report.** After that the daily sweep deletes the content and the parked reported link, and nothing is left to hold.
 3. Hold the ones you decide to keep with the `hold` command above. Your own `hold` run is not limited by the caps. Use the CyberTipline's report id as `REPORTID`, or `cap-` and the date if you have none yet.
 4. If the cap is full of junk, free room first by ending the holds you are sure are junk with `release-hold`, or raise the cap. A raised cap is a code change in `hold.go`, so ask first.
 

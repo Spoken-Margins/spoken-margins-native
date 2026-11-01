@@ -356,6 +356,10 @@ func TestHoldsPastTheClientCapDisableTheLinkKeepItsContentAndLeaveALine(t *testi
 		if liveErr != nil || !bytes.Equal(live, linkPacket) {
 			t.Fatalf("the capped link's ciphertext was deleted: %v", liveErr)
 		}
+		// The reporter's key is kept beside it, so the owner's hold by hand can open what it keeps.
+		if key, err := os.ReadFile(filepath.Join(stateDirOf(s), "links", id, "reported-link")); err != nil || !strings.Contains(string(key), reportKey) {
+			t.Fatalf("the capped report's link was lost: %v", err)
+		}
 		logText, _ := os.ReadFile(filepath.Join(stateDirOf(s), "links-held", "access.log"))
 		if !strings.Contains(string(logText), `"event":"cap"`) || !strings.Contains(string(logText), id) {
 			t.Fatalf("the cap left no line for the owner: %s", logText)
@@ -396,5 +400,36 @@ func TestAHoldPastTheStoreCapDisablesTheLinkAndKeepsItsContent(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(stateDirOf(s), "links-held", b, "packet")); err != nil {
 		t.Fatalf("hold by hand after the cap: %v", err)
+	}
+}
+
+// A made-up id must not forge an owner alert or spend a client's allowance, and a re-report of a link that
+// is already held begins no new hold, so it spends nothing either.
+func TestOnlyANewHoldOfARealLinkSpendsTheClientAllowanceOrRaisesTheAlert(t *testing.T) {
+	s, _ := enabledLinks(t)
+	s.HoldsPerClientPerDay = 1
+	h := s.Handler()
+	id := createdLink(t, h)
+	for i := 0; i < 3; i++ {
+		if code, _ := postReport(h, strings.Repeat("b", 32), "category=abuse_material", "203.0.113.7"); code != 404 {
+			t.Fatalf("unknown id: %d", code)
+		}
+	}
+	if _, err := os.ReadFile(filepath.Join(stateDirOf(s), "links-held", "access.log")); err == nil {
+		t.Fatal("a made-up id left a line in the owner's access log")
+	}
+	full := "https://spokenmargins.com/l/" + id + "#" + reportKey
+	if code, body := postReport(h, id, "category=abuse_material&link="+full, "203.0.113.7"); code != 200 {
+		t.Fatalf("first report: %d %s", code, body)
+	}
+	// The one allowance is used. The held link's second report from the same network still adds its link.
+	real := "https://spokenmargins.com/l/" + id + "#SECONDKEY"
+	postReport(h, id, "category=abuse_material&link="+real, "203.0.113.7")
+	if data, err := os.ReadFile(filepath.Join(stateDirOf(s), "links-held", id, "reported-link-2")); err != nil || string(data) != real {
+		t.Fatalf("the re-report's link was not added to the held ones: %q, %v", data, err)
+	}
+	logText, _ := os.ReadFile(filepath.Join(stateDirOf(s), "links-held", "access.log"))
+	if strings.Contains(string(logText), `"event":"cap"`) {
+		t.Fatalf("a re-report of a held link raised a cap alert: %s", logText)
 	}
 }

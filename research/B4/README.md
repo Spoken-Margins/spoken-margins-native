@@ -94,7 +94,7 @@ The report form is public, so holds are bounded (#3120): a held link keeps up to
 five different reported links (`reported-link`, `reported-link-2` ...), and the
 form's holds are capped at 500 items, 5 GiB, 50 a UTC day and 5 a day per client
 network. Past a cap the link is disabled (`Store.Disable`: dark at once, content
-kept until its own 30 days are up), the server log says `HOLD CAP REACHED` and
+and the reported link kept for 30 days), the server log says `HOLD CAP REACHED` and
 `links-held/access.log` gets a `cap` line, and the owner runs `smserver hold`,
 which the caps do not limit.
 

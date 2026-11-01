@@ -352,7 +352,7 @@ func TestReportedLinksStopAtTheCapAndTheLogSaysSoButTheOwnerCanAddMore(t *testin
 // daily sweep deleted it. The cap path depends on the promise.
 func TestDisabledLinkIsDarkAtOnceAndKeepsItsContentUntilItsOwnExpiry(t *testing.T) {
 	st, id, _, _ := putLink(t)
-	if err := st.Disable(id); err != nil {
+	if err := st.Disable(id, holdNow); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.Live(id, holdNow); !errors.Is(err, ErrGone) {
@@ -373,7 +373,7 @@ func TestDisabledLinkIsDarkAtOnceAndKeepsItsContentUntilItsOwnExpiry(t *testing.
 	}
 
 	st2, id2, _, _ := putLink(t)
-	if err := st2.Disable(id2); err != nil {
+	if err := st2.Disable(id2, holdNow); err != nil {
 		t.Fatal(err)
 	}
 	if n, err := st2.Sweep(holdNow.Add(Lifetime)); err != nil || n != 1 {
@@ -382,7 +382,7 @@ func TestDisabledLinkIsDarkAtOnceAndKeepsItsContentUntilItsOwnExpiry(t *testing.
 	if _, err := os.Stat(filepath.Join(st2.dir, id2, "packet")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("a disabled link's content outlived its 30 days")
 	}
-	if err := st2.Disable(strings.Repeat("0", 32)); !errors.Is(err, ErrNotFound) {
+	if err := st2.Disable(strings.Repeat("0", 32), holdNow); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("Disable of an unknown id = %v", err)
 	}
 }
@@ -486,5 +486,53 @@ func TestDefaultHoldLimitsAreFiniteAndAnUnreadableRecordCountsAgainstTheDay(t *t
 	}
 	if err := st.Hold(ids[1], "R", nil, holdNow.Add(24*time.Hour)); !errors.Is(err, ErrHoldCap) {
 		t.Fatalf("a record that cannot be read must count against the cap, got %v", err)
+	}
+}
+
+// A link reported on day 29 must still give the owner a full Lifetime to hold it by hand, and a key parked
+// beside the content must reach the hold and must not outlive the content.
+func TestDisableLateGivesAFullLifetimeAndAParkedKeyReachesTheHold(t *testing.T) {
+	st, id, _, _ := putLink(t)
+	late := holdNow.Add(29 * 24 * time.Hour)
+	if err := st.ParkLink(id, []byte("parked-key-link")); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ParkLink(id, []byte("parked-key-link")); err != nil { // a copy takes no slot
+		t.Fatal(err)
+	}
+	if err := st.Disable(id, late); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := st.Sweep(holdNow.Add(Lifetime + 2*time.Hour)); err != nil || n != 0 {
+		t.Fatalf("a link disabled on day 29 was swept a day later: %d, %v", n, err)
+	}
+	if err := st.HoldByOwner(id, "R1", []byte("owner-link"), late.Add(24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]string{reportedRef: "parked-key-link", reportedLinkName(2): "owner-link"} {
+		if got, err := os.ReadFile(heldFile(st, id, name)); err != nil || string(got) != want {
+			t.Fatalf("%s = %q, %v; want %q", name, got, err, want)
+		}
+	}
+	if _, err := os.Stat(heldFile(st, id, reportedLinkName(3))); err == nil {
+		t.Fatal("a parked copy took a slot")
+	}
+
+	// Without a hold the parked key goes with the content, never on its own.
+	st2, id2, _, _ := putLink(t)
+	if err := st2.ParkLink(id2, []byte("parked-key-link")); err != nil {
+		t.Fatal(err)
+	}
+	if err := st2.Disable(id2, holdNow); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st2.Sweep(holdNow.Add(Lifetime)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(st2.dir, id2, reportedRef)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("a parked key outlived its link's content")
+	}
+	if err := st2.ParkLink(strings.Repeat("0", 32), []byte("x")); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("ParkLink of an unknown id = %v", err)
 	}
 }

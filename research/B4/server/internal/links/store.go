@@ -30,7 +30,15 @@ var (
 // that name so no readable copy outlives its link.
 const previewFile = "preview"
 
-var contentFiles = []string{"packet", previewFile, "preview.json"}
+// A parked link (ParkLink) can also hold reported full links, key included, in the same slots a hold uses.
+// They are content: takedown and the sweep delete them with the packet, so no key outlives its link.
+var contentFiles = func() []string {
+	names := []string{"packet", previewFile, "preview.json"}
+	for n := 1; n <= MaxReportedLinks; n++ {
+		names = append(names, reportedLinkName(n))
+	}
+	return names
+}()
 
 // Only expiry metadata survives deletion, so previously issued links still
 // answer 410 after a sweep or takedown. No content or client address survives.
@@ -244,11 +252,12 @@ func (s *Store) Takedown(id string) error {
 }
 
 // Disable stops a link being served and keeps its content, for when a hold could not be made or was
-// refused at a cap: the link goes dark at once and the ciphertext stays, until the day the link would
-// have expired anyway, for the hold to be made by hand. The daily sweep deletes it then and not before.
-// (Until #3120 this wrote the same epoch tombstone as a takedown, so the next sweep deleted the content
-// the comment said it kept.)
-func (s *Store) Disable(id string) error {
+// refused at a cap: the link goes dark at once and the ciphertext stays for a hold to be made by hand.
+// It stays for a full Lifetime from now (longer if the link had longer left), so a link reported on day 29
+// still gives the owner thirty days. The daily sweep deletes it then and not before. (Until #3120 this
+// wrote the same epoch tombstone as a takedown, so the next sweep deleted the content the comment said
+// it kept.)
+func (s *Store) Disable(id string, now time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !ValidID(id) {
@@ -271,6 +280,9 @@ func (s *Store) Disable(id string) error {
 		return nil
 	}
 	meta.Disabled = true
+	if keep := now.UTC().Add(Lifetime); keep.After(meta.ExpiresAt) {
+		meta.ExpiresAt = keep
+	}
 	return s.writeMetaLocked(dir, meta)
 }
 
