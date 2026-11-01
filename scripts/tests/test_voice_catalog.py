@@ -9,6 +9,7 @@ import copy
 import hashlib
 import http.server
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -133,6 +134,62 @@ class TheShippedSources(unittest.TestCase):
         voice = next(v for v in sources["voices"] if v["id"] == "supertonic-3-int8")
         draft = json.loads(tools.DRAFT.read_text(encoding="utf-8"))
         self.assertEqual(vc.voice_entry(sources, voice), draft["voices"][0])
+
+    def test_a_watched_licence_is_the_pinned_one_so_the_reviewed_hash_is_of_what_check_fetches(self):
+        # `check` fetches `watchURL` (else `textURL`) and compares it with `textSHA256` (#3123). Kokoro watched its
+        # publisher's LICENSE but hashed apache.org's copy, which differs by a leading blank line, so check held a
+        # voice whose terms had not changed. A licence with a `watchURL` must therefore pin the very file it
+        # watches: the same URL with the branch `main` swapped for the revision that was reviewed.
+        mismatched = []
+        for voice in vc.load_sources()["voices"]:
+            for licence in voice["licenses"]:
+                watch = licence.get("watchURL")
+                if not watch:
+                    continue
+                self.assertIn("/main/", watch, f"{licence['id']}: watchURL should follow the main branch")
+                prefix, suffix = watch.split("/main/", 1)
+                if not re.fullmatch(re.escape(prefix) + r"/[0-9a-f]{40}/" + re.escape(suffix), licence["textURL"]):
+                    mismatched.append(f"{voice['id']}/{licence['id']}: textURL {licence['textURL']} is not watchURL pinned to a revision")
+        self.assertEqual(mismatched, [])
+
+    def test_every_shipped_licence_is_clean_against_its_reviewed_text_and_one_changed_word_holds_the_voice(self):
+        # The shipped sources, checked against a network that serves each licence's reviewed copy, hold nothing
+        # (so a blank-line-only mismatch cannot recur); one changed word in one licence holds exactly that voice.
+        sources = copy.deepcopy(vc.load_sources())
+        for voice in sources["voices"]:
+            voice["files"] = []
+            voice.pop("upstreamArchives", None)
+
+        class Licences:
+            def __init__(self):
+                self.served = {}
+                for voice in sources["voices"]:
+                    for licence in voice["licenses"]:
+                        text = (vc.SOURCES_PATH.parent / licence["reviewedText"]).read_bytes()
+                        self.served[licence.get("watchURL") or licence["textURL"]] = text
+
+            def get(self, url, limit=0):
+                return (200, self.served[url]) if url in self.served else (404, b"")
+
+            def head(self, url):
+                return {"status": 404, "size": None, "etag": None, "error": None}
+
+        def run(network):
+            with tempfile.TemporaryDirectory() as folder:
+                return vc.check(sources, Path(folder), http=network, now=NOW, out=lambda _: None)
+
+        network = Licences()
+        report = run(network)
+        self.assertEqual({v: r["problems"] for v, r in report["voices"].items()}, {v: [] for v in report["voices"]})
+
+        kokoro = next(v for v in sources["voices"] if v["id"] == "kokoro-82m")
+        url = kokoro["licenses"][0].get("watchURL") or kokoro["licenses"][0]["textURL"]
+        network.served[url] = network.served[url].replace(b"Licensed under", b"Licenced under", 1)
+        self.assertNotEqual(network.served[url], (vc.SOURCES_PATH.parent / kokoro["licenses"][0]["reviewedText"]).read_bytes())
+        report = run(network)
+        held = {v for v, r in report["voices"].items() if r["held"]}
+        self.assertEqual(held, {"kokoro-82m"})
+        self.assertEqual(report["voices"]["kokoro-82m"]["problems"][0]["kind"], "licence-changed")
 
     def test_the_built_catalog_passes_the_schema(self):
         sources = vc.load_sources()
