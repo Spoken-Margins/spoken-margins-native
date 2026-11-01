@@ -108,12 +108,11 @@ extension Gate1AppModel {
                 request: capture.request,
                 suffix: capture.windowRole == .preInterjection ? "stream-pre" : "stream-post"
             )
-            let fileURL: URL
+            // The folder and the signature file are made on the background task, not here (#2510): the signature is
+            // tens of KB and this runs from the player's callback. The path is only built here.
+            let root: URL
             do {
-                let root = try podcastAnchorEvidenceDirectory(for: capture.request)
-                try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-                fileURL = root.appending(path: "\(evidenceID).shazamsignature")
-                try capture.signatureData.write(to: fileURL, options: .atomic)
+                root = try podcastAnchorEvidenceDirectory(for: capture.request)
             } catch {
                 let request = capture.request
                 let reason = "stream_signature_persistence_failed:\(error.localizedDescription)"
@@ -122,8 +121,11 @@ extension Gate1AppModel {
                 }
                 return
             }
+            let fileURL = root.appending(path: "\(evidenceID).shazamsignature")
             Task.detached { [weak self] in
                 do {
+                    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+                    try capture.signatureData.write(to: fileURL, options: .atomic)
                     try await self?.persistPodcastAnchorEvidence(
                         request: capture.request,
                         evidence: [CapturedPodcastAnchorEvidence(
