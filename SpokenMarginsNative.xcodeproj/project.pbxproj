@@ -48,6 +48,7 @@
 		93BDBE3759E50512647FCCB2 /* Defuddle-LICENSE.txt in Resources */ = {isa = PBXBuildFile; fileRef = 3D2052181FEAFB56EB0856FA /* Defuddle-LICENSE.txt */; };
 		A2D0366161FA302E7139746D /* SharedTextIntake.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45170E0354730F22BB2E258A /* SharedTextIntake.swift */; };
 		A391E3C44188F2FE5A49C93B /* KokoroPipeline in Frameworks */ = {isa = PBXBuildFile; productRef = 54900B4C14FBCE4EEBA05420 /* KokoroPipeline */; };
+		A5242E161454F038B466BAE4 /* Gate2LiveActivityWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7145068260B70B5F88F4D76 /* Gate2LiveActivityWidget.swift */; };
 		A978B4713391C8A80029DD08 /* SessionKit in Frameworks */ = {isa = PBXBuildFile; productRef = 857D6087011D0775305B56B7 /* SessionKit */; };
 		AB149D16A2A0482B581B0847 /* SessionKitSharing in Frameworks */ = {isa = PBXBuildFile; productRef = 03B12E07A60683D31E17A8FC /* SessionKitSharing */; };
 		B401E3D73FFFC3B4CCD67491 /* SessionKitAudio in Frameworks */ = {isa = PBXBuildFile; productRef = 34C621C37AF71E6ED22B1045 /* SessionKitAudio */; };
@@ -189,6 +190,7 @@
 		E0ABF1D829406CA5F06567CD /* maps */ = {isa = PBXFileReference; lastKnownFileType = folder; name = maps; path = Contracts/fixtures/maps; sourceTree = SOURCE_ROOT; };
 		E253416A15B5108380F819E8 /* Legal */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Legal; path = App/SpokenMarginsApp/Resources/Legal; sourceTree = SOURCE_ROOT; };
 		E3D5265FADF5995640D6FB31 /* SpokenMarginsGate2Widget.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = SpokenMarginsGate2Widget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		E7145068260B70B5F88F4D76 /* Gate2LiveActivityWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate2LiveActivityWidget.swift; sourceTree = "<group>"; };
 		EE29274792FFFC88EA74C157 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		F2A6CC7522887307C67D46AE /* SpokenMarginsBrowserTextExtension.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = SpokenMarginsBrowserTextExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		F4D18E57D6973BBFE094E993 /* SpokenMarginsWatchApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SpokenMarginsWatchApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -388,10 +390,20 @@
 				61E0A1E977F3456236F0C7D9 /* SessionKit */,
 				EE2767B5F5BD53E79758E8D4 /* SharedResources */,
 				5B74E9616092FD1489F4F709 /* Sources */,
+				34447A1CD52ADC20F1369A5C /* Sources */,
 				CA56E872559E3D6C366F3C1B /* TestFixtures */,
 				089BEE7203E243E68BBEEA0F /* v1 */,
 				FD1F64C96AF6992C79DA59C5 /* Products */,
 			);
+			sourceTree = "<group>";
+		};
+		34447A1CD52ADC20F1369A5C /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				E7145068260B70B5F88F4D76 /* Gate2LiveActivityWidget.swift */,
+			);
+			name = Sources;
+			path = App/SpokenMarginsGate2Widget/Sources;
 			sourceTree = "<group>";
 		};
 		460250240FDC5A068A5D5EA9 /* Resources */ = {
@@ -880,6 +892,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A5242E161454F038B466BAE4 /* Gate2LiveActivityWidget.swift in Sources */,
 				78065128412B4F94A3B7B6FD /* LiveSessionMarkInbox.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

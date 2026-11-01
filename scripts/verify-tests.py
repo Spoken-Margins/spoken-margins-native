@@ -616,6 +616,7 @@ RUNNER_TEST_READERS = ('test_filled_button_contrast', 'test_filled_button_labels
                        'test_screen_change_cue', 'test_selected_trait', 'test_screen_title_heading',
                        'test_row_accessibility_actions', 'test_voiceover_label_nits',
                        'test_increase_contrast_wiring', 'test_reduce_motion', 'test_tap_target_styles',
+                       'test_dynamic_type_live_activity',
                        # The article-entry inventory reads App/ Swift files (#2363).
                        'test_article_entry_followups',
                        # The task-cost map checks its controls against App/ Swift files (#2396).
@@ -623,7 +624,9 @@ RUNNER_TEST_READERS = ('test_filled_button_contrast', 'test_filled_button_labels
                        # The container-identifier guard scans App/ Swift files (#2898).
                        'test_container_identifiers',
                        # The phone-build switch guard reads project.yml (#3086).
-                       'test_phone_build_gate')
+                       'test_phone_build_gate',
+                       # The resume-owner guard scans App/ and Packages/ Swift files (#3032).
+                       'test_resume_owners')
 RUNNER_TEST_INPUTS = ('App/', 'Packages/', 'Contracts/', 'TestPlans/', 'validation/', 'research/', 'project.yml',
                       'docs/sharing-test-kit/', 'docs/task-cost-map.json', 'BUILDING.md', 'README.md', 'package.json', '.gitattributes',
                       # test_third_party_notices reads the dependency manifests and its own list (#1823).

@@ -122,7 +122,8 @@ extension Gate1AppModel {
             identified.externalReference = feedEntry.canonicalURL
             identified.author = feedEntry.author ?? identified.author
             feedEntry.fillEpisodeIdentity(of: &identified, showTitle: subscription?.source.title)
-            try store.saveItem(identified)
+            let identifiedItem = identified
+            try await StoreReader(store).read { try $0.saveItem(identifiedItem) } // off the main actor (#2509)
             if item.media?.url == result.selectedCandidate?.audioURL,
                try store.listeningMapId(itemId: item.id) == nil, // whether there is one, not the map (#2506)
                let summary = feedEntry.summary,

@@ -245,16 +245,25 @@ extension Gate1AppModel {
                     outputDirectory: Result { try self.podcastAnchorEvidenceDirectory(for: request) },
                     idPrefix: self.podcastAnchorEvidenceID(request: request, suffix: "source-window")
                 )
-                self.run { engine in
+                let completed = self.run { engine in
                     self.snapshot = try engine.sourceWindowContextCompleted(interjectionId: interjectionId, sessionId: interjection.sessionId, timeline: analysis.timeline)
                     self.heardSourceWindows.discardInBackground(identity) // #652: the context is ready without it
-                    if !reference.evidence.isEmpty {
-                        try self.persistPodcastAnchorEvidence(
+                }
+                guard completed else { return }
+                // The evidence is saved off the main thread after the engine's own save (#2509); the refresh below reads both.
+                if !reference.evidence.isEmpty {
+                    do {
+                        try await self.persistPodcastAnchorEvidence(
                             request: request,
                             evidence: reference.evidence,
                             sourceExactEditionSHA256: nil
                         )
+                    } catch {
+                        self.reportFailure(error)
+                        return
                     }
+                }
+                self.run { _ in
                     self.refreshSelectedItemInBackground()
                     self.refreshMarginRow(sessionId: interjection.sessionId, interjectionId: interjectionId)
                     self.diagnostics[Self.marginDiagnosticKey("sourceWindowTranscription", sessionId: interjection.sessionId, interjectionId: interjectionId)] = "complete:speech_window"

@@ -611,25 +611,35 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
         previewGeneration += 1
         let generation = previewGeneration
         let fingerprint = currentDraftFingerprint()
+        // The packet build is one at a time. An earlier build still writing its file must finish first.
+        guard !model.sharingState.isExporting else {
+            previewState = .failed("The last packet is still being prepared. Try again in a moment.")
+            return
+        }
         previewTask?.cancel()
         verifiedPreview = nil
         previewFingerprint = nil
         previewState = .building
         stage = .recipientPreview
-        model.exportSharedInterjections(presentsReadySheet: false)
-        guard let fileURL = model.sharedSpokenMarginsPackageURL,
-              model.sharingState.errorMessage == nil else {
-            previewState = .failed(model.sharingState.errorMessage ?? "The package could not be built.")
-            stage = .review
-            return
-        }
         previewTask = Task { [weak self] in
+            // The archive is written off the main thread (#2510), so the build is awaited here, not in the tap.
+            guard let model = self?.model else { return }
+            // The file this build wrote, never the model's last one: a build that stopped early wrote none.
+            let builtURL = await model.exportSharedInterjections(presentsReadySheet: false)
+            guard let self,
+                  !Task.isCancelled,
+                  self.previewGeneration == generation else { return }
+            guard let fileURL = builtURL,
+                  self.model.sharingState.errorMessage == nil else {
+                self.previewState = .failed(self.model.sharingState.errorMessage ?? "The package could not be built.")
+                self.stage = .review
+                return
+            }
             do {
                 let preview = try await Task.detached(priority: .userInitiated) {
                     try Self.roundTrippedPreview(fileURL: fileURL)
                 }.value
-                guard let self,
-                      !Task.isCancelled,
+                guard !Task.isCancelled,
                       self.previewGeneration == generation else { return }
                 guard self.currentDraftFingerprint() == fingerprint else {
                     self.previewState = .stale
@@ -641,8 +651,7 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
                 self.previewState = .ready
                 self.model.isSharedSpokenMarginsPackagePresented = false
             } catch {
-                guard let self,
-                      self.previewGeneration == generation else { return }
+                guard self.previewGeneration == generation else { return }
                 self.previewState = .failed(error.localizedDescription)
                 self.stage = .review
             }

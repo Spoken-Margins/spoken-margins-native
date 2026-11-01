@@ -475,6 +475,8 @@ def report_text(sha: str, result: dict, *, started: float, finished: float, prev
                      + ', '.join(f'{t.rsplit("/", 1)[-1]} {s}' for t, s in sorted(result['journeys'].items())))
         if result.get('journeys_due'):
             lines.append('  ' + result['journeys_due'])
+    if result.get('tour'):
+        lines.append(tour_line(result['tour']))
     lines.append('outcome: ' + words['outcome'])
     lines += [words[k] for k in ('failing', 'probation') if words[k]]
     lines.append(words['retry'])
@@ -1105,7 +1107,42 @@ def run_tests(ops: Ops, wt: Path, evidence: Path, fds: tuple) -> dict:
     result.update(verdict=final.verdict, failed=list(final.failing), confirmed=list(final.confirmed),
                   flaky=list(final.retry_passes), gating_failed=list(final.gating_failed),
                   probation_failed=list(final.probation_failed))
+    if result['verdict'] == 'PASS':  # a tour of a broken build proves nothing; only after a PASS (test-lane.md)
+        result['tour'] = run_tour(ops, wt, evidence, fds)
     return result
+
+
+TOUR_NAMES_SHOWN = 24
+
+
+def run_tour(ops: Ops, wt: Path, evidence: Path, fds: tuple) -> dict:
+    """The screen tour (#381): one named screenshot per main screen, for the design and human-factors critics.
+    Never verdict input and never blocks the report: whatever goes wrong here becomes one line in it."""
+    try:
+        manifest = ops.test_plan(wt, evidence / 'tour', 'tour', fds)
+        done = summarize(manifest)
+    except Exception as error:  # noqa: BLE001 - the report must still go out
+        return {'status': 'not run', 'detail': str(error)[:300], 'screens': []}
+    screens = [str(name) for name in manifest.get('screenshots') or []]
+    if done['verdict'] == 'PASS' and screens:
+        return {'status': 'captured', 'detail': '', 'screens': screens}
+    why = '; '.join(dict.fromkeys(done['errors']))[:300] or ('no screenshot was exported' if done['verdict'] == 'PASS'
+                                                            else f"the tour's verdict was {done['verdict']}")
+    status = 'failed' if done['verdict'] == 'FAIL' else 'inconclusive'
+    return {'status': status, 'detail': why + (f" (failed: {', '.join(done['failed'])})" if done['failed'] else ''),
+            'screens': screens}
+
+
+def tour_line(tour: dict) -> str:
+    """The report's one line about the tour, or nothing when it did not run."""
+    if not tour:
+        return ''
+    if tour['status'] == 'captured':
+        shown = tour['screens'][:TOUR_NAMES_SHOWN]
+        more = f' and {len(tour["screens"]) - len(shown)} more' if len(tour['screens']) > len(shown) else ''
+        return (f"  screen tour (not verdict input): {len(tour['screens'])} screenshots in tour/screens of the "
+                f"evidence folder: {', '.join(shown)}{more}")
+    return f"  screen tour (not verdict input): {tour['status']}: {tour['detail']}"
 
 
 def search_culprit(ops: Ops, wt: Path, evidence: Path, green: Optional[str], sha: str, failed: list[str],

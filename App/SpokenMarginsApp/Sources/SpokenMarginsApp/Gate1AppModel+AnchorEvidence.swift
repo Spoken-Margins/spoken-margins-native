@@ -24,16 +24,16 @@ extension Gate1AppModel {
               let mediaTimeMs = interjection.anchor.mediaTimeMs,
               let sourceURL = podcastDownloadCoordinator?.validatedLocalURL(for: interjection.itemId),
               mediaPlaybackClient?.isUsingPlaybackURL(sourceURL, itemId: interjection.itemId) == true else {
-            markPodcastAnchorEvidenceUnavailable(
-                request: PostResumeAudioSampleRequest(
-                    interjectionId: interjection.id,
-                    sessionId: interjection.sessionId,
-                    itemId: interjection.itemId,
-                    anchorMediaTimeMs: interjection.anchor.mediaTimeMs ?? 0,
-                    targetDurationMs: PodcastAnchorEvidenceGenerator.flankDurationMs
-                ),
-                reason: "no_exact_local_playback_edition"
+            let request = PostResumeAudioSampleRequest(
+                interjectionId: interjection.id,
+                sessionId: interjection.sessionId,
+                itemId: interjection.itemId,
+                anchorMediaTimeMs: interjection.anchor.mediaTimeMs ?? 0,
+                targetDurationMs: PodcastAnchorEvidenceGenerator.flankDurationMs
             )
+            Task.detached { [weak self] in
+                await self?.markPodcastAnchorEvidenceUnavailable(request: request, reason: "no_exact_local_playback_edition")
+            }
             return
         }
         diagnostics[Self.marginDiagnosticKey("podcastAnchorEvidence", interjection)] = "scheduled"
@@ -45,12 +45,15 @@ extension Gate1AppModel {
             targetDurationMs: PodcastAnchorEvidenceGenerator.flankDurationMs
         )
         guard let root = try? podcastAnchorEvidenceDirectory(for: request) else {
-            markPodcastAnchorEvidenceUnavailable(request: request, reason: "storage_unavailable")
+            Task.detached { [weak self] in
+                await self?.markPodcastAnchorEvidenceUnavailable(request: request, reason: "storage_unavailable")
+            }
             return
         }
-        markPodcastAnchorEvidencePendingLocal(request: request)
         let evidenceIDPrefix = podcastAnchorEvidenceID(request: request, suffix: "local")
         Task.detached { [weak self] in
+            // The "pending" mark is saved before the capture starts, so the evidence it ends with can't be overwritten by it.
+            await self?.markPodcastAnchorEvidencePendingLocal(request: request)
             do {
                 let digestBeforeCapture = try PodcastAnchorEvidenceGenerator.exactEditionSHA256(of: sourceURL)
                 let generated = try await PodcastAnchorEvidenceGenerator.generate(
@@ -73,28 +76,26 @@ extension Gate1AppModel {
                         windowRole: $0.id.hasSuffix("-pre") ? .preInterjection : .postResume
                     )
                 }
-                await MainActor.run {
-                    do {
-                        try self?.persistPodcastAnchorEvidence(
-                            request: request,
-                            evidence: captured,
-                            sourceExactEditionSHA256: digestAfterCapture
-                        )
-                        self?.diagnostics[Self.marginDiagnosticKey("podcastAnchorEvidence", interjection)] = "complete:\(captured.count)"
-                    } catch {
-                        self?.markPodcastAnchorEvidenceUnavailable(
-                            request: request,
-                            reason: "local_signature_persistence_failed:\(error.localizedDescription)"
-                        )
-                    }
-                }
-            } catch {
-                await MainActor.run {
-                    self?.markPodcastAnchorEvidenceUnavailable(
+                do {
+                    try await self?.persistPodcastAnchorEvidence(
                         request: request,
-                        reason: "local_signature_failed:\(error.localizedDescription)"
+                        evidence: captured,
+                        sourceExactEditionSHA256: digestAfterCapture
+                    )
+                    await MainActor.run {
+                        self?.diagnostics[Self.marginDiagnosticKey("podcastAnchorEvidence", interjection)] = "complete:\(captured.count)"
+                    }
+                } catch {
+                    await self?.markPodcastAnchorEvidenceUnavailable(
+                        request: request,
+                        reason: "local_signature_persistence_failed:\(error.localizedDescription)"
                     )
                 }
+            } catch {
+                await self?.markPodcastAnchorEvidenceUnavailable(
+                    request: request,
+                    reason: "local_signature_failed:\(error.localizedDescription)"
+                )
             }
         }
     }
@@ -103,43 +104,62 @@ extension Gate1AppModel {
     func handlePostResumePodcastEvidence(_ result: PostResumePodcastEvidenceCaptureResult) {
         switch result {
         case .captured(let capture):
+            let evidenceID = podcastAnchorEvidenceID(
+                request: capture.request,
+                suffix: capture.windowRole == .preInterjection ? "stream-pre" : "stream-post"
+            )
+            let fileURL: URL
             do {
                 let root = try podcastAnchorEvidenceDirectory(for: capture.request)
                 try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-                let evidenceID = podcastAnchorEvidenceID(
-                    request: capture.request,
-                    suffix: capture.windowRole == .preInterjection ? "stream-pre" : "stream-post"
-                )
-                let fileURL = root.appending(path: "\(evidenceID).shazamsignature")
+                fileURL = root.appending(path: "\(evidenceID).shazamsignature")
                 try capture.signatureData.write(to: fileURL, options: .atomic)
-                try persistPodcastAnchorEvidence(
-                    request: capture.request,
-                    evidence: [CapturedPodcastAnchorEvidence(
-                        id: evidenceID,
-                        localPath: fileURL.path,
-                        durationMs: capture.durationMs,
-                        anchorOffsetMs: capture.anchorOffsetMs,
-                        provenance: .observedDecodedPlayback,
-                        windowRole: capture.windowRole == .preInterjection ? .preInterjection : .postResume
-                    )],
-                    sourceExactEditionSHA256: nil
-                )
-                diagnostics[Self.marginDiagnosticKey("podcastAnchorEvidence", capture.request)] =
-                    "complete:decoded_playback_\(capture.windowRole.rawValue):bytes=\(capture.signatureData.count)"
             } catch {
-                markPodcastAnchorEvidenceUnavailable(
-                    request: capture.request,
-                    reason: "stream_signature_persistence_failed:\(error.localizedDescription)"
-                )
+                let request = capture.request
+                let reason = "stream_signature_persistence_failed:\(error.localizedDescription)"
+                Task.detached { [weak self] in
+                    await self?.markPodcastAnchorEvidenceUnavailable(request: request, reason: reason)
+                }
+                return
+            }
+            Task.detached { [weak self] in
+                do {
+                    try await self?.persistPodcastAnchorEvidence(
+                        request: capture.request,
+                        evidence: [CapturedPodcastAnchorEvidence(
+                            id: evidenceID,
+                            localPath: fileURL.path,
+                            durationMs: capture.durationMs,
+                            anchorOffsetMs: capture.anchorOffsetMs,
+                            provenance: .observedDecodedPlayback,
+                            windowRole: capture.windowRole == .preInterjection ? .preInterjection : .postResume
+                        )],
+                        sourceExactEditionSHA256: nil
+                    )
+                    await MainActor.run {
+                        self?.diagnostics[Self.marginDiagnosticKey("podcastAnchorEvidence", capture.request)] =
+                            "complete:decoded_playback_\(capture.windowRole.rawValue):bytes=\(capture.signatureData.count)"
+                    }
+                } catch {
+                    await self?.markPodcastAnchorEvidenceUnavailable(
+                        request: capture.request,
+                        reason: "stream_signature_persistence_failed:\(error.localizedDescription)"
+                    )
+                }
             }
         case .landmark(let landmark):
             saveSparseEpisodeFingerprintLandmark(landmark)
         case .failed(let request, let reason):
-            if let interjection = recordPodcastAnchorEvidenceFailureReason(request: request, reason: "stream_failed:\(reason)") {
-                diagnostics[Self.marginDiagnosticKey("podcastAnchorEvidence", request)] = "stream_failed:\(reason)"
-                schedulePodcastAnchorEvidenceCapture(for: interjection)
-            } else {
-                markPodcastAnchorEvidenceUnavailable(request: request, reason: reason)
+            Task.detached { [weak self] in
+                guard let self else { return }
+                if let interjection = await self.recordPodcastAnchorEvidenceFailureReason(request: request, reason: "stream_failed:\(reason)") {
+                    await MainActor.run {
+                        self.diagnostics[Self.marginDiagnosticKey("podcastAnchorEvidence", request)] = "stream_failed:\(reason)"
+                        self.schedulePodcastAnchorEvidenceCapture(for: interjection)
+                    }
+                } else {
+                    await self.markPodcastAnchorEvidenceUnavailable(request: request, reason: reason)
+                }
             }
         }
     }
@@ -220,21 +240,30 @@ extension Gate1AppModel {
         return records.first { $0.id == request.interjectionId && $0.itemId == request.itemId }
     }
 
+    /// Applies one change to a Margin's anchor evidence off the main thread, one at a time in the order asked (#2509).
+    /// Nil when there is no store or no such Margin.
+    private func editPodcastAnchorEvidence(
+        _ change: PodcastAnchorEvidenceEdits.Change,
+        request: PostResumeAudioSampleRequest
+    ) async throws -> Interjection? {
+        guard let store else { return nil }
+        let (interjectionId, itemId, sessionId) = (request.interjectionId, request.itemId, request.sessionId)
+        return try await StoreReader(store).readInOrder(PodcastAnchorEvidenceEdits.orderKey) { store in
+            try PodcastAnchorEvidenceEdits.apply(
+                change, interjectionId: interjectionId, itemId: itemId, sessionId: sessionId, in: store
+            )
+        }
+    }
+
     func persistPodcastAnchorEvidence(
         request: PostResumeAudioSampleRequest,
         evidence: [CapturedPodcastAnchorEvidence],
         sourceExactEditionSHA256: String?
-    ) throws {
-        guard let store,
-              let interjection = try store.loadInterjections(sessionId: request.sessionId)
-                .first(where: { $0.id == request.interjectionId && $0.itemId == request.itemId }) else {
+    ) async throws {
+        let change = PodcastAnchorEvidenceEdits.Change.merge(evidence, sourceExactEditionSHA256: sourceExactEditionSHA256)
+        guard try await editPodcastAnchorEvidence(change, request: request) != nil else {
             throw SessionKitError.persistenceFailed("podcast_anchor_interjection_missing")
         }
-        try store.saveInterjection(PodcastAnchorEvidenceRecord.merging(
-            evidence,
-            sourceExactEditionSHA256: sourceExactEditionSHA256,
-            into: interjection
-        ))
         if activeItemId == request.itemId {
             refreshSelectedItemInBackground()
         }
@@ -243,17 +272,11 @@ extension Gate1AppModel {
     private func markPodcastAnchorEvidenceUnavailable(
         request: PostResumeAudioSampleRequest,
         reason: String
-    ) {
-        guard let store,
-              let records = try? store.loadInterjections(sessionId: request.sessionId),
-              let stored = records.first(where: {
-                  $0.id == request.interjectionId && $0.itemId == request.itemId
-              }) else {
+    ) async {
+        guard let interjection = try? await editPodcastAnchorEvidence(.markUnavailable(reason: reason), request: request) else {
             diagnostics[Self.marginDiagnosticKey("podcastAnchorEvidence", request)] = "unavailable:\(reason)"
             return
         }
-        let interjection = PodcastAnchorEvidenceRecord.markingUnavailable(stored, reason: reason)
-        try? store.saveInterjection(interjection)
         if activeItemId == request.itemId {
             refreshSelectedItemInBackground()
         }
@@ -262,13 +285,8 @@ extension Gate1AppModel {
         scheduleSourceWindowContextIfNeeded(for: interjection)
     }
 
-    private func markPodcastAnchorEvidencePendingLocal(request: PostResumeAudioSampleRequest) {
-        guard let store,
-              let records = try? store.loadInterjections(sessionId: request.sessionId),
-              let stored = records.first(where: {
-                  $0.id == request.interjectionId && $0.itemId == request.itemId
-              }) else { return }
-        try? store.saveInterjection(PodcastAnchorEvidenceRecord.markingPendingLocalCapture(stored))
+    private func markPodcastAnchorEvidencePendingLocal(request: PostResumeAudioSampleRequest) async {
+        guard (try? await editPodcastAnchorEvidence(.markPendingLocalCapture, request: request)) != nil else { return }
         if activeItemId == request.itemId {
             refreshSelectedItemInBackground()
         }
@@ -278,10 +296,7 @@ extension Gate1AppModel {
     private func recordPodcastAnchorEvidenceFailureReason(
         request: PostResumeAudioSampleRequest,
         reason: String
-    ) -> Interjection? {
-        guard let stored = storedInterjection(request: request) else { return nil }
-        let interjection = PodcastAnchorEvidenceRecord.recordingFailureReason(reason, on: stored)
-        try? store?.saveInterjection(interjection)
-        return interjection
+    ) async -> Interjection? {
+        try? await editPodcastAnchorEvidence(.recordFailureReason(reason), request: request)
     }
 }

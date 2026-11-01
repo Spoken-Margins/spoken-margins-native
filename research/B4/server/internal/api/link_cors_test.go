@@ -222,7 +222,9 @@ func TestLinkCORSOtherRoutesRefuse(t *testing.T) {
 		t.Fatalf("upload: %d %s", w.Code, w.Body)
 	}
 	noCORS(t, "upload", w)
-	w = corsRequest(h, "POST", "/l/"+id+"/report", webApp, nil, []byte("reason=privacy"), "application/x-www-form-urlencoded")
+	// A report takes its link down, so it files against a second link.
+	reported := createdLink(t, h)
+	w = corsRequest(h, "POST", "/l/"+reported+"/report", webApp, nil, []byte("category=copyright"), "application/x-www-form-urlencoded")
 	if w.Code != 200 {
 		t.Fatalf("report: %d %s", w.Code, w.Body)
 	}

@@ -8,6 +8,8 @@
 //	smserver validate-manifest FILE
 //	smserver publish-manifest -public DIR FILE   the only way the manifest should change
 //	smserver takedown-map -state DIR EPISODEKEY   delete a listening map at once and keep it down
+//	smserver hold    -state DIR -report REPORTID [-link-file FILE|-] ID   hold a CyberTipline-reported link for a year
+//	smserver release-hold -state DIR -reason TEXT ID   end a hold early and delete the held copy
 //	smserver make-test-ca DIR            a fake Apple CA for local testing
 //
 // Admin is CLI-only, on the box: there is no remote admin endpoint to attack.
@@ -18,6 +20,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -26,6 +29,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode"
 
 	"spokenmargins.dev/bridge/internal/api"
 	"spokenmargins.dev/bridge/internal/appattest"
@@ -35,6 +39,8 @@ import (
 	"spokenmargins.dev/bridge/internal/manifest"
 	"spokenmargins.dev/bridge/internal/maps"
 	"spokenmargins.dev/bridge/internal/relay"
+	"spokenmargins.dev/bridge/internal/reportrules"
+	"spokenmargins.dev/bridge/internal/reports"
 	"spokenmargins.dev/bridge/internal/store"
 	"spokenmargins.dev/bridge/internal/tokens"
 	"spokenmargins.dev/bridge/internal/weborigin"
@@ -71,6 +77,12 @@ func main() {
 		err = takedownLink(args)
 	case "takedown-map":
 		err = takedownMap(args)
+	case "hold":
+		err = holdLink(args)
+	case "release-hold":
+		err = releaseHold(args)
+	case "reports":
+		err = listReports(args, os.Stdout, time.Now())
 	default:
 		usage()
 	}
@@ -81,7 +93,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: smserver serve|block|unblock|switch|purge|validate-manifest|publish-manifest|make-test-ca|takedown|takedown-map [flags]")
+	fmt.Fprintln(os.Stderr, "usage: smserver serve|block|unblock|switch|purge|validate-manifest|publish-manifest|make-test-ca|takedown|takedown-map|hold|release-hold|reports [flags]")
 	os.Exit(2)
 }
 
@@ -144,6 +156,13 @@ func serve(args []string) error {
 		log.Print("links: unavailable")
 		linkStore = nil
 	}
+	// Links come up only with somewhere to record a report (#2239): a link nobody can report is not served.
+	reportStore, err := reports.Open(filepath.Join(*stateDir, "reports"))
+	if err != nil {
+		log.Print("reports: unavailable, links off")
+		reportStore = nil
+		linkStore = nil
+	}
 	rootPEM := appattest.AppleRootPEM()
 	if *rootPath != "" {
 		data, err := os.ReadFile(*rootPath)
@@ -197,6 +216,7 @@ func serve(args []string) error {
 		Maps:              mapService,
 		Tokens:            issuer,
 		Links:             linkStore,
+		Reports:           reportStore,
 		LinkInstallURL:    *installURL,
 		Relay:             feedRelay,
 		LinkOrigins:       webOrigins,
@@ -239,6 +259,19 @@ func serve(args []string) error {
 					log.Print("links: daily sweep failed")
 				} else if n > 0 {
 					log.Printf("links: swept %d expired packets", n)
+				}
+				if n, err := linkStore.SweepHeld(time.Now()); err != nil {
+					log.Print("links: held-link sweep failed")
+				} else if n > 0 {
+					log.Printf("links: deleted %d held links at one year", n)
+				}
+			}
+			if reportStore != nil {
+				cfg := reportrules.DefaultConfig()
+				if n, err := reportStore.Sweep(time.Now(), cfg.ReasonWindow, cfg.StrikeWindow); err != nil {
+					log.Print("reports: daily sweep failed")
+				} else if n > 0 {
+					log.Printf("reports: deleted %d records past 90 days", n)
 				}
 			}
 			if n, err := st.Purge(time.Now(), *idleDays); err != nil {
@@ -461,4 +494,133 @@ func takedownLink(args []string) error {
 	}
 	fmt.Println("shared link removed")
 	return nil
+}
+
+const maxReportedLink = 64 << 10
+
+// holdLink moves a reported link into restricted storage for a year and takes it down (#2235). The
+// reported link, key included, is read from -link-file (or stdin with "-") and stored unread; it is
+// never printed or logged.
+func holdLink(args []string) error {
+	fs := flag.NewFlagSet("hold", flag.ExitOnError)
+	state := fs.String("state", "state", "state directory")
+	report := fs.String("report", "", "the CyberTipline report id")
+	linkFile := fs.String("link-file", "", "file holding the full reported link, or - for stdin")
+	fs.Parse(args)
+	if fs.NArg() != 1 || *report == "" {
+		return errors.New("usage: smserver hold -state DIR -report REPORTID [-link-file FILE|-] ID")
+	}
+	var full []byte
+	switch *linkFile {
+	case "":
+	case "-":
+		data, err := io.ReadAll(io.LimitReader(os.Stdin, maxReportedLink+1))
+		if err != nil {
+			return err
+		}
+		full = data
+	default:
+		data, err := os.ReadFile(*linkFile)
+		if err != nil {
+			return err
+		}
+		full = data
+	}
+	if *linkFile != "" && (len(full) == 0 || len(full) > maxReportedLink) {
+		return fmt.Errorf("the reported link must be between 1 and %d bytes", maxReportedLink)
+	}
+	st, err := links.OpenStore(filepath.Join(*state, "links"))
+	if err != nil {
+		return err
+	}
+	if err := st.HoldByOwner(fs.Arg(0), *report, full, time.Now()); err != nil {
+		return err
+	}
+	fmt.Println("link taken down and held for one year")
+	return nil
+}
+
+func releaseHold(args []string) error {
+	fs := flag.NewFlagSet("release-hold", flag.ExitOnError)
+	state := fs.String("state", "state", "state directory")
+	reason := fs.String("reason", "", "why the hold ends early (goes in the access log)")
+	fs.Parse(args)
+	if fs.NArg() != 1 || *reason == "" {
+		return errors.New("usage: smserver release-hold -state DIR -reason TEXT ID")
+	}
+	st, err := links.OpenStore(filepath.Join(*state, "links"))
+	if err != nil {
+		return err
+	}
+	if err := st.ReleaseHeld(fs.Arg(0), *reason, time.Now()); err != nil {
+		return err
+	}
+	fmt.Println("hold ended and the held copy deleted")
+	return nil
+}
+
+// listReports prints the filed "Report this link" records so the owner can see them (#2846). It shows
+// the report reference, the date, the category, the link id, what the link is now, and the reporter's
+// written reason. It never opens a link's content, and a link pasted into a reason is shown without its
+// key in every category. A reason is a stranger's text, so control characters are dropped and it prints
+// on one line: it cannot move the cursor or fake another report.
+func listReports(args []string, out io.Writer, now time.Time) error {
+	fs := flag.NewFlagSet("reports", flag.ContinueOnError)
+	state := fs.String("state", "state", "state directory")
+	since := fs.Duration("since", 0, "only reports filed in the last DURATION, such as 24h or 168h (default: all kept)")
+	category := fs.String("category", "", "only this category")
+	fs.SetOutput(io.Discard)
+	if err := fs.Parse(args); err != nil {
+		return errors.New("usage: smserver reports -state DIR [-since DURATION] [-category CATEGORY]")
+	}
+	if fs.NArg() != 0 || *since < 0 {
+		return errors.New("usage: smserver reports -state DIR [-since DURATION] [-category CATEGORY]")
+	}
+	if *category != "" {
+		if _, err := reportrules.ParseCategory(*category); err != nil {
+			return fmt.Errorf("unknown category %q (one of %v)", *category, reportrules.Categories())
+		}
+	}
+	recs, err := reports.List(filepath.Join(*state, "reports"))
+	if err != nil {
+		return err
+	}
+	linksDir := filepath.Join(*state, "links")
+	shown := 0
+	for _, r := range recs {
+		if *category != "" && string(r.Category) != *category {
+			continue
+		}
+		if *since > 0 && now.Sub(r.At) > *since {
+			continue
+		}
+		fmt.Fprintf(out, "%s  %s  %-16s  link %s  %s\n", r.Ref, r.At.UTC().Format("2006-01-02 15:04Z"), r.Category, r.LinkID, linkStatus(linksDir, r.LinkID, now))
+		if r.Reason != "" {
+			fmt.Fprintf(out, "    reason: %s\n", oneLine(reports.RedactKeys(r.Reason)))
+		}
+		shown++
+	}
+	fmt.Fprintf(out, "%d report(s)\n", shown)
+	return nil
+}
+
+// linkStatus says what a reported link is now. "STILL SERVED" means the report did not take it down,
+// and "disabled, NOT held yet" is an abuse-material link a cap or failure parked: run `smserver
+// takedown` on the first (and `hold` first for abuse material), and `hold` on the second.
+func linkStatus(dir, id string, now time.Time) string {
+	st, err := links.ReadStatus(dir, id, now)
+	if err != nil {
+		return "unknown (" + err.Error() + ")"
+	}
+	return string(st)
+}
+
+// oneLine drops control characters (newlines and escapes included) so stranger text stays on its line.
+func oneLine(text string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || unicode.Is(unicode.Zl, r) || unicode.Is(unicode.Zp, r) {
+			return ' '
+		}
+		return r
+	}, text)
 }

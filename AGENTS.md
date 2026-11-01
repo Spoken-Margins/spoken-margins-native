@@ -80,7 +80,7 @@ The owner's words and the detail are in [docs/decisions.md](docs/decisions.md) u
 - **Protect owner data.** Never reset, reseed or delete the owner's Library or recordings. Storage changes must let the previous build still open the database.
 - **Keep evidence local.** `artifacts/` is git-ignored; test output, logs, screenshots and recordings stay there, summarized in the commit or PR. Evidence posted on a PR or issue comes only from fixtures and test simulators, never his Library, Margins, recordings or Diagnostics, as Actions artifacts linked from a comment (2026-10-21).
 - **Don't record instructions as documents.** Owner direction lives in the conversation, issues, Current focus and [docs/decisions.md](docs/decisions.md). Don't append directive logs to other docs.
-- **Use GitHub issues** for bugs and feature requests: one issue per problem, with steps, expected and actual behavior, and the build number.
+- **Use GitHub issues** for bugs and feature requests: one issue per problem, with steps, expected and actual behavior, the build number and board Area.
 
 ## Verification
 
@@ -146,6 +146,7 @@ Apple build numbers identify uploads, not milestones: each replacement upload ne
    `PATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH" xcodebuild -exportArchive -archivePath artifacts/SpokenMargins-<build>.xcarchive -exportOptionsPlist scripts/TestFlightUploadOptions.plist -exportPath artifacts/export-<build> -allowProvisioningUpdates`
    The PATH prefix matters: Homebrew's rsync breaks Xcode's packaging step. A warning that onnxruntime.framework has no dSYM is expected and harmless.
    Check App Store Connect does not mark the uploaded build `Internal`, and confirm its version, build number and group assignment before calling the upload complete.
+   Before external assignment, run `scripts/release_gate.py` (#2236).
 5. Tag the archived commit `testflight/0.1-build-N`, and push the tag.
 6. Delete the archive and export folders unless the owner wants them kept.
 

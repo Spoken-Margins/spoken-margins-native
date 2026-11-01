@@ -9,6 +9,7 @@ import copy
 import hashlib
 import http.server
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -134,6 +135,62 @@ class TheShippedSources(unittest.TestCase):
         draft = json.loads(tools.DRAFT.read_text(encoding="utf-8"))
         self.assertEqual(vc.voice_entry(sources, voice), draft["voices"][0])
 
+    def test_a_watched_licence_is_the_pinned_one_so_the_reviewed_hash_is_of_what_check_fetches(self):
+        # `check` fetches `watchURL` (else `textURL`) and compares it with `textSHA256` (#3123). Kokoro watched its
+        # publisher's LICENSE but hashed apache.org's copy, which differs by a leading blank line, so check held a
+        # voice whose terms had not changed. A licence with a `watchURL` must therefore pin the very file it
+        # watches: the same URL with the branch `main` swapped for the revision that was reviewed.
+        mismatched = []
+        for voice in vc.load_sources()["voices"]:
+            for licence in voice["licenses"]:
+                watch = licence.get("watchURL")
+                if not watch:
+                    continue
+                self.assertIn("/main/", watch, f"{licence['id']}: watchURL should follow the main branch")
+                prefix, suffix = watch.split("/main/", 1)
+                if not re.fullmatch(re.escape(prefix) + r"/[0-9a-f]{40}/" + re.escape(suffix), licence["textURL"]):
+                    mismatched.append(f"{voice['id']}/{licence['id']}: textURL {licence['textURL']} is not watchURL pinned to a revision")
+        self.assertEqual(mismatched, [])
+
+    def test_every_shipped_licence_is_clean_against_its_reviewed_text_and_one_changed_word_holds_the_voice(self):
+        # The shipped sources, checked against a network that serves each licence's reviewed copy, hold nothing
+        # (so a blank-line-only mismatch cannot recur); one changed word in one licence holds exactly that voice.
+        sources = copy.deepcopy(vc.load_sources())
+        for voice in sources["voices"]:
+            voice["files"] = []
+            voice.pop("upstreamArchives", None)
+
+        class Licences:
+            def __init__(self):
+                self.served = {}
+                for voice in sources["voices"]:
+                    for licence in voice["licenses"]:
+                        text = (vc.SOURCES_PATH.parent / licence["reviewedText"]).read_bytes()
+                        self.served[licence.get("watchURL") or licence["textURL"]] = text
+
+            def get(self, url, limit=0):
+                return (200, self.served[url]) if url in self.served else (404, b"")
+
+            def head(self, url):
+                return {"status": 404, "size": None, "etag": None, "error": None}
+
+        def run(network):
+            with tempfile.TemporaryDirectory() as folder:
+                return vc.check(sources, Path(folder), http=network, now=NOW, out=lambda _: None)
+
+        network = Licences()
+        report = run(network)
+        self.assertEqual({v: r["problems"] for v, r in report["voices"].items()}, {v: [] for v in report["voices"]})
+
+        kokoro = next(v for v in sources["voices"] if v["id"] == "kokoro-82m")
+        url = kokoro["licenses"][0].get("watchURL") or kokoro["licenses"][0]["textURL"]
+        network.served[url] = network.served[url].replace(b"Licensed under", b"Licenced under", 1)
+        self.assertNotEqual(network.served[url], (vc.SOURCES_PATH.parent / kokoro["licenses"][0]["reviewedText"]).read_bytes())
+        report = run(network)
+        held = {v for v, r in report["voices"].items() if r["held"]}
+        self.assertEqual(held, {"kokoro-82m"})
+        self.assertEqual(report["voices"]["kokoro-82m"]["problems"][0]["kind"], "licence-changed")
+
     def test_the_built_catalog_passes_the_schema(self):
         sources = vc.load_sources()
         payload = {"schemaVersion": "voice-model-catalog.v1", "catalogVersion": 1, "issuedAt": "2026-10-18T00:00:00Z",
@@ -168,6 +225,39 @@ class TheShippedSources(unittest.TestCase):
                 with self.subTest(voice=voice["id"], path=file["path"]):
                     self.assertFalse(file.get("mirrored"))
                     self.assertFalse(any(url.startswith(site) for url in vc.file_source_urls(sources, voice, file)))
+
+    def test_the_committed_site_catalog_downloads_nothing_from_the_owners_server(self):
+        # #2086: catalog version 1 (Site/voices/v1/) sent every Supertonic file to voices/files/ on the owner's server,
+        # long after sources.json stopped mirroring it, because nobody re-signed it.
+        sources = vc.load_sources()
+        site = sources["site"]["baseURL"]
+        catalog = vc.published_payload(vc.SITE_DIR)
+        self.assertIsNotNone(catalog)
+        for voice in catalog["voices"]:
+            urls = [url for file in voice["files"] for url in file.get("sources", [])]
+            urls += [url for archive in voice.get("archives", []) for url in archive["sources"]]
+            with self.subTest(voice=voice["id"]):
+                self.assertEqual([url for url in urls if url.startswith(site)], [])
+
+    def test_the_committed_site_manifest_describes_the_committed_catalog(self):
+        catalog_bytes = (vc.SITE_DIR / vc.CATALOG_REL).read_bytes()
+        manifest = json.loads((vc.SITE_DIR / vc.MANIFEST_REL).read_text(encoding="utf-8"))
+        self.assertEqual(manifest["contentVersion"], vc.published_payload(vc.SITE_DIR)["catalogVersion"])
+        self.assertEqual(manifest["catalogChecksumSHA256"], vc.sha256_hex(catalog_bytes))
+        self.assertEqual(manifest["catalogByteCount"], len(catalog_bytes))
+
+    def test_the_committed_site_page_is_what_the_tool_renders(self):
+        # `page` rewrites Site/voices/index.html whole, so a hand edit there is lost at the next publish: #3063's
+        # "Copyright and DMCA" footer link was. Change render_page instead, then run `page`.
+        catalog = vc.published_payload(vc.SITE_DIR)
+        self.assertEqual((vc.SITE_DIR / vc.PAGE_REL).read_text(encoding="utf-8"), vc.render_page(catalog, vc.load_sources()))
+
+    @unittest.skipUnless(HAVE_CRYPTO, "cryptography is not installed")
+    def test_the_committed_site_catalog_is_signed_by_a_key_the_app_trusts(self):
+        envelope = json.loads((vc.SITE_DIR / vc.CATALOG_REL).read_text(encoding="utf-8"))
+        keys = vc.trusted_keys()
+        self.assertIn(envelope["keyId"], keys)
+        self.assertTrue(vc.envelope_signature_ok(envelope, keys[envelope["keyId"]]))
 
     def test_the_four_int8_graphs_come_from_the_pinned_sherpa_onnx_hugging_face_repo(self):
         sources = vc.load_sources()
@@ -790,6 +880,25 @@ class TheSitePage(unittest.TestCase):
 
     def test_the_same_catalog_always_renders_the_same_page(self):
         self.assertEqual(vc.render_page(self.catalog, self.sources), vc.render_page(copy.deepcopy(self.catalog), self.sources))
+
+    def test_a_file_carried_as_text_or_taken_from_an_archive_is_listed_and_its_archive_host_named(self):
+        # #2086: the page read every file's "sources", so catalog version 2 (Supertonic's MODIFIED.txt carried as text,
+        # Phonon's files inside a pinned archive) could not be rendered at all.
+        voice = self.catalog["voices"][0]
+        voice["files"][1] = {"path": "MODIFIED.txt", "byteCount": 5, "sha256": "0" * 64, "content": "note\n"}
+        voice["files"].append({"path": "inside.onnx", "byteCount": 7, "sha256": "1" * 64, "archiveMember": {"archive": "pack", "member": "x/inside.onnx"}})
+        voice["archives"] = [{"id": "pack", "format": "tar.bz2", "byteCount": 9, "sha256": "2" * 64, "sources": ["https://archives.example/pack.tar.bz2"]}]
+        page = vc.render_page(self.catalog, self.sources)
+        for expected in ("MODIFIED.txt", "inside.onnx", "archives.example"):
+            self.assertIn(expected, page)
+
+    def test_a_voice_with_no_mirrored_file_does_not_mention_a_mirror(self):
+        for voice in self.catalog["voices"]:
+            for file in voice["files"]:
+                file["sources"] = [url for url in file.get("sources", []) if not url.startswith(self.sources["site"]["baseURL"])] or ["https://publisher.example/f"]
+        page = vc.render_page(self.catalog, self.sources)
+        self.assertNotIn("mirror", page)
+        self.assertIn("publisher.example", page)
 
 
 @unittest.skipUnless(HAVE_CRYPTO, "needs the cryptography package")

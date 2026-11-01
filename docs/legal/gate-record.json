@@ -1,0 +1,22 @@
+{
+  "_about": "The owner's gate record for external TestFlight builds with share-link creation on (#2236). scripts/release_gate.py reads it. It holds nothing beyond what the public DMCA Directory lists. The owner edits it; agents never mark a line true.",
+  "llc": {
+    "formed": true,
+    "approved_on": "2026-10-28"
+  },
+  "dmca_agent": {
+    "registered": false,
+    "registration_number": null,
+    "registered_on": null,
+    "page_url": null,
+    "page_live": false
+  },
+  "insurance": {
+    "in_place": false
+  },
+  "waiver": {
+    "granted_on": "2026-10-28",
+    "no_revenue": true,
+    "external_testers": 0
+  }
+}

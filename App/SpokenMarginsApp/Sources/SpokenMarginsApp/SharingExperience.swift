@@ -272,7 +272,7 @@ struct InterjectionSharingView: View {
                             }
 
                             Button {
-                                model.exportSharedInterjections()
+                                Task { await model.exportSharedInterjections() }
                             } label: {
                                 if model.sharingState.isExporting {
                                     ProgressView().frame(maxWidth: .infinity)

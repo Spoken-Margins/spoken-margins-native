@@ -17,7 +17,7 @@ import ShippedPacketReader
 /// the same file.
 @MainActor
 final class SharedMarginAppExportTests: XCTestCase {
-    func testExportedPacketCarriesEachMarginsOwnAnchorEvidenceAndVoice() throws {
+    func testExportedPacketCarriesEachMarginsOwnAnchorEvidenceAndVoice() async throws {
         let root = FileManager.default.temporaryDirectory
             .appending(path: "shared-margin-app-export-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -78,7 +78,7 @@ final class SharedMarginAppExportTests: XCTestCase {
         model.prepareShareInterjections()
         XCTAssertEqual(model.sharingState.drafts.map(\.representationChoice), [.original, .original, .textOnly],
                        "A Margin with a recording defaults to sending its own voice")
-        model.exportSharedInterjections(presentsReadySheet: false)
+        await model.exportSharedInterjections(presentsReadySheet: false)
         XCTAssertNil(model.sharingState.errorMessage)
         let packetURL = try XCTUnwrap(model.sharedSpokenMarginsPackageURL)
         defer { try? FileManager.default.removeItem(at: packetURL) }
@@ -161,7 +161,7 @@ final class SharedMarginAppExportTests: XCTestCase {
     /// artifact, writes nothing for a Margin that is not a reply, and the last shipped build imports the same file
     /// with both as ordinary Margins. The parent's audio is not part of the packet: only the listener's own
     /// Margins are exported.
-    func testExportedPacketCarriesAReplysLinkAndBuild29ReadsItAsAnOrdinaryMargin() throws {
+    func testExportedPacketCarriesAReplysLinkAndBuild29ReadsItAsAnOrdinaryMargin() async throws {
         let root = FileManager.default.temporaryDirectory
             .appending(path: "shared-margin-app-reply-export-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -195,7 +195,7 @@ final class SharedMarginAppExportTests: XCTestCase {
         model.selectedItem.interjections = [reply, plain]
 
         model.prepareShareInterjections()
-        model.exportSharedInterjections(presentsReadySheet: false)
+        await model.exportSharedInterjections(presentsReadySheet: false)
         XCTAssertNil(model.sharingState.errorMessage)
         let packetURL = try XCTUnwrap(model.sharedSpokenMarginsPackageURL)
         defer { try? FileManager.default.removeItem(at: packetURL) }
@@ -214,6 +214,23 @@ final class SharedMarginAppExportTests: XCTestCase {
             .sorted { $0.packageScopedId < $1.packageScopedId }
         XCTAssertEqual(shipped.map(\.packageScopedId), ["margin-0001", "margin-0002"], ShippedPacketReader.build)
         XCTAssertEqual(shipped.map(\.approvedTranscript), ["I saw that too.", "He always asks too late."])
+    }
+
+    /// The archive is now written while the main thread stays free (#2510), so a second tap can arrive mid-build.
+    /// It must do nothing: no second packet, no error banner over the one being built.
+    func testASecondExportWhileOneIsRunningDoesNothing() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "shared-margin-app-export-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: root.appending(path: "library.sqlite"))
+        model.resetAndSeed()
+        model.sharingState.isExporting = true
+        let url = await model.exportSharedInterjections(presentsReadySheet: false)
+        XCTAssertNil(url, "a call that wrote nothing returns no file, so a preview never reuses an older packet")
+        XCTAssertNil(model.sharingState.errorMessage, "a second call returns before it checks anything")
+        XCTAssertNil(model.sharedSpokenMarginsPackageURL)
+        XCTAssertTrue(model.sharingState.isExporting, "the running build still owns the flag")
     }
 
     private func margin(
