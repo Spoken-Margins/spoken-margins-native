@@ -143,6 +143,12 @@ def stale_hold_seconds():
         return STALE_HOLD_SECONDS
 
 
+def _started_stamp():
+    """Now with its UTC offset. A naive local stamp is ambiguous in the hour the clocks go back, and a hold
+    taken then read an hour too old, so a young simulator hold looked stale and was reclaimed (#3149, #3150)."""
+    return datetime.datetime.now(datetime.timezone.utc).astimezone().isoformat(timespec='seconds')
+
+
 def _held_for(holder, now):
     """Seconds since the holder took the lock, or None when its note has no readable start."""
     try:
@@ -334,7 +340,7 @@ def acquire(names, what, label, out=sys.stderr, max_wait=None, allowed=None, why
             handle.seek(0)
             handle.truncate()
             handle.write(json.dumps({'pid': os.getpid(), 'cwd': os.getcwd(), 'label': label,
-                                     'started': datetime.datetime.now().isoformat(timespec='seconds')}))
+                                     'started': _started_stamp()}))
             handle.flush()
             taken = (handle, index)
             break

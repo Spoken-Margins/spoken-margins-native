@@ -238,12 +238,44 @@ class StaleSimulatorHoldTests(unittest.TestCase):
                                     str(path)], stdout=subprocess.PIPE, text=True, start_new_session=True)
         self.addCleanup(lambda: (process.kill(), process.wait(), process.stdout.close()))
         self.assertEqual(process.stdout.readline().strip(), 'locked')
-        started = (datetime.datetime.now() - datetime.timedelta(hours=started_hours_ago)).isoformat(timespec='seconds')
+        started = ((datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=started_hours_ago))
+                   .astimezone().isoformat(timespec='seconds'))
         note = {'pid': self.dead_pid, 'cwd': '/desk', 'label': 'lane-sim-boot a desk pool device', 'started': started}
         if with_watcher:
             note.update(udid=udid, watcher_pid=process.pid)
         path.write_text(json.dumps(note))
         return process
+
+    def test_a_hold_taken_in_the_hour_the_clocks_go_back_is_not_read_an_hour_too_old(self):
+        # 2026-11-01 07:16Z is 01:16 CST, the second pass through 01:00 in Chicago. A naive local stamp read back as
+        # 01:16 CDT, an hour early, so a hold taken now looked 90 minutes old after 30 (#3149, #3150).
+        slots = self.slots
+        instant = datetime.datetime(2026, 11, 1, 7, 16, tzinfo=datetime.timezone.utc)
+
+        class Frozen(datetime.datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return instant.astimezone(tz) if tz else instant.astimezone().replace(tzinfo=None)
+
+        previous = os.environ.get('TZ')
+        os.environ['TZ'] = 'America/Chicago'
+        time.tzset()
+
+        def restore():
+            if previous is None:
+                os.environ.pop('TZ', None)
+            else:
+                os.environ['TZ'] = previous
+            time.tzset()
+
+        self.addCleanup(restore)
+        with unittest.mock.patch.object(slots.datetime, 'datetime', Frozen):
+            handle, _, _ = slots.acquire(slots.SIMULATOR_SLOTS[:1], 'simulator slot', 'T3', out=self.quiet, max_wait=0)
+        self.addCleanup(slots.release_handle, handle)
+        holder = slots.simulator_holders()[0]
+        half_hour_later = instant.timestamp() + 1800
+        self.assertEqual(slots._held_for(holder, half_hour_later), 1800)
+        self.assertEqual(slots.stale_holders([{**holder, 'gone': True}], now=half_hour_later, max_age=3600), [])
 
     def test_a_gone_taker_s_young_hold_is_not_stale(self):
         self.holder_process(started_hours_ago=0.5)
