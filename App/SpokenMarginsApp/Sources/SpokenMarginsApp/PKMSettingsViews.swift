@@ -213,6 +213,7 @@ struct ListeningEditionImportScreen: View {
     @State private var nextEntryID = 0
     @State private var results: [ListeningEditionBatch.Line] = []
     @State private var loadingForReview = false
+    @State private var isImporting = false
     @FocusState private var editingJSON: Bool
     private static let pastedEntryID = -1
 
@@ -305,12 +306,12 @@ struct ListeningEditionImportScreen: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("listeningEdition.result")
                 }
-                Button(action: importAll) {
+                Button(action: { Task { await importAll() } }) {
                     Text(ListeningEditionBatch.buttonTitle(count: importCount))
                         .font(.headline).frame(maxWidth: .infinity, minHeight: 44)
                 }
                 .filledActionButton()
-                .disabled(importCount == 0)
+                .disabled(importCount == 0 || isImporting)
                 .accessibilityIdentifier("listeningEdition.import")
             }
             .padding(.horizontal, 16)
@@ -351,7 +352,11 @@ struct ListeningEditionImportScreen: View {
         message = ""
     }
 
-    private func importAll() {
+    private func importAll() async {
+        // The edition files are read and written off the main thread (#2510), so a second tap could arrive mid-import.
+        guard !isImporting else { return }
+        isImporting = true
+        defer { isImporting = false }
         editingJSON = false
         var entries = picked
         if hasPastedJSON {
@@ -362,11 +367,11 @@ struct ListeningEditionImportScreen: View {
         // One edition is imported and opened, as it always was. Several are saved where the listener is.
         if entries.count == 1, let single = entries[0].edition {
             let replace = entries[0].id == Self.pastedEntryID && replaceMap
-            if model.importListeningEdition(single, replaceMap: replace) { picked = []; json = ""; edition = nil; replaceMap = false }
+            if await model.importListeningEdition(single, replaceMap: replace) { picked = []; json = ""; edition = nil; replaceMap = false }
             else { message = model.lastError ?? "The edition could not be imported."; messageIsFailure = true }
             return
         }
-        let lines = model.importListeningEditions(entries)
+        let lines = await model.importListeningEditions(entries)
         results = lines
         let done = Set(lines.filter { $0.outcome.isSuccess }.map(\.id))
         // What imported leaves the list; what did not stays, so it can be fixed, reviewed on its own, or removed.
