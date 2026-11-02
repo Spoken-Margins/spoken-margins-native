@@ -127,8 +127,14 @@ final class SharedMarginAppExportTests: XCTestCase {
             let descriptor = try XCTUnwrap(packet.manifest.assets.first { $0.id == assetID })
             XCTAssertEqual(descriptor.role, SpokenMarginsAssetRole.originalVoice, expected.record.packageScopedId)
             let assetURL = try XCTUnwrap(packet.extractedAssetURLs[assetID], expected.record.packageScopedId)
-            XCTAssertEqual(try Data(contentsOf: assetURL), try Data(contentsOf: expected.source),
+            // The voice goes out re-encoded smaller (#3218), so its bytes differ from the recording; it is still this
+            // Margin's own recording, told apart by its length, and never larger than the recording.
+            XCTAssertTrue(model.diagnostics["lastSharedPackageAudio"]?.contains("failed=0") == true,
+                          "the encoder ran without failing: \(model.diagnostics["lastSharedPackageAudio"] ?? "nil")")
+            let sentSeconds = try Self.seconds(of: assetURL)
+            XCTAssertEqual(sentSeconds, expected.seconds, accuracy: 0.2,
                            "\(expected.record.packageScopedId) must carry its own Margin's recording")
+            XCTAssertLessThanOrEqual(try Data(contentsOf: assetURL).count, try Data(contentsOf: expected.source).count)
             let durationMs = try XCTUnwrap(descriptor.durationMs, expected.record.packageScopedId)
             XCTAssertEqual(Double(durationMs), expected.seconds * 1_000, accuracy: 150, expected.record.packageScopedId)
             voiceDurations.append(durationMs)
@@ -301,6 +307,11 @@ final class SharedMarginAppExportTests: XCTestCase {
         let range = try XCTUnwrap(text.range(of: phrase), "\(phrase) is missing from the imported text")
         let start = text.distance(from: text.startIndex, to: range.lowerBound)
         return start..<(start + phrase.count)
+    }
+
+    private static func seconds(of url: URL) throws -> Double {
+        let file = try AVAudioFile(forReading: url)
+        return Double(file.length) / file.processingFormat.sampleRate
     }
 
     /// Writes a real AAC recording of a sine tone.

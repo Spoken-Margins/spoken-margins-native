@@ -162,7 +162,7 @@ private struct Build23RecipientSharingHost: View {
         case .text:
             .pastedText
         case .pdf, .epub:
-            .documentOrBook
+            .importFromFiles
         case .other:
             .linkOrPodcast
         }

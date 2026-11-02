@@ -6,14 +6,15 @@
   requests that leave out the if-changed flag build immediately. The script keeps its Release cache and handles
   one build at a time, memory/disk guards, test evidence and failed-tip suppression. Not installed by the PR.
 
-  Install (once, from the main checkout):
+  Install (once, from the ops checkout, ~/SpokenMarginsOps/repo):
     run ops/install-launchd.py with its install option and the job name phone-build (this file holds
     a home-folder placeholder; copying it into ~/Library/LaunchAgents/ as is would load a broken job)
   Remove:
     the same script with its remove option (see docs/scheduled-jobs.md)
 
-  It runs the main checkout's copy, which the hourly Mac tick fast-forwards to origin/main. A
-  LaunchAgent runs in the owner's login session, so signing can use his login keychain.
+  It runs the ops checkout's copy (#2372). Every run of the job first moves that checkout to origin/main
+  (scripts/ops_checkout.py), so a session that switches branches in the development checkout cannot change
+  what the job runs. A LaunchAgent runs in the owner's login session, so signing can use his login keychain.
 -->
 <plist version="1.0">
 <dict>
@@ -22,15 +23,17 @@
   <key>ProgramArguments</key>
   <array>
     <string>/usr/bin/python3</string>
-    <string>@HOME@/Documents/GitHub/spoken-margins-native/scripts/phone-build</string>
+    <string>@HOME@/SpokenMarginsOps/repo/scripts/phone-build</string>
     <string>--if-changed</string>
   </array>
   <key>WorkingDirectory</key>
-  <string>@HOME@/Documents/GitHub/spoken-margins-native</string>
+  <string>@HOME@/SpokenMarginsOps/repo</string>
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
     <string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>SM_PIN_CHECKOUT</key>
+    <string>@HOME@/SpokenMarginsOps/repo</string>
   </dict>
   <key>StartInterval</key>
   <integer>600</integer>

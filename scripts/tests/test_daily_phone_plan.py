@@ -446,5 +446,31 @@ class ValidatorTests(unittest.TestCase):
             self.assertEqual(daily.validator_command(), ['/x/phone-plan', '--flag'])
 
 
+class PinnedCheckoutTests(unittest.TestCase):
+    """#2372: the scheduled job runs from a checkout it keeps on main, and builds its own validator."""
+
+    def test_a_pinned_job_builds_the_validator_in_its_own_checkout(self):
+        with patch.dict(os.environ, {'SM_PIN_CHECKOUT': '/x/ops'}), \
+                patch.object(daily.ops_checkout, 'ensure_validator', return_value=Path('/x/ops/bin/phone-plan')) as built:
+            os.environ.pop('SM_DAILY_VALIDATOR', None)
+            self.assertEqual(daily.validator_command(), ['/x/ops/bin/phone-plan'])
+        built.assert_called_once_with(daily.phone.PUBLIC)
+
+    def test_a_script_run_by_hand_builds_nothing(self):
+        with patch.dict(os.environ, {}), patch.object(daily.ops_checkout, 'ensure_validator') as built:
+            os.environ.pop('SM_PIN_CHECKOUT', None)
+            os.environ.pop('SM_DAILY_VALIDATOR', None)
+            self.assertTrue(daily.validator_command()[0].endswith('phone-plan'))
+        built.assert_not_called()
+
+    def test_main_pins_the_checkout_before_anything_else(self):
+        order = []
+        with patch.object(daily.ops_checkout, 'pin_from_env', side_effect=lambda *a, **k: order.append('pin')), \
+                patch.object(daily.phone, 'phone_dir', side_effect=lambda: order.append('phone_dir') or Path(tempfile.mkdtemp())), \
+                patch.object(daily, 'deliver', return_value='ok'):
+            daily.main([])
+        self.assertEqual(order[0], 'pin')
+
+
 if __name__ == '__main__':
     unittest.main()

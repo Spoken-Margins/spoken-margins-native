@@ -185,11 +185,25 @@ extension Gate1AppModel {
             let directory = try applicationSupportDirectory()
                 .appending(path: "SpokenMargins/SharedPackages", directoryHint: .isDirectory)
             let destination = directory.appending(path: "\(SharedMarginExport.fileName(item.title))-\(packageID.suffix(8)).spokenmargins")
+            // Each Margin voice goes out as HE-AAC mono at 24 kbps, re-encoded here and never at recording time; the
+            // recording stays as it was. A voice that can't be re-encoded goes as recorded (#3218).
+            let audioStaging = FileManager.default.temporaryDirectory
+                .appending(path: "SharedPacketAudio-\(packageID)", directoryHint: .isDirectory)
+            let (smallPackage, audioReport) = await SharedMarginAudioCompression.compressed(
+                package, workingIn: audioStaging, using: AVFoundationMarginAudioTranscoder())
             // The archive reads every asset and zips it; the write creates the folder itself, atomically (#2510).
-            let writtenManifest = try await Self.offMain {
-                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-                return try SpokenMarginsPackageArchive.write(package, to: destination)
+            let writtenManifest: SpokenMarginsPackageManifest
+            do {
+                writtenManifest = try await Self.offMain {
+                    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                    return try SpokenMarginsPackageArchive.write(smallPackage, to: destination)
+                }
+            } catch {
+                await Self.removeOffMain(audioStaging)
+                throw error
             }
+            await Self.removeOffMain(audioStaging)
+            diagnostics["lastSharedPackageAudio"] = "reencoded=\(audioReport.compressedCount);as_recorded=\(audioReport.keptOriginalCount);failed=\(audioReport.failedCount);bytes=\(audioReport.originalBytes)->\(audioReport.sentBytes)"
             let exportedSelections = selections
             // The export is recorded in one background transaction (#2509).
             try? await StoreReader(store).read { try SpokenMarginsPackageExportRecord.recordExport(manifest: writtenManifest, selections: exportedSelections, repository: $0) } // replies link back through the recorded identity; the share still succeeds without it (#473)
@@ -234,6 +248,11 @@ extension Gate1AppModel {
 
     func sharedItemType<Fields: LibraryItemFields>(for item: Fields) -> SharedItemType {
         SharedPacketItemMatcher.itemType(for: item)
+    }
+
+    /// Deletes a scratch folder away from the main thread; a folder that is already gone is fine.
+    private nonisolated static func removeOffMain(_ url: URL) async {
+        await Task.detached(priority: .utility) { try? FileManager.default.removeItem(at: url) }.value
     }
 
     /// The length of each audio file, by URL; a file that will not open is left out. Opens each header off the main thread.

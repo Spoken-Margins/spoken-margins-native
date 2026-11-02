@@ -117,7 +117,14 @@ export interface UploadOptions {
  */
 export async function uploadLink(packet: Uint8Array, preview: LinkPreview, options: UploadOptions): Promise<{ url: string; expiresAt?: string }> {
   if (!SHARE_LINKS_ENABLED) throw new ShareLinksOffError();
-  const sealed = await sealPacket(packet, preview);
+  return postSealedLink(await sealPacket(packet, preview), options);
+}
+
+/**
+ * Uploads an already sealed link and returns the link to send. The web app reaches it only through uploadLink and
+ * its build-time switch; the Mac's make-share-link command (#3239) calls it directly, so a hosted build never can.
+ */
+export async function postSealedLink(sealed: SealedLink, options: UploadOptions): Promise<{ url: string; expiresAt?: string }> {
   const send = options.fetch ?? fetch;
   const base = new URL(options.server);
   if (!uploadableServer(base)) throw new Error('share links upload over https only');
