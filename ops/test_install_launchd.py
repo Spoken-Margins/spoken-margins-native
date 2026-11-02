@@ -55,6 +55,18 @@ class TemplateTests(unittest.TestCase):
                     relative = next(argument.split(c, 1)[1] for c in CHECKOUTS if c in argument)
                     self.assertTrue((ROOT / relative).is_file(), relative)
 
+    def test_the_phone_jobs_run_from_the_pinned_ops_checkout_not_the_development_one(self):
+        # #2372: a session's branch switch in ~/Documents/GitHub/... must not change what these jobs run.
+        rendered = render_all()
+        for name in ('phone-build', 'daily-phone-plan'):
+            with self.subTest(name):
+                data = plistlib.loads(rendered[name].encode())
+                ops = f'{HOME}/SpokenMarginsOps/repo'
+                self.assertTrue(data['ProgramArguments'][1].startswith(ops + '/scripts/'))
+                self.assertEqual(data['WorkingDirectory'], ops)
+                self.assertEqual(data['EnvironmentVariables']['SM_PIN_CHECKOUT'], ops)
+                self.assertNotIn('Documents/GitHub', rendered[name].replace('(~/Documents/GitHub', ''))
+
     def test_no_other_plist_in_the_repository_carries_the_owners_home(self):
         found = {str(p.relative_to(ROOT)) for folder in ('ops', 'scripts') for p in (ROOT / folder).rglob('*.plist')
                  if '/Users/colemiller' in p.read_text(errors='replace')}

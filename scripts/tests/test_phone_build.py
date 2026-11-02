@@ -2931,5 +2931,31 @@ class SolidGroundLeadTests(unittest.TestCase):
         self.assertIn('2. **Library wording**', plan)
         self.assertNotIn('no phone steps written', plan)
 
+class PersistentWorktreeOwnerTests(unittest.TestCase):
+    """#2372: the jobs moved to another checkout; a build worktree the old one registered cannot be reused."""
+
+    def test_a_worktree_is_ours_only_when_our_repository_added_it(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+
+            def git(cwd, *args):
+                return subprocess.run(['git', '-c', 'user.email=t@example.com', '-c', 'user.name=T', *args], cwd=cwd,
+                                      check=True, capture_output=True, text=True).stdout.strip()
+            repos = {}
+            for name in ('old', 'new'):
+                repos[name] = tmp / name
+                repos[name].mkdir()
+                git(repos[name], 'init', '-q')
+                (repos[name] / 'f').write_text(name)
+                git(repos[name], 'add', 'f')
+                git(repos[name], 'commit', '-q', '-m', name)
+                git(repos[name], 'worktree', 'add', '-q', '--detach', str(tmp / f'src-{name}'))
+            with unittest.mock.patch.dict(os.environ, {'SM_PHONE_REPO': str(repos['new'])}):
+                module = load_phone_build()
+            self.assertTrue(module.worktree_of_root(tmp / 'src-new'))
+            self.assertFalse(module.worktree_of_root(tmp / 'src-old'))
+            self.assertFalse(module.worktree_of_root(tmp / 'not-there'))
+
+
 if __name__ == '__main__':
     unittest.main()
