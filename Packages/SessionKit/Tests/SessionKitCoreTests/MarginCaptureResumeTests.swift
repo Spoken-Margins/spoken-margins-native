@@ -182,30 +182,30 @@ final class MarginCaptureResumeTests: XCTestCase {
             let cutShort: Bool
             let settledAt: InterruptedSourceMark?
             let cancelled: Bool
-            let shouldResume: Bool
+            let iosEnd: InterruptionEnd
             let recording: TimeInterval?
             let pausedNow: InterruptedSourceMark?
             let expected: Bool
         }
         let here = mark()
         let rows: [Row] = [
-            Row(name: "call ends, iOS says resume, source untouched", cutShort: true, settledAt: here, cancelled: false, shouldResume: true, recording: nil, pausedNow: here, expected: true),
-            Row(name: "iOS says do not resume", cutShort: true, settledAt: here, cancelled: false, shouldResume: false, recording: nil, pausedNow: here, expected: false),
-            Row(name: "listener recorded again during the call", cutShort: true, settledAt: here, cancelled: false, shouldResume: true, recording: 2, pausedNow: here, expected: false),
-            Row(name: "listener moved the source", cutShort: true, settledAt: here, cancelled: false, shouldResume: true, recording: nil, pausedNow: mark(ms: 6_000), expected: false),
-            Row(name: "listener recorded a Margin on it", cutShort: true, settledAt: here, cancelled: false, shouldResume: true, recording: nil, pausedNow: mark(margins: 2), expected: false),
-            Row(name: "listener opened another item", cutShort: true, settledAt: here, cancelled: false, shouldResume: true, recording: nil, pausedNow: mark("t2"), expected: false),
-            Row(name: "source no longer paused part-way", cutShort: true, settledAt: here, cancelled: false, shouldResume: true, recording: nil, pausedNow: nil, expected: false),
-            Row(name: "save left the source playing or finished", cutShort: true, settledAt: nil, cancelled: false, shouldResume: true, recording: nil, pausedNow: here, expected: false),
-            Row(name: "headphones lost during the call", cutShort: true, settledAt: here, cancelled: true, shouldResume: true, recording: nil, pausedNow: here, expected: false),
-            Row(name: "no Margin was cut short", cutShort: false, settledAt: here, cancelled: false, shouldResume: true, recording: nil, pausedNow: here, expected: false),
+            Row(name: "call ends, iOS says resume, source untouched", cutShort: true, settledAt: here, cancelled: false, iosEnd: .audioMayStart, recording: nil, pausedNow: here, expected: true),
+            Row(name: "iOS says do not resume", cutShort: true, settledAt: here, cancelled: false, iosEnd: .audioStaysStopped, recording: nil, pausedNow: here, expected: false),
+            Row(name: "listener recorded again during the call", cutShort: true, settledAt: here, cancelled: false, iosEnd: .audioMayStart, recording: 2, pausedNow: here, expected: false),
+            Row(name: "listener moved the source", cutShort: true, settledAt: here, cancelled: false, iosEnd: .audioMayStart, recording: nil, pausedNow: mark(ms: 6_000), expected: false),
+            Row(name: "listener recorded a Margin on it", cutShort: true, settledAt: here, cancelled: false, iosEnd: .audioMayStart, recording: nil, pausedNow: mark(margins: 2), expected: false),
+            Row(name: "listener opened another item", cutShort: true, settledAt: here, cancelled: false, iosEnd: .audioMayStart, recording: nil, pausedNow: mark("t2"), expected: false),
+            Row(name: "source no longer paused part-way", cutShort: true, settledAt: here, cancelled: false, iosEnd: .audioMayStart, recording: nil, pausedNow: nil, expected: false),
+            Row(name: "save left the source playing or finished", cutShort: true, settledAt: nil, cancelled: false, iosEnd: .audioMayStart, recording: nil, pausedNow: here, expected: false),
+            Row(name: "headphones lost during the call", cutShort: true, settledAt: here, cancelled: true, iosEnd: .audioMayStart, recording: nil, pausedNow: here, expected: false),
+            Row(name: "no Margin was cut short", cutShort: false, settledAt: here, cancelled: false, iosEnd: .audioMayStart, recording: nil, pausedNow: here, expected: false),
         ]
         for row in rows {
             var call = InterruptedCaptureResume()
             if row.cutShort { call.marginCutShort() }
             call.sourceSettled(at: row.settledAt)
             if row.cancelled { call.cancel() }
-            XCTAssertEqual(call.ended(shouldResume: row.shouldResume, recordedSeconds: row.recording, pausedSource: row.pausedNow), row.expected, row.name)
+            XCTAssertEqual(call.ended(row.iosEnd, recordedSeconds: row.recording, pausedSource: row.pausedNow), row.expected, row.name)
         }
     }
 
@@ -213,14 +213,14 @@ final class MarginCaptureResumeTests: XCTestCase {
         var call = InterruptedCaptureResume()
         call.marginCutShort()
         call.sourceSettled(at: mark())
-        XCTAssertTrue(call.ended(shouldResume: true, recordedSeconds: nil, pausedSource: mark()))
-        XCTAssertFalse(call.ended(shouldResume: true, recordedSeconds: nil, pausedSource: mark()), "a late second end cannot resume twice")
+        XCTAssertTrue(call.ended(.audioMayStart, recordedSeconds: nil, pausedSource: mark()))
+        XCTAssertFalse(call.ended(.audioMayStart, recordedSeconds: nil, pausedSource: mark()), "a late second end cannot resume twice")
     }
 
     func testASettleBeforeTheCallCutAMarginShortChangesNothing() {
         var call = InterruptedCaptureResume()
         call.sourceSettled(at: mark())
-        XCTAssertFalse(call.ended(shouldResume: true, recordedSeconds: nil, pausedSource: mark()))
+        XCTAssertFalse(call.ended(.audioMayStart, recordedSeconds: nil, pausedSource: mark()))
     }
 
     // MARK: Where the source resumes from after a system pause
@@ -262,11 +262,11 @@ final class MarginCaptureResumeTests: XCTestCase {
                 resumes: false, waitingForCall: false),
             Row(edge: "headphones while a call is awaited", steps: { $0.callBegan(); $0.headphonesRemoved() },
                 resumes: false, waitingForCall: true),
-            Row(edge: "a call during the rejoin, iOS says resume", steps: { $0.closing(resume: true); $0.callBegan(); _ = $0.callEnded(shouldResume: true) },
+            Row(edge: "a call during the rejoin, iOS says resume", steps: { $0.closing(resume: true); $0.callBegan(); _ = $0.callEnded(.audioMayStart) },
                 resumes: true, waitingForCall: false),
-            Row(edge: "a call that iOS ends with shouldResume false", steps: { $0.callBegan(); _ = $0.callEnded(shouldResume: false) },
+            Row(edge: "a call that iOS ends without the resume bit", steps: { $0.callBegan(); _ = $0.callEnded(.audioStaysStopped) },
                 resumes: false, waitingForCall: false),
-            Row(edge: "iOS says resume after headphones came out", steps: { $0.callBegan(); $0.headphonesRemoved(); _ = $0.callEnded(shouldResume: true) },
+            Row(edge: "iOS says resume after headphones came out", steps: { $0.callBegan(); $0.headphonesRemoved(); _ = $0.callEnded(.audioMayStart) },
                 resumes: false, waitingForCall: false),
             Row(edge: "a new Margin forgets a stale answer", steps: { $0.callBegan(); $0.headphonesRemoved(); $0.reset() },
                 resumes: true, waitingForCall: false),
@@ -281,15 +281,15 @@ final class MarginCaptureResumeTests: XCTestCase {
 
     func testACallEndWithNoWaitChangesNothing() {
         var intent = HandsFreeCaptureResume()
-        XCTAssertFalse(intent.callEnded(shouldResume: false))
+        XCTAssertFalse(intent.callEnded(.audioStaysStopped))
         XCTAssertTrue(intent.resumesSource, "a call end nobody waited for must not rule the resume out")
     }
 
     func testACallsEndSpendsTheHandsFreeWait() {
         var intent = HandsFreeCaptureResume()
         intent.callBegan()
-        XCTAssertTrue(intent.callEnded(shouldResume: true))
-        XCTAssertFalse(intent.callEnded(shouldResume: false), "a second end report finds nothing waiting")
+        XCTAssertTrue(intent.callEnded(.audioMayStart))
+        XCTAssertFalse(intent.callEnded(.audioStaysStopped), "a second end report finds nothing waiting")
         XCTAssertTrue(intent.resumesSource)
     }
 }

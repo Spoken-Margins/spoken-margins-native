@@ -157,7 +157,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// A stall or its end, with the audio session's and player's state then (#288).
     typealias StallHandler = @Sendable (_ kind: String, _ fields: [String: String]) -> Void
     /// A pause, or a missing resume, the listener didn't ask for, with its cause (#538).
-    typealias SystemPauseHandler = @Sendable (_ kind: String, _ fields: [String: String]) -> Void
+    typealias PauseLogHandler = @Sendable (_ kind: String, _ fields: [String: String]) -> Void
     /// The article text a target speaks, without the engine's spoken preface ("Overview. …").
     typealias ArticleTextLookup = @Sendable (_ targetId: String) -> String?
     /// Which way a play request went, for diagnostics (#235).
@@ -410,7 +410,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// play released the voice. `onRestore` clears it.
     private let onBundledVoice: BundledVoiceHandler?
     private let onStall: StallHandler?
-    private let onSystemPause: SystemPauseHandler?
+    private let onPauseLog: PauseLogHandler?
     private let onRenderPace: RenderPaceHandler?
     private let onVoiceTelemetry: VoiceTelemetryHandler?
     /// Whether the app is in front. With it the player is a queue, and while the app is away the next rendered
@@ -560,7 +560,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         onVoiceRestored: VoiceRestoredHandler? = nil,
         onBundledVoice: BundledVoiceHandler? = nil,
         onStall: StallHandler? = nil,
-        onSystemPause: SystemPauseHandler? = nil,
+        onPauseLog: PauseLogHandler? = nil,
         stallThreshold: Duration = .seconds(5),
         stallSampleInterval: Duration = .seconds(1),
         stallRecoveryCooldown: Duration = .seconds(30),
@@ -621,7 +621,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         self.onVoiceRestored = onVoiceRestored
         self.onBundledVoice = onBundledVoice
         self.onStall = onStall
-        self.onSystemPause = onSystemPause
+        self.onPauseLog = onPauseLog
         self.stallThreshold = stallThreshold
         self.stallSampleInterval = stallSampleInterval
         self.stallRecoveryCooldown = stallRecoveryCooldown
@@ -3969,9 +3969,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 let reason = notification.userInfo?[AVAudioSessionInterruptionReasonKey] as? UInt
                 self?.pauseForSystemInterruption(allowsAutomaticResume: true, cause: .interruptionBegan(reasonRawValue: reason))
             case .ended:
-                let rawOptions = notification.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
                 self?.finishSystemInterruption(
-                    shouldResume: AVAudioSession.InterruptionOptions(rawValue: rawOptions).contains(.shouldResume)
+                    InterruptionEnd(userInfo: notification.userInfo, optionsKey: AVAudioSessionInterruptionOptionKey)
                 )
             @unknown default:
                 break
@@ -3998,7 +3997,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         ) { [weak self] _ in
             guard let self else { return }
             // Recorded first, so the event log shows the cause before the pause it leads to.
-            self.recordSystemPause(.mediaServicesReset, acted: self.lock.withLock { self.transportIntent == .playing })
+            self.logPause(.mediaServicesReset, acted: self.lock.withLock { self.transportIntent == .playing })
             self.markMediaServicesReset()
         })
         #endif
@@ -4016,7 +4015,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             return (true, fallbackIsActive, player)
         }
         // A lost route while nothing plays (Bluetooth dropping between listens) isn't worth a log entry.
-        if state.didPause || cause != .routeLost { recordSystemPause(cause, acted: state.didPause) }
+        if state.didPause || cause != .routeLost { logPause(cause, acted: state.didPause) }
         guard state.didPause else { return }
         if state.usesFallback {
             try? pauseFallbackVoice()
@@ -4050,7 +4049,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             interruptionResume.otherAudioStopped(sourceStillPaused: transportIntent == .paused)
         }
         guard requestsResume else { return }
-        interruptionHandler?(.endedShouldResume)
+        interruptionHandler?(.endedResumeRequested)
     }
 
     private func interruptionWaitEnded(_ reason: InterruptionBackgroundHold.Outcome) {
@@ -4065,18 +4064,18 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         }
     }
 
-    private func finishSystemInterruption(shouldResume: Bool) {
+    private func finishSystemInterruption(_ end: InterruptionEnd) {
         interruptionWaitEnded(.ended)
-        let requestsResume = lock.withLock { interruptionResume.ended(shouldResume: shouldResume) }
-        recordSystemPause(.interruptionEnded(shouldResume: shouldResume), acted: requestsResume)
+        let requestsResume = lock.withLock { interruptionResume.ended(end) }
+        logPause(.interruptionEnded(end), acted: requestsResume)
         guard requestsResume else { return }
-        interruptionHandler?(.endedShouldResume)
+        interruptionHandler?(.endedResumeRequested)
     }
 
     /// Reports a system pause with the audio session's and player's state, the app's state and
     /// Low Power Mode, so a device export can say why narration stopped in the background (#538).
-    private func recordSystemPause(_ cause: SpeechSystemPause, acted: Bool) {
-        guard let onSystemPause else { return }
+    private func logPause(_ cause: SpeechSystemPause, acted: Bool) {
+        guard let onPauseLog else { return }
         let (player, usesSystemVoice) = lock.withLock { (self.player, fallbackIsActive) }
         var fields = AudioSessionDiagnostics.fields()
         if usesSystemVoice {
@@ -4089,7 +4088,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             appState: Self.applicationStateName(),
             lowPowerMode: ProcessInfo.processInfo.isLowPowerModeEnabled
         )) { _, cause in cause }
-        onSystemPause(cause.kind, fields)
+        onPauseLog(cause.kind, fields)
     }
 
     /// The app's state, read on the main thread (the audio-session observers run there).

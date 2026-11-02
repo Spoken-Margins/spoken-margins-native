@@ -86,8 +86,8 @@ public struct LiveActivityLifecycle: Equatable, Sendable {
 
     /// Call when `AVAudioSession` reports that an interruption ended. Returns `.end` when a paused
     /// activity should go now, or nil when nothing changes.
-    public mutating func audioInterruptionEnded(shouldResume: Bool) -> Decision? {
-        guard !shouldResume, pausedSessionId != nil, endReason == nil else { return nil }
+    public mutating func audioInterruptionEnded(_ end: InterruptionEnd) -> Decision? {
+        guard !end.iosAllowsAudioToStart, pausedSessionId != nil, endReason == nil else { return nil }
         endReason = .interruptionWithoutResume
         return .end(.interruptionWithoutResume)
     }

@@ -42,10 +42,11 @@ public struct SystemInterruptionResume: Equatable, Sendable {
         return wasPlaying
     }
 
-    /// The interruption ended. True when playback should resume now. Spends the arming either way.
-    public mutating func ended(shouldResume: Bool) -> Bool {
+    /// The interruption ended. True when playback should resume now: armed, and iOS says audio may start again.
+    /// Spends the arming either way.
+    public mutating func ended(_ end: InterruptionEnd) -> Bool {
         defer { isArmed = false }
-        return isArmed && shouldResume
+        return isArmed && end.iosAllowsAudioToStart
     }
 
     /// The other audio stopped without iOS reporting an end. True when playback should resume now: armed, and the
@@ -69,8 +70,8 @@ public enum SpeechSystemPause: Equatable, Sendable {
     /// An audio-session interruption began. `reasonRawValue` is the notification's
     /// `AVAudioSessionInterruptionReasonKey`, when it has one.
     case interruptionBegan(reasonRawValue: UInt?)
-    /// An audio-session interruption ended. Without `shouldResume`, speech stays paused.
-    case interruptionEnded(shouldResume: Bool)
+    /// An audio-session interruption ended. When iOS does not say audio may start again, speech stays paused.
+    case interruptionEnded(InterruptionEnd)
     /// The output in use went away (headphones unplugged, Bluetooth disconnected).
     case routeLost
     case mediaServicesReset
@@ -94,8 +95,8 @@ public enum SpeechSystemPause: Equatable, Sendable {
         case .interruptionBegan(let reason):
             fields["reason"] = Self.interruptionReasonName(reason)
             fields["paused"] = String(acted)
-        case .interruptionEnded(let shouldResume):
-            fields["shouldResume"] = String(shouldResume)
+        case .interruptionEnded(let end):
+            fields["shouldResume"] = String(end.iosAllowsAudioToStart) // the log key stays: device reports and tests read it
             fields["resumeRequested"] = String(acted)
         case .routeLost, .mediaServicesReset:
             fields["paused"] = String(acted)

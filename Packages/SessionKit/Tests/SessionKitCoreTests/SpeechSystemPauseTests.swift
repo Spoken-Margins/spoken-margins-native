@@ -23,7 +23,7 @@ final class SpeechSystemPauseTests: XCTestCase {
     /// ended event only asks for a resume; whether one happened is its own entry, because the resume
     /// can still fail to start the audio session (Codex audit on 3fddef3).
     func testAnEndedInterruptionSaysWhetherItAskedToResume() {
-        let fields = SpeechSystemPause.interruptionEnded(shouldResume: true)
+        let fields = SpeechSystemPause.interruptionEnded(.audioMayStart)
             .fields(acted: true, appState: "active", lowPowerMode: false)
         XCTAssertEqual(fields["shouldResume"], "true")
         XCTAssertEqual(fields["resumeRequested"], "true")

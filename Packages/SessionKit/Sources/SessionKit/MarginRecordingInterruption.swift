@@ -4,8 +4,8 @@ import Foundation
 public enum MarginRecordingInterruptionEvent: Equatable, Sendable {
     /// A call, Siri or another app took the audio session. iOS stops the recorder.
     case interruptionBegan
-    /// That interruption is over. `shouldResume` is iOS saying audio may start again.
-    case interruptionEnded(shouldResume: Bool)
+    /// That interruption is over, with what iOS said about it.
+    case interruptionEnded(InterruptionEnd)
     /// The route in use went away: AirPods taken out, a headset unplugged.
     case routeLost
 }
@@ -85,8 +85,8 @@ public struct MarginRecordingInterruptionPolicy: Equatable, Sendable {
             callResume.cancel()
             guard let recordedSeconds else { return .none }
             return Self.keeps(recordedSeconds) ? .saveCutShort : .discard
-        case .interruptionEnded(let shouldResume):
-            return callResume.ended(shouldResume: shouldResume, recordedSeconds: recordedSeconds, pausedSource: pausedSource)
+        case .interruptionEnded(let end):
+            return callResume.ended(end, recordedSeconds: recordedSeconds, pausedSource: pausedSource)
                 ? .resumeSource : .none
         }
     }

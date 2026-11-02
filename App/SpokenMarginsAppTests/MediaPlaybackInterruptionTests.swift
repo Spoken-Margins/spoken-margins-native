@@ -129,7 +129,7 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
                 switch event {
                 case .began:
                     began.fulfill()
-                case .endedShouldResume:
+                case .endedResumeRequested:
                     ended.fulfill()
                 }
             }
@@ -163,7 +163,7 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
             ]
         )
         await fulfillment(of: [ended], timeout: 1)
-        XCTAssertEqual(events.values, [.began, .endedShouldResume])
+        XCTAssertEqual(events.values, [.began, .endedResumeRequested])
         try client.stop()
     }
 
@@ -241,11 +241,11 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
 
         otherAudio = .init(isPlaying: false, secondaryShouldBeSilenced: false)
         await settle { events.values.count == 2 }
-        XCTAssertEqual(events.values, [.began, .endedShouldResume])
+        XCTAssertEqual(events.values, [.began, .endedResumeRequested])
         XCTAssertEqual(probe.hold.outcome, .otherAudioStopped)
         post(.ended, options: .shouldResume, to: notificationCenter)
         try await Task.sleep(for: .milliseconds(100))
-        XCTAssertEqual(events.values, [.began, .endedShouldResume], "a late end doesn't resume a second time")
+        XCTAssertEqual(events.values, [.began, .endedResumeRequested], "a late end doesn't resume a second time")
 
         try client.play(targetId: "watched-interruption-audio", fromMediaTimeMs: 0)
         otherAudio = .init(isPlaying: true, secondaryShouldBeSilenced: true)
@@ -254,7 +254,7 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         try client.pause()
         otherAudio = .init(isPlaying: false, secondaryShouldBeSilenced: false)
         try await Task.sleep(for: .milliseconds(300))
-        XCTAssertEqual(events.values, [.began, .endedShouldResume, .began], "the listener's pause keeps it paused")
+        XCTAssertEqual(events.values, [.began, .endedResumeRequested, .began], "the listener's pause keeps it paused")
         XCTAssertEqual(probe.hold.outcome, .listenerActed)
         try client.stop()
     }

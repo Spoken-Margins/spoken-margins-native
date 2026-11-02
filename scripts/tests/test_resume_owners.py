@@ -228,11 +228,10 @@ class TheGuardOnTheRealTree(unittest.TestCase):
         found = ro.problems(ro.scan_tree(), ro.load_baseline())
         self.assertEqual(found, [], '\n'.join(found))
 
-    def test_the_baseline_names_the_flags_the_audit_listed_that_are_still_to_move(self):
-        keys = set(ro.load_baseline())
-        for needle in ('HandsFreeMarginCoordinator.swift::shouldResume',):
-            with self.subTest(needle):
-                self.assertTrue(any(k.endswith(needle) for k in keys), needle)
+    def test_the_report_carriers_are_gone_so_the_baseline_stays_empty(self):
+        # #3180: iOS's answer travels as `InterruptionEnd` (InterruptionEnd.swift), not as a `shouldResume` Bool. A row
+        # here means a new copy of the flag, or a carrier that went back to a Bool.
+        self.assertEqual(sorted(ro.load_baseline()), [])
 
     def test_the_flags_the_capture_owner_retired_stay_out_of_the_engine_and_the_policy(self):
         # #3144: these lived in SessionEngine and MarginRecordingInterruptionPolicy; MarginCaptureResume owns them now.

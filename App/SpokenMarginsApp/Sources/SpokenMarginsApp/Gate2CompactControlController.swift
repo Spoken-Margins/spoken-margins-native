@@ -344,7 +344,7 @@ final class Gate2CompactControlController {
         audioInterruptionObserver = Gate2AudioInterruptionObserver(
             center: notificationCenter,
             onBegan: { [weak self] in self?.handleAudioInterruptionBegan() },
-            onEnded: { [weak self] shouldResume in self?.handleAudioInterruptionEnded(shouldResume: shouldResume) }
+            onEnded: { [weak self] end in self?.handleAudioInterruptionEnded(end) }
         )
         #endif
         appLifecycleObserver = Gate2AppLifecycleObserver(
@@ -461,8 +461,8 @@ final class Gate2CompactControlController {
 
     /// Another app kept the audio after an interruption: a paused Live Activity goes now rather
     /// than waiting out the idle limit. A phone call ends with `shouldResume`, so it stays.
-    func handleAudioInterruptionEnded(shouldResume: Bool) {
-        guard case .end(let reason)? = liveActivityLifecycle.audioInterruptionEnded(shouldResume: shouldResume) else {
+    func handleAudioInterruptionEnded(_ end: InterruptionEnd) {
+        guard case .end(let reason)? = liveActivityLifecycle.audioInterruptionEnded(end) else {
             return
         }
         liveActivity.endAll()
@@ -1067,7 +1067,7 @@ private final class Gate2AudioInterruptionObserver {
     init(
         center: NotificationCenter,
         onBegan: @escaping @MainActor @Sendable () -> Void,
-        onEnded: @escaping @MainActor @Sendable (_ shouldResume: Bool) -> Void
+        onEnded: @escaping @MainActor @Sendable (_ end: InterruptionEnd) -> Void
     ) {
         self.center = center
         token = center.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { notification in
@@ -1077,9 +1077,8 @@ private final class Gate2AudioInterruptionObserver {
             case .began:
                 MainActor.assumeIsolated { onBegan() }
             case .ended:
-                let rawOptions = notification.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
-                let shouldResume = AVAudioSession.InterruptionOptions(rawValue: rawOptions).contains(.shouldResume)
-                MainActor.assumeIsolated { onEnded(shouldResume) }
+                let end = InterruptionEnd(userInfo: notification.userInfo, optionsKey: AVAudioSessionInterruptionOptionKey)
+                MainActor.assumeIsolated { onEnded(end) }
             @unknown default:
                 break
             }

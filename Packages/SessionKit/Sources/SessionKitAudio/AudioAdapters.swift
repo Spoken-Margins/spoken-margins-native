@@ -1594,7 +1594,8 @@ extension PreparedAudioPlaybackClient: AVAudioPlayerDelegate {
 
 public enum AudioPlaybackInterruptionEvent: Equatable, Sendable {
     case began
-    case endedShouldResume
+    /// The interruption ended and `SystemInterruptionResume` says the source resumes now.
+    case endedResumeRequested
 }
 
 struct MediaSeekLifecycle: Equatable {
@@ -3010,9 +3011,8 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, HeardAudio
             case .began:
                 self?.pauseForSystemInterruption(awaitsEnd: true)
             case .ended:
-                let rawOptions = notification.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
                 self?.finishSystemInterruption(
-                    shouldResume: AVAudioSession.InterruptionOptions(rawValue: rawOptions).contains(.shouldResume)
+                    InterruptionEnd(userInfo: notification.userInfo, optionsKey: AVAudioSessionInterruptionOptionKey)
                 )
             @unknown default:
                 break
@@ -3051,17 +3051,17 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, HeardAudio
         interruptionHandler?(.began)
     }
 
-    private func finishSystemInterruption(shouldResume: Bool) {
+    private func finishSystemInterruption(_ end: InterruptionEnd) {
         withInterruptionHold { $0.interruptionEnded() }
-        guard interruptionResume.ended(shouldResume: shouldResume) else { return }
-        interruptionHandler?(.endedShouldResume)
+        guard interruptionResume.ended(end) else { return }
+        interruptionHandler?(.endedResumeRequested)
     }
 
     /// The interruption's other audio stopped without iOS reporting an end: resume as an end with "should resume"
     /// would, unless the listener has taken over since (#1434).
     private func resumeBecauseOtherAudioStopped() {
         guard interruptionResume.otherAudioStopped() else { return }
-        interruptionHandler?(.endedShouldResume)
+        interruptionHandler?(.endedResumeRequested)
     }
 
     /// The listener's Play, Pause, Stop or a new item replaces an interruption's automatic resume.
@@ -4003,8 +4003,7 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
                 self.awaitsInterruptionEnd = true
                 self.onInterruption?(.interruptionBegan, self.recordedSeconds)
             case .ended:
-                let rawOptions = notification.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
-                let shouldResume = AVAudioSession.InterruptionOptions(rawValue: rawOptions).contains(.shouldResume)
+                let end = InterruptionEnd(userInfo: notification.userInfo, optionsKey: AVAudioSessionInterruptionOptionKey)
                 let wasAwaiting = self.awaitsInterruptionEnd
                 self.awaitsInterruptionEnd = false
                 if self.recordingStartedAt == nil { self.removeAudioSessionObservers() }
@@ -4013,7 +4012,7 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
                     self.onInterruption?(.routeLost, self.recordedSeconds)
                 }
                 self.headphonesWhenInterrupted = []
-                self.onInterruption?(.interruptionEnded(shouldResume: shouldResume), self.recordedSeconds)
+                self.onInterruption?(.interruptionEnded(end), self.recordedSeconds)
             @unknown default:
                 break
             }

@@ -4242,7 +4242,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertNotNil(model.selectedItem.interjections.first { !marginIDsBefore.contains($0.id) }, "what was said is saved")
         XCTAssertTrue(model.diagnostics["lastMarginCutShort"]?.contains("call_or_siri") == true)
 
-        recorder.onInterruption?(.interruptionEnded(shouldResume: true), nil)
+        recorder.onInterruption?(.interruptionEnded(.audioMayStart), nil)
         for _ in 0..<50 where !model.snapshot.status.isPlaybackActive { try await Task.sleep(for: .milliseconds(10)) }
         XCTAssertTrue(model.snapshot.status.isPlaybackActive, "the source plays on after the call")
         XCTAssertEqual(audio.playCount, playsBefore + 1)
@@ -4271,7 +4271,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.snapshot.status, .paused)
         let playsBefore = audio.playCount
 
-        recorder.onInterruption?(.interruptionEnded(shouldResume: true), nil)
+        recorder.onInterruption?(.interruptionEnded(.audioMayStart), nil)
         try await Task.sleep(for: .milliseconds(200))
         XCTAssertEqual(model.snapshot.status, .paused, "the session the listener chose stays paused")
         XCTAssertEqual(audio.playCount, playsBefore)
