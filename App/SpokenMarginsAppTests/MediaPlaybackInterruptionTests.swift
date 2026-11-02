@@ -1446,7 +1446,11 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         let momentVoice = model.leveledVoiceURL(["own-margin": voice], itemId: "real-source", margins: [anchor])
 
         try waitUntil("the leveled copy is made", timeout: 20) { Gate1AppModel.leveledMargins.readyCopy(for: voice) != nil }
-        let copy = try XCTUnwrap(Gate1AppModel.leveledMargins.readyCopy(for: voice))
+        // The leveling outcome says why there is no copy: none yet means the work never finished.
+        let copy = try XCTUnwrap(
+            Gate1AppModel.leveledMargins.readyCopy(for: voice),
+            "leveling: \(model.diagnostics["marginLeveling"] ?? "none yet")"
+        )
         defer { try? FileManager.default.removeItem(at: copy) }
         let recorded = try XCTUnwrap(MarginLoudnessLeveler.measure(fileAt: voice).integratedLUFS)
         let leveled = try XCTUnwrap(MarginLoudnessLeveler.measure(fileAt: copy).integratedLUFS)
