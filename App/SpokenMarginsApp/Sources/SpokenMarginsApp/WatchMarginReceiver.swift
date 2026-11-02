@@ -90,8 +90,9 @@ final class WatchMarginReceiver: NSObject {
             await previous?.value
             // A Resume tapped before a Mark opens the session the Mark belongs in.
             let resumed = await self?.apply(resumes) ?? false
-            let result = await files.fileMarks(marks)
-            if result.changed || resumed { self?.announceChange() }
+            let result = await files.fileMarks(marks, playerRuns: PlayerRunController.runs())
+            let placed = await self?.placeOnPlayerItems(result.placements) ?? false
+            if result.changed || resumed || placed { self?.announceChange() }
         }
         lastPass = pass
     }
@@ -115,18 +116,31 @@ final class WatchMarginReceiver: NSObject {
         var changed = await apply(drainResumes())
         let marks = drainMarks()
         if !marks.isEmpty {
-            changed = await files.fileMarks(marks).changed || changed
+            let result = await files.fileMarks(marks, playerRuns: PlayerRunController.runs())
+            changed = result.changed || changed
+            changed = await placeOnPlayerItems(result.placements) || changed
         }
-        let pass = await files.fileWatchInbox()
+        let pass = await files.fileWatchInbox(playerRuns: PlayerRunController.runs())
         changed = pass.changed || changed
-        for placement in pass.placements {
-            // Slice 1a hands no player runs to the worker, so this is a safety net: file it by the rest of the rule.
-            changed = await files.fileAsQuick(placement) || changed
-        }
+        changed = await placeOnPlayerItems(pass.placements) || changed
         send(pass.answers)
         publish(board: await files.watchBoard())
         if changed { announceChange() }
         return pass.filed
+    }
+
+    /// Writes each Margin the filing rule put on the item our player was playing (#2542). One that can't be written there
+    /// is filed by the rest of the rule instead, so nothing is lost. True when anything changed.
+    private func placeOnPlayerItems(_ placements: [LiveSessionFileWorker.PlayerPlacement]) async -> Bool {
+        var changed = false
+        for placement in placements {
+            if PlayerRunController.place(placement) {
+                changed = true
+            } else {
+                changed = await files.fileAsQuick(placement) || changed
+            }
+        }
+        return changed
     }
 
     private func transcribe(_ filed: [LiveSessionFileWorker.FiledMargin]) async {

@@ -81,6 +81,7 @@ extension Gate1AppModel {
         settleSpeechInterruptionResume()
         labels.scoped("snapshot.listeningSignals") {
             listeningSignals.snapshotChanged(from: oldValue, to: snapshot); playQueueSnapshotChanged(from: oldValue, to: snapshot)
+            PlayerRunController.note(snapshot, in: self) // where our player was, for a Watch Margin taken now (#2542)
         }
         updateNarrationVoiceNotice()
         if playingImportedCommentary != nil,
