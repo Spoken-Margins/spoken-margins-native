@@ -137,4 +137,12 @@ final class PlayerItemMarginTests: XCTestCase {
         XCTAssertNotEqual(first.id, second.id)
         XCTAssertEqual(try repo.loadInterjections(sessionId: "session-episode").count, 2)
     }
+
+    func testARetryOfTheSameRecordingReturnsTheMarginAlreadyThere() throws {
+        let repo = repository([session()])
+        let first = try PlayerItemMargin.placeSpoken(audioPath: "a.m4a", atMediaTimeMs: 10_000, markedAt: taken, itemId: "episode", repository: repo)
+        let again = try PlayerItemMargin.placeSpoken(audioPath: "a.m4a", atMediaTimeMs: 10_000, markedAt: taken, itemId: "episode", repository: repo)
+        XCTAssertEqual(again, first)
+        XCTAssertEqual(try repo.loadInterjections(sessionId: "session-episode").count, 1, "no second copy")
+    }
 }

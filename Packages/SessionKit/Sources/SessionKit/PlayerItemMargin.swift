@@ -42,6 +42,10 @@ public enum PlayerItemMargin {
         guard original.currentTargetType == .transcriptBackedMedia || original.currentTargetType == .browserOwnedMedia else {
             throw Failure.unsupportedTarget
         }
+        // A retry after the first try got as far as the store: the Margin is already there, so never write a second copy.
+        if let existing = (try? repository.loadInterjections(sessionId: original.id))?.first(where: { $0.audioPath == audioPath }) {
+            return existing
+        }
         let durationMs = item.media?.durationMs
         let time = durationMs.map { min(max(0, mediaTimeMs), max(0, $0 - 1)) } ?? max(0, mediaTimeMs)
 

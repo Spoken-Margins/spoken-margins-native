@@ -91,8 +91,8 @@ final class WatchMarginReceiver: NSObject {
             // A Resume tapped before a Mark opens the session the Mark belongs in.
             let resumed = await self?.apply(resumes) ?? false
             let result = await files.fileMarks(marks, playerRuns: PlayerRunController.runs())
-            let placed = await self?.placeOnPlayerItems(result.placements) ?? false
-            if result.changed || resumed || placed { self?.announceChange() }
+            let placed = await self?.placeOnPlayerItems(result.placements)
+            if result.changed || resumed || placed?.changed == true { self?.announceChange() }
         }
         lastPass = pass
     }
@@ -118,29 +118,38 @@ final class WatchMarginReceiver: NSObject {
         if !marks.isEmpty {
             let result = await files.fileMarks(marks, playerRuns: PlayerRunController.runs())
             changed = result.changed || changed
-            changed = await placeOnPlayerItems(result.placements) || changed
+            changed = await placeOnPlayerItems(result.placements).changed || changed
         }
         let pass = await files.fileWatchInbox(playerRuns: PlayerRunController.runs())
         changed = pass.changed || changed
-        changed = await placeOnPlayerItems(pass.placements) || changed
-        send(pass.answers)
+        let placed = await placeOnPlayerItems(pass.placements)
+        changed = placed.changed || changed
+        send(pass.answers + placed.answers)
         publish(board: await files.watchBoard())
         if changed { announceChange() }
-        return pass.filed
+        return pass.filed + placed.filed
     }
 
-    /// Writes each Margin the filing rule put on the item our player was playing (#2542). One that can't be written there
-    /// is filed by the rest of the rule instead, so nothing is lost. True when anything changed.
-    private func placeOnPlayerItems(_ placements: [LiveSessionFileWorker.PlayerPlacement]) async -> Bool {
-        var changed = false
+    /// Writes each Margin the filing rule put on the item our player was playing (#2542), and only then clears and answers
+    /// the Watch's copy. One the item can't take is filed by the rest of the rule and answered with where it really went. One
+    /// that can't be filed at all stays in the landing folder for the next pass: no answer, nothing lost.
+    private func placeOnPlayerItems(
+        _ placements: [LiveSessionFileWorker.PlayerPlacement]
+    ) async -> (changed: Bool, answers: [WatchMarginAnswer], filed: [LiveSessionFileWorker.FiledMargin]) {
+        var result: (changed: Bool, answers: [WatchMarginAnswer], filed: [LiveSessionFileWorker.FiledMargin]) = (false, [], [])
         for placement in placements {
-            if await PlayerRunController.fileOntoPlayerItem(placement) {
-                changed = true
-            } else {
-                changed = await files.fileAsQuick(placement) || changed
+            if PlayerRunController.fileOntoPlayerItem(placement) {
+                result.changed = true
+                if let answer = await files.completePlacement(placement) { result.answers.append(answer) }
+            } else if let session = await files.fileAsQuickSession(placement) {
+                result.changed = true
+                if let answer = await files.completePlacement(placement, in: session) { result.answers.append(answer) }
+                if let audioPath = placement.audioPath {
+                    result.filed.append(LiveSessionFileWorker.FiledMargin(marginId: placement.marginId, audioPath: audioPath))
+                }
             }
         }
-        return changed
+        return result
     }
 
     private func transcribe(_ filed: [LiveSessionFileWorker.FiledMargin]) async {

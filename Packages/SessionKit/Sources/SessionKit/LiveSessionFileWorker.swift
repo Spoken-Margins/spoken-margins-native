@@ -37,6 +37,17 @@ public actor LiveSessionFileWorker {
         public var audioPath: String?
         public var durationMs: Int?
         public var spokenOn: String?
+        /// A Watch recording still waiting in the landing folder and the inbox: nothing is cleared until the Margin is
+        /// somewhere the listener can see it (`completePlacement`), so an app that ends in between loses nothing (#2542).
+        public var pending: PendingWatchCapture?
+    }
+
+    /// What a deferred Watch Margin needs to be answered and cleared once it is placed.
+    public struct PendingWatchCapture: Equatable, Sendable {
+        public var captureId: String
+        public var receipt: WatchMarginReceipt
+        /// The landing files' path without an extension (`<stem>.json` and `<stem>.m4a`).
+        public var landedStem: String
     }
 
     /// What one filing pass did.
@@ -343,6 +354,11 @@ public actor LiveSessionFileWorker {
     /// A Margin the player's item couldn't take files into a session instead, by the rest of the rule.
     @discardableResult
     public func fileAsQuick(_ placement: PlayerPlacement, now: Date = Date()) -> Bool {
+        fileAsQuickSession(placement, now: now) != nil
+    }
+
+    /// `fileAsQuick`, giving the session the Margin went into (nil when it could not be filed).
+    public func fileAsQuickSession(_ placement: PlayerPlacement, now: Date = Date()) -> LiveSession? {
         sessions()
         var margin = LiveSessionMargin(id: placement.marginId, text: "", markedAt: placement.markedAt, isBlindMark: placement.audioPath == nil)
         margin.audioPath = placement.audioPath
@@ -352,10 +368,37 @@ public actor LiveSessionFileWorker {
             .init(marginId: placement.marginId, markedAt: placement.markedAt, allowsPlayerItem: false),
             sessions: candidates(), deletions: deletions, playerRuns: [], now: now
         )
-        guard (try? place(margin, by: decision)) != nil else { return false }
+        let placed: LiveSession?
+        if case let .alreadyFiled(sessionId) = decision {
+            placed = sessions()[sessionId] // a retry after the first try got as far as the session
+        } else {
+            placed = (try? place(margin, by: decision)) ?? nil
+        }
+        guard let session = placed else { return nil }
         var pass = Pass()
         tidy(now: now, pass: &pass)
-        return true
+        return sessions()[session.id] ?? session
+    }
+
+    /// The Margin is where the listener can see it (on the item when `session` is nil, else in `session`): clears the
+    /// recording from the landing folder and the inbox and returns the answer for the Watch, naming where it really went.
+    /// Nil for a placement with no Watch recording (a Mark).
+    public func completePlacement(_ placement: PlayerPlacement, in session: LiveSession? = nil) -> WatchMarginAnswer? {
+        guard let pending = placement.pending else { return nil }
+        if let inbox = openWatchInbox() {
+            try? inbox.markIncorporated(pending.captureId)
+            dropStoredAudio(inbox, pending.captureId)
+        }
+        let fileManager = FileManager.default
+        try? fileManager.removeItem(atPath: pending.landedStem + ".m4a")
+        try? fileManager.removeItem(atPath: pending.landedStem + ".json")
+        guard let session else {
+            return WatchMarginAnswer(receipt: pending.receipt, outcome: .filed, filedIn: "what was playing", positionMs: placement.positionMs)
+        }
+        return WatchMarginAnswer(
+            receipt: pending.receipt, outcome: .filed, sessionId: session.id, filedIn: Self.name(of: session),
+            positionMs: session.margins.first { $0.id == placement.marginId }?.sessionOffsetMs
+        )
     }
 
     /// Stores, files and answers one Watch Margin. Nil leaves it in the landing folder for the next pass.
@@ -416,13 +459,14 @@ public actor LiveSessionFileWorker {
             return nil
         }
         if case let .playerItem(itemId, positionMs) = decision {
+            // Not cleared and not answered yet: the app writes it onto the item, or files it by the rest of the rule, and
+            // only then calls `completePlacement`. If the app ends first, the recording is still here for the next pass.
             pass.placements.append(PlayerPlacement(
                 marginId: transfer.marginId, itemId: itemId, positionMs: positionMs, markedAt: corrected.time,
-                audioPath: transfer.audioPath, durationMs: transfer.durationMs, spokenOn: "watch"
+                audioPath: transfer.audioPath, durationMs: transfer.durationMs, spokenOn: "watch",
+                pending: PendingWatchCapture(captureId: captureId, receipt: receipt, landedStem: audioURL.deletingPathExtension().path)
             ))
-            try? inbox.markIncorporated(captureId)
-            dropStoredAudio(inbox, captureId)
-            return WatchMarginAnswer(receipt: receipt, outcome: .filed, filedIn: "what was playing", positionMs: positionMs)
+            return nil
         }
         var margin = LiveSessionMargin(id: transfer.marginId, text: "", markedAt: corrected.time)
         margin.deviceMarkedAt = transfer.wallStart

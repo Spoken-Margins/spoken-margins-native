@@ -144,11 +144,61 @@ final class LiveSessionFileWorkerTests: XCTestCase {
         let sessions = await worker.allSessions()
         XCTAssertEqual(sessions, [])
 
+        // Nothing is cleared or answered until the Margin is somewhere the listener can see it (#2542).
+        XCTAssertEqual(pass.answers, [])
+        let landing = try XCTUnwrap(worker.inboxDirectory)
+        XCTAssertFalse(try FileManager.default.contentsOfDirectory(atPath: landing.path).isEmpty, "the landing files wait for the item")
+
         // The item couldn't take it: it files by the rest of the rule instead of being lost.
         let filed = await worker.fileAsQuick(try XCTUnwrap(pass.placements.first), now: t0.addingTimeInterval(200))
         XCTAssertTrue(filed)
         let after = await worker.allSessions()
         XCTAssertEqual(after.flatMap(\.margins).map(\.audioPath), [transfer.audioPath])
+    }
+
+    func testTheItemTakingTheMarginClearsTheRecordingAndAnswersWhatWasPlaying() async throws {
+        let worker = LiveSessionFileWorker(root: root)
+        _ = try dropInInbox(worker, id: "pod", at: 100)
+        let run = LiveSessionFiling.PlayerRun(itemId: "ep", startedAt: t0, endedAt: t0.addingTimeInterval(200), startPositionMs: 5_000, rate: 1)
+        let pass = await worker.fileWatchInbox(playerRuns: [run], now: t0.addingTimeInterval(200))
+        let placement = try XCTUnwrap(pass.placements.first)
+
+        let answer = await worker.completePlacement(placement)
+
+        XCTAssertEqual(answer?.outcome, .filed)
+        XCTAssertEqual(answer?.filedIn, "what was playing")
+        XCTAssertEqual(answer?.positionMs, 105_000)
+        let landing = try XCTUnwrap(worker.inboxDirectory)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: landing.path), [])
+        let repeatPass = await worker.fileWatchInbox(playerRuns: [run], now: t0.addingTimeInterval(210))
+        XCTAssertEqual(repeatPass.placements, [], "a repeat is not placed twice")
+    }
+
+    func testAnAppThatEndedBeforeTheItemTookTheMarginFilesItOnTheNextPass() async throws {
+        let worker = LiveSessionFileWorker(root: root, makeId: { "next" })
+        let transfer = try dropInInbox(worker, id: "pod", at: 100)
+        let run = LiveSessionFiling.PlayerRun(itemId: "ep", startedAt: t0, endedAt: t0.addingTimeInterval(200), startPositionMs: 5_000, rate: 1)
+        _ = await worker.fileWatchInbox(playerRuns: [run], now: t0.addingTimeInterval(200))
+        // The app is gone before it places anything; the player's runs are gone with it.
+        let next = await worker.fileWatchInbox(now: t0.addingTimeInterval(300))
+        XCTAssertEqual(next.answers.map(\.outcome), [.filed])
+        let sessions = await worker.allSessions()
+        XCTAssertEqual(sessions.flatMap(\.margins).map(\.id), [transfer.marginId], "the Margin is not lost")
+    }
+
+    func testAMarginTheItemCouldNotTakeIsAnsweredWithTheSessionItReallyWentTo() async throws {
+        let worker = LiveSessionFileWorker(root: root, makeId: { "q" })
+        _ = try dropInInbox(worker, id: "pod", at: 100)
+        let run = LiveSessionFiling.PlayerRun(itemId: "ep", startedAt: t0, endedAt: t0.addingTimeInterval(200), startPositionMs: 5_000, rate: 1)
+        let pass = await worker.fileWatchInbox(playerRuns: [run], now: t0.addingTimeInterval(200))
+        let placement = try XCTUnwrap(pass.placements.first)
+
+        let session = await worker.fileAsQuickSession(placement, now: t0.addingTimeInterval(200))
+        let answer = await worker.completePlacement(placement, in: session)
+
+        XCTAssertEqual(answer?.filedIn, "a quick session", "not 'what was playing'")
+        XCTAssertEqual(answer?.sessionId, session?.id)
+        XCTAssertEqual(answer?.outcome, .filed)
     }
 
     func testAWatchMarginForADeletedSessionIsRefusedAndNotBroughtBack() async throws {
