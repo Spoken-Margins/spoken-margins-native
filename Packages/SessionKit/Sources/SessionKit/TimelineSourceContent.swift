@@ -13,6 +13,9 @@ public struct TimelineSourceContent: Equatable, Sendable {
 
     public let entries: [Entry]
     public let characterCount: Int
+    /// The pictures, embeds and links the import kept, in text order (#2032). They are not entries: the text
+    /// they sit in is already one, and Timeline draws a row of their own for each.
+    public let elements: [SourceElement]
 
     public func entry(atCharacter offset: Int) -> Entry? {
         guard offset >= 0, offset <= characterCount else { return nil }
@@ -25,9 +28,10 @@ public struct TimelineSourceContent: Equatable, Sendable {
         return lower > 0 ? entries[lower - 1] : nil
     }
 
-    public init(text: String, document: StructuredDocument? = nil) {
+    public init(text: String, document: StructuredDocument? = nil, elements: [SourceElement] = []) {
         let characters = Array(text)
         characterCount = characters.count
+        self.elements = elements.filter { $0.start >= 0 && $0.start <= characters.count }
         var result: [Entry] = []
         func append(_ range: Range<Int>, role: StructuredDocument.Role = .body,
                     label: String? = nil, pageIndex: Int? = nil) {

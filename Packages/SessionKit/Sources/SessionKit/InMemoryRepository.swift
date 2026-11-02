@@ -38,6 +38,7 @@ public class InMemorySessionRepository: SessionRepository, @unchecked Sendable {
     public var sourceSuggestionDecisions: [String: SourceSuggestionDecision]
     /// I13 documents by item id, then extraction version.
     public var structuredDocuments: [String: [Int: StructuredDocument]] = [:]
+    public var sourceElements: [String: SourceElementsRecord] = [:]
     /// Publisher audio by item id (#545).
     public var publisherAudio: [String: PublisherAudio] = [:]
     public var communityMapUploads: [String: CommunityMapUploadRecord] = [:]
@@ -444,6 +445,16 @@ public class InMemorySessionRepository: SessionRepository, @unchecked Sendable {
     public func loadFeedRefreshState(subscriptionId: String) throws -> FeedRefreshState? { feedRefreshStates[subscriptionId] }
     public func saveSourceSuggestionDecision(_ decision: SourceSuggestionDecision) throws { sourceSuggestionDecisions[decision.sourceId] = decision }
     public func loadSourceSuggestionDecision(sourceId: String) throws -> SourceSuggestionDecision? { sourceSuggestionDecisions[sourceId] }
+}
+
+extension InMemorySessionRepository: SourceElementsRepository {
+    public func saveSourceElements(_ record: SourceElementsRecord, itemId: String) throws {
+        sourceElements[itemId] = record
+    }
+
+    public func loadSourceElements(itemId: String) throws -> SourceElementsRecord? {
+        sourceElements[itemId]
+    }
 }
 
 extension InMemorySessionRepository: StructuredDocumentRepository {

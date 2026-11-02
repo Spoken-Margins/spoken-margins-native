@@ -132,6 +132,8 @@ public struct ItemDetailLoader {
             sharedMarginPlacement: placementPasses.pass(itemId: item.id),
             sharedMapRefusalReason: sharedMapRefusalReason,
             turns: turns
-        ).includingTimelineSource(try? store.loadStructuredDocument(itemId: id))
+        ).includingTimelineSource(
+            try? store.loadStructuredDocument(itemId: id),
+            elements: try? store.loadSourceElements(itemId: id))
     }
 }
