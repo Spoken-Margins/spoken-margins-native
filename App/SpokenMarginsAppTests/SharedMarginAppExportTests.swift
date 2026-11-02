@@ -216,6 +216,52 @@ final class SharedMarginAppExportTests: XCTestCase {
         XCTAssertEqual(shipped.map(\.approvedTranscript), ["I saw that too.", "He always asks too late."])
     }
 
+    /// The share revisions and the export record are written on a background thread now (#2509). They must still
+    /// be there when the export returns: one revision per Margin, and each stored Margin remembers its packet identity.
+    func testExportSavesEachMarginsRevisionAndRemembersItsPacketIdentity() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "shared-margin-app-record-export-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let db = root.appending(path: "library.sqlite")
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: db)
+        model.resetAndSeed()
+        model.importTitle = "Harbour notes"
+        model.importText = "The tide went out at dawn. Nobody on the pier noticed the boat had gone. By noon the harbour master was asking questions."
+        model.importTextItem()
+        let itemID = model.selectedItem.id
+        let store = try SQLiteSessionStore(path: db.path)
+        let itemText = try XCTUnwrap(store.loadItem(id: itemID).text)
+        let first = try characterRange(of: "Nobody on the pier", in: itemText)
+        let second = try characterRange(of: "harbour master", in: itemText)
+        let margins = [
+            margin(id: "margin-record-1", itemID: itemID, roughPercent: 31,
+                   anchor: Anchor(anchorType: .text, startChar: first.lowerBound, endChar: first.upperBound,
+                                  anchorBefore: "The tide went out at dawn.", anchorAfter: "noticed the boat had gone."),
+                   audioPath: nil, transcript: "I saw that too."),
+            margin(id: "margin-record-2", itemID: itemID, roughPercent: 77,
+                   anchor: Anchor(anchorType: .text, startChar: second.lowerBound, endChar: second.upperBound,
+                                  anchorBefore: "By noon the", anchorAfter: "was asking questions."),
+                   audioPath: nil, transcript: "He always asks too late.")
+        ]
+        for margin in margins { try store.saveInterjection(margin) }
+        model.selectedItem.interjections = margins
+
+        model.prepareShareInterjections()
+        await model.exportSharedInterjections(presentsReadySheet: false)
+        XCTAssertNil(model.sharingState.errorMessage)
+        let packetURL = try XCTUnwrap(model.sharedSpokenMarginsPackageURL)
+        defer { try? FileManager.default.removeItem(at: packetURL) }
+
+        for margin in margins {
+            XCTAssertEqual(try store.loadInterjectionShareRevisions(interjectionId: margin.id).count, 1, margin.id)
+        }
+        let stored = try store.loadInterjections(sessionId: "session-app-export")
+        let scoped = margins.compactMap { margin in stored.first(where: { $0.id == margin.id })?.sharedAs?.map(\.packageScopedId) }
+        XCTAssertEqual(scoped.count, 2, "both stored Margins remember the packet they were exported in")
+        XCTAssertEqual(Set(scoped.flatMap { $0 }), ["margin-0001", "margin-0002"])
+    }
+
     /// The archive is now written while the main thread stays free (#2510), so a second tap can arrive mid-build.
     /// It must do nothing: no second packet, no error banner over the one being built.
     func testASecondExportWhileOneIsRunningDoesNothing() async throws {
