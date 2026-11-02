@@ -301,6 +301,11 @@ How it is used:
 
 - **Owner's call on counting "beat Kindle" (2026-10-25, #2710).** Don't ask again. Kindle's own note is "about 3 or 4 taps to actually record a note, which is hilarious. And I think it's possible that we could actually beat it." Starting a listening session is not counted against a Margin; it is a per-sitting line, "more just a single configuration fatigue", and "if it doesn't take too many taps to configure, we can figure out how many margins you need to add for it to be still more efficient." A Back Tap or a long-press counts as one action; speaking is free. The Action Button is taken (he uses it for debugging); Back Tap is free.
 
+## 2026-10-28
+
+- **Owner's standing call (2026-10-28).** Don't ask again:
+  - **Showcase was cut to the audit fixes, and only phone-found issues join it.** "Let's cut showcase, but keep the audit fixes." Fifteen issues moved to Later (#2673). New issues join Showcase only if found on the owner's phone; everything else goes to Later or Co-op Experience. This was first recorded only in the milestone description and on #2673, and three issues slipped back in before 11-02.
+
 ## 2026-10-30
 
 - **Owner's standing calls (2026-10-30).** Don't ask again:
@@ -343,3 +348,7 @@ How it is used:
   - **Sending replies back offers the listener's other new Margins too.** "additional margins should be optionally sent as well." Replies are pre-selected; other new Margins are offered, unselected (#3221).
   - **Shared Margin audio goes out at AAC-LC mono 32 kbps, 22.05 kHz.** He compared the same Margin at today's quality, 32 kbps AAC, 24 kbps HE-AAC and 16 kbps HE-AAC: "2 is fine, 3 had noticable artifacts but I'm not sure if a human voice would have been better." HE-AAC was set aside on synthetic speech. The listener's own copy stays at recording quality (#3218).
   - **Changed the same day: shared Margin audio goes out at HE-AAC mono 24 kbps.** After hearing excerpts of his own spoken Margins at 24 and 16 kbps HE-AAC: "HE-AAC 24 kbps is a great ballence. let's use that for now." It replaces the 32 kbps AAC pick. The container stays `.m4a`, so older importers accept the file; #3218 must still prove with a test that Build 32 and Build 34 import and play it (#3218).
+  - **Showcase closes on a measured exit, and the sharing loop gets the hot files first.** He approved the cleanup and its record ("Please apply and record the fixes"). Showcase went from 18 open issues to 8. The audit umbrella #2256 (and #2096 with it) closes when no main-thread TODO row is left on a play, open, pause, record or background path, and one 30-minute export from the rolling phone build shows no hang over 250 ms (exit criterion on #2256). The non-tap rows (#2505, #2507, #2509) moved to Later. Housekeeping and audit work is welcome, but it never blocks share links, Margin review or outside listening: an audit slice that touches the loop's files waits for the loop.
+  - **Make share links from the Mac first, then on the iPhone.** "it would be great to generate some share links from the laptop and share them to my phone and see if that works before adding the ability to create it on my phone, as I'm building from my computer" (#3239, then #487).
+  - **Share links for his own testers don't wait on Apple's review.** "I feel very good about doing share links without Apple review." Read as: link creation for the internal group ships in the owner's own builds behind the build-time flag. A public release still waits for the lawyer (2026-10-20).
+  - **The Journaling Suggestions experiment is deferred but recorded.** "we can defer the experimentation with the journal stuff, that would be great to have documented as something we want to try" (#3240). No public iOS 26 or 27 API lets an app read another app's playback position; iOS 27's NowPlaying framework is publish-only (findings on #3240).
