@@ -159,4 +159,4 @@ jobs:
         if: always()
         run: |
           seconds=$(( $(date +%s) - STARTED ))
-          echo "hosted web took ${seconds}s on ubuntu-latest." | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "hosted web took ${seconds}s on ${ImageOS:-$RUNNER_OS}." | tee -a "$GITHUB_STEP_SUMMARY"
