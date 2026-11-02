@@ -693,13 +693,19 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8))
         app.buttons["home.addSource.button"].tap()
 
-        for route in ["linkOrPodcast", "pastedText", "documentOrBook", "audiobook", "quickFolder"] {
-            XCTAssertTrue(scrollToElement("addSource.route.\(route)").exists, "Missing typed intake route \(route)")
+        // Every way in is on screen at once, with no scrolling (#3217).
+        XCTAssertTrue(element("addSource.sheet").waitForExistence(timeout: 4))
+        let screenBottom = app.windows.firstMatch.frame.maxY
+        for route in ["linkOrPodcast", "findPodcast", "pastedText", "importFromFiles", "quickFolder", "liveSession"] {
+            let tile = element("addSource.route.\(route)")
+            XCTAssertTrue(tile.waitForExistence(timeout: 4), "Missing typed intake route \(route)")
+            XCTAssertTrue(tile.isHittable, "\(route) needs scrolling to reach")
+            XCTAssertLessThanOrEqual(tile.frame.maxY, screenBottom, "\(route) runs past the bottom of the screen")
         }
-        scrollToElement("addSource.route.audiobook").tap()
-        XCTAssertTrue(scrollToElement("audiobook.import.button").exists)
-        element("addSource.route.back").tap()
-        scrollToElement("addSource.route.quickFolder").tap()
+        // Documents, books, audiobooks and packets share one Files tile; there is no separate document or audiobook one.
+        XCTAssertFalse(element("addSource.route.documentOrBook").exists)
+        XCTAssertFalse(element("addSource.route.audiobook").exists)
+        element("addSource.route.quickFolder").tap()
         XCTAssertTrue(scrollToElement("quickFolder.choose.button").exists)
     }
 

@@ -218,12 +218,26 @@ final class ExperiencePresentationTests: XCTestCase {
         ), 32, "Long content must still reach its real bottom before the pull counts")
     }
 
-    func testAddSourceStartsWithFourObjectRoutesAndKeepsFolderManagementSecondary() {
+    /// #3217: every way in is one tile in the grid, no two do the same thing, and Files is a single tile.
+    func testAddSourceGridHoldsEveryWayInOnceWithOneFilesTile() {
         XCTAssertEqual(
-            AddSourcePresentation.primaryObjectRoutes,
-            [.linkOrPodcast, .pastedText, .documentOrBook, .audiobook]
+            AddSourcePresentation.tiles,
+            [.linkOrPodcast, .findPodcast, .pastedText, .importFromFiles, .quickFolder, .liveSession]
         )
-        XCTAssertFalse(AddSourcePresentation.primaryObjectRoutes.contains(.quickFolder))
+        XCTAssertEqual(Set(AddSourcePresentation.tiles.map(\.title)).count, AddSourcePresentation.tiles.count, "two tiles share a name")
+        let filesTiles = AddSourcePresentation.tiles.filter { $0.route == .importFromFiles }
+        XCTAssertEqual(filesTiles, [.importFromFiles])
+        XCTAssertEqual(AddSourceTile.importFromFiles.title, "Import from Files")
+        XCTAssertEqual(AddSourcePresentation.tiles.count % 2, 0, "the two-column grid should end on a full row")
+    }
+
+    func testFindPodcastTileIsLeftOutWhereTheCatalogCannotOpen() {
+        XCTAssertFalse(AddSourcePresentation.tiles(canSearchPodcasts: false).contains(.findPodcast))
+        XCTAssertEqual(AddSourcePresentation.tiles(canSearchPodcasts: true), AddSourcePresentation.tiles)
+    }
+
+    func testFilesTileAcceptsPacketsByTheExtensionThePacketArchiveWrites() {
+        XCTAssertEqual(AddFromFilesPlan.packetExtension, SpokenMarginsPackageArchive.fileExtension)
     }
 
     func testTimelineRailOrdersBySourcePositionThenProvenanceRank() {
