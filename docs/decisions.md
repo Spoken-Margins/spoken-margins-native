@@ -297,6 +297,8 @@ How it is used:
     - The recording screen, the written-Margin screen and the saved Margin show whom it answers, with a control to make it independent (and back). There is no new Reply button on the playing card.
     - The packet format is unchanged; the reply link already round-trips, so Builds 32 and 34 read these packets as before.
 
+- **Owner's call on counting "beat Kindle" (2026-10-25, #2710).** Don't ask again. Kindle's own note is "about 3 or 4 taps to actually record a note, which is hilarious. And I think it's possible that we could actually beat it." Starting a listening session is not counted against a Margin; it is a per-sitting line, "more just a single configuration fatigue", and "if it doesn't take too many taps to configure, we can figure out how many margins you need to add for it to be still more efficient." A Back Tap or a long-press counts as one action; speaking is free. The Action Button is taken (he uses it for debugging); Back Tap is free.
+
 ## 2026-10-30
 
 - **Owner's standing calls (2026-10-30).** Don't ask again:

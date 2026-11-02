@@ -377,7 +377,7 @@ compute-taps.py's rules stand: a tap is 1, a menu item is 2, typing is not count
 
 What to read off it:
 
-1. **Every job is at or under the three-tap ceiling.** Six jobs that are impossible today become possible.
+1. **Every job is at or under the three-tap ceiling.** Eight jobs that are impossible today become possible.
 2. **The biggest gains are not taps.** They are the four "not possible" rows about leaving the other app, finding orphans, and lining up the next day.
 3. **Seven rows rest on unverified platform behaviour.** If check C2 or C3 fails, "spoken Margin without leaving the other app" falls back to Mark (2 taps) plus words later, which is today's state.
 
@@ -385,16 +385,16 @@ What to read off it:
 
 The owner's bar (2026-10-25): Kindle's own note is select the text, tap Note, type, tap Save, which he counts as 3 to 4 taps plus typing, and the book stays on screen. Ours should be fewer actions, no typing, and the book still on screen. `python3 docs/design/live-sessions/job-table.py` prints this table from the same file as the one above.
 
-| Job | Actions per Margin | Kindle's own note | Saved per Margin | Margins per sitting to pay back setup | Margins ever to pay back once-ever setup |
+| Job | Actions per Margin | Kindle's own note | Saved per Margin | Margins per sitting to pay back setup | Margins in the first sitting to pay back both setups |
 | --- | --- | --- | --- | --- | --- |
-| Add a spoken Margin to a book with Back Tap, without leaving it | 1 | 3 to 4, plus typing | 2 | 1 | 3 |
+| Add a spoken Margin to a book with Back Tap, without leaving it | 1 | 3 to 4, plus typing | 2 | 1 | 4 |
 | Add a spoken Margin to a book from the Dynamic Island, with auto-stop | 2 | 3 to 4, plus typing | 1 | 2 | n/a |
 
 How to read it:
 
 1. **Kindle's count is the owner's, not measured here.** Saved per Margin uses its low end (3), so each break-even is the cautious one. Against 4, both are better.
-2. **Starting the session is not counted against a Margin** (owner, 2026-10-25: "single configuration fatigue"). It is the per-sitting setup: 2 taps (Library, plus, kind button, job L01). The break-even is that setup divided by the actions saved per Margin, rounded up.
-3. **Back Tap also has a once-ever setup:** Settings, Accessibility, Touch, Back Tap, pick the shortcut, about 6 taps. That is the thread's estimate and needs a measurement on the owner's phone.
+2. **Starting the session is not counted against a Margin** (owner, 2026-10-25, recorded in `docs/decisions.md`: "single configuration fatigue"). It is the per-sitting setup: 2 taps (plus, kind button, job L01). The break-even is that setup divided by the actions saved per Margin, rounded up.
+3. **Back Tap also has a once-ever setup:** Settings, Accessibility, Touch, Back Tap, pick the shortcut, about 6 taps. That is the thread's estimate and needs a measurement on the owner's phone. The last column adds it to that first sitting's own 2 taps, (6 + 2) / 2 saved = 4 Margins; from the second sitting on, 1 Margin pays the sitting back.
 4. **Both counts assume a pause ends the recording by itself.** Without auto-stop the island costs 3 (job L05) and Back Tap costs 2 (a second Back Tap to stop). How long a silence ends it is not settled here; it is still open on #2710.
 5. **Neither count is real until the device checks pass.** Back Tap rests on C13 and C3, the island on C2 and C3. If the microphone cannot start in place, Back Tap and the island open our recorder, the book leaves the screen, and the "without leaving it" claim fails even where the tap count wins.
 6. **Typing is a saving none of the counts include,** and Kindle's note cannot be spoken at all.

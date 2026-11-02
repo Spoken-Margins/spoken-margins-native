@@ -378,8 +378,8 @@
    "line": null,
    "anchor": null,
    "present_line": null,
-   "condition": "a session is running, or none (the Margin then files by the rule in section 4, point 6)",
-   "notes": "A Back Tap is one action (owner's counting rule, #2710). It runs the Record a Margin intent, which does not exist yet; check C13 decides whether it can record in place. Speaking is free and a pause ends the recording.",
+   "condition": "a session is running",
+   "notes": "A Back Tap is one action (owner's counting rule, docs/decisions.md 2026-10-25). It runs the Record a Margin intent, which does not exist yet; check C13 decides whether it can record in place. Speaking is free. The count assumes a pause ends the recording, which is not built or settled (open on #2710).",
    "proposed": true
   }
  ],
@@ -810,7 +810,7 @@
     "ls18"
    ],
    "final_cost": 0,
-   "final": "Speak; a pause ends the recording. The island then says 'Filed: Margin 4'. Say where you are ('chapter 5') or fill it in afterwards.",
+   "final": "Speak; a pause ends the recording (assumed; not built, length open on #2710). The island then says 'Filed: Margin 4'. Say where you are ('chapter 5') or fill it in afterwards.",
    "extra": {
     "leaves_other_app": "no",
     "watch": "",
@@ -838,7 +838,7 @@
     "ls11"
    ],
    "final_cost": 1,
-   "final": "Record, speak; a pause ends the recording. The island then says 'Filed: Margin 4'.",
+   "final": "Record, speak; a pause ends the recording (assumed; not built, length open on #2710). The island then says 'Filed: Margin 4'.",
    "extra": {
     "leaves_other_app": "no",
     "watch": "",
@@ -860,7 +860,7 @@
  ],
  "reference": {
   "name": "Kindle's own note",
-  "source": "Owner, 2026-10-25 (#2710): select the text, tap Note, type, tap Save",
+  "source": "Owner, 2026-10-25 (docs/decisions.md; #2710): select the text, tap Note, type, tap Save",
   "taps_low": 3,
   "taps_high": 4,
   "typing": true,
@@ -869,9 +869,9 @@
  },
  "sitting_setup": {
   "per_sitting_taps": 2,
-  "per_sitting_how": "Library, plus, kind button (job L01). Counted apart from a Margin's actions (owner, 2026-10-25: 'single configuration fatigue').",
+  "per_sitting_how": "Plus, kind button (job L01). Counted apart from a Margin's actions (owner, 2026-10-25, docs/decisions.md).",
   "once_ever_taps": 6,
-  "once_ever_how": "Back Tap only: Settings, Accessibility, Touch, Back Tap, pick the shortcut. About 6 taps (the thread's estimate, to be measured).",
+  "once_ever_how": "Back Tap only: Settings, Accessibility, Touch, Back Tap, pick the shortcut. About 6 taps (the thread's estimate, to be measured). The first sitting also pays the per-sitting setup.",
   "applies_to": [
    "L17",
    "L18"

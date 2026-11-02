@@ -21,12 +21,13 @@ class BeatKindleJobTableTests(unittest.TestCase):
         cls.table = load_table()
         cls.rows = {r[0]: r for r in cls.table.kindle_rows(cls.table.prop, cls.table.result)}
 
-    def test_back_tap_is_one_action_and_beats_kindle_on_the_first_margin(self):
+    def test_back_tap_is_one_action_and_a_later_sitting_pays_back_in_one_margin(self):
         _, _, taps, _, saved, per_sitting, once_ever = self.rows["L17"]
         self.assertEqual(taps, 1)
         self.assertEqual(saved, 2)
         self.assertEqual(per_sitting, 1)
-        self.assertEqual(once_ever, 3)
+        # 6 taps once ever plus the first sitting's 2, over 2 saved per Margin.
+        self.assertEqual(once_ever, 4)
 
     def test_island_with_auto_stop_is_two_actions(self):
         _, _, taps, _, saved, per_sitting, once_ever = self.rows["L18"]
@@ -44,6 +45,11 @@ class BeatKindleJobTableTests(unittest.TestCase):
         self.assertEqual(self.table.result["L05"][0], 3)
         edges = [e for e in self.table.edges if e["id"] != "ls18"]
         self.assertIsNone(self.table.ct.compute_all(edges, self.table.jobs, self.table.start)["L17"])
+
+    def test_island_count_follows_the_long_press_edge(self):
+        edges = [e for e in self.table.edges if e["id"] != "ls11"]
+        after = self.table.ct.compute_all(edges, self.table.jobs, self.table.start)
+        self.assertNotEqual(after["L18"], self.table.result["L18"])
 
     def test_every_check_a_job_rests_on_is_in_the_device_check_table(self):
         text = SITUATIONS.read_text(encoding="utf-8")

@@ -44,7 +44,7 @@ def kindle_rows(prop, result):
         saved = ref["taps_low"] - taps
         if saved > 0:
             sitting = math.ceil(setup["per_sitting_taps"] / saved)
-            once = math.ceil(setup["once_ever_taps"] / saved) if jid in setup.get("once_ever_applies_to", []) else None
+            once = math.ceil((setup["once_ever_taps"] + setup["per_sitting_taps"]) / saved) if jid in setup.get("once_ever_applies_to", []) else None
         else:
             sitting = once = None
         rows.append((jid, names[jid], taps, "%d to %d" % (ref["taps_low"], ref["taps_high"]), saved, sitting, once))
@@ -71,7 +71,7 @@ def main():
 
     ref = prop["reference"]
     print()
-    print("| Job | Actions per Margin | %s | Saved per Margin | Margins per sitting to pay back setup | Margins ever to pay back once-ever setup |" % ref["name"])
+    print("| Job | Actions per Margin | %s | Saved per Margin | Margins per sitting to pay back setup | Margins in the first sitting to pay back both setups |" % ref["name"])
     print("| --- | --- | --- | --- | --- | --- |")
     for jid, name, taps, kindle, saved, sitting, once in kindle_rows(prop, result):
         print("| %s | %s | %s, plus typing | %s | %s | %s |" % (
