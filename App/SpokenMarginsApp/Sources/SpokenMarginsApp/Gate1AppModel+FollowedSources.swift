@@ -313,8 +313,10 @@ extension Gate1AppModel {
                 let now = Date()
                 let eligible = try FollowedSourceMatching.suggestible(unfollowed, now: now) { try store.loadSourceSuggestionDecision(sourceId: $0) }
                 guard !eligible.isEmpty else { return }
-                for decision in SourceFollowSuggestionPolicy.promptedDecisions(for: eligible, now: now) {
-                    try store.saveSourceSuggestionDecision(decision)
+                // Saved before the offer shows, in one background step (#2509).
+                let prompted = SourceFollowSuggestionPolicy.promptedDecisions(for: eligible, now: now)
+                try await StoreReader(store).read { store in
+                    for decision in prompted { try store.saveSourceSuggestionDecision(decision) }
                 }
                 self.sourceFollowSuggestionItemId = itemId
                 self.storedSourceFollowSuggestionCandidates = eligible
