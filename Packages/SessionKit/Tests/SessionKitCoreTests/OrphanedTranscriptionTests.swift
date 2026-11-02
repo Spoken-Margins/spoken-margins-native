@@ -195,6 +195,34 @@ final class OrphanedTranscriptionTests: XCTestCase {
         XCTAssertEqual(try relaunched.settleOrphanedTranscriptions(skippingMarginsSavedThisRun: true), 0)
     }
 
+    /// An old orphan can be re-written as "pending" right at launch (an edit, a percentage repair, a document upgrade).
+    /// That save is not this run's transcription, so the settle must still reach it (#3200). A Margin the run moves into
+    /// "pending" (a new recording, a Watch import, a retry of a failed one) stays untouched.
+    func testAnOldOrphanReSavedAsPendingThisRunIsStillSettled() throws {
+        let path = makePath()
+        let (earlierRun, _) = try makeEngine(path: path)
+        try earlierRun.saveInterjection(margin(id: "orphan", status: "pending", words: nil))
+        try earlierRun.saveInterjection(margin(id: "failed-before", status: "failed", words: nil))
+
+        let relaunched = try SQLiteSessionStore(path: path)
+        var reSaved = margin(id: "orphan", status: "pending", words: nil)
+        reSaved.createdAt = Date(timeIntervalSince1970: 1)
+        try relaunched.saveInterjection(reSaved) // same row, still pending: not this run's work
+        var fromTheWatch = margin(id: "watch-import", status: "pending", words: nil)
+        fromTheWatch.createdAt = Date(timeIntervalSince1970: 0)
+        try relaunched.saveInterjection(fromTheWatch)
+        try relaunched.saveInterjection(margin(id: "recording-now", status: "pending", words: nil))
+        try relaunched.saveInterjection(margin(id: "failed-before", status: "pending", words: nil)) // a retry
+
+        XCTAssertEqual(try relaunched.settleOrphanedTranscriptions(skippingMarginsSavedThisRun: true), 1)
+
+        let stored = Dictionary(uniqueKeysWithValues: try relaunched.loadInterjections(sessionId: "session-A").map { ($0.id, $0) })
+        XCTAssertEqual(stored["orphan"]?.transcriptionStatus, "failed")
+        XCTAssertEqual(stored["watch-import"], fromTheWatch)
+        XCTAssertEqual(stored["recording-now"]?.transcriptionStatus, "pending")
+        XCTAssertEqual(stored["failed-before"]?.transcriptionStatus, "pending")
+    }
+
     // MARK: A retry that fails
 
     func testAFailedRetryOfAMarginThatWasNeverTranscribedDoesNotLeaveItPending() throws {
