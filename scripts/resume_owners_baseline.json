@@ -5,91 +5,73 @@
    "key": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+MarginVoicePlayback.swift::shouldResume",
    "decls": 2,
    "writes": 0,
-   "why": "holds the answer of SharedMarginReturnClaim, which owns who returns the source after a shared Margin (#997); a local copy of its answer, not a second decision (#3144)"
+   "why": "local named for the answer of SharedMarginReturnClaim, which owns who returns the source after a shared Margin (#997); not state of its own; renamed by #3180"
   },
   {
    "key": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+MarginVoicePlayback.swift::shouldResumeSource",
    "decls": 1,
    "writes": 0,
-   "why": "holds the answer of SharedMarginReturnClaim, which owns who returns the source after a shared Margin (#997); a local copy of its answer, not a second decision (#3144)"
+   "why": "local named for the answer of SharedMarginReturnClaim, which owns who returns the source after a shared Margin (#997); not state of its own; renamed by #3180"
   },
   {
    "key": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate2CompactControlController.swift::shouldResume",
    "decls": 2,
    "writes": 0,
-   "why": "carries what iOS reported (AVAudioSession interruption options) to LiveActivityLifecycle, which decides whether the card stays, not whether the source resumes (#3144); a report, not a second decision"
+   "why": "carries what iOS reported (AVAudioSession interruption options) to LiveActivityLifecycle, which decides whether the card stays, not whether the source resumes (#3144); the Bool becomes a typed report in #3180"
   },
   {
    "key": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/SupertonicSpeechPlaybackClient.swift::SystemPauseHandler",
    "decls": 1,
    "writes": 1,
-   "why": "carries or logs what iOS reported to SystemInterruptionResume, which owns the decision (#3032 slice 2); a report, not a second decision"
+   "why": "carries or logs what iOS reported to SystemInterruptionResume, which owns the decision (#3032 slice 2); the Bool becomes a typed report in #3180"
   },
   {
    "key": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/SupertonicSpeechPlaybackClient.swift::onSystemPause",
    "decls": 3,
    "writes": 1,
-   "why": "carries or logs what iOS reported to SystemInterruptionResume, which owns the decision (#3032 slice 2); a report, not a second decision"
+   "why": "carries or logs what iOS reported to SystemInterruptionResume, which owns the decision (#3032 slice 2); the Bool becomes a typed report in #3180"
   },
   {
    "key": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/SupertonicSpeechPlaybackClient.swift::recordSystemPause",
    "decls": 1,
    "writes": 0,
-   "why": "carries or logs what iOS reported to SystemInterruptionResume, which owns the decision (#3032 slice 2); a report, not a second decision"
+   "why": "carries or logs what iOS reported to SystemInterruptionResume, which owns the decision (#3032 slice 2); the Bool becomes a typed report in #3180"
   },
   {
    "key": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/SupertonicSpeechPlaybackClient.swift::shouldResume",
    "decls": 1,
    "writes": 0,
-   "why": "carries or logs what iOS reported to SystemInterruptionResume, which owns the decision (#3032 slice 2); a report, not a second decision"
+   "why": "carries or logs what iOS reported to SystemInterruptionResume, which owns the decision (#3032 slice 2); the Bool becomes a typed report in #3180"
   },
   {
    "key": "Packages/SessionKit/Sources/SessionKit/HandsFreeMarginCoordinator.swift::shouldResume",
    "decls": 1,
    "writes": 0,
-   "why": "carries iOS's report into the hands-free coordinator, MarginCaptureResume's remaining caller (#3170, #3032 slice 4); a report, not a second decision"
-  },
-  {
-   "key": "Packages/SessionKit/Sources/SessionKit/LibraryAudioPreparationQueue.swift::foregroundShouldResume",
-   "decls": 1,
-   "writes": 0,
-   "why": "the audio-preparation queue, not the playing source; outside the resume paths, listed so it stays visible (#3032); follow-up #3171 only if it grows"
+   "why": "carries iOS's report into HandsFreeCaptureResume (MarginCaptureResume.swift), which owns the decision (#3170); the Bool becomes a typed report in #3180"
   },
   {
    "key": "Packages/SessionKit/Sources/SessionKit/LiveActivityLifecycle.swift::shouldResume",
    "decls": 1,
    "writes": 0,
-   "why": "carries what iOS reported to the Live Activity card, which decides whether the card stays, not whether the source resumes (#3144); a report, not a second decision"
+   "why": "carries what iOS reported to the Live Activity card, which decides whether the card stays, not whether the source resumes (#3144); the Bool becomes a typed report in #3180"
   },
   {
    "key": "Packages/SessionKit/Sources/SessionKit/MarginRecordingInterruption.swift::shouldResume",
    "decls": 2,
    "writes": 0,
-   "why": "carries what iOS reported into MarginCaptureResume (InterruptedCaptureResume), which owns whether the source resumes after a call that cut a Margin short (#3144); a report, not a second decision"
-  },
-  {
-   "key": "Packages/SessionKit/Sources/SessionKit/SpeechSystemPause.swift::SpeechSystemPause",
-   "decls": 1,
-   "writes": 0,
-   "why": "carries or logs what iOS reported to SystemInterruptionResume, which owns the decision (#3032 slice 2); a report, not a second decision"
-  },
-  {
-   "key": "Packages/SessionKit/Sources/SessionKit/SpeechSystemPause.swift::shouldResume",
-   "decls": 2,
-   "writes": 0,
-   "why": "carries or logs what iOS reported to SystemInterruptionResume, which owns the decision (#3032 slice 2); a report, not a second decision"
+   "why": "carries what iOS reported into MarginCaptureResume (InterruptedCaptureResume), which owns whether the source resumes after a call that cut a Margin short (#3144); the Bool becomes a typed report in #3180"
   },
   {
    "key": "Packages/SessionKit/Sources/SessionKitAudio/AudioAdapters.swift::endedShouldResume",
    "decls": 1,
    "writes": 0,
-   "why": "carries or logs what iOS reported to SystemInterruptionResume, which owns the decision (#3032 slice 2); a report, not a second decision"
+   "why": "carries or logs what iOS reported to SystemInterruptionResume, which owns the decision (#3032 slice 2); the Bool becomes a typed report in #3180"
   },
   {
    "key": "Packages/SessionKit/Sources/SessionKitAudio/AudioAdapters.swift::shouldResume",
    "decls": 2,
    "writes": 0,
-   "why": "carries or logs what iOS reported to SystemInterruptionResume, which owns the decision (#3032 slice 2); a report, not a second decision"
+   "why": "carries or logs what iOS reported to SystemInterruptionResume, which owns the decision (#3032 slice 2); the Bool becomes a typed report in #3180"
   }
  ]
 }
