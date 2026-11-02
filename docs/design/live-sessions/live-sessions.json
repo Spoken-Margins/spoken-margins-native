@@ -366,6 +366,21 @@
    "condition": "a session is running",
    "notes": "The app reopens on the running session. Leaves the other app.",
    "proposed": true
+  },
+  {
+   "id": "ls18",
+   "from": "OTHER_APP",
+   "to": "LIVE_ACTIVITY",
+   "control": "Back Tap (double or triple tap on the back of the phone), set once in Settings > Accessibility > Touch > Back Tap to run Record a Margin",
+   "control_kind": "gesture",
+   "presentation": "system",
+   "file": null,
+   "line": null,
+   "anchor": null,
+   "present_line": null,
+   "condition": "a session is running, or none (the Margin then files by the rule in section 4, point 6)",
+   "notes": "A Back Tap is one action (owner's counting rule, #2710). It runs the Record a Margin intent, which does not exist yet; check C13 decides whether it can record in place. Speaking is free and a pause ends the recording.",
+   "proposed": true
   }
  ],
  "removed_edges": [],
@@ -785,6 +800,84 @@
      "Library row (title area)"
     ]
    }
+  },
+  {
+   "id": "L17",
+   "name": "Add a spoken Margin to a book with Back Tap, without leaving it",
+   "target": "LIVE_ACTIVITY",
+   "start": "OTHER_APP",
+   "via_edges": [
+    "ls18"
+   ],
+   "final_cost": 0,
+   "final": "Speak; a pause ends the recording. The island then says 'Filed: Margin 4'. Say where you are ('chapter 5') or fill it in afterwards.",
+   "extra": {
+    "leaves_other_app": "no",
+    "watch": "",
+    "voice": 0,
+    "checks": "C13, C3"
+   },
+   "today": {
+    "taps": null,
+    "how": "Not possible: the only Add Margin intent asks for typed text, and says 'Nothing is playing' when Spoken Margins isn't"
+   },
+   "taps": {
+    "as_built": null,
+    "proposed": 1,
+    "route": [
+     "Back Tap (double or triple tap on the back of the phone), set once in Settings > Accessibility > Touch > Back Tap to run Record a Margin"
+    ]
+   }
+  },
+  {
+   "id": "L18",
+   "name": "Add a spoken Margin to a book from the Dynamic Island, with auto-stop",
+   "target": "LIVE_ACTIVITY",
+   "start": "OTHER_APP",
+   "via_edges": [
+    "ls11"
+   ],
+   "final_cost": 1,
+   "final": "Record, speak; a pause ends the recording. The island then says 'Filed: Margin 4'.",
+   "extra": {
+    "leaves_other_app": "no",
+    "watch": "",
+    "voice": 0,
+    "checks": "C2, C3"
+   },
+   "today": {
+    "taps": null,
+    "how": "Not possible: only a blind Mark"
+   },
+   "taps": {
+    "as_built": null,
+    "proposed": 2,
+    "route": [
+     "Long-press the Dynamic Island (or wake the Lock Screen)"
+    ]
+   }
   }
- ]
+ ],
+ "reference": {
+  "name": "Kindle's own note",
+  "source": "Owner, 2026-10-25 (#2710): select the text, tap Note, type, tap Save",
+  "taps_low": 3,
+  "taps_high": 4,
+  "typing": true,
+  "speaks": false,
+  "note": "Kindle's count is the owner's, not measured here. The low end is used for break-even so the result is the cautious one."
+ },
+ "sitting_setup": {
+  "per_sitting_taps": 2,
+  "per_sitting_how": "Library, plus, kind button (job L01). Counted apart from a Margin's actions (owner, 2026-10-25: 'single configuration fatigue').",
+  "once_ever_taps": 6,
+  "once_ever_how": "Back Tap only: Settings, Accessibility, Touch, Back Tap, pick the shortcut. About 6 taps (the thread's estimate, to be measured).",
+  "applies_to": [
+   "L17",
+   "L18"
+  ],
+  "once_ever_applies_to": [
+   "L17"
+  ]
+ }
 }

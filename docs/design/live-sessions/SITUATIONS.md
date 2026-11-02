@@ -346,6 +346,7 @@ compute-taps.py's rules stand: a tap is 1, a menu item is 2, typing is not count
 
 1. **Long-press the Dynamic Island** is 1 tap. It's the system's expand gesture.
 2. **Open Control Center, or press the Action button,** is 1.
+2a. **A Back Tap** (double or triple tap on the back of the phone) is 1 (owner's counting rule, #2710).
 3. **A spoken command to Siri** is 1, in the Voice column. Waking Siri is not counted.
 4. **Watch actions** are counted apart from phone taps: a wrist raise, a Watch tap, a double-tap gesture and a crown turn are 1 each. A glance with no touch is 0, but it is listed.
 5. **Leaves the other app:** yes when the other app (the call, the book, the video) leaves the screen. In a video call, that is eyes off the call.
@@ -371,12 +372,32 @@ compute-taps.py's rules stand: a tap is 1, a menu item is 2, typing is not count
 | Export a session as Markdown | 2 | 2 | n/a | none | 0 | nothing new |
 | Find a Margin taken with no session running | not possible | 1 | n/a | none | 0 | nothing new |
 | Fix a wrong start position afterwards | not possible | 3 | n/a | none | 0 | nothing new |
+| Add a spoken Margin to a book with Back Tap, without leaving it | not possible | 1 | no | none | 0 | C13, C3 |
+| Add a spoken Margin to a book from the Dynamic Island, with auto-stop | not possible | 2 | no | none | 0 | C2, C3 |
 
 What to read off it:
 
 1. **Every job is at or under the three-tap ceiling.** Six jobs that are impossible today become possible.
 2. **The biggest gains are not taps.** They are the four "not possible" rows about leaving the other app, finding orphans, and lining up the next day.
-3. **Five rows rest on unverified platform behaviour.** If check C2 or C3 fails, "spoken Margin without leaving the other app" falls back to Mark (2 taps) plus words later, which is today's state.
+3. **Seven rows rest on unverified platform behaviour.** If check C2 or C3 fails, "spoken Margin without leaving the other app" falls back to Mark (2 taps) plus words later, which is today's state.
+
+### Beat Kindle (#2710)
+
+The owner's bar (2026-10-25): Kindle's own note is select the text, tap Note, type, tap Save, which he counts as 3 to 4 taps plus typing, and the book stays on screen. Ours should be fewer actions, no typing, and the book still on screen. `python3 docs/design/live-sessions/job-table.py` prints this table from the same file as the one above.
+
+| Job | Actions per Margin | Kindle's own note | Saved per Margin | Margins per sitting to pay back setup | Margins ever to pay back once-ever setup |
+| --- | --- | --- | --- | --- | --- |
+| Add a spoken Margin to a book with Back Tap, without leaving it | 1 | 3 to 4, plus typing | 2 | 1 | 3 |
+| Add a spoken Margin to a book from the Dynamic Island, with auto-stop | 2 | 3 to 4, plus typing | 1 | 2 | n/a |
+
+How to read it:
+
+1. **Kindle's count is the owner's, not measured here.** Saved per Margin uses its low end (3), so each break-even is the cautious one. Against 4, both are better.
+2. **Starting the session is not counted against a Margin** (owner, 2026-10-25: "single configuration fatigue"). It is the per-sitting setup: 2 taps (Library, plus, kind button, job L01). The break-even is that setup divided by the actions saved per Margin, rounded up.
+3. **Back Tap also has a once-ever setup:** Settings, Accessibility, Touch, Back Tap, pick the shortcut, about 6 taps. That is the thread's estimate and needs a measurement on the owner's phone.
+4. **Both counts assume a pause ends the recording by itself.** Without auto-stop the island costs 3 (job L05) and Back Tap costs 2 (a second Back Tap to stop). How long a silence ends it is not settled here; it is still open on #2710.
+5. **Neither count is real until the device checks pass.** Back Tap rests on C13 and C3, the island on C2 and C3. If the microphone cannot start in place, Back Tap and the island open our recorder, the book leaves the screen, and the "without leaving it" claim fails even where the tap count wins.
+6. **Typing is a saving none of the counts include,** and Kindle's note cannot be spoken at all.
 
 ### Screens
 
@@ -402,6 +423,7 @@ Each platform claim this design leans on, how sure it is, and the check that set
 | C10 | AirPods double-press goes to the app that owns Now Playing (Audible), not to us, while Audible plays. | Inference, high confidence | Audible playing, a session running, double-press. See which app reacts. |
 | C11 | Audible's main view shows time within the chapter, not time in the book. | Inference | Look at Audible's player. It decides the hint for an audiobook's "Where are you now?". |
 | C12 | A session started on the Watch puts the Live Activity on the phone's Lock Screen without the phone app coming forward. | Inference: probably not (an app starts a Live Activity from the foreground or an App Intent) | Phone locked, app in the background. Start a session on the Watch. Wake the phone and look for the Live Activity. |
+| C13 | A Back Tap can run a Shortcut that runs our Record a Margin intent, and the intent can start the phone's microphone with another app (Kindle, with Speak Screen reading) in front. | Unverified (#2710). The intent itself is not built yet | Set Back Tap to a shortcut that runs the intent. With Kindle open and Speak Screen playing, double-tap the back: check that a non-empty Margin is filed, Kindle stays in front, and what Speak Screen's voice does at the start and the stop. Repeat with the phone locked. |
 
 ---
 
