@@ -69,7 +69,7 @@ extension Gate1AppModel {
                     voiceIdentifier: speechVoiceIdentifier.isEmpty ? nil : speechVoiceIdentifier,
                     rate: Float(speechRate)
                 )
-                refreshSelectedItem()
+                refreshSelectedItemInBackground() // nothing below reads the item
                 diagnostics["speechSettingsApplied"] = snapshot.status.rawValue
                 reportConfirmation("Speech settings saved.")
             }
@@ -93,7 +93,7 @@ extension Gate1AppModel {
         saveSpeechSettings()
         if let engine {
             snapshot = (try? engine.stopPlayback()) ?? snapshot
-            refreshSelectedItem()
+            refreshSelectedItemInBackground() // nothing below reads the item
         }
         _ = rebuildEngineForCurrentSettings()
         if ttsVoiceSelection.supertonicVoice == nil, let renderer = supertonicModel.reset(retiring: false) {

@@ -32,7 +32,7 @@ extension Gate1AppModel {
                 playbackURL: url.absoluteString,
                 replaceActivePlayback: snapshot.status == .starting || requestedReplacement
             )
-            refreshSelectedItem()
+            refreshSelectedItemInBackground() // nothing below reads the item
         }
         if requestedReplacement, let record = podcastDownloadRecords[itemId] { reportConfirmation(PodcastDownloadStatusText.downloaded(record) + ".") }
         scheduleEmbeddedPublisherChapterImport(itemId: itemId, localURL: url)

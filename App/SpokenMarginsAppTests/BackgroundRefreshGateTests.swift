@@ -623,4 +623,38 @@ final class BackgroundRefreshGateTests: XCTestCase {
         await model.settleItemReload()
         XCTAssertEqual(model.selectedItem.title, storedTitle, "the background reload publishes the stored item")
     }
+
+    /// A Lock Screen, headphone or CarPlay command used to rebuild the whole item screen from SQLite on the main thread
+    /// before it returned (#2505). Only a command that finishes the item reloads on the spot.
+    func testACompactCommandReloadsTheItemInTheBackground() async throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        await model.settleItemReload()
+        let storedTitle = model.selectedItem.title
+        model.selectedItem.title = "Not reloaded yet"
+
+        model.performGate2CompactCommand(.pause)
+        XCTAssertEqual(model.selectedItem.title, "Not reloaded yet", "a compact command must not read the item before it returns")
+
+        await model.settleItemReload()
+        XCTAssertEqual(model.selectedItem.title, storedTitle, "the background reload publishes the stored item")
+    }
+
+    /// A speech or voice change stops the narration and rebuilds the engine. Neither reads the item on the main
+    /// thread any more (#2505).
+    func testChangingTheVoiceReloadsTheItemInTheBackground() async throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        await model.settleItemReload()
+        let storedTitle = model.selectedItem.title
+        model.selectedItem.title = "Not reloaded yet"
+
+        XCTAssertTrue(model.rebuildEngineForCurrentSettings())
+        XCTAssertEqual(model.selectedItem.title, "Not reloaded yet", "an engine rebuild must not read the item before it returns")
+
+        await model.settleItemReload()
+        XCTAssertEqual(model.selectedItem.title, storedTitle)
+    }
 }

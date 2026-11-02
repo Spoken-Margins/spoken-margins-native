@@ -760,7 +760,7 @@ final class Gate1AppModel: ObservableObject {
         saveSpeechSettings()
         if let engine {
             snapshot = (try? engine.stopPlayback()) ?? snapshot
-            refreshSelectedItem()
+            refreshSelectedItemInBackground() // only chapter lists are read below, and a stop doesn't change them
         }
         _ = rebuildEngineForCurrentSettings()
         diagnostics["termsAcceptedVersion"] = SpokenMarginsTerms.currentVersion
@@ -959,7 +959,7 @@ final class Gate1AppModel: ObservableObject {
             if completedCurrentAudio && !playedPendingTurn {
                 closeCompletedSessionIfReady()
             }
-            if refreshingItem || completedCurrentAudio { refreshSelectedItem() }
+            if completedCurrentAudio { refreshSelectedItem() } else if refreshingItem { refreshSelectedItemInBackground() } // a finished session is read by the next tap (#2505)
             diagnostics["playbackLifecycleSync"] = "saved"
         } catch {
             diagnostics["playbackLifecycleSyncError"] = String(describing: error)
@@ -1503,7 +1503,7 @@ final class Gate1AppModel: ObservableObject {
                     try engine.syncPlaybackProgress(),
                     itemId: activeItemId
                 )
-                refreshSelectedItem()
+                refreshSelectedItemInBackground() // nothing below reads the item
             }
             onDeviceSpeechGenerationStatus = RenderedSpeechGenerationState.stopped.rawValue
             onDeviceSpeechGenerationDelayTask?.cancel()
@@ -2304,7 +2304,7 @@ final class Gate1AppModel: ObservableObject {
                     UserDefaults.standard.set(speechRate, forKey: "speechRate")
                 }
             }
-            refreshSelectedItem()
+            if command == .finishInterjection { refreshSelectedItem() } else { refreshSelectedItemAfterTransport() } // a saved Margin shows at once
             if command == .finishInterjection {
                 recordSavedInterjectionForOnboarding()
             }
@@ -2590,7 +2590,7 @@ final class Gate1AppModel: ObservableObject {
                 snapshot = restoredSnapshot
                 activeItemId = restoredSnapshot.itemId ?? activeItemId
                 try prepareSourceMediaPlayback(itemId: activeItemId)
-                refreshSelectedItem()
+                refreshSelectedItemInBackground() // nothing below reads the item
                 diagnostics["sessionRestoredAfterRuntimeRebuild"] = sessionId
             }
             return true
