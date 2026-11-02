@@ -2,12 +2,12 @@
 
 `sm_lane_open.py` wakes the coordinator when a Mac lane runner is left idle (#1215). The coordinator acts only when something wakes it, and nothing told it when a lane slot freed up, so armed PRs, stale "waiting on you" items and idle threads sat until some other wake.
 
-Two last jobs of `.github/workflows/lane.yml`, `lane-open-lane` and `lane-open-automerge`, each run after its Mac job (so the notice comes when either one frees its runner), on the VPS runner (never a Mac runner). It takes `sm_lane_open.py` from the base branch's tip and reads two facts from GitHub:
+Two last jobs of `.github/workflows/lane.yml`, `lane-open-lane` and `lane-open-automerge`, each run after its Mac job (so the notice comes when either one frees its runner), on a GitHub-hosted Linux runner (never a Mac runner, and since #2383 no job runs on the VPS). It takes `sm_lane_open.py` from the base branch's tip and reads two facts from GitHub:
 
 1. Which online runners labelled `sm-lane`, `sm-lane-build` or `sm-lane-priority` are idle.
 2. Which jobs of any workflow's active runs are queued for a runner and ask for a lane label. That includes `compat` in `shipped-build-compat.yml`, which uses the main runner. Each takes one idle runner that has all its labels. A job that waits on its PR's own concurrency group (`pending`) is not counted.
 
-If an idle runner is left over, it POSTs `Lane open-<UTC time>: <free> free, <queued> queued` to the Dial relay routine, which posts it into the project chat like a Dial fire. At most one ping goes out per 10 minutes (`~/.sm-lane-open/state.json` on the VPS runner's user), so a burst of finishes is one message. If the runner still reads busy for a moment after its job ended, it re-reads up to three times, 5 seconds apart.
+If an idle runner is left over, it POSTs `Lane open-<UTC time>: <free> free, <queued> queued` to the Dial relay routine, which posts it into the project chat like a Dial fire. At most one ping goes out per 10 minutes: the time of the last ping is one file, `state.json`, on the `lane-open-state` branch (an empty-tree branch the script creates on first use; no source on it). A run writes it with a compare-and-swap on the file's sha before it pings, so two runs at once send one ping and the loser says "another run pinged first". A ping that fails to send keeps its 10 minutes. `SM_LANE_OPEN_STATE` (a file on a runner that keeps its disk) still works when `SM_LANE_OPEN_STATE_BRANCH` is unset, so a burst of finishes is one message. If the runner still reads busy for a moment after its job ended, it re-reads up to three times, 5 seconds apart.
 
 It fails toward quiet and never turns a lane run red: no relay secrets, an unreadable runner list or queue, more than one page of runners or runs, or a failed POST sends nothing. The step has `continue-on-error`, and the Mac jobs don't wait for it.
 
