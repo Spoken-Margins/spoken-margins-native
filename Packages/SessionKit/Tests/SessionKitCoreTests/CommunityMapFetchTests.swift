@@ -75,7 +75,7 @@ final class CommunityMapFetchTests: XCTestCase {
         local: @escaping @Sendable () async -> CommunityMapLocalState = { CommunityMapLocalState(hasPublisherChapters: false, hasMap: false) },
         mapsState: @escaping @Sendable () async -> ServerFeatureState = { .on },
         calls: FetchCalls = FetchCalls(),
-        store: @escaping @Sendable (CommunityMap) throws -> Bool = { _ in true }
+        store: @escaping @Sendable (CommunityMap) async throws -> Bool = { _ in true }
     ) async throws -> CommunityMapFetchOutcome {
         let payload = try data ?? body(response())
         let fetcher = CommunityMapFetcher(timeoutSeconds: timeout) { url, maximumBytes in
@@ -492,6 +492,25 @@ final class CommunityMapFetchTests: XCTestCase {
         XCTAssertLessThan(Date().timeIntervalSince(started), 5, "the slow request was not waited for")
         let maps = stored.maps
         XCTAssertTrue(maps.isEmpty)
+    }
+
+    /// #2509: the app stores through `StoreReader`, so the store step waits. A map handed to a store that suspends is
+    /// stored, and its answer still decides the outcome.
+    func testAStoreThatWaitsStillDecidesTheOutcome() async throws {
+        let stored = Stored()
+        let outcome = try await fetch(store: { map in
+            try await Task.sleep(nanoseconds: 20_000_000)
+            stored.save(map)
+            return true
+        })
+        guard case .stored = outcome else { return XCTFail("expected a stored map, got \(outcome)") }
+        XCTAssertEqual(stored.maps.count, 1)
+
+        let lostRace = try await fetch(store: { _ in
+            try await Task.sleep(nanoseconds: 20_000_000)
+            return false
+        })
+        XCTAssertEqual(lostRace, .skipped(.hasMap))
     }
 
     func testAFullDiskIsOnlyDiagnostics() async throws {

@@ -199,6 +199,8 @@ How it is used:
 
 - **Run the away check before any hand-off (owner, 2026-10-17).** "I would really love to feel confident that we have an exhaustive build queue." Before any overnight or away-day hand-off, and when the owner says "run the away check", the lead runs `python3 ops/away/away_check.py --hours <hours away>` ([ops/away](../ops/away/README.md)) and acts on it before handing off: fills a thin queue, takes a suspect hold to the owner, and puts his owner-only items in front of him.
 
+- **Baseline builds (moved here from AGENTS.md "Current focus", 2026-11-02).** Build 34, tag `testflight/0.1-build-34` (`485b1449`), is Solid Ground, on internal TestFlight and accepted by the owner on 2026-10-17. Build 32, tag `testflight/0.1-build-32` (`ec940321`), is the external TestFlight build.
+
 ## 2026-10-18
 
 - **Owner's standing calls (2026-10-18).** Don't ask again:
@@ -337,3 +339,6 @@ How it is used:
     - The Add sheet loses its duplicate Files tiles and puts podcast search and Live Session in the top grid (#3217).
   - **No Build 35 upload yet, and the D-U-N-S address stays as Dun & Bradstreet has it.** Asked to approve uploading Build 35 before the Apple conversion, and to ask D&B to add "PMB 1021", he said "no" to both. Don't propose either again until he raises it.
   - **The gate record is the owner's, and he asked for this update.** "please update": the DMCA agent (DMCA-1084466, 2026-10-31) and its live page are recorded (#3204). The project board no longer shows Co-op as held: "make it so" (#3209).
+  - **Build 35 waits until the sharing loop is good.** "when the share loop is any good we will consider cutting build 35." Links on spokenmargins.com open the app only after that upload (#488).
+  - **Sending replies back offers the listener's other new Margins too.** "additional margins should be optionally sent as well." Replies are pre-selected; other new Margins are offered, unselected (#3221).
+  - **Shared Margin audio goes out at AAC-LC mono 32 kbps, 22.05 kHz.** He compared the same Margin at today's quality, 32 kbps AAC, 24 kbps HE-AAC and 16 kbps HE-AAC: "2 is fine, 3 had noticable artifacts but I'm not sure if a human voice would have been better." HE-AAC is out. The listener's own copy stays at recording quality (#3218).

@@ -504,8 +504,9 @@ class WorkflowTests(unittest.TestCase):
         needs = [needs] if isinstance(needs, str) else list(needs)
         return [name for name in needs if name != 'scope']
 
-    def test_no_workflow_runs_on_the_vps_test_runner_and_only_the_lane_open_pings_on_the_vps(self):
-        # #2442: CI left the owner's VPS. linux-t1.yml is gone; the lane-open pings keep sm-vps for their shared state.
+    def test_no_workflow_job_runs_on_the_vps(self):
+        # #2442, #2383: CI left the owner's VPS. linux-t1.yml is gone, and the lane-open pings keep their 10-minute
+        # limit on a data branch (a compare-and-swap in ops/lane/sm_lane_open.py), not on the VPS runner's disk.
         workflows = ROOT / '.github/workflows'
         self.assertFalse((workflows / 'linux-t1.yml').exists())
         on_vps = {}
@@ -516,7 +517,7 @@ class WorkflowTests(unittest.TestCase):
             for job, body in re.findall(r'(?ms)^  ([\w-]+):\n(.*?)(?=^  [\w-]+:\n|\Z)', jobs):
                 if any('sm-vps' in runs_on for runs_on in re.findall(r'(?m)^    runs-on: (.*)$', body)):
                     on_vps.setdefault(path.name, []).append(job)
-        self.assertEqual(on_vps, {'lane.yml': ['lane-open-lane', 'lane-open-automerge']})
+        self.assertEqual(on_vps, {})
 
     def test_the_lane_hands_the_switch_to_the_automerge_and_release_runs_and_may_read_checks(self):
         # The route job (hosted_merge_routing), the lane job (a T3 PASS merging on the hosted checks), the automerge
