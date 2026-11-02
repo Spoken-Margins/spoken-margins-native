@@ -19,6 +19,7 @@ RETIRED = {
     "appear in Sources": "appear in Following",
     "under Add Source": "under Add to Library",
     "Opens Add Source": "Opens Add to Library",
+    "tap Add, then": "tap Add to Library (the plus), then",
     "Native Audio": "Podcast Skip Back / Forward",
     "Episode Map Preparation": "Prepare Chapters and Scenes Ahead",
 }
