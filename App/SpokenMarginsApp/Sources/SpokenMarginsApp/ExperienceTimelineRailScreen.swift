@@ -12,6 +12,7 @@ struct ExperienceTimelineRailScreen: View {
 
     @State private var followsPlayback = true
     @State private var selectedSource: PlaybackTimelineSourceView.Selection?
+    @State private var selectedElement: SourceElement?
     @State private var selectedMargin: MarginRow?
     @State private var selectedSharedMargin: SharedMarginRow?
     @State private var entries: [TimelineRailEntry] = []
@@ -160,6 +161,9 @@ struct ExperienceTimelineRailScreen: View {
         .sheet(item: $selectedSource) { entry in
             PlaybackTimelineSourceView(selection: entry)
         }
+        .sheet(item: $selectedElement) { element in
+            PlaybackTimelineElementView(element: element)
+        }
         .sheet(item: $selectedSharedMargin) { row in
             SharedMarginDetailView(row: row).environmentObject(model)
         }
@@ -224,6 +228,15 @@ struct ExperienceTimelineRailScreen: View {
                 title: entry.label ?? entry.role.timelineTitle,
                 detail: TimelineTextPresentation.excerpt(entry.text, characterLimit: TimelineTextPresentation.supportingCharacterLimit),
                 action: .sourceText(entry), precisePosition: position))
+        }
+
+        // Pictures, embeds and links the import kept from the page (#2032), at the place they sit in the text.
+        for element in item.timelineSource.elements {
+            let position = Double(element.start) / Double(max(1, item.timelineSource.characterCount)) * 100
+            result.append(TimelineRailEntry(
+                id: "source.element.\(element.id)", position: Int(position.rounded()), rank: 0, provenance: .source,
+                title: element.label, detail: element.timelineDetail,
+                action: .sourceElement(element), precisePosition: position))
         }
 
         let sourceAlreadyStartsAtBeginning = item.chapters.contains { $0.percent == 0 }
@@ -501,6 +514,8 @@ struct ExperienceTimelineRailScreen: View {
         switch action {
         case .sourceText(let entry):
             selectedSource = .init(entry: entry, sourceReference: model.selectedItem.externalReference)
+        case .sourceElement(let element):
+            selectedElement = element
         case .beginning:
             if let first = model.selectedItem.chapters.first {
                 model.jumpToChapter(first, fromTimeline: true)
@@ -604,6 +619,7 @@ struct ExperienceTimelineRailScreen: View {
 struct TimelineRailEntry: Identifiable, Equatable {
     enum Action: Equatable {
         case sourceText(TimelineSourceContent.Entry)
+        case sourceElement(SourceElement)
         case beginning
         case chapter(Chapter)
         case mediaChapter(MediaTimelineChapter)
@@ -637,6 +653,7 @@ struct TimelineRailEntry: Identifiable, Equatable {
 
     var provenanceLabel: String {
         if case .sourceText = action { return "Source" }
+        if case .sourceElement(let element) = action { return element.kind.timelineName }
         return provenance.label
     }
 
@@ -656,6 +673,7 @@ struct TimelineRailEntry: Identifiable, Equatable {
         case .listeningMapScene(let scene): "timeline.listeningMapScene.jump.\(scene.id)"
         case .beginning: "timeline.source.beginning"
         case .sourceText(let entry): "timeline.sourceText.\(entry.id)"
+        case .sourceElement(let element): "timeline.sourceElement.\(element.id)"
         }
     }
 }

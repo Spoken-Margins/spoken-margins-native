@@ -79,6 +79,36 @@ final class PlaybackTimelineTests: XCTestCase {
         XCTAssertEqual(item.timelineSource.entries.map(\.role), roles, "Now and the reader still receive every retained role")
     }
 
+    /// #2032: pictures, embeds and links an imported Substack page kept are Timeline rows, in text order and
+    /// labelled; a page that kept none shows none, and ordinary paragraphs still get no row of their own.
+    func testTimelineShowsKeptPicturesEmbedsAndLinksAndNoEmptyRows() throws {
+        let text = "Intro paragraph.\n\nA chart caption.\n\nSee the study here.\n\nClosing paragraph."
+        let characters = text.count
+        let chartStart = try XCTUnwrap(text.range(of: "A chart")).lowerBound.utf16Offset(in: text)
+        let linkStart = try XCTUnwrap(text.range(of: "the study")).lowerBound.utf16Offset(in: text)
+        let record = SourceElementsRecord(text: text, elements: [
+            SourceElement(id: "e0", kind: .picture, start: chartStart, label: "A chart caption.",
+                          altText: "Rates", url: "https://substackcdn.com/a.jpg"),
+            SourceElement(id: "e1", kind: .link, start: linkStart, label: "the study", url: "https://www.example.com/study"),
+            SourceElement(id: "e2", kind: .embed, start: characters, label: "YouTube video", url: "https://www.youtube.com/watch?v=x")
+        ])
+        let item = ItemDetailState(id: "substack", title: "Post", text: text).includingTimelineSource(nil, elements: record)
+        let rows = ExperienceTimelineRailScreen.makeEntries(from: item, sessionID: nil)
+        let elementRows = rows.filter { if case .sourceElement = $0.action { return true } else { return false } }
+        XCTAssertEqual(elementRows.map(\.title), ["A chart caption.", "the study", "YouTube video"])
+        XCTAssertEqual(elementRows.map(\.detail), ["Picture", "Link · example.com", "Embed"])
+        XCTAssertEqual(elementRows.map(\.position), elementRows.map(\.position).sorted())
+        XCTAssertEqual(elementRows.map(\.accessibilityIdentifier),
+                       ["timeline.sourceElement.e0", "timeline.sourceElement.e1", "timeline.sourceElement.e2"])
+        XCTAssertEqual(rows.count, elementRows.count + 1, "only the beginning and the kept elements: no row per paragraph")
+
+        let none = ItemDetailState(id: "plain", title: "Post", text: text).includingTimelineSource(nil)
+        XCTAssertEqual(ExperienceTimelineRailScreen.makeEntries(from: none, sessionID: nil).map(\.id), ["source.beginning"])
+        // Elements made for other text are ignored.
+        let stale = ItemDetailState(id: "edited", title: "Post", text: text + " edited").includingTimelineSource(nil, elements: record)
+        XCTAssertEqual(ExperienceTimelineRailScreen.makeEntries(from: stale, sessionID: nil).map(\.id), ["source.beginning"])
+    }
+
     func testParagraphsDoNotInventNavigationWhenAnArticleHasNoScenes() {
         for text in ["", "One paragraph.", "First.\n\nSecond.\n \nThird.",
                      (0..<100).map { "Paragraph \($0)." }.joined(separator: "\n\n")] {

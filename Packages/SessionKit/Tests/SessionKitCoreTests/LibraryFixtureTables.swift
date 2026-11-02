@@ -135,6 +135,10 @@ extension LibraryFixture {
                     markers: paragraphs.prefix(40).map { .init(kind: .citation, range: .init(start: $0.start, length: 3), label: "[\($0.index)]") },
                     floats: []), itemId: itemId)
                 counts.structuredDocuments += 1
+                // The same items carry the pictures, embeds and links a Substack import kept (#2032).
+                try store.saveSourceElements(SourceElementsRecord(text: text, elements: [
+                    SourceElement(id: "e00000", kind: .picture, start: 0, label: "Picture", url: "https://substackcdn.com/p.jpg")
+                ]), itemId: itemId)
             }
         }
 

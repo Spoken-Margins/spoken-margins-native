@@ -200,6 +200,8 @@ final class SQLiteQuarantinePermanentDeleteTests: XCTestCase {
         try seed()
         try quarantine("structured_document", "item-1#v2", #"{"text":"EXTRACTED PDF TEXT","from-a-future-build":true}"#)
         try quarantine("structured_document", "item-10#v2", #"{"text":"another item's","from-a-future-build":true}"#)
+        try quarantine("source_elements", "item-1#elements", #"{"from-a-future-build":true,"elements":[{"url":"https://example.com/a"}]}"#)
+        try quarantine("source_elements", "item-10#elements", #"{"from-a-future-build":true}"#)
         try quarantine("community_map_upload", "episode-key", #"{"id":"episode-key","itemId":"item-1","from-a-future-build":true}"#)
         try quarantine("interjection", "session-10::note", margin("note", session: "session-10", item: "item-10", audio: "SpokenMargins/note-10.m4a"))
         let store = try SQLiteSessionStore(path: path)
@@ -209,6 +211,8 @@ final class SQLiteQuarantinePermanentDeleteTests: XCTestCase {
         let kept = try quarantinedKeys()
         XCTAssertFalse(kept.contains("structured_document/item-1#v2"), "the extracted text is the item's")
         XCTAssertTrue(kept.contains("structured_document/item-10#v2"), "item-10 is not item-1")
+        XCTAssertFalse(kept.contains("source_elements/item-1#elements"), "a set-aside picture, link and embed list goes with its item (#2032)")
+        XCTAssertTrue(kept.contains("source_elements/item-10#elements"), "item-10 is not item-1")
         XCTAssertTrue(kept.contains("interjection/session-10::note"))
         XCTAssertTrue(kept.contains("community_map_upload/episode-key"),
                       "a live upload record deliberately outlives its item, so a quarantined one does too")

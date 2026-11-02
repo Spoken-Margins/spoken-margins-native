@@ -43,6 +43,8 @@ public struct ParsedObsidianMarkdown: Equatable, Sendable {
     /// Where a closing run of footnote definitions or a trailing "References"-style section starts,
     /// or nil when the text doesn't end in one (#124).
     public var notesStartChar: Int? = nil
+    /// The pictures, embeds and links of a Substack page, anchored in `text` (#2032). Empty for any other text.
+    public var elements: [SourceElement] = []
     /// True when no front matter, heading or override gave the title and `parse`'s `fallbackTitle`
     /// was used as given.
     public var titleIsFallback = false
@@ -350,13 +352,16 @@ public enum ObsidianMarkdownParser {
         fileName: String,
         contents: String,
         titleOverride: String? = nil,
-        fallbackTitle: String? = nil
+        fallbackTitle: String? = nil,
+        sourceURL: String? = nil
     ) throws -> ParsedObsidianMarkdown {
         let parsed = splitFrontmatter(contents)
         let explicitTitle = firstNonEmpty([titleOverride, parsed.metadata["title"], firstMarkdownHeading(in: parsed.body)])
         let givenTitle = explicitTitle == nil ? firstNonEmpty([fallbackTitle]) : nil
         let title = explicitTitle.map(unquote) ?? givenTitle ?? fileNameTitle(fileName)
-        let cleaned = cleanBody(parsed.body)
+        // Only a Substack page pays for finding its pictures, embeds and links (#2032).
+        let keepsElements = sourceURL.map { SourceElementCapture.isSubstackPage(sourceURL: $0, markdown: parsed.body) } ?? false
+        let cleaned = cleanBody(parsed.body, capturingElements: keepsElements)
         guard !cleaned.text.isEmpty else {
             throw SessionKitError.persistenceFailed("obsidian_import_empty_text")
         }
@@ -367,6 +372,7 @@ public enum ObsidianMarkdownParser {
             metadata: parsed.metadata,
             headings: cleaned.headings,
             notesStartChar: cleaned.notesStartChar,
+            elements: cleaned.elements,
             titleIsFallback: givenTitle != nil
         )
     }
@@ -411,7 +417,30 @@ public enum ObsidianMarkdownParser {
         case continuation
     }
 
-    private static func cleanBody(_ body: String) -> (text: String, headings: [ParsedMarkdownHeading], notesStartChar: Int?) {
+    /// An element found while cleaning, waiting for the cleaned text to say where it landed: the output line it
+    /// precedes (or sits on) and, for a link, the offset of its words within that line.
+    private struct PendingElement {
+        var kind: SourceElement.Kind
+        var label: String
+        var altText: String?
+        var url: String
+        var outputIndex: Int
+        var offsetInLine = 0
+    }
+
+    private static func pendingImage(_ image: SourceElementCapture.Image, caption: String?, outputIndex: Int) -> PendingElement {
+        let kind = SourceElementCapture.kind(ofImageAt: image.url)
+        return PendingElement(
+            kind: kind,
+            label: kind == .embed
+                ? (SourceElementCapture.embedService(forURL: image.url) ?? "Embedded media")
+                : SourceElementCapture.pictureLabel(caption: caption, alt: image.alt),
+            altText: kind == .picture ? SourceElementCapture.usableAlt(image.alt) : nil,
+            url: image.url,
+            outputIndex: outputIndex)
+    }
+
+    private static func cleanBody(_ body: String, capturingElements: Bool = false) -> (text: String, headings: [ParsedMarkdownHeading], notesStartChar: Int?, elements: [SourceElement]) {
         let lines = body.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")
         var output: [String] = []
         // Parallel to `output`; nil for the blank separators.
@@ -419,6 +448,7 @@ public enum ObsidianMarkdownParser {
         var headings: [(level: Int, title: String, outputIndex: Int, boldOnly: Bool)] = []
         var skippingTimestampBlock = false
         var lineIsBoldOnly = false
+        var pendingElements: [PendingElement] = []
 
         for (lineIndex, rawLine) in lines.enumerated() {
             var line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -439,8 +469,19 @@ public enum ObsidianMarkdownParser {
                 continue
             }
             if line.range(of: #"^!\[[^\]]*\]\([^)]+\)$"#, options: .regularExpression) != nil {
+                if capturingElements, let image = SourceElementCapture.standaloneImage(line) {
+                    // Its place is the caption or paragraph that follows it, which the next output line becomes.
+                    pendingElements.append(pendingImage(image, caption: SourceElementCapture.caption(followingLine: lineIndex, in: lines),
+                                                        outputIndex: output.count))
+                }
                 continue
             }
+            // A picture the page wraps in a link: `[![alt](src)](page)`. Its line stays in the text as it always did.
+            if capturingElements, let image = SourceElementCapture.linkedImage(line) {
+                pendingElements.append(pendingImage(image, caption: SourceElementCapture.caption(followingLine: lineIndex, in: lines),
+                                                    outputIndex: output.count))
+            }
+            let linksInLine = capturingElements ? SourceElementCapture.inlineLinks(in: line) : []
 
             // Preserve explicit Setext headings, and standalone bold lines as headings when the text has
             // no real ones (below), from pasted text.
@@ -478,6 +519,19 @@ public enum ObsidianMarkdownParser {
             }
             line = SpeechTextNormalizer.normalizeImportedText(line)
             if !line.isEmpty {
+                var searchFrom = line.startIndex
+                for link in linksInLine {
+                    // The link's words as they read once cleaned; when they can't be found the link sits at the line's start.
+                    let words = SourceElementCapture.cleanedLabel(link.text)
+                    var offset = 0
+                    if let found = SourceElementCapture.offset(of: link, words: words, in: line, searchFrom: searchFrom) {
+                        offset = found.offset
+                        searchFrom = found.end
+                    }
+                    pendingElements.append(PendingElement(
+                        kind: .link, label: SourceElementCapture.shortened(words.isEmpty ? link.text : words),
+                        altText: nil, url: link.url, outputIndex: output.count, offsetInLine: offset))
+                }
                 output.append(line)
                 notesLines.append(notesLine)
             }
@@ -508,7 +562,26 @@ public enum ObsidianMarkdownParser {
             },
             closingNotesHeadingStart(resolvedHeadings)
         ].compactMap { $0 }.min()
-        return (text, resolvedHeadings, notesStart)
+        var elements: [SourceElement] = []
+        if !pendingElements.isEmpty {
+            // Where each output line starts in the text, worked out once.
+            var lineStarts: [Int] = []
+            var running = 0
+            for line in output {
+                lineStarts.append(running)
+                running += line.count + 1
+            }
+            elements = SourceElementCapture.finalized(pendingElements.map { pending in
+                // A picture or embed belongs to the next passage, so it skips the blank separator after it.
+                var index = pending.outputIndex
+                if pending.kind != .link { while index < output.count, output[index].isEmpty { index += 1 } }
+                let lineStart = index < output.count ? lineStarts[index] : text.count
+                return SourceElement(
+                    id: "", kind: pending.kind, start: lineStart + pending.offsetInLine,
+                    label: pending.label, altText: pending.altText, url: pending.url)
+            }, textLength: text.count)
+        }
+        return (text, resolvedHeadings, notesStart, elements)
     }
 
     /// The output line where the text's closing run of footnote definitions starts: at least three
