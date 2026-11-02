@@ -147,8 +147,10 @@ extension Gate1AppModel {
                 onPreparedAudio: { [weak self] itemId, prepared in
                     Task { @MainActor [weak self] in
                         guard let signature = try? await signatureTask.value, let self else { return }
+                        // The article is read off the main actor (#2506): this runs once per finished render, and the
+                        // text of a book is megabytes to decode.
                         guard let store = self.store,
-                              let item = try? store.loadItem(id: itemId),
+                              let item = try? await StoreReader(store).read({ try $0.loadItem(id: itemId) }),
                               let canonical = prepared.canonicalized(toItemText: item.text) else {
                             self.diagnostics["supertonicPreparedCanonicalization:\(itemId)"] = "source_mismatch"
                             return

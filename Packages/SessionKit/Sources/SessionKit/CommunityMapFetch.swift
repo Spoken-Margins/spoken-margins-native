@@ -79,17 +79,18 @@ public struct CommunityMapLocalState: Equatable, Sendable {
     /// that is imported but not placed yet, a stored listening
     /// map that isn't the publisher's, or chapters in the transcript timeline.
     ///
-    /// Opening an episode asks this, so it reads ids and chapters, never a podcast's whole transcript or a map (#2506).
+    /// Opening an episode asks this, so it reads ids, yes/no answers and chapters, never a podcast's whole transcript,
+    /// a map, a projection's points or a friend's imported layer (#2506).
     public static func read(itemId: String, repository: SessionRepository, hasEmbeddedChapters: Bool = false) -> Self {
         let chapters = (try? repository.loadTranscriptTimelineChapters(itemId: itemId)) ?? []
         let listeningMapId = (try? repository.listeningMapId(itemId: itemId)) ?? nil
         let proposalIds = (try? repository.portableListeningMapProposalIds(itemId: itemId)) ?? []
-        let projection = try? repository.loadResolvedListeningMapProjection(itemId: itemId)
-        let friendsMap = ((try? repository.loadImportedCommentaryLayers(itemId: itemId)) ?? []).contains(where: \.holdsListeningMap)
+        let hasProjection = (try? repository.hasResolvedListeningMapProjection(itemId: itemId)) ?? false
+        let friendsMap = (try? repository.holdsImportedListeningMap(itemId: itemId)) ?? false
         return Self(
             hasPublisherChapters: hasEmbeddedChapters
                 || CommunityMapUploadPolicy.hasPublisherChapters(mapId: listeningMapId, chapters: chapters),
-            hasMap: !proposalIds.isEmpty || projection != nil || listeningMapId != nil || friendsMap
+            hasMap: !proposalIds.isEmpty || hasProjection || listeningMapId != nil || friendsMap
                 || !chapters.isEmpty
         )
     }

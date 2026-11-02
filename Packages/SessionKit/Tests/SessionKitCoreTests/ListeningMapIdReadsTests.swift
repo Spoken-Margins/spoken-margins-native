@@ -98,6 +98,67 @@ final class ListeningMapIdReadsTests: XCTestCase {
             MediaTimelineChapter(id: "ch-publisher-feed-001", title: "Intro", startMs: 0, transcriptSegmentId: "s0")]))
     }
 
+    private func friendsLayer(_ id: String, itemId: String? = nil, deleted: Bool = false, proposals: [PortableListeningMapProposalArtifact]?) -> ImportedCommentaryLayer {
+        ImportedCommentaryLayer(
+            id: id, itemId: itemId ?? self.itemId, packageDigest: "digest-\(id)", packageId: "package-\(id)",
+            itemIdentity: SharedItemIdentity(itemType: .podcast, title: "Episode"),
+            importedAt: now, deletedAt: deleted ? now : nil, listeningMapProposals: proposals
+        )
+    }
+
+    private func projection(_ id: String, itemId: String, points: Int) -> ResolvedListeningMapProjection {
+        ResolvedListeningMapProjection(
+            id: id, itemId: itemId, proposalId: "friend-map", createdAt: now,
+            points: (0..<points).map { ResolvedListeningMapPoint(id: "p\($0)", sourceMediaTimeMs: $0 * 1_000, recipientMediaTimeMs: $0 * 1_000, confidence: .exactEdition, evidenceIds: []) },
+            intervals: [])
+    }
+
+    /// The two yes/no questions give the whole reads' answers over the neighbouring cases: no layer, a layer with no map,
+    /// an empty map list, a deleted one, a live one, another item's, and a projection of another item.
+    func testTheMapYesNoReadsAgreeWithTheWholeReadsOverNeighbouringRows() throws {
+        try withStore { store, _ in
+            func answers(_ id: String) throws -> [Bool] {
+                [try store.holdsImportedListeningMap(itemId: id), try store.hasResolvedListeningMapProjection(itemId: id)]
+            }
+            func wholeAnswers(_ id: String) throws -> [Bool] {
+                [try store.loadImportedCommentaryLayers(itemId: id).contains(where: \.holdsListeningMap),
+                 try store.loadResolvedListeningMapProjection(itemId: id) != nil]
+            }
+            XCTAssertEqual(try answers(itemId), [false, false])
+
+            try store.saveImportedCommentaryLayer(friendsLayer("no-map", proposals: nil))
+            try store.saveImportedCommentaryLayer(friendsLayer("empty-map", proposals: []))
+            try store.saveImportedCommentaryLayer(friendsLayer("deleted", deleted: true, proposals: [proposal("gone")]))
+            try store.saveImportedCommentaryLayer(friendsLayer("elsewhere", itemId: "other-item", proposals: [proposal("theirs")]))
+            try store.saveResolvedListeningMapProjection(projection("projection-other", itemId: "other-item", points: 3))
+            XCTAssertEqual(try answers(itemId), [false, false])
+            XCTAssertEqual(try answers(itemId), try wholeAnswers(itemId))
+
+            try store.saveImportedCommentaryLayer(friendsLayer("live", proposals: [proposal("friend-map")]))
+            XCTAssertEqual(try answers(itemId), [true, false])
+            try store.saveResolvedListeningMapProjection(projection("projection-item", itemId: itemId, points: 3))
+            XCTAssertEqual(try answers(itemId), [true, true])
+            for id in [itemId, "other-item", "nobody"] { XCTAssertEqual(try answers(id), try wholeAnswers(id), id) }
+        }
+    }
+
+    func testAFriendsLayerAndAProjectionAreNotReadWholeToAskWhetherTheEpisodeHasAMap() throws {
+        try withStore { store, meter in
+            try store.saveImportedCommentaryLayer(friendsLayer("live", proposals: [proposal("friend-map", sceneCount: 300)]))
+            try store.saveResolvedListeningMapProjection(projection("projection-item", itemId: itemId, points: 3_000))
+
+            meter.reset()
+            let state = CommunityMapLocalState.read(itemId: itemId, repository: store)
+            let bytes = meter.samples.reduce(0) { $0 + $1.bytes }
+
+            XCTAssertEqual(state, CommunityMapLocalState(hasPublisherChapters: false, hasMap: true))
+            for whole in ["loadImportedCommentaryLayers(itemId:)", "loadResolvedListeningMapProjection(itemId:)"] {
+                XCTAssertEqual(meter.totals(for: whole).calls, 0, "\(whole) decodes the whole record")
+            }
+            XCTAssertLessThan(bytes, 1_000, "ids only, not the layer's scenes or the projection's points (\(bytes) bytes read)")
+        }
+    }
+
     func testAStoreWithoutIdReadsAnswersFromTheWholeRecords() throws {
         let repository = InMemorySessionRepository()
         try repository.saveListeningMap(ListeningMap(id: "map-item", itemId: itemId, overview: "", chapters: []))

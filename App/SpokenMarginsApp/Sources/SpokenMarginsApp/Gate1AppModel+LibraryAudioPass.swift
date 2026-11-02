@@ -159,13 +159,22 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
             if let previous, previous != job.itemId,
                libraryItems.first(where: { $0.id == previous })?.startupAudioState == .preparing { updateLibraryStartupAudioState(itemId: previous, state: .waiting) }
             if libraryItems.first(where: { $0.id == job.itemId })?.startupAudioState == .waiting { updateLibraryStartupAudioState(itemId: job.itemId, state: .preparing) }
-            guard var manifest = try store.loadPreparedAudioManifest(id: job.manifestId),
-                  let item = try? store.loadItem(id: job.itemId), item.deletedAt == nil, // a job saved back mid-render for an item since trashed (#883)
-                  let sourceText = PreparedSpeechHooks.preparedText(of: item, in: store) else {
+            // The manifest and the item with its text are read off the main actor (#2506):
+            // this runs once per chunk, and a book's text is megabytes to decode.
+            let jobManifestId = job.manifestId, jobItemId = job.itemId
+            let source = try await StoreReader(store).read { store -> PreparationPassSource? in
+                guard let manifest = try store.loadPreparedAudioManifest(id: jobManifestId),
+                      let item = try? store.loadItem(id: jobItemId), item.deletedAt == nil, // a job saved back mid-render for an item since trashed (#883)
+                      let sourceText = PreparedSpeechHooks.preparedText(of: item, in: store) else { return nil }
+                return PreparationPassSource(manifest: manifest, item: item, sourceText: sourceText)
+            }
+            guard let source else {
                 try await discardPreparationJob(job.id, store: store)
                 diagnostics["backgroundAudioPreparation"] = "discarded_missing_source_job"
                 return try hasMoreMatchingJobs()
             }
+            var manifest = source.manifest
+            let item = source.item, sourceText = source.sourceText
             attemptedJob = job
             recordDeveloperDiagnostic("preparation.selected", ["item": DeveloperDiagnosticRecording.token(job.itemId), "policy": String(describing: job.policy), "nextChunk": String(job.nextChunkIndex)])
             let support = try applicationSupportDirectory()
@@ -190,8 +199,13 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
             let ledger = requireOfflineLedger(store: store, rootDirectory: support)
             let coordinator = requirePreparedAudioCoordinator(store: store, supportDirectory: support)
             let atRender = preparationSeams.deviceConditions() // read again here: heat can rise during the setup above (Codex audit on 27fd1bd)
+            var alreadyListened = item.sourceCompletedAt != nil
+            if !alreadyListened { // the sessions are read here, as before, off the main actor (#2506)
+                let sessions = try await StoreReader(store).read { try $0.loadSessions(itemId: jobItemId) }
+                alreadyListened = PreparationChunkGate.itemAlreadyListened(sessions)
+            }
             let gate = try PreparationChunkGate.decide(policy: job.policy, thermal: atRender.thermal, isLowPowerModeEnabled: atRender.isLowPowerModeEnabled,
-                                                       itemAlreadyListened: item.sourceCompletedAt != nil || PreparationChunkGate.itemAlreadyListened(store.loadSessions(itemId: item.id)))
+                                                       itemAlreadyListened: alreadyListened)
             let gated = try await coordinator.applyGate(gate, manifestId: manifest.id) // applied to the saved manifest: chunks committed meanwhile stay
             manifest = gated.manifest ?? manifest
             if gated.changed { refreshLibraryRowsInBackground() }
@@ -254,7 +268,8 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
                 try? await ledger.release(reservationId: reservation.id)
                 throw error
             }
-            guard let updated = try store.loadPreparedAudioManifest(id: manifest.id),
+            let renderedManifestId = manifest.id
+            guard let updated = try await StoreReader(store).readInOrder(AudioPreparationQueueEdits.orderKey, { try $0.loadPreparedAudioManifest(id: renderedManifestId) }), // runs even if the pass was just cancelled, as the commit after it does
                   let committed = updated.chunks.first(where: { $0.index == next.index }) else {
                 try? await ledger.release(reservationId: reservation.id)
                 return try hasMoreMatchingJobs()
@@ -363,4 +378,11 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
             try AudioPreparationPassWrites.markFailure(jobId: jobId, manifestId: manifestId, code: code, in: $0)
         }
     }
+}
+
+/// What one pass over a preparation job needs from the store, read together off the main actor (#2506).
+private struct PreparationPassSource: Sendable {
+    var manifest: PreparedAudioManifest
+    var item: Item
+    var sourceText: String
 }
