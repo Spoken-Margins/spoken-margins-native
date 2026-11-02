@@ -41,8 +41,12 @@ extension Gate1AppModel {
             let saved = try await Self.offMain { try Self.savedListeningEditionState(of: edition) }
             if saved == .missing { return .none }
             if saved == .different { return .different }
-            // Saved edition but the item is gone from the Library: import it again.
-            return (try? requireStore().loadItemSummary(id: edition.itemID)) == nil ? .none : .identical // not the text (#2506)
+            // Saved edition but the item or its map is gone from the Library (or the import stopped after the file was
+            // written, because playback began): import it again. Neither read decodes the text or the map (#2506).
+            guard let store = try? requireStore() else { return .none }
+            let itemIsThere = (try? store.loadItemSummary(id: edition.itemID)) != nil
+            let mapIsThere = (try? store.listeningMapId(itemId: edition.itemID)) != nil
+            return itemIsThere && mapIsThere ? .identical : .none
         }, importOne: { edition in
             try await saveListeningEdition(edition, replaceMap: false)
             schedulePrewarmAfterPreparedTextChange(itemId: edition.itemID)
