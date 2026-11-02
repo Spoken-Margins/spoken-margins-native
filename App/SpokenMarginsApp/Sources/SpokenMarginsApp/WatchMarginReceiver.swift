@@ -134,7 +134,7 @@ final class WatchMarginReceiver: NSObject {
     private func placeOnPlayerItems(_ placements: [LiveSessionFileWorker.PlayerPlacement]) async -> Bool {
         var changed = false
         for placement in placements {
-            if PlayerRunController.place(placement) {
+            if await PlayerRunController.fileOntoPlayerItem(placement) {
                 changed = true
             } else {
                 changed = await files.fileAsQuick(placement) || changed

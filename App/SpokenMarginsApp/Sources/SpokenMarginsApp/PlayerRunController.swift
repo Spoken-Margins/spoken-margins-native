@@ -5,11 +5,13 @@ import SessionKit
 /// Spoken Margins was playing an item, lands on that item at the time it was taken (#2542; `docs/design/live-sessions/
 /// DESIGN.md` section 2 point 12). The model reports each snapshot here (`note`), `PlayerRunRecorder` turns them into
 /// runs of steady playback, and `WatchMarginReceiver` hands the runs to `LiveSessionFiling` and each placement back to
-/// `place`. A placement that can't be written (an item with no session, a Mark with no recording, a failed write) returns
+/// `fileOntoPlayerItem`. A placement that can't be written (an item with no session, a Mark with no recording, a failed write) returns
 /// false, and the receiver files it as a quick session as before, so a Margin is never lost.
 ///
-/// All of it is on the main actor: the write moves the item's saved place for a moment and puts it back
-/// (`PlayerItemMargin`), which is safe only while nothing else saves that session, and the player saves on the main actor.
+/// The runs are kept on the main actor, where the snapshot changes. The write itself runs off the main thread, in order
+/// (`StoreReader.readInOrder`, #2505): `PlayerItemMargin` moves the item's saved place for a few milliseconds and puts it
+/// back. If the player saves its own place in that instant, the put-back is overwritten by the player's next save half a
+/// second later, so the resume point is at worst that stale for an instant.
 @MainActor
 enum PlayerRunController {
     private static var recorder = PlayerRunRecorder()
@@ -34,22 +36,26 @@ enum PlayerRunController {
     }
 
     /// Writes a placement onto its item. True when it is there; false leaves nothing written.
-    static func place(_ placement: LiveSessionFileWorker.PlayerPlacement) -> Bool {
+    static func fileOntoPlayerItem(_ placement: LiveSessionFileWorker.PlayerPlacement) async -> Bool {
         guard let model, let store = model.store else { return false }
         let saved: Interjection
         do {
-            saved = try PlayerItemMargin.placeSpoken(
-                audioPath: placement.audioPath, atMediaTimeMs: placement.positionMs, markedAt: placement.markedAt,
-                itemId: placement.itemId, repository: store
-            )
+            saved = try await StoreReader(store).readInOrder("player-item-margin") {
+                try PlayerItemMargin.placeSpoken(
+                    audioPath: placement.audioPath, atMediaTimeMs: placement.positionMs, markedAt: placement.markedAt,
+                    itemId: placement.itemId, repository: $0
+                )
+            }
         } catch {
             model.diagnostics["playerItemMargin"] = "filed as quick: \(String(describing: error))"
             return false
         }
         model.diagnostics["playerItemMargin"] = "placed \(saved.id)"
-        model.scheduleTranscription(for: saved)
-        model.refreshMarginRowsInBackground(forItem: placement.itemId)
-        if model.activeItemId == placement.itemId { model.refreshSelectedItemInBackground() }
+        model.hangTelemetry.labels.scoped("playerItemMargin") {
+            model.scheduleTranscription(for: saved)
+            model.refreshMarginRowsInBackground(forItem: placement.itemId)
+            if model.activeItemId == placement.itemId { model.refreshSelectedItemInBackground() }
+        }
         return true
     }
 }

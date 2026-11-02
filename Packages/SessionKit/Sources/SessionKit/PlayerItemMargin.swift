@@ -12,8 +12,9 @@ import Foundation
 /// back before the error is thrown, and the caller files the Margin another way (`LiveSessionFileWorker.fileAsQuick`).
 ///
 /// It only runs on an item whose session keeps a media clock (an episode, an audio file, a narrated article with a
-/// transcript). Anything else throws `unsupportedTarget`. It must run where the player's own session writes run (the
-/// main actor), so nothing saves the session between the move and the put-back.
+/// transcript). Anything else throws `unsupportedTarget`. The app runs it off the main thread, in order, a few
+/// milliseconds long. If the player saves its own place inside that window, the put-back overwrites it with the place
+/// the session had when this started, and the player's next save (half a second later) corrects it.
 public enum PlayerItemMargin {
     public enum Failure: Error, Equatable {
         case itemNotFound
