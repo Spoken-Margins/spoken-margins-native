@@ -1,9 +1,15 @@
 # Hosted web UI checks (#3004, part of #2977): build the web app in `Web/` and run its Playwright suite on a
-# GitHub-hosted ubuntu runner, for PRs that change `Web/**`. Until now the build and the browser tests ran only in the
+# GitHub-hosted Mac, for PRs that change `Web/**`. Until now the build and the browser tests ran only in the
 # thread that changed them and were reported by hand, so a PR could pass on its author's machine and fail on a clean
 # checkout (#2991 failed in CI on a fixture the author never committed). The owner's 2026-10-21 call: every test
 # blocks merges. `Web/`'s plain-TypeScript tests already run in the fast plan (`npm run test:web`); this adds the
-# part with its own package.json: the Vite build and the Playwright journeys in Chromium.
+# part with its own package.json: the Vite build and the Playwright journeys in Chromium, Google Chrome and WebKit.
+#
+# Why a Mac and not ubuntu (#3254): a voice Margin is AAC in `.m4a` only (#2984), and no browser on Linux can record
+# AAC, so every test that records (9 of them, transcription included) failed there, and the job ran out its clock
+# instead of reporting. Chrome and WebKit on a Mac record AAC as they do for listeners, and the suite is the one
+# authors run on their own Macs. GitHub's Macs cost nothing on this public repository; the price is the wait for one
+# of the 5 Macs a repository may hold at once.
 #
 # The rerun rule (owner, 2026-10-24): Playwright runs with one retry. A test that fails and then passes counts as a
 # pass, and the job summary lists it under "passed on retry". A test that fails its retry too makes the job red. The
@@ -39,7 +45,8 @@ jobs:
     # Same-repo PRs only, as in every other workflow. Always true for workflow_dispatch.
     name: 'hosted web: build and Playwright'
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-latest
+    # The image the other hosted Mac jobs use (hosted-app-macos.yml), with Google Chrome installed.
+    runs-on: xcode-27
     timeout-minutes: 20
     steps:
       - name: Start the clock
@@ -72,11 +79,25 @@ jobs:
         if: steps.present.outputs.present == 'true'
         working-directory: Web
         run: npm run build
-      # Chromium only, as the config uses; --with-deps adds the system libraries the hosted image lacks.
-      - name: Install Playwright Chromium
+      # What the config's projects launch: bundled Chromium (`phone`, `laptop`), WebKit (`phone-webkit`), and installed
+      # Google Chrome (`phone-chrome`, `chrome-transcribe`), which the image has; Playwright installs it only if not.
+      - name: Install Playwright browsers
         if: steps.present.outputs.present == 'true'
         working-directory: Web
-        run: npx playwright install --with-deps chromium
+        run: |
+          npx playwright install chromium webkit
+          if [ -d "/Applications/Google Chrome.app" ]; then echo "Google Chrome is installed."; else npx playwright install chrome; fi
+      # transcribe.spec.ts fills this folder from Hugging Face once per machine (the pinned model, about 32 MB); keyed
+      # by the catalog that pins its revision, so a new model fetches once and is then reused.
+      - name: Speech model cache
+        if: steps.present.outputs.present == 'true'
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/Library/Caches/spoken-margins-web-models
+          key: web-models-${{ hashFiles('Web/src/transcribe/catalog.ts') }}
+      # --global-timeout stops the run at 14 minutes, leaving the job's last 6 for setup and the report: a run that
+      # hangs still prints each failure's error and keeps its report, where the job's own timeout would cancel it
+      # silently (#3254).
       - name: Playwright suite
         if: steps.present.outputs.present == 'true'
         working-directory: Web
@@ -88,7 +109,7 @@ jobs:
           config=$(ls e2e/playwright.config.* playwright.config.* 2>/dev/null | head -n 1 || true)
           [ -n "$config" ] || { echo "No Playwright config under Web/ (looked for e2e/playwright.config.* and playwright.config.*)." >&2; exit 1; }
           echo "Playwright config: $config"
-          npx playwright test -c "$config" --retries=1 --reporter=list,json,html
+          npx playwright test -c "$config" --retries=1 --global-timeout=840000 --reporter=list,json,html
       # A test that failed and then passed is a pass, but each one is evidence (#2176 tallies them, and three in a
       # week get an issue). The JSON reporter marks them `flaky`.
       - name: List tests that passed on retry
