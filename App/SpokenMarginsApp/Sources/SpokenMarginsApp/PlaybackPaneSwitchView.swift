@@ -1,3 +1,4 @@
+import SessionKit
 import SwiftUI
 
 /// Presentation only: selecting a pane never navigates or changes the player's state.
@@ -26,6 +27,8 @@ enum PlaybackPane: String, CaseIterable {
 struct PlaybackPaneSwitchView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Binding var selection: PlaybackPane
+    /// Margins a friend sent on this item. The Margins tab says so (#3059), in words and a number.
+    var receivedMarginCount = 0
 
     var body: some View {
         HStack(spacing: 4) {
@@ -33,7 +36,7 @@ struct PlaybackPaneSwitchView: View {
                 Button { selection = pane } label: {
                     Group {
                         if dynamicTypeSize.isAccessibilitySize { Image(systemName: pane.symbol) }
-                        else { Text(pane.rawValue) }
+                        else { Text(title(for: pane)) }
                     }
                         .font(.subheadline.weight(.semibold))
                         .lineLimit(1)
@@ -46,7 +49,7 @@ struct PlaybackPaneSwitchView: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.white)
-                .accessibilityLabel(pane.rawValue)
+                .accessibilityLabel(accessibilityTitle(for: pane))
                 .accessibilityIdentifier(pane.accessibilityIdentifier)
                 .accessibilityAddTraits(selection == pane ? .isSelected : [])
             }
@@ -56,5 +59,13 @@ struct PlaybackPaneSwitchView: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Playback view")
         .accessibilityIdentifier("playback.viewSwitch")
+    }
+
+    private func title(for pane: PlaybackPane) -> String {
+        pane == .margins ? PlaybackMarginsTabLabel.title(receivedCount: receivedMarginCount) : pane.rawValue
+    }
+
+    private func accessibilityTitle(for pane: PlaybackPane) -> String {
+        pane == .margins ? PlaybackMarginsTabLabel.accessibilityLabel(receivedCount: receivedMarginCount) : pane.rawValue
     }
 }
