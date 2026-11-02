@@ -100,6 +100,36 @@ public enum ListeningEditionBatch {
         }
     }
 
+    /// The same batch for callers whose lookups and imports wait on work off the main thread (#2510): the entries are
+    /// still taken one at a time, in order, so a repeated source is seen as already imported. The closures run on the
+    /// caller's actor, as the synchronous `run` does; only the waiting differs.
+    public static func runAsync(_ entries: [Entry],
+                                isolation: isolated (any Actor)? = #isolation,
+                                existing: (ListeningEdition) async throws -> Existing,
+                                importOne: (ListeningEdition) async throws -> Void) async -> [Line] {
+        var lines: [Line] = []
+        for entry in entries {
+            guard let edition = entry.edition else {
+                lines.append(Line(id: entry.id, name: entry.name, title: nil, outcome: .failed(entry.error ?? "Could not be read.")))
+                continue
+            }
+            do {
+                switch try await existing(edition) {
+                case .identical:
+                    lines.append(Line(id: entry.id, name: entry.name, title: edition.title, outcome: .alreadyImported))
+                case .different:
+                    lines.append(Line(id: entry.id, name: entry.name, title: edition.title, outcome: .keptExistingMap))
+                case .none:
+                    try await importOne(edition)
+                    lines.append(Line(id: entry.id, name: entry.name, title: edition.title, outcome: .imported))
+                }
+            } catch {
+                lines.append(Line(id: entry.id, name: entry.name, title: edition.title, outcome: .failed(error.localizedDescription)))
+            }
+        }
+        return lines
+    }
+
     /// One message for a set of result lines, for a place with no results list (the Add sheet's Files route, #2373).
     /// `isFailure` is true when any file was not imported or kept a different map, and the message then names each one.
     public struct Summary: Equatable, Sendable {

@@ -7,7 +7,7 @@ import SQLite3
 
 @MainActor
 final class PKMWorkflowTests: XCTestCase {
-    func testEditionImportPreservesActiveSessionAndRejectsSilentMapReplacement() throws {
+    func testEditionImportPreservesActiveSessionAndRejectsSilentMapReplacement() async throws {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed(); model.declineCurrentTerms()
         model.importTitle = "Existing"; model.importText = "Keep the ongoing session."
@@ -16,19 +16,19 @@ final class PKMWorkflowTests: XCTestCase {
         var edition = ListeningEdition(title: "Imported", text: "An article " + UUID().uuidString,
             generator: "External model", overview: "Overview", scenes: [.init(title: "A", description: "Description", summary: "Summary", startBlock: 1, endBlock: 1)])
         defer { try? FileManager.default.removeItem(at: ListeningEditionStore.application().file(edition.itemID)) }
-        model.importListeningEditionData(try edition.encoded())
+        await model.importListeningEditionData(try edition.encoded())
         XCTAssertEqual(model.snapshot.sessionId, activeSession)
         XCTAssertEqual(model.selectedItem.id, edition.itemID)
-        model.importListeningEditionData(try edition.encoded())
+        await model.importListeningEditionData(try edition.encoded())
         XCTAssertEqual(model.libraryItems.filter { $0.id == edition.itemID }.count, 1)
         edition.scenes[0].summary = "Changed"
-        model.importListeningEditionData(try edition.encoded())
+        await model.importListeningEditionData(try edition.encoded())
         XCTAssertEqual(try ListeningEditionStore.application().load(itemID: edition.itemID)?.scenes[0].summary, "Summary")
-        model.importListeningEditionData(try edition.encoded(), replaceMap: true)
+        await model.importListeningEditionData(try edition.encoded(), replaceMap: true)
         XCTAssertEqual(try ListeningEditionStore.application().load(itemID: edition.itemID)?.scenes[0].summary, "Changed")
     }
 
-    func testBatchEditionImportSavesEveryFileInOneOperationAndStaysWhereTheListenerIs() throws {
+    func testBatchEditionImportSavesEveryFileInOneOperationAndStaysWhereTheListenerIs() async throws {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed(); model.declineCurrentTerms()
         model.importTitle = "Existing"; model.importText = "Keep the ongoing session."
@@ -45,7 +45,7 @@ final class PKMWorkflowTests: XCTestCase {
         different.scenes[0].summary = "A different map for the same source"
         defer { for e in [first, second] { try? FileManager.default.removeItem(at: ListeningEditionStore.application().file(e.itemID)) } }
 
-        let lines = model.importListeningEditions([
+        let lines = await model.importListeningEditions([
             .init(id: 0, name: "one.json", data: try first.encoded()),
             .init(id: 1, name: "broken.json", data: Data("not json".utf8)),
             .init(id: 2, name: "two.json", data: try second.encoded()),
