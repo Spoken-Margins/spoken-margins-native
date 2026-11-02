@@ -232,7 +232,8 @@ public struct RecordingDraftReconciler {
             anchor: draft.anchor,
             audioPath: ref,
             audioStatus: "saved",
-            // The launch that follows settles an unstarted transcription as retryable, so the listener sees Retry.
+            // No transcription starts for it, so it is stored already settled as retryable (the listener sees Retry).
+            // The launch's orphan repair skips a Margin this run saved as pending (#2509), so it can't be left to it.
             transcriptionStatus: "pending",
             transcript: nil,
             cleanedTranscript: nil,
@@ -241,7 +242,7 @@ public struct RecordingDraftReconciler {
             anchorContextStatus: Interjection.contextStatus(for: draft.anchor),
             replyTo: draft.replyTo
         )
-        try repository.saveInterjection(margin)
+        try repository.saveInterjection(OrphanedTranscription.settled(margin) ?? margin)
         onRecovered(margin.sessionId, margin.id)
         try journal.remove(id: draft.id)
         return .recovered(interjectionId: margin.id)

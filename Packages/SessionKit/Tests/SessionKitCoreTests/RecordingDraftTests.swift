@@ -188,12 +188,28 @@ final class RecordingDraftTests: XCTestCase {
         XCTAssertEqual(margin.anchor, anchor, "the place saved when recording began, not a guess")
         XCTAssertEqual(margin.itemId, article.id)
         XCTAssertEqual(margin.audioPath, ref)
-        XCTAssertEqual(margin.transcriptionStatus, "pending", "the launch settles this as retryable")
+        XCTAssertEqual(margin.transcriptionStatus, "failed", "stored settled: nothing transcribes it, so it offers Retry (#942)")
         XCTAssertNil(margin.transcript)
         XCTAssertTrue(try journal.load().drafts.isEmpty)
 
         XCTAssertEqual(try reconcile(), [], "a second launch recovers nothing more")
         XCTAssertEqual(try margins(session.id).count, 1)
+    }
+
+    /// #2509 audit: the launch repair skips Margins this connection saved as pending (a transcription of this run is
+    /// working on them). A recovered recording has no worker, so it must not wait for that repair: after recovery and the
+    /// repair on one connection it is "failed" (Retry), never "pending" for the rest of the run.
+    func testARecoveredMarginIsRetryableEvenWhenTheLaunchRepairSkipsThisRunsOwnMargins() throws {
+        let (engine, _) = try recordingEngine()
+        let session = try XCTUnwrap(engine.currentSession)
+        _ = try engine.beginInterjection()
+
+        _ = try reconcile()
+        XCTAssertEqual(try store.settleOrphanedTranscriptions(skippingMarginsSavedThisRun: true), 0)
+
+        let margin = try XCTUnwrap(try margins(session.id).first)
+        XCTAssertEqual(margin.transcriptionStatus, "failed")
+        XCTAssertNotNil(margin.audioPath, "the recording stays, so Retry has something to read")
     }
 
     func testARecoveredMarginIsReportedToTheCallerWithItsSessionAndId() throws {
