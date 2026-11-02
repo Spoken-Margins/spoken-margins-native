@@ -853,6 +853,8 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         defer { fixture.cleanUp() }
         let model = fixture.model
         model.markSharedMarginHeard(fixture.record)
+        // This fixture's selected item is another one, so `newSharedMargins` reads the store, where the mark lands off the main thread (#2509).
+        try waitUntil("the heard mark is stored") { try fixture.storedRecord()?.firstHeardAt != nil }
         XCTAssertEqual(model.newSharedMargins(itemId: "real-source").map(\.interjection.id), ["note2"])
 
         model.reviewNewMargins(itemId: "real-source", thenContinue: false)
