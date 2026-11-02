@@ -372,6 +372,34 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         XCTAssertEqual(model.diagnostics["lastSharedPodcastAcquisition"], "package_reference_after_resolution_failure")
     }
 
+    /// The Margins and Now tabs read `sharedMarginRows`; an import that reloaded only the item left them empty (#3263).
+    @MainActor
+    func testImportedMarginsReachTheMarginsTabWithoutARelaunch() async throws {
+        let root = try temporaryDirectory(named: "spoken-margins-import-margin-rows")
+        let databaseURL = root.appendingPathComponent("recipient.sqlite")
+        let packageURL = root.appendingPathComponent("referenced-episode.spokenmargins")
+        _ = try writePodcastPackage(to: packageURL, packageID: "package-import-margin-rows")
+        let model = Gate1AppModel(
+            sourceLinkResolver: FailingPackagePodcastLinkResolver(),
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            databaseURLOverride: databaseURL
+        )
+        model.resetAndSeed()
+        await model.settleMarginRows()
+
+        model.handleIncomingURL(packageURL)
+        await model.waitForPackageStaging()
+        model.confirmSpokenMarginsPackageImport()
+        try await waitForImportToFinish(model)
+        await model.settleMarginRows()
+
+        let itemID = model.selectedItem.id
+        let timeline = model.selectedItem.importedCommentaryInterjections.values.reduce(0) { $0 + $1.count }
+        XCTAssertGreaterThan(timeline, 0, "the packet should carry Margins")
+        let shared = model.sharedMarginRows.filter { $0.layer.itemId == itemID }
+        XCTAssertEqual(shared.count, timeline, "the Margins tab should list what the Timeline shows")
+    }
+
     @MainActor
     func testPodcastPackageUsesItsOwnEnclosureWhenThePageLookupFindsNoAudio() async throws {
         // Omny-style: the page resolves, but only to a title with no audio (#157).
