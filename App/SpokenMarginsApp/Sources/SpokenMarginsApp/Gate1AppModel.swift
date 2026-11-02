@@ -959,9 +959,7 @@ final class Gate1AppModel: ObservableObject {
             if completedCurrentAudio && !playedPendingTurn {
                 closeCompletedSessionIfReady()
             }
-            // A finished session is read off `selectedItem` by the next tap, so it reloads on the spot; every other
-            // return reloads in the background (#2505).
-            if completedCurrentAudio { refreshSelectedItem() } else if refreshingItem { refreshSelectedItemInBackground() }
+            if completedCurrentAudio { refreshSelectedItem() } else if refreshingItem { refreshSelectedItemInBackground() } // a finished session is read by the next tap (#2505)
             diagnostics["playbackLifecycleSync"] = "saved"
         } catch {
             diagnostics["playbackLifecycleSyncError"] = String(describing: error)
