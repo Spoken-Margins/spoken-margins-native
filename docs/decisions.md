@@ -339,3 +339,5 @@ How it is used:
     - The Add sheet loses its duplicate Files tiles and puts podcast search and Live Session in the top grid (#3217).
   - **No Build 35 upload yet, and the D-U-N-S address stays as Dun & Bradstreet has it.** Asked to approve uploading Build 35 before the Apple conversion, and to ask D&B to add "PMB 1021", he said "no" to both. Don't propose either again until he raises it.
   - **The gate record is the owner's, and he asked for this update.** "please update": the DMCA agent (DMCA-1084466, 2026-10-31) and its live page are recorded (#3204). The project board no longer shows Co-op as held: "make it so" (#3209).
+  - **Build 35 waits until the sharing loop is good.** "when the share loop is any good we will consider cutting build 35." Links on spokenmargins.com open the app only after that upload (#488).
+  - **Sending replies back offers the listener's other new Margins too.** "additional margins should be optionally sent as well." Replies are pre-selected; other new Margins are offered, unselected (#3221).
