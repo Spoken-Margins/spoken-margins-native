@@ -18,8 +18,8 @@ extension SQLiteSessionStore {
         var sessionIds: [String] = []
         try readTexts(
             """
-            SELECT DISTINCT session_id FROM records WHERE kind = 'ai_job' AND json_valid(payload)
-              AND json_extract(payload, '$.status') IN ('pending', 'streaming')
+            SELECT DISTINCT session_id FROM records WHERE kind = 'ai_job'
+              AND CASE WHEN json_valid(payload) THEN json_extract(payload, '$.status') IN ('pending', 'streaming') ELSE 0 END
             ORDER BY session_id;
             """, [], name: "sessions_with_interrupted_ai_jobs"
         ) { sessionIds.append($0) }
