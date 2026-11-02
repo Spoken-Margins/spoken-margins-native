@@ -168,4 +168,45 @@ final class SharedTextListeningMapImporterTests: XCTestCase {
         XCTAssertEqual(attached?.chapters.count, 5)
         XCTAssertNil(try store.loadListeningMap(itemId: item.id), "the closure decides where the map goes")
     }
+
+    // The app attaches the map on the main actor and saves the proposal on a background thread (#2509): the halves
+    // must leave exactly what `commit` leaves, and a refused attach must leave nothing.
+
+    func testTheTwoHalvesLeaveWhatCommitLeaves() throws {
+        let item = try seed(text: text)
+        let plan = try SharedTextListeningMapImporter.plan(try package(), for: item, repository: store)
+        let map = try XCTUnwrap(SharedTextListeningMapImporter.mapToAttach(plan, to: item, senderLabel: "A Friend"))
+        try store.saveListeningMap(map)
+        let outcome = try SharedTextListeningMapImporter.saveProposal(plan, to: item, repository: store)
+        XCTAssertEqual(outcome, .added(placed: 5, total: 5, replacedAnotherMap: false))
+
+        let other = try seed(text: text, id: "item-2")
+        let viaCommit = try SharedTextListeningMapImporter.importMap(try package(), into: other, senderLabel: "A Friend", repository: store)
+        XCTAssertEqual(viaCommit, outcome)
+        let a = try XCTUnwrap(store.loadListeningMap(itemId: item.id)), b = try XCTUnwrap(store.loadListeningMap(itemId: other.id))
+        XCTAssertEqual(a.chapters, b.chapters)
+        XCTAssertEqual(a.overview, b.overview)
+        XCTAssertEqual(try store.loadPortableListeningMapProposals(itemId: item.id), try store.loadPortableListeningMapProposals(itemId: other.id))
+    }
+
+    func testASavedMapHasNothingLeftToAttachOrSave() throws {
+        let item = try seed(text: text)
+        let contents = try package()
+        _ = try SharedTextListeningMapImporter.importMap(contents, into: item, repository: store)
+        let plan = try SharedTextListeningMapImporter.plan(contents, for: item, repository: store)
+        XCTAssertNil(SharedTextListeningMapImporter.mapToAttach(plan, to: item))
+        XCTAssertEqual(SharedTextListeningMapImporter.outcome(of: plan), .alreadyAdded(chapterCount: 5))
+        XCTAssertEqual(try SharedTextListeningMapImporter.saveProposal(plan, to: item, repository: store), .alreadyAdded(chapterCount: 5))
+        XCTAssertEqual(try store.loadPortableListeningMapProposals(itemId: item.id).count, 1)
+    }
+
+    func testARefusedAttachLeavesNoProposalSoTheSameImportCanBeTriedAgain() throws {
+        let item = try seed(text: text)
+        let contents = try package()
+        struct Refused: Error {}
+        XCTAssertThrowsError(try SharedTextListeningMapImporter.importMap(contents, into: item, repository: store) { _ in throw Refused() })
+        XCTAssertTrue(try store.loadPortableListeningMapProposals(itemId: item.id).isEmpty)
+        XCTAssertNil(try store.loadListeningMap(itemId: item.id))
+        XCTAssertEqual(try SharedTextListeningMapImporter.importMap(contents, into: item, repository: store), .added(placed: 5, total: 5, replacedAnotherMap: false))
+    }
 }
