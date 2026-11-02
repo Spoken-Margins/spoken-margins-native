@@ -59,6 +59,19 @@ final class MalformedPayloadGuardTests: XCTestCase {
         XCTAssertEqual(try store.latestPendingSummaryTurnId(sessionId: "s"), "t1")
     }
 
+    /// #2509: these counts run on every playback tick. A `kind` or `session_id` test inside the `CASE` can't use
+    /// `records_session_idx`, and each tick would then walk the whole table (the audit of the first push found it).
+    func testThePerTickCountsStillUseTheSessionIndex() throws {
+        _ = try SQLiteSessionStore(path: path)
+        let plan = try StoreRawSQL.rows(
+            "EXPLAIN QUERY PLAN " + SQLiteSessionStore.sessionRecordCountSQL("json_extract(payload, '$.status') = 'active'"),
+            bindings: ["interjection", "s"], at: path)
+        let detail = plan.compactMap { $0.last ?? nil }.joined(separator: " | ")
+        XCTAssertTrue(detail.contains("records_session_idx"), "plan: \(detail)")
+        XCTAssertTrue(detail.contains("kind=? AND session_id=?"), "plan: \(detail)")
+        XCTAssertFalse(detail.contains("SCAN records"), "plan: \(detail)")
+    }
+
     /// The class guard: no SQL in the persistence sources tests `json_valid(...)` with a bare `AND`, on one line or across
     /// two. A new query that does is the next instance of this bug. (An extraction with no `json_valid` at all is not
     /// scanned for: a source-text scan can't tell a stored column from a bound parameter or an already-decoded row.)

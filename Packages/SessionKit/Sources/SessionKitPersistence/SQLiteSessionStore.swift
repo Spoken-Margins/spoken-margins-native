@@ -2208,22 +2208,25 @@ private struct ImportedWatchSyncEvent: Codable {
 extension SQLiteSessionStore: SessionRecordCounting {
     public func activeInterjectionCount(sessionId: String) throws -> Int {
         try sessionRecordCount(
-            "kind = 'interjection' AND json_extract(payload, '$.status') = 'active'", sessionId: sessionId,
+            kind: "interjection", "json_extract(payload, '$.status') = 'active'", sessionId: sessionId,
             name: "activeInterjectionCount")
     }
 
     public func unfinishedAIJobCount(sessionId: String) throws -> Int {
         try sessionRecordCount(
-            "kind = 'ai_job' AND IFNULL(json_extract(payload, '$.status'), '') != 'complete'", sessionId: sessionId,
+            kind: "ai_job", "IFNULL(json_extract(payload, '$.status'), '') != 'complete'", sessionId: sessionId,
             name: "unfinishedAIJobCount")
     }
 
-    private func sessionRecordCount(_ condition: String, sessionId: String, name: String) throws -> Int {
+    /// The `kind` and `session_id` tests stay outside the `CASE` so `records_session_idx (kind, session_id)` answers
+    /// them; only the JSON test, which needs the payload, sits inside it. These run on every playback tick.
+    static func sessionRecordCountSQL(_ condition: String) -> String {
+        "SELECT count(*) FROM records WHERE kind = ? AND session_id = ? AND CASE WHEN json_valid(payload) THEN \(condition) ELSE 0 END;"
+    }
+
+    private func sessionRecordCount(kind: String, _ condition: String, sessionId: String, name: String) throws -> Int {
         var count = 0
-        try readTexts(
-            "SELECT count(*) FROM records WHERE session_id = ? AND CASE WHEN json_valid(payload) THEN \(condition) ELSE 0 END;",
-            [sessionId], name: name
-        ) { count = Int($0) ?? 0 }
+        try readTexts(Self.sessionRecordCountSQL(condition), [kind, sessionId], name: name) { count = Int($0) ?? 0 }
         return count
     }
 }
