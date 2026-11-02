@@ -90,7 +90,7 @@ struct HelpScreen: View {
                     Text("PDFs must contain extractable text. Image-only or scanned PDFs need OCR before Spoken Margins can import them.")
                 }
                 Section("Podcast Links") {
-                    Text("Paste a podcast episode, RSS, or direct audio URL into Add Source. For Spotify, share the specific episode; a show or podcast-page link does not identify one episode.")
+                    Text("Paste a podcast episode, RSS, or direct audio URL into Add to Library (the plus on the Library tab). For Spotify, share the specific episode; a show or podcast-page link does not identify one episode.")
                 }
                 Section("Share and Export") {
                     Text("Choose the listening session, format, and included material. Share Session opens the iOS share sheet; Copy puts the generated Markdown or JSON on the clipboard.")

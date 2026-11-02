@@ -419,7 +419,7 @@ struct ExperienceLibraryScreen: View {
                 systemImage: "books.vertical",
                 title: "Your Library is ready",
                 detail: "Add a link, text, document, book, or audiobook to begin.",
-                actionTitle: "Add Source"
+                actionTitle: "Add to Library"
             ) { addSourceRoute = .linkOrPodcast }
             .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
         case .caughtUp:
