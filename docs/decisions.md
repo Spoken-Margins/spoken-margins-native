@@ -199,6 +199,8 @@ How it is used:
 
 - **Run the away check before any hand-off (owner, 2026-10-17).** "I would really love to feel confident that we have an exhaustive build queue." Before any overnight or away-day hand-off, and when the owner says "run the away check", the lead runs `python3 ops/away/away_check.py --hours <hours away>` ([ops/away](../ops/away/README.md)) and acts on it before handing off: fills a thin queue, takes a suspect hold to the owner, and puts his owner-only items in front of him.
 
+- **Baseline builds (moved here from AGENTS.md "Current focus", 2026-11-02).** Build 34, tag `testflight/0.1-build-34` (`485b1449`), is Solid Ground, on internal TestFlight and accepted by the owner on 2026-10-17. Build 32, tag `testflight/0.1-build-32` (`ec940321`), is the external TestFlight build.
+
 ## 2026-10-18
 
 - **Owner's standing calls (2026-10-18).** Don't ask again:
