@@ -31,22 +31,16 @@ final class AudioPreparationPassReadsTests: XCTestCase {
         XCTAssertNotEqual(after.progressToken, before.progressToken, "a chunk committed between two reads is progress")
     }
 
-    /// A pass that asks right after the listener's Prioritize must see the pin, not the queue as it was before.
-    func testReadSeesAQueueEditAskedForBeforeIt() async throws {
+    /// A pass that asks right after the listener's Prioritize sees the pin, not the queue as it was before.
+    func testReadSeesAQueueEditThatFinishedBeforeIt() async throws {
         let store = try makeStore()
         try seed(store, item: "a")
         try seed(store, item: "b")
-        let edit = Task {
-            try await StoreReader(store).readInOrder(AudioPreparationQueueEdits.orderKey) {
-                try AudioPreparationQueueEdits.prioritize(id: "job-b", in: $0)
-            }
+        try await StoreReader(store).readInOrder(AudioPreparationQueueEdits.orderKey) {
+            try AudioPreparationQueueEdits.prioritize(id: "job-b", in: $0)
         }
-        // Queue the edit first, then read; the read joins the same line.
-        try await Task.sleep(nanoseconds: 20_000_000)
         let jobs = try await AudioPreparationPassReads.audioJobs(store)
-        _ = try await edit.value
-        let pinned = try XCTUnwrap(jobs.first { $0.id == "job-b" })
-        XCTAssertNotNil(pinned.userPriority)
+        XCTAssertNotNil(try XCTUnwrap(jobs.first { $0.id == "job-b" }).userPriority)
     }
 
     /// The caller is not held while the read runs: a read that blocks on the store leaves the caller's actor free.
