@@ -149,9 +149,14 @@ struct OPMLImportScreen: View {
     @StateObject private var importer: OPMLImportModel
     @Environment(\.dismiss) private var dismiss
     @State private var isChoosingFile = false
+    @State private var didOpenFilePicker = false
+    /// Following's Follow sheet opens this screen from "Import from another app" (#3205): the file picker
+    /// opens at once instead of waiting for a second tap.
+    private let opensFilePickerOnAppear: Bool
 
-    init(importer: @autoclosure @escaping () -> OPMLImportModel) {
+    init(importer: @autoclosure @escaping () -> OPMLImportModel, opensFilePickerOnAppear: Bool = false) {
         _importer = StateObject(wrappedValue: importer())
+        self.opensFilePickerOnAppear = opensFilePickerOnAppear
     }
 
     var body: some View {
@@ -170,6 +175,13 @@ struct OPMLImportScreen: View {
                 }
             }
             .accessibilityIdentifier("opml.import.screen")
+            .task {
+                // Once, after the push settles: a picker raised mid-transition can be dropped.
+                guard opensFilePickerOnAppear, !didOpenFilePicker else { return }
+                didOpenFilePicker = true
+                try? await Task.sleep(for: .milliseconds(450))
+                if case .choosing = importer.phase { isChoosingFile = true }
+            }
     }
 
     @ViewBuilder

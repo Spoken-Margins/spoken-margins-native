@@ -3,10 +3,9 @@ import Foundation
 import SessionKitSharing
 import XCTest
 
-/// The reveal mode a recipient gets when a packet arrives (PKT-09 of the #1039 audit). The test that names the default
-/// in the app (Build23RecipientSharingExperienceTests) builds the layer with `.companion` and asserts it is
-/// `.companion`; the real defaulting happens here, on import, and every packet in the suite passed
-/// `suggestedRevealMode` explicitly, so the `nil` case was never imported.
+/// The reveal mode a recipient gets when a packet arrives (PKT-09 of the #1039 audit; guided since #3059). The real
+/// defaulting happens here, on import; every packet in the suite passed `suggestedRevealMode` explicitly, so the
+/// `nil` case was never imported.
 final class ImportedLayerRevealModeTests: XCTestCase {
     private let created = Date(timeIntervalSince1970: 1_777_000_000)
     private var root: URL!
@@ -50,17 +49,20 @@ final class ImportedLayerRevealModeTests: XCTestCase {
         return try XCTUnwrap(try repository.loadImportedCommentaryLayers(itemId: "recipient-item").first)
     }
 
-    func testAPacketWhoseSenderChoseNoRevealModeArrivesAsCompanion() throws {
+    /// The friend hears the sender's Margins in place by default and turns that off themselves (2026-10-31, #3059).
+    func testAPacketWhoseSenderChoseNoRevealModeArrivesAsGuided() throws {
         let layer = try importedLayer(suggesting: nil)
         XCTAssertNil(layer.suggestedRevealMode, "no suggestion is kept as no suggestion")
-        XCTAssertEqual(layer.revealMode, .companion)
+        XCTAssertEqual(layer.revealMode, .guided)
     }
 
-    func testAPacketKeepsTheRevealModeItsSenderSuggested() throws {
+    /// A sender's suggestion is kept with the layer but doesn't decide how the friend listens: the sharing-kit
+    /// packets say `companion`, and a friend opening one heard nothing until they found the switch (#3059).
+    func testASendersSuggestionIsKeptButEveryPacketArrivesAsGuided() throws {
         for mode in ImportedCommentaryRevealMode.allCases {
             let layer = try importedLayer(suggesting: mode)
             XCTAssertEqual(layer.suggestedRevealMode, mode, "\(mode)")
-            XCTAssertEqual(layer.revealMode, mode, "a \(mode) suggestion is the mode the recipient gets")
+            XCTAssertEqual(layer.revealMode, .guided, "a \(mode) suggestion still arrives as guided")
         }
     }
 }

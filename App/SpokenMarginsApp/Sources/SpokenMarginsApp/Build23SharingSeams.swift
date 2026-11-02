@@ -447,7 +447,7 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
                     sourceResolution: layer.sourceResolutionStatus,
                     isEnabled: layer.isEnabled,
                     isMuted: layer.isMuted,
-                    revealMode: layer.revealMode ?? layer.suggestedRevealMode ?? .companion,
+                    revealMode: layer.revealMode ?? .guided,
                     listeningMapProposalCount: layer.listeningMapProposals?.count ?? 0,
                     margins: margins
                 )

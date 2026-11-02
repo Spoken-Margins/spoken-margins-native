@@ -179,7 +179,7 @@ struct LiveSessionView: View {
                     TextField(kind == .meeting ? "Meeting clock, like 2:00" : "Time in the book, like 0:00", text: $startPosition)
                         .textFieldStyle(.roundedBorder)
                         .keyboardType(.numbersAndPunctuation)
-                    Text(kind == .meeting ? "Leave blank if you're at the start." : "The time your audiobook app shows.")
+                    Text(kind == .meeting ? "Leave blank if you don't know. You can set it later with Edit." : "The time your audiobook app shows.")
                         .font(.caption).foregroundStyle(AppColors.secondaryText)
                 }
             }
@@ -191,7 +191,7 @@ struct LiveSessionView: View {
                 let read = LiveSessionWhere.interpret(clockText: startPosition, whereText: startWhere, kind: kind)
                 controller.start(
                     kind: kind, title: title,
-                    startPositionMs: read.positionMs ?? (kind == .meeting ? 0 : nil),
+                    startPositionMs: read.positionMs, // blank stays unknown, never a guessed 0:00 (#3241)
                     startWhere: read.text, startPlace: read.place
                 )
             } label: {
@@ -265,6 +265,10 @@ struct LiveSessionView: View {
                     .accessibilityLabel("Session time \(sessionTime)")
                 if let position = controller.predictedPosition(at: date) {
                     Text("Source: \(position.label)").font(.subheadline).foregroundStyle(AppColors.secondaryText)
+                }
+                if session.kind == .meeting, session.startPositionMs == nil, controller.isRunning {
+                    Text("Meeting clock not set. Tap Edit and say where the meeting is now.")
+                        .font(.caption).foregroundStyle(AppColors.secondaryText)
                 }
             }
         }

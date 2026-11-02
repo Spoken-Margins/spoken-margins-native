@@ -2931,5 +2931,89 @@ class SolidGroundLeadTests(unittest.TestCase):
         self.assertIn('2. **Library wording**', plan)
         self.assertNotIn('no phone steps written', plan)
 
+class PersistentWorktreeOwnerTests(unittest.TestCase):
+    """#2372: the jobs moved to another checkout; a build worktree the old one registered cannot be reused."""
+
+    def test_a_worktree_is_ours_only_when_our_repository_added_it(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+
+            def git(cwd, *args):
+                return subprocess.run(['git', '-c', 'user.email=t@example.com', '-c', 'user.name=T', *args], cwd=cwd,
+                                      check=True, capture_output=True, text=True).stdout.strip()
+            repos = {}
+            for name in ('old', 'new'):
+                repos[name] = tmp / name
+                repos[name].mkdir()
+                git(repos[name], 'init', '-q')
+                (repos[name] / 'f').write_text(name)
+                git(repos[name], 'add', 'f')
+                git(repos[name], 'commit', '-q', '-m', name)
+                git(repos[name], 'worktree', 'add', '-q', '--detach', str(tmp / f'src-{name}'))
+            with unittest.mock.patch.dict(os.environ, {'SM_PHONE_REPO': str(repos['new'])}):
+                module = load_phone_build()
+            self.assertTrue(module.worktree_of_root(tmp / 'src-new'))
+            self.assertFalse(module.worktree_of_root(tmp / 'src-old'))
+            self.assertFalse(module.worktree_of_root(tmp / 'not-there'))
+
+
+class SigningConfigOfPinnedCheckoutTests(unittest.TestCase):
+    """#2372: a job pinned to the ops checkout must not lose its signing team when the build worktree moves."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: subprocess.run(['rm', '-rf', str(self.tmp)]))
+        self.repo = self.tmp / 'ops'
+        (self.repo / 'Config').mkdir(parents=True)
+        subprocess.run(['git', 'init', '-q'], cwd=self.repo, check=True)
+        self.env = {'SM_PHONE_REPO': str(self.repo), 'SM_PHONE_DIR': str(self.tmp / 'phone'), 'SM_PHONE_NOTIFY': 'off'}
+
+    def load(self, pinned):
+        env = {**self.env, **({'SM_PIN_CHECKOUT': str(self.repo)} if pinned else {})}
+        with unittest.mock.patch.dict(os.environ, env):
+            os.environ.pop('SM_PIN_CHECKOUT', None) if not pinned else None
+            return load_phone_build()
+
+    def test_a_pinned_job_without_the_signing_file_is_told_how_to_link_it(self):
+        with unittest.mock.patch.dict(os.environ, {'SM_PIN_CHECKOUT': str(self.repo)}):
+            module = self.load(True)
+            problem = module.signing_config_problem()
+        self.assertIn('Config/Local.xcconfig is missing', problem)
+        self.assertIn('ln -s', problem)
+
+    def test_the_file_or_a_working_link_satisfies_it_and_a_broken_link_does_not(self):
+        target = self.repo / 'Config' / 'Local.xcconfig'
+        with unittest.mock.patch.dict(os.environ, {'SM_PIN_CHECKOUT': str(self.repo)}):
+            module = self.load(True)
+            target.symlink_to(self.tmp / 'nowhere')
+            self.assertIsNotNone(module.signing_config_problem())
+            target.unlink()
+            (self.tmp / 'dev.xcconfig').write_text('DEVELOPMENT_TEAM = X\n')
+            target.symlink_to(self.tmp / 'dev.xcconfig')
+            self.assertIsNone(module.signing_config_problem())
+
+    def test_a_script_run_by_hand_is_not_checked(self):
+        with unittest.mock.patch.dict(os.environ, {}):
+            os.environ.pop('SM_PIN_CHECKOUT', None)
+            module = self.load(False)
+            self.assertIsNone(module.signing_config_problem())
+
+    def test_build_stops_before_touching_the_old_worktree(self):
+        with unittest.mock.patch.dict(os.environ, {**self.env, 'SM_PIN_CHECKOUT': str(self.repo)}):
+            module = self.load(True)
+            phone = Path(self.env['SM_PHONE_DIR'])
+            (phone / '.cache' / 'src').mkdir(parents=True)
+            with unittest.mock.patch.object(module, 'remove_worktree') as removed, \
+                    unittest.mock.patch.object(module, 'run_logged') as ran, \
+                    unittest.mock.patch.object(module, 'notify') as told, \
+                    unittest.mock.patch('sys.stdout'):
+                self.assertEqual(module.build('a' * 40), 1)
+        removed.assert_not_called()
+        ran.assert_not_called()
+        self.assertIn('Config/Local.xcconfig is missing', told.call_args[0][1])
+        self.assertTrue((phone / '.cache' / 'src').is_dir())
+        self.assertIn('failed', (phone / 'last-attempt.json').read_text())
+
+
 if __name__ == '__main__':
     unittest.main()

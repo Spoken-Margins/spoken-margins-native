@@ -113,6 +113,7 @@ public struct ItemDetailLoader {
             text: item.text ?? "",
             externalReference: item.externalReference ?? "",
             publishedDateText: ItemMetadata.publishedDateText(item.publishedAt),
+            addedDateText: ItemMetadata.addedDateText(item.createdAt),
             descriptionText: item.descriptionText,
             externalReferenceType: item.externalReferenceType ?? "",
             overview: map?.overview ?? "",

@@ -23,9 +23,13 @@ import (
 const PathLinks = "/api/v1/links"
 const routeLinks = "/l/*"
 
-func (s *Server) linksOn(w http.ResponseWriter) bool {
+func (s *Server) linksUp() bool {
 	doc, err := s.Config.Current()
-	if err != nil || !doc.Enabled(config.ServiceLinks) || s.Links == nil || !links.ValidInstallURL(s.LinkInstallURL) {
+	return err == nil && doc.Enabled(config.ServiceLinks) && s.Links != nil && links.ValidInstallURL(s.LinkInstallURL)
+}
+
+func (s *Server) linksOn(w http.ResponseWriter) bool {
+	if !s.linksUp() {
 		fail(w, http.StatusServiceUnavailable, "disabled")
 		return false
 	}
@@ -147,22 +151,44 @@ func linkHeaders(w http.ResponseWriter) {
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
 }
 
+// The page a friend opens in a browser. Every way it can fail answers a page in plain words, never the
+// API's JSON, which the apps keep on /preview and /packet (#3251). The status code still tells a caller
+// not found, gone and off apart; the words do not, so a taken-down link reads like an expired one.
 func (s *Server) getLink(w http.ResponseWriter, r *http.Request) {
 	linkHeaders(w)
-	if !s.linksOn(w) {
+	if !s.linksUp() {
+		s.linkUnavailablePage(w, http.StatusServiceUnavailable, links.UnavailablePaused)
 		return
 	}
 	id := r.PathValue("id")
 	if err := s.Links.Live(id, s.Now()); err != nil {
-		linkFailure(w, err)
+		switch {
+		case errors.Is(err, links.ErrNotFound):
+			s.linkUnavailablePage(w, http.StatusNotFound, links.UnavailableGone)
+		case errors.Is(err, links.ErrGone):
+			s.linkUnavailablePage(w, http.StatusGone, links.UnavailableGone)
+		default:
+			s.linkUnavailablePage(w, http.StatusInternalServerError, links.UnavailableError)
+		}
 		return
 	}
 	var page bytes.Buffer
 	if err := links.Render(&page, id, s.LinkInstallURL); err != nil {
-		linkFailure(w, err)
+		s.linkUnavailablePage(w, http.StatusInternalServerError, links.UnavailableError)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write(page.Bytes())
+}
+
+func (s *Server) linkUnavailablePage(w http.ResponseWriter, status int, reason links.Unavailable) {
+	var page bytes.Buffer
+	if err := links.RenderUnavailable(&page, reason, s.LinkInstallURL); err != nil {
+		fail(w, http.StatusInternalServerError, "internal")
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(status)
 	w.Write(page.Bytes())
 }
 

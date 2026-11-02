@@ -113,6 +113,34 @@ final class SharedMarginPromptsTests: XCTestCase {
         XCTAssertEqual(crossed.map(\.id), ["z", "a", "m"])
     }
 
+    /// A friend who presses play before the episode has downloaded hears each Margin at the sender's time (#3059).
+    func testAnUnplacedMarginWaitingForItsPassPlaysAtTheSendersTime() {
+        let waiting = layer()
+        XCTAssertTrue(waiting.awaitsPlacementPass)
+        let unplaced = senderTimed("u", senderMs: 60_000)
+        XCTAssertTrue(SharedMarginPrompts.isLayerPlaybackEligible(waiting, records: [unplaced]))
+        let selected = SharedMarginPrompts.prompts(layers: [waiting], recordsByLayerID: ["layer": [unplaced]],
+                                                   announcedIDs: [], includeAnnounced: false)
+        XCTAssertEqual(selected.map(\.id), ["u"])
+        XCTAssertEqual(SharedMarginPrompts.crossed(prompts: selected, previous: snapshot(media: 59_000),
+                                                   current: snapshot(media: 61_000)).map(\.id), ["u"])
+        XCTAssertTrue(SharedMarginPrompts.crossed(prompts: selected, previous: snapshot(media: 1_000),
+                                                  current: snapshot(media: 2_000)).isEmpty)
+    }
+
+    /// Once a pass has run, or when the Margin was found twice or not at all, no guessed time plays.
+    func testNoSendersTimePlaysAfterThePassOrForAnAmbiguousOrAbsentMargin() {
+        var placedLayer = layer()
+        placedLayer.resolvedRecipientEditionSHA256 = "digest-of-the-listeners-file"
+        XCTAssertFalse(placedLayer.awaitsPlacementPass)
+        XCTAssertFalse(SharedMarginPrompts.isPlayable(senderTimed("after-pass", senderMs: 60_000), in: placedLayer))
+
+        let waiting = layer()
+        XCTAssertFalse(SharedMarginPrompts.isPlayable(senderTimed("absent", senderMs: 60_000, evidence: .absentFromRecipientEdition), in: waiting))
+        XCTAssertFalse(SharedMarginPrompts.isPlayable(senderTimed("ambiguous", senderMs: 60_000, evidence: .ambiguous), in: waiting))
+        XCTAssertFalse(SharedMarginPrompts.isPlayable(senderTimed("no-time", senderMs: nil), in: waiting))
+    }
+
     private func layer(id: String = "layer", label: String? = nil) -> ImportedCommentaryLayer {
         ImportedCommentaryLayer(id: id, itemId: "item", packageDigest: "digest", packageId: "package",
                                 itemIdentity: SharedItemIdentity(itemType: .podcast, title: "Episode"),
@@ -127,6 +155,15 @@ final class SharedMarginPromptsTests: XCTestCase {
                                        anchorEvidence: PortableAnchorEvidence(anchorType: .media), approvedTranscript: "Words",
                                        resolution: ImportedAnchorResolution(evidenceClass: evidence,
                                                                             localStartChar: text, localMediaTimeMs: media))
+    }
+
+    private func senderTimed(_ id: String, senderMs: Int?,
+                             evidence: AnchorResolutionEvidenceClass = .unresolved) -> ImportedCommentaryInterjection {
+        ImportedCommentaryInterjection(id: id, layerId: "layer", packageScopedId: "packet-\(id)",
+                                       createdAt: Date(timeIntervalSince1970: 0),
+                                       anchorEvidence: PortableAnchorEvidence(anchorType: .media, mediaTimeMs: senderMs),
+                                       approvedTranscript: "Words",
+                                       resolution: ImportedAnchorResolution(evidenceClass: evidence))
     }
 
     private func prompt(_ record: ImportedCommentaryInterjection) -> ImportedCommentaryPrompt {
