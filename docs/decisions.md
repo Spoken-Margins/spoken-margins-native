@@ -199,6 +199,8 @@ How it is used:
 
 - **Run the away check before any hand-off (owner, 2026-10-17).** "I would really love to feel confident that we have an exhaustive build queue." Before any overnight or away-day hand-off, and when the owner says "run the away check", the lead runs `python3 ops/away/away_check.py --hours <hours away>` ([ops/away](../ops/away/README.md)) and acts on it before handing off: fills a thin queue, takes a suspect hold to the owner, and puts his owner-only items in front of him.
 
+- **Baseline builds (moved here from AGENTS.md "Current focus", 2026-11-02).** Build 34, tag `testflight/0.1-build-34` (`485b1449`), is Solid Ground, on internal TestFlight and accepted by the owner on 2026-10-17. Build 32, tag `testflight/0.1-build-32` (`ec940321`), is the external TestFlight build.
+
 ## 2026-10-18
 
 - **Owner's standing calls (2026-10-18).** Don't ask again:
@@ -263,7 +265,7 @@ How it is used:
 ### From the guide
 
 - **Now: Showcase (owner, 2026-10-21).** The repo is public, so the `Showcase` milestone comes first: make the solo app its best. That means freezes, playback and recording polish, and Library, import and item-screen UI. "I think we can just focus on making the app the best version of itself." Threads and dispatch take `priority` issues first, then `Showcase`, then everything else. `Open Source: after the flip` (hosted CI, runner faults) runs alongside, and a pipeline fault with `priority` ranks with Showcase.
-- **Held: Co-op Experience (owner, 2026-10-21).** "if we have any spare capacity while we're fixing bugs and implementing the UI passes, we can spend it on the co-op." Share links wait on the LLC and the DMCA designated agent (2026-10-20 call below), likely a week or more. So Co-op runs only when no `priority` or `Showcase` issue is free. It is an order, not a ban (2026-10-17 call). The ordered plan stays on #203: reply threading (#473), Review new Margins (#474, PR #1154), finding a friend's Margins (#1792), matching (#1257), two-tap share (#1507), the web listener (#2168), then the club server (#1799). Plain app bugs filed in `Co-op Experience` move to `Showcase`.
+- **Held: Co-op Experience (owner, 2026-10-21; lifted 2026-11-02, see that date).** "if we have any spare capacity while we're fixing bugs and implementing the UI passes, we can spend it on the co-op." Share links wait on the LLC and the DMCA designated agent (2026-10-20 call below), likely a week or more. So Co-op runs only when no `priority` or `Showcase` issue is free. It is an order, not a ban (2026-10-17 call). The ordered plan stays on #203: reply threading (#473), Review new Margins (#474, PR #1154), finding a friend's Margins (#1792), matching (#1257), two-tap share (#1507), the web listener (#2168), then the club server (#1799). Plain app bugs filed in `Co-op Experience` move to `Showcase`.
 
 ## 2026-10-22
 
@@ -326,3 +328,14 @@ How it is used:
   - **A headphone double-press set to Add a Margin always tries to add a Margin; when it cannot start, a tone plays. No rule looks at whether the phone is locked or the app is in the background.** After a double-press failed with the phone locked (iOS lets an app begin recording only while it is in the foreground), he read the research on recording intents and said: "I trust you and don't really feel the need to chase this down. I think that what you've done is enough." and "when the setting is configured, so the double tap adds a margin, it adds a margin, and then when the screen is locked, it just plays a tone. I'd also like you to add some diagnostics to be able to know when that happens. I don't think we need to worry about adding a feature that is state-based on whether the phone is locked or background, the app is backgrounded. That's really complicated, and I think would just confuse users a lot." The earlier failure-tone ask: "it plays a failure noise at the very least when that happens. This is not an issue that blocks release."
     - The tone and the export record (`lastCompactBeginFailure`: app state, protected-data hint, origin, raw error) are #3085.
     - Not pursued: starting a recording from a locked phone through `AudioRecordingIntent` and the Lock Screen mic (spike #3086, closed as not planned). #2698 (Lock Screen and Action button control) must not assume locked recording.
+
+## 2026-11-02
+
+- **Owner's standing calls (2026-11-02).** Don't ask again:
+  - **The sharing loop comes first, and it is tested for human factors.** "We need share links to work. We need the full sharing lifecycle to be tested with a very high attention paid to the actual human factors of the getting the first podcast in, adding margins to it, sending that to a friend, the friend getting it to start up quickly, and then the friend adding margins, and then closing the loop, and it returning back to the originator." (#3216)
+    - The 2026-10-21 Co-op hold is lifted. Its reason (the LLC and the DMCA agent) cleared on 2026-10-31. The loop's issues carry `priority`; the rest of `Co-op Experience` is ordinary work after Showcase, never held.
+    - One playback experience serves both listening modes: "we're not creating a new playback experience. We just have one interface versus another interface." The addition is a skip to the next Margin's lead-in, then straight to the Margin (#460, #3220).
+    - Smaller packets are an experiment, not a commitment: "I'm not saying we should definitely do that. I'm just saying we should experiment with that" (#3218). Sound quality is his call by ear.
+    - The Add sheet loses its duplicate Files tiles and puts podcast search and Live Session in the top grid (#3217).
+  - **No Build 35 upload yet, and the D-U-N-S address stays as Dun & Bradstreet has it.** Asked to approve uploading Build 35 before the Apple conversion, and to ask D&B to add "PMB 1021", he said "no" to both. Don't propose either again until he raises it.
+  - **The gate record is the owner's, and he asked for this update.** "please update": the DMCA agent (DMCA-1084466, 2026-10-31) and its live page are recorded (#3204). The project board no longer shows Co-op as held: "make it so" (#3209).
