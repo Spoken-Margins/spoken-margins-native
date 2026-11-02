@@ -54,7 +54,12 @@ final class CommunityMapFetchService {
                     // A file that can't be read (gone, or being replaced) holds the lookup, as for an
                     // upload; with no file yet, the map goes if embedded chapters turn up later.
                     if let audioFile { embedded = await CommunityMapUploadService.hasEmbeddedChapters(audioFile) ?? true }
-                    return CommunityMapLocalState.read(itemId: itemId, repository: store, hasEmbeddedChapters: embedded)
+                    // Read off the main actor (#2506). A read that cannot be made (the task was cancelled) says the episode
+                    // has a map, so nothing is stored on a guess.
+                    let hasEmbeddedChapters = embedded
+                    return (try? await StoreReader(store).read {
+                        CommunityMapLocalState.read(itemId: itemId, repository: $0, hasEmbeddedChapters: hasEmbeddedChapters)
+                    }) ?? CommunityMapLocalState(hasPublisherChapters: false, hasMap: true)
                 },
                 mapsState: {
                     guard let bridge else { return .off(.noConfig) }
