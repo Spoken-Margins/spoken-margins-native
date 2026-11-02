@@ -1,5 +1,6 @@
 import Foundation
 import SessionKit
+import SessionKitPersistence
 
 /// The live session's call site on the model (#1989, #2481). A finished session becomes an ordinary Library
 /// item, so storage doesn't change:
@@ -22,16 +23,20 @@ extension Gate1AppModel {
             ? transcript?.title ?? "\(session.kind.label) session"
             : session.title
         let itemId: String
-        var finalPlaced = placed
-        var linked: [(liveId: String, saved: Interjection)] = []
+        let finalPlaced: [LiveSessionAlignment.Placed]
+        let linked: LiveSessionWrites.Linked
+        // The item and Margin writes go off the main thread (#2509), in order and even if this screen is dismissed.
         if let recordingURL {
             let importer = try requireLocalSourceImporter()
             let item = try await importer.importAudiobook(from: recordingURL)
             itemId = item.id
+            finalPlaced = placed
             if let transcript {
                 attachSourceTranscriptTimeline(Self.timeline(for: transcript), itemId: itemId)
             }
-            linked = try LiveSessionMarginPlacer.placeLinked(finalPlaced, itemId: itemId, repository: store)
+            linked = try await StoreReader(store).readInOrder(LiveSessionWrites.orderKey) {
+                try LiveSessionMarginPlacer.placeLinked(placed, itemId: itemId, repository: $0)
+            }
         } else {
             let built = transcript.map { LiveSessionText.transcript($0, placed: placed) } ?? LiveSessionText.notes(session)
             finalPlaced = built.placed
@@ -46,9 +51,10 @@ extension Gate1AppModel {
                 externalReferenceType: "manual",
                 createdAt: Date()
             )
-            try store.seed(item: item)
             if engine == nil { installEngine(try makeEngine(store: store)) }
-            linked = try LiveSessionMarginPlacer.placeLinked(finalPlaced, itemId: itemId, repository: store)
+            linked = try await StoreReader(store).readInOrder(LiveSessionWrites.orderKey) {
+                try LiveSessionWrites.saveTextItem(item, placed: finalPlaced, in: $0)
+            }
         }
         if let directory = Self.liveSessionDirectory {
             var named = session
