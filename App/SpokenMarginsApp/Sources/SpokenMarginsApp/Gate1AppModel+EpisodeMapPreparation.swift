@@ -222,6 +222,54 @@ extension Gate1AppModel {
         }
     }
 
+    /// Deletes the item's episode-map jobs on a background task, in line with the automatic queueing's saves (#2509).
+    func deleteEpisodeMapPreparationJobsInBackground(itemId: String) {
+        guard let store else { return }
+        Task {
+            _ = try? await StoreReader(store).readInOrder(AutomaticEpisodeMapJobs.orderKey) {
+                EpisodeMapJobCleanup.deleteJobs(itemId: itemId, store: $0)
+            }
+        }
+    }
+
+    /// Launch clean-up of cancelled and week-old episode-map jobs. The job reads and deletes run on a background task,
+    /// in line with the automatic queueing's saves (#2509); the files go first and the rows after, so a crash in
+    /// between leaves a job to try again.
+    func purgeExpiredEpisodeMapPreparationJobs(store: SQLiteSessionStore, now: Date = Date()) {
+        Task { [weak self] in
+            // Read, then confirm just before the files go, so a job asked for again meanwhile keeps its folder.
+            let found = (try? await StoreReader(store).readInOrder(AutomaticEpisodeMapJobs.orderKey) {
+                EpisodeMapJobCleanup.expiredJobs(now: now, store: $0)
+            }) ?? []
+            guard !found.isEmpty else { return }
+            guard let self else { return }
+            // `prepare` keeps a live job's old `requestedAt`, so the row can't show a re-request. The items being
+            // prepared, or waiting on a download or transcript, are read here on the main actor and kept.
+            let busy = self.busyEpisodeMapItemIds
+            let expired = (try? await StoreReader(store).readInOrder(AutomaticEpisodeMapJobs.orderKey) {
+                EpisodeMapJobCleanup.stillExpired(found, now: now, excluding: busy, store: $0)
+            }) ?? []
+            // Another hop passed; ask again, then remove the files in the same turn with no await in between.
+            let busyNow = self.busyEpisodeMapItemIds
+            let doomed = expired.filter { !busyNow.contains($0.itemId) }
+            guard !doomed.isEmpty else { return }
+            for job in doomed {
+                // Without a saved map the whole folder goes; with one, only the transient folder (#2510: off the main thread).
+                let directory = try? self.episodeMapDirectory(itemId: job.itemId)
+                let target = job.hasMap ? directory?.appending(path: "Transient", directoryHint: .isDirectory) : directory
+                Self.removeEpisodeTranscriptionFilesInBackground(itemId: job.itemId, directories: [target].compactMap { $0 })
+            }
+            _ = try? await StoreReader(store).readInOrder(AutomaticEpisodeMapJobs.orderKey) {
+                EpisodeMapJobCleanup.deleteExpired(doomed, now: now, excluding: busyNow, store: $0)
+            }
+        }
+    }
+
+    /// Items whose episode map is being prepared, or is waiting on a download or a transcript.
+    var busyEpisodeMapItemIds: Set<String> {
+        Set([episodeMapPreparationItemId, pendingMapGenerationItemId].compactMap { $0 })
+    }
+
     func purgeTransientEpisodeTranscriptionCaches(itemId: String) async throws {
         let transientDirectory = try episodeMapDirectory(itemId: itemId)
             .appending(path: "Transient", directoryHint: .isDirectory)

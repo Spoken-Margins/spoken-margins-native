@@ -2754,23 +2754,7 @@ final class Gate1AppModel: ObservableObject {
         // The map folder holds the transient folder, so one removal covers both; the files go off the main thread (#2510).
         Self.removeEpisodeTranscriptionFilesInBackground(itemId: itemId, directories: [try? episodeMapDirectory(itemId: itemId)].compactMap { $0 })
         try? deleteTransientTranscriptAssets(itemId: itemId)
-        for job in (try? store?.loadEpisodeMapPreparationJobs(itemId: itemId)) ?? [] {
-            try? store?.deleteEpisodeMapPreparationJob(id: job.id)
-        }
-    }
-
-    func purgeExpiredEpisodeMapPreparationJobs(store: SQLiteSessionStore, now: Date = Date()) {
-        let expiration = now.addingTimeInterval(-7 * 24 * 60 * 60)
-        for job in (try? store.loadEpisodeMapPreparationJobs()) ?? [] where
-            job.isCancelled || job.requestedAt < expiration {
-            // Without a saved map the whole folder goes; with one, only the transient folder (#2510: off the main thread).
-            let directory = try? episodeMapDirectory(itemId: job.itemId)
-            let hasMap = (try? store.hasEditionFingerprintSpine(itemId: job.itemId)) == true
-            let doomed = hasMap ? directory?.appending(path: "Transient", directoryHint: .isDirectory) : directory
-            Self.removeEpisodeTranscriptionFilesInBackground(itemId: job.itemId, directories: [doomed].compactMap { $0 })
-            try? deleteTransientTranscriptAssets(itemId: job.itemId)
-            try? store.deleteEpisodeMapPreparationJob(id: job.id)
-        }
+        deleteEpisodeMapPreparationJobsInBackground(itemId: itemId) // #2509
     }
 
     @discardableResult
