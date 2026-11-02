@@ -44,12 +44,6 @@
    "why": "carries or logs what iOS reported to SystemInterruptionResume, which owns the decision (#3032 slice 2); a report, not a second decision"
   },
   {
-   "key": "Packages/SessionKit/Sources/SessionKit/HandsFreeMarginCoordinator.swift::resumesAfter",
-   "decls": 1,
-   "writes": 8,
-   "why": "the hands-free Margin's own copy of the resume decision; moves into MarginCaptureResume (#3170, #3032 slice 4)"
-  },
-  {
    "key": "Packages/SessionKit/Sources/SessionKit/HandsFreeMarginCoordinator.swift::shouldResume",
    "decls": 1,
    "writes": 0,

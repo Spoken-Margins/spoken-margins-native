@@ -230,18 +230,20 @@ class TheGuardOnTheRealTree(unittest.TestCase):
 
     def test_the_baseline_names_the_flags_the_audit_listed_that_are_still_to_move(self):
         keys = set(ro.load_baseline())
-        for needle in ('HandsFreeMarginCoordinator.swift::resumesAfter',
-                       'HandsFreeMarginCoordinator.swift::shouldResume'):
+        for needle in ('HandsFreeMarginCoordinator.swift::shouldResume',):
             with self.subTest(needle):
                 self.assertTrue(any(k.endswith(needle) for k in keys), needle)
 
     def test_the_flags_the_capture_owner_retired_stay_out_of_the_engine_and_the_policy(self):
         # #3144: these lived in SessionEngine and MarginRecordingInterruptionPolicy; MarginCaptureResume owns them now.
+        # #3170 adds the hands-free coordinator's `resumesAfter`.
         # A scan row for one of them, in any file outside an owner, means an old copy came back.
         retired = ('priorPhase', 'priorPhaseForResume', 'pendingInterjectionPause', 'PendingInterjectionPause',
                    'hasPendingInterjectionPause', 'recordingOnFinishedSource', 'rejoinAttempted', 'systemPause',
                    'pendingPlaybackPosition', 'PendingPlaybackPosition', 'hasPendingPlaybackPosition',
-                   'previousPendingPlaybackPosition', 'pendingResume', 'PendingResume')
+                   'previousPendingPlaybackPosition', 'pendingResume', 'PendingResume',
+                   # #3170: the hands-free coordinator's flag moved into HandsFreeCaptureResume (MarginCaptureResume.swift).
+                   'resumesAfter')
         declared = {row['name'] for row in ro.scan_tree()}
         for name in retired:
             with self.subTest(name):

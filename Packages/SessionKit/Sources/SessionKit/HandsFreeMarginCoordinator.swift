@@ -137,9 +137,8 @@ public final class HandsFreeMarginCoordinator {
     private var warnedOfCap = false
     // How the current Margin closes, once decided.
     private var closingTone: HandsFreeTone?
-    private var resumesAfter = true
+    private var resumeIntent = HandsFreeCaptureResume()
     private var awaitingSave = false
-    private var awaitingInterruptionEnd = false
     private var backgroundDB: Double?
     private var loudestDB: Double = -.infinity
     private var rejoiningSince: TimeInterval = 0
@@ -188,10 +187,9 @@ public final class HandsFreeMarginCoordinator {
             commands += heardAnAttempt ? finish(.press) : flag()
         case .speaking, .trailingSilence:
             commands += finish(.press)
-        case .saving where awaitingInterruptionEnd && !awaitingSave:
+        case .saving where resumeIntent.isWaitingForCallToEnd && !awaitingSave:
             // iOS doesn't always say a call ended. A press means the listener is back.
-            awaitingInterruptionEnd = false
-            resumesAfter = false
+            resumeIntent.pressedAfterCallThatNeverEnded()
             commands += settle()
         case .saving, .rejoining:
             break
@@ -208,7 +206,7 @@ public final class HandsFreeMarginCoordinator {
             commands += openMicrophone(at: now)
         case (.rejoining, _) where tone == closingTone:
             phase = .idle
-            if resumesAfter { commands.append(.resumeSource) }
+            if resumeIntent.resumesSource { commands.append(.resumeSource) }
         default:
             break
         }
@@ -282,27 +280,27 @@ public final class HandsFreeMarginCoordinator {
         if let last = lastLevel, last.isSpeech { speechSeconds += now - last.at; lastLevel = (now, true) }
         switch phase {
         case .startTone:
-            awaitingInterruptionEnd = true
+            resumeIntent.callBegan()
             closingTone = .flag
-            resumesAfter = true
+            resumeIntent.closing(resume: true)
             phase = .saving
             return due + [.requestFlag]
         case .listening, .speaking, .trailingSilence:
-            awaitingInterruptionEnd = true
+            resumeIntent.callBegan()
             if speechSeconds >= HandsFreeMarginTimings.minimumSpeechToKeep {
                 return due + finish(.interruption)
             }
             closingTone = .flag
-            resumesAfter = true
+            resumeIntent.closing(resume: true)
             phase = .saving
             return due + [.cancelRecording, .requestFlag]
         case .saving:
-            awaitingInterruptionEnd = true
+            resumeIntent.callBegan()
             return due
         case .rejoining:
             // The call cut the closing tone off; resume, if at all, when the call ends.
             closingTone = nil
-            awaitingInterruptionEnd = true
+            resumeIntent.callBegan()
             phase = .saving
             return due
         case .idle:
@@ -312,9 +310,7 @@ public final class HandsFreeMarginCoordinator {
 
     /// The call ended. `shouldResume` is iOS's answer; the source resumes only when it says so.
     public func interruptionEnded(shouldResume: Bool) -> [HandsFreeMarginCommand] {
-        guard phase == .saving, awaitingInterruptionEnd else { return [] }
-        awaitingInterruptionEnd = false
-        resumesAfter = resumesAfter && shouldResume
+        guard phase == .saving, resumeIntent.callEnded(shouldResume: shouldResume) else { return [] }
         return settle()
     }
 
@@ -334,7 +330,7 @@ public final class HandsFreeMarginCoordinator {
             return due + finish(.headphonesRemoved)
         case .saving, .rejoining:
             closingTone = nil
-            resumesAfter = false
+            resumeIntent.headphonesRemoved()
             if phase == .rejoining { phase = .idle }
             return due
         case .idle:
@@ -354,9 +350,8 @@ public final class HandsFreeMarginCoordinator {
         silenceSince = nil
         warnedOfCap = false
         closingTone = nil
-        resumesAfter = true
+        resumeIntent.reset()
         awaitingSave = false
-        awaitingInterruptionEnd = false
         backgroundDB = nil
         loudestDB = -.infinity
     }
@@ -414,7 +409,7 @@ public final class HandsFreeMarginCoordinator {
         }
         if phase == .rejoining, now - rejoiningSince >= HandsFreeMarginTimings.toneTimeout {
             phase = .idle
-            return resumesAfter ? [.resumeSource] : []
+            return resumeIntent.resumesSource ? [.resumeSource] : []
         }
         guard isRecording else { return [] }
         let elapsed = now - recordingStartedAt
@@ -444,26 +439,26 @@ public final class HandsFreeMarginCoordinator {
         phase = .saving
         awaitingSave = true
         closingTone = reason == .headphonesRemoved ? nil : .saved
-        resumesAfter = reason != .headphonesRemoved
+        resumeIntent.closing(resume: reason != .headphonesRemoved)
         return [.finishRecording(reason)]
     }
 
     private func close(tone: HandsFreeTone, resume: Bool) -> [HandsFreeMarginCommand] {
         closingTone = tone
-        resumesAfter = resume
+        resumeIntent.closing(resume: resume)
         phase = .saving
         return settle()
     }
 
     /// Plays the closing tone once nothing is pending; with no tone, resumes or stays paused.
     private func settle() -> [HandsFreeMarginCommand] {
-        guard !awaitingSave, !awaitingInterruptionEnd else { return [] }
+        guard !awaitingSave, !resumeIntent.isWaitingForCallToEnd else { return [] }
         if let tone = closingTone {
             phase = .rejoining
             rejoiningSince = clock()
             return [.playTone(tone)]
         }
         phase = .idle
-        return resumesAfter ? [.resumeSource] : []
+        return resumeIntent.resumesSource ? [.resumeSource] : []
     }
 }
