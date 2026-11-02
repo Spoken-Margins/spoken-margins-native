@@ -60,10 +60,33 @@ final class LiveSessionEditTests: XCTestCase {
         XCTAssertEqual(LiveSessionPositionMap.position(at: start.addingTimeInterval(60), in: live)?.ms, 150_000)
     }
 
-    func testAMeetingFromAKindWithNoClockStartsItAtTheBeginning() {
+    func testAMeetingFromAKindWithNoClockStaysUnknownNotZero() {
         var live = session(kind: .paper, startPositionMs: nil)
         LiveSessionEdit.setKind(.meeting, on: &live)
-        XCTAssertEqual(live.startPositionMs, 0)
+        XCTAssertNil(live.startPositionMs, "no clock given: 0:00 would be a guess (#3241)")
+        XCTAssertNil(LiveSessionPositionMap.position(at: start.addingTimeInterval(60), in: live))
+    }
+
+    func testAMeetingStartedWithBlankClockHasNoPositionUntilTheListenerSetsOne() throws {
+        // What the start card sends for a meeting with the clock left blank.
+        let read = LiveSessionWhere.interpret(clockText: "  ", whereText: "", kind: .meeting)
+        var live = LiveSession(id: "m", kind: .meeting, startedAt: start, startPositionMs: read.positionMs)
+        XCTAssertNil(live.startPositionMs)
+        XCTAssertNil(LiveSessionPositionMap.position(at: start.addingTimeInterval(300), in: live))
+        XCTAssertNil(LiveSessionClock.origin(of: live, now: start.addingTimeInterval(300)))
+
+        try LiveSessionEdit.setSourceClock(positionMs: 12 * 60_000, at: start.addingTimeInterval(300), on: &live)
+        XCTAssertEqual(live.startPositionMs, 7 * 60_000)
+        XCTAssertEqual(LiveSessionPositionMap.position(at: start.addingTimeInterval(360), in: live)?.ms, 13 * 60_000)
+    }
+
+    func testAMeetingWithAPageButNoClockIsPlacedByPageUntilTheClockIsSet() throws {
+        let read = LiveSessionWhere.interpret(clockText: "", whereText: "page 12", kind: .meeting)
+        var live = LiveSession(id: "m", kind: .meeting, startedAt: start, startPositionMs: read.positionMs, startWhere: read.text)
+        live.startPlace = read.place
+        XCTAssertTrue(live.usesPlaces)
+        try LiveSessionEdit.setSourceClock(positionMs: 60_000, at: start, on: &live)
+        XCTAssertFalse(live.usesPlaces, "once the clock is set the meeting is placed by time again")
     }
 
     func testTheNameAndChapterAreTrimmedAndBlankClearsTheChapter() {
