@@ -224,7 +224,7 @@ def derive(api, issue, pulls, now, cache):
         if latest and 'in-progress' in labels and resumed_after(api, issue, latest) and claim_activity(api, issue, now)[0]:
             return decision('In Progress', 'reclaimed after the merge; implementation active again')
         return decision('Needs your check', 'protected physical-device validation is pending')
-    if labels & HOLD or (issue.get('milestone') or {}).get('title') in {'Later', 'Co-op Experience'}:
+    if labels & HOLD or (issue.get('milestone') or {}).get('title') == 'Later':
         health = ('Needs attention: ' + ', '.join(sorted(labels & {'blocked', 'needs-owner'}))) if labels & {'blocked', 'needs-owner'} else ''
         return decision('Todo', 'issue explicitly held/deferred; a stale claim or old merge does not override it', health)
     if latest:
