@@ -17,7 +17,7 @@ import subprocess
 import sys
 import time
 from xml.etree import ElementTree
-from lane_xcresult_attachments import export_failed_attachments
+from lane_xcresult_attachments import export_failed_attachments, readable_attachment_name
 
 from check_posterboard_repair import crash_snapshot, new_crash
 import host_audio
@@ -240,15 +240,40 @@ def name_screenshots(exported, screens):
     for test in json.loads((exported / 'manifest.json').read_text()):
         for attachment in test.get('attachments', []):
             source = exported / attachment['exportedFileName']
-            human = attachment.get('suggestedHumanReadableName') or source.name
-            match = re.fullmatch(r'(.+?)_\d+_[0-9A-Fa-f-]{36}(\.\w+)?', human)
-            name = match[1] + (match[2] or source.suffix) if match else human
-            stem, suffix, copy = Path(name).stem, Path(name).suffix, 2
-            while name in names:
-                name, copy = f'{stem}-{copy}{suffix}', copy + 1
+            name = readable_attachment_name(attachment, names)
             shutil.copyfile(source, screens / name)
             names.append(name)
     return sorted(names)
+
+
+TOUR_INDEX_PREFIX = 'tour-index-'
+
+
+def write_screen_index(screens, names):
+    """Turn the tour's index attachments (`tour-index-*`, a tab-separated "screenshot, what it shows" line per
+    screenshot, #3237) into screens/INDEX.md, listing file, step and what is on screen. Returns the screenshot names
+    without the index attachments. A screenshot no index names is still listed, with nothing said about it."""
+    shows = {}
+    for name in [n for n in names if n.startswith(TOUR_INDEX_PREFIX)]:
+        for line in (screens / name).read_text(errors='replace').splitlines():
+            screenshot, _, description = line.partition('\t')
+            if screenshot.strip():
+                shows[screenshot.strip()] = description.strip()
+        (screens / name).unlink()
+    names = [n for n in names if not n.startswith(TOUR_INDEX_PREFIX)]
+    if not names:
+        return names
+    rows = ['# Screen tour', '', 'One screenshot per screen; `-missing` names a screen that did not come in time.', '',
+            '| File | Step | On screen |', '| --- | --- | --- |']
+    for name in names:
+        stem = Path(name).stem
+        match = re.match(r'tour-(\w+)-(\d+)', stem)
+        step = f'{match[2]} ({match[1]})' if match else ''
+        # A retried test's second copy is `<name>-2`; it shows what the first did.
+        description = (shows.get(stem) or shows.get(re.sub(r'-\d+$', '', stem), '')).replace('|', '\\|')
+        rows.append(f'| [{name}]({name}) | {step} | {description} |')
+    (screens / 'INDEX.md').write_text('\n'.join(rows) + '\n')
+    return names
 
 
 def dedicated_simulator(devices, ios=None):
@@ -2229,13 +2254,26 @@ class Run:
                     slot.close()
                 else:
                     release_handle(slot)
-        if plan in SCREENSHOT_PLANS:
-            self.export_screenshots()
+            if plan in SCREENSHOT_PLANS:
+                # A tour test that stops partway still hands over what the run took (#3237): from 11-02 the tour failed
+                # at one moved control on every run, and exported nothing at all. The tests' own failure stays the error.
+                self.export_screenshots(tests_failed=sys.exc_info()[1] is not None)
         if input_identity() != identity:
             raise RuntimeError('Inputs changed during testing; rerun on a stable source state')
 
-    def export_screenshots(self):
-        """Export the run's screenshots to screens/, named per screen, and list them in the manifest."""
+    def export_screenshots(self, tests_failed=False):
+        """Export the run's screenshots to screens/, named per screen, with INDEX.md, and list them in the manifest.
+
+        After a failed test an export error is only recorded, so it can't hide the failure."""
+        try:
+            self._export_screenshots()
+        except (RuntimeError, OSError, subprocess.SubprocessError) as error:
+            if not tests_failed:
+                raise
+            self.manifest['screenshot_export_error'] = repr(error)
+            self.save()
+
+    def _export_screenshots(self):
         exported = self.output / 'attachments'
         self.command('export-screenshots', ['xcrun', 'xcresulttool', 'export', 'attachments',
                      '--path', str(self.output / 'tests.xcresult'), '--output-path', str(exported)], timeout=120)
@@ -2249,6 +2287,7 @@ class Run:
             shutil.copytree(exported, screens, ignore=shutil.ignore_patterns('manifest.json'))
             names = sorted(path.name for path in screens.iterdir())
         shutil.rmtree(exported, ignore_errors=True)
+        names = write_screen_index(screens, names)
         self.manifest['screenshots'] = names
         self.save()
         if not names:

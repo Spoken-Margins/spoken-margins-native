@@ -23,6 +23,23 @@ def test_selectors(payload):
     return selectors
 
 
+def readable_attachment_name(attachment, taken):
+    """The file name an exported attachment should carry: its XCTAttachment name, not xcresulttool's UUID.
+
+    xcresulttool names the files by UUID and records the attachment's name in manifest.json as
+    `suggestedHumanReadableName`, `<name>_<index>_<UUID>.<ext>`. A name already in `taken` gets `-2`, `-3`, ...
+    """
+    exported = Path(attachment['exportedFileName'])
+    human = attachment.get('suggestedHumanReadableName') or exported.name
+    match = re.fullmatch(r'(.+?)_\d+_[0-9A-Fa-f-]{36}(\.\w+)?', human)
+    name = match[1] + (match[2] or exported.suffix) if match else human
+    name = re.sub(r'[/\\:]', '-', name).lstrip('.') or exported.name
+    stem, suffix, copy = Path(name).stem, Path(name).suffix, 2
+    while name in taken:
+        name, copy = f'{stem}-{copy}{suffix}', copy + 1
+    return name
+
+
 def export_failed_attachments(bundle, records, payload, output):
     """Exports have a 60-second per-test and 180-second total budget, with distinct directories.
 
@@ -68,7 +85,14 @@ def export_failed_attachments(bundle, records, payload, output):
                     file = directory / attachment['exportedFileName']
                     if file.resolve().parent != directory or not file.is_file():
                         raise ValueError('Attachment file is missing or outside its test directory')
-                    entry['files'].append(str(file))
+                    # A report that lists UUIDs says nothing about what each file is (#3237).
+                    taken = {Path(path).name for path in entry['files']} | {'manifest.json', 'export.log'}
+                    readable = directory / readable_attachment_name(attachment, taken)
+                    if readable != file:
+                        file.rename(readable)
+                        attachment['exportedFileName'] = readable.name
+                    entry['files'].append(str(readable))
+            manifest.write_text(json.dumps(entries, indent=2))  # it names the renamed files
             if not entry['files']:
                 raise ValueError('Export returned no attachments; absence of retained media is not established')
         except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError) as error:
