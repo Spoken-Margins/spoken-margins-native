@@ -72,7 +72,7 @@ struct BrowserTextImporter: Sendable {
 
         let parsedMarkdown: ParsedObsidianMarkdown?
         if document == nil, handoff.contentFormat == .markdown {
-            parsedMarkdown = try? ObsidianMarkdownParser.parse(fileName: fallbackTitle, contents: rawText, fallbackTitle: fallbackTitle)
+            parsedMarkdown = try? ObsidianMarkdownParser.parse(fileName: fallbackTitle, contents: rawText, fallbackTitle: fallbackTitle, sourceURL: handoff.source.url)
         } else {
             parsedMarkdown = nil
         }
@@ -219,6 +219,7 @@ struct BrowserTextImporter: Sendable {
         let result = try outcome(handoff, structuredDocument: structuredDocument, upgrade: mode)
         if case .records(let item, let map, let document, _) = result {
             try persist(item, map: map, document: document)
+            saveSourceElements(for: handoff, item: item)
         }
         return result
     }
@@ -232,5 +233,25 @@ struct BrowserTextImporter: Sendable {
         if let store = store as? any (SessionRepository & StructuredDocumentRepository) {
             try PreparedAudioEnqueue.saveStructuredDocument(document, itemId: item.id, repository: store)
         } else { try store.saveStructuredDocument(document, itemId: item.id) }
+    }
+
+    /// The pictures, embeds and links of a Substack page, kept beside the item for Timeline (#2032). Best effort: an
+    /// import never fails because of them, and a page with none writes nothing. They are read from the same Markdown
+    /// as the text, and kept only when that gives exactly the item's text, so every offset indexes it.
+    func saveSourceElements(for handoff: BrowserTextHandoff, item: Item) {
+        guard let record = Self.sourceElements(for: handoff, item: item),
+              let store = repository as? any SourceElementsRepository else { return }
+        try? store.saveSourceElements(record, itemId: item.id)
+    }
+
+    static func sourceElements(for handoff: BrowserTextHandoff, item: Item) -> SourceElementsRecord? {
+        guard handoff.captureMode == .readablePage, handoff.contentFormat == .markdown,
+              item.mediaType == "text", let text = item.text,
+              SourceElementCapture.isSubstackPage(sourceURL: handoff.source.url, markdown: handoff.text),
+              let parsed = try? ObsidianMarkdownParser.parse(
+                fileName: item.title, contents: handoff.text, fallbackTitle: item.title, sourceURL: handoff.source.url),
+              !parsed.elements.isEmpty, parsed.text == text.trimmingCharacters(in: .whitespacesAndNewlines)
+        else { return nil }
+        return SourceElementsRecord(text: text, elements: parsed.elements)
     }
 }

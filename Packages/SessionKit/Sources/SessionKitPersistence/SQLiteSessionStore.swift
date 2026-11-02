@@ -2212,6 +2212,22 @@ extension SQLiteSessionStore: InterjectionByIdReading {
 extension SQLiteSessionStore: ItemRevisionReading {}
 extension SQLiteSessionStore: ItemAddressLookup {}
 
+/// The pictures, embeds and links an imported Substack page carries (#2032), in the existing records table as kind
+/// "source_elements", one row per item. No table or column changes and schema_version stays 5: an older build
+/// selects records by kind and never reads this one, and deleting the item removes the row with it.
+extension SQLiteSessionStore: SourceElementsRepository {
+    static let sourceElementsKind = "source_elements"
+
+    public func saveSourceElements(_ record: SourceElementsRecord, itemId: String) throws {
+        try save(kind: Self.sourceElementsKind, id: "\(itemId)#elements", sessionId: nil, itemId: itemId, value: record)
+    }
+
+    public func loadSourceElements(itemId: String) throws -> SourceElementsRecord? {
+        let records: [SourceElementsRecord] = try loadByItem(kind: Self.sourceElementsKind, itemId: itemId)
+        return records.first
+    }
+}
+
 /// I13 documents live in the existing records table as kind
 /// "structured_document", one row per item and extraction version. No table or
 /// column changes, and schema_version stays 5: Build 29 selects records by kind

@@ -966,6 +966,7 @@ public final class SessionEngine {
             if let deterministicMap { try repository.saveListeningMap(deterministicMap) }
             try saveStructuredDocument(document, itemId: item.id)
         } else { forgetDocumentCaches(itemId: item.id) }
+        browserTextImporter().saveSourceElements(for: handoff, item: item)
         forgetFailure(unlessItemIs: item.id)
         currentItem = item
         currentMap = deterministicMap
@@ -995,6 +996,7 @@ public final class SessionEngine {
             if let deterministicMap { try repository.saveListeningMap(deterministicMap) }
             try saveStructuredDocument(document, itemId: item.id)
         } else { forgetDocumentCaches(itemId: item.id) }
+        browserTextImporter().saveSourceElements(for: handoff, item: item)
         return item
     }
 

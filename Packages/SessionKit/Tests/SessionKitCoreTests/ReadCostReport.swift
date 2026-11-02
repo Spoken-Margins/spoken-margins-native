@@ -46,6 +46,7 @@ struct ReadCostReport {
             ("loadAudioAssets(itemId: mapped)", { _ = try store.loadAudioAssets(itemId: mapped) }),
             ("loadCanonicalSource(article)", { _ = try store.loadCanonicalSource(itemId: article) }),
             ("loadStructuredDocument(article)", { _ = try store.loadStructuredDocument(itemId: article) }),
+            ("loadSourceElements(article)", { _ = try store.loadSourceElements(itemId: article) }),
             ("loadStructuredDocumentItemIds()", { _ = try store.loadStructuredDocumentItemIds() }),
             ("loadResolvedListeningMapProjection(mapped)", { _ = try store.loadResolvedListeningMapProjection(itemId: mapped) }),
             ("loadPortableListeningMapProposals(mapped)", { _ = try store.loadPortableListeningMapProposals(itemId: mapped) }),
