@@ -237,6 +237,9 @@ struct Gate2LiveActivityView: View {
                     }
                 }
             }
+            // Empty space under the header, where the progress bar used to sit (#1508): the next-chapter chip's
+            // tap area grows 16 pt down into it, so it never reaches the transport row below.
+            .padding(.bottom, 10)
 
             if state.offersResume(isStale: isStale) {
                 Label(Gate2LiveActivityCopy.pausedPrompt, systemImage: "play.circle.fill")
@@ -344,7 +347,7 @@ struct Gate2LiveActivityView: View {
 
     /// Skips to the next chapter or Shared Margin: a small "Next" chip in the header's trailing corner, under the state
     /// word. The listener hears the next title through its VoiceOver label. The chip is 24 pt tall and its tap area
-    /// grows to 44 pt toward the progress bar, which is not tappable, and never over the titles or the transport row.
+    /// grows to 44 pt into the empty space under the header, and never over the titles or the transport row.
     @ViewBuilder
     private var nextNavigation: some View {
         if let nextChapterTitle = state.nextChapterTitle,
