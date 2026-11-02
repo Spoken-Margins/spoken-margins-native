@@ -1949,6 +1949,20 @@ def fetch_hosted(hosted: dict) -> int:
         shutil.rmtree(work, ignore_errors=True)
 
 
+def signing_config_problem() -> str | None:
+    """Why a scheduled job's checkout could not sign a Release build, or None.
+
+    scripts/xcodebuild-lane and scripts/setup-worktree.sh link the signing team into a build worktree from the
+    main checkout of the worktree's repository, here ROOT. A job pinned to the ops checkout (#2372) needs the
+    owner's git-ignored Config/Local.xcconfig there too; without it the build has no DEVELOPMENT_TEAM.
+    A script run by hand uses whichever checkout it was started in, so only a pinned job is checked."""
+    if not ops_checkout.pinned_repo() or (ROOT / 'Config' / 'Local.xcconfig').exists():
+        return None
+    return (f'{ROOT}/Config/Local.xcconfig is missing, so a Release build has no signing team. '
+            f'Link it once: ln -s ~/Documents/GitHub/spoken-margins-native/Config/Local.xcconfig '
+            f'{ROOT}/Config/Local.xcconfig')
+
+
 def worktree_of_root(src: Path) -> bool:
     """True when the worktree at `src` was added by ROOT's repository."""
     def common(cwd):
@@ -1969,6 +1983,9 @@ def build(sha: str) -> int:
     work.mkdir(parents=True)
     try:
         cache.mkdir(exist_ok=True)
+        missing = signing_config_problem()
+        if missing:  # before the old worktree goes: a switch of checkout must not break signing without saying so (#2372)
+            raise BuildFailed(f'the iPhone build could not start. Signing needs the owner: {missing}')
         say(f'checking out {sha[:7]} in the persistent phone-build worktree')
         if src.exists() and not worktree_of_root(src):
             # Registered by another checkout (the jobs moved to the ops checkout, #2372): it cannot see this one's objects.
