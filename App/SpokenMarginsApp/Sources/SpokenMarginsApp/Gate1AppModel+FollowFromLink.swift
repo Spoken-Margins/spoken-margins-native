@@ -88,7 +88,7 @@ extension Gate1AppModel {
                 FollowPasteDecision.followedMessage(showTitle: title, wasAlreadyFollowed: wasAlreadyFollowed),
                 action: undo)
             // The first look at the new show's episodes can wait on the network; the sheet does not.
-            Task { [weak self] in await self?.performFollowedSourceRefresh(force: true) }
+            refreshFollowedSources(force: true)
             return .followed
         } catch {
             if let coordinator = followedSourceCoordinator {
