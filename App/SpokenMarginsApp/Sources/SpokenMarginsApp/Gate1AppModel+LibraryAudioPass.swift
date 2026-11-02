@@ -29,20 +29,16 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
 
     func performBackgroundPreparationPass() async -> BackgroundPreparationWorkResult {
         guard let store else { return .finished }
-        let progressToken = {
-            BackgroundPreparationPlanner.progressToken(
-                audioJobs: (try? store.loadAudioPreparationJobs()) ?? [],
-                episodeJobs: (try? store.loadEpisodeMapPreparationJobs()) ?? []
-            )
-        }
-        let progressBefore = progressToken()
+        // Both job tables are read off the main actor, once here and once after the work (#2507).
+        let before = await AudioPreparationPassReads.readJobs(store)
+        let progressBefore = before.progressToken
         let episodeJobs = BackgroundPreparationPlanner.eligibleEpisodeJobs(
-            (try? store.loadEpisodeMapPreparationJobs()) ?? [],
+            before.episode,
             episodePolicy: automaticEpisodeMapPreparationPolicy,
             hasLocalAudio: { self.podcastDownloadCoordinator?.validatedLocalURL(for: $0) != nil }
         )
         let hasAudioWork = !OfflinePreparationRecovery.backgroundJobs(
-            (try? store.loadAudioPreparationJobs()) ?? [], automaticPolicy: automaticAudioPreparationPolicy
+            before.audio, automaticPolicy: automaticAudioPreparationPolicy
         ).isEmpty
         if let job = backgroundPreparationPlanner.plan(
             hasAudioWork: hasAudioWork,
@@ -65,13 +61,12 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
                 }
             }
             backgroundPreparationPlanner.afterEpisodePass()
-            let hasEpisodeWork = ((try? store.loadEpisodeMapPreparationJobs()) ?? []).contains {
-                !$0.isCancelled && $0.stage != .completed
-            }
+            let after = await AudioPreparationPassReads.readJobs(store)
+            let hasEpisodeWork = after.episode.contains { !$0.isCancelled && $0.stage != .completed }
             return BackgroundPreparationPlanner.result(
                 hasRemainingWork: hasEpisodeWork || hasAudioWork,
                 before: progressBefore,
-                after: progressToken()
+                after: after.progressToken
             )
         }
         let audioHasMore = await performBackgroundAudioPreparationPass()
@@ -79,11 +74,12 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
             audioHasMore: audioHasMore, hadAudioWork: hasAudioWork, hadEpisodeJobs: !episodeJobs.isEmpty
         )
         // A pass can stop for heat, playback or expiry without consuming its durable job.
+        let after = await AudioPreparationPassReads.readJobs(store)
         let hasRemainingWork = plannerHasMore || !OfflinePreparationRecovery.backgroundJobs(
-            (try? store.loadAudioPreparationJobs()) ?? [], automaticPolicy: automaticAudioPreparationPolicy
+            after.audio, automaticPolicy: automaticAudioPreparationPolicy
         ).isEmpty
         return BackgroundPreparationPlanner.result(
-            hasRemainingWork: hasRemainingWork, before: progressBefore, after: progressToken()
+            hasRemainingWork: hasRemainingWork, before: progressBefore, after: after.progressToken
         )
     }
 
@@ -135,7 +131,7 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
             let ownJobs: ([AudioPreparationJob]) -> [AudioPreparationJob] = { jobs in
                 preparationVoice.jobsFiledUnderItsEngine(jobs, manifestEngines: manifestEngines)
             }
-            var queuedJobs = ownJobs(try store.loadAudioPreparationJobs())
+            var queuedJobs = ownJobs(try await AudioPreparationPassReads.audioJobs(store))
                 .filter({ !PreparationChunkGate.setsAsideForLowPowerMode($0.policy, thermal: device.thermal, isLowPowerModeEnabled: device.isLowPowerModeEnabled) })
             if !foregroundDemandOnly {
                 queuedJobs = OfflinePreparationRecovery.backgroundJobs(queuedJobs, automaticPolicy: automaticAudioPreparationPolicy)
@@ -144,11 +140,11 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
                PreparationChunkGate.allowsAutomaticWork(thermal: device.thermal, isLowPowerModeEnabled: device.isLowPowerModeEnabled) {
                 await enqueueAutomaticAudioPreparationJobs()
                 queuedJobs = OfflinePreparationRecovery.backgroundJobs(
-                    ownJobs(try store.loadAudioPreparationJobs()), automaticPolicy: automaticAudioPreparationPolicy
+                    ownJobs(try await AudioPreparationPassReads.audioJobs(store)), automaticPolicy: automaticAudioPreparationPolicy
                 )
             }
-            let hasMoreMatchingJobs = {
-                let jobs = ownJobs(try store.loadAudioPreparationJobs())
+            let hasMoreMatchingJobs = { () async throws -> Bool in
+                let jobs = ownJobs(try await AudioPreparationPassReads.audioJobs(store))
                 return !LibraryAudioPreparationTurns.eligible(
                     foregroundDemandOnly ? jobs : OfflinePreparationRecovery.backgroundJobs(jobs, automaticPolicy: self.automaticAudioPreparationPolicy),
                     for: caller
@@ -171,7 +167,7 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
             guard let source else {
                 try await discardPreparationJob(job.id, store: store)
                 diagnostics["backgroundAudioPreparation"] = "discarded_missing_source_job"
-                return try hasMoreMatchingJobs()
+                return try await hasMoreMatchingJobs()
             }
             var manifest = source.manifest
             let item = source.item, sourceText = source.sourceText
@@ -187,7 +183,7 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
                 manifest.updatedAt = Date()
                 let retired = manifest, jobId = job.id
                 _ = try await preparationWrite(store) { try AudioPreparationPassWrites.retireManifest(retired, discardingJobId: jobId, in: $0) }
-                return try hasMoreMatchingJobs()
+                return try await hasMoreMatchingJobs()
             }
             let plan = await Task.detached(priority: .utility) {
                 Self.preparedChunkPlan(for: sourceText)
@@ -213,7 +209,7 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
                 // Removing speculative work must never invalidate committed audio.
                 try await discardPreparationJob(job.id, store: store)
                 diagnostics["automaticAudioPreparation:\(item.id)"] = "cancelled_existing_progress"
-                return try hasMoreMatchingJobs()
+                return try await hasMoreMatchingJobs()
             }
             guard gate == .render else { diagnostics["backgroundAudioPreparation"] = gate.rawValue; return false }
             // After the heat gate, so a hot phone pauses the manifest as it always did (#2857).
@@ -231,7 +227,7 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
                     )
                 }
                 try await discardPreparationJob(job.id, store: store)
-                return try hasMoreMatchingJobs()
+                return try await hasMoreMatchingJobs()
             }
             let reservation = try await ledger.reserve(
                 ownerId: "prepared-chunk-\(manifest.id)-\(next.index)",
@@ -272,10 +268,10 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
             guard let updated = try await StoreReader(store).readInOrder(AudioPreparationQueueEdits.orderKey, { try $0.loadPreparedAudioManifest(id: renderedManifestId) }), // runs even if the pass was just cancelled, as the commit after it does
                   let committed = updated.chunks.first(where: { $0.index == next.index }) else {
                 try? await ledger.release(reservationId: reservation.id)
-                return try hasMoreMatchingJobs()
+                return try await hasMoreMatchingJobs()
             }
             guard try await ledger.commitPrepared(reservationId: reservation.id, asset: PreparedAudioCoordinator.ledgerAsset(for: committed, itemId: item.id), manifest: updated) else {
-                return try hasMoreMatchingJobs()
+                return try await hasMoreMatchingJobs()
             }
             // The record is written off the main thread, on the job as the store holds it then, so a priority the
             // listener set while this chunk rendered is kept (#2509).
@@ -312,7 +308,7 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
                                                                     "renderMs": String(renderMs), "thermal": SupertonicResourcePolicy.currentConditions().thermal.rawValue])
                 if let note = decision.note { diagnostics["startupAudioPreparation:\(item.id)"] = note }
             }
-            guard let needsAssembly else { return try hasMoreMatchingJobs() }
+            guard let needsAssembly else { return try await hasMoreMatchingJobs() }
             if needsAssembly {
                 try await finishBackgroundPreparedAudio(
                     item: item,
@@ -328,9 +324,9 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
                     support: support
                 )
             }
-            applyPreparedChunkProgress(item: item, manifest: updated,
-                                       remainingJobs: try store.loadAudioPreparationJobs())
-            let hasMore = try hasMoreMatchingJobs()
+            let remainingJobs = try await AudioPreparationPassReads.audioJobs(store)
+            applyPreparedChunkProgress(item: item, manifest: updated, remainingJobs: remainingJobs)
+            let hasMore = try await hasMoreMatchingJobs()
             diagnostics["backgroundAudioPreparation"] = hasMore ? "chunk_committed" : "complete"
             return hasMore
         } catch is CancellationError {
