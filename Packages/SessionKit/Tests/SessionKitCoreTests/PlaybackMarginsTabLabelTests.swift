@@ -23,4 +23,10 @@ final class PlaybackMarginsTabLabelTests: XCTestCase {
         // VoiceOver is not width-bound, so it reads the real number.
         XCTAssertEqual(PlaybackMarginsTabLabel.accessibilityLabel(receivedCount: 4_000), "Margins, 4000 received")
     }
+
+    func testTheIconOnlyTabGetsJustTheNumber() {
+        XCTAssertNil(PlaybackMarginsTabLabel.countText(receivedCount: 0))
+        XCTAssertEqual(PlaybackMarginsTabLabel.countText(receivedCount: 3), "3")
+        XCTAssertEqual(PlaybackMarginsTabLabel.countText(receivedCount: 250), "99+")
+    }
 }

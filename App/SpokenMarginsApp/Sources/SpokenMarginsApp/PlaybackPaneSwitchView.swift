@@ -35,8 +35,19 @@ struct PlaybackPaneSwitchView: View {
             ForEach(PlaybackPane.allCases, id: \.self) { pane in
                 Button { selection = pane } label: {
                     Group {
-                        if dynamicTypeSize.isAccessibilitySize { Image(systemName: pane.symbol) }
-                        else { Text(title(for: pane)) }
+                        if dynamicTypeSize.isAccessibilitySize {
+                            // Icon only at these sizes, so the count rides beside the Margins icon (#3059).
+                            HStack(spacing: 4) {
+                                Image(systemName: pane.symbol)
+                                if pane == .margins,
+                                   let count = PlaybackMarginsTabLabel.countText(receivedCount: receivedMarginCount) {
+                                    Text(count)
+                                }
+                            }
+                        } else {
+                            // A count must not truncate at large (non-accessibility) sizes on a small phone.
+                            Text(title(for: pane)).minimumScaleFactor(0.8)
+                        }
                     }
                         .font(.subheadline.weight(.semibold))
                         .lineLimit(1)

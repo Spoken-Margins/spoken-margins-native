@@ -7,10 +7,16 @@ public enum PlaybackMarginsTabLabel {
     /// Above this the tab says "99+": the exact count is the tab's job, not the label's.
     public static let displayCap = 99
 
+    /// The number alone, for the icon-only tab at accessibility text sizes. Nil when nothing was received.
+    public static func countText(receivedCount: Int) -> String? {
+        guard receivedCount > 0 else { return nil }
+        return receivedCount > displayCap ? "\(displayCap)+" : String(receivedCount)
+    }
+
     /// What the tab shows. Plain "Margins" when nothing was received.
     public static func title(receivedCount: Int) -> String {
-        guard receivedCount > 0 else { return "Margins" }
-        return "Margins \(receivedCount > displayCap ? "\(displayCap)+" : String(receivedCount))"
+        guard let count = countText(receivedCount: receivedCount) else { return "Margins" }
+        return "Margins \(count)"
     }
 
     /// What VoiceOver reads: the tab name, then how many arrived, spelled out.
