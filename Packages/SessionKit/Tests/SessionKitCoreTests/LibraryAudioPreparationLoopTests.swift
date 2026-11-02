@@ -127,13 +127,13 @@ final class LibraryAudioPreparationLoopTests: XCTestCase {
         _ = loop.turns.select([chargingOnly], activeItemId: nil, for: .background)
         XCTAssertNil(loop.turns.select([chargingOnly], activeItemId: nil, for: .foreground), "the loop waits for the background task")
         loop.turns.stopped(.background)
-        XCTAssertTrue(loop.turns.foregroundShouldResume)
+        XCTAssertTrue(loop.turns.foregroundShouldRestart)
 
         loop.start(host: host)
         await settle { host.runsStarted == 1 }
         host.finishRun(0)
         await settle { host.runsStarted == 2 }
-        XCTAssertFalse(loop.turns.foregroundShouldResume, "the resume is used up by the restart")
+        XCTAssertFalse(loop.turns.foregroundShouldRestart, "the resume is used up by the restart")
 
         host.finishRun(1)
         await settle { host.loopsEnded == 2 }
