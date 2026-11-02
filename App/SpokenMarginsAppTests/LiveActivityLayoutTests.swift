@@ -56,7 +56,25 @@ final class LiveActivityLayoutTests: XCTestCase {
         }
     }
 
+    /// #1508: the owner saw the card's progress bar out of step with playback and asked for it to go. If any pixel of
+    /// the card still follows `progressPercent`, a card at 5% and one at 95% would differ.
+    func testTheCardShowsNoPlaybackProgress() throws {
+        for status in ["playing", "paused"] {
+            var early = state(status: status)
+            early.progressPercent = 5
+            var late = state(status: status)
+            late.progressPercent = 95
+            let earlyPNG = try XCTUnwrap(try renderImage(early, size: .large).pngData())
+            let latePNG = try XCTUnwrap(try renderImage(late, size: .large).pngData())
+            XCTAssertEqual(earlyPNG, latePNG, "\(status): the card still draws playback progress")
+        }
+    }
+
     private func render(_ state: Gate2LiveActivityAttributes.ContentState, size: DynamicTypeSize) throws -> CGSize {
+        try renderImage(state, size: size).size
+    }
+
+    private func renderImage(_ state: Gate2LiveActivityAttributes.ContentState, size: DynamicTypeSize) throws -> UIImage {
         let card = Gate2LiveActivityView(state: state, isStale: false)
             .environment(\.dynamicTypeSize, size)
             .environment(\.colorScheme, .dark)
@@ -69,6 +87,6 @@ final class LiveActivityLayoutTests: XCTestCase {
         attachment.name = "live-activity-\(state.status)-\(size)-\(Int(image.size.width))x\(Int(image.size.height))"
         attachment.lifetime = .keepAlways
         add(attachment)
-        return image.size
+        return image
     }
 }

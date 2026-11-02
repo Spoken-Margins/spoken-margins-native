@@ -16,10 +16,6 @@ struct Gate2LiveActivityWidget: Widget {
                     Text(context.state.offersResume(isStale: context.isStale) ? "Paused" : context.state.statusLabel)
                         .font(.caption)
                 }
-                DynamicIslandExpandedRegion(.trailing) {
-                    Text("\(context.state.progressPercent)%")
-                        .font(.caption.monospacedDigit())
-                }
                 DynamicIslandExpandedRegion(.bottom) {
                     if let sender = context.state.sharedMarginSenderLabel {
                         VStack(spacing: 8) {
@@ -51,8 +47,11 @@ struct Gate2LiveActivityWidget: Widget {
                     : context.state.surfaceSymbol(isStale: context.isStale))
                     .accessibilityLabel(context.state.stateAccessibilityLabel(isStale: context.isStale))
             } compactTrailing: {
-                Text(context.state.sharedMarginSenderLabel != nil ? "NEW" : "\(context.state.progressPercent)%")
-                    .font(.caption2.monospacedDigit())
+                // No playback progress here (#1508): the island shows state and actions, not a second meter.
+                if context.state.sharedMarginSenderLabel != nil {
+                    Text("NEW")
+                        .font(.caption2.monospacedDigit())
+                }
             } minimal: {
                 Image(systemName: context.state.sharedMarginSenderLabel != nil
                     ? "text.bubble.fill"
@@ -90,7 +89,7 @@ extension Gate2LiveActivityAttributes.ContentState {
 
     var recordingTint: Color { microphone == .capturing ? .red : .orange }
 
-    /// Progress and the idle glyph are sky blue, never green: red and green sit side by side on this card when a
+    /// The state glyph is sky blue, never green: red and green sit side by side on this card when a
     /// Margin records, and the pair cannot be told apart by a red-green colourblind listener (#1924). Sky blue is the
     /// Okabe-Ito colour that stays distinct from both red and orange.
     static let progressTint = Color(red: 0.34, green: 0.71, blue: 0.91)
@@ -137,7 +136,6 @@ private struct Gate2LiveActivityContent: View {
 }
 
 private struct Gate2LiveActivitySmallView: View {
-    @Environment(\.isLuminanceReduced) private var isLuminanceReduced
     /// The state glyph and its frame follow the text size, never below the default (#1940).
     @ScaledMetric(relativeTo: .caption) private var glyphSize: CGFloat = 16
     @ScaledMetric(relativeTo: .caption) private var glyphFrame: CGFloat = 22
@@ -196,13 +194,7 @@ private struct Gate2LiveActivitySmallView: View {
                         .minimumScaleFactor(0.7)
                         .accessibilityLabel(state.stateAccessibilityLabel(isStale: isStale))
                     Spacer(minLength: 4)
-                    Text("\(max(0, min(100, state.progressPercent)))%")
-                        .font(.caption.weight(.bold).monospacedDigit())
-                        .foregroundStyle(.white)
                 }
-
-                ProgressView(value: Double(max(0, min(100, state.progressPercent))), total: 100)
-                    .tint(isLuminanceReduced ? .white.opacity(0.72) : Gate2LiveActivityAttributes.ContentState.progressTint)
             }
         }
         .padding(.horizontal, 12)
@@ -245,9 +237,9 @@ struct Gate2LiveActivityView: View {
                     }
                 }
             }
-
-            ProgressView(value: Double(max(0, min(100, state.progressPercent))), total: 100)
-                .tint(state.offersResume(isStale: isStale) ? .white.opacity(0.45) : Gate2LiveActivityAttributes.ContentState.progressTint)
+            // Empty space under the header, where the progress bar used to sit (#1508): the next-chapter chip's
+            // tap area grows 16 pt down into it, so it never reaches the transport row below.
+            .padding(.bottom, 10)
 
             if state.offersResume(isStale: isStale) {
                 Label(Gate2LiveActivityCopy.pausedPrompt, systemImage: "play.circle.fill")
@@ -355,7 +347,7 @@ struct Gate2LiveActivityView: View {
 
     /// Skips to the next chapter or Shared Margin: a small "Next" chip in the header's trailing corner, under the state
     /// word. The listener hears the next title through its VoiceOver label. The chip is 24 pt tall and its tap area
-    /// grows to 44 pt toward the progress bar, which is not tappable, and never over the titles or the transport row.
+    /// grows to 44 pt into the empty space under the header, and never over the titles or the transport row.
     @ViewBuilder
     private var nextNavigation: some View {
         if let nextChapterTitle = state.nextChapterTitle,
