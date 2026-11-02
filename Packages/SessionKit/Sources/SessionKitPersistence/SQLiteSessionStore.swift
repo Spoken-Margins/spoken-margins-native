@@ -394,7 +394,11 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
     }
 
     public func saveInterjection(_ interjection: Interjection) throws {
-        if interjection.transcriptionStatus == "pending" {
+        // Only a save that moves a Margin into "pending" is this run's own work. A save that re-writes an old orphan's
+        // existing "pending" row (an edit, a percentage repair, a document upgrade) is not, so the launch settle still
+        // reaches it (#3200). A row that can't be read counts as new, the safe side: its settle waits a launch.
+        if interjection.transcriptionStatus == "pending",
+           (try? loadInterjection(id: interjection.id, sessionId: interjection.sessionId))?.transcriptionStatus != "pending" {
             pendingSavedLock.withLock { _ = pendingSavedThisRun.insert(Self.pendingKey(sessionId: interjection.sessionId, id: interjection.id)) }
         }
         try save(kind: "interjection", id: interjection.id, sessionId: interjection.sessionId, itemId: interjection.itemId, value: interjection)
