@@ -29,14 +29,19 @@ extension Gate1AppModel {
                 ownMargins: selectedItem.interjections
             )
         } else if let store {
-            // The listener's own Margins let a friend's reply say which of them it answers (#3221).
-            entries = (try? SharedMarginReview.entries(
-                itemId: itemId, in: store, ownMargins: store.loadInterjections(itemId: itemId)
-            )) ?? []
+            // The listener's own Margins let a friend's reply say which of them it answers (#3221). They come from the
+            // Margins screen's published rows, so this adds no store read to the main thread.
+            entries = (try? SharedMarginReview.entries(itemId: itemId, in: store, ownMargins: ownMargins(itemId: itemId))) ?? []
         } else {
             entries = []
         }
         return entries.filter { $0.interjection.audioPath.flatMap(resolvedApplicationSupportAssetURL(for:)) != nil }
+    }
+
+    /// The listener's own Margins on `itemId`, read from what the app already holds: the open item's, else the rows
+    /// the Margins screen published.
+    private func ownMargins(itemId: String) -> [Interjection] {
+        selectedItem.id == itemId ? selectedItem.interjections : marginRows.map(\.interjection).filter { $0.itemId == itemId }
     }
 
     /// Continue for an item. Starts it, or hands `offer` the item when it has new shared Margins that the listener
@@ -80,8 +85,7 @@ extension Gate1AppModel {
         // A friend's reply to one of the listener's own spoken Margins plays after that Margin (#3221): the lead-in,
         // the Margin, then the reply. Skip on the card goes past the Margin to the reply.
         var voiceURLs: [String: URL] = [:]
-        let ownMargins = selectedItem.id == itemId ? selectedItem.interjections : ((try? store?.loadInterjections(itemId: itemId)) ?? [])
-        let steps = SharedMarginReview.playlist(for: entries, ownMargins: ownMargins).filter { step in
+        let steps = SharedMarginReview.playlist(for: entries, ownMargins: ownMargins(itemId: itemId)).filter { step in
             guard let parent = step.ownParent else { return true }
             guard let url = parent.audioPath.flatMap(resolvedInterjectionAudioURL(for:)) else { return false }
             voiceURLs[step.anchor.marginId] = url
