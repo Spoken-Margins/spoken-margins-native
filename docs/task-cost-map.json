@@ -503,21 +503,15 @@
             },
             {
               "do": "tap",
-              "label": "Manage feeds",
+              "label": "Follow (plus)",
               "marker": "\"sources.manageFeeds",
               "file": "ExperienceSourcesScreen.swift"
             },
             {
               "do": "tap",
-              "label": "Paste into the link field",
-              "marker": "\"sources.follow.url",
-              "file": "ExperienceSourcesScreen.swift"
-            },
-            {
-              "do": "tap",
-              "label": "Follow",
-              "marker": "\"sources.follow.button",
-              "file": "ExperienceSourcesScreen.swift"
+              "label": "Paste a show link (follows at once, with Undo)",
+              "marker": "\"sources.follow.paste",
+              "file": "FollowSheet.swift"
             }
           ],
           "note": "Plus a system Paste tap when the clipboard is read."
@@ -536,7 +530,7 @@
             },
             {
               "do": "tap",
-              "label": "Manage feeds",
+              "label": "Follow (plus)",
               "marker": "\"sources.manageFeeds",
               "file": "ExperienceSourcesScreen.swift"
             },
@@ -544,7 +538,7 @@
               "do": "tap",
               "label": "Browse catalog",
               "marker": "\"sources.browseCatalog",
-              "file": "ExperienceSourcesScreen.swift"
+              "file": "FollowSheet.swift"
             },
             {
               "do": "tap",

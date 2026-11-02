@@ -792,13 +792,17 @@ final class Gate1FlowUITests: XCTestCase {
 
         tapRoot("Following")
         XCTAssertTrue(element("sources.screen").waitForExistence(timeout: 4))
-        // Following opens on its entries; the feed field lives on Manage Feeds (#141).
+        // Following opens on its entries; the feed field lives on the Follow sheet (#141, #3205).
         XCTAssertFalse(element("sources.follow.url").exists)
         element("sources.manageFeeds").tap()
         XCTAssertTrue(element("sources.follow.url").waitForExistence(timeout: 4))
+        XCTAssertTrue(element("sources.follow.paste").exists)
         XCTAssertTrue(element("sources.follow.button").exists)
         XCTAssertTrue(element("sources.browseCatalog").exists)
-        app.navigationBars.buttons.element(boundBy: 0).tap()
+        // Read Later and Listening Edition imports are in Settings, not on this sheet.
+        XCTAssertFalse(app.buttons["Read Later Services"].exists)
+        XCTAssertFalse(app.buttons["Import Listening Edition"].exists)
+        element("sources.follow.cancel").tap()
         XCTAssertTrue(element("sources.manageFeeds").waitForExistence(timeout: 4))
         tapRoot("Settings")
         XCTAssertTrue(element("settings.screen").waitForExistence(timeout: 5))
