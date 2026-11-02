@@ -5,11 +5,11 @@
     "approved_on": "2026-10-28"
   },
   "dmca_agent": {
-    "registered": false,
-    "registration_number": null,
-    "registered_on": null,
-    "page_url": null,
-    "page_live": false
+    "registered": true,
+    "registration_number": "DMCA-1084466",
+    "registered_on": "2026-10-31",
+    "page_url": "https://spokenmargins.com/copyright/",
+    "page_live": true
   },
   "insurance": {
     "in_place": false

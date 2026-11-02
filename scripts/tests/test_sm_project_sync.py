@@ -196,6 +196,11 @@ class Reconciliation(unittest.TestCase):
         api = API([issue(labels=['in-progress'], milestone='Later')], bundles=[merged(paths=['scripts/tool.py'])])
         self.assertEqual(self.run_sync(api)['changes'][0]['status'], 'Todo')
 
+    def test_coop_claim_shows_in_progress_not_held(self):
+        # Co-op Experience is ordinary work since 2026-11-02; only Later still reads as held.
+        api = API([issue(labels=['in-progress'], milestone='Co-op Experience')])
+        self.assertEqual(self.run_sync(api)['changes'][0]['status'], 'In Progress')
+
     def test_closed_issue_follows_completion_and_preserves_protected_labels(self):
         for labels, wanted in (([], 'Done'), (['found-on-phone', 'priority'], 'Done')):
             api = API([issue(labels=labels, state='closed')], {7: {'Status': 'Checking'}})
