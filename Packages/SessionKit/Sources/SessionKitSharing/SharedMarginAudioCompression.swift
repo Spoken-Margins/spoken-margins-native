@@ -97,9 +97,33 @@ public struct AVFoundationMarginAudioTranscoder: SharedMarginAudioTranscoding {
     public init() {}
 
     public func transcode(_ source: URL, to destination: URL) async throws {
+        let encoded = destination.deletingPathExtension().appendingPathExtension("encoded.m4a")
+        try? FileManager.default.removeItem(at: encoded)
+        defer { try? FileManager.default.removeItem(at: encoded) }
         try await Task.detached(priority: .userInitiated) {
-            try Self.transcodeSynchronously(source, to: destination)
+            try Self.transcodeSynchronously(source, to: encoded)
         }.value
+        // AVAudioFile reserves a `free` atom of about 20–30 KB in front of the audio: a third of a 20 s Margin at
+        // 24 kbps. A passthrough remux copies the same HE-AAC packets into an `.m4a` without it. If the remux fails or
+        // comes out a different length, the padded file still plays, so it goes out instead.
+        try? FileManager.default.removeItem(at: destination)
+        if await Self.remuxed(encoded, to: destination, matchingSecondsOf: source) { return }
+        try? FileManager.default.removeItem(at: destination)
+        try FileManager.default.moveItem(at: encoded, to: destination)
+    }
+
+    private static func remuxed(_ encoded: URL, to destination: URL, matchingSecondsOf source: URL) async -> Bool {
+        guard let exporter = AVAssetExportSession(asset: AVURLAsset(url: encoded), presetName: AVAssetExportPresetPassthrough) else {
+            return false
+        }
+        do { try await exporter.export(to: destination, as: .m4a) } catch { return false }
+        guard let expected = try? seconds(of: source), let written = try? seconds(of: destination) else { return false }
+        return abs(written - expected) <= 0.5
+    }
+
+    private static func seconds(of url: URL) throws -> Double {
+        let file = try AVAudioFile(forReading: url)
+        return Double(file.length) / file.processingFormat.sampleRate
     }
 
     private static let chunkFrames: AVAudioFrameCount = 16_384
