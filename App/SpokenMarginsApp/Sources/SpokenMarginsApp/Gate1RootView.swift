@@ -30,7 +30,7 @@ struct Gate1RootView: View {
                 case .home:
                     ExperienceRootTabs(navigation: $navigation, supertonicNotice: supertonicNotice, showsMiniPlayer: !keyboardIsPresented && model.shouldShowMiniPlayer).announcesScreenChange()
                 case .item:
-                    ExperienceItemDetailScreen()
+                    ExperienceItemDetailScreen(backTitle: navigation.selectedRoot.itemBackTitle)
                 case .playback:
                     PlaybackScreen()
                 case .timeline:

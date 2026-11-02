@@ -16,6 +16,7 @@ struct SettingsScreen: View {
     @State private var pendingPermanentDeletion: LibraryItemRow?
     @State private var pendingInboxDeletion: ImportInboxEntry?
     @State private var isEmptyRecentlyDeletedConfirmationPresented = false
+    @State private var showsAllRecentlyDeleted = false
     @State private var isResetConfirmationPresented = false
     @State private var diagnosticsExportURL: URL?
     @State private var isDiagnosticsSharePresented = false
@@ -241,23 +242,44 @@ struct SettingsScreen: View {
                                 isEmptyRecentlyDeletedConfirmationPresented = true
                             }
                             .accessibilityIdentifier("recentlyDeleted.empty.button")
-                            ForEach(model.recentlyDeletedItems) { item in
-                                VStack(alignment: .leading, spacing: 8) {
+                            let list = CollapsedListPresentation(
+                                total: model.recentlyDeletedItems.count, isExpanded: showsAllRecentlyDeleted)
+                            ForEach(Array(model.recentlyDeletedItems.prefix(list.shownCount))) { item in
+                                VStack(alignment: .leading, spacing: 4) {
                                     Text(item.title)
                                         .font(.headline)
                                     HStack {
-                                        Button("Restore") { model.restoreItem(id: item.id) }
-                                            .buttonStyle(.borderless)
-                                            .accessibilityLabel("Restore \(item.title)")
-                                            .accessibilityIdentifier("recentlyDeleted.restore.\(item.id)")
-                                        Button("Delete Permanently", role: .destructive) {
-                                            pendingPermanentDeletion = item
+                                        Button { model.restoreItem(id: item.id) } label: {
+                                            Text("Restore").frame(minHeight: 44)
                                         }
                                         .buttonStyle(.borderless)
-                                        .accessibilityLabel("Delete \(item.title) Permanently")
-                                        .accessibilityIdentifier("recentlyDeleted.delete.\(item.id)")
+                                        .accessibilityLabel("Restore \(item.title)")
+                                        .accessibilityIdentifier("recentlyDeleted.restore.\(item.id)")
+                                        Spacer()
+                                        // Permanent delete sits behind a menu, not beside Restore, so a slip of the
+                                        // thumb restores instead of deleting (#3206). The confirmation stays.
+                                        Menu {
+                                            Button("Delete Permanently", role: .destructive) {
+                                                pendingPermanentDeletion = item
+                                            }
+                                            .accessibilityIdentifier("recentlyDeleted.delete.\(item.id)")
+                                        } label: {
+                                            Image(systemName: "ellipsis.circle")
+                                                .frame(minWidth: 44, minHeight: 44)
+                                        }
+                                        .buttonStyle(.borderless)
+                                        .accessibilityLabel("More options for \(item.title)")
+                                        .accessibilityIdentifier("recentlyDeleted.more.\(item.id)")
                                     }
                                 }
+                            }
+                            if list.showsToggle {
+                                Button(list.toggleTitle) {
+                                    withAnimation { showsAllRecentlyDeleted.toggle() }
+                                }
+                                .frame(minHeight: 44)
+                                .accessibilityHint(list.toggleHint)
+                                .accessibilityIdentifier("recentlyDeleted.toggle.button")
                             }
                         }
                     }

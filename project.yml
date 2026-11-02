@@ -236,6 +236,7 @@ targets:
         SWIFT_VERSION: "6.0"
         TARGETED_DEVICE_FAMILY: "4"
         SKIP_INSTALL: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     info:
       path: App/SpokenMarginsWatchApp/Info.plist
       properties:
@@ -245,6 +246,9 @@ targets:
         WKApplication: true
         WKCompanionAppBundleIdentifier: com.spokenmargins.native
         NSMicrophoneUsageDescription: Spoken Margins records the Margins you speak on your Watch and sends them to your iPhone.
+        # Tapping any of the phone's Live Activities in the Watch Smart Stack opens this app, instead of a
+        # wrapper that says to open the iPhone. An empty array means every activity type (watchOS 11.1+).
+        WKSupportsLiveActivityLaunchAttributeTypes: []
   SpokenMarginsGate2Widget:
     type: app-extension
     platform: iOS
