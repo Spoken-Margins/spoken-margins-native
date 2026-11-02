@@ -473,8 +473,8 @@
             },
             {
               "do": "tap",
-              "label": "Search podcasts",
-              "marker": "\"sourceLink.searchPodcasts.button",
+              "label": "Find a Podcast",
+              "marker": "\"addSource.route.",
               "file": "ExperienceAddSourceFlow.swift"
             },
             {
