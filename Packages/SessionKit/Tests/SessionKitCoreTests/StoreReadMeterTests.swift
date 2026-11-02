@@ -428,7 +428,8 @@ final class StoreReadMeterTests: XCTestCase {
         "importedCommentaryRecordsMention",   // a miss is the common answer: it scans every record
         "marginNoteChanges", "itemRevision", "isLiveImportedCommentaryLayer", "transcriptTimelineStamp",
         "listDeletedItems",                   // the trash starts empty
-        "latestPendingSummaryTurnId"          // no summary is waiting in a healthy Library; a miss is the common answer
+        "latestPendingSummaryTurnId",         // no summary is waiting in a healthy Library; a miss is the common answer
+        "holdsImportedListeningMap"           // few layers carry a friend's map; a miss is the common answer (it still reads the item's layers inside SQLite)
     ]
 
     /// Answered from memory, not SQLite: nothing for the meter to see.
