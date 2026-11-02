@@ -52,11 +52,12 @@ extension Gate1AppModel {
         while !Task.isCancelled {
             let thermal = preparationSeams.deviceConditions().thermal
             heldByHeat = heldByHeat || PreparationChunkGate.isTooWarm(thermal)
+            let foregroundWorkWaiting = await foregroundPreparationWorkIsWaiting()
             let step = OfflinePreparationRun.pauseWaitStep(
                 thermal: thermal,
                 memoryBackoffActive: preparationSeams.memoryBackoffActive(),
                 waitedSeconds: waited,
-                foregroundWorkWaiting: foregroundPreparationWorkIsWaiting()
+                foregroundWorkWaiting: foregroundWorkWaiting
             )
             let key = heldByHeat ? "preparationHeatWait" : "preparationMemoryWait"
             switch step {
@@ -90,8 +91,9 @@ extension Gate1AppModel {
         diagnostics[key] = "waiting"
     }
 
-    private func foregroundPreparationWorkIsWaiting() -> Bool {
-        guard let store, let jobs = try? store.loadAudioPreparationJobs() else { return false }
+    /// Read off the main actor (#2507): the pause wait asks on every step.
+    private func foregroundPreparationWorkIsWaiting() async -> Bool {
+        guard let store, let jobs = try? await AudioPreparationPassReads.audioJobs(store) else { return false }
         return !LibraryAudioPreparationTurns.eligible(jobs, for: .foreground).isEmpty
     }
 
