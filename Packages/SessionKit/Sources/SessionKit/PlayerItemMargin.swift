@@ -55,27 +55,27 @@ public enum PlayerItemMargin {
             recorder: recorder,
             now: { markedAt }
         )
-        var result: Result<Interjection, Error>
+        let before = Set((try? repository.loadInterjections(sessionId: original.id))?.map(\.id) ?? [])
+        func written() -> Interjection? {
+            (try? repository.loadInterjections(sessionId: original.id))?
+                .first(where: { !before.contains($0.id) && $0.audioPath == audioPath })
+        }
+        var failure: Error?
         do {
             var moved = original
             moved.position.mediaTimeMs = time
             try repository.saveSession(moved)
             try engine.inspectSession(sessionId: original.id)
-            let before = Set(try repository.loadInterjections(sessionId: original.id).map(\.id))
             _ = try engine.beginInterjection()
             _ = try engine.finishInterjection(audioRef: audioPath, resumesSource: false)
-            guard let saved = try repository.loadInterjections(sessionId: original.id)
-                .first(where: { !before.contains($0.id) && $0.audioPath == audioPath }) else { throw Failure.notWritten }
-            result = .success(saved)
         } catch {
-            result = .failure(error)
+            failure = error
         }
         // Put the session back whatever happened: the resume point, the percent, the phase and `updatedAt`.
-        do {
-            try repository.saveSession(original)
-        } catch {
-            if case .success = result { result = .failure(error) }
-        }
-        return try result.get()
+        try? repository.saveSession(original)
+        // The engine stores the Margin before its last steps, so a throw after that still left it written. Report what
+        // is in the store, so the caller never files a second copy of a Margin that is already on the item.
+        if let saved = written() { return saved }
+        throw failure ?? Failure.notWritten
     }
 }
