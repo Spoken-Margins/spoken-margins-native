@@ -382,7 +382,7 @@ final class SpokenMarginsPackageImportCoordinator {
             case .existing(let matchingId):
                 itemId = matchingId
             case .embeddedText:
-                itemId = try installEmbeddedItem(from: review.contents, store: store)
+                itemId = try await installEmbeddedItem(from: review.contents, store: store)
             case .acquirePodcast:
                 itemId = try await environment.acquirePodcast(review.contents.manifest.item)
             case .acquireArticle:
@@ -493,8 +493,11 @@ final class SpokenMarginsPackageImportCoordinator {
             for scene in proposal.scenes where scene.summaryAssetId != nil {
                 try await adoptSuppliedSummary(scene: scene, proposalId: proposal.id, itemId: item.id, contents: contents, store: store)
             }
-            try store.savePortableListeningMapProposal(proposal, itemId: item.id)
-            try store.saveResolvedListeningMapProjection(projection)
+            // Both rows go in one background step, in this order (#2509).
+            try await StoreReader(store).read {
+                try $0.savePortableListeningMapProposal(proposal, itemId: item.id)
+                try $0.saveResolvedListeningMapProjection(projection)
+            }
         }
         if environment.selectedItemID() == item.id { environment.refreshSelectedItem() }
         environment.prepareLocalAudioBridges(item.id)
@@ -539,7 +542,7 @@ final class SpokenMarginsPackageImportCoordinator {
     private func installEmbeddedItem(
         from contents: VerifiedSpokenMarginsPackage,
         store: SQLiteSessionStore
-    ) throws -> String {
+    ) async throws -> String {
         guard contents.manifest.itemTransport.kind == .embeddedText,
               let artifactID = contents.manifest.itemTransport.embeddedArtifactId,
               let embedded = contents.embeddedTextItems.first(where: { $0.id == artifactID }),
@@ -556,7 +559,7 @@ final class SpokenMarginsPackageImportCoordinator {
             status: "ready",
             externalReferenceType: "spoken_margins_package"
         )
-        try store.seed(item: item)
+        try await StoreReader(store).read { try $0.seed(item: item) } // off the main actor (#2509)
         return itemID
     }
 
@@ -676,11 +679,24 @@ final class SpokenMarginsPackageImportCoordinator {
         let plan = try await Task.detached(priority: .userInitiated) {
             try SharedTextListeningMapImporter.plan(contents, for: item, repository: store)
         }.value
-        var attach: ((ListeningMap) throws -> Void)?
-        if let hook = environment.attachListeningMap { attach = { map in try hook(map) } }
-        let outcome = try SharedTextListeningMapImporter.commit(
-            plan, to: item, senderLabel: manifest.senderDisplayLabel, repository: store, attach: attach
-        )
+        // The map goes to a running session on the main actor, which may refuse it (a map can't change under
+        // playback) before anything is saved. The proposal rows are written on a background thread (#2509); with no
+        // session to tell, the map and the proposal go in one background step, in the order `commit` writes them.
+        let senderLabel = manifest.senderDisplayLabel
+        let outcome: SharedTextListeningMapImporter.Outcome
+        if let map = SharedTextListeningMapImporter.mapToAttach(plan, to: item, senderLabel: senderLabel) {
+            if let hook = environment.attachListeningMap {
+                try hook(map)
+                outcome = try await StoreReader(store).read { try SharedTextListeningMapImporter.saveProposal(plan, to: item, repository: $0) }
+            } else {
+                outcome = try await StoreReader(store).read {
+                    try $0.saveListeningMap(map)
+                    return try SharedTextListeningMapImporter.saveProposal(plan, to: item, repository: $0)
+                }
+            }
+        } else {
+            outcome = SharedTextListeningMapImporter.outcome(of: plan) // already added: nothing to write
+        }
         switch outcome {
         case .alreadyAdded(let count):
             environment.recordDiagnostic("lastSpokenMarginsPackageImport", "duplicate_map:\(itemId):\(count)")

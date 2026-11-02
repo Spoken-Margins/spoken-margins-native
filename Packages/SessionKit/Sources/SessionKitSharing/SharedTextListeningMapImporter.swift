@@ -102,13 +102,36 @@ public enum SharedTextListeningMapImporter {
         repository: SessionRepository,
         attach: ((ListeningMap) throws -> Void)? = nil
     ) throws -> Outcome {
-        if case .sameMap(let count) = plan.existing { return .alreadyAdded(chapterCount: count) }
-        let overview = senderLabel.map { "Chapters shared by \($0)." } ?? "Chapters shared with you."
-        let map = ListeningMap(id: "shared-map-" + item.id, itemId: item.id, overview: overview, chapters: plan.placement.chapters)
+        guard let map = mapToAttach(plan, to: item, senderLabel: senderLabel) else {
+            return outcome(of: plan)
+        }
         if let attach { try attach(map) } else { try repository.saveListeningMap(map) }
-        // A map that replaces another leaves only itself, so the item never reads the old one.
+        return try saveProposal(plan, to: item, repository: repository)
+    }
+
+    // The two halves of `commit`, for a caller that must attach the map where a running session lives (the main
+    // actor) but can save the proposal rows anywhere (#2509): `mapToAttach` is pure, the app attaches it, then
+    // `saveProposal` runs off the main actor. Run in that order, they do what `commit` does.
+
+    /// The Listening Map to attach, or nil when this exact map is already on the item (nothing to save).
+    public static func mapToAttach(_ plan: Plan, to item: Item, senderLabel: String? = nil) -> ListeningMap? {
+        if case .sameMap = plan.existing { return nil }
+        let overview = senderLabel.map { "Chapters shared by \($0)." } ?? "Chapters shared with you."
+        return ListeningMap(id: "shared-map-" + item.id, itemId: item.id, overview: overview, chapters: plan.placement.chapters)
+    }
+
+    /// Saves the shared proposal beside an attached map and returns the outcome. A map that replaces another leaves
+    /// only itself, so the item never reads the old one. The two writes are one ordered step on one thread.
+    public static func saveProposal(_ plan: Plan, to item: Item, repository: SessionRepository) throws -> Outcome {
+        if case .sameMap = plan.existing { return outcome(of: plan) }
         try repository.removePortableListeningMapProposals(itemId: item.id)
         try repository.savePortableListeningMapProposal(localProposal(from: plan.proposal, placement: plan.placement), itemId: item.id)
+        return outcome(of: plan)
+    }
+
+    /// What committing `plan` reports; for a plan that is already there, it is known without touching the store.
+    public static func outcome(of plan: Plan) -> Outcome {
+        if case .sameMap(let count) = plan.existing { return .alreadyAdded(chapterCount: count) }
         return .added(placed: plan.placement.scenes.count, total: plan.placement.totalSceneCount, replacedAnotherMap: plan.existing == .differentMap)
     }
 
