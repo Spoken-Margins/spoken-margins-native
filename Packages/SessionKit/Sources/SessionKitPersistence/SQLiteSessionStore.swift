@@ -39,6 +39,10 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
     /// answering from it never waits behind a write holding `connectionLock`.
     private let transcriptSummaryLock = NSLock()
     private var transcriptSummaryByItem: [String: (stamp: String, summary: TranscriptTimelineSummary)] = [:]
+    /// The Margins this connection has saved as `pending` (a transcription of this run is, or was, working on them), by
+    /// session and id, for `settleOrphanedTranscriptions(skippingMarginsSavedThisRun:)`. Its own lock.
+    private let pendingSavedLock = NSLock()
+    private var pendingSavedThisRun: Set<String> = []
     private let anchorContextLock = NSLock()
     private var anchorContextByItem: [String: (stamp: String, contexts: [Int: SourceAnchorContext?])] = [:]
     private var anchorTimelineDecodeCount = 0
@@ -390,6 +394,9 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
     }
 
     public func saveInterjection(_ interjection: Interjection) throws {
+        if interjection.transcriptionStatus == "pending" {
+            pendingSavedLock.withLock { _ = pendingSavedThisRun.insert(Self.pendingKey(sessionId: interjection.sessionId, id: interjection.id)) }
+        }
         try save(kind: "interjection", id: interjection.id, sessionId: interjection.sessionId, itemId: interjection.itemId, value: interjection)
     }
 
@@ -496,19 +503,39 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
     }
 
     /// Settles the voice Margins left "pending" by an earlier run of the app as "failed", so they offer Retry
-    /// instead of promising work no one will do (#942). Call it once at launch, before any transcription of
-    /// this run can start. Returns how many Margins it changed. Only the status of those Margins is written.
+    /// instead of promising work no one will do (#942). Call it once at launch. Returns how many Margins it changed.
+    /// Only the status of those Margins is written.
+    ///
+    /// The app runs it off the main thread after launch has started (#2509), so a transcription of this run may
+    /// already be pending: a recording just made, or a Margin imported from the Watch (which keeps the time the Watch
+    /// recorded it, so its `createdAt` says nothing about this run). With `skippingMarginsSavedThisRun`, a Margin this connection saved as pending is left
+    /// alone. Each other Margin is read again in the transaction that settles it, so one whose transcription
+    /// finished since the first read keeps its words and its status.
     @discardableResult
-    public func settleOrphanedTranscriptions() throws -> Int {
+    public func settleOrphanedTranscriptions(skippingMarginsSavedThisRun: Bool = false) throws -> Int {
         // "pending" is also an AI-job and turn status, so a text match only narrows the rows to decode.
         let candidates: [Interjection] = try query(
             "SELECT kind, id, payload FROM records WHERE kind = ? AND payload LIKE '%\"pending\"%';",
             ["interjection"]
         )
-        let settled = candidates.compactMap(OrphanedTranscription.settled)
-        for margin in settled { try saveInterjection(margin) }
-        return settled.count
+        var settled = 0
+        for candidate in candidates where OrphanedTranscription.settled(candidate) != nil {
+            settled += try withSessionTransaction {
+                // Checked inside the transaction: a save that lands before it has already recorded its key.
+                if skippingMarginsSavedThisRun,
+                   pendingSavedLock.withLock({ pendingSavedThisRun.contains(Self.pendingKey(sessionId: candidate.sessionId, id: candidate.id)) }) {
+                    return 0
+                }
+                guard let fresh = try loadInterjection(id: candidate.id, sessionId: candidate.sessionId),
+                      let orphan = OrphanedTranscription.settled(fresh) else { return 0 }
+                try saveInterjection(orphan)
+                return 1
+            }
+        }
+        return settled
     }
+
+    private static func pendingKey(sessionId: String, id: String) -> String { "\(sessionId)\u{1F}\(id)" }
 
     /// Every audio path any stored Margin names, read from the stored JSON itself: live rows, rows that no
     /// longer decode as a Margin, and rows already moved to quarantine. It is the check that no Margin
