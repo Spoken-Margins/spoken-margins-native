@@ -120,7 +120,9 @@ enum SourceElementCapture {
         let candidate = lines[next].trimmingCharacters(in: .whitespacesAndNewlines)
         let plain = cleanedLabel(candidate)
         guard !plain.isEmpty, plain.count <= maximumCaptionLength,
-              candidate.range(of: #"^(?:#{1,6}\s|[-*+]\s|>|!\[|\||\d+[.)]\s|```)"#, options: .regularExpression) == nil
+              candidate.range(of: #"^(?:#{1,6}\s|[-*+]\s|>|!\[|\[!\[|\||\d+[.)]\s|```)"#, options: .regularExpression) == nil,
+              // A line that is only a link ("Read more") is a button or a pointer, not a caption.
+              candidate.range(of: #"^\[[^\]]*\]\([^)]*\)$"#, options: .regularExpression) == nil
         else { return nil }
         return plain
     }
@@ -169,9 +171,11 @@ enum SourceElementCapture {
     /// when the words are found there, else at their first occurrence at or after `searchFrom`, else nil.
     static func offset(of link: Link, words: String, in line: String, searchFrom: String.Index) -> (offset: Int, end: String.Index)? {
         guard !words.isEmpty else { return nil }
-        let before = cleanedLabel(link.precedingRaw)
+        // The line's own marker (heading, list, quote) is gone from the cleaned line.
+        let raw = link.precedingRaw.replacingOccurrences(of: #"^\s*(?:#{1,6}\s+|[-*+]\s+|>\s?)"#, with: "", options: .regularExpression)
+        let before = cleanedLabel(raw)
         var expected = before.count
-        if let last = link.precedingRaw.last, last.isWhitespace, !before.isEmpty { expected += 1 }
+        if let last = raw.last, last.isWhitespace, !before.isEmpty { expected += 1 }
         if expected <= line.count {
             let from = line.index(line.startIndex, offsetBy: expected)
             if from >= searchFrom, line[from...].hasPrefix(words) {

@@ -286,4 +286,32 @@ final class SubstackSourceElementsTests: XCTestCase {
         XCTAssertEqual(withSource.elements, [])
         XCTAssertEqual(withSource.text, without.text)
     }
+
+    func testALinkOnlyOrLinkedPictureLineAfterAPictureIsNotItsCaption() throws {
+        func label(_ next: String) throws -> String? {
+            try parse("# Post\n\n\(prose("Lead"))\n\n![](https://substackcdn.com/c.jpg)\n\n\(next)\n\n\(prose("Tail"))").elements.first?.label
+        }
+        XCTAssertEqual(try label("[Read more](https://example.com/more)"), "Picture")
+        XCTAssertEqual(try label("[![A](https://substackcdn.com/d.jpg)](https://example.com/v)"), "Picture")
+    }
+
+    func testALinkInAListOrHeadingAnchorsOnItsOwnWords() throws {
+        let parsed = try parse("# Post\n\n\(prose("Lead"))\n\n- the post about this post [post](https://example.com/p)\n\n\(prose("Tail"))")
+        let link = try XCTUnwrap(parsed.elements.first)
+        XCTAssertEqual(link.start, try start(of: "this post post", in: parsed.text) + "this post ".count)
+    }
+
+    func testReimportWithNoElementsReplacesTheOldRecord() throws {
+        let repository = InMemorySessionRepository()
+        let importer = BrowserTextImporter(repository: repository, openItemIds: [], isPlaybackActive: false, publisherPlayback: [:])
+        func handoff(_ body: String) -> BrowserTextHandoff {
+            BrowserTextHandoff(captureMode: .readablePage, source: BrowserTextSource(url: sourceURL, title: "Rates"),
+                               text: "# Rates\n\n\(prose("Lead"))\n\n\(body)\n\n\(prose("Tail"))", contentFormat: .markdown)
+        }
+        // A picture line never reaches the text, so removing it leaves the text as it was.
+        _ = try importer.outcomeAndPersist(handoff("![](https://substackcdn.com/x.jpg)"), structuredDocument: nil, upgrade: .skip)
+        XCTAssertEqual(repository.sourceElements.values.first?.elements.count, 1)
+        _ = try importer.outcomeAndPersist(handoff(""), structuredDocument: nil, upgrade: .skip)
+        XCTAssertEqual(repository.sourceElements.values.first?.elements, [], "the removed picture's row is gone")
+    }
 }

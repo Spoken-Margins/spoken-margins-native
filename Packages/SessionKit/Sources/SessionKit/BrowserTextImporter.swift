@@ -236,7 +236,7 @@ struct BrowserTextImporter: Sendable {
     }
 
     /// The pictures, embeds and links of a Substack page, kept beside the item for Timeline (#2032). Best effort: an
-    /// import never fails because of them, and a page with none writes nothing. They are read from the same Markdown
+    /// import never fails because of them, and a page that now has none replaces the record from an earlier import with an empty one, so a removed picture's row goes. They are read from the same Markdown
     /// as the text, and kept only when that gives exactly the item's text, so every offset indexes it.
     func saveSourceElements(for handoff: BrowserTextHandoff, item: Item) {
         guard let record = Self.sourceElements(for: handoff, item: item),
@@ -250,7 +250,7 @@ struct BrowserTextImporter: Sendable {
               SourceElementCapture.isSubstackPage(sourceURL: handoff.source.url, markdown: handoff.text),
               let parsed = try? ObsidianMarkdownParser.parse(
                 fileName: item.title, contents: handoff.text, fallbackTitle: item.title, sourceURL: handoff.source.url),
-              !parsed.elements.isEmpty, parsed.text == text.trimmingCharacters(in: .whitespacesAndNewlines)
+              parsed.text == text.trimmingCharacters(in: .whitespacesAndNewlines)
         else { return nil }
         return SourceElementsRecord(text: text, elements: parsed.elements)
     }

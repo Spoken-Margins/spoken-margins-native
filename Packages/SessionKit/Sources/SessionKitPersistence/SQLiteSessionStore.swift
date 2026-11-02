@@ -1578,6 +1578,7 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         OR (kind = 'publisher_audio' AND id = ?1)
         OR (kind IN (\(itemScopedQuarantineKinds)) AND \(quarantinedJSON("$.itemId")) = ?1)
         OR (kind = 'structured_document' AND substr(id, 1, length(?1) + 2) = ?1 || '#v')
+        OR (kind = 'source_elements' AND id = ?1 || '#elements')
         OR (kind = 'turn' AND \(quarantinedJSON("$.sessionId")) IN (\(quarantinedSessionIdsOfItem)))
         OR (kind = 'imported_commentary_interjection' AND \(quarantinedJSON("$.layerId")) IN (\(quarantinedLayerIdsOfItem)))
         """
@@ -1604,7 +1605,7 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
             "DELETE FROM quarantined_records WHERE kind = 'imported_commentary_interjection' AND \(Self.quarantinedJSON("$.layerId")) IN (\(Self.quarantinedLayerIdsOfItem));",
             prepareError: "prepare_delete_item_quarantined_imports", stepError: "step_delete_item_quarantined_imports", ids: [id])
         try runDelete(
-            "DELETE FROM quarantined_records WHERE (kind = 'item' AND id = ?1) OR (kind = 'publisher_audio' AND id = ?1) OR (kind IN (\(Self.itemScopedQuarantineKinds)) AND \(Self.quarantinedJSON("$.itemId")) = ?1) OR (kind = 'structured_document' AND substr(id, 1, length(?1) + 2) = ?1 || '#v');",
+            "DELETE FROM quarantined_records WHERE (kind = 'item' AND id = ?1) OR (kind = 'publisher_audio' AND id = ?1) OR (kind IN (\(Self.itemScopedQuarantineKinds)) AND \(Self.quarantinedJSON("$.itemId")) = ?1) OR (kind = 'structured_document' AND substr(id, 1, length(?1) + 2) = ?1 || '#v') OR (kind = 'source_elements' AND id = ?1 || '#elements');",
             prepareError: "prepare_delete_item_quarantined", stepError: "step_delete_item_quarantined", ids: [id])
     }
 
