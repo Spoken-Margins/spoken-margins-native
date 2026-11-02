@@ -25,14 +25,23 @@ extension Gate1AppModel {
         let entries: [SharedMarginReview.Entry]
         if selectedItem.id == itemId {
             entries = SharedMarginReview.entries(
-                layers: selectedItem.importedCommentaryLayers, records: selectedItem.importedCommentaryInterjections
+                layers: selectedItem.importedCommentaryLayers, records: selectedItem.importedCommentaryInterjections,
+                ownMargins: selectedItem.interjections
             )
         } else if let store {
-            entries = (try? SharedMarginReview.entries(itemId: itemId, in: store)) ?? []
+            // The listener's own Margins let a friend's reply say which of them it answers (#3221). They come from the
+            // Margins screen's published rows, so this adds no store read to the main thread.
+            entries = (try? SharedMarginReview.entries(itemId: itemId, in: store, ownMargins: ownMargins(itemId: itemId))) ?? []
         } else {
             entries = []
         }
         return entries.filter { $0.interjection.audioPath.flatMap(resolvedApplicationSupportAssetURL(for:)) != nil }
+    }
+
+    /// The listener's own Margins on `itemId`, read from what the app already holds: the open item's, else the rows
+    /// the Margins screen published.
+    private func ownMargins(itemId: String) -> [Interjection] {
+        selectedItem.id == itemId ? selectedItem.interjections : marginRows.map(\.interjection).filter { $0.itemId == itemId }
     }
 
     /// Continue for an item. Starts it, or hands `offer` the item when it has new shared Margins that the listener
@@ -73,16 +82,24 @@ extension Gate1AppModel {
         _ = sharedMarginReturn.promptDismissed()
         stopImportedCommentaryPlayback(resumeSource: false)
         if snapshot.itemId != itemId || !hasActiveSession { startItem(id: itemId) }
+        // A friend's reply to one of the listener's own spoken Margins plays after that Margin (#3221): the lead-in,
+        // the Margin, then the reply. Skip on the card goes past the Margin to the reply.
+        var voiceURLs: [String: URL] = [:]
+        let steps = SharedMarginReview.playlist(for: entries, ownMargins: ownMargins(itemId: itemId)).filter { step in
+            guard let parent = step.ownParent else { return true }
+            guard let url = parent.audioPath.flatMap(resolvedInterjectionAudioURL(for:)) else { return false }
+            voiceURLs[step.anchor.marginId] = url
+            return true
+        }
         guard snapshot.itemId == itemId,
               let sequence = MarginMomentSequence(
-                  itemId: itemId, reviewing: entries.map(\.anchor),
+                  itemId: itemId, reviewing: steps.map(\.anchor),
                   returnToMediaTimeMs: snapshot.currentMediaTimeMs, resumesAtEnd: thenContinue
               ) else { return }
         // The review plays these voices; the automatic shared-Margin prompts mustn't play them again.
         entries.forEach { sharedMarginOffers.markAnnounced($0.interjection.id) }
         // Written down before the review first moves the source, for the endings it can't give the place back at.
         if let place = ReviewReturnPlace(sequence: sequence) { reviewPlaces.owe(place) }
-        var voiceURLs: [String: URL] = [:]
         var heard: [String: ImportedCommentaryInterjection] = [:]
         for entry in entries {
             heard[entry.marginId] = entry.interjection
@@ -93,7 +110,7 @@ extension Gate1AppModel {
             if let margin = heard[$0] { self?.markSharedMarginHeard(margin) }
         }
         // Their voices get the same chime as the automatic prompt, except for a muted layer's (#932).
-        marginMomentConductor?.chimedMarginIds = Set(entries.filter { !$0.layer.isMuted }.map(\.marginId))
+        marginMomentConductor?.chimedMarginIds = SharedMarginReview.chimedMarginIds(steps)
         marginMomentConductor?.onChimeStarted = { [weak self] in self?.diagnostics["marginMoment.chime"] = "played:\($0)" }
         if !snapshot.status.isPlaybackActive { resumePlayback() }
         screen = .playback

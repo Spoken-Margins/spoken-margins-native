@@ -264,6 +264,8 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
     @Published private(set) var pendingRecipientSourceRequest: Build23RecipientSourceRequest?
 
     private let model: Gate1AppModel
+    /// The sheet's heading: "Send replies to Ana" when it was opened to send replies back (#3221).
+    var senderHeading: String { model.sharingState.replyBackTitle ?? "Share Margins" }
     /// Recovers a private-feed packet's episode from the recipient's own feed (#454).
     let episodeRecovery: SharedEpisodeRecovery
     private var previewFingerprint: String?
