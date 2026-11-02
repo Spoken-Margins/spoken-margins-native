@@ -211,7 +211,7 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
                try liveRecordExists(sql: "SELECT 1 FROM records WHERE kind = ? AND item_id = ? LIMIT 1;", values: [row.kind, itemId]) { return false }
         case "imported_commentary_layer":
             // The same packet imported again while this layer was set aside is already in the Library.
-            if try liveRecordExists(sql: "SELECT 1 FROM records WHERE kind = 'imported_commentary_layer' AND json_extract(payload, '$.packageDigest') = (SELECT json_extract(?, '$.packageDigest')) LIMIT 1;", values: [row.payload]) { return false }
+            if try liveRecordExists(sql: "SELECT 1 FROM records WHERE kind = 'imported_commentary_layer' AND CASE WHEN json_valid(payload) THEN json_extract(payload, '$.packageDigest') = (SELECT json_extract(?, '$.packageDigest')) ELSE 0 END LIMIT 1;", values: [row.payload]) { return false }
         case "imported_commentary_interjection":
             // Its layer is restored first. One that isn't in the Library leaves the Margin set aside.
             if try !liveRecordExists(sql: "SELECT 1 FROM records WHERE kind = 'imported_commentary_layer' AND id = json_extract(?, '$.layerId') LIMIT 1;", values: [row.payload]) { return false }
@@ -765,9 +765,11 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
     public func holdsImportedListeningMap(itemId: String) throws -> Bool {
         var found = false
         try readTexts("""
-            SELECT id FROM records WHERE kind = 'imported_commentary_layer' AND item_id = ? AND json_valid(payload)
-            AND json_extract(payload, '$.deletedAt') IS NULL
-            AND COALESCE(json_array_length(payload, '$.listeningMapProposals'), 0) > 0 LIMIT 1;
+            SELECT id FROM records WHERE kind = 'imported_commentary_layer' AND item_id = ?
+            AND CASE WHEN json_valid(payload)
+                     THEN json_extract(payload, '$.deletedAt') IS NULL
+                          AND COALESCE(json_array_length(payload, '$.listeningMapProposals'), 0) > 0
+                     ELSE 0 END LIMIT 1;
             """, [itemId], name: #function) { _ in found = true }
         return found
     }
@@ -873,9 +875,11 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         var found: String?
         try readTexts(
             """
-            SELECT json_extract(payload, '$.id') FROM records WHERE kind = 'turn' AND session_id = ? AND json_valid(payload)
-              AND json_extract(payload, '$.turnType') = 'interjection_summary'
-              AND json_extract(payload, '$.status') IS NOT 'complete'
+            SELECT json_extract(payload, '$.id') FROM records WHERE kind = 'turn' AND session_id = ?
+              AND CASE WHEN json_valid(payload)
+                       THEN json_extract(payload, '$.turnType') = 'interjection_summary'
+                            AND json_extract(payload, '$.status') IS NOT 'complete'
+                       ELSE 0 END
             ORDER BY updated_at DESC, id DESC LIMIT 1;
             """, [sessionId], name: "latest_pending_summary_turn_id"
         ) { found = $0 }
@@ -1131,8 +1135,10 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
             var statement: OpaquePointer?
             let sql = """
                 SELECT CASE WHEN json_valid(payload) THEN json_remove(payload, '$.chunks') END,
-                       CASE WHEN json_valid(payload) AND json_type(payload, '$.chunks') = 'array'
-                            THEN (SELECT json_group_array(json_extract(chunk.value, '$.index')) FROM json_each(payload, '$.chunks') AS chunk) END
+                       CASE WHEN json_valid(payload)
+                            THEN CASE WHEN json_type(payload, '$.chunks') = 'array'
+                                      THEN (SELECT json_group_array(json_extract(chunk.value, '$.index')) FROM json_each(payload, '$.chunks') AS chunk) END
+                            END
                 FROM records WHERE kind = 'prepared_audio_manifest' ORDER BY updated_at, id;
                 """
             guard sqlite3_prepare_v2(connection, sql, -1, &statement, nil) == SQLITE_OK else {
@@ -2202,22 +2208,25 @@ private struct ImportedWatchSyncEvent: Codable {
 extension SQLiteSessionStore: SessionRecordCounting {
     public func activeInterjectionCount(sessionId: String) throws -> Int {
         try sessionRecordCount(
-            "kind = 'interjection' AND json_extract(payload, '$.status') = 'active'", sessionId: sessionId,
+            kind: "interjection", "json_extract(payload, '$.status') = 'active'", sessionId: sessionId,
             name: "activeInterjectionCount")
     }
 
     public func unfinishedAIJobCount(sessionId: String) throws -> Int {
         try sessionRecordCount(
-            "kind = 'ai_job' AND IFNULL(json_extract(payload, '$.status'), '') != 'complete'", sessionId: sessionId,
+            kind: "ai_job", "IFNULL(json_extract(payload, '$.status'), '') != 'complete'", sessionId: sessionId,
             name: "unfinishedAIJobCount")
     }
 
-    private func sessionRecordCount(_ condition: String, sessionId: String, name: String) throws -> Int {
+    /// The `kind` and `session_id` tests stay outside the `CASE` so `records_session_idx (kind, session_id)` answers
+    /// them; only the JSON test, which needs the payload, sits inside it. These run on every playback tick.
+    static func sessionRecordCountSQL(_ condition: String) -> String {
+        "SELECT count(*) FROM records WHERE kind = ? AND session_id = ? AND CASE WHEN json_valid(payload) THEN \(condition) ELSE 0 END;"
+    }
+
+    private func sessionRecordCount(kind: String, _ condition: String, sessionId: String, name: String) throws -> Int {
         var count = 0
-        try readTexts(
-            "SELECT count(*) FROM records WHERE session_id = ? AND json_valid(payload) AND \(condition);",
-            [sessionId], name: name
-        ) { count = Int($0) ?? 0 }
+        try readTexts(Self.sessionRecordCountSQL(condition), [kind, sessionId], name: name) { count = Int($0) ?? 0 }
         return count
     }
 }
