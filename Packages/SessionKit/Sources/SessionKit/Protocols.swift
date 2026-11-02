@@ -77,6 +77,9 @@ public protocol ListeningSessionRepository {
     func loadImportedCommentaryLayer(id: String) throws -> ImportedCommentaryLayer?
     func loadImportedCommentaryLayer(packageDigest: String) throws -> ImportedCommentaryLayer?
     func loadImportedCommentaryLayers(itemId: String) throws -> [ImportedCommentaryLayer]
+    /// Whether a friend's shared Listening Map that hasn't been deleted is held for the item (an imported layer with
+    /// `holdsListeningMap`), without reading the layer or its proposals (#2506).
+    func holdsImportedListeningMap(itemId: String) throws -> Bool
     func loadImportedCommentaryInterjections(layerId: String) throws -> [ImportedCommentaryInterjection]
     func saveImportedCommentaryLayer(_ layer: ImportedCommentaryLayer) throws
     /// Keeps a stored `firstHeardAt` when `interjection` has none, so a copy loaded before
@@ -90,6 +93,12 @@ public protocol ListeningSessionRepository {
     func saveAIJob(_ job: AIJob) throws
     func loadAIJobs(sessionId: String) throws -> [AIJob]
     func updateAIJob(_ job: AIJob) throws
+}
+
+extension ListeningSessionRepository {
+    public func holdsImportedListeningMap(itemId: String) throws -> Bool {
+        try loadImportedCommentaryLayers(itemId: itemId).contains(where: \.holdsListeningMap)
+    }
 }
 
 public protocol WatchRepository {
@@ -165,6 +174,9 @@ public protocol EpisodeMapRepository {
     func removePortableListeningMapProposals(itemId: String) throws
     func saveResolvedListeningMapProjection(_ projection: ResolvedListeningMapProjection) throws
     func loadResolvedListeningMapProjection(itemId: String) throws -> ResolvedListeningMapProjection?
+    /// Whether the item has a resolved projection, without reading its points (#2506). For a caller that asks only
+    /// whether the item has a map.
+    func hasResolvedListeningMapProjection(itemId: String) throws -> Bool
     /// Removes a community map's proposal and projection (#553), found by their ids; nothing else.
     /// Called when the publisher's own chapters arrive, which a community map never outlives.
     func removeCommunityMap(itemId: String) throws
@@ -521,6 +533,10 @@ public extension AIProviderClient {
 }
 
 extension EpisodeMapRepository {
+    public func hasResolvedListeningMapProjection(itemId: String) throws -> Bool {
+        try loadResolvedListeningMapProjection(itemId: itemId) != nil
+    }
+
     public func portableListeningMapProposalIds(itemId: String) throws -> [String] {
         try loadPortableListeningMapProposals(itemId: itemId).map(\.id)
     }

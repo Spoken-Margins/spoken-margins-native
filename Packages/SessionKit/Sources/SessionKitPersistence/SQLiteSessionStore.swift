@@ -759,6 +759,19 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         try loadByItem(kind: "imported_commentary_layer", itemId: itemId)
     }
 
+    /// Whether the item has an imported layer that holds a friend's Listening Map and isn't deleted
+    /// (`ImportedCommentaryLayer.holdsListeningMap`), answered by SQLite so no layer is copied out or decoded (#2506).
+    /// A layer carries its whole shared map, so asking this of every opened episode must not read them.
+    public func holdsImportedListeningMap(itemId: String) throws -> Bool {
+        var found = false
+        try readTexts("""
+            SELECT id FROM records WHERE kind = 'imported_commentary_layer' AND item_id = ? AND json_valid(payload)
+            AND json_extract(payload, '$.deletedAt') IS NULL
+            AND COALESCE(json_array_length(payload, '$.listeningMapProposals'), 0) > 0 LIMIT 1;
+            """, [itemId], name: #function) { _ in found = true }
+        return found
+    }
+
     public func loadImportedCommentaryInterjections(layerId: String) throws -> [ImportedCommentaryInterjection] {
         // Filter before decoding: opening one layer must not materialize every
         // imported recording, transcript and anchor in the Library.
@@ -1303,6 +1316,12 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
                 try deleteRecords(kind: "resolved_listening_map_projection", itemId: itemId)
             }
         }
+    }
+
+    /// Whether the item has a resolved projection, reading only the id column (#2506). A projection carries every
+    /// boundary of the map, and a caller asking whether the item has a map has no use for them.
+    public func hasResolvedListeningMapProjection(itemId: String) throws -> Bool {
+        try !recordIds(kind: "resolved_listening_map_projection", itemId: itemId, name: #function).isEmpty
     }
 
     public func loadResolvedListeningMapProjection(itemId: String) throws -> ResolvedListeningMapProjection? {
