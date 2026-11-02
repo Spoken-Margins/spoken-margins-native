@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Makes a share link from a .spokenmargins file on the Mac and prints it (#3239). Details: Web/src/cli/make-share-link.ts.
+set -euo pipefail
+repo="$(cd "$(dirname "$0")/.." && pwd)"
+exec node "${repo}/Web/src/cli/make-share-link.ts" "$@"
