@@ -249,7 +249,7 @@ struct PlaybackScreen: View {
     private var playbackControls: some View {
         // The scrubber's 44 pt bar reaches into the gaps either side of it (`PlaybackPositionSlider.rowGapOverlap`).
         VStack(spacing: PlaybackPositionSlider.rowGapOverlap) {
-            PlaybackPaneSwitchView(selection: $selectedPane)
+            PlaybackPaneSwitchView(selection: $selectedPane, receivedMarginCount: activeImportedMargins.count)
                 .id("playback.timeline")
             PlaybackChapterRowView(
                 title: model.playbackChapterHeaderTitle,
