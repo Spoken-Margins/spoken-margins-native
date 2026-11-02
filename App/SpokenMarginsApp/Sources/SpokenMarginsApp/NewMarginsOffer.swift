@@ -6,29 +6,31 @@ import SessionKit
 /// the episode and then carry on from there.
 private struct NewMarginsOffer: ViewModifier {
     @EnvironmentObject private var model: Gate1AppModel
-    @Binding var itemId: String?
+    @Binding var offer: NewMarginsOfferRequest?
 
     func body(content: Content) -> some View {
         content.confirmationDialog(
             "New Margins to hear",
-            isPresented: Binding(get: { itemId != nil }, set: { if !$0 { itemId = nil } }),
+            isPresented: Binding(get: { offer != nil }, set: { if !$0 { offer = nil } }),
             titleVisibility: .visible,
-            presenting: itemId
-        ) { id in
-            Button("Hear new Margins first") { model.reviewNewMargins(itemId: id, thenContinue: true) }
+            presenting: offer
+        ) { offer in
+            Button("Hear new Margins first") {
+                model.reviewNewMargins(itemId: offer.itemId, thenContinue: true, entries: offer.entries)
+            }
                 .accessibilityIdentifier("newMarginsOffer.review")
-            Button("Listen without them") { model.continueWithoutNewMargins(itemId: id) }
+            Button("Listen without them") { model.continueWithoutNewMargins(offer) }
                 .accessibilityIdentifier("newMarginsOffer.skip")
             Button("Cancel", role: .cancel) {}
-        } message: { id in
-            Text(SharedMarginReview.offerMessage(for: model.newSharedMargins(itemId: id)))
+        } message: { offer in
+            Text(SharedMarginReview.offerMessage(for: offer.entries))
         }
     }
 }
 
 extension View {
-    /// Shows the offer while `itemId` is set; see `Gate1AppModel.continueListening(itemId:offer:)`.
-    func newMarginsOffer(itemId: Binding<String?>) -> some View {
-        modifier(NewMarginsOffer(itemId: itemId))
+    /// Shows the offer while `offer` is set; see `Gate1AppModel.continueListening(itemId:offer:)`.
+    func newMarginsOffer(_ offer: Binding<NewMarginsOfferRequest?>) -> some View {
+        modifier(NewMarginsOffer(offer: offer))
     }
 }

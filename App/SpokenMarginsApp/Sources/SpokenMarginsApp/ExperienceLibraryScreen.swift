@@ -16,7 +16,7 @@ struct ExperienceLibraryScreen: View {
     @State private var restoredScroll = false
     @State private var isAudioPreparationQueuePresented = false
     /// The item whose Continue is waiting on the "hear new Margins first?" question (#474).
-    @State private var newMarginsOfferItemId: String?
+    @State private var pendingNewMarginsOffer: NewMarginsOfferRequest?
     @State private var collectionItem: LibraryItemRow?
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.isEdgeSwipePreview) private var isEdgeSwipePreview
@@ -90,7 +90,7 @@ struct ExperienceLibraryScreen: View {
             ItemCollectionSheet(item: item)
                 .environmentObject(model)
         }
-        .newMarginsOffer(itemId: $newMarginsOfferItemId)
+        .newMarginsOffer($pendingNewMarginsOffer)
         .task { if !isEdgeSwipePreview { await clipboardLink.refresh() } } // the swipe's preview reads nothing (#106)
         .onCompatibleChange(of: scenePhase) { phase in
             if phase == .active { Task { await clipboardLink.refresh() } }
@@ -449,7 +449,7 @@ struct ExperienceLibraryScreen: View {
                     isCurrentItem: entry.isCurrent,
                     playbackSpeed: model.speechPlaybackRateMultiplier,
                     onOpen: { model.openItem(id: row.id) },
-                    onPlay: { model.continueListening(itemId: row.id) { newMarginsOfferItemId = $0 } },
+                    onPlay: { model.continueListening(itemId: row.id) { pendingNewMarginsOffer = $0 } },
                     onComplete: { model.markItemCompleted(id: row.id) },
                     onMarkUnfinished: { model.markItemUnfinished(id: row.id) },
                     onPrepareOffline: { model.prioritizeOfflinePreparation(id: row.id) },
