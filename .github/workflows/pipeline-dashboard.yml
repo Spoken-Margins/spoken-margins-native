@@ -1,0 +1,91 @@
+# Pipeline dashboard (#2379): once a day, one writer keeps what the pipeline costs and catches where the owner can
+# see it without asking an agent.
+#   1. It checks out the orphan `metrics` data branch (or starts it on the first run). The branch holds only
+#      events-YYYY-MM.jsonl files and a README: no app code, no PR, nothing any other workflow runs on.
+#   2. scripts/pipeline_dashboard.py collects what is new from GitHub (lane reports, Actions runs and jobs, reverts and
+#      regression issues) through scripts/pipeline_events.py, writes the month files, and rewrites the body of ONE
+#      issue, "Pipeline value: ..." (created and pinned on the first run). The body is edited in place, never
+#      commented, so it sends no notification.
+#   3. This workflow commits and pushes the branch.
+# Events hold only ids, enums and numbers; scripts/pipeline_dashboard.py refuses anything else before it is written.
+# The year's files are capped at 20 MB: past that, new events for that year are not written, the issue says so and this run
+# fails (other years are still written, and the push step below still runs, so they reach the branch).
+#
+# GitHub reads `schedule` and `workflow_dispatch` only from the default branch (main). Run it by hand with
+# `gh workflow run pipeline-dashboard.yml`.
+#
+# Single writer: one job, and `concurrency` queues a second run instead of cancelling the first, so two runs can
+# never push the branch at once. A push that still loses a race fails and the next day's run repairs it, because
+# each run recollects the last three days.
+#
+# Cost and catch: about 1 to 3 Actions minutes a day on ubuntu (free for a public repo, mostly the per-day Actions
+# listing), 0 tokens, 0 owner clicks. It catches nothing itself: it lets cuts and batch sizes be decided from counts
+# (#2376). Evidence it is needed: the per-PR app builds ran 140 times in a week and caught nothing before anyone
+# noticed (#1196). Waste signal: no decision cites the issue in 30 days. Then turn the schedule off and keep the
+# collector.
+name: pipeline-dashboard
+
+on:
+  schedule:
+    - cron: '17 8 * * *'  # a jittered minute, not :00
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: write  # the metrics branch only: this workflow pushes nothing else
+  issues: write
+
+concurrency:
+  group: pipeline-dashboard
+  cancel-in-progress: false
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+      SM_STATUS_REPO: ${{ github.repository }}
+      SM_TRUNK: ${{ vars.SM_TRUNK || 'main' }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Check out the metrics branch, or start it
+        id: branch
+        run: |
+          set -euo pipefail
+          url="https://github.com/${GITHUB_REPOSITORY}.git"
+          heads="$(git ls-remote --heads "$url" refs/heads/metrics)"
+          if [ -n "$heads" ]; then
+            git clone --quiet --depth 1 --branch metrics "$url" metrics
+          else
+            git init --quiet -b metrics metrics
+            git -C metrics remote add origin "$url"
+            cat > metrics/README.md <<'EOF'
+          # metrics
+
+          Data branch written once a day by the `pipeline-dashboard` workflow (#2379). It holds `events-YYYY-MM.jsonl`,
+          one JSON event per line: ids, enums and numbers only. It has no app code, and no workflow runs on it.
+          The summary is the pinned "Pipeline value" issue. Read the files with `scripts/pipeline_events.py report --out <folder>`.
+          EOF
+          fi
+      - name: Collect, write the month files and update the issue
+        run: python3 scripts/pipeline_dashboard.py publish --metrics metrics
+      - name: Push the metrics branch
+        # After a failed publish too: it exits 1 for a full year or a failed collect but may have written other years' files.
+        # With nothing written, `git status` is clean and this step does nothing; the job still fails on the publish step.
+        if: ${{ !cancelled() && steps.branch.conclusion == 'success' }}
+        run: |
+          set -euo pipefail
+          cd metrics
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "Nothing new on the metrics branch."
+            exit 0
+          fi
+          auth="$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 -w0)"
+          echo "::add-mask::$auth"
+          git add -A
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit --quiet -m "Pipeline events through $(date -u +%Y-%m-%d)"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${auth}" push --quiet origin HEAD:metrics
