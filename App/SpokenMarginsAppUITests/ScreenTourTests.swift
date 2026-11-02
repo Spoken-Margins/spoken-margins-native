@@ -91,7 +91,8 @@ final class ScreenTourTests: XCTestCase {
         capture("06-following")
 
         // The first-run drawer opens by itself only on an empty Library; Following opens the same drawer.
-        scrollTo("sources.browseCatalog").tap()
+        element("sources.manageFeeds").tap()
+        element("sources.browseCatalog").tap()
         XCTAssertTrue(element("catalog.drawer.done").waitForExistence(timeout: 5), "The first-run drawer did not appear")
         capture("07-first-run-drawer")
         element("catalog.drawer.done").tap()

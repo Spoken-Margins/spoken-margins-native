@@ -38,23 +38,36 @@ extension Gate1AppModel {
         scheduleEmbeddedPublisherChapterImport(itemId: itemId, localURL: url)
         retrySourceWindowContexts(itemId: itemId)
         resolveImportedPodcastCommentary(itemId: itemId, localURL: url)
-        // Placement reads the item off the main thread and decides later (#2507), so the deferral it records is not
-        // there yet. Ask the #914 question here instead: a stream the session keeps gets no transcript of the download.
-        if importedPodcastCommentaryNeedsTranscript(itemId: itemId, store: store),
-           let item = try? store.loadItemSummary(id: itemId), // a summary answers the stream check and the duration; the article text stays on disk (#2506)
-           !deferPlacementWhileSessionKeepsItsEdition(item: item, localURL: url) {
-            diagnostics["sourceTranscriptionAfterDownload:\(itemId)"] = "requested_for_imported_commentary"
-            scheduleTransientRecipientAlignmentTranscript(for: item, localSourceURL: url)
-            return
+        continueAfterPodcastDownload(itemId: itemId, url: url, store: store)
+    }
+
+    /// Placement reads the item off the main thread and decides later (#2507), so the deferral it records is not there
+    /// yet. Ask the #914 question here instead: a stream the session keeps gets no transcript of the download. The
+    /// question reads every imported commentary layer, so it is asked on `StoreReader`, and what follows it waits for
+    /// the answer.
+    private func continueAfterPodcastDownload(itemId: String, url: URL, store: SQLiteSessionStore) {
+        Task { [weak self] in
+            // The imported-commentary question and the item summary (it answers the stream check and the duration; the
+            // article text stays on disk, #2506) are read together, off the main actor.
+            let read = try? await StoreReader(store).read { store -> (needsTranscript: Bool, item: LibraryItemSummary?) in
+                (ImportedPodcastPlacementCoordinator.layersNeedTranscript(itemId: itemId, store: store),
+                 try? store.loadItemSummary(id: itemId))
+            }
+            guard let self, !Task.isCancelled else { return }
+            if let read, read.needsTranscript, let item = read.item,
+               !deferPlacementWhileSessionKeepsItsEdition(item: item, localURL: url) {
+                diagnostics["sourceTranscriptionAfterDownload:\(itemId)"] = "requested_for_imported_commentary"
+                scheduleTransientRecipientAlignmentTranscript(for: item, localSourceURL: url)
+                return
+            }
+            guard pendingMapGenerationItemId == itemId, read?.item != nil else {
+                diagnostics["sourceTranscriptionAfterDownload:\(itemId)"] = "not_requested"
+                return
+            }
+            pendingMapGenerationItemId = nil
+            diagnostics["sourceTranscriptionAfterDownload:\(itemId)"] = "requested_private_episode_map"
+            prepareEpisodeMap(itemId: itemId, policy: .explicit, trigger: .downloadFinished)
         }
-        guard pendingMapGenerationItemId == itemId,
-              (try? store.loadItemSummary(id: itemId)) != nil else {
-            diagnostics["sourceTranscriptionAfterDownload:\(itemId)"] = "not_requested"
-            return
-        }
-        pendingMapGenerationItemId = nil
-        diagnostics["sourceTranscriptionAfterDownload:\(itemId)"] = "requested_private_episode_map"
-        prepareEpisodeMap(itemId: itemId, policy: .explicit, trigger: .downloadFinished)
     }
 
     private func scheduleEmbeddedPublisherChapterImport(itemId: String, localURL: URL) {

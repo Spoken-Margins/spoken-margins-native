@@ -317,6 +317,8 @@ extension SpokenMarginsPackageImportCoordinator.Environment {
                 model.libraryItems = try model.loadLibraryRows(store: store)
                 model.selectedItem = try model.loadItemDetail(id: itemId, store: store)
                 model.updateSkimAvailability() // a map added from a packet reaches Skim even where the chapters read the same (#1471)
+                // The Margins and Now tabs read these rows, not selectedItem; without this they stay empty until relaunch (#3263).
+                model.refreshMarginRowsInBackground(forItem: itemId)
                 model.screen = .item
             },
             recordPacketImport: { [weak model] itemId, packetId, marginCount in
