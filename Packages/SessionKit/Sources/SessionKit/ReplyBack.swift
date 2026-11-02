@@ -36,8 +36,9 @@ public struct ReplyBackOffer: Equatable, Sendable {
         var others: [Interjection] = []
         var answered: [ImportedCommentaryLayer] = []
         for margin in localMargins.sorted(by: madeBefore)
-        // A Margin that already went out in a packet isn't offered again: the button goes away once it is sent.
-        where margin.status == "active" && margin.targetType == .item && (margin.sharedAs ?? []).isEmpty {
+        // `sharedAs` is written when the packet file is built, before anything leaves the phone, so it can't tell a
+        // reply that was sent from one whose Share sheet was cancelled. A reply stays on offer.
+        where margin.status == "active" && margin.targetType == .item {
             if let link = margin.replyTo, let layer = layerByDigest[link.parentPackageDigest] {
                 replies.append(margin)
                 if !answered.contains(where: { $0.id == layer.id }) { answered.append(layer) }

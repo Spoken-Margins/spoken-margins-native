@@ -225,13 +225,16 @@ final class ReplyBackTests: XCTestCase {
         XCTAssertEqual(next.caption, "Reply to your Margin at 12:34")
     }
 
-    func testMarginsAlreadySentAreNotOfferedAgainAndANamelessFriendIsYourFriend() throws {
-        let sent = [MarginPacketIdentity(packageDigest: "digest-out", packageScopedId: "r1")]
-        let margins = [own("r1", madeAt: 200, replyingTo: "ana", sharedAs: sent), own("r2", madeAt: 201, replyingTo: "ana")]
+    func testAReplyWhosePacketWasOnlyBuiltIsStillOfferedAndANamelessFriendIsYourFriend() throws {
+        // `sharedAs` is saved when the packet file is built, before the iOS share sheet opens, so a cancelled share
+        // leaves it set on a reply that never went out. The offer must not lose that reply.
+        let built = [MarginPacketIdentity(packageDigest: "digest-out", packageScopedId: "r1")]
+        let margins = [own("r1", madeAt: 200, replyingTo: "ana", sharedAs: built), own("r2", madeAt: 201, replyingTo: "ana")]
         let offer = try XCTUnwrap(ReplyBackOffer.make(localMargins: margins, layers: [layer("ana", label: "  ")]))
-        XCTAssertEqual(ids(offer.candidates), ["r2"])
+        XCTAssertEqual(ids(offer.candidates), ["r1", "r2"])
+        XCTAssertEqual(offer.candidates.map(offer.isPreselected), [true, true])
         XCTAssertEqual(offer.title, "Send replies to your friend")
-        XCTAssertNil(ReplyBackOffer.make(localMargins: [margins[0]], layers: [layer("ana")]), "once everything is sent the offer goes")
+        XCTAssertNotNil(ReplyBackOffer.make(localMargins: [margins[0]], layers: [layer("ana")]))
     }
 
     func testTheChimeAnnouncesTheFirstMarginOfAStretchAndNeverAMutedFriendsOrASecondOne() {
