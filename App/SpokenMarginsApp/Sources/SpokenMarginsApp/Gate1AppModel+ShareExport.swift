@@ -74,6 +74,7 @@ extension Gate1AppModel {
             let itemTransport = SharedMarginExport.itemTransport(item: item, identity: itemIdentity, isAppAuthored: isAppAuthoredItem, confirmsPrivateRights: confirmsPrivateSharingRights)
             var machineEvidence: [ReviewedMachineEvidenceAsset] = []
             var selections: [ReviewedInterjectionSelection] = []
+            var revisions: [InterjectionShareRevision] = []
 
             for (index, draft) in drafts.enumerated() {
                 let revisionID = "share-revision-\(UUID().uuidString.lowercased())"
@@ -92,7 +93,7 @@ extension Gate1AppModel {
                     anchorAfter: draft.anchorAfter,
                     status: .senderApproved
                 )
-                try store.saveInterjectionShareRevision(revision)
+                revisions.append(revision)
 
                 let evidence = includesAcousticEvidence
                     ? (draft.interjection.podcastAnchorEvidence ?? []).filter { FileManager.default.fileExists(atPath: $0.localPath) }
@@ -136,6 +137,12 @@ extension Gate1AppModel {
                     anchor: anchor,
                     representation: representation, replyTo: draft.interjection.replyTo
                 ))
+            }
+
+            // The revisions are saved in one background step, before the packet is built, as they were one by one (#2509).
+            let revisionsToSave = revisions
+            try await StoreReader(store).read { store in
+                for revision in revisionsToSave { try store.saveInterjectionShareRevision(revision) }
             }
 
             let mapProposals = SharedMarginExport.mapProposals(
@@ -183,7 +190,9 @@ extension Gate1AppModel {
                 try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
                 return try SpokenMarginsPackageArchive.write(package, to: destination)
             }
-            try? SpokenMarginsPackageExportRecord.recordExport(manifest: writtenManifest, selections: selections, repository: store) // replies link back through the recorded identity; the share still succeeds without it (#473)
+            let exportedSelections = selections
+            // The export is recorded in one background transaction (#2509).
+            try? await StoreReader(store).read { try SpokenMarginsPackageExportRecord.recordExport(manifest: writtenManifest, selections: exportedSelections, repository: $0) } // replies link back through the recorded identity; the share still succeeds without it (#473)
             listeningSignals.export(itemId: item.id, packetId: packageID, marginCount: drafts.count, packetURL: destination)
             UserDefaults.standard.set(senderDisplayLabel, forKey: "sharingSenderDisplayLabel")
             sharedSpokenMarginsPackageURL = destination
