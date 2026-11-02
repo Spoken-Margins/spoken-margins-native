@@ -290,6 +290,7 @@ struct Build23RecipientSharingExperience: View {
                 .filledActionButton()
                 .disabled(!enabled)
                 .accessibilityHint(Build23RecipientPresentation.confirmHint(for: snapshot))
+                .accessibilityIdentifier("build23.recipient.import")
             }
 
             Button("Cancel", role: .cancel) {
