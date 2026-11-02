@@ -86,23 +86,23 @@ public enum PlayerItemMargin {
 
     /// The listener deleted the Margin on the Watch after the phone had already put it on an item: marks every Margin
     /// recorded at `audioPath` deleted, the way deleting a Margin in the app does (its status, nothing else), and
-    /// returns the item ids it touched. `sessions` are the sessions to look in. A Margin already deleted is left alone,
-    /// and a retry of `placeSpoken` for the same recording finds the deleted copy and writes no second one.
+    /// returns the item ids it touched. `sessions` are the sessions to look in. `markDeleted` makes the change; the app
+    /// passes `SQLiteSessionStore.updateInterjection`, so it is one transaction and cannot erase another thread's edit
+    /// of the same Margin (#2509). A Margin already deleted is left alone, and a retry of `placeSpoken` for the same
+    /// recording finds the deleted copy and writes no second one.
     @discardableResult
     public static func withdraw(
         audioPath: String,
         in sessions: [Session],
-        repository: SessionRepository
+        repository: SessionRepository,
+        markDeleted: (_ margin: Interjection) throws -> Bool
     ) -> [String] {
         var touched: [String] = []
         for session in sessions {
             guard session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia,
                   let margins = try? repository.loadInterjections(sessionId: session.id) else { continue }
-            for var margin in margins where margin.audioPath == audioPath && margin.status != "deleted" {
-                margin.status = "deleted"
-                if (try? repository.saveInterjection(margin)) != nil, !touched.contains(session.itemId) {
-                    touched.append(session.itemId)
-                }
+            for margin in margins where margin.audioPath == audioPath && margin.status != "deleted" {
+                if (try? markDeleted(margin)) == true, !touched.contains(session.itemId) { touched.append(session.itemId) }
             }
         }
         return touched

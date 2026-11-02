@@ -146,6 +146,15 @@ final class PlayerItemMarginTests: XCTestCase {
         XCTAssertEqual(try repo.loadInterjections(sessionId: "session-episode").count, 1, "no second copy")
     }
 
+    private func markDeleted(in repo: InMemorySessionRepository) -> (Interjection) throws -> Bool {
+        { margin in
+            var changed = margin
+            changed.status = "deleted"
+            try repo.saveInterjection(changed)
+            return true
+        }
+    }
+
     /// The audit on 9faeb7b: a Margin deleted on the Watch after the phone placed it must not stay on the episode.
     func testAWithdrawnWatchMarginIsDeletedFromTheEpisodeAndNotWrittenAgain() throws {
         let repo = repository([session()])
@@ -153,13 +162,13 @@ final class PlayerItemMarginTests: XCTestCase {
         let placed = try PlayerItemMargin.placeSpoken(audioPath: path, atMediaTimeMs: 10_000, markedAt: taken, itemId: "episode", repository: repo)
         let other = try PlayerItemMargin.placeSpoken(audioPath: "other.m4a", atMediaTimeMs: 20_000, markedAt: taken, itemId: "episode", repository: repo)
 
-        let touched = PlayerItemMargin.withdraw(audioPath: path, in: [session()], repository: repo)
+        let touched = PlayerItemMargin.withdraw(audioPath: path, in: [session()], repository: repo, markDeleted: markDeleted(in: repo))
 
         XCTAssertEqual(touched, ["episode"])
         let stored = try repo.loadInterjections(sessionId: "session-episode")
         XCTAssertEqual(stored.first { $0.id == placed.id }?.status, "deleted")
         XCTAssertEqual(stored.first { $0.id == other.id }?.status, other.status, "another Margin is untouched")
-        XCTAssertEqual(PlayerItemMargin.withdraw(audioPath: path, in: [session()], repository: repo), [], "a second withdraw changes nothing")
+        XCTAssertEqual(PlayerItemMargin.withdraw(audioPath: path, in: [session()], repository: repo, markDeleted: markDeleted(in: repo)), [], "a second withdraw changes nothing")
         // A retry of the placement finds the deleted copy and does not bring the Margin back.
         _ = try PlayerItemMargin.placeSpoken(audioPath: path, atMediaTimeMs: 10_000, markedAt: taken, itemId: "episode", repository: repo)
         XCTAssertEqual(try repo.loadInterjections(sessionId: "session-episode").count, 2)

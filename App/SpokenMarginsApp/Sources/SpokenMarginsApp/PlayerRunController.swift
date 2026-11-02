@@ -1,5 +1,6 @@
 import Foundation
 import SessionKit
+import SessionKitPersistence
 
 /// Our own player's recent playing, kept so a Margin from the Watch or the Lock Screen, taken with no live session while
 /// Spoken Margins was playing an item, lands on that item at the time it was taken (#2542; `docs/design/live-sessions/
@@ -65,7 +66,9 @@ enum PlayerRunController {
         let audioPath = WatchMarginTransfer(id: id, wallStart: Date(timeIntervalSince1970: 1), durationMs: 0).audioPath
         let touched = await Task.detached(priority: .utility) { () -> [String] in
             guard let sessions = try? store.loadSessions() else { return [] }
-            return PlayerItemMargin.withdraw(audioPath: audioPath, in: sessions, repository: store)
+            return PlayerItemMargin.withdraw(audioPath: audioPath, in: sessions, repository: store) { margin in
+                try store.updateInterjection(id: margin.id, sessionId: margin.sessionId) { $0.status = "deleted" } != nil
+            }
         }.value
         guard !touched.isEmpty else { return }
         model.diagnostics["playerItemMargin"] = "withdrawn from \(touched.count) item(s)"
