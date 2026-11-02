@@ -407,7 +407,7 @@ final class EpisodeMapPreparerTests: XCTestCase {
 
         fixture.model.purgeExpiredEpisodeMapPreparationJobs(store: fixture.store)
 
-        XCTAssertEqual(try fixture.store.loadEpisodeMapPreparationJobs(), [])
+        try await waitUntil("the expired job to be deleted") { (try? fixture.store.loadEpisodeMapPreparationJobs())?.isEmpty == true }
         try await waitUntil("the transient folder and the audio chunks to be removed") {
             !FileManager.default.fileExists(atPath: left.transient.path)
                 && !FileManager.default.fileExists(atPath: left.chunks.path)
