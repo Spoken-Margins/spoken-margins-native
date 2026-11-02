@@ -242,7 +242,7 @@ struct Build23RecipientSharingExperience: View {
                     .accessibilityHint("Opens Add to Library and keeps this package ready to resume")
                 } else {
                     Button(action: requestMissingSource) {
-                        Label("Add Source", systemImage: "plus")
+                        Label("Add to Library", systemImage: "plus")
                             .frame(maxWidth: .infinity)
                     }
                     .filledActionButton()

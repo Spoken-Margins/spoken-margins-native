@@ -226,7 +226,7 @@ struct SettingsScreen: View {
                     .onCompatibleChange(of: model.automaticEpisodeMapPreparationPolicy) { _ in
                         model.automaticEpisodeMapPreparationPolicyChanged()
                     }
-                    Text("Chapters and scenes for podcasts are prepared on your device, kept private, and off by default. While Charging only prepares episodes that are already downloaded; the full transcript and temporary audio are deleted once the chapters and scenes are saved.")
+                    Text("Chapters and scenes for podcasts are prepared on your device and are off by default. While Charging only prepares episodes that are already downloaded; the full transcript and temporary audio are deleted once the chapters and scenes are saved.")
                         .font(.caption)
                         .foregroundStyle(AppColors.secondaryText)
                     Text("While Charging uses durable jobs and pauses between parts of an item when power, thermal, or storage safety changes. Completion timing is not guaranteed.")
