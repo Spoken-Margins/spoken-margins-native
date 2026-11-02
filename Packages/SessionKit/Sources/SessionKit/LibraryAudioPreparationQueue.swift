@@ -60,7 +60,7 @@ public struct LibraryAudioPreparationTurns: Sendable {
 
     /// The foreground loop stopped to wait, and the background task has stopped since:
     /// start the loop again, or an explicit request waits for an unrelated trigger.
-    public var foregroundShouldResume: Bool { foregroundIsWaiting && !backgroundIsPreparing }
+    public var foregroundShouldRestart: Bool { foregroundIsWaiting && !backgroundIsPreparing }
 
     public init() {}
 
@@ -131,7 +131,7 @@ public struct LibraryAudioPreparationTurns: Sendable {
     /// must not restart the loop again and again (Codex audit on #644).
     public mutating func foregroundLoopEnded() -> Bool {
         stopped(.foreground)
-        guard foregroundShouldResume else { return false }
+        guard foregroundShouldRestart else { return false }
         foregroundIsWaiting = false
         return true
     }

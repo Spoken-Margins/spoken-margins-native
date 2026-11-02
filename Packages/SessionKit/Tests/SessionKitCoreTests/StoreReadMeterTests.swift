@@ -454,7 +454,7 @@ final class StoreReadMeterTests: XCTestCase {
         XCTAssertFalse(files.isEmpty, "the store source moved; update this test")
         let writeVerbs = ["save", "delete", "remove", "update", "apply", "import", "invalidate", "mark", "move", "publish",
                           "restore", "settle", "migrate", "seed", "reset", "sweep", "compose", "plan", "with", "measuring",
-                          "totals", "read", "schemaVersion"]
+                          "totals", "read", "schemaVersion", "release"]
         let regex = try NSRegularExpression(pattern: #"^\s*public func ([A-Za-z0-9_]+)"#, options: [.anchorsMatchLines])
         var reads = Set<String>(), unclassified = Set<String>()
         for file in files {
