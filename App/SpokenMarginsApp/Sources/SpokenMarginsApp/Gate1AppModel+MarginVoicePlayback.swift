@@ -175,13 +175,20 @@ extension Gate1AppModel {
         let shown = SharedMarginHearing.heard(margin, at: Date())
         showSharedMarginHeard(shown)
         Task { [weak self] in
+            let written: Result<ImportedCommentaryInterjection?, Error>
             do {
-                let stored = try await StoreReader(store).read(priority: .userInitiated) {
+                written = .success(try await StoreReader(store).read(priority: .userInitiated) {
                     try $0.markImportedCommentaryInterjectionHeard(id: shown.id, at: shown.firstHeardAt ?? Date())
-                }
-                self?.sharedMarginHeardWritten(stored)
+                })
             } catch {
-                self?.sharedMarginHeardFailed(shown.id, error)
+                written = .failure(error)
+            }
+            guard let self else { return }
+            hangTelemetry.labels.scoped("sharedMarginHeard") {
+                switch written {
+                case .success(let stored): sharedMarginHeardWritten(stored)
+                case .failure(let error): sharedMarginHeardFailed(shown.id, error)
+                }
             }
         }
     }
