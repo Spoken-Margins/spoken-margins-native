@@ -4063,7 +4063,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertTrue(model.statusMessage.contains("Play from Beginning"))
     }
 
-    func testLifecycleSyncPersistsLatestTextPlaybackPosition() throws {
+    func testLifecycleSyncPersistsLatestTextPlaybackPosition() async throws {
         let audio = WorkflowRecordingAudioClient()
         let model = Gate1AppModel(audioPlaybackClient: audio)
         model.resetAndSeed()
@@ -4073,6 +4073,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.importTextItem()
         audio.currentOffset = "One. Two. ".count
         model.syncPlaybackProgressForLifecycle()
+        await model.settleItemReload()
 
         let session = try XCTUnwrap(model.selectedItem.sessions.last)
         XCTAssertEqual(session.position.charOffset, "One. Two. ".count)
@@ -4082,7 +4083,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
 
     /// #2184: leaving the foreground saves the position but does not re-read the item on the main thread. On the owner's
     /// phone that read decoded a mapped episode's transcript as iOS waited for the app to settle, and iOS killed it.
-    func testLeavingTheForegroundSavesThePositionWithoutReloadingTheItem() throws {
+    func testLeavingTheForegroundSavesThePositionWithoutReloadingTheItem() async throws {
         let audio = WorkflowRecordingAudioClient()
         let model = Gate1AppModel(audioPlaybackClient: audio)
         defer { OnDeviceVoiceGovernor.app.setAppBackgrounded(false) } // the background handler sets it app-wide
@@ -4103,7 +4104,9 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertNotEqual(shownOffset, "One. Two. ".count, "precondition: a reload would have shown the new position")
 
         model.syncPlaybackProgressForLifecycle()
-        XCTAssertEqual(model.selectedItem.sessions.last?.position.charOffset, "One. Two. ".count, "coming back re-reads it")
+        XCTAssertEqual(model.selectedItem.sessions.last?.position.charOffset, shownOffset, "coming back does not read the item before it returns (#2505)")
+        await model.settleItemReload()
+        XCTAssertEqual(model.selectedItem.sessions.last?.position.charOffset, "One. Two. ".count, "coming back re-reads it in the background")
     }
 
     func testCompletingFinalAudioRetainsFinishedSessionForReview() throws {
