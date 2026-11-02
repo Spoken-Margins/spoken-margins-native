@@ -69,8 +69,11 @@ test('opening a link lands on the first Margin’s moment, with the episode adde
   // The first Margin sits at 0:30.
   await expect.poll(() => audioTime(page), { timeout: 10_000 }).toBeGreaterThanOrEqual(29.5);
   expect(await audioTime(page)).toBeLessThan(34);
-  await expect(playing.getByText('A written Margin at half a minute.')).toBeVisible();
-  await expect(playing.getByText('This is a web Margin, recorded for the packet test.')).toBeVisible();
+  // In the episode's list: the sender's Margin at 0:30 is also shown for a moment as it comes up (#3058), so text alone
+  // matches twice while that lasts (#3254).
+  const listed = playing.getByRole('region', { name: 'Margins in this episode' });
+  await expect(listed.getByText('A written Margin at half a minute.')).toBeVisible();
+  await expect(listed.getByText('This is a web Margin, recorded for the packet test.')).toBeVisible();
   await shot(page, info, '30-link-landed');
 
   // One request, for the packet only, and the key never in it. The address bar no longer holds the key.
