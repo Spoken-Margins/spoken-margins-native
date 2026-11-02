@@ -314,4 +314,24 @@ final class SubstackSourceElementsTests: XCTestCase {
         _ = try importer.outcomeAndPersist(handoff(""), structuredDocument: nil, upgrade: .skip)
         XCTAssertEqual(repository.sourceElements.values.first?.elements, [], "the removed picture's row is gone")
     }
+
+    func testReimportOfACustomDomainPageThatLostItsLastSubstackPictureReplacesTheRecord() throws {
+        let repository = InMemorySessionRepository()
+        let importer = BrowserTextImporter(repository: repository, openItemIds: [], isPlaybackActive: false, publisherPlayback: [:])
+        func handoff(_ body: String) -> BrowserTextHandoff {
+            BrowserTextHandoff(captureMode: .readablePage, source: BrowserTextSource(url: "https://www.example.org/p/rates", title: "Rates"),
+                               text: "# Rates\n\n\(prose("Lead"))\n\n\(body)\n\n\(prose("Tail"))", contentFormat: .markdown)
+        }
+        _ = try importer.outcomeAndPersist(handoff("![](https://substackcdn.com/x.jpg)"), structuredDocument: nil, upgrade: .skip)
+        XCTAssertEqual(repository.sourceElements.values.first?.elements.count, 1)
+        // Nothing on the page says Substack any more.
+        _ = try importer.outcomeAndPersist(handoff(""), structuredDocument: nil, upgrade: .skip)
+        XCTAssertEqual(repository.sourceElements.values.first?.elements, [])
+    }
+
+    func testANumberedListLinkAnchorsOnItsOwnWords() throws {
+        let parsed = try parse("# Post\n\n\(prose("Lead"))\n\n1. the post about this post [post](https://example.com/p)\n\n\(prose("Tail"))")
+        let link = try XCTUnwrap(parsed.elements.first)
+        XCTAssertEqual(link.start, try start(of: "this post post", in: parsed.text) + "this post ".count)
+    }
 }

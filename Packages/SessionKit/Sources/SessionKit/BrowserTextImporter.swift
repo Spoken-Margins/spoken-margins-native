@@ -236,18 +236,21 @@ struct BrowserTextImporter: Sendable {
     }
 
     /// The pictures, embeds and links of a Substack page, kept beside the item for Timeline (#2032). Best effort: an
-    /// import never fails because of them, and a page that now has none replaces the record from an earlier import with an empty one, so a removed picture's row goes. They are read from the same Markdown
-    /// as the text, and kept only when that gives exactly the item's text, so every offset indexes it.
+    /// import never fails because of them. They are read from the same Markdown as the text, and kept only when that
+    /// gives exactly the item's text, so every offset indexes it. A record from an earlier import is always
+    /// refreshed, even by a page that no longer reads as Substack or has no elements left, so a removed picture's
+    /// row cannot outlive the picture.
     func saveSourceElements(for handoff: BrowserTextHandoff, item: Item) {
-        guard let record = Self.sourceElements(for: handoff, item: item),
-              let store = repository as? any SourceElementsRepository else { return }
+        guard let store = repository as? any SourceElementsRepository else { return }
+        let existing = (try? store.loadSourceElements(itemId: item.id)) ?? nil
+        guard let record = Self.sourceElements(for: handoff, item: item, hasEarlierRecord: existing != nil) else { return }
         try? store.saveSourceElements(record, itemId: item.id)
     }
 
-    static func sourceElements(for handoff: BrowserTextHandoff, item: Item) -> SourceElementsRecord? {
+    static func sourceElements(for handoff: BrowserTextHandoff, item: Item, hasEarlierRecord: Bool = false) -> SourceElementsRecord? {
         guard handoff.captureMode == .readablePage, handoff.contentFormat == .markdown,
               item.mediaType == "text", let text = item.text,
-              SourceElementCapture.isSubstackPage(sourceURL: handoff.source.url, markdown: handoff.text),
+              hasEarlierRecord || SourceElementCapture.isSubstackPage(sourceURL: handoff.source.url, markdown: handoff.text),
               let parsed = try? ObsidianMarkdownParser.parse(
                 fileName: item.title, contents: handoff.text, fallbackTitle: item.title, sourceURL: handoff.source.url),
               parsed.text == text.trimmingCharacters(in: .whitespacesAndNewlines)
