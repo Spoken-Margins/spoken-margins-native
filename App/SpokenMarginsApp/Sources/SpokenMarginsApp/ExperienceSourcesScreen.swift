@@ -89,7 +89,7 @@ struct ExperienceSourcesScreen: View {
                     }
                     .frame(minWidth: 44, minHeight: 44)
                     .disabled(model.isRefreshingQuickAddFeed)
-                    .accessibilityLabel("Refresh Sources")
+                    .accessibilityLabel("Refresh Following")
                     .accessibilityIdentifier("quickAdd.refresh.button")
                     Button(action: { isShowingFollowSheet = true }) {
                         Image(systemName: "plus")

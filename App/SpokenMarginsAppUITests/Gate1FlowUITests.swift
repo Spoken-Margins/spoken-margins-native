@@ -1212,14 +1212,14 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(integrity.exists)
         XCTAssertTrue(app.staticTexts["Add the source to continue"].exists)
 
-        let addSource = app.buttons["Add Source"].firstMatch
+        let addSource = app.buttons["Add to Library"].firstMatch
         XCTAssertTrue(addSource.waitForExistence(timeout: 4))
         let pinnedImport = app.buttons["Import"].firstMatch
         for _ in 0..<6 where addSource.frame.maxY >= pinnedImport.frame.minY {
             app.scrollViews["build23.recipient.experience"].swipeUp()
         }
         XCTAssertLessThan(addSource.frame.maxY, pinnedImport.frame.minY,
-                          "Add Source remains covered by the pinned import actions.")
+                          "Add to Library remains covered by the pinned import actions.")
         addSource.tap()
         XCTAssertTrue(element("addSource.sheet").waitForExistence(timeout: 5))
         app.buttons["Close"].firstMatch.tap()

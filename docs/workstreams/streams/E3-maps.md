@@ -28,7 +28,7 @@ Everything is anonymous. There are no accounts; installs that submit junk can be
   6. a Foundation Models title and description per scene;
   7. summary audio;
   8. delete the transcript.
-- Users reach it through Item → Advanced, or Settings → Automatic Episode Map Preparation, where the options are Off and While Charging.
+- Users reach it through Item → Advanced, or Settings → Prepare Chapters and Scenes Ahead, where the options are Off and While Charging.
 - Portable maps already exist for sharing (`PortableListeningMapProposalArtifact`, schema `listening-map-proposal.v2`). Their start and end anchors are designed to land on a different edition of the same episode, and the same acoustic-matching benchmark gates apply: zero false-confident placements, p95 ≤ 1.5 s.
 - Current policy: the full transcript of native audio stays internal and is never exported. Uploading transcripts changes that policy, and is the owner's call (#14, #173).
 - #51 is an earlier spike for server-hosted AI maps; #88 and #89 cover portable scenes and Skim summaries.
