@@ -179,6 +179,8 @@ final class SharedTextListeningMapImporterTests: XCTestCase {
         try store.saveListeningMap(map)
         let outcome = try SharedTextListeningMapImporter.saveProposal(plan, to: item, repository: store)
         XCTAssertEqual(outcome, .added(placed: 5, total: 5, replacedAnotherMap: false))
+        // A proposal row is keyed by its id, so read it before the second import moves it to the other item.
+        let proposalsViaHalves = try store.loadPortableListeningMapProposals(itemId: item.id)
 
         let other = try seed(text: text, id: "item-2")
         let viaCommit = try SharedTextListeningMapImporter.importMap(try package(), into: other, senderLabel: "A Friend", repository: store)
@@ -186,7 +188,7 @@ final class SharedTextListeningMapImporterTests: XCTestCase {
         let a = try XCTUnwrap(store.loadListeningMap(itemId: item.id)), b = try XCTUnwrap(store.loadListeningMap(itemId: other.id))
         XCTAssertEqual(a.chapters, b.chapters)
         XCTAssertEqual(a.overview, b.overview)
-        XCTAssertEqual(try store.loadPortableListeningMapProposals(itemId: item.id), try store.loadPortableListeningMapProposals(itemId: other.id))
+        XCTAssertEqual(proposalsViaHalves, try store.loadPortableListeningMapProposals(itemId: other.id))
     }
 
     func testASavedMapHasNothingLeftToAttachOrSave() throws {
