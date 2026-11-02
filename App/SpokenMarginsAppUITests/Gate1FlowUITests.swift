@@ -1212,7 +1212,7 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(integrity.exists)
         XCTAssertTrue(app.staticTexts["Add the source to continue"].exists)
 
-        let addSource = app.buttons["Add to Library"].firstMatch
+        let addSource = element("build23.recipient.addToLibrary")
         XCTAssertTrue(addSource.waitForExistence(timeout: 4))
         let pinnedImport = app.buttons["Import"].firstMatch
         for _ in 0..<6 where addSource.frame.maxY >= pinnedImport.frame.minY {
