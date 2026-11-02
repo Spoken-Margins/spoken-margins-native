@@ -76,7 +76,7 @@ export function Settings() {
         </p>
         <p className="muted">Web app, early version. Source code under AGPL-3.0.</p>
         <p>
-          <a href="https://spokenmargins.proximitytoprogress.com/copyright/" target="_blank" rel="noopener noreferrer">
+          <a className="settings-link" href="https://spokenmargins.proximitytoprogress.com/copyright/" target="_blank" rel="noopener noreferrer">
             Copyright and DMCA
           </a>
         </p>
