@@ -56,4 +56,22 @@ enum PlayerRunController {
         }
         return true
     }
+
+    /// The listener deleted a Margin on the Watch that the phone may already have put on an item: marks it deleted there
+    /// too (#2542 audit). The scan runs off the main thread; it only sets one Margin's status, which cannot take an id
+    /// another save is choosing.
+    static func withdrawWatchMargin(id: String) async {
+        guard let model, let store = model.store else { return }
+        let audioPath = WatchMarginTransfer(id: id, wallStart: Date(timeIntervalSince1970: 1), durationMs: 0).audioPath
+        let touched = await Task.detached(priority: .utility) { () -> [String] in
+            guard let sessions = try? store.loadSessions() else { return [] }
+            return PlayerItemMargin.withdraw(audioPath: audioPath, in: sessions, repository: store)
+        }.value
+        guard !touched.isEmpty else { return }
+        model.diagnostics["playerItemMargin"] = "withdrawn from \(touched.count) item(s)"
+        for itemId in touched {
+            model.refreshMarginRowsInBackground(forItem: itemId)
+            if model.activeItemId == itemId { model.refreshSelectedItemInBackground() }
+        }
+    }
 }

@@ -186,6 +186,8 @@ final class WatchMarginReceiver: NSObject {
         let work = Task { [weak self] () -> (WatchPhoneReply, [LiveSessionFileWorker.FiledMargin]) in
             await previous?.value
             let filed = await self?.fileWaiting() ?? []
+            // A Margin deleted on the Watch may already be on the item it was playing (#2542).
+            if case .withdraw(let id) = envelope.message { await PlayerRunController.withdrawWatchMargin(id: id) }
             let reply = await files.applyWatch(envelope, now: now())
             guard let self else { return (reply, filed) }
             self.send(reply.answers)
