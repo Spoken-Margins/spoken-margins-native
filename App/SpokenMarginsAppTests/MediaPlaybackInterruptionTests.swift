@@ -523,8 +523,8 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         defer { model.endMarginMoment(); model.pause() }
         XCTAssertNil(try fixture.storedRecord()?.firstHeardAt, "the lead-in alone isn't hearing it")
         model.playMarginMomentNow()
-        XCTAssertNotNil(try fixture.storedRecord()?.firstHeardAt, "its voice started")
-        XCTAssertEqual(model.sharedMarginRows.first { $0.interjection.id == fixture.record.id }?.isNew, false)
+        XCTAssertEqual(model.sharedMarginRows.first { $0.interjection.id == fixture.record.id }?.isNew, false, "shown as heard at once")
+        try waitUntil("its voice started and the mark is stored") { try fixture.storedRecord()?.firstHeardAt != nil } // written off the main thread (#2509)
         XCTAssertNil(model.diagnostics["marginMoment.chime"], "a muted layer's Margin plays with no chime (#932)")
     }
 
@@ -1101,7 +1101,7 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         XCTAssertNotNil(model.marginMoment?.playing, "the Margin is still waiting, not consumed")
 
         model.playPause()
-        XCTAssertNotNil(try fixture.storedRecord()?.firstHeardAt, "Play starts their voice")
+        try waitUntil("Play starts their voice") { try fixture.storedRecord()?.firstHeardAt != nil } // written off the main thread (#2509)
     }
 
     /// #866 (found on the phone): Add Margin while a shared Margin's moment plays its voice used to be refused.

@@ -165,12 +165,40 @@ extension Gate1AppModel {
         #endif
     }
 
-    /// Its voice started playing, so the shared Margin is no longer new to this listener (#469).
+    /// Its voice started playing, so the shared Margin is no longer new to this listener (#469). The screen shows it as
+    /// heard at once; the row is written off the main thread (#2509), and the screen takes the stored copy when the
+    /// write lands. A failed write is read back, so the screen never keeps a mark the store doesn't have.
     func markSharedMarginHeard(_ margin: ImportedCommentaryInterjection) {
-        guard margin.isNewToListener, let heard = try? store?.markImportedCommentaryInterjectionHeard(id: margin.id, at: Date()) else { return }
+        guard margin.isNewToListener, let store else { return }
+        let shown = SharedMarginHearing.heard(margin, at: Date())
+        showSharedMarginHeard(shown)
+        Task.detached(priority: .utility) { [weak self] in
+            do {
+                let stored = try await StoreReader(store).read { try $0.markImportedCommentaryInterjectionHeard(id: shown.id, at: shown.firstHeardAt ?? Date()) }
+                await self?.sharedMarginHeardWritten(stored)
+            } catch {
+                await self?.sharedMarginHeardFailed(shown.id, error)
+            }
+        }
+    }
+
+    private func showSharedMarginHeard(_ heard: ImportedCommentaryInterjection) {
         selectedItem.importedCommentaryInterjections = SharedMarginHearing.replacing(heard, in: selectedItem.importedCommentaryInterjections)
         noteMarginRowsChanged(forItem: sharedMarginRows.first { $0.interjection.id == heard.id }?.layer.itemId)
         sharedMarginRows = sharedMarginRows.map { $0.interjection.id == heard.id ? SharedMarginRow(interjection: heard, layer: $0.layer, itemTitle: $0.itemTitle, placement: $0.placement) : $0 }
+    }
+
+    /// The write landed. Showing the stored copy again also stops a Margin rows read that began before the write from
+    /// leaving the old "new" mark on the screen (`noteMarginRowsChanged` makes a read in flight read again).
+    private func sharedMarginHeardWritten(_ stored: ImportedCommentaryInterjection?) {
+        guard let stored else { return } // the Margin is gone; whatever removed it refreshed the screen
+        showSharedMarginHeard(stored)
+    }
+
+    private func sharedMarginHeardFailed(_ marginId: String, _ error: Error) {
+        diagnostics["sharedMarginHeard:\(marginId)"] = "failed:\(error.localizedDescription)"
+        refreshSelectedItemInBackground()
+        refreshMarginRowsInBackground()
     }
 
     func stopImportedCommentaryPlayback(resumeSource: Bool) {
