@@ -5,9 +5,9 @@ import SessionKitPersistence
 // Kept out of Gate1AppModel.swift, which may not grow (hot-file ratchet).
 extension Gate1AppModel {
     @discardableResult
-    func importListeningEditionData(_ data: Data, replaceMap: Bool = false) -> Bool {
+    func importListeningEditionData(_ data: Data, replaceMap: Bool = false) async -> Bool {
         do {
-            try performListeningEditionImport(data, replaceMap: replaceMap)
+            try await performListeningEditionImport(data, replaceMap: replaceMap)
             return true
         } catch {
             reportFailure(error, context: "Listening edition import failed")
@@ -17,9 +17,9 @@ extension Gate1AppModel {
 
     /// One already-decoded edition from the Listening Edition screen. Opens the item, as a single file always has.
     @discardableResult
-    func importListeningEdition(_ edition: ListeningEdition, replaceMap: Bool = false) -> Bool {
+    func importListeningEdition(_ edition: ListeningEdition, replaceMap: Bool = false) async -> Bool {
         do {
-            try openAfterImporting(edition, replaceMap: replaceMap)
+            try await openAfterImporting(edition, replaceMap: replaceMap)
             return true
         } catch {
             reportFailure(error, context: "Listening edition import failed")
@@ -30,19 +30,21 @@ extension Gate1AppModel {
     /// Several editions at once (#1472): saves each one and leaves the listener where they are. It opens no item
     /// and starts no playback, and a source that already has a different map keeps it (replacing that stays
     /// on the single-file path, with its toggle). One result line per entry.
-    func importListeningEditions(_ entries: [ListeningEditionBatch.Entry]) -> [ListeningEditionBatch.Line] {
+    func importListeningEditions(_ entries: [ListeningEditionBatch.Entry]) async -> [ListeningEditionBatch.Line] {
         defer {
             if let store, let rows = try? loadLibraryRows(store: store) { libraryItems = rows }
             refreshSelectedItem()
         }
-        return ListeningEditionBatch.run(entries, existing: { edition in
+        // The edition files are read and written off the main thread (#2510); the store steps stay here, in order.
+        return await ListeningEditionBatch.runAsync(entries, existing: { edition in
             guard !snapshot.isRecording else { throw EditionError.invalid("Finish recording before importing a listening edition.") }
-            guard let previous = try ListeningEditionStore.application().load(itemID: edition.itemID) else { return .none }
-            if previous != edition { return .different }
+            let saved = try await Self.offMain { try Self.savedListeningEditionState(of: edition) }
+            if saved == .missing { return .none }
+            if saved == .different { return .different }
             // Saved edition but the item is gone from the Library: import it again.
             return (try? requireStore().loadItemSummary(id: edition.itemID)) == nil ? .none : .identical // not the text (#2506)
         }, importOne: { edition in
-            try saveListeningEdition(edition, replaceMap: false)
+            try await saveListeningEdition(edition, replaceMap: false)
             schedulePrewarmAfterPreparedTextChange(itemId: edition.itemID)
         })
     }
@@ -51,14 +53,14 @@ extension Gate1AppModel {
     /// Library and nothing opens or plays. Returns whether every file went in, so the sheet knows to close.
     @discardableResult
     func importListeningEditionFiles(_ urls: [URL], folders: [URL] = []) async -> Bool {
-        // The folders are walked and the files read and decoded off the main thread (#2510, #2256); the import
-        // itself still runs on it.
+        // The folders are walked and the files read and decoded off the main thread (#2510, #2256); each edition's
+        // file is read and written off it too, and only the store steps run here.
         let loaded = await Task.detached(priority: .userInitiated) { Self.readListeningEditionEntries(urls, folders: folders) }.value
         if loaded.entries.isEmpty {
             reportFailure(ListeningEditionFolderWalk.emptyMessage(folderNames: folders.map(\.lastPathComponent)))
             return false
         }
-        let lines = hangTelemetry.labels.scoped("listeningEditionFiles.import") { importListeningEditions(loaded.entries) }
+        let lines = await importListeningEditions(loaded.entries)
         var summary = ListeningEditionBatch.summary(of: lines)
         if loaded.truncated {
             summary = summary.appending(ListeningEditionFolderWalk.truncationNote())
@@ -95,7 +97,7 @@ extension Gate1AppModel {
         Task { @MainActor in
             do {
                 let data = try await Self.offMain { try Self.listeningEditionFileData(url) }
-                hangTelemetry.labels.scoped("listeningEditionFile.import") { importListeningEditionData(data) }
+                await importListeningEditionData(data)
             } catch { reportFailure(error, context: "Listening edition file could not be opened") }
         }
     }
@@ -108,17 +110,17 @@ extension Gate1AppModel {
         return try Data(contentsOf: url)
     }
 
-    func importListeningEditionDataForShortcut(_ data: Data) throws {
-        try performListeningEditionImport(data, replaceMap: false)
+    func importListeningEditionDataForShortcut(_ data: Data) async throws {
+        try await performListeningEditionImport(data, replaceMap: false)
     }
 
-    private func performListeningEditionImport(_ data: Data, replaceMap: Bool) throws {
+    private func performListeningEditionImport(_ data: Data, replaceMap: Bool) async throws {
         guard !snapshot.isRecording else { throw EditionError.invalid("Finish recording before importing a listening edition.") }
-        try openAfterImporting(try ListeningEdition.decode(data), replaceMap: replaceMap)
+        try await openAfterImporting(try ListeningEdition.decode(data), replaceMap: replaceMap)
     }
 
-    private func openAfterImporting(_ edition: ListeningEdition, replaceMap: Bool) throws {
-        try saveListeningEdition(edition, replaceMap: replaceMap)
+    private func openAfterImporting(_ edition: ListeningEdition, replaceMap: Bool) async throws {
+        try await saveListeningEdition(edition, replaceMap: replaceMap)
         let store = try requireStore()
         activeItemId = edition.itemID
         libraryItems = try loadLibraryRows(store: store)
@@ -129,10 +131,14 @@ extension Gate1AppModel {
     }
 
     /// Saves the item, the edition and its map. Navigates nowhere.
-    private func saveListeningEdition(_ edition: ListeningEdition, replaceMap: Bool) throws {
+    ///
+    /// The edition's file is read and written off the main thread (#2510): it can be megabytes. The steps keep their
+    /// old order (check for a different map, save the item, check playback, write the file, attach the map); the
+    /// store steps stay on the main thread, and playback is checked again after the write, since the listener can
+    /// press play while it runs.
+    private func saveListeningEdition(_ edition: ListeningEdition, replaceMap: Bool) async throws {
         guard !snapshot.isRecording else { throw EditionError.invalid("Finish recording before importing a listening edition.") }
-        let editions = try ListeningEditionStore.application()
-        if let previous = try editions.load(itemID: edition.itemID), previous != edition, !replaceMap {
+        if !replaceMap, try await Self.offMain({ try Self.savedListeningEditionState(of: edition) }) == .different {
             throw EditionError.invalid("This source already has a different Listening Map. To replace it, preview this edition (Review on its own, or paste it) in Import Listening Edition and turn on Replace.")
         }
         let store = try requireStore()
@@ -141,15 +147,30 @@ extension Gate1AppModel {
             try store.saveItem(Item(id: edition.itemID, title: edition.title, mediaType: "text", text: edition.text,
                                    externalReference: edition.sourceURL, status: "ready", externalReferenceType: "url", createdAt: Date()))
         }
-        if snapshot.itemId == edition.itemID, snapshot.status.isPlaybackActive {
+        try requireNoPlaybackForListeningEdition(itemId: edition.itemID)
+        try await Self.offMain { try ListeningEditionStore.application().save(edition) }
+        try requireNoPlaybackForListeningEdition(itemId: edition.itemID)
+        hangTelemetry.labels.scoped("listeningEdition.attach") {
+            if let engine { snapshot = try engine.attachListeningMap(edition.listeningMap()) }
+            else { try store.saveListeningMap(edition.listeningMap()) }
+            if let timeline = try store.loadTranscriptTimeline(itemId: edition.itemID)?.timeline {
+                activateListeningEditionAudio(itemId: edition.itemID, timeline: timeline)
+            }
+        }
+    }
+
+    private func requireNoPlaybackForListeningEdition(itemId: String) throws {
+        if snapshot.itemId == itemId, snapshot.status.isPlaybackActive {
             throw EditionError.invalid("Pause playback before importing a map for the current item.")
         }
-        try editions.save(edition)
-        if let engine { snapshot = try engine.attachListeningMap(edition.listeningMap()) }
-        else { try store.saveListeningMap(edition.listeningMap()) }
-        if let timeline = try store.loadTranscriptTimeline(itemId: edition.itemID)?.timeline {
-            activateListeningEditionAudio(itemId: edition.itemID, timeline: timeline)
-        }
+    }
+
+    /// What the edition file for this source holds compared with `edition`, read where the file is (off main).
+    private enum SavedListeningEditionState { case missing, identical, different }
+
+    private nonisolated static func savedListeningEditionState(of edition: ListeningEdition) throws -> SavedListeningEditionState {
+        guard let previous = try ListeningEditionStore.application().load(itemID: edition.itemID) else { return .missing }
+        return previous == edition ? .identical : .different
     }
 
     /// Saves a shared Listening Map for a text item (#1471). A running session reads its map from memory, so it is
