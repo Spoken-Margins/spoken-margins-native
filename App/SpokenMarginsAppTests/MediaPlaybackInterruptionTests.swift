@@ -777,12 +777,13 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         let model = fixture.model
         defer { model.endMarginMoment(); model.pause() }
 
-        var offered: String?
+        var offered: NewMarginsOfferRequest?
         model.continueListening(itemId: "declined-source") { offered = $0 }
-        XCTAssertEqual(offered, "declined-source")
+        XCTAssertEqual(offered?.itemId, "declined-source")
+        XCTAssertEqual(offered?.entries.count, 1, "the offer carries the Margins it asks about, read once (#2506)")
         XCTAssertEqual(model.newSharedMargins(itemId: "declined-source").count, 1)
 
-        model.continueWithoutNewMargins(itemId: "declined-source")
+        model.continueWithoutNewMargins(try XCTUnwrap(offered))
         XCTAssertEqual(model.snapshot.itemId, "declined-source")
         model.pause()
         XCTAssertEqual(model.newSharedMargins(itemId: "declined-source").count, 1, "still new, and Review new Margins still offers it")
@@ -799,9 +800,10 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         let model = fixture.model
         defer { model.endMarginMoment(); model.pause() }
 
-        var offered: String?
+        var offered: NewMarginsOfferRequest?
         model.continueListening(itemId: "real-source") { offered = $0 }
-        XCTAssertEqual(offered, "real-source", "the question comes before anything plays")
+        XCTAssertEqual(offered?.itemId, "real-source", "the question comes before anything plays")
+        XCTAssertEqual(offered?.entries.map(\.interjection.id), [fixture.record.id], "the offer's Margins are the ones it read")
         XCTAssertNotEqual(model.snapshot.itemId, "real-source")
         XCTAssertNil(model.marginMoment)
 

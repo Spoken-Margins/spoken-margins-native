@@ -11,7 +11,7 @@ struct ExperienceItemDetailScreen: View {
     @State private var confirmsNewSession = false
     @State private var showsAdvanced = false
     /// Set while Continue waits on the "hear new Margins first?" question (#474).
-    @State private var newMarginsOfferItemId: String?
+    @State private var pendingNewMarginsOffer: NewMarginsOfferRequest?
     @State private var episodeLinkStatus = ImportedFileEpisodeLinker.Status()
     /// True while a link or unlink saves, so a second tap cannot race it.
     @State private var isChangingEpisodeLink = false
@@ -144,7 +144,7 @@ struct ExperienceItemDetailScreen: View {
             } message: {
                 Text("Your existing listening position and Margins remain in their current session.")
             }
-            .newMarginsOffer(itemId: $newMarginsOfferItemId)
+            .newMarginsOffer($pendingNewMarginsOffer)
             .miniPlayerKeepOut()
         }
     }
@@ -353,7 +353,7 @@ struct ExperienceItemDetailScreen: View {
             .accessibilityIdentifier("item.start.preparing")
         }
         Button {
-                model.continueListening(itemId: model.selectedItem.id) { newMarginsOfferItemId = $0 }
+                model.continueListening(itemId: model.selectedItem.id) { pendingNewMarginsOffer = $0 }
             } label: {
                 Label([.waiting, .preparing].contains(model.selectedItemStartupAudioState) ? "Listen now" : primaryPlaybackLabel, systemImage: "play.fill")
                     .frame(maxWidth: .infinity, minHeight: 52)

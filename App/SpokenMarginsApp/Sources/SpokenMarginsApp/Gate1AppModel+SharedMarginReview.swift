@@ -2,6 +2,14 @@ import Foundation
 import SessionKit
 import SessionKitAudio
 
+/// The question Continue asks before it starts an item that has new shared Margins (#474): the item, and the Margins
+/// the question is about. Read once when Continue is tapped, so the dialog's message and its two answers don't read
+/// the store again (#2506): the dialog rebuilds its message on every render while it is up.
+struct NewMarginsOfferRequest: Equatable {
+    let itemId: String
+    let entries: [SharedMarginReview.Entry]
+}
+
 /// "Review new Margins" (#474): plays an item's shared Margins that the listener hasn't heard, one after another,
 /// each with a short lead-in, through the same conductor as "Play this moment". Which Margins, in what order, and
 /// where the source hops between them is decided in SessionKit (`SharedMarginReview`, `MarginMomentSequence`).
@@ -30,26 +38,28 @@ extension Gate1AppModel {
     /// Continue for an item. Starts it, or hands `offer` the item when it has new shared Margins that the listener
     /// should be asked about first: after an import, Continue used to land past them (owner's co-op test). An offer
     /// the listener already turned down isn't made again until another Margin arrives.
-    func continueListening(itemId: String, offer: (String) -> Void) {
-        let new = newSharedMargins(itemId: itemId).map(\.marginId)
+    func continueListening(itemId: String, offer: (NewMarginsOfferRequest) -> Void) {
+        let entries = newSharedMargins(itemId: itemId)
+        let new = entries.map(\.marginId)
         if new.isEmpty || Self.declinedNewMargins.isDeclined(itemId: itemId, margins: new) {
             startItem(id: itemId)
         } else {
-            offer(itemId)
+            offer(NewMarginsOfferRequest(itemId: itemId, entries: entries))
         }
     }
 
     /// "Listen without them" on the offer: starts the item, and doesn't ask about these Margins again.
-    func continueWithoutNewMargins(itemId: String) {
-        Self.declinedNewMargins.decline(itemId: itemId, margins: newSharedMargins(itemId: itemId).map(\.marginId))
-        startItem(id: itemId)
+    func continueWithoutNewMargins(_ offer: NewMarginsOfferRequest) {
+        Self.declinedNewMargins.decline(itemId: offer.itemId, margins: offer.entries.map(\.marginId))
+        startItem(id: offer.itemId)
     }
 
     /// Plays the new shared Margins on `itemId` in turn. Afterwards the item goes back to where the listener left
-    /// off: playing on with `thenContinue`, paused without it.
-    func reviewNewMargins(itemId: String, thenContinue: Bool) {
+    /// off: playing on with `thenContinue`, paused without it. `entries` are the Margins an offer already read; without
+    /// them the review reads them.
+    func reviewNewMargins(itemId: String, thenContinue: Bool, entries offered: [SharedMarginReview.Entry]? = nil) {
         guard !rejectNavigationOrSessionMutationWhileRecording("review_new_margins") else { return }
-        let entries = newSharedMargins(itemId: itemId)
+        let entries = offered ?? newSharedMargins(itemId: itemId)
         guard !entries.isEmpty else {
             reportWarning("There are no new Margins to review on this item.")
             return
