@@ -1,5 +1,6 @@
 import Foundation
 import SessionKit
+import SessionKitPersistence
 
 /// Our own player's recent playing, kept so a Margin from the Watch or the Lock Screen, taken with no live session while
 /// Spoken Margins was playing an item, lands on that item at the time it was taken (#2542; `docs/design/live-sessions/
