@@ -13,7 +13,7 @@ extension Gate1AppModel {
         for row in sharedMarginRows where row.layer.itemId == itemID { layers[row.layer.id] = row.layer }
         guard !layers.isEmpty else { return nil }
         return ReplyBackOffer.make(
-            localMargins: marginRows.map(\.interjection).filter { $0.itemId == itemID },
+            localMargins: marginRows.filter { $0.interjection.itemId == itemID }.map(\.interjection),
             layers: Array(layers.values)
         )
     }

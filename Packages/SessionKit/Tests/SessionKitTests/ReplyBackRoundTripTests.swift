@@ -192,7 +192,7 @@ private final class Person {
                     status: .senderApproved
                 ),
                 anchor: PortableAnchorEvidence(anchorType: .media, mediaTimeMs: margin.anchor.mediaTimeMs),
-                representation: margin.audioPath.map { .originalAudio(sourceURL: URL(fileURLWithPath: $0), durationMs: 600) } ?? .textOnly,
+                representation: margin.audioPath.map { ReviewedRepresentationSelection.originalAudio(sourceURL: URL(fileURLWithPath: $0), durationMs: 600) } ?? .textOnly,
                 replyTo: margin.replyTo
             )
         }

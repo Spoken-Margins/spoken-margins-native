@@ -36,7 +36,8 @@ public struct ReplyBackOffer: Equatable, Sendable {
         var others: [Interjection] = []
         var answered: [ImportedCommentaryLayer] = []
         for margin in localMargins.sorted(by: madeBefore)
-        where margin.status == "active" && margin.targetType == .item {
+        // A Margin that already went out in a packet isn't offered again: the button goes away once it is sent.
+        where margin.status == "active" && margin.targetType == .item && (margin.sharedAs ?? []).isEmpty {
             if let link = margin.replyTo, let layer = layerByDigest[link.parentPackageDigest] {
                 replies.append(margin)
                 if !answered.contains(where: { $0.id == layer.id }) { answered.append(layer) }
@@ -48,8 +49,9 @@ public struct ReplyBackOffer: Equatable, Sendable {
         let friends = answered.isEmpty ? liveLayers.sorted { $0.importedAt < $1.importedAt } : answered
         var labels: [String] = []
         for layer in friends {
-            let label = SharedMarginReview.senderLabel(of: layer)
-            if !labels.contains(label) { labels.append(label) }
+            // A friend with no name is "your friend", not "Imported collection".
+            let label = layer.displayLabel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !label.isEmpty, !labels.contains(label) { labels.append(label) }
         }
         return ReplyBackOffer(replies: replies, others: others, friendLabels: labels)
     }

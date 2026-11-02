@@ -225,6 +225,15 @@ final class ReplyBackTests: XCTestCase {
         XCTAssertEqual(next.caption, "Reply to your Margin at 12:34")
     }
 
+    func testMarginsAlreadySentAreNotOfferedAgainAndANamelessFriendIsYourFriend() throws {
+        let sent = [MarginPacketIdentity(packageDigest: "digest-out", packageScopedId: "r1")]
+        let margins = [own("r1", madeAt: 200, replyingTo: "ana", sharedAs: sent), own("r2", madeAt: 201, replyingTo: "ana")]
+        let offer = try XCTUnwrap(ReplyBackOffer.make(localMargins: margins, layers: [layer("ana", label: "  ")]))
+        XCTAssertEqual(ids(offer.candidates), ["r2"])
+        XCTAssertEqual(offer.title, "Send replies to your friend")
+        XCTAssertNil(ReplyBackOffer.make(localMargins: [margins[0]], layers: [layer("ana")]), "once everything is sent the offer goes")
+    }
+
     func testTheChimeAnnouncesTheFirstMarginOfAStretchAndNeverAMutedFriendsOrASecondOne() {
         let margins = [own("m1", madeAt: 10, atMs: 754_000, sharedAs: [mine])]
         func steps(muted: Bool) -> [SharedMarginReview.Step] {
