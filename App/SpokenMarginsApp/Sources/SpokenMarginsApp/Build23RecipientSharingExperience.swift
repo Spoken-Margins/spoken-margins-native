@@ -246,6 +246,7 @@ struct Build23RecipientSharingExperience: View {
                             .frame(maxWidth: .infinity)
                     }
                     .filledActionButton()
+                    .accessibilityIdentifier("build23.recipient.addToLibrary")
                     .accessibilityHint("Opens Add to Library and keeps this package ready to resume")
                 }
             }
