@@ -3,14 +3,29 @@ import SessionKitPersistence
 
 extension Gate1AppModel {
     /// No transcription of this run exists yet at launch, so a Margin still "pending" lost its worker with the
-    /// last run: settle it so it offers Retry instead of promising work (#942).
+    /// last run: settle it so it offers Retry instead of promising work (#942). The scan and the writes run off the
+    /// main thread (#2509). A Margin this run saved as pending (a new recording, a Watch import) is left
+    /// alone, whenever it was made; the screen is read again after, when any were settled.
     func settleOrphanedTranscriptions(store: SQLiteSessionStore) {
-        do {
-            let settled = try store.settleOrphanedTranscriptions()
-            if settled > 0 { diagnostics["orphanedTranscriptionsSettled"] = "\(settled)" }
-        } catch {
-            diagnostics["orphanedTranscriptionsSettled"] = "failed:\(error.localizedDescription)"
+        Task.detached(priority: .utility) { [weak self] in
+            do {
+                let settled = try store.settleOrphanedTranscriptions(skippingMarginsSavedThisRun: true)
+                await self?.orphanedTranscriptionsSettled(settled)
+            } catch {
+                await self?.orphanedTranscriptionsSettled(failure: error)
+            }
         }
+    }
+
+    private func orphanedTranscriptionsSettled(_ count: Int) {
+        guard count > 0 else { return }
+        diagnostics["orphanedTranscriptionsSettled"] = "\(count)"
+        refreshSelectedItemInBackground()
+        refreshMarginRowsInBackground()
+    }
+
+    private func orphanedTranscriptionsSettled(failure: Error) {
+        diagnostics["orphanedTranscriptionsSettled"] = "failed:\(failure.localizedDescription)"
     }
 
     /// A manual Retry failed. A Margin never transcribed would stay "pending" with the retry over; one that has

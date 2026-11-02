@@ -170,6 +170,31 @@ final class OrphanedTranscriptionTests: XCTestCase {
         XCTAssertEqual(try store.loadInterjections(sessionId: "session-B").first?.transcriptionStatus, "failed")
     }
 
+    // MARK: Launch recovery that runs after the run has begun (#2509)
+
+    /// The app settles off the main thread once launch has started, so a Margin this run saved as pending is being
+    /// transcribed by this run. It must not be settled, whatever its `createdAt` says (a Watch import keeps the time the
+    /// Watch recorded it); the earlier run's orphan still is.
+    func testASettleThatRunsAfterTheRunBeganLeavesThisRunsOwnMarginsAlone() throws {
+        let path = makePath()
+        let (earlierRun, _) = try makeEngine(path: path)
+        try earlierRun.saveInterjection(margin(id: "orphan", status: "pending", words: nil))
+
+        let relaunched = try SQLiteSessionStore(path: path)
+        var fromTheWatch = margin(id: "watch-import", status: "pending", words: nil)
+        fromTheWatch.createdAt = Date(timeIntervalSince1970: 0) // recorded long before this run
+        try relaunched.saveInterjection(fromTheWatch)
+        try relaunched.saveInterjection(margin(id: "recording-now", status: "pending", words: nil))
+
+        XCTAssertEqual(try relaunched.settleOrphanedTranscriptions(skippingMarginsSavedThisRun: true), 1)
+
+        let stored = Dictionary(uniqueKeysWithValues: try relaunched.loadInterjections(sessionId: "session-A").map { ($0.id, $0) })
+        XCTAssertEqual(stored["orphan"]?.transcriptionStatus, "failed")
+        XCTAssertEqual(stored["watch-import"], fromTheWatch, "this run's pending Margin is untouched")
+        XCTAssertEqual(stored["recording-now"]?.transcriptionStatus, "pending")
+        XCTAssertEqual(try relaunched.settleOrphanedTranscriptions(skippingMarginsSavedThisRun: true), 0)
+    }
+
     // MARK: A retry that fails
 
     func testAFailedRetryOfAMarginThatWasNeverTranscribedDoesNotLeaveItPending() throws {
