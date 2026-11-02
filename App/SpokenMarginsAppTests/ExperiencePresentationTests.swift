@@ -1,6 +1,7 @@
 import XCTest
 @testable import SessionKit
 import SessionKitPersistence
+import SessionKitSharing
 @testable import SpokenMarginsApp
 
 final class ExperiencePresentationTests: XCTestCase {

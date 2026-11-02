@@ -465,6 +465,12 @@ struct ExperienceAddSourceFlow: View {
             url.hasDirectoryPath || ((try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true)
         }
         guard !plan.isEmpty else { return }
+        // An EPUB goes in alone. Say so before anything else starts, so a re-pick does not meet the audio or packet
+        // that already began importing.
+        if plan.documents.count > 1, plan.documents.contains(where: { $0.pathExtension.lowercased() == "epub" }) {
+            model.reportImportFailure(ExperienceFileImportError.epubMustBeImportedAlone)
+            return
+        }
         fileImportError = nil
         for packet in plan.packets { model.stageSpokenMarginsPackageImportInBackground(from: packet) }
         for audio in plan.audio { model.importAudiobookFile(url: audio, openWhenFinished: false) }
