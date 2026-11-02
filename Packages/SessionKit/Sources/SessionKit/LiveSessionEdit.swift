@@ -9,12 +9,11 @@ import Foundation
 /// position the listener slid by hand (`listenerPositionMs`) keeps that position.
 public enum LiveSessionEdit {
     /// Sets the kind. A paper book has no clock, but the clock the session had is kept, only hidden, so a slip of the
-    /// finger on the kind control loses nothing; changing to a meeting from a kind with no clock starts the meeting
-    /// clock at the moment the session began, as starting a meeting does.
+    /// finger on the kind control loses nothing. Changing to a meeting from a kind with no clock leaves the start
+    /// unknown, as starting a meeting without a clock typed does (#3241): 0:00 would be a guess nothing says is one.
     public static func setKind(_ kind: ElsewhereKind, on session: inout LiveSession) {
         guard session.kind != kind else { return }
         session.kind = kind
-        if kind == .meeting, session.startPositionMs == nil { session.startPositionMs = 0 }
     }
 
     public static func setTitle(_ title: String, on session: inout LiveSession) {
