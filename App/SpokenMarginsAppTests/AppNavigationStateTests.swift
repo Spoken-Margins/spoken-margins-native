@@ -18,6 +18,18 @@ final class AppNavigationStateTests: XCTestCase {
         XCTAssertEqual(navigation.paths[.margins], [.marginDetail("margin-1")])
     }
 
+    /// #3214: the Item screen's back button names the tab it lands on, for each tab an item opens from.
+    func testItemBackButtonNamesTheTabTheListenerLeft() {
+        var navigation = AppNavigationState()
+        XCTAssertEqual(navigation.selectedRoot.itemBackTitle, "Library")
+        navigation.select(.sources, recordingIsLocked: false)
+        XCTAssertEqual(navigation.selectedRoot.itemBackTitle, "Following")
+        navigation.select(.margins, recordingIsLocked: false)
+        XCTAssertEqual(navigation.selectedRoot.itemBackTitle, "Margins")
+        navigation.select(.settings, recordingIsLocked: false)
+        XCTAssertEqual(navigation.selectedRoot.itemBackTitle, "Back")
+    }
+
     /// #1784: the add sheet's "Search podcasts by name" closes the sheet and asks for the catalog once.
     func testSearchingPodcastsFromTheAddSheetClosesItAndAsksForTheCatalogOnce() {
         var navigation = AppNavigationState()

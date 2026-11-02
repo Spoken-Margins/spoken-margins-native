@@ -3,6 +3,10 @@ import SessionKit
 import SessionKitPersistence
 
 struct ExperienceItemDetailScreen: View {
+    /// The tab the back button lands on (#3214): the Item screen replaces the tab view, so back shows the tab
+    /// the listener left. It names that tab instead of always saying "Library".
+    var backTitle: String = AppRoot.library.itemBackTitle
+
     @EnvironmentObject private var model: Gate1AppModel
     @EnvironmentObject private var sharingCoordinator: Build23SharingCoordinator
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
@@ -70,8 +74,9 @@ struct ExperienceItemDetailScreen: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button(action: model.openHome) {
-                        Label("Library", systemImage: "arrow.left")
+                        Label(backTitle, systemImage: "arrow.left")
                     }
+                    .accessibilityLabel("Back to \(backTitle)")
                     .accessibilityIdentifier("item.home.button")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
