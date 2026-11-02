@@ -37,6 +37,15 @@ enum AppRoot: String, CaseIterable, Identifiable, Hashable, Sendable {
         }
     }
 
+    /// What the Item screen's back button says: the tab it returns to (#3214). Settings has no items, so it
+    /// reads just "Back".
+    var itemBackTitle: String {
+        switch self {
+        case .library, .sources, .margins: title
+        case .settings: "Back"
+        }
+    }
+
     var systemImage: String {
         switch self {
         case .library: "books.vertical"

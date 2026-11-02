@@ -676,7 +676,10 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(waitForDisappearance(libraryRow, timeout: 4))
 
         openLibrarySettings()
-        let delete = scrollToButton(containingLabel: "Delete \(itemTitle) Permanently")
+        // Delete Permanently sits behind the row's menu, away from Restore (#3206).
+        scrollToButton(containingLabel: "More options for \(itemTitle)").tap()
+        let delete = app.buttons["Delete Permanently"].firstMatch
+        XCTAssertTrue(delete.waitForExistence(timeout: 2))
         delete.tap()
         let confirmation = app.alerts["Delete Permanently?"]
         XCTAssertTrue(confirmation.waitForExistence(timeout: 2))
