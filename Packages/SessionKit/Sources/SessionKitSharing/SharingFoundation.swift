@@ -504,7 +504,9 @@ public enum SpokenMarginsPackageImporter {
             importedAt: importedAt,
             sourceResolutionStatus: itemResolution.status,
             isEnabled: true,
-            revealMode: manifest.suggestedRevealMode ?? .companion,
+            // The big button plays the episode with a friend's Margins playing in place (2026-10-31, #3059). The
+            // listener turns that off with the auto-play switch; a sender's suggestion doesn't decide it for them.
+            revealMode: .guided,
             listeningMapProposals: contents.listeningMapProposals,
             editionFingerprintSpines: contents.editionFingerprintSpines,
             transcriptPhraseSketches: contents.transcriptPhraseSketches,
