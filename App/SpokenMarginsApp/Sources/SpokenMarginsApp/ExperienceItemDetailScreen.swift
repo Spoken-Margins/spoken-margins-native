@@ -157,10 +157,16 @@ struct ExperienceItemDetailScreen: View {
                 .foregroundStyle(AppColors.text)
                 .fixedSize(horizontal: false, vertical: true)
             if let published = model.selectedItem.publishedDateText {
-                Text(published)
+                Text("Published \(published)")
                     .font(.subheadline)
                     .foregroundStyle(AppColors.secondaryText)
                     .accessibilityIdentifier("item.publishedDate")
+            }
+            if let added = model.selectedItem.addedDateText {
+                Text("Added \(added)")
+                    .font(.subheadline)
+                    .foregroundStyle(AppColors.secondaryText)
+                    .accessibilityIdentifier("item.addedDate")
             }
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 8) { metadataPills }

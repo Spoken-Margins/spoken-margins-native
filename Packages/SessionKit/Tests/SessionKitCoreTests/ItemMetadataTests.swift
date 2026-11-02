@@ -141,4 +141,41 @@ final class ItemMetadataTests: XCTestCase {
         try store.saveItem(old)
         XCTAssertNil(try store.loadItem(id: "legacy").descriptionText)
     }
+
+    // MARK: Date added (#3212)
+
+    private func added(_ iso: String?) -> String? {
+        ItemMetadata.addedDateText(iso.flatMap { ISO8601DateFormatter().date(from: $0) }, now: now, locale: english, timeZone: utc)
+    }
+
+    func testAddedDateReadsAsTheSameLongStyleAsThePublishedDate() {
+        XCTAssertEqual(added("2026-10-03T09:30:00Z"), "October 3, 2026")
+        XCTAssertEqual(added("2026-10-16T11:00:00Z"), date("2026-10-16T11:00:00Z"), "one style for both dates")
+    }
+
+    func testAddedDateIsShownInTheViewersTimeZone() {
+        let tokyo = TimeZone(identifier: "Asia/Tokyo")!
+        let moment = ISO8601DateFormatter().date(from: "2026-10-03T20:00:00Z")
+        XCTAssertEqual(ItemMetadata.addedDateText(moment, now: now, locale: english, timeZone: tokyo), "October 4, 2026")
+    }
+
+    func testAddedDateIsMissingWhenTheItemHasNoneOrOnlyAFutureOrImplausibleOne() {
+        XCTAssertNil(ItemMetadata.addedDateText(nil, now: now, locale: english, timeZone: utc))
+        XCTAssertNil(added("2026-10-30T12:00:00Z"), "a date in the future shows nothing")
+        XCTAssertEqual(added("2026-10-17T12:00:00Z"), "October 17, 2026", "a day of clock skew is still shown")
+        XCTAssertNil(ItemMetadata.addedDateText(Date(timeIntervalSince1970: -1), now: now, locale: english, timeZone: utc))
+    }
+
+    func testDateLinesLabelEachDateAndKeepBothWhenTheyFallOnTheSameDay() {
+        func state(published: String?, addedAt: String?) -> ItemDetailState {
+            ItemDetailState(publishedDateText: published.flatMap { date($0) }, addedDateText: added(addedAt))
+        }
+        XCTAssertEqual(state(published: nil, addedAt: "2026-10-03T09:30:00Z").dateLines, ["Added October 3, 2026"])
+        XCTAssertEqual(state(published: "2026-09-29", addedAt: "2026-10-03T09:30:00Z").dateLines,
+                       ["Published September 29, 2026", "Added October 3, 2026"])
+        XCTAssertEqual(state(published: "2026-10-03", addedAt: "2026-10-03T09:30:00Z").dateLines,
+                       ["Published October 3, 2026", "Added October 3, 2026"])
+        XCTAssertEqual(state(published: "2026-09-29", addedAt: nil).dateLines, ["Published September 29, 2026"])
+        XCTAssertEqual(state(published: nil, addedAt: nil).dateLines, [])
+    }
 }
