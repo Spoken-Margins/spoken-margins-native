@@ -46,7 +46,7 @@ extension Gate1AppModel {
                 diagnostics["mediaPlaybackInterruption"] = "pause_failed:\(error.localizedDescription)"
                 reportWarning("Playback could not be paused cleanly after the audio route changed.")
             }
-        case .endedShouldResume:
+        case .endedResumeRequested:
             guard snapshot.status == .paused, let engine else {
                 diagnostics["mediaPlaybackInterruption"] = "resume_skipped"
                 return
@@ -118,7 +118,7 @@ extension Gate1AppModel {
                 diagnostics["speechPlaybackInterruption"] = "pause_failed:\(error.localizedDescription)"
                 reportWarning("Playback could not be paused cleanly after the audio route changed.")
             }
-        case .endedShouldResume:
+        case .endedResumeRequested:
             guard snapshot.status == .paused, let engine else {
                 noteSpeechInterruptionResume(.skipped)
                 return

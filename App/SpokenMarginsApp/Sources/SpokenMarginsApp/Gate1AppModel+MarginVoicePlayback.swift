@@ -98,8 +98,8 @@ extension Gate1AppModel {
         importedCommentaryAutoPlayTask?.cancel()
         importedCommentaryAutoPlayTask = nil
         pendingImportedCommentary = nil
-        let shouldResume = sharedMarginReturn.promptDismissed()
-        if shouldResume, snapshot.status == .paused {
+        let returnsSource = sharedMarginReturn.promptDismissed()
+        if returnsSource, snapshot.status == .paused {
             resumePlayback()
         }
     }
@@ -132,13 +132,13 @@ extension Gate1AppModel {
         importedCommentaryAutoPlayTask?.cancel()
         importedCommentaryAutoPlayTask = nil
         let cutMomentVoice = endMarginMomentVoiceIfPlaying() // one Margin voice at a time (#1671)
-        let shouldResumeSource = sharedMarginReturn.listenRequested(
+        let returnsSourceAfterVoice = sharedMarginReturn.listenRequested(
             sourceIsPlaying: snapshot.status.isPlaybackActive || cutMomentVoice,
             voiceIsPlaying: playingImportedCommentary != nil
         )
         if snapshot.status.isPlaybackActive { pause() }
         stopInterjectionAudioPlayback()
-        sharedMarginReturn.voiceStarted(returnToSource: shouldResumeSource)
+        sharedMarginReturn.voiceStarted(returnToSource: returnsSourceAfterVoice)
         do {
             try marginVoicePlayer.prepareShared(
                 prompt,
@@ -175,11 +175,11 @@ extension Gate1AppModel {
 
     func stopImportedCommentaryPlayback(resumeSource: Bool) {
         if marginVoiceHeldForRecording?.kind == .shared { marginVoiceHeldForRecording = nil } // nothing is held once the voice is gone (#1672)
-        let shouldResume = sharedMarginReturn.returnsSourceWhenVoiceEnds(resumeSource: resumeSource)
+        let returnsSource = sharedMarginReturn.returnsSourceWhenVoiceEnds(resumeSource: resumeSource)
         stopInterjectionAudioPlayback()
         marginVoicePlayer.forgetSharedMargin()
         sharedMarginReturn.voiceStopped()
-        if shouldResume, snapshot.status == .paused { resumePlayback() }
+        if returnsSource, snapshot.status == .paused { resumePlayback() }
     }
 
     func reconcileImportedCommentary(previous: SessionSnapshot, current: SessionSnapshot) {

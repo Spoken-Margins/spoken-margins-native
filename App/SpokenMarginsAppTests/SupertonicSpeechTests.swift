@@ -5113,7 +5113,7 @@ final class SupertonicSpeechTests: XCTestCase {
             audioPlayerStarter: { _, _ in },
             observesPlayerLifecycle: false,
             fallbackClient: RecordingFallbackAudioClient(),
-            onSystemPause: { pauses.record($0, $1) }
+            onPauseLog: { pauses.record($0, $1) }
         )
         _ = try client.prepareSpeechText("Leaving the app should never pause this without saying why.")
         try client.play(targetId: "system-pause")

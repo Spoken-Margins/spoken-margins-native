@@ -180,7 +180,7 @@ final class HandsFreeMarginCoordinatorTests: XCTestCase {
         XCTAssertTrue(HandsFreeFinishReason.interruption.isCutShort)
         // Saved during the call: the tone waits for the call to end.
         XCTAssertEqual(coordinator.saveCompleted(), [])
-        XCTAssertEqual(coordinator.interruptionEnded(shouldResume: false), [.playTone(.saved)])
+        XCTAssertEqual(coordinator.interruptionEnded(.audioStaysStopped), [.playTone(.saved)])
         XCTAssertEqual(coordinator.toneFinished(.saved), [], "iOS said not to resume")
         XCTAssertEqual(coordinator.phase, .idle)
     }
@@ -190,7 +190,7 @@ final class HandsFreeMarginCoordinatorTests: XCTestCase {
         feed(quiet, for: 0.5)
         feed(voice, for: 0.5)
         XCTAssertEqual(coordinator.interruptionBegan(), [.cancelRecording, .requestFlag])
-        XCTAssertEqual(coordinator.interruptionEnded(shouldResume: true), [.playTone(.flag)])
+        XCTAssertEqual(coordinator.interruptionEnded(.audioMayStart), [.playTone(.flag)])
         XCTAssertEqual(coordinator.toneFinished(.flag), [.resumeSource])
     }
 
@@ -357,7 +357,7 @@ final class HandsFreeMarginCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.speechSeconds, 1.2, accuracy: 0.001)
         XCTAssertEqual(coordinator.interruptionBegan(), [.finishRecording(.interruption)])
         XCTAssertEqual(coordinator.saveCompleted(), [], "the save tone waits for the call to end")
-        XCTAssertEqual(coordinator.interruptionEnded(shouldResume: true), [.playTone(.saved)])
+        XCTAssertEqual(coordinator.interruptionEnded(.audioMayStart), [.playTone(.saved)])
         XCTAssertEqual(coordinator.toneFinished(.saved), [.resumeSource])
 
         // A new silent capture must not inherit the recovered words or the quieter run.
@@ -489,7 +489,7 @@ final class HandsFreeMarginCoordinatorTests: XCTestCase {
         feed(quiet, for: 6)
         XCTAssertEqual(coordinator.phase, .rejoining)
         XCTAssertEqual(coordinator.interruptionBegan(), [])
-        XCTAssertEqual(coordinator.interruptionEnded(shouldResume: true), [.resumeSource])
+        XCTAssertEqual(coordinator.interruptionEnded(.audioMayStart), [.resumeSource])
         XCTAssertEqual(coordinator.phase, .idle)
     }
 
@@ -542,7 +542,7 @@ final class HandsFreeMarginCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.trigger(from: .headphones), [.finishRecording(.press)])
         XCTAssertEqual(coordinator.interruptionBegan(), [])
         XCTAssertEqual(coordinator.saveCompleted(), [], "the save tone would play into the call")
-        XCTAssertEqual(coordinator.interruptionEnded(shouldResume: true), [.playTone(.saved)])
+        XCTAssertEqual(coordinator.interruptionEnded(.audioMayStart), [.playTone(.saved)])
         XCTAssertEqual(coordinator.toneFinished(.saved), [.resumeSource])
         XCTAssertEqual(coordinator.phase, .idle)
     }
@@ -553,7 +553,7 @@ final class HandsFreeMarginCoordinatorTests: XCTestCase {
         feed(voice, for: 2)
         XCTAssertEqual(coordinator.trigger(from: .headphones), [.finishRecording(.press)])
         XCTAssertEqual(coordinator.interruptionBegan(), [])
-        XCTAssertEqual(coordinator.interruptionEnded(shouldResume: false), [], "the Margin is not stored yet")
+        XCTAssertEqual(coordinator.interruptionEnded(.audioStaysStopped), [], "the Margin is not stored yet")
         XCTAssertEqual(coordinator.saveCompleted(), [.playTone(.saved)])
         XCTAssertEqual(coordinator.toneFinished(.saved), [], "iOS said not to resume")
         XCTAssertEqual(coordinator.phase, .idle)
@@ -728,14 +728,14 @@ final class HandsFreeMarginCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.interruptionBegan(), [.requestFlag])
         XCTAssertEqual(coordinator.toneFinished(.start), [], "the microphone stays closed during the call")
         XCTAssertEqual(coordinator.phase, .saving)
-        XCTAssertEqual(coordinator.interruptionEnded(shouldResume: true), [.playTone(.flag)])
+        XCTAssertEqual(coordinator.interruptionEnded(.audioMayStart), [.playTone(.flag)])
         XCTAssertEqual(coordinator.toneFinished(.flag), [.resumeSource])
         XCTAssertEqual(coordinator.phase, .idle)
 
         clock.advance(1)
         XCTAssertEqual(coordinator.trigger(from: .headphones), [.pauseSource, .playTone(.start)])
         XCTAssertEqual(coordinator.interruptionBegan(), [.requestFlag])
-        XCTAssertEqual(coordinator.interruptionEnded(shouldResume: false), [.playTone(.flag)])
+        XCTAssertEqual(coordinator.interruptionEnded(.audioStaysStopped), [.playTone(.flag)])
         XCTAssertEqual(coordinator.toneFinished(.flag), [], "iOS said not to resume")
     }
 

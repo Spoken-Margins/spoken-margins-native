@@ -84,12 +84,12 @@ final class LiveActivityLifecycleTests: XCTestCase {
         _ = lifecycle.observe(sessionId: "s1", isListening: true, isPaused: false, now: start)
         // Another app (Spotify, Music) takes the audio: the app pauses, then the interruption ends without resume.
         _ = lifecycle.observe(sessionId: "s1", isListening: false, isPaused: true, now: start.addingTimeInterval(1))
-        XCTAssertEqual(lifecycle.audioInterruptionEnded(shouldResume: false), .end(.interruptionWithoutResume))
+        XCTAssertEqual(lifecycle.audioInterruptionEnded(.audioStaysStopped), .end(.interruptionWithoutResume))
         XCTAssertEqual(
             lifecycle.observe(sessionId: "s1", isListening: false, isPaused: true, now: start.addingTimeInterval(2)),
             .hidden(.interruptionWithoutResume)
         )
-        XCTAssertNil(lifecycle.audioInterruptionEnded(shouldResume: false), "ending twice does nothing")
+        XCTAssertNil(lifecycle.audioInterruptionEnded(.audioStaysStopped), "ending twice does nothing")
     }
 
     func testPhoneCallThatEndsWithResumeKeepsTheActivity() {
@@ -100,7 +100,7 @@ final class LiveActivityLifecycleTests: XCTestCase {
             lifecycle.observe(sessionId: "s1", isListening: false, isPaused: true, now: callStarted),
             .show(staleDate: callStarted.addingTimeInterval(limit))
         )
-        XCTAssertNil(lifecycle.audioInterruptionEnded(shouldResume: true))
+        XCTAssertNil(lifecycle.audioInterruptionEnded(.audioMayStart))
         XCTAssertEqual(
             lifecycle.observe(sessionId: "s1", isListening: false, isPaused: true, now: callStarted.addingTimeInterval(300)),
             .show(staleDate: callStarted.addingTimeInterval(limit)),
@@ -227,8 +227,8 @@ final class LiveActivityLifecycleTests: XCTestCase {
 
     func testInterruptionWhileListeningOrWithoutASessionChangesNothing() {
         var lifecycle = LiveActivityLifecycle()
-        XCTAssertNil(lifecycle.audioInterruptionEnded(shouldResume: false), "no session")
+        XCTAssertNil(lifecycle.audioInterruptionEnded(.audioStaysStopped), "no session")
         _ = lifecycle.observe(sessionId: "s1", isListening: true, isPaused: false, now: start)
-        XCTAssertNil(lifecycle.audioInterruptionEnded(shouldResume: false), "already playing again")
+        XCTAssertNil(lifecycle.audioInterruptionEnded(.audioStaysStopped), "already playing again")
     }
 }

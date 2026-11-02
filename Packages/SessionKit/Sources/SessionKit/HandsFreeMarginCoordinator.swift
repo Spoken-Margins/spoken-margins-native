@@ -308,9 +308,9 @@ public final class HandsFreeMarginCoordinator {
         }
     }
 
-    /// The call ended. `shouldResume` is iOS's answer; the source resumes only when it says so.
-    public func interruptionEnded(shouldResume: Bool) -> [HandsFreeMarginCommand] {
-        guard phase == .saving, resumeIntent.callEnded(shouldResume: shouldResume) else { return [] }
+    /// The call ended. `end` is iOS's answer; the source resumes only when it says audio may start again.
+    public func interruptionEnded(_ end: InterruptionEnd) -> [HandsFreeMarginCommand] {
+        guard phase == .saving, resumeIntent.callEnded(end) else { return [] }
         return settle()
     }
 

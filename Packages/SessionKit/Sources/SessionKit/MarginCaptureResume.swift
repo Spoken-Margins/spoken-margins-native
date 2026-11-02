@@ -207,9 +207,9 @@ struct InterruptedCaptureResume: Equatable {
 
     /// The call ended. True when the source resumes: iOS says it should, no Margin is recording, and the source is
     /// still where the Margin left it. Spends the wait either way.
-    mutating func ended(shouldResume: Bool, recordedSeconds: TimeInterval?, pausedSource: InterruptedSourceMark?) -> Bool {
+    mutating func ended(_ end: InterruptionEnd, recordedSeconds: TimeInterval?, pausedSource: InterruptedSourceMark?) -> Bool {
         defer { state = .none }
-        guard case .at(let mark) = state, shouldResume, recordedSeconds == nil,
+        guard case .at(let mark) = state, end.iosAllowsAudioToStart, recordedSeconds == nil,
               let pausedSource, pausedSource == mark else { return false }
         return true
     }
@@ -251,10 +251,10 @@ struct HandsFreeCaptureResume: Equatable {
 
     /// The call ended. Returns false when no call was being waited for (nothing changes). Otherwise the wait is spent and
     /// the source resumes only if it still would have and iOS says it should.
-    mutating func callEnded(shouldResume: Bool) -> Bool {
+    mutating func callEnded(_ end: InterruptionEnd) -> Bool {
         guard isWaitingForCallToEnd else { return false }
         isWaitingForCallToEnd = false
-        resumesSource = resumesSource && shouldResume
+        resumesSource = resumesSource && end.iosAllowsAudioToStart
         return true
     }
 
