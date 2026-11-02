@@ -32,7 +32,18 @@ function newId(): string {
  */
 function LandingOffer({ landing }: { landing?: Landing }) {
   const player = usePlayer();
-  const label = landingOffer(landing, { episodeId: player.episode?.id, playing: player.playing, loading: player.loading });
+  // The landing that has played: a new file's landing offers again.
+  const [playedLanding, setPlayedLanding] = useState<Landing>();
+  const playingLanding = Boolean(landing && player.playing && player.episode?.id === landing.episodeId);
+  useEffect(() => {
+    if (playingLanding) setPlayedLanding(landing);
+  }, [playingLanding, landing]);
+  const label = landingOffer(landing, {
+    episodeId: player.episode?.id,
+    playing: player.playing,
+    played: playedLanding !== undefined && playedLanding === landing,
+    loading: player.loading,
+  });
   if (!landing || !label) return null;
   return (
     <p className="landing-offer">

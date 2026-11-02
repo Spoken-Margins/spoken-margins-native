@@ -116,13 +116,14 @@ export interface Landing {
 
 /**
  * The words on Now Playing's offer to start, for when a browser won't start the audio by itself after a file opens
- * (the file was read, but nobody tapped Play). Undefined once it plays, while the audio loads, and when Now Playing
- * shows another episode.
+ * (the file was read, but nobody tapped Play). Undefined while it plays, for good once it has played since the file
+ * opened (a later pause, or a friend's clip the browser blocked, is not a refused start; #3254), while the audio
+ * loads, and when Now Playing shows another episode.
  */
 export function landingOffer(
   landing: Landing | undefined,
-  now: { episodeId: string | undefined; playing: boolean; loading: boolean },
+  now: { episodeId: string | undefined; playing: boolean; played: boolean; loading: boolean },
 ): string | undefined {
-  if (!landing || now.playing || now.loading || now.episodeId !== landing.episodeId) return undefined;
+  if (!landing || now.playing || now.played || now.loading || now.episodeId !== landing.episodeId) return undefined;
   return `Play from the first Margin, at ${formatClock(landing.at)}`;
 }
