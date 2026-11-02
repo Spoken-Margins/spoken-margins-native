@@ -168,16 +168,20 @@ extension Gate1AppModel {
     /// Its voice started playing, so the shared Margin is no longer new to this listener (#469). The screen shows it as
     /// heard at once; the row is written off the main thread (#2509), and the screen takes the stored copy when the
     /// write lands. A failed write is read back, so the screen never keeps a mark the store doesn't have.
+    /// The write runs at the listener's priority, not `.utility`: it follows their own playback, and on the test lane a
+    /// `.utility` write queued behind other background work missed a 10 s wait while a source played (#3195).
     func markSharedMarginHeard(_ margin: ImportedCommentaryInterjection) {
         guard margin.isNewToListener, let store else { return }
         let shown = SharedMarginHearing.heard(margin, at: Date())
         showSharedMarginHeard(shown)
-        Task.detached(priority: .utility) { [weak self] in
+        Task { [weak self] in
             do {
-                let stored = try await StoreReader(store).read { try $0.markImportedCommentaryInterjectionHeard(id: shown.id, at: shown.firstHeardAt ?? Date()) }
-                await self?.sharedMarginHeardWritten(stored)
+                let stored = try await StoreReader(store).read(priority: .userInitiated) {
+                    try $0.markImportedCommentaryInterjectionHeard(id: shown.id, at: shown.firstHeardAt ?? Date())
+                }
+                self?.sharedMarginHeardWritten(stored)
             } catch {
-                await self?.sharedMarginHeardFailed(shown.id, error)
+                self?.sharedMarginHeardFailed(shown.id, error)
             }
         }
     }

@@ -502,10 +502,10 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         model.stopInterjectionAudioPlayback()
     }
 
-    private func waitUntil(_ what: String, timeout: TimeInterval = 5, _ condition: () throws -> Bool) throws {
+    private func waitUntil(_ what: @autoclosure () -> String, timeout: TimeInterval = 5, _ condition: () throws -> Bool) throws {
         let deadline = Date().addingTimeInterval(timeout)
         while try !condition() {
-            guard Date() < deadline else { return XCTFail("timed out waiting until \(what)") }
+            guard Date() < deadline else { return XCTFail("timed out waiting until \(what())") }
             RunLoop.main.run(until: Date().addingTimeInterval(0.05))
         }
     }
@@ -524,7 +524,7 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         XCTAssertNil(try fixture.storedRecord()?.firstHeardAt, "the lead-in alone isn't hearing it")
         model.playMarginMomentNow()
         XCTAssertEqual(model.sharedMarginRows.first { $0.interjection.id == fixture.record.id }?.isNew, false, "shown as heard at once")
-        try waitUntil("its voice started and the mark is stored") { try fixture.storedRecord()?.firstHeardAt != nil } // written off the main thread (#2509)
+        try waitUntil("its voice started and the mark is stored; \(fixture.heardWriteNote())") { try fixture.storedRecord()?.firstHeardAt != nil } // written off the main thread (#2509)
         XCTAssertNil(model.diagnostics["marginMoment.chime"], "a muted layer's Margin plays with no chime (#932)")
     }
 
@@ -540,9 +540,9 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         defer { model.endMarginMoment(); model.pause() }
         XCTAssertEqual(model.marginMoment?.isReview, true)
         XCTAssertEqual(model.screen, .playback)
-        try waitUntil("the first Margin's voice plays", timeout: 10) { try fixture.storedRecord("note")?.firstHeardAt != nil }
+        try waitUntil("the first Margin's voice plays; \(fixture.heardWriteNote("note"))", timeout: 10) { try fixture.storedRecord("note")?.firstHeardAt != nil }
         XCTAssertNil(try fixture.storedRecord("note2")?.firstHeardAt, "the second waits its turn")
-        try waitUntil("the second Margin's voice plays", timeout: 15) { try fixture.storedRecord("note2")?.firstHeardAt != nil }
+        try waitUntil("the second Margin's voice plays; \(fixture.heardWriteNote("note2"))", timeout: 15) { try fixture.storedRecord("note2")?.firstHeardAt != nil }
         let first = try XCTUnwrap(try fixture.storedRecord("note")?.firstHeardAt)
         let second = try XCTUnwrap(try fixture.storedRecord("note2")?.firstHeardAt)
         XCTAssertLessThan(first, second, "heard in the order they sit in the episode")
@@ -854,14 +854,14 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         let model = fixture.model
         model.markSharedMarginHeard(fixture.record)
         // This fixture's selected item is another one, so `newSharedMargins` reads the store, where the mark lands off the main thread (#2509).
-        try waitUntil("the heard mark is stored") { try fixture.storedRecord()?.firstHeardAt != nil }
+        try waitUntil("the heard mark is stored; \(fixture.heardWriteNote())") { try fixture.storedRecord()?.firstHeardAt != nil }
         XCTAssertEqual(model.newSharedMargins(itemId: "real-source").map(\.interjection.id), ["note2"])
 
         model.reviewNewMargins(itemId: "real-source", thenContinue: false)
         defer { model.endMarginMoment(); model.pause() }
         XCTAssertLessThan(model.snapshot.currentMediaTimeMs ?? 0, 1_000, "the review plays through the heard Margin at 1 s")
         var offered: String?
-        try waitUntil("the new Margin's voice plays", timeout: 10) {
+        try waitUntil("the new Margin's voice plays; \(fixture.heardWriteNote("note2"))", timeout: 10) {
             offered = offered ?? model.pendingImportedCommentary?.interjection.id
             return try fixture.storedRecord("note2")?.firstHeardAt != nil
         }
@@ -1063,7 +1063,7 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         model.playMarginMomentNow()
         XCTAssertEqual(model.diagnostics["marginMoment.chime"], "played:shared::received::note", "the chime plays first")
         XCTAssertNil(try fixture.storedRecord()?.firstHeardAt, "their voice waits for the chime")
-        try waitUntil("their voice follows the chime") { try fixture.storedRecord()?.firstHeardAt != nil }
+        try waitUntil("their voice follows the chime; \(fixture.heardWriteNote())") { try fixture.storedRecord()?.firstHeardAt != nil }
         XCTAssertNil(model.pendingImportedCommentary, "the automatic prompt adds no second cue for the same Margin")
     }
 
@@ -1103,7 +1103,7 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         XCTAssertNotNil(model.marginMoment?.playing, "the Margin is still waiting, not consumed")
 
         model.playPause()
-        try waitUntil("Play starts their voice") { try fixture.storedRecord()?.firstHeardAt != nil } // written off the main thread (#2509)
+        try waitUntil("Play starts their voice; \(fixture.heardWriteNote())") { try fixture.storedRecord()?.firstHeardAt != nil } // written off the main thread (#2509)
     }
 
     /// #866 (found on the phone): Add Margin while a shared Margin's moment plays its voice used to be refused.
@@ -1602,6 +1602,14 @@ private struct SharedMarginHearingFixture {
 
     func storedRecord(_ id: String? = nil) throws -> ImportedCommentaryInterjection? {
         try store.loadImportedCommentaryInterjections(layerId: layer.id).first { $0.id == (id ?? record.id) }
+    }
+
+    /// What a timed-out wait for a stored heard mark reports, so a lane failure says whether the write failed or never
+    /// ran (#3195).
+    func heardWriteNote(_ id: String? = nil) -> String {
+        let id = id ?? record.id
+        let shown = model.sharedMarginRows.first { $0.interjection.id == id }.map { $0.isNew ? "shown new" : "shown heard" } ?? "no row"
+        return "\(shown), write: \(model.diagnostics["sharedMarginHeard:\(id)"] ?? "no failure recorded")"
     }
 
     func cleanUp() {
