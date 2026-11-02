@@ -102,6 +102,44 @@ final class SharedPodcastResolutionPolicyTests: XCTestCase {
         }
     }
 
+    /// The sharing-kit HPR packet's page link is the mp3 itself, so the real resolver returns a bare file whose title
+    /// is the file name. The friend must see the sender's title, never "hpr4736" (#3262).
+    func testAPacketWhoseLinkIsTheAudioFileNamesTheEpisodeByItsTitleNotItsFileName() throws {
+        let file = "https://hpr.nyc3.cdn.digitaloceanspaces.com/eps/hpr4736/hpr4736.mp3"
+        let title = "HPR4736: How to replace the battery in a car key fob"
+        let item = packet(canonical: file, title: title, enclosure: file)
+        let link = SourceLink(url: file, provider: "direct_audio", title: "hpr4736", role: "audio_file")
+        let direct = LinkResolutionCandidate(sourceLink: link, title: "hpr4736", audioURL: file, confidence: 1)
+        let resolved = LinkResolutionResult(requestId: "r", status: .playable, originalLink: link, selectedCandidate: direct, candidates: [direct])
+        let settled = try SharedPodcastResolutionPolicy.settle(resolved, item: item, request: request).result
+        XCTAssertEqual(settled.selectedCandidate?.title, title)
+        XCTAssertEqual(settled.selectedCandidate?.sourceLink.title, title, "the Library byline falls back to this")
+        XCTAssertEqual(settled.selectedCandidate?.showTitle, "Example Show")
+        XCTAssertEqual(settled.originalLink.title, title)
+        XCTAssertEqual(settled.candidates.map(\.title), [title])
+        XCTAssertEqual(settled.selectedCandidate?.audioURL, file, "only the name changes")
+    }
+
+    /// Neighbouring inputs: a feed that reports the file name or ID as the title is also a bare ID; a real title,
+    /// a title that only contains the ID, and a blank packet title are left alone.
+    func testOnlyAFileNameShapedTitleIsReplacedByThePacketTitle() throws {
+        let file = "https://cdn.example.com/eps/hpr4736/hpr4736.mp3"
+        let title = "HPR4736: How to replace the battery"
+        func settle(resolvedTitle: String, provider: String = "rss", packetTitle: String = title) throws -> String {
+            let link = SourceLink(url: "https://podcast.example.com/feed.xml", provider: provider, role: "canonical_feed")
+            let resolvedCandidate = LinkResolutionCandidate(sourceLink: link, title: resolvedTitle, audioURL: file, confidence: 1)
+            let resolved = LinkResolutionResult(requestId: "r", status: .playable, originalLink: link, selectedCandidate: resolvedCandidate, candidates: [resolvedCandidate])
+            let item = packet(canonical: "https://podcast.example.com/eps/4736", title: packetTitle, enclosure: file)
+            return try XCTUnwrap(SharedPodcastResolutionPolicy.settle(resolved, item: item, request: request).result.selectedCandidate?.title)
+        }
+        for idLike in ["hpr4736", "HPR4736", "hpr 4736", "hpr-4736", " hpr4736 "] {
+            XCTAssertEqual(try settle(resolvedTitle: idLike), title, idLike)
+        }
+        XCTAssertEqual(try settle(resolvedTitle: "HPR4736: Feed's own title"), "HPR4736: Feed's own title")
+        XCTAssertEqual(try settle(resolvedTitle: "Battery"), "Battery")
+        XCTAssertEqual(try settle(resolvedTitle: "hpr4736", packetTitle: "  "), "hpr4736", "nothing better to show")
+    }
+
     func testNonReviewResultsRemainUnchanged() throws {
         for status in [LinkResolutionStatus.playable, .unsupported, .resolving] {
             var original = review([candidate("Other", audio: nil)])
