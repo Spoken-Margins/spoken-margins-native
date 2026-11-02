@@ -10,6 +10,13 @@ public struct ItemDetailState: Equatable, Sendable {
     public var externalReference = ""
     /// The feed's publication date as a readable date, and the opening of its description (#1322). Nil when unknown.
     public var publishedDateText: String?
+    /// The day the item was added, as a readable date (#3212). Nil when the item has no usable `createdAt`.
+    public var addedDateText: String?
+    /// The header's date lines, each with its label so VoiceOver reads which date it is (#3212):
+    /// "Published <date>" when the feed gave one, then "Added <date>".
+    public var dateLines: [String] {
+        [publishedDateText.map { "Published \($0)" }, addedDateText.map { "Added \($0)" }].compactMap { $0 }
+    }
     public var descriptionText: String?
     public var externalReferenceType = ""
     public var overview = ""
@@ -57,6 +64,7 @@ public struct ItemDetailState: Equatable, Sendable {
         text: String = "",
         externalReference: String = "",
         publishedDateText: String? = nil,
+        addedDateText: String? = nil,
         descriptionText: String? = nil,
         externalReferenceType: String = "",
         overview: String = "",
@@ -84,6 +92,7 @@ public struct ItemDetailState: Equatable, Sendable {
         self.text = text
         self.externalReference = externalReference
         self.publishedDateText = publishedDateText
+        self.addedDateText = addedDateText
         self.descriptionText = descriptionText
         self.externalReferenceType = externalReferenceType
         self.overview = overview

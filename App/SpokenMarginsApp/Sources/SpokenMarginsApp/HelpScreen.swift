@@ -86,7 +86,7 @@ struct HelpScreen: View {
                     Text("For Safari’s Share menu, run the Add Article to Spoken Margins Shortcut. In the app, the Link field takes podcast episodes, RSS feeds, audio files, web articles and PDF links.")
                 }
                 Section("Files and PDFs") {
-                    Text("In the Library, tap Add, then Document or Book. You can also share a PDF, Markdown file, or text file to Spoken Margins from another app.")
+                    Text("In the Library, tap Add, then Import from Files. You can also share a PDF, Markdown file, or text file to Spoken Margins from another app.")
                     Text("PDFs must contain extractable text. Image-only or scanned PDFs need OCR before Spoken Margins can import them.")
                 }
                 Section("Podcast Links") {

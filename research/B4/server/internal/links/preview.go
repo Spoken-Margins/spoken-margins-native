@@ -59,3 +59,42 @@ func Render(w io.Writer, id string, installURL string) error {
 		Policies   []PolicyLink
 	}{id, installURL, PolicyLinks})
 }
+
+// Unavailable is why a share page has nothing to show. Not found, expired and taken down share one
+// wording (the 2026-10-20 rule: never name the category of a takedown), so a friend cannot tell them apart.
+type Unavailable int
+
+const (
+	UnavailableGone Unavailable = iota
+	UnavailablePaused
+	UnavailableError
+)
+
+var unavailableWords = map[Unavailable]struct{ Heading, Body string }{
+	UnavailableGone:   {"This link isn't available", "It may have expired, or been removed. Ask your friend to share it again."},
+	UnavailablePaused: {"Shared links are paused", "Try this link again later, or ask your friend to send the Margins another way."},
+	UnavailableError:  {"Something went wrong", "Try this link again in a moment."},
+}
+
+var unavailable = template.Must(template.New("unavailable").Parse(`<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><title>{{.Heading}} — Spoken Margins</title>
+<style>body{font:17px/1.6 system-ui,sans-serif;margin:0;background:#faf9f6;color:#252524}main{max-width:42rem;margin:auto;padding:1.5rem}a{color:#305d78}small{color:#555}</style></head>
+<body><main><header><p>Spoken Margins</p><h1>{{.Heading}}</h1></header><p>{{.Body}}</p>{{if .InstallURL}}<p><a href="{{.InstallURL}}" rel="noreferrer noopener">Install Spoken Margins (App Store / TestFlight)</a></p>{{end}}
+<footer><p>{{range $i, $l := .Policies}}{{if $i}} · {{end}}<a href="{{$l.Path}}">{{$l.Title}}</a>{{end}}</p></footer>
+</main></body></html>`))
+
+// RenderUnavailable writes the plain page a browser gets when a share link can't be shown. The install link
+// is left out when it isn't a valid one, as it is when the service is off for that reason.
+func RenderUnavailable(w io.Writer, reason Unavailable, installURL string) error {
+	words, ok := unavailableWords[reason]
+	if !ok {
+		return errors.New("links: unknown unavailable reason")
+	}
+	if !ValidInstallURL(installURL) {
+		installURL = ""
+	}
+	return unavailable.Execute(w, struct {
+		Heading, Body, InstallURL string
+		Policies                  []PolicyLink
+	}{words.Heading, words.Body, installURL, PolicyLinks})
+}

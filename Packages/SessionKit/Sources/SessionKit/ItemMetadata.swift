@@ -24,6 +24,20 @@ public enum ItemMetadata {
         return formatter.string(from: parsed.date)
     }
 
+    /// A readable date for `Item.createdAt`, the day the item was added (#3212). Nil when the item has no
+    /// date, one before 1970, or one more than two days after `now` (a clock set wrong shows nothing rather
+    /// than a date in the future). The same style as `publishedDateText`, shown in the viewer's time zone.
+    public static func addedDateText(_ added: Date?, now: Date = Date(),
+                                     locale: Locale = .current, timeZone: TimeZone = .current) -> String? {
+        guard let added, added.timeIntervalSince1970 >= 0, added <= now.addingTimeInterval(2 * 86_400) else { return nil }
+        let formatter = DateFormatter()
+        formatter.locale = locale
+        formatter.dateStyle = .long
+        formatter.timeStyle = .none
+        formatter.timeZone = timeZone
+        return formatter.string(from: added)
+    }
+
     /// The moment `Item.publishedAt` names, for ordering the Library by it. Nil for the same text
     /// `publishedDateText` refuses, so an item with no usable date sorts as undated (#1867).
     public static func publishedDate(_ raw: String?, now: Date = Date()) -> Date? {

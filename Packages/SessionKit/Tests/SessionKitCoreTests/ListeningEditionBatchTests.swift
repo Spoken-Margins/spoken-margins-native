@@ -90,6 +90,48 @@ final class ListeningEditionBatchTests: XCTestCase {
         XCTAssertEqual(lookup.map(\.outcome), [.failed("The saved edition could not be read."), .imported])
     }
 
+    /// The async run gives the lines the sync run does, taking entries one at a time in order, with a real suspension
+    /// in every lookup and import (#2510).
+    func testRunAsyncMatchesRunWhenEveryLookupAndImportWaits() async throws {
+        let store = Store()
+        let kept = edition("Kept", text: "Source already in the Library")
+        store.saved[kept.itemID] = kept
+        let twice = edition("Twice", text: "One source")
+        var conflicting = kept
+        conflicting.scenes[0].summary = "A different map for the same source"
+        let entries = [
+            ListeningEditionBatch.Entry(id: 0, name: "a.json", edition: twice),
+            ListeningEditionBatch.Entry(id: 1, name: "broken.json", error: "Not an edition."),
+            ListeningEditionBatch.Entry(id: 2, name: "b.json", edition: twice),
+            ListeningEditionBatch.Entry(id: 3, name: "c.json", edition: conflicting),
+        ]
+        let other = Store()
+        other.saved[kept.itemID] = kept
+        let lines = await ListeningEditionBatch.runAsync(entries, existing: { edition in
+            await Task.yield()
+            return other.existing(edition)
+        }, importOne: { edition in
+            await Task.yield()
+            other.importOne(edition)
+        })
+        let sync = Store()
+        sync.saved[kept.itemID] = kept
+        let reference = ListeningEditionBatch.run(entries, existing: sync.existing, importOne: sync.importOne)
+        XCTAssertEqual(lines, reference)
+        XCTAssertEqual(lines.map(\.outcome), [.imported, .failed("Not an edition."), .alreadyImported, .keptExistingMap])
+        XCTAssertEqual(other.imported, ["Twice"])
+    }
+
+    func testRunAsyncMakesAThrowingLookupOrImportThatFilesLineOnly() async throws {
+        struct Refused: LocalizedError { var errorDescription: String? { "Pause playback first." } }
+        let one = edition("One", text: "First source"), two = edition("Two", text: "Second source")
+        let lines = await ListeningEditionBatch.runAsync(
+            [.init(id: 0, name: "one.json", edition: one), .init(id: 1, name: "two.json", edition: two)],
+            existing: { if $0.title == "One" { throw Refused() }; return .none },
+            importOne: { _ in })
+        XCTAssertEqual(lines.map(\.outcome), [.failed("Pause playback first."), .imported])
+    }
+
     func testEntryDetailShowsTitleAndSceneCountOrTheDecodeError() throws {
         let one = edition("Chapter one", text: "Body")
         XCTAssertEqual(ListeningEditionBatch.Entry(id: 0, name: "a.json", data: try one.encoded()).detail, "Chapter one · 1 scene")
