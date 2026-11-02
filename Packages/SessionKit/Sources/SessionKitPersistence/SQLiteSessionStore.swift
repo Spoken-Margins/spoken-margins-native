@@ -211,7 +211,7 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
                try liveRecordExists(sql: "SELECT 1 FROM records WHERE kind = ? AND item_id = ? LIMIT 1;", values: [row.kind, itemId]) { return false }
         case "imported_commentary_layer":
             // The same packet imported again while this layer was set aside is already in the Library.
-            if try liveRecordExists(sql: "SELECT 1 FROM records WHERE kind = 'imported_commentary_layer' AND json_extract(payload, '$.packageDigest') = (SELECT json_extract(?, '$.packageDigest')) LIMIT 1;", values: [row.payload]) { return false }
+            if try liveRecordExists(sql: "SELECT 1 FROM records WHERE kind = 'imported_commentary_layer' AND CASE WHEN json_valid(payload) THEN json_extract(payload, '$.packageDigest') = (SELECT json_extract(?, '$.packageDigest')) ELSE 0 END LIMIT 1;", values: [row.payload]) { return false }
         case "imported_commentary_interjection":
             // Its layer is restored first. One that isn't in the Library leaves the Margin set aside.
             if try !liveRecordExists(sql: "SELECT 1 FROM records WHERE kind = 'imported_commentary_layer' AND id = json_extract(?, '$.layerId') LIMIT 1;", values: [row.payload]) { return false }

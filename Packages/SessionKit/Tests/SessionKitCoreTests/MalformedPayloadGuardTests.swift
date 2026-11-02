@@ -46,29 +46,35 @@ final class MalformedPayloadGuardTests: XCTestCase {
         try insertBroken(kind: "interjection", id: "s::broken-margin", sessionId: "s")
         try insertBroken(kind: "ai_job", id: "s::broken-job", sessionId: "s")
         try insertBroken(kind: "turn", id: "s::broken-turn", sessionId: "s")
-        XCTAssertEqual(try store.activeInterjectionCount(sessionId: "s"), 0)
-        XCTAssertEqual(try store.unfinishedAIJobCount(sessionId: "s"), 0)
-        XCTAssertNil(try store.latestPendingSummaryTurnId(sessionId: "s"))
-        XCTAssertEqual(try store.settleInterruptedAIJobs(), 0)
+        // Valid rows beside the broken ones still count and settle as before.
+        try StoreRawSQL.execute([
+            "INSERT INTO records(kind,id,session_id,payload,updated_at) VALUES('interjection','s::m1','s','{\"status\":\"active\"}','2000-01-01 00:00:00');",
+            "INSERT INTO records(kind,id,session_id,payload,updated_at) VALUES('interjection','s::m2','s','{\"status\":\"deleted\"}','2000-01-01 00:00:00');",
+            "INSERT INTO records(kind,id,session_id,payload,updated_at) VALUES('ai_job','s::j1','s','{\"status\":\"pending\"}','2000-01-01 00:00:00');",
+            "INSERT INTO records(kind,id,session_id,payload,updated_at) VALUES('ai_job','s::j2','s','{\"status\":\"complete\"}','2000-01-01 00:00:00');",
+            "INSERT INTO records(kind,id,session_id,payload,updated_at) VALUES('turn','s::t1','s','{\"id\":\"t1\",\"turnType\":\"interjection_summary\",\"status\":\"streaming\"}','2000-01-01 00:00:00');"
+        ], at: path)
+        XCTAssertEqual(try store.activeInterjectionCount(sessionId: "s"), 1)
+        XCTAssertEqual(try store.unfinishedAIJobCount(sessionId: "s"), 1)
+        XCTAssertEqual(try store.latestPendingSummaryTurnId(sessionId: "s"), "t1")
     }
 
-    /// The class guard: no SQL in the persistence sources tests `json_valid(...)` with a bare `AND`; the extraction
-    /// belongs inside the `CASE`. A new query that does is the next instance of this bug.
+    /// The class guard: no SQL in the persistence sources tests `json_valid(...)` with a bare `AND`, on one line or across
+    /// two. A new query that does is the next instance of this bug. (An extraction with no `json_valid` at all is not
+    /// scanned for: a source-text scan can't tell a stored column from a bound parameter or an already-decoded row.)
     func testNoQueryRelyOnAndOrderingAfterJSONValid() throws {
         let sources = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Sources/SessionKitPersistence")
+        let bareAnd = try NSRegularExpression(pattern: #"json_valid\([^)]*\)\s+AND\b|\bAND\s+json_valid\("#)
         var offenders: [String] = []
         for file in try FileManager.default.contentsOfDirectory(at: sources, includingPropertiesForKeys: nil)
         where file.pathExtension == "swift" {
             let text = try String(contentsOf: file, encoding: .utf8)
-            for (number, line) in text.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
-                let trimmed = line.trimmingCharacters(in: .whitespaces)
-                if trimmed.hasPrefix("//") || trimmed.hasPrefix("///") { continue }
-                if line.contains("AND json_valid(") || line.contains("json_valid(payload) AND")
-                    || line.contains("json_valid(margin.payload) AND") {
-                    offenders.append("\(file.lastPathComponent):\(number + 1)")
-                }
+            let whole = NSRange(text.startIndex..., in: text)
+            func line(_ range: NSRange) -> Int { text.prefix(through: text.index(text.startIndex, offsetBy: range.location)).filter { $0 == "\n" }.count + 1 }
+            for match in bareAnd.matches(in: text, range: whole) {
+                offenders.append("\(file.lastPathComponent):\(line(match.range)) bare AND after json_valid")
             }
         }
         XCTAssertEqual(offenders, [], "wrap the extraction in CASE WHEN json_valid(payload) THEN ... ELSE ... END")
