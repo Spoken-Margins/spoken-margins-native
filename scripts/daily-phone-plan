@@ -233,13 +233,17 @@ def validate(request, plan_id):
     return json.loads(result.stdout)
 
 
+class RelayNotConfigured(RuntimeError):
+    """No project-chat relay URL or token: the plan still reaches the owner by Mac notification (#2372)."""
+
+
 def relay(message):
     # Same authenticated project-chat relay contract as ops/lane/sm_lane_open.py.
     import urllib.request
     url = os.environ.get('SM_DAILY_RELAY_URL') or os.environ.get('SM_LANE_OPEN_URL')
     token = os.environ.get('SM_DAILY_RELAY_TOKEN') or os.environ.get('SM_LANE_OPEN_TOKEN')
     if not url or not token:
-        raise RuntimeError('project-chat relay is not configured')
+        raise RelayNotConfigured('project-chat relay is not configured')
     req = urllib.request.Request(url, data=json.dumps({'text': message}).encode(), method='POST', headers={
         'Authorization': f'Bearer {token}', 'Content-Type': 'application/json',
         'anthropic-beta': 'experimental-cc-routine-2026-04-01', 'anthropic-version': '2023-06-01'})
@@ -353,15 +357,24 @@ def deliver(now, state, state_path, on_request=False):
                'Resolve blocked checks. Accept one pasted reply; run scripts/daily-phone-plan --results <reply-file> '
                'to close explicit passes and file failures as found-on-phone. Never infer PASS from silence.\n\n'
                + record['markdown'] + '\n' + '\n'.join(record.get('cost_alarms', [])))
-    # Persist each delivery channel separately, so a notification failure cannot duplicate chat.
-    if not record.get('chat_sent'):
-        relay(message)
-        record['chat_sent'] = True
-        atomic(archive / 'plan.json', record)
+    # Persist each delivery channel separately, so one channel's failure cannot repeat the other.
+    # The Mac notification goes first: it needs no network, never fails, and is how the owner learns
+    # a plan is ready when the chat relay is missing or down (#2372).
     if not record.get('notified'):
         phone.notify('Spoken Margins: daily phone pass', f'Build {sha[:7]} ready: about {record["minutes"]} minutes. '
                      'Open "Install Spoken Margins on iPhone" on the Desktop.')
         record['notified'] = True
+        atomic(archive / 'plan.json', record)
+    if not record.get('chat_sent') and not record.get('chat_skipped'):
+        try:
+            relay(message)
+            record['chat_sent'] = True
+        except RelayNotConfigured as error:
+            # Not a failure of this plan: no coordinator will post it, so the owner has the notification
+            # and the plan file. Say so in the log; do not hold the slot or the pin.
+            print(f'{name}: {error}; the owner was notified by the Mac instead. Plan: {folder / "test-plan.md"}',
+                  file=sys.stderr)
+            record['chat_skipped'] = str(error)
         atomic(archive / 'plan.json', record)
     day = name[:10]
     if state.get('last_day') != day:

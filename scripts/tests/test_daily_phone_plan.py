@@ -17,6 +17,7 @@ spec = importlib.util.spec_from_loader('daily_phone_plan', loader)
 daily = importlib.util.module_from_spec(spec)
 loader.exec_module(daily)
 SHA = 'a' * 40
+REAL_RELAY = daily.relay  # DeliveryTests replaces daily.relay with a mock
 
 
 def issue(number, pr=200, check='Tap Play. Hear the article once.'):
@@ -251,6 +252,42 @@ class DeliveryTests(unittest.TestCase):
         daily.deliver(self.now, state, self.state_path)
         self.mocks['propose'].assert_called_once()
         self.mocks['validate'].assert_called_once()
+
+    def test_missing_relay_still_notifies_the_owner_and_delivers(self):
+        # Seen 2026-10-21 (#2372): "project-chat relay is not configured" stopped the job before the Mac
+        # notification, so the pinned plan was never announced.
+        self.mocks['relay'].side_effect = daily.RelayNotConfigured('project-chat relay is not configured')
+        state = {}
+        with patch.object(daily.sys, 'stderr') as stderr:
+            self.assertIn('delivered', daily.deliver(self.now, state, self.state_path))
+        self.mocks['notify'].assert_called_once()
+        self.assertEqual(state['last_plan'], '2026-10-14-am')
+        self.assertEqual((self.root / 'daily-ready').resolve(), self.folder.resolve())
+        record = json.loads(next((self.root / 'daily-plans').glob('*/plan.json')).read_text())
+        self.assertNotIn('chat_sent', record)
+        self.assertIn('not configured', record['chat_skipped'])
+        self.assertIn('owner was notified', ''.join(call.args[0] for call in stderr.write.call_args_list))
+        # A later tick for the same plan neither repeats the notification nor asks the relay again.
+        self.mocks['relay'].reset_mock()
+        daily.deliver(self.now, {}, self.state_path)
+        self.mocks['notify'].assert_called_once()
+        self.mocks['relay'].assert_not_called()
+
+    def test_relay_error_still_notifies_once_before_failing(self):
+        self.mocks['relay'].side_effect = RuntimeError('relay down')
+        with self.assertRaisesRegex(RuntimeError, 'relay down'):
+            daily.deliver(self.now, {}, self.state_path)
+        self.mocks['notify'].assert_called_once()
+        self.mocks['relay'].side_effect = None
+        daily.deliver(self.now, {}, self.state_path)
+        self.mocks['notify'].assert_called_once()
+        self.assertEqual(self.mocks['relay'].call_count, 2)  # the failed try, then the retry
+
+    def test_relay_without_url_or_token_raises_the_not_configured_error(self):
+        env = {k: v for k, v in os.environ.items() if not k.startswith(('SM_DAILY_RELAY', 'SM_LANE_OPEN'))}
+        with patch.dict(os.environ, env, clear=True):
+            with self.assertRaises(daily.RelayNotConfigured):
+                REAL_RELAY('hello')
 
     def test_pinned_binary_is_not_pruned_when_rolling_tip_advances(self):
         for day in range(15, 19):
