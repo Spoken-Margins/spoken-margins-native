@@ -45,7 +45,8 @@ class DecideTests(unittest.TestCase):
         return gate.decide(destination, plist, record, TODAY)[0]
 
     def test_creation_on_is_refused_for_external_while_the_record_is_incomplete(self):
-        for record in ({}, gate_record_default(), record_with(COMPLETE_WITH_WAIVER, "llc", formed=False)):
+        for record in ({}, record_with(COMPLETE_WITH_WAIVER, "llc", formed=False),
+                       record_with(COMPLETE_WITH_WAIVER, "dmca_agent", page_live=False)):
             self.assertFalse(self.allowed("external", ON, record))
 
     def test_creation_on_is_allowed_for_external_once_complete(self):
@@ -128,10 +129,12 @@ class DecideTests(unittest.TestCase):
         for record in ({"llc": "yes"}, {"dmca_agent": [], "llc": None}, {"insurance": 3}):
             self.assertFalse(self.allowed("external", ON, record))
 
-    def test_the_shipped_record_is_closed_until_the_owner_fills_it_in(self):
+    def test_the_shipped_record_opens_the_gate_under_the_waiver(self):
+        # The owner recorded the agent on 2026-11-02 (DMCA-1084466, page live); insurance stays waived.
         record = gate.read_record(gate.DEFAULT_RECORD)
         self.assertTrue(record["llc"]["formed"])
-        self.assertFalse(self.allowed("external", ON, record))
+        self.assertFalse(record["insurance"]["in_place"])
+        self.assertTrue(self.allowed("external", ON, record))
         self.assertTrue(self.allowed("external", OFF, record))
         self.assertTrue(self.allowed("internal", ON, record))
 
@@ -308,7 +311,7 @@ class BuildSettingTests(unittest.TestCase):
         plist = self.built_plist("Release", SM_SHARE_LINK_CREATION="YES")
         self.assertEqual(plist[gate.PLIST_KEY], "YES")
         self.assertTrue(gate.decide("internal", plist, {}, TODAY)[0])
-        self.assertFalse(gate.decide("external", plist, gate_record_default(), TODAY)[0])
+        self.assertFalse(gate.decide("external", plist, {}, TODAY)[0])
         self.assertTrue(gate.decide("external", plist, COMPLETE_WITH_WAIVER, TODAY)[0])
 
     def test_debug_builds_compile_the_creation_code(self):
