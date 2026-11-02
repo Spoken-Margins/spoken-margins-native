@@ -154,7 +154,7 @@ extension Gate1AppModel {
         try requireNoPlaybackForListeningEdition(itemId: edition.itemID)
         try await Self.offMain { try ListeningEditionStore.application().save(edition) }
         try requireNoPlaybackForListeningEdition(itemId: edition.itemID)
-        hangTelemetry.labels.scoped("listeningEdition.attach") {
+        try hangTelemetry.labels.scoped("listeningEdition.attach") {
             if let engine { snapshot = try engine.attachListeningMap(edition.listeningMap()) }
             else { try store.saveListeningMap(edition.listeningMap()) }
             if let timeline = try store.loadTranscriptTimeline(itemId: edition.itemID)?.timeline {
