@@ -72,6 +72,32 @@ final class SharedMarginFirstHeardTests: XCTestCase {
         XCTAssertEqual(try reopened.markImportedCommentaryInterjectionHeard(id: "heard", at: secondPlay)?.firstHeardAt, firstPlay)
     }
 
+    /// #2509: the screen shows a Margin as heard at once and the row is written off the main thread, so the shown copy
+    /// and the stored one must say the same thing, and a burst of marks (the voice's start fires more than once) leaves
+    /// the first time.
+    func testTheShownCopyMatchesTheStoredOneAndABurstOfMarksKeepsTheFirstTime() async throws {
+        XCTAssertEqual(SharedMarginHearing.heard(margin("m"), at: firstPlay).firstHeardAt, firstPlay)
+        let alreadyHeard = SharedMarginHearing.heard(margin("m"), at: firstPlay)
+        XCTAssertEqual(SharedMarginHearing.heard(alreadyHeard, at: secondPlay).firstHeardAt, firstPlay, "the first time sticks")
+
+        let path = temporaryDatabasePath()
+        defer { for suffix in ["", "-wal", "-shm"] { try? FileManager.default.removeItem(atPath: path + suffix) } }
+        let store = try SQLiteSessionStore(path: path)
+        _ = try store.importCommentaryLayer(layer(), interjections: [margin("m")])
+
+        let results = try await withThrowingTaskGroup(of: ImportedCommentaryInterjection?.self) { group in
+            for index in 0..<10 {
+                let date = firstPlay.addingTimeInterval(Double(index))
+                group.addTask { try await StoreReader(store).read { try $0.markImportedCommentaryInterjectionHeard(id: "m", at: date) } }
+            }
+            return try await group.reduce(into: []) { $0.append($1) }
+        }
+        let stored = try XCTUnwrap(try store.loadImportedCommentaryInterjections(layerId: "layer").first)
+        XCTAssertNotNil(stored.firstHeardAt)
+        XCTAssertEqual(Set(results.compactMap { $0?.firstHeardAt }), [stored.firstHeardAt], "every mark answers with the one stored time")
+        XCTAssertEqual(SharedMarginHearing.heard(margin("m"), at: stored.firstHeardAt!).firstHeardAt, stored.firstHeardAt)
+    }
+
     /// #576 merges two additive record fields: hearing a reply must keep its conversation links.
     func testHearingAReplyKeepsItsLinksInBothStoresAndAcrossAReopen() throws {
         let path = temporaryDatabasePath()
