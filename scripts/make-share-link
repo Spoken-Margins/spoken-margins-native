@@ -1,5 +1,22 @@
 #!/usr/bin/env bash
 # Makes a share link from a .spokenmargins file on the Mac and prints it (#3239). Details: Web/src/cli/make-share-link.ts.
+# It needs the Node major in .nvmrc (type stripping). The PATH's node is used when new enough; otherwise nvm's, as
+# verify-tests.py's node_for_nvmrc does, because an older Node first on PATH fails on the .ts file (#3006).
 set -euo pipefail
 repo="$(cd "$(dirname "$0")/.." && pwd)"
-exec node "${repo}/Web/src/cli/make-share-link.ts" "$@"
+needed="$(tr -d 'v \n' <"${repo}/.nvmrc")"
+needed="${needed%%.*}"
+major() { "$1" --version 2>/dev/null | sed -E 's/^v([0-9]+).*/\1/'; }
+node_bin=""
+if command -v node >/dev/null && [[ "$(major node)" -ge "${needed}" ]]; then
+  node_bin="$(command -v node)"
+else
+  for candidate in "${NVM_DIR:-$HOME/.nvm}"/versions/node/v"${needed}".*/bin/node /opt/homebrew/bin/node "${NVM_DIR:-$HOME/.nvm}"/versions/node/v*/bin/node; do
+    if [[ -x "${candidate}" && "$(major "${candidate}")" -ge "${needed}" ]]; then node_bin="${candidate}"; break; fi
+  done
+fi
+if [[ -z "${node_bin}" ]]; then
+  echo "Node ${needed} or later is needed (.nvmrc). Install it with: nvm install ${needed}" >&2
+  exit 1
+fi
+exec "${node_bin}" "${repo}/Web/src/cli/make-share-link.ts" "$@"
