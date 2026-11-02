@@ -21,18 +21,30 @@ RETIRED = {
     "Opens Add Source": "Opens Add to Library",
     "Native Audio": "Podcast Skip Back / Forward",
     "Episode Map Preparation": "Prepare Chapters and Scenes Ahead",
+    "from Add Source": "with Add to Library",
+    "New from Sources": "Following",
 }
 
 
 def retired_uses(text: str, name: str) -> list[int]:
-    """Line numbers where `name` sits in a string literal on a line that isn't a comment."""
+    """Line numbers where `name` sits in a string literal on a line that isn't a comment.
+
+    Inside a triple-quoted string (the guided tour's text) every line is string, so no quote pair is needed.
+    """
     hits = []
+    in_block = False
     for number, line in enumerate(text.splitlines(), 1):
-        if line.lstrip().startswith("//"):
+        if not in_block and line.lstrip().startswith("//"):
             continue
-        code = re.split(r"\s//", line)[0]
-        if re.search(r'"[^"\n]*' + re.escape(name) + r'[^"\n]*"', code):
+        code = line if in_block else re.split(r"\s//", line)[0]
+        if in_block:
+            matched = name in code
+        else:
+            matched = bool(re.search(r'"[^"\n]*' + re.escape(name) + r'[^"\n]*"', code))
+        if matched:
             hits.append(number)
+        if code.count('"""') % 2 == 1:
+            in_block = not in_block
     return hits
 
 
@@ -40,6 +52,11 @@ class RetiredNamesScanTests(unittest.TestCase):
     def test_scan_finds_a_retired_name_in_a_string(self):
         self.assertEqual(retired_uses('Text("Refresh Sources")', "Refresh Sources"), [1])
         self.assertEqual(retired_uses('a\n  .accessibilityLabel("Refresh Sources")', "Refresh Sources"), [2])
+
+    def test_scan_reads_every_line_of_a_triple_quoted_string(self):
+        text = 'text: """\n  Add a podcast from Add Source.\n  """\nlet x = 1'
+        self.assertEqual(retired_uses(text, "from Add Source"), [2])
+        self.assertEqual(retired_uses('let y = 2 // from Add Source', "from Add Source"), [])
 
     def test_scan_ignores_comments_and_identifiers(self):
         self.assertEqual(retired_uses('// "Refresh Sources" was renamed', "Refresh Sources"), [])
