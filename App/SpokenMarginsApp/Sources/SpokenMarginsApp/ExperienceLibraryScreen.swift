@@ -132,6 +132,7 @@ struct ExperienceLibraryScreen: View {
                 Label("Add", systemImage: "plus")
             }
             .disabled(!screenState.allowsAddingContent)
+            .accessibilityLabel("Add to Library")
             .accessibilityIdentifier("home.addSource.button")
         }
     }
