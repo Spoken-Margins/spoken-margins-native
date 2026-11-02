@@ -38,7 +38,7 @@ The owner's words and the detail are in [docs/decisions.md](docs/decisions.md) u
 - **Fetch a publisher's page only on a listener's action, never in the background** (2026-10-21).
 - **Owner ideas are challenges, not directives.** Solve the challenge his suggestion serves (2026-10-05).
 - **Timeline shows scenes and rich source elements, not ordinary passages** (2026-10-14).
-- **Share links, Listening Maps and a public App Store release wait for the lawyer and the LLC.** The share-link rules are in the record under 2026-10-20; share-link creation stays behind a build-time flag.
+- **A public release of share links, Listening Maps and the App Store app waits for the lawyer.** The LLC and the DMCA agent cleared on 2026-10-31, so share links for the internal group are built now. Share-link creation stays behind a build-time flag. The rules are in the record under 2026-10-20 and 2026-11-02.
 
 ## Repository map
 
