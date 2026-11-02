@@ -137,6 +137,7 @@ public struct AVFoundationMarginAudioTranscoder: SharedMarginAudioTranscoding {
             throw SharedMarginAudioTranscodingError.encoderUnavailable
         }
         let feed = ConversionFeed(file: input, buffer: inputBuffer, chunkFrames: chunkFrames)
+        var framesWritten: AVAudioFramePosition = 0
         while true {
             var failure: NSError?
             outputBuffer.frameLength = 0
@@ -146,12 +147,21 @@ public struct AVFoundationMarginAudioTranscoder: SharedMarginAudioTranscoding {
             if status == .error {
                 throw SharedMarginAudioTranscodingError.conversionFailed(failure?.localizedDescription ?? "unknown")
             }
-            if outputBuffer.frameLength > 0 { try output.write(from: outputBuffer) }
+            if outputBuffer.frameLength > 0 {
+                try output.write(from: outputBuffer)
+                framesWritten += AVAudioFramePosition(outputBuffer.frameLength)
+            }
             if status == .endOfStream { break }
         }
         // A read that failed part-way would otherwise leave a short recording that looks smaller and valid.
         if let readFailure = feed.readFailure {
             throw SharedMarginAudioTranscodingError.conversionFailed(readFailure.localizedDescription)
+        }
+        // The manifest keeps the recording's length, so a copy that ended early is refused, not sent.
+        let expectedSeconds = Double(input.length) / inputFormat.sampleRate
+        let writtenSeconds = Double(framesWritten) / outputFormat.sampleRate
+        guard abs(writtenSeconds - expectedSeconds) <= 0.5 else {
+            throw SharedMarginAudioTranscodingError.conversionFailed("length \(writtenSeconds) s, expected \(expectedSeconds) s")
         }
     }
 
@@ -176,6 +186,12 @@ public struct AVFoundationMarginAudioTranscoder: SharedMarginAudioTranscoding {
                 return nil
             }
             buffer.frameLength = 0
+            // Reading at the end of the file can throw on some systems instead of returning no frames.
+            guard file.framePosition < file.length else {
+                finished = true
+                status.pointee = .endOfStream
+                return nil
+            }
             do { try file.read(into: buffer, frameCount: chunkFrames) } catch {
                 readFailure = error
                 buffer.frameLength = 0

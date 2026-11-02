@@ -129,6 +129,8 @@ final class SharedMarginAppExportTests: XCTestCase {
             let assetURL = try XCTUnwrap(packet.extractedAssetURLs[assetID], expected.record.packageScopedId)
             // The voice goes out re-encoded smaller (#3218), so its bytes differ from the recording; it is still this
             // Margin's own recording, told apart by its length, and never larger than the recording.
+            XCTAssertTrue(model.diagnostics["lastSharedPackageAudio"]?.contains("failed=0") == true,
+                          "the encoder ran without failing: \(model.diagnostics["lastSharedPackageAudio"] ?? "nil")")
             let sentSeconds = try Self.seconds(of: assetURL)
             XCTAssertEqual(sentSeconds, expected.seconds, accuracy: 0.2,
                            "\(expected.record.packageScopedId) must carry its own Margin's recording")
