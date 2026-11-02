@@ -28,7 +28,7 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
     private var transactionDepth = 0
     /// Read-only connections for reads, so a read never waits for `connectionLock` or for another read (#2103).
     /// nil when the file can't be read beside the writer (not WAL, or in memory): reads then use the one connection.
-    private var readConnections: ReadConnectionPool?
+    var readConnections: ReadConnectionPool?
     /// The thread that has a transaction open on `db`, if any. Its reads must see its own uncommitted writes, so they
     /// stay on `db`; every other thread reads what is committed.
     private let transactionOwnerLock = NSLock()
@@ -82,6 +82,7 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         // A record an older build couldn't read was set aside, not lost. If this build can read it, put it back (#1052).
         // Best effort: a failure here leaves the rows quarantined and must not stop the Library opening.
         try? restoreQuarantinedRecords()
+        OpenStoreRegistry.shared.registerIfTracking(self)
     }
 
     deinit {
