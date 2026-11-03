@@ -28,12 +28,15 @@ def readable_attachment_name(attachment, taken):
 
     xcresulttool names the files by UUID and records the attachment's name in manifest.json as
     `suggestedHumanReadableName`, `<name>_<index>_<UUID>.<ext>`. A name already in `taken` gets `-2`, `-3`, ...
+    Characters that actions/upload-artifact refuses (`\" : < > | * ? \\ /` and line breaks) become `-`: XCTest names its
+    failure snapshots after the query, as in ``Debug description for `"margins.shareItem.x" Any`.txt``, and one such
+    file cost the hosted run every tour screenshot (#3237).
     """
     exported = Path(attachment['exportedFileName'])
     human = attachment.get('suggestedHumanReadableName') or exported.name
     match = re.fullmatch(r'(.+?)_\d+_[0-9A-Fa-f-]{36}(\.\w+)?', human)
     name = match[1] + (match[2] or exported.suffix) if match else human
-    name = re.sub(r'[/\\:]', '-', name).lstrip('.') or exported.name
+    name = re.sub(r'[/\\:"<>|*?\r\n]', '-', name).lstrip('.') or exported.name
     stem, suffix, copy = Path(name).stem, Path(name).suffix, 2
     while name in taken:
         name, copy = f'{stem}-{copy}{suffix}', copy + 1

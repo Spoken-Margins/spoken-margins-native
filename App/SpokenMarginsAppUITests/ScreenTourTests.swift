@@ -167,10 +167,13 @@ final class ScreenTourTests: XCTestCase {
         tapButton("recording.finish.button")
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8), "Did not return to Now Playing")
         pausePlaybackIfPlaying()
+        // The pane lists this item's Margins; the Share action sits on the Margins tab it links to (#3237, as
+        // VoiceOverAuditUITests does). Hosted run 41576228151 looked for it on the pane and never found it.
         tapButton("playback.margins.button")
+        tapButton("playback.margins.collection.button")
         let share = element("margins.shareItem.\(podcast)")
         XCTAssertTrue(share.waitForExistence(timeout: 5), "The item's Share action is missing")
-        capture("15-share-action", "The episode's Margins with its Share action")
+        capture("15-share-action", "The Margins tab with the episode's Share action")
         share.tap()
         XCTAssertTrue(element("build23.sender.experience").waitForExistence(timeout: 5), "Share Margins did not open")
         let cleanUp = app.alerts["Clean selected Margins automatically?"]
