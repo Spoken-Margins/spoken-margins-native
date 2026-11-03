@@ -382,7 +382,8 @@ public struct CommunityMapFetcher: Sendable {
     /// - `mapsState` is read only for an episode that can take a community map, so an episode
     ///   with chapters or a map of its own makes no request at all.
     /// - `audioDurationMs` is asked only when the feed gave no length.
-    /// - `store` returns false when the episode got a map of its own meanwhile; nothing is replaced.
+    /// - `store` returns false when the episode got a map of its own meanwhile; nothing is replaced. It is `async` so the
+    ///   app can write through `StoreReader` instead of on whatever thread called (#2509).
     public func fetchIfEligible(
         item: Item,
         blockedUntil: Date?,
@@ -391,7 +392,7 @@ public struct CommunityMapFetcher: Sendable {
         localState: @Sendable () async -> CommunityMapLocalState,
         mapsState: @Sendable () async -> ServerFeatureState,
         audioDurationMs: @Sendable () async -> Int? = { nil },
-        store: @Sendable (CommunityMap) throws -> Bool
+        store: @Sendable (CommunityMap) async throws -> Bool
     ) async -> CommunityMapFetchOutcome {
         guard await optedIn() else { return .skipped(.optedOut) }
         let nothingHeld = CommunityMapLocalState(hasPublisherChapters: false, hasMap: false)
@@ -456,7 +457,7 @@ public struct CommunityMapFetcher: Sendable {
         if latest.hasPublisherChapters { return .skipped(.publisherChapters) }
         if latest.hasMap { return .skipped(.hasMap) }
         do {
-            guard try store(map) else { return .skipped(.hasMap) }
+            guard try await store(map) else { return .skipped(.hasMap) }
         } catch {
             return .failed("storage")
         }
