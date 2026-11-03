@@ -210,6 +210,7 @@ final class SpokenMarginsPackageImportCoordinator {
             let duplicate = try await lookUpDuplicate(digest: digest, store: store)
             let duplicateCheck = duplicate.check
             if case .alreadyImported(let itemId) = duplicateCheck {
+                // The item's screen is the answer; nothing more is said (#3291).
                 environment.openItem(itemId)
                 releaseSource?()
                 if let item = duplicate.item, item.mediaType == "audiobook" {
@@ -219,13 +220,15 @@ final class SpokenMarginsPackageImportCoordinator {
                 if let localURL = environment.validatedLocalURL(itemId) {
                     environment.resolvePodcastCommentary(itemId, localURL)
                 }
-                environment.reportSuccess("These shared Margins are already in your library. Playback has not started.")
                 environment.recordDiagnostic("lastSpokenMarginsPackageImport", "duplicate:\(digest)")
                 await Self.removeFolder(root) // the duplicate's copy and extracted assets, off the main actor (#2510)
                 return .staged
             }
-            let staged = try await makeReview(packageURL: copiedPackage, extractionDirectory: root, contents: contents,
+            var staged = try await makeReview(packageURL: copiedPackage, extractionDirectory: root, contents: contents,
                                               store: store, releaseSource: releaseSource)
+            // Decided once, on arrival: a review re-matched after Add Source keeps the sheet the listener is in.
+            staged.opensDirectly = SharedPacketArrival.route(
+                isListeningMap: staged.isListeningMap, requiresRecipientItem: staged.requiresRecipientItem) == .openItem
             if review == nil { importError = nil }
             if case .waiting = queue.offer(staged) {
                 environment.recordDiagnostic("lastSpokenMarginsPackageImport", "queued:\(digest)")
@@ -400,6 +403,10 @@ final class SpokenMarginsPackageImportCoordinator {
             }
             let itemText = item?.text
             let contents = review.contents
+            // Whether a friend's Margins were already on the item, for "2 new Margins from Cole" (#3291).
+            let itemHadFriendMargins = try await reader.read { store in
+                try itemId.map { try store.loadImportedCommentaryLayers(itemId: $0).contains { $0.deletedAt == nil } } ?? false
+            }
             let (disposition, repairedLayerId) = try await reader.read { store -> (ImportedCommentaryImportDisposition, String?) in
                 let localItem = item.map {
                     SharedPacketItemMatcher.localIdentity(for: $0, ownedAudiobookDigest: ownedAudiobookDigest)
@@ -427,10 +434,12 @@ final class SpokenMarginsPackageImportCoordinator {
             if let repairedLayerId, let itemId {
                 environment.recordDiagnostic("lastSpokenMarginsPackageRepair", "reassociated:\(repairedLayerId):\(itemId)")
             }
+            var newMarginCount = 0
             switch disposition {
             case .duplicate(let existingLayerId):
                 environment.recordDiagnostic("lastSpokenMarginsPackageImport", "duplicate_layer:\(existingLayerId)")
             case .imported(let layerId, let interjectionIds):
+                newMarginCount = interjectionIds.count
                 environment.recordDiagnostic("lastSpokenMarginsPackageImport", "imported:\(layerId):\(interjectionIds.count)")
                 environment.recordPacketImport(itemId, review.contents.manifest.packageId, interjectionIds.count)
             }
@@ -451,10 +460,24 @@ final class SpokenMarginsPackageImportCoordinator {
             queue.finish(review.id)
             isImporting = false
             review.releaseSource?()
-            environment.reportConfirmation("Imported shared Margins. Playback has not started.")
+            if !review.opensDirectly {
+                environment.reportConfirmation("Imported shared Margins. Playback has not started.")
+            } else if let announcement = SharedPacketArrival.announcement(
+                newMarginCount: newMarginCount, senderName: review.contents.manifest.senderDisplayLabel,
+                itemHadFriendMargins: itemHadFriendMargins
+            ) {
+                environment.reportConfirmation(announcement)
+            }
         } catch {
             isImporting = false
             if queue.isShowing(review.id) { importError = SharedMarginsImportMessage.userFacing(error) }
+            // Opening it directly failed: the sheet comes up with the error, for a retry or Cancel. The packet is kept.
+            if review.opensDirectly, queue.isShowing(review.id) {
+                var shown = review
+                shown.opensDirectly = false
+                queue.replaceShowing(with: shown) // the same review, so this publishes nothing by itself
+                environment.publishReview(shown)
+            }
             environment.recordDiagnostic("lastSpokenMarginsPackageImport", "failed:\(error.localizedDescription)")
             environment.reportFailure(error, "Shared Margins import failed")
         }

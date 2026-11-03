@@ -177,6 +177,21 @@ extension Gate1AppModel {
         }
     }
 
+    /// A friend's file with nothing for the listener to decide: imported straight away, then its item's screen opens,
+    /// with no sheet (#3291). The root view calls it when such a review comes up. It starts on the next turn because
+    /// the coordinator brings a waiting packet up while the one before it is still finishing its import.
+    func openSharedPacketDirectly(_ review: SpokenMarginsPackageImportReview) {
+        let opening = SharedPacketArrival.openingMessage(senderName: review.contents.manifest.senderDisplayLabel)
+        Task { @MainActor [weak self] in
+            guard let self, self.packageImport.review?.id == review.id,
+                  let began = self.packageImport.beginConfirmation() else { return }
+            let showsProgress = self.sourceImportProgressMessage == nil
+            if showsProgress { self.sourceImportProgressMessage = opening }
+            await self.packageImport.confirm(began)
+            if showsProgress, self.sourceImportProgressMessage == opening { self.sourceImportProgressMessage = nil }
+        }
+    }
+
     /// Prepares the summary audio Skim plays for each scene of a mapped item; every open runs it. The map and the saved
     /// summaries are read once, off the main thread, and only scenes whose summary isn't saved are prepared (#2255).
     /// This used to read the whole asset table and reload Skim once per scene on the main thread, even with every

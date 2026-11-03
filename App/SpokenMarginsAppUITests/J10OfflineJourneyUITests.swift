@@ -101,11 +101,11 @@ final class J10OfflineJourneyUITests: XCTestCase {
             let stage = element("build23.sender.recipient-test-session")
             XCTAssertTrue(stage.waitForExistence(timeout: 5), "The verified packet can't be staged for import")
             stage.tap()
-            XCTAssertTrue(element("build23.recipient.experience").waitForExistence(timeout: 8),
-                          "The verified packet did not open in the import review")
-            let integrity = app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] %@", "integrity checked")).firstMatch
-            XCTAssertTrue(integrity.waitForExistence(timeout: 5), "The import review does not show the packet checked")
-            screenshot("J10 import review of the packet built offline")
+            // A packet that passes its check opens straight onto its item (#3291); one that fails never gets there.
+            XCTAssertTrue(element("item.screen").waitForExistence(timeout: 15),
+                          "The verified packet did not open onto its item")
+            XCTAssertFalse(element("build23.recipient.experience").exists, "The packet opened the Import sheet")
+            screenshot("J10 the packet built offline, opened onto its item")
         }
     }
 

@@ -37,7 +37,7 @@ final class KeptPackageHandoffTests: XCTestCase {
         let newer = try h.store.savePackage(from: try writePacket(manifestSchema: "spoken-margins.package.v99"))
 
         try await h.model.consumePendingSpokenMarginsPackageHandoffs(from: h.store, keptNotices: h.notices, appVersion: "v1", now: launch)
-        XCTAssertEqual(h.model.feedbackEvent?.message, "These Margins need a newer Spoken Margins. Update the app, then open them again.")
+        XCTAssertEqual(h.model.feedbackEvent?.message, "Your friend made this with a newer Spoken Margins. Update the app to hear it.")
 
         h.model.dismissFeedback()
         try await h.model.consumePendingSpokenMarginsPackageHandoffs(from: h.store, keptNotices: h.notices, appVersion: "v1", now: launch.addingTimeInterval(3_600))

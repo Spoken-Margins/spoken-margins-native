@@ -190,18 +190,11 @@ final class ScreenTourTests: XCTestCase {
         captureWhenPresent(element("ActivityListView"), timeout: 12, "19-share-system-sheet",
                            "The iOS share sheet with the packet")
 
-        // Sam's packet, opened the way a listener's tap opens it: the import review, then the episode.
+        // Sam's packet, opened the way a listener's tap opens it: straight onto the episode, no Import sheet (#3291).
         try relaunchOpening("sharing-loop-sam-margin")
-        let review = element("build23.recipient.experience")
-        XCTAssertTrue(review.waitForExistence(timeout: 15), "Sam's packet did not open the import review")
-        capture("20-import-review", "Sam's packet: the import review as it opens")
-        let importButton = element("build23.recipient.import")
-        waitFor(importButton, enabled: true, "The import review never offered Import")
-        importButton.tap()
-        capture("21-importing", "Just after Import")
-        XCTAssertTrue(waitForDisappearance(review, timeout: 15), "The import review did not close")
-        capture("22-after-import", "What the listener sees once the import review closes")
-        openItem(podcast)
+        XCTAssertTrue(element("item.screen").waitForExistence(timeout: 20), "Sam's packet did not open its episode")
+        XCTAssertFalse(element("build23.recipient.experience").exists, "a friend's packet opened the Import sheet")
+        capture("20-arrival", "Sam's packet: the episode's screen as it opens")
         capture("23-item-top", "The episode's item screen after Sam's packet, top")
         app.swipeUp()
         app.swipeUp()
@@ -232,12 +225,9 @@ final class ScreenTourTests: XCTestCase {
 
         // Sam's reply to the listener's Margin comes back.
         try relaunchOpening("sharing-loop-sam-reply", markingListenerMarginShared: true)
-        XCTAssertTrue(review.waitForExistence(timeout: 15), "Sam's reply did not open the import review")
-        capture("30-reply-import-review", "Sam's reply: the import review as it opens")
-        waitFor(importButton, enabled: true, "The reply's import review never offered Import")
-        importButton.tap()
-        XCTAssertTrue(waitForDisappearance(review, timeout: 15), "The reply's import review did not close")
-        capture("31-after-reply-import", "What the listener sees once the reply's import review closes")
+        XCTAssertTrue(element("item.screen").waitForExistence(timeout: 20), "Sam's reply did not open its episode")
+        XCTAssertFalse(element("build23.recipient.experience").exists, "Sam's reply opened the Import sheet")
+        capture("30-reply-arrival", "Sam's reply: the episode's screen as it opens (\"1 new Margin from Sam\")")
         tapRoot("Margins")
         XCTAssertTrue(element("margins.screen").waitForExistence(timeout: 5), "Margins did not appear")
         capture("32-margins-with-reply", "Margins tab after Sam's reply")

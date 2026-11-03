@@ -93,11 +93,11 @@ struct Gate1RootView: View {
             Build23SenderSharingHost(coordinator: sharingCoordinator)
                 .environmentObject(model)
         }
-        .sheet(item: $model.spokenMarginsPackageImportReview) { _ in
+        .modifier(SharedPacketImportSheet(model: model) {
             Build23RecipientSharingHost(coordinator: sharingCoordinator)
                 .environmentObject(model)
                 .interactiveDismissDisabled()
-        }
+        })
     }
 }
 

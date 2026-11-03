@@ -57,7 +57,7 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
 
         XCTAssertEqual(h.openedItems, h.shownItems, "the existing item opens")
         XCTAssertEqual(h.diagnostics["lastSpokenMarginsPackageImport"], "duplicate:\(packet.digest)")
-        XCTAssertEqual(h.successes.last, "These shared Margins are already in your library. Playback has not started.")
+        XCTAssertTrue(h.successes.isEmpty, "the item's screen is the answer; nothing more is said (#3291)")
         XCTAssertNil(h.coordinator.review, "a duplicate is never shown for review")
         XCTAssertEqual(h.incomingFolderNames(), [firstFolder.lastPathComponent], "only the first import's folder is left")
         XCTAssertTrue(h.events.isEmpty)
@@ -257,7 +257,8 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
         XCTAssertEqual(h.shownItems, [itemId])
         XCTAssertEqual(h.packetImports, [PacketImport(itemId: itemId, packetId: "package-alpha", marginCount: 1)])
         XCTAssertTrue(h.diagnostics["lastSpokenMarginsPackageImport"]?.hasPrefix("imported:") == true)
-        XCTAssertEqual(h.confirmations, ["Imported shared Margins. Playback has not started."])
+        XCTAssertTrue(began.opensDirectly)
+        XCTAssertEqual(h.confirmations, [], "a first arrival: the item's screen says who sent how many (#3291)")
         XCTAssertNil(h.coordinator.review)
         XCTAssertFalse(h.coordinator.isImporting)
         XCTAssertEqual(h.events, ["review:nil", "importing:false"], "review clears, then the busy flag")
@@ -279,6 +280,8 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
 
         XCTAssertNotNil(try h.store.loadImportedCommentaryLayer(packageDigest: packet.digest), "the layer was saved before the failure")
         XCTAssertEqual(h.coordinator.review?.id, review.id, "the sheet stays open for a retry")
+        XCTAssertEqual(h.coordinator.review?.opensDirectly, false, "a file that failed to open directly brings its sheet up (#3291)")
+        XCTAssertTrue(h.events.contains("review:\(review.id)"), "and the views are told")
         XCTAssertFalse(h.coordinator.isImporting)
         XCTAssertNotNil(h.coordinator.importError)
         XCTAssertTrue(h.diagnostics["lastSpokenMarginsPackageImport"]?.hasPrefix("failed:") == true)
@@ -293,6 +296,25 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
         XCTAssertNil(h.coordinator.review)
         XCTAssertNil(h.coordinator.importError, "a retry clears the earlier error")
         XCTAssertEqual(h.shownItems.count, 1)
+        XCTAssertEqual(h.confirmations.last, "Imported shared Margins. Playback has not started.", "the sheet's own Import says so")
+    }
+
+    /// #3291: a friend's file opens straight onto its item unless the listener has a choice to make, decided once on
+    /// arrival. A packet re-matched after Add Source keeps the sheet the listener is already in.
+    func testOnlyAFileWithNothingToDecideOpensDirectly() async throws {
+        let h = try makeHarness()
+        let embedded = try h.writePacket(named: "alpha", text: Self.alphaText)
+        assertStaged(await h.coordinator.stage(from: embedded.url))
+        XCTAssertEqual(h.coordinator.review?.opensDirectly, true, "embedded text: nothing to decide")
+        h.coordinator.cancel()
+
+        let supplied = try h.writePacket(named: "beta", text: Self.alphaText, recipientSupplied: true)
+        assertStaged(await h.coordinator.stage(from: supplied.url))
+        XCTAssertEqual(h.coordinator.review?.opensDirectly, false, "the listener picks their own copy")
+        let before = try XCTUnwrap(h.coordinator.review)
+        await h.coordinator.refreshAfterAddingSource()
+        XCTAssertNotEqual(h.coordinator.review?.id, before.id)
+        XCTAssertEqual(h.coordinator.review?.opensDirectly, false, "re-matched in the sheet: it stays there")
     }
 
     /// #2122: a packet opened while another imports waits its turn. A's success brings B up for review instead of
