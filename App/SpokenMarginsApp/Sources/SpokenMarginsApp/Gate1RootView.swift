@@ -19,6 +19,8 @@ struct Gate1RootView: View {
             && model.shouldShowMiniPlayer && !keyboardIsPresented
     }
 
+    private var welcomePlace: FirstLaunchWelcomeOrder.Place { FirstLaunchWelcomeOrder.Place(model) }
+
     var body: some View {
         MiniPlayerDock(showsMiniPlayer: showsRootMiniPlayer) {
             if model.writtenMarginDraft != nil {
@@ -59,10 +61,20 @@ struct Gate1RootView: View {
         }
         .onAppear {
             model.bootstrapLibraryIfNeeded()
-            catalogDrawer.presentIfFirstRun(
+            catalogDrawer.noteLaunch(
                 libraryWasEmptyAtLaunch: model.libraryWasEmptyAtLaunch,
                 followedSourceCount: model.feedSubscriptions.count
             )
+        }
+        // The first-run drawer waits a moment for a file the system opened the app with, so a friend's file comes
+        // first (#3291); after that it waits for the friend's item and then the Library.
+        .task {
+            try? await Task.sleep(for: .milliseconds(500))
+            catalogDrawer.settleFirstRun(at: welcomePlace)
+        }
+        .onChange(of: welcomePlace) { _, place in catalogDrawer.listenerMoved(to: place) }
+        .onChange(of: model.spokenMarginsPackageImportReview != nil) { _, arrived in
+            if arrived { catalogDrawer.friendFileArrived() } // also files from the Share extension's inbox
         }
         .onChange(of: model.requestedExperienceRoot) { _, root in
             guard let root else { return }
