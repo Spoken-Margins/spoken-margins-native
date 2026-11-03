@@ -128,7 +128,7 @@ public enum ShareLinkResult: Equatable, Sendable {
     case useFile(ShareLinkFallback)
 }
 
-public enum ShareLinkFallback: Equatable, Sendable {
+public enum ShareLinkFallback: Error, Equatable, Sendable {
     /// The server's `links` switch is off, or its config is missing or stale.
     case unavailable
     /// No Margin has words to show on the link's page.
@@ -219,12 +219,13 @@ public struct ShareLinkClient: Sendable {
         var expiresAt: String?
     }
 
-    /// `/l/<id>`, the only shape the app will turn into a link.
+    /// `/l/<id>` with the id the server mints and the app opens: 32 lowercase hex characters. Anything else is
+    /// never turned into a link the sender would send.
     static func isLinkPath(_ path: String) -> Bool {
         guard path.hasPrefix("/l/") else { return false }
         let id = path.dropFirst(3)
-        return !id.isEmpty && id.count <= 128 && id.utf8.allSatisfy {
-            ($0 >= 0x30 && $0 <= 0x39) || ($0 >= 0x41 && $0 <= 0x5A) || ($0 >= 0x61 && $0 <= 0x7A) || $0 == 0x2D || $0 == 0x5F
+        return id.utf8.count == ShareLinkURL.idLength && id.utf8.allSatisfy {
+            ($0 >= 0x30 && $0 <= 0x39) || ($0 >= 0x61 && $0 <= 0x66)
         }
     }
 

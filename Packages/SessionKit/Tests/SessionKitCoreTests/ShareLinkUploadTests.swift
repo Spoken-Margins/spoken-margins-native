@@ -18,7 +18,7 @@ final class ShareLinkUploadTests: XCTestCase {
     private func client(
         recorder: Recorder,
         status: Int = 201,
-        body: String = #"{"id":"abc123","path":"/l/abc123","expiresAt":"2026-12-03T00:00:00Z"}"#,
+        body: String = #"{"id":"0123456789abcdef0123456789abcdef","path":"/l/0123456789abcdef0123456789abcdef","expiresAt":"2026-12-03T00:00:00Z"}"#,
         fail: Bool = false
     ) -> ShareLinkClient {
         let key = self.key
@@ -72,7 +72,7 @@ final class ShareLinkUploadTests: XCTestCase {
         XCTAssertEqual(recorder.requests.count, 1)
         XCTAssertEqual(request.url.absoluteString, "https://links.example.test/api/v1/links")
         guard case .link(let link, let expiresAt) = result else { return XCTFail("expected a link, got \(result)") }
-        XCTAssertEqual(link.absoluteString, "https://links.example.test/l/abc123#\(key.fragment)")
+        XCTAssertEqual(link.absoluteString, "https://links.example.test/l/0123456789abcdef0123456789abcdef#\(key.fragment)")
         XCTAssertEqual(expiresAt, "2026-12-03T00:00:00Z")
 
         // Exactly two parts, preview first. The server gets neither the key nor any plaintext.
@@ -137,7 +137,8 @@ final class ShareLinkUploadTests: XCTestCase {
 
     func testAnAnswerThatIsNotALinkPathIsNeverTurnedIntoALink() async throws {
         for body in [#"{}"#, #"{"path":""}"#, #"{"path":"/l/"}"#, #"{"path":"/l/a/b"}"#, #"{"path":"https://evil.example/l/x"}"#,
-                     #"{"path":"/x/abc"}"#, #"{"path":"/l/a b"}"#, #"{"path":"/l/a?x=1"}"#, "not json"] {
+                     #"{"path":"/x/abc"}"#, #"{"path":"/l/abc123"}"#, #"{"path":"/l/0123456789ABCDEF0123456789ABCDEF"}"#,
+                     #"{"path":"/l/0123456789abcdef0123456789abcde"}"#, #"{"path":"/l/a b"}"#, #"{"path":"/l/a?x=1"}"#, "not json"] {
             let result = await client(recorder: Recorder(), body: body).makeLink(packet: Data([1]), preview: try preview(), linksState: on)
             XCTAssertEqual(result, .useFile(.failed), body)
         }

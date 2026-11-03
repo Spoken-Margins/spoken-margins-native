@@ -25,10 +25,17 @@ final class ShareLinkSender: ObservableObject {
     @Published private(set) var state: State = .idle
     private let bridge = BridgeService.makeStore()
 
-    /// Whether to show the button at all: the cached config says links are on. Reads the cache only, no request.
+    /// Whether to show the button at all. The cached config decides; with none, or a stale one, the sender's own
+    /// screen asks the server once (our server, no one else's) so a fresh install can offer the button.
     func isOffered() async -> Bool {
         guard let bridge else { return false }
-        return await bridge.state(of: ServerService.links).isOn
+        switch await bridge.state(of: ServerService.links) {
+        case .on: return true
+        case .off(.noConfig), .off(.staleConfig):
+            await bridge.refreshConfigOnly()
+            return await bridge.state(of: ServerService.links).isOn
+        case .off: return false
+        }
     }
 
     /// Seals and uploads the packet at `packageURL`, the file the sender would otherwise share.
