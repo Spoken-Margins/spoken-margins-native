@@ -17,7 +17,7 @@ import XCTest
 @MainActor
 final class RealPlaybackMarginCaptureTests: XCTestCase {
     func testStreamedMarginStoresPreAndPostEvidence() async throws {
-        // The waits below add up to 131 s at their limits, past the AppBehavior plan's 120 s default. A hosted
+        // The waits below add up to 126 s at their limits, past the AppBehavior plan's 120 s default. A hosted
         // runner under audio overload took 147 s to pass once (#3275), so ask for the plan's 180 s maximum.
         executionTimeAllowance = 180
         let root = FileManager.default.temporaryDirectory.appending(path: "margin-capture-\(UUID().uuidString)")
