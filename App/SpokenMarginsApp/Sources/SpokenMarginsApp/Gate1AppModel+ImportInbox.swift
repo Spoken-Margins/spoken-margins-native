@@ -18,6 +18,9 @@ extension Gate1AppModel {
         return try Gate5BrowserTextHandoffStore.appGroup()
     }
 
+    /// True while the pending-handoff drain runs, including the extra round a Retry or a link opened mid-drain asks for (#2136).
+    var isImportingPendingSourceLinkHandoffs: Bool { pendingHandoffDrainGate.isRunning }
+
     func refreshImportInbox() {
         var entries: [ImportInboxEntry] = []
         do {
