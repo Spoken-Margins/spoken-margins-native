@@ -81,6 +81,53 @@ public enum SharedPostVoiceoverLookup {
     }
 }
 
+/// Which posts have had their voiceover looked up in this launch, and when a post may be looked up again (#3297).
+/// An answer of "no recording" is final for the launch, so opening the item can't repeat a page fetch. An answer of
+/// "not yet" (Substack's narration was `pending` or `processing` when the page was read) and a failed try are not:
+/// the next open or play looks again. A "not yet" answer waits `retryInterval` first and stops after
+/// `maximumNotYetTries`, so a post that never finishes isn't fetched on every open. Every lookup is still the
+/// listener's own action (open or play), never a background fetch (owner's call, 2026-10-21).
+public struct VoiceoverLookupLedger: Sendable {
+    public static let retryInterval: TimeInterval = 60
+    public static let maximumNotYetTries = 5
+
+    private var settled = Set<String>()
+    private var retryNotBefore: [String: Date] = [:]
+    private var notYetTries: [String: Int] = [:]
+
+    public init() {}
+
+    /// True for an item not looked up in this launch, or whose last answer was "not yet" or a failure and whose
+    /// wait is over.
+    public func mayLookUp(itemId: String, now: Date = Date()) -> Bool {
+        guard !settled.contains(itemId) else { return false }
+        return retryNotBefore[itemId].map { now >= $0 } ?? true
+    }
+
+    /// Marks the item as being looked up and says whether this caller may start the lookup. Claiming at once, not
+    /// inside the lookup task, keeps two callers to one page fetch.
+    public mutating func claim(itemId: String, now: Date = Date()) -> Bool {
+        guard mayLookUp(itemId: itemId, now: now) else { return false }
+        settled.insert(itemId)
+        retryNotBefore[itemId] = nil
+        return true
+    }
+
+    /// Takes a lookup's status (`SharedLinkVoiceover.remember`'s report): `failed:` lets the next open try at once
+    /// and `none:<reason>` for a "not yet" reason lets it try after the wait; anything else stays settled.
+    public mutating func record(status: String, itemId: String, now: Date = Date()) {
+        if status.hasPrefix("failed:") {
+            settled.remove(itemId)
+        } else if status.hasPrefix("none:"), PublisherNarrationEvidence.isNotYet(absence: String(status.dropFirst("none:".count))) {
+            let tries = (notYetTries[itemId] ?? 0) + 1
+            notYetTries[itemId] = tries
+            guard tries < Self.maximumNotYetTries else { return }
+            settled.remove(itemId)
+            retryNotBefore[itemId] = now.addingTimeInterval(Self.retryInterval)
+        }
+    }
+}
+
 /// The latest voiceover outcome of each recently shared post, newest last (#810). A single diagnostic line kept
 /// only the last share, so a later link (an openai.com page, `not_substack`) hid what happened to the post the
 /// listener asked about.
