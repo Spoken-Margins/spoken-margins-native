@@ -11,6 +11,9 @@ final class CatalogDrawerModel: ObservableObject {
     static let seenKey = "catalogDrawerSeenV1"
     /// Catalog entry id → followed source id, recorded when the drawer follows a show.
     static let followedSourcesKey = "catalogDrawerFollowedSourcesV1"
+    /// Set while a friend's file holds the first-run opening back (#3291), so a launch whose friend's item never opened
+    /// leaves the drawer to the next one. Cleared when the drawer is seen.
+    static let deferredByFriendFileKey = "catalogDrawerDeferredByFriendFileV1"
 
     @Published var isPresented = false
     @Published var selectedSubject: String? { didSet { refreshEntries() } }
@@ -46,6 +49,14 @@ final class CatalogDrawerModel: ObservableObject {
     /// Set by the first-run opening; Done then plays. Opened from Following, Done only closes.
     private var isFirstRunOpening = false
     private var playsOnDismiss = false
+    /// When the first-run opening comes: after a friend's file's item, when one arrives (#3291).
+    private var welcomeOrder = FirstLaunchWelcomeOrder(drawerOwed: false)
+    /// The drawer is closing to make way for a friend's file: not seen, and Done's play doesn't run.
+    private var isWithdrawing = false
+    /// A friend's file arrived while this opening showed; its item opened underneath, so Done plays nothing over it.
+    private var friendFileOpenedUnderneath = false
+    /// A friend's file arrived in this run of the app.
+    private var hasFriendFileArrived = false
     /// Makes a fresh OPML import (#463) for the drawer and Following; nil hides the entry.
     let makeOPMLImport: (@MainActor () -> OPMLImportModel)?
 
@@ -112,14 +123,64 @@ final class CatalogDrawerModel: ObservableObject {
         return CatalogFollowedSummary.text(followedKinds: followed.map(\.contentKind))
     }
 
+    /// `noteLaunch` with what the model knows once the Library has been bootstrapped.
+    func noteLaunch(of model: Gate1AppModel) {
+        noteLaunch(libraryWasEmptyAtLaunch: model.libraryWasEmptyAtLaunch, followedSourceCount: model.feedSubscriptions.count)
+    }
+
+    /// The first-run opening at once, as for a launch with no friend's file that has settled on the Library.
     func presentIfFirstRun(libraryWasEmptyAtLaunch: Bool, followedSourceCount: Int) {
-        guard FirstRunCatalogDrawerPolicy.opensAutomatically(
+        noteLaunch(libraryWasEmptyAtLaunch: libraryWasEmptyAtLaunch, followedSourceCount: followedSourceCount)
+        settleFirstRun(at: .library)
+    }
+
+    /// The root view appeared: whether this launch owes the first-run opening. It waits for `settleFirstRun`, so a
+    /// friend's file the app was opened with comes first (#3291).
+    func noteLaunch(libraryWasEmptyAtLaunch: Bool, followedSourceCount: Int) {
+        welcomeOrder = FirstLaunchWelcomeOrder(drawerOwed: FirstLaunchWelcomeOrder.drawerOwed(
             libraryWasEmptyAtLaunch: libraryWasEmptyAtLaunch,
+            deferredFromEarlierLaunch: defaults.bool(forKey: Self.deferredByFriendFileKey),
             hasSeenDrawer: defaults.bool(forKey: Self.seenKey),
             followedSourceCount: followedSourceCount
-        ) else { return }
-        present()
-        isFirstRunOpening = true
+        ))
+        // The system can hand the file over before the root view appears.
+        if hasFriendFileArrived { recordFriendFileArrival() }
+    }
+
+    /// The launch has had time for the system to hand over the file it opened the app with.
+    func settleFirstRun(at place: FirstLaunchWelcomeOrder.Place) {
+        apply(welcomeOrder.settle(at: place))
+    }
+
+    func listenerMoved(to place: FirstLaunchWelcomeOrder.Place) {
+        apply(welcomeOrder.moved(to: place))
+    }
+
+    /// A friend's file (a packet or a share link) arrived. On a first launch it comes before the drawer (#3291).
+    func friendFileArrived() {
+        hasFriendFileArrived = true
+        if isPresented, isFirstRunOpening { friendFileOpenedUnderneath = true }
+        recordFriendFileArrival()
+    }
+
+    private func recordFriendFileArrival() {
+        apply(welcomeOrder.friendFileArrived(drawerHasPicks: isFirstRunOpening && !picks.isEmpty))
+        if welcomeOrder.defersDrawer { defaults.set(true, forKey: Self.deferredByFriendFileKey) }
+    }
+
+    private func apply(_ action: FirstLaunchWelcomeOrder.Action) {
+        switch action {
+        case .none:
+            break
+        case .presentDrawer:
+            // Opened from Following meanwhile, or already seen: the first-run opening has nothing left to do.
+            guard !isPresented, !defaults.bool(forKey: Self.seenKey) else { return }
+            present()
+            isFirstRunOpening = true
+        case .withdrawDrawer:
+            isWithdrawing = true
+            isPresented = false
+        }
     }
 
     /// The drawer model lives for the whole app run, so each opening drops the follows it
@@ -130,18 +191,23 @@ final class CatalogDrawerModel: ObservableObject {
         followTasks = []
         isFirstRunOpening = false
         playsOnDismiss = false
+        isWithdrawing = false
+        friendFileOpenedUnderneath = false
         isPresented = true
     }
 
     /// Done. On the first-run opening the sheet closes and the listener's first pick starts playing as it
     /// goes (#2851). A swipe down closes it without playing.
     func finish() {
-        playsOnDismiss = isFirstRunOpening && startFirstListen != nil
+        playsOnDismiss = isFirstRunOpening && startFirstListen != nil && !friendFileOpenedUnderneath
         isPresented = false
     }
 
     /// The sheet closed, however it closed.
     func didDismiss() {
+        // Withdrawn for a friend's file: it opens again once the friend's item has been opened (#3291).
+        if isWithdrawing { isWithdrawing = false; return }
+        welcomeOrder.drawerClosed()
         markSeen()
         Task { await playFirstListenIfRequested() }
     }
@@ -158,6 +224,7 @@ final class CatalogDrawerModel: ObservableObject {
     /// Called when the sheet closes, however it closes.
     func markSeen() {
         defaults.set(true, forKey: Self.seenKey)
+        defaults.removeObject(forKey: Self.deferredByFriendFileKey)
     }
 
     func load() async {
@@ -623,5 +690,50 @@ struct CatalogSubjectChipLabel: View {
         .background(isSelected ? AppColors.evergreen.opacity(0.16) : AppColors.panel, in: Capsule())
         .overlay { Capsule().stroke(isSelected ? AppColors.evergreen : AppColors.border) }
         .minimumTapTarget()
+    }
+}
+
+extension FirstLaunchWelcomeOrder.Place {
+    /// Where the first-run drawer's order (#3291) sees the listener: the Library only with no sheet or capture over it.
+    @MainActor
+    init(_ model: Gate1AppModel) {
+        let covered = model.spokenMarginsPackageImportReview != nil || model.isTermsOfUsePresented || model.isHelpPresented
+            || model.isSharingInterjectionsPresented || model.writtenMarginDraft != nil || model.snapshot.isRecording
+        if covered {
+            self = .elsewhere
+        } else if model.screen == .home {
+            self = .library
+        } else if model.screen == .item {
+            self = .item
+        } else {
+            self = .elsewhere
+        }
+    }
+}
+
+/// The first-run drawer waits a moment for a file the system opened the app with, so a friend's file comes first
+/// (#3291); after that it waits for the friend's item and then the Library. The root view notes the launch first.
+private struct FirstLaunchWelcomeOrderModifier: ViewModifier {
+    @ObservedObject var model: Gate1AppModel
+    @ObservedObject var drawer: CatalogDrawerModel
+
+    private var place: FirstLaunchWelcomeOrder.Place { FirstLaunchWelcomeOrder.Place(model) }
+
+    func body(content: Content) -> some View {
+        content
+            .task {
+                try? await Task.sleep(for: .milliseconds(500))
+                drawer.settleFirstRun(at: place)
+            }
+            .onChange(of: place) { _, place in drawer.listenerMoved(to: place) }
+            .onChange(of: model.spokenMarginsPackageImportReview != nil) { _, arrived in
+                if arrived { drawer.friendFileArrived() } // also files from the Share extension's inbox
+            }
+    }
+}
+
+extension View {
+    func firstLaunchWelcomeOrder(model: Gate1AppModel, drawer: CatalogDrawerModel) -> some View {
+        modifier(FirstLaunchWelcomeOrderModifier(model: model, drawer: drawer))
     }
 }

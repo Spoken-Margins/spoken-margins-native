@@ -59,11 +59,9 @@ struct Gate1RootView: View {
         }
         .onAppear {
             model.bootstrapLibraryIfNeeded()
-            catalogDrawer.presentIfFirstRun(
-                libraryWasEmptyAtLaunch: model.libraryWasEmptyAtLaunch,
-                followedSourceCount: model.feedSubscriptions.count
-            )
+            catalogDrawer.noteLaunch(of: model)
         }
+        .firstLaunchWelcomeOrder(model: model, drawer: catalogDrawer)
         .onChange(of: model.requestedExperienceRoot) { _, root in
             guard let root else { return }
             navigation.select(root, recordingIsLocked: model.recordingNavigationIsLocked)

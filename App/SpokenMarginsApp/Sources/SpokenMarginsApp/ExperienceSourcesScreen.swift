@@ -23,9 +23,20 @@ struct ExperienceSourcesScreen: View {
     /// destroyed when one opens and keeps its own place.
     @Binding var scrollMemory: FollowingScrollMemory
 
+    /// A friend with Margins on more than one item, whose items are open.
+    @State private var openFriend: FollowingFriends.Friend?
+
+    /// The friends who sent Margins, read from the Margins list the app already keeps.
+    private var friends: [FollowingFriends.Friend] {
+        FollowingFriends.friends(from: model.sharedMarginRows.map {
+            MarginCollection.SharedEntry(interjection: $0.interjection, layer: $0.layer, itemTitle: $0.itemTitle)
+        })
+    }
+
     var body: some View {
         NavigationStack(path: $path) {
             let list = model.followingShowListCache
+            let friends = self.friends
             List {
                 // An item's Follow can find several feeds; the choice shows here too, not only on the follow screen.
                 if !model.followedSourceCandidates.isEmpty {
@@ -42,7 +53,25 @@ struct ExperienceSourcesScreen: View {
                     quickFolderRow
                         .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
                 }
-                if list.rows.isEmpty && list.quiet.isEmpty {
+                // Each friend who sent Margins, above the shows (#3291).
+                ForEach(friends) { friend in
+                    FollowingFriendRowView(friend: friend) {
+                        if friend.items.count == 1, let item = friend.items.first {
+                            model.openItem(id: item.id)
+                        } else {
+                            openFriend = friend
+                        }
+                    }
+                    .listRowInsets(EdgeInsets(
+                        top: 0,
+                        leading: horizontalSizeClass == .regular ? 28 : 16,
+                        bottom: 0,
+                        trailing: horizontalSizeClass == .regular ? 28 : 16
+                    ))
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(AppColors.bone)
+                }
+                if list.rows.isEmpty && list.quiet.isEmpty && friends.isEmpty {
                     SMExperienceEmptyState(
                         systemImage: "dot.radiowaves.left.and.right",
                         title: "You’re not following anything yet",
@@ -119,6 +148,10 @@ struct ExperienceSourcesScreen: View {
                 })
                 .environmentObject(model)
                 .environmentObject(catalogDrawer)
+            }
+            .navigationDestination(item: $openFriend) { friend in
+                FollowingFriendItemsScreen(friend: friend)
+                    .miniPlayerKeepOut()
             }
             .navigationDestination(isPresented: $isShowingQuickFolder) {
                 QuickFolderFilesScreen(artwork: artwork)
