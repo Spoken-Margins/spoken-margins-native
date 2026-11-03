@@ -350,16 +350,12 @@ def outcome_of(result: dict, trunk: bool = True) -> Outcome:
     """The Outcome of a result dict (`run_tests`'s, or an error result with only a verdict and failed list)."""
     verdict = result['verdict']
     failed = result.get('failed', [])
-    notes = dict(result.get('flaky_notes') or {})
-    for test, said in (result.get('retry_failures') or {}).items():
-        if said and test in (result.get('flaky') or ()):  # what its failed attempt reported (#3286)
-            notes[test] = notes.get(test, '') + f' (first attempt: {said[0]})'
     return outcome(verdict,
                    first_failures=result.get('first_failures', failed if verdict == 'INCONCLUSIVE' else []),
                    confirmed=result.get('confirmed', failed if verdict == 'FAIL' else []),
                    retry_passes=result.get('flaky', []), gating_failed=result.get('gating_failed', []),
                    probation_failed=result.get('probation_failed', []), trunk=trunk,
-                   reruns=result.get('reruns', 0), notes=notes)
+                   reruns=result.get('reruns', 0), notes=result.get('flaky_notes'))
 
 
 def failure_basis(journey: bool) -> str:
@@ -368,6 +364,26 @@ def failure_basis(journey: bool) -> str:
         return ("failed in the scripted-journeys run, including xcodebuild's own retry "
                 '(this script does not re-run journeys)')
     return f'failed in the first run and no re-run (of {RERUNS}, same build) cleared it'
+
+
+RETRY_SAID_SHOWN = 5
+
+
+def retry_said_lines(retry_failures: dict, flaky) -> list[str]:
+    """What the failed first attempts of the retry-passes said (#3286), grouped by message so a run where hundreds of
+    tests failed the same way prints that once: at most RETRY_SAID_SHOWN lines, most common first, however many
+    tests passed on retry. The full per-test messages stay in the manifest and the #2176 tally."""
+    groups = {}
+    for test in sorted(flaky or ()):
+        said = (retry_failures or {}).get(test)
+        if said:
+            groups.setdefault(said[0], []).append(test)
+    ranked = sorted(groups.items(), key=lambda item: (-len(item[1]), item[0]))
+    lines = [f'  first attempt said ({len(tests)} test{"s" if len(tests) != 1 else ""}, e.g. {tests[0].rsplit("/", 1)[-1]}): '
+             f'{message}' for message, tests in ranked[:RETRY_SAID_SHOWN]]
+    if len(ranked) > RETRY_SAID_SHOWN:
+        lines.append(f'  and {len(ranked) - RETRY_SAID_SHOWN} more messages (in the run\'s manifest)')
+    return lines
 
 
 def describe(o: Outcome, *, sha7: str = '', scripted: str = '') -> dict:
@@ -494,6 +510,7 @@ def report_text(sha: str, result: dict, *, started: float, finished: float, prev
     lines.append('outcome: ' + words['outcome'])
     lines += [words[k] for k in ('failing', 'probation') if words[k]]
     lines.append(words['retry'])
+    lines += retry_said_lines(result.get('retry_failures'), result.get('flaky'))
     lines.append('crashes: ' + (', '.join(Path(p).name for p in result['crashes'])
                                 if result.get('crashes') else 'none recorded'))
     if o.verdict == 'FAIL':
@@ -1113,6 +1130,7 @@ def run_tests(ops: Ops, wt: Path, evidence: Path, fds: tuple) -> dict:
         result['journeys'] = script_results(listing, journeys['journeys'])
         result['attachments'] = result['attachments'] + journeys['attachments']
         result['flaky'] = sorted(set(result['flaky']) | set(journeys['retried']))  # the scripted journeys retry too
+        result['retry_failures'] = {**journeys.get('retry_failures', {}), **result.get('retry_failures', {})}
         gating = {e['test'].removesuffix('()') for e in listing.get('gating', [])}
         gating_failed = sorted(t for t, s in result['journeys'].items() if t in gating and s != 'passed')
         probation_failed = sorted(t for t, s in result['journeys'].items()

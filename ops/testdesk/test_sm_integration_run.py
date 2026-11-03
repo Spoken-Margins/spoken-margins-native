@@ -239,7 +239,7 @@ class VerdictTests(unittest.TestCase):
         counts = {'passed': 0, 'failed': 0, 'skipped': 0}
         text = run.report_text('a' * 40, dict(settled, reruns=0, crashes=[], counts=counts),
                                started=0, finished=1, previous=None, suspects=[], evidence=Path('/e'))
-        self.assertIn(f'passed on retry: {TEST} (first attempt: {said})', text)
+        self.assertIn(f'passed on retry: {TEST}\n  first attempt said (1 test, e.g. testResume): {said}\n', text)
         self.assertNotIn('not a retry-pass', text)
         ops = types.SimpleNamespace(posted=[], post_tally=lambda body: ops.posted.append(body),
                                     tally_comments=lambda: [], open_flake_markers=lambda: [],
@@ -254,9 +254,46 @@ class VerdictTests(unittest.TestCase):
         self.assertEqual(both['retry_failures'], {TEST: [said]})
         # no message recorded: today's wording, unchanged
         plain = run.settle(run.summarize(manifest({TEST: 'passed'}, retried=[TEST])), [])
-        self.assertIn(f'passed on retry: {TEST}\n', run.report_text(
+        self.assertNotIn('first attempt said', run.report_text(
             'a' * 40, dict(plain, reruns=0, crashes=[], counts=counts), started=0, finished=1, previous=None,
-            suspects=[], evidence=Path('/e')) + '\n')
+            suspects=[], evidence=Path('/e')))
+
+    def test_hundreds_of_retry_passes_cannot_make_the_report_too_long_to_post(self):
+        # Audit on 6d4e4cf: one note per flaky test could push the report past GitHub's 65,536-character limit.
+        counts = {'passed': 0, 'failed': 0, 'skipped': 0}
+        tests = [f'SpokenMarginsAppTests/BigTests/test{n:04d}' for n in range(400)]
+        launch = 'Failed to launch app with identifier: ' + 'x' * 200
+        said = {t: [launch if n % 3 else f'distinct failure number {n} ' + 'y' * 200] for n, t in enumerate(tests)}
+        result = dict(verdict='PASS', failed=[], confirmed=[], flaky=tests, retry_failures=said, errors=[], reruns=0,
+                      crashes=[], counts=counts, first_failures=[])
+        text = run.report_text('a' * 40, result, started=0, finished=1, previous=None, suspects=[], evidence=Path('/e'))
+        said_lines = [l for l in text.splitlines() if 'first attempt said' in l]
+        self.assertLessEqual(len(said_lines), run.RETRY_SAID_SHOWN)
+        self.assertIn('  first attempt said (266 tests, e.g. test0001):', said_lines[0])
+        self.assertIn(f'and {len(set(m[0] for m in said.values())) - run.RETRY_SAID_SHOWN} more messages', text)
+        self.assertLess(len(text), 30000)
+
+    def test_a_journey_that_passes_on_retry_carries_its_first_message_into_the_report(self):
+        # Audit on 6d4e4cf: run_tests copied the journeys' retry-passes but not what their first attempts said.
+        said = "XCTAssertTrue failed - The friend's Margin never started playing"
+        listing = {'gating': [{'test': f'{JOURNEY}/testOpen', 'journey': 'J1'}], 'probation': []}
+        journeys = manifest({f'{JOURNEY}/testOpen': 'passed'}, retried=[f'{JOURNEY}/testOpen'])
+        journeys['steps'][0]['gating'] = {f'{JOURNEY}/testOpen': 'passed'}
+        journeys['steps'][0]['retry_failures'] = {f'{JOURNEY}/testOpen': [said]}
+        journeys['status'] = 'verified'
+        plans = [manifest({TEST: 'passed'}), journeys, tour_manifest()]
+        with tempfile.TemporaryDirectory() as tmp:
+            ops = FakeOps(tmp, plans, listing=listing)
+            wt = Path(tmp) / 'wt'
+            (wt / 'TestPlans').mkdir(parents=True)
+            (wt / 'TestPlans' / 'scripted-journeys.json').write_text(json.dumps(listing))
+            result = run.run_tests(ops, wt, Path(tmp) / 'evidence', (7, 8))
+        self.assertIn(f'{JOURNEY}/testOpen', result['flaky'])
+        self.assertEqual(result['retry_failures'][f'{JOURNEY}/testOpen'], [said])
+        counts = {'passed': 0, 'failed': 0, 'skipped': 0}
+        text = run.report_text('a' * 40, dict(result, crashes=[], counts=counts), started=0, finished=1,
+                               previous=None, suspects=[], evidence=Path('/e'))
+        self.assertIn(f'first attempt said (1 test, e.g. testOpen): {said}', text)
 
     def test_a_test_the_scripts_own_rerun_clears_keeps_its_first_runs_message(self):
         # Audit on e0ffbf2: xcodebuild's retries failed too, so no message was kept for the later re-run pass.
@@ -270,7 +307,7 @@ class VerdictTests(unittest.TestCase):
         counts = {'passed': 0, 'failed': 0, 'skipped': 0}
         text = run.report_text('a' * 40, dict(settled, reruns=2, crashes=[], counts=counts),
                                started=0, finished=1, previous=None, suspects=[], evidence=Path('/e'))
-        self.assertIn(f'passed on retry: {TEST} (first attempt: {said})', text)
+        self.assertIn(f'first attempt said (1 test, e.g. testResume): {said}', text)
         # a test that stays failed is not a retry-pass, so no message rides on the pass line
         stays = run.settle(first, [run.summarize(manifest({TEST: 'failed'}))] * 2)
         self.assertEqual((stays['verdict'], stays['flaky']), ('FAIL', []))

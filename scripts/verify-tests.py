@@ -4,12 +4,14 @@ import argparse
 import contextlib
 import datetime
 import fcntl
+import getpass
 import hashlib
 import json
 import os
 import platform
 import plistlib
 import shutil
+import socket
 from pathlib import Path
 import re
 import signal
@@ -421,8 +423,12 @@ RETRY_FAILURES_KEPT = 2
 RETRY_FAILURE_WIDTH = 240
 # A path, wherever it sits in the text: a file URL, or one under the places a runner's files live. `[^\s"'),;\]]*`
 # stops at the quote or bracket a message wraps it in, so the closing `")` of `("path")` survives.
-FAILURE_PATH = re.compile(r'(?:file://)?(?:/(?:Users|private|var|tmp|Volumes|home|Library|Applications|System|opt)\b|~/)'
+FAILURE_PATH = re.compile(r'(?:file://)?(?:/Users/[^/\n"\']{1,40}/[^\s"\'),;\]]*|/(?:Users|private|var|tmp|Volumes|home|Library|Applications|System|opt)\b|~/)'
                           r'[^\s"\'),;\]]*')
+# The runner's own account and host names, wherever they sit outside a path (a message can say "runner" or the Mac's name).
+FAILURE_OWN_NAMES = tuple(sorted({n for n in (getpass.getuser(), socket.gethostname().split('.')[0]) if len(n) > 2},
+                                 key=len, reverse=True))
+FAILURE_HOST = re.compile(r'\b[\w-]+\.local\b')
 FAILURE_UUID = re.compile(r'\b[0-9A-Fa-f]{8}-(?:[0-9A-Fa-f]{4}-){3}[0-9A-Fa-f]{12}\b')
 FAILURE_SOURCE_PREFIX = re.compile(r'^(?:\S*?[\w+.-]+\.(?:swift|m|mm|h):\d+:\s*)?(?:error:\s*)?')
 
@@ -432,6 +438,9 @@ def clean_failure_message(text):
     the runner (file URLs, home and container folders), simulator ids, or backticks that would break a code span."""
     text = FAILURE_SOURCE_PREFIX.sub('', re.sub(r'\s+', ' ', text).strip())
     text = FAILURE_UUID.sub('<id>', FAILURE_PATH.sub('<path>', text)).replace('`', "'")
+    text = FAILURE_HOST.sub('<host>', text)
+    for own in FAILURE_OWN_NAMES:
+        text = re.sub(rf'\b{re.escape(own)}\b', '<name>', text)
     return text[:RETRY_FAILURE_WIDTH].strip()
 
 

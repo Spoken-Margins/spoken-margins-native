@@ -1665,12 +1665,18 @@ class VerificationTests(unittest.TestCase):
             (f'XCTAssertNotNil failed - device {uuid} not booted', 'XCTAssertNotNil failed - device <id> not booted'),
             ('XCTAssertTrue failed - thanks @someone, see #1234 and `code`', "XCTAssertTrue failed - thanks @someone, see #1234 and 'code'"),
             ('XCTAssertTrue failed - the /Usersful word stays', 'XCTAssertTrue failed - the /Usersful word stays'),
+            ('XCTAssertTrue failed - /Users/first last/Library/x.m4a is missing', 'XCTAssertTrue failed - <path> is missing'),
+            ('XCTAssertTrue failed - Coles-Mac-mini.local refused', 'XCTAssertTrue failed - <host> refused'),
             ('', ''),
         ]
         for raw, expected in rows:
             with self.subTest(raw=raw[:40]):
                 self.assertEqual(verification.clean_failure_message(raw), expected)
         self.assertLessEqual(len(verification.clean_failure_message('x ' * 400)), 240)
+        with patch.object(verification, 'FAILURE_OWN_NAMES', ('colemiller', 'builder')):
+            self.assertEqual(verification.clean_failure_message('user colemiller on builder failed'),
+                             'user <name> on <name> failed')
+            self.assertEqual(verification.clean_failure_message('colemillers stay'), 'colemillers stay')
         # the same cleaning on the log path
         log = ("Test Case '-[App.ExportTests testIsolation]' started.\n"
                f"/a/B.swift:1: error: -[App.ExportTests testIsolation] : XCTAssertEqual failed: (\"{base}/x\") is not\n"
