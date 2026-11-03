@@ -37,7 +37,9 @@ extension Gate1AppModel {
             let seed = pendingUITestingSeed ?? UITestingLaunchSeed.none; pendingUITestingSeed = nil
             switch seed {
             case .none: break
-            case .keepLibrary: try UITestingLaunchSeedWriter.importCoopLayerIfRequested(into: store)
+            case .keepLibrary:
+                try UITestingLaunchSeedWriter.importCoopLayerIfRequested(into: store)
+                try UITestingLaunchSeedWriter.markListenerMarginSharedIfRequested(into: store)
             case .firstRun: try store.reset() // then the launch goes on as a new install's does
             case .fixture: resetAndSeed(); return
             case .importedPDF: resetAndSeed(); try importObsidianMarkdownFiles(urls: [UITestingLaunchSeedWriter.writePDF()]); return

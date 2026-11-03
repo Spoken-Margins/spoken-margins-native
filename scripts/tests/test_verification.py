@@ -2690,5 +2690,24 @@ class InheritedSimulatorSlotTests(unittest.TestCase):
             self.assertEqual(sorted(p.name for p in screens.iterdir()), names)
 
 
+    def test_the_tour_index_lists_every_screenshot_with_its_step_and_what_it_shows(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            screens = Path(temporary)
+            names = ['tour-dark-11-add-sheet-half.png', 'tour-index-dark-testSharingLoopInDarkAppearance.txt',
+                     'tour-light-11-add-sheet-half-2.png', 'tour-light-11-add-sheet-half.png', 'tour-light-28-now-sam-arrives-missing.png']
+            for name in names:
+                (screens / name).write_bytes(b'png')
+            (screens / names[1]).write_text('tour-dark-11-add-sheet-half\tThe Add sheet | half height\n')
+            (screens / 'tour-index-light-testSharingLoopInLightAppearance.txt').write_text(
+                'tour-light-11-add-sheet-half\tThe Add sheet\ntour-light-28-now-sam-arrives-missing\tExpected: the card\n')
+            listed = verification.write_screen_index(screens, sorted(names + ['tour-index-light-testSharingLoopInLightAppearance.txt']))
+            self.assertEqual(listed, sorted(n for n in names if 'index' not in n))
+            self.assertFalse(any('tour-index' in p.name for p in screens.iterdir()))
+            index = (screens / 'INDEX.md').read_text()
+            self.assertIn('| [tour-dark-11-add-sheet-half.png](tour-dark-11-add-sheet-half.png) | 11 (dark) | The Add sheet \\| half height |', index)
+            self.assertIn('| [tour-light-11-add-sheet-half-2.png](tour-light-11-add-sheet-half-2.png) | 11 (light) | The Add sheet |', index)
+            self.assertIn('| 28 (light) | Expected: the card |', index)
+
+
 if __name__ == '__main__':
     unittest.main()

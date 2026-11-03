@@ -3,6 +3,12 @@ import XCTest
 /// Opens each main screen from the seeded launch and attaches one named screenshot per screen, in
 /// light and dark appearance, so an unattended integration run can hand the critics the whole app
 /// (#381). It only checks that each screen appears; what the screens show may change freely.
+/// The sharing loop (#3237) runs on the generated podcast: add, record and share a Margin, open Sam's packet the way a
+/// listener's tap does, hear his Margin, then open his reply. Sam's packets are checked-in fixtures with a synthetic voice
+/// (`App/TestFixtures/sharing-loop-*.spokenmargins`, plans in `Packages/SessionKitTools/Plans/sharing-loop`).
+///
+/// Each test also attaches `tour-index-<appearance>-<test>`, a tab-separated line per screenshot with what it shows;
+/// `verify-tests.py --plan tour` turns them into `screens/INDEX.md`.
 ///
 /// Export the screenshots from the result bundle with
 /// `xcrun xcresulttool export attachments --path <run>.xcresult --output-path <folder>`;
@@ -10,6 +16,8 @@ import XCTest
 final class ScreenTourTests: XCTestCase {
     private var app: XCUIApplication!
     private var appearance = "light"
+    /// The screenshots this test took, with what each shows, for the run's INDEX.md.
+    private var index: [(name: String, shows: String)] = []
 
     override func setUpWithError() throws {
         continueAfterFailure = false
@@ -19,6 +27,14 @@ final class ScreenTourTests: XCTestCase {
     override func tearDownWithError() throws {
         // The simulator keeps its appearance between runs; leave it as the other UI tests expect.
         XCUIDevice.shared.appearance = .light
+        // Added here so a test that stops halfway still lists what it took.
+        if !index.isEmpty {
+            let lines = index.map { "\($0.name)\t\($0.shows)" }.joined(separator: "\n") + "\n"
+            let attachment = XCTAttachment(data: Data(lines.utf8), uniformTypeIdentifier: "public.plain-text")
+            attachment.name = "tour-index-\(appearance)-\(name.split(separator: " ").last?.dropLast() ?? "test")"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        }
     }
 
     func testTourInLightAppearance() throws {
@@ -27,6 +43,14 @@ final class ScreenTourTests: XCTestCase {
 
     func testTourInDarkAppearance() throws {
         tour(.dark, named: "dark")
+    }
+
+    func testSharingLoopInLightAppearance() throws {
+        try sharingLoop(.light, named: "light")
+    }
+
+    func testSharingLoopInDarkAppearance() throws {
+        try sharingLoop(.dark, named: "dark")
     }
 
     /// The Live Activity's Lock Screen card at the default and the largest text size (#1940). A UI test can't lock
@@ -50,7 +74,7 @@ final class ScreenTourTests: XCTestCase {
                 XCTAssertEqual(XCTWaiter().wait(for: [measured], timeout: 5), .completed,
                                "The \(status) card was not measured at \(size)")
             }
-            capture("10-live-activity-\(size)")
+            capture("10-live-activity-\(size)", "Live Activity Lock Screen card, paused and playing, at text size \(size)")
         }
     }
 
@@ -60,50 +84,244 @@ final class ScreenTourTests: XCTestCase {
         launch()
 
         XCTAssertTrue(element("library.screen").waitForExistence(timeout: 10), "Library did not appear")
-        capture("01-library")
+        capture("01-library", "Library with the seeded article")
 
         let row = app.buttons["library.row.item-pill"]
         XCTAssertTrue(row.waitForExistence(timeout: 5), "The seeded item is missing from Library")
         row.tap()
         XCTAssertTrue(element("item.screen").waitForExistence(timeout: 5), "Item did not appear")
-        capture("02-item")
+        capture("02-item", "Item screen of the seeded article")
         app.buttons["item.home.button"].tap()
         XCTAssertTrue(element("library.screen").waitForExistence(timeout: 5))
 
         app.buttons["queue.start.item-pill"].tap()
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 10), "The text player did not appear")
         pausePlaybackIfPlaying()
-        capture("03-player-text")
+        capture("03-player-text", "Now Playing for an article, paused")
 
         element("playback.options.button").tap()
         scrollTo("playback.export.button").tap()
         XCTAssertTrue(element("export.screen").waitForExistence(timeout: 5), "Share/Export did not appear")
-        capture("04-share-export")
+        capture("04-share-export", "Share/Export from the player's options")
         app.buttons["export.home.button"].tap()
         XCTAssertTrue(element("library.screen").waitForExistence(timeout: 5))
 
         tapRoot("Margins")
         XCTAssertTrue(element("margins.screen").waitForExistence(timeout: 5), "Margins did not appear")
-        capture("05-margins")
+        capture("05-margins", "Margins tab")
 
         tapRoot("Following")
         XCTAssertTrue(element("sources.screen").waitForExistence(timeout: 5), "Following did not appear")
-        capture("06-following")
+        capture("06-following", "Following tab")
 
-        // The first-run drawer opens by itself only on an empty Library; Following opens the same drawer.
+        // The first-run drawer opens by itself only on an empty Library; Manage Feeds (Following's plus) opens the same
+        // drawer. Browse used to sit on Following itself, and the tour failed there on every run until #3237.
         element("sources.manageFeeds").tap()
-        element("sources.browseCatalog").tap()
+        scrollTo("sources.browseCatalog").tap()
         XCTAssertTrue(element("catalog.drawer.done").waitForExistence(timeout: 5), "The first-run drawer did not appear")
-        capture("07-first-run-drawer")
+        capture("07-first-run-drawer", "Browse podcasts and writers drawer, from Manage Feeds")
         element("catalog.drawer.done").tap()
         XCTAssertTrue(element("sources.screen").waitForExistence(timeout: 5))
 
         app.buttons["Settings"].firstMatch.tap()
         XCTAssertTrue(element("settings.screen").waitForExistence(timeout: 5), "Settings did not appear")
-        capture("08-settings")
+        capture("08-settings", "Settings")
 
         openPodcastPlayer()
-        capture("09-player-podcast")
+        capture("09-player-podcast", "Now Playing for a podcast episode added by link")
+    }
+
+    /// The sharing loop on the generated 25-minute podcast (#3237), numbered from 11. Screens a listener meets only
+    /// sometimes are captured as `-missing` when they don't come, so the set never pretends to show what it doesn't.
+    private func sharingLoop(_ style: XCUIDevice.Appearance, named name: String) throws {
+        XCUIDevice.shared.appearance = style
+        appearance = name
+        let podcast = "item-ui-podcast" // UITestingLaunchSeed.podcastItemId
+        loopEnvironment = ["SPOKEN_MARGINS_UI_TEST_PODCAST": "1", "SPOKEN_MARGINS_UI_TEST_RECORDING": "1"]
+        launch()
+
+        // Adding a podcast: the sheet opens at half height, as the 11-02 storyboard did not draw it.
+        XCTAssertTrue(element("library.screen").waitForExistence(timeout: 10), "Library did not appear")
+        app.buttons["home.addSource.button"].tap()
+        let sheet = element("addSource.sheet")
+        XCTAssertTrue(sheet.waitForExistence(timeout: 5), "The Add sheet did not open")
+        capture("11-add-sheet-half", "Library + : the Add sheet as it first opens, at its half-height detent")
+        sheet.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.02))
+            .press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.04)))
+        capture("12-add-sheet-full", "The Add sheet dragged to full height")
+        scrollTo("addSource.route.linkOrPodcast").tap()
+        XCTAssertTrue(element("sourceLink.url.field").waitForExistence(timeout: 5), "Link or Podcast did not open")
+        capture("13-link-form-top", "Link or Podcast form, as it opens")
+        app.swipeUp()
+        capture("14-link-form-bottom", "Link or Podcast form, scrolled to the bottom")
+
+        // The listener's own Margin at about 20:00, then Share for the item, up to the system share sheet.
+        relaunchKeepingLibrary()
+        tapButton("queue.start.\(podcast)")
+        XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 10), "Now Playing did not open")
+        waitFor(playPause, label: "Pause", "The episode never started playing")
+        scrub(to: 0.8)
+        tapButton("playback.interject.button")
+        XCTAssertTrue(element("recording.screen").waitForExistence(timeout: 5), "Recording did not open")
+        _ = XCTWaiter().wait(for: [XCTestExpectation(description: "record")], timeout: 4)
+        tapButton("recording.finish.button")
+        XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8), "Did not return to Now Playing")
+        pausePlaybackIfPlaying()
+        tapButton("playback.margins.button")
+        let share = element("margins.shareItem.\(podcast)")
+        XCTAssertTrue(share.waitForExistence(timeout: 5), "The item's Share action is missing")
+        capture("15-share-action", "The episode's Margins with its Share action")
+        share.tap()
+        XCTAssertTrue(element("build23.sender.experience").waitForExistence(timeout: 5), "Share Margins did not open")
+        let cleanUp = app.alerts["Clean selected Margins automatically?"]
+        if cleanUp.waitForExistence(timeout: 2) {
+            capture("16-share-clean-up-question", "First share only: the clean-up question")
+            cleanUp.buttons["Not now"].tap()
+        }
+        XCTAssertTrue(element("build23.sender.select.continue").waitForExistence(timeout: 5), "Choose Margins has no Review")
+        capture("17-share-choose", "Share: Choose Margins")
+        element("build23.sender.select.continue").tap()
+        XCTAssertTrue(element("build23.sender.stage.review").waitForExistence(timeout: 5), "Share's Review did not open")
+        capture("18-share-review", "Share: Review, with Share pinned at the bottom")
+        element("build23.sender.review.share").tap()
+        captureWhenPresent(element("ActivityListView"), timeout: 12, "19-share-system-sheet",
+                           "The iOS share sheet with the packet")
+
+        // Sam's packet, opened the way a listener's tap opens it: the import review, then the episode.
+        try relaunchOpening("sharing-loop-sam-margin")
+        let review = element("build23.recipient.experience")
+        XCTAssertTrue(review.waitForExistence(timeout: 15), "Sam's packet did not open the import review")
+        capture("20-import-review", "Sam's packet: the import review as it opens")
+        let importButton = element("build23.recipient.import")
+        waitFor(importButton, enabled: true, "The import review never offered Import")
+        importButton.tap()
+        capture("21-importing", "Just after Import")
+        XCTAssertTrue(waitForDisappearance(review, timeout: 15), "The import review did not close")
+        capture("22-after-import", "What the listener sees once the import review closes")
+        openItem(podcast)
+        capture("23-item-top", "The episode's item screen after Sam's packet, top")
+        app.swipeUp()
+        app.swipeUp()
+        capture("24-item-bottom", "The episode's item screen, scrolled to the bottom")
+        for _ in 0..<3 { app.swipeDown() }
+
+        // Continue offers Sam's Margin first; hear it in place.
+        scrollTo("item.start.button").tap()
+        let hear = offerButton("newMarginsOffer.review", orLabel: "Hear new Margins first")
+        XCTAssertTrue(hear.waitForExistence(timeout: 5), "Continue did not offer Sam's Margin")
+        capture("25-new-margins-dialog", "Continue: the offer to hear new Margins first")
+        hear.tap()
+        XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8), "Now Playing did not open")
+        captureWhenPresent(element("review.comingUp"), timeout: 8, "26-now-review-lead-in",
+                           "Now tab during the review's lead-in before Sam's Margin")
+        captureWhenPresent(element("review.playing"), timeout: 25, "27-now-review-sam", "Now tab while Sam's Margin plays")
+        _ = waitForDisappearance(element("review.progress"), timeout: 25)
+
+        // Normal playback through 5:00, where Sam's Margin sits.
+        pausePlaybackIfPlaying()
+        scrub(to: 0.19)
+        if playPause.label == "Play" { playPause.tap() }
+        let sharedCard = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "playback.now.margin.")).firstMatch
+        captureWhenPresent(sharedCard, timeout: 30, "28-now-sam-arrives",
+                           "Now tab in normal playback as Sam's Margin arrives (the pinned card)")
+        pausePlaybackIfPlaying()
+
+        // Sam's reply to the listener's Margin comes back.
+        try relaunchOpening("sharing-loop-sam-reply", markingListenerMarginShared: true)
+        XCTAssertTrue(review.waitForExistence(timeout: 15), "Sam's reply did not open the import review")
+        capture("30-reply-import-review", "Sam's reply: the import review as it opens")
+        waitFor(importButton, enabled: true, "The reply's import review never offered Import")
+        importButton.tap()
+        XCTAssertTrue(waitForDisappearance(review, timeout: 15), "The reply's import review did not close")
+        capture("31-after-reply-import", "What the listener sees once the reply's import review closes")
+        tapRoot("Margins")
+        XCTAssertTrue(element("margins.screen").waitForExistence(timeout: 5), "Margins did not appear")
+        capture("32-margins-with-reply", "Margins tab after Sam's reply")
+        openItem(podcast)
+        capture("33-item-with-reply-top", "The episode's item screen after Sam's reply, top")
+        app.swipeUp()
+        app.swipeUp()
+        capture("34-item-with-reply-bottom", "The episode's item screen after Sam's reply, bottom")
+    }
+
+    /// Launch values the sharing loop keeps across its relaunches.
+    private var loopEnvironment: [String: String] = [:]
+
+    private func relaunchKeepingLibrary(_ extra: [String: String] = [:]) {
+        app.terminate()
+        app.launchEnvironment = [:]
+        for (key, value) in loopEnvironment.merging(extra, uniquingKeysWith: { $1 }) { app.launchEnvironment[key] = value }
+        app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_KEEP_LIBRARY"] = "1"
+        launch()
+        XCTAssertTrue(element("library.screen").waitForExistence(timeout: 10), "Library did not reopen")
+    }
+
+    /// Relaunches with a fixture packet that the app opens through the same entry point as a listener's tap. The bytes
+    /// travel in the launch because the app can't read this test bundle.
+    private func relaunchOpening(_ fixture: String, markingListenerMarginShared: Bool = false) throws {
+        let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: fixture, withExtension: "spokenmargins"),
+                                "\(fixture).spokenmargins is not in the test bundle")
+        var extra = ["SPOKEN_MARGINS_UI_TEST_OPEN_PACKET": try Data(contentsOf: url).base64EncodedString(),
+                     "SPOKEN_MARGINS_UI_TEST_OPEN_PACKET_NAME": fixture]
+        if markingListenerMarginShared { extra["SPOKEN_MARGINS_UI_TEST_LISTENER_SHARED"] = "1" }
+        relaunchKeepingLibrary(extra)
+    }
+
+    private func openItem(_ itemId: String) {
+        if !element("item.screen").exists {
+            tapRoot("Library")
+            let row = app.buttons["library.row.\(itemId)"]
+            XCTAssertTrue(row.waitForExistence(timeout: 8), "The episode is missing from Library")
+            row.tap()
+        }
+        XCTAssertTrue(element("item.screen").waitForExistence(timeout: 5), "The item screen did not appear")
+    }
+
+    /// Captures `screen` when `target` appears in time, else `<screen>-missing`, so a screen that didn't come is named.
+    private func captureWhenPresent(_ target: XCUIElement, timeout: TimeInterval, _ screen: String, _ shows: String) {
+        if target.waitForExistence(timeout: timeout) {
+            capture(screen, shows)
+        } else {
+            capture("\(screen)-missing", "Expected but did not appear within \(Int(timeout)) s: \(shows)")
+        }
+    }
+
+    private var playPause: XCUIElement { app.buttons["playback.play.button"] }
+
+    private func tapButton(_ identifier: String) {
+        let control = app.buttons[identifier].firstMatch
+        XCTAssertTrue(control.waitForExistence(timeout: 5), "Missing control: \(identifier)")
+        control.tap()
+    }
+
+    private func offerButton(_ identifier: String, orLabel label: String) -> XCUIElement {
+        let byIdentifier = app.buttons[identifier].firstMatch
+        return byIdentifier.waitForExistence(timeout: 5) ? byIdentifier : app.buttons[label].firstMatch
+    }
+
+    /// Taps the position slider at a fraction of its width, as a listener would.
+    private func scrub(to fraction: CGFloat) {
+        let scrubber = element("playback.scrubber")
+        XCTAssertTrue(scrubber.waitForExistence(timeout: 5), "Episode scrubber is missing")
+        scrubber.coordinate(withNormalizedOffset: CGVector(dx: fraction, dy: 0.5)).tap()
+    }
+
+    private func waitFor(_ target: XCUIElement, label: String, _ message: String) {
+        let met = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", label), object: target)
+        XCTAssertEqual(XCTWaiter().wait(for: [met], timeout: 15), .completed, message)
+    }
+
+    private func waitFor(_ target: XCUIElement, enabled: Bool, _ message: String) {
+        let met = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == true AND enabled == %@", NSNumber(value: enabled)), object: target
+        )
+        XCTAssertEqual(XCTWaiter().wait(for: [met], timeout: 15), .completed, message)
+    }
+
+    private func waitForDisappearance(_ target: XCUIElement, timeout: TimeInterval) -> Bool {
+        let gone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: target)
+        return XCTWaiter().wait(for: [gone], timeout: timeout) == .completed
     }
 
     /// Adds a podcast episode through the app's own UI-testing link resolver (the one
@@ -146,16 +364,21 @@ final class ScreenTourTests: XCTestCase {
             "-libraryOfflineStateFilter", "all", "-librarySort", "recently_added",
             "-libraryUnfinishedDefaultApplied", "YES"]
         app.launchEnvironment["SPOKEN_MARGINS_UI_TESTING"] = "1"
+        if app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_KEEP_LIBRARY"] == nil {
+            for (key, value) in loopEnvironment { app.launchEnvironment[key] = value }
+        }
         app.launch()
     }
 
-    private func capture(_ screen: String) {
+    /// Attaches a screenshot named `tour-<appearance>-<screen>` and lists it with what it `shows`.
+    private func capture(_ screen: String, _ shows: String) {
         // Let the navigation transition finish so the screenshot shows the screen, not the push.
         _ = XCTWaiter().wait(for: [XCTestExpectation(description: "settle")], timeout: 0.8)
         let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         attachment.name = "tour-\(appearance)-\(screen)"
         attachment.lifetime = .keepAlways
         add(attachment)
+        index.append((attachment.name ?? screen, shows))
     }
 
     private func element(_ identifier: String) -> XCUIElement {
