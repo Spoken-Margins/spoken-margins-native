@@ -16,7 +16,7 @@ final class PinnedMarginCardTests: XCTestCase {
         XCTAssertEqual(PinnedMarginCard(subject: cole, stage: .waitingForTap).headline, "Cole's Margin is here")
         XCTAssertEqual(PinnedMarginCard(subject: .yours, stage: .speaking).headline, "You are speaking")
         XCTAssertEqual(PinnedMarginCard(subject: .friend(nil), stage: .speaking).headline, "A friend is speaking")
-        XCTAssertEqual(PinnedMarginCard(subject: .friend(nil), stage: .failed).headline, "A friend's Margin could not play")
+        XCTAssertEqual(PinnedMarginCard(subject: .friend(nil), stage: .failed(canMoveOn: true)).headline, "A friend's Margin could not play")
     }
 
     func testWhatHappensAtTheNextMarginIsSaidPlainly() {
@@ -41,8 +41,41 @@ final class PinnedMarginCardTests: XCTestCase {
         XCTAssertEqual(PinnedMarginCard(subject: cole, stage: .speaking).detail, "The episode is paused while this plays.")
     }
 
+    func testAFailedVoiceOnTheLastMarginPointsAtReturnToSourceNotAtADisabledButton() {
+        let last = PinnedMarginCard(subject: cole, stage: .failed(canMoveOn: false)).detail
+        XCTAssertTrue(last.contains("Return to Source"))
+        XCTAssertFalse(last.contains("Next Margin"))
+        XCTAssertTrue(PinnedMarginCard(subject: cole, stage: .failed(canMoveOn: true)).detail.contains("Next Margin"))
+    }
+
+    /// The card promises what the offer will do, per Margin: a mixed set of layers on one episode (#3220 audit).
+    func testWhatHappensAtAMarginComesFromThatMarginsOwnLayerAndTheOfferRules() {
+        typealias Arrival = PinnedMarginCard.Arrival
+        XCTAssertEqual(Arrival.forMargin(announced: false, revealMode: .guided), .playsByItself)
+        XCTAssertEqual(Arrival.forMargin(announced: false, revealMode: .companion), .toneThenTap)
+        XCTAssertEqual(Arrival.forMargin(announced: false, revealMode: nil), .toneThenTap)
+        XCTAssertEqual(Arrival.forMargin(announced: true, revealMode: .guided), .onRequest, "announced is not offered again")
+        XCTAssertEqual(Arrival.forMargin(announced: false, revealMode: .fresh), .waitsForYou, "Fresh is never offered")
+        XCTAssertEqual(Arrival.forMargin(announced: true, revealMode: .fresh), .waitsForYou)
+        // It agrees with the prompt style the model acts on, for every reveal mode.
+        for mode in ImportedCommentaryRevealMode.allCases where mode != .fresh {
+            let plays = SharedMarginPromptStyle.style(revealMode: mode, arrival: .crossed).autoPlayAfterMs != nil
+            XCTAssertEqual(Arrival.forMargin(announced: false, revealMode: mode) == .playsByItself, plays, "\(mode)")
+        }
+    }
+
+    func testAFreshLayersMarginIsReachedInOnePressNotThroughALeadInThatEndsInSilence() {
+        XCTAssertEqual(
+            NextMarginPress.press(.sharedPlayback(positionMs: 10_000, nextMarginMs: 120_000, arrival: .waitsForYou)),
+            .playMarginNow)
+        XCTAssertEqual(
+            NextMarginPress.press(.sharedPlayback(positionMs: 10_000, nextMarginMs: 120_000, arrival: .toneThenTap)),
+            .seekToLeadIn(mediaTimeMs: MarginMomentSequence.leadInStartMediaTimeMs(
+                forTarget: MarginMomentAnchor(marginId: "m", mediaTimeMs: 120_000), leadInMs: MarginMomentSequence.reviewLeadInMs)))
+    }
+
     func testAFailedVoiceSaysTheEpisodeStaysPaused() {
-        XCTAssertTrue(PinnedMarginCard(subject: cole, stage: .failed).detail.hasPrefix("The episode is paused."))
+        XCTAssertTrue(PinnedMarginCard(subject: cole, stage: .failed(canMoveOn: true)).detail.hasPrefix("The episode is paused."))
     }
 
     func testOneMarginIsNotCounted() {
@@ -61,7 +94,7 @@ final class PinnedMarginCardTests: XCTestCase {
 
     func testEveryStageHasAnExplanationSoTheCardKeepsOneShape() {
         let stages: [PinnedMarginCard.Stage] = [
-            .speaking, .voicePaused, .loading, .failed, .comingUp(msRemaining: 1_000), .waitingForTap, .upNext(msRemaining: nil, arrival: .toneThenTap),
+            .speaking, .voicePaused, .loading, .failed(canMoveOn: true), .comingUp(msRemaining: 1_000), .waitingForTap, .upNext(msRemaining: nil, arrival: .toneThenTap),
         ]
         for stage in stages {
             let card = PinnedMarginCard(subject: cole, stage: stage)
@@ -87,32 +120,32 @@ final class PinnedMarginCardTests: XCTestCase {
         XCTAssertLessThan(leadIn, marginAt)
         // First press, far away: go to the lead-in.
         XCTAssertEqual(
-            NextMarginPress.press(.sharedPlayback(positionMs: 10_000, nextMarginMs: marginAt)),
+            NextMarginPress.press(.sharedPlayback(positionMs: 10_000, nextMarginMs: marginAt, arrival: .playsByItself)),
             .seekToLeadIn(mediaTimeMs: leadIn))
         // Second press, now inside the lead-in: straight to the Margin.
         XCTAssertEqual(
-            NextMarginPress.press(.sharedPlayback(positionMs: leadIn, nextMarginMs: marginAt)),
+            NextMarginPress.press(.sharedPlayback(positionMs: leadIn, nextMarginMs: marginAt, arrival: .playsByItself)),
             .playMarginNow)
         XCTAssertEqual(
-            NextMarginPress.press(.sharedPlayback(positionMs: marginAt - 1, nextMarginMs: marginAt)),
+            NextMarginPress.press(.sharedPlayback(positionMs: marginAt - 1, nextMarginMs: marginAt, arrival: .playsByItself)),
             .playMarginNow)
         // Just before the lead-in starts it is still a first press.
         XCTAssertEqual(
-            NextMarginPress.press(.sharedPlayback(positionMs: leadIn - 1, nextMarginMs: marginAt)),
+            NextMarginPress.press(.sharedPlayback(positionMs: leadIn - 1, nextMarginMs: marginAt, arrival: .playsByItself)),
             .seekToLeadIn(mediaTimeMs: leadIn))
         // A voice sounding at 100 s with another Margin at 103 s: that Margin's lead-in began before the playhead, so
         // the press plays it, instead of seeking back into the Margin that is playing.
         XCTAssertEqual(
-            NextMarginPress.press(.sharedPlayback(positionMs: 100_000, nextMarginMs: 103_000)), .playMarginNow)
-        XCTAssertEqual(NextMarginPress.press(.sharedPlayback(positionMs: 10_000, nextMarginMs: nil)), .unavailable)
+            NextMarginPress.press(.sharedPlayback(positionMs: 100_000, nextMarginMs: 103_000, arrival: .playsByItself)), .playMarginNow)
+        XCTAssertEqual(NextMarginPress.press(.sharedPlayback(positionMs: 10_000, nextMarginMs: nil, arrival: .playsByItself)), .unavailable)
     }
 
     func testALeadInThatWouldStartBeforeTheStartOfTheEpisodeSeeksToZero() {
         XCTAssertEqual(
-            NextMarginPress.press(.sharedPlayback(positionMs: nil, nextMarginMs: 500)),
+            NextMarginPress.press(.sharedPlayback(positionMs: nil, nextMarginMs: 500, arrival: .playsByItself)),
             .seekToLeadIn(mediaTimeMs: 0))
         XCTAssertEqual(
-            NextMarginPress.press(.sharedPlayback(positionMs: 0, nextMarginMs: 500)),
+            NextMarginPress.press(.sharedPlayback(positionMs: 0, nextMarginMs: 500, arrival: .playsByItself)),
             .playMarginNow, "at the start, a Margin 0.5 s in is already inside its lead-in")
     }
 

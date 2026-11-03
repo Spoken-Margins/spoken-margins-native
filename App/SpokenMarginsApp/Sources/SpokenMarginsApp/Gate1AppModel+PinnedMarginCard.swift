@@ -38,7 +38,7 @@ extension Gate1AppModel {
             case .loading: stage = .loading
             case .playing: stage = .speaking
             case .paused: stage = .voicePaused
-            case .failed: stage = .failed
+            case .failed: stage = .failed(canMoveOn: canGoToNextMargin)
             }
             return PinnedMarginCard(
                 subject: .friend(playing.senderLabel), stage: stage,
@@ -69,8 +69,7 @@ extension Gate1AppModel {
         // Auto-play off still holds the slot: Next Margin is reachable between Margins and the title never moves.
         guard let next = nextSharedMargin else { return nil }
         let remaining = next.mediaTimeMs.flatMap { ms in snapshot.currentMediaTimeMs.map { max(0, ms - $0) } }
-        let arrival: PinnedMarginCard.Arrival = sharedMarginOffers.announcedIDs.contains(next.prompt.id)
-            ? .onRequest : (importedCommentaryAutoPlayEnabled ? .playsByItself : .toneThenTap)
+        let arrival = sharedMarginArrival(next.prompt)
         return PinnedMarginCard(
             subject: .friend(next.prompt.senderLabel), stage: .upNext(msRemaining: remaining, arrival: arrival),
             position: PinnedMarginCard.position(next.prompt.index, of: next.prompt.count))
@@ -88,6 +87,12 @@ extension Gate1AppModel {
         return nil
     }
 
+    /// What happens when the episode reaches `prompt`, from that Margin's own layer and the offer queue's memory, the
+    /// same facts the offer uses, so the card and Next Margin never promise what the offer will not do.
+    private func sharedMarginArrival(_ prompt: ImportedCommentaryPrompt) -> PinnedMarginCard.Arrival {
+        .forMargin(announced: sharedMarginOffers.announcedIDs.contains(prompt.id), revealMode: prompt.layer.revealMode)
+    }
+
     private var nextMarginContext: NextMarginPress.Context? {
         if let moment = marginMoment {
             return moment.isPlayingMargin
@@ -96,7 +101,7 @@ extension Gate1AppModel {
         }
         guard let next = nextSharedMargin else { return nil }
         guard let ms = next.mediaTimeMs else { return nil }
-        return .sharedPlayback(positionMs: snapshot.currentMediaTimeMs, nextMarginMs: ms)
+        return .sharedPlayback(positionMs: snapshot.currentMediaTimeMs, nextMarginMs: ms, arrival: sharedMarginArrival(next.prompt))
     }
 
     /// Whether the card's Next Margin button is enabled.

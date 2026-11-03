@@ -35,8 +35,8 @@ public struct PinnedMarginCard: Equatable, Sendable {
         case voicePaused
         /// The voice was asked for and is not sounding yet.
         case loading
-        /// The voice could not play.
-        case failed
+        /// The voice could not play. `canMoveOn`: Next Margin has somewhere to go.
+        case failed(canMoveOn: Bool)
         /// A lead-in is under way: the Margin plays when the episode reaches it (or when the listener says so).
         case comingUp(msRemaining: Int?)
         /// A Margin is here and waits for the listener's tap (tone-only or jumped to).
@@ -54,6 +54,18 @@ public struct PinnedMarginCard: Equatable, Sendable {
         /// The Margin was announced already (a finished review, or heard before the listener scrubbed back), so
         /// reaching it plays nothing. Next Margin plays it.
         case onRequest
+        /// The Margin's layer is Fresh: the episode never offers it. Next Margin plays it, with no lead-in to wait through.
+        case waitsForYou
+
+        /// What happens when the episode reaches a Margin, from the same rules the offer uses: a Fresh layer is never
+        /// offered, an announced Margin is not offered again, and otherwise the layer's own reveal mode decides
+        /// (`SharedMarginPromptStyle`). Per Margin, never per item: layers on one episode can differ.
+        public static func forMargin(announced: Bool, revealMode: ImportedCommentaryRevealMode?) -> Arrival {
+            if revealMode == .fresh { return .waitsForYou }
+            if announced { return .onRequest }
+            let style = SharedMarginPromptStyle.style(revealMode: revealMode, arrival: .crossed)
+            return style.autoPlayAfterMs != nil ? .playsByItself : .toneThenTap
+        }
     }
 
     public let subject: Subject
@@ -104,7 +116,8 @@ public struct PinnedMarginCard: Equatable, Sendable {
         case .speaking: voiceTime.map { "\($0) · The episode is paused." } ?? "The episode is paused while this plays."
         case .voicePaused: voiceTime.map { "\($0) · The episode stays paused." } ?? "The episode stays paused until this is done."
         case .loading: "Hold on, this is getting ready."
-        case .failed: "The episode is paused. Tap Retry, or Next Margin to move on."
+        case .failed(let canMoveOn):
+            canMoveOn ? "The episode is paused. Tap Retry, or Next Margin to move on." : "The episode is paused. Tap Retry, or Return to Source."
         case .comingUp: "It plays by itself when the episode gets there."
         case .waitingForTap: "The episode is paused. Tap Listen to hear it."
         case .upNext(_, let arrival):
@@ -112,6 +125,7 @@ public struct PinnedMarginCard: Equatable, Sendable {
             case .playsByItself: "It plays by itself when the episode gets there."
             case .toneThenTap: "You will hear a tone. Tap Listen to hear it."
             case .onRequest: "You have heard this one. Tap Next Margin to hear it again."
+            case .waitsForYou: "This one waits for you. Tap Next Margin to hear it."
             }
         }
     }
@@ -143,7 +157,7 @@ public enum NextMarginPress: Equatable, Sendable {
         case momentVoice(isReview: Bool, isLastMargin: Bool)
         /// No moment is running: the episode plays and a friend's Margins come as it reaches them. `positionMs` is the
         /// playhead, `nextMarginMs` the next friend's Margin after it, either nil when not known.
-        case sharedPlayback(positionMs: Int?, nextMarginMs: Int?)
+        case sharedPlayback(positionMs: Int?, nextMarginMs: Int?, arrival: PinnedMarginCard.Arrival)
     }
 
     public static func press(_ context: Context) -> NextMarginPress {
@@ -152,8 +166,10 @@ public enum NextMarginPress: Equatable, Sendable {
             return isReview ? .playMarginNow : .unavailable
         case .momentVoice(let isReview, let isLastMargin):
             return isReview && !isLastMargin ? .skipVoice : .unavailable
-        case .sharedPlayback(let position, let next):
+        case .sharedPlayback(let position, let next, let arrival):
             guard let next else { return .unavailable }
+            // A Fresh layer's Margin is never offered, so a lead-in would end in silence: go straight to it.
+            if arrival == .waitsForYou { return .playMarginNow }
             let leadIn = MarginMomentSequence.leadInStartMediaTimeMs(
                 forTarget: MarginMomentAnchor(marginId: "next", mediaTimeMs: next),
                 leadInMs: MarginMomentSequence.reviewLeadInMs
