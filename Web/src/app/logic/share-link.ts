@@ -26,12 +26,18 @@ export const LINK_MESSAGES = Object.freeze({
   refused: 'The server didn’t accept these Margins. Save them as a file instead.',
   tooMany: 'Too many links were made from here just now. Try again later.',
   noServer: 'This copy of the web app has no link server.',
+  off: 'Links are switched off for now. Ask your friend to send the Margins as a file.',
 });
 
+/** Why a link didn't open, for a screen that words it its own way (the arrival page). */
+export type ShareLinkFailure = 'damaged' | 'expired' | 'offline' | 'server' | 'off' | 'other';
+
 export class ShareLinkError extends Error {
-  constructor(message: string) {
+  readonly reason: ShareLinkFailure;
+  constructor(message: string, reason: ShareLinkFailure = 'other') {
     super(message);
     this.name = 'ShareLinkError';
+    this.reason = reason;
   }
 }
 
@@ -84,20 +90,22 @@ export async function openSharedPacket(link: ShareLinkRef, fetchImpl: typeof fet
       referrerPolicy: 'no-referrer',
     });
   } catch {
-    throw new ShareLinkError(LINK_MESSAGES.offline);
+    throw new ShareLinkError(LINK_MESSAGES.offline, 'offline');
   }
-  if (response.status === 404 || response.status === 410) throw new ShareLinkError(LINK_MESSAGES.expired);
-  if (response.status !== 200) throw new ShareLinkError(LINK_MESSAGES.server);
+  if (response.status === 404 || response.status === 410) throw new ShareLinkError(LINK_MESSAGES.expired, 'expired');
+  // The server answers 503 while links are switched off: nothing will change in a minute, so it isn't "try again".
+  if (response.status === 503) throw new ShareLinkError(LINK_MESSAGES.off, 'off');
+  if (response.status !== 200) throw new ShareLinkError(LINK_MESSAGES.server, 'server');
   let sealed: Uint8Array;
   try {
     sealed = new Uint8Array(await response.arrayBuffer());
   } catch {
-    throw new ShareLinkError(LINK_MESSAGES.offline);
+    throw new ShareLinkError(LINK_MESSAGES.offline, 'offline');
   }
   try {
     return await openPart(sealed, PART.packet, link.key);
   } catch {
-    throw new ShareLinkError(LINK_MESSAGES.damaged);
+    throw new ShareLinkError(LINK_MESSAGES.damaged, 'damaged');
   }
 }
 

@@ -142,6 +142,11 @@ struct SpokenMarginsApp: App {
         ))
     }
 
+    private func open(_ url: URL) {
+        if LiveSessionLinkRouter.shared.handle(url) { return }
+        model.handleIncomingURL(url)
+    }
+
     var body: some Scene {
         WindowGroup {
             Gate1RootView()
@@ -150,10 +155,7 @@ struct SpokenMarginsApp: App {
                 .environmentObject(catalogDrawer)
                 .environmentObject(bridge)
                 .onReceive(NotificationCenter.default.publisher(for: ListeningReadyNotifications.opened)) { _ in model.openReadyListeningEdition() }
-                .onOpenURL { url in
-                    if LiveSessionLinkRouter.shared.handle(url) { return }
-                    model.handleIncomingURL(url)
-                }
+                .onOpenURL(perform: open)
                 .onCompatibleChange(of: scenePhase) { phase in
                     if phase == .active {
                         model.handleAppBecameActive()
@@ -177,6 +179,10 @@ struct SpokenMarginsApp: App {
                 #endif
                 .task {
                     model.importPendingSourceLinkHandoffs()
+                    #if DEBUG
+                    // The screen tour's packets (#3237) open the way a listener's tap does.
+                    if let packet = UITestingHooks.packetToOpen() { open(packet) }
+                    #endif
                 }
                 #if DEBUG
                 .overlay {

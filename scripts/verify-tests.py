@@ -4,12 +4,14 @@ import argparse
 import contextlib
 import datetime
 import fcntl
+import getpass
 import hashlib
 import json
 import os
 import platform
 import plistlib
 import shutil
+import socket
 from pathlib import Path
 import re
 import signal
@@ -17,7 +19,7 @@ import subprocess
 import sys
 import time
 from xml.etree import ElementTree
-from lane_xcresult_attachments import export_failed_attachments
+from lane_xcresult_attachments import export_failed_attachments, readable_attachment_name
 
 from check_posterboard_repair import crash_snapshot, new_crash
 import host_audio
@@ -44,7 +46,8 @@ PLANS = {
     'release': ('SpokenMarginsReleaseTests', 'Release', 3600),
     # The scripted journeys in TestPlans/scripted-journeys.json, from the Release plan (it holds every UI test).
     'journeys': ('SpokenMarginsReleaseTests', 'Release', 1800),
-    'tour': ('SpokenMarginsUISeams', 'ScreenTour', 600),
+    # The tour includes the sharing-loop tests (#3237), about 2-3 minutes each, run twice on a failure; a stopped run exports no screenshots.
+    'tour': ('SpokenMarginsUISeams', 'ScreenTour', 1800),
 }
 
 # Plans whose screenshots are exported from the result bundle, one file per screen, for the critics (#381).
@@ -240,15 +243,40 @@ def name_screenshots(exported, screens):
     for test in json.loads((exported / 'manifest.json').read_text()):
         for attachment in test.get('attachments', []):
             source = exported / attachment['exportedFileName']
-            human = attachment.get('suggestedHumanReadableName') or source.name
-            match = re.fullmatch(r'(.+?)_\d+_[0-9A-Fa-f-]{36}(\.\w+)?', human)
-            name = match[1] + (match[2] or source.suffix) if match else human
-            stem, suffix, copy = Path(name).stem, Path(name).suffix, 2
-            while name in names:
-                name, copy = f'{stem}-{copy}{suffix}', copy + 1
+            name = readable_attachment_name(attachment, names)
             shutil.copyfile(source, screens / name)
             names.append(name)
     return sorted(names)
+
+
+TOUR_INDEX_PREFIX = 'tour-index-'
+
+
+def write_screen_index(screens, names):
+    """Turn the tour's index attachments (`tour-index-*`, a tab-separated "screenshot, what it shows" line per
+    screenshot, #3237) into screens/INDEX.md, listing file, step and what is on screen. Returns the screenshot names
+    without the index attachments. A screenshot no index names is still listed, with nothing said about it."""
+    shows = {}
+    for name in [n for n in names if n.startswith(TOUR_INDEX_PREFIX)]:
+        for line in (screens / name).read_text(errors='replace').splitlines():
+            screenshot, _, description = line.partition('\t')
+            if screenshot.strip():
+                shows[screenshot.strip()] = description.strip()
+        (screens / name).unlink()
+    names = [n for n in names if not n.startswith(TOUR_INDEX_PREFIX)]
+    if not names:
+        return names
+    rows = ['# Screen tour', '', 'One screenshot per screen; `-missing` names a screen that did not come in time.', '',
+            '| File | Step | On screen |', '| --- | --- | --- |']
+    for name in names:
+        stem = Path(name).stem
+        match = re.match(r'tour-(\w+)-(\d+)', stem)
+        step = f'{match[2]} ({match[1]})' if match else ''
+        # A retried test's second copy is `<name>-2`; it shows what the first did.
+        description = (shows.get(stem) or shows.get(re.sub(r'-\d+$', '', stem), '')).replace('|', '\\|')
+        rows.append(f'| [{name}]({name}) | {step} | {description} |')
+    (screens / 'INDEX.md').write_text('\n'.join(rows) + '\n')
+    return names
 
 
 def dedicated_simulator(devices, ios=None):
@@ -378,7 +406,50 @@ def test_records(log):
             previous['seconds'] = seconds_total
         else:
             records[identifier] = result
+    # What failed attempts said. The report is otherwise all that is left of a first attempt, and a flake with no
+    # message cannot be fixed (#3286). Kept for every test that failed an attempt, because a test that then fails
+    # its retries but passes the Test Desk's own re-run still needs its first message.
+    for module, name, method, message in ATTEMPT_FAILURE.findall(log):
+        record = records.get(f'{module}/{name}/{method}')
+        if record:
+            keep_failure_message(record, message)
     return records
+
+
+# `/path/File.swift:171: error: -[Module.Class testName] : XCTAssertTrue failed - the message`, one per failed
+# assertion. The path stays out of the capture: it is the runner's checkout.
+ATTEMPT_FAILURE = re.compile(r'^.*?: error: -\[(\w+)\.(\w+) (test\w+)\] : (.+)$', re.M)
+RETRY_FAILURES_KEPT = 2
+RETRY_FAILURE_WIDTH = 240
+# A path, wherever it sits in the text: a file URL, or one under the places a runner's files live. `[^\s"'),;\]]*`
+# stops at the quote or bracket a message wraps it in, so the closing `")` of `("path")` survives.
+FAILURE_PATH = re.compile(r'(?:file://)?(?:/Users/[^/\n"\']{1,40}/[^\s"\'),;\]]*|/(?:Users|private|var|tmp|Volumes|home|Library|Applications|System|opt)\b|~/)'
+                          r'[^\s"\'),;\]]*')
+# The runner's own account and host names, wherever they sit outside a path (a message can say "runner" or the Mac's name).
+FAILURE_OWN_NAMES = tuple(sorted({n for n in (getpass.getuser(), socket.gethostname().split('.')[0]) if len(n) > 2},
+                                 key=len, reverse=True))
+FAILURE_HOST = re.compile(r'\b[\w-]+\.local\b')
+FAILURE_UUID = re.compile(r'\b[0-9A-Fa-f]{8}-(?:[0-9A-Fa-f]{4}-){3}[0-9A-Fa-f]{12}\b')
+FAILURE_SOURCE_PREFIX = re.compile(r'^(?:\S*?[\w+.-]+\.(?:swift|m|mm|h):\d+:\s*)?(?:error:\s*)?')
+
+
+def clean_failure_message(text):
+    """One line of at most RETRY_FAILURE_WIDTH characters that is safe to post: no source-file prefix, paths from
+    the runner (file URLs, home and container folders), simulator ids, or backticks that would break a code span."""
+    text = FAILURE_SOURCE_PREFIX.sub('', re.sub(r'\s+', ' ', text).strip())
+    text = FAILURE_UUID.sub('<id>', FAILURE_PATH.sub('<path>', text)).replace('`', "'")
+    text = FAILURE_HOST.sub('<host>', text)
+    for own in FAILURE_OWN_NAMES:
+        text = re.sub(rf'\b{re.escape(own)}\b', '<name>', text)
+    return text[:RETRY_FAILURE_WIDTH].strip()
+
+
+def keep_failure_message(record, text):
+    """Adds the cleaned message to the record's `retry_failures` (no repeats, RETRY_FAILURES_KEPT at most)."""
+    message = clean_failure_message(text)
+    messages = record.setdefault('retry_failures', [])
+    if message and message not in messages and len(messages) < RETRY_FAILURES_KEPT:
+        messages.append(message)
 
 
 TEST_STARTED = re.compile(r"Test Case '-\[(\w+)\.(\w+) (test\w+)\]' started\.")
@@ -446,6 +517,14 @@ def xcresult_test_records(payload):
                 yield status(child)
             yield from attempts(child)
 
+    def failure_messages(node):
+        """The `Failure Message` nodes under each failed attempt of a test case (#3286)."""
+        for child in node.get('children', []):
+            if child['nodeType'] == 'Failure Message':
+                yield str(child.get('name', ''))
+            elif child['nodeType'] != 'Test Case Run' or child.get('result') == 'Failed':
+                yield from failure_messages(child)
+
     def visit(nodes, bundle=None):
         for node in nodes:
             if node['nodeType'] in ('Unit test bundle', 'UI test bundle'):
@@ -462,10 +541,14 @@ def xcresult_test_records(payload):
                           'seconds': float(node.get('durationInSeconds', 0))}
                 if retried:
                     result['passed_on_retry'] = True
+                for message in failure_messages(node):
+                    keep_failure_message(result, message)
                 if identifier in records:
                     previous = records[identifier]
                     result['status'] = worst([previous['status'], result['status']])
                     result['seconds'] += previous['seconds']
+                    for message in previous.get('retry_failures', []):
+                        keep_failure_message(result, message)
                     if result['status'] != 'passed' or not (previous.get('passed_on_retry') or result.get('passed_on_retry')):
                         result.pop('passed_on_retry', None)
                     else:
@@ -494,6 +577,9 @@ def completed_test_records(log, result_bundle):
             previous = records[identifier]
             previous['status'] = next(s for s in ('failed', 'skipped', 'passed')
                                       if s in (previous['status'], result['status']))
+            # The log is the first source of a failed attempt's message; the xcresult fills in what it missed.
+            if result.get('retry_failures') and not previous.get('retry_failures'):
+                previous['retry_failures'] = list(result['retry_failures'])
             if previous['status'] == 'passed' and result.get('passed_on_retry'):
                 previous['passed_on_retry'] = True
             elif previous['status'] != 'passed':
@@ -1636,6 +1722,8 @@ class Run:
             entry['counts'] = {status: sum(r['status'] == status for r in records.values())
                                for status in ('passed', 'failed', 'skipped')}
             entry['passed_on_retry'] = sorted(n for n, r in records.items() if r.get('passed_on_retry'))
+            entry['retry_failures'] = {n: r['retry_failures'] for n, r in sorted(records.items())
+                                       if r.get('retry_failures')}
             errors.extend(reconcile(expected, records, allowed_skips, probation or ()))
             if probation is not None:  # scripted journeys: each listed test's result, by status
                 entry['gating'] = {test: records.get(test, {}).get('status', 'missing')
@@ -2229,13 +2317,26 @@ class Run:
                     slot.close()
                 else:
                     release_handle(slot)
-        if plan in SCREENSHOT_PLANS:
-            self.export_screenshots()
+            if plan in SCREENSHOT_PLANS:
+                # A tour test that stops partway still hands over what the run took (#3237): from 11-02 the tour failed
+                # at one moved control on every run, and exported nothing at all. The tests' own failure stays the error.
+                self.export_screenshots(tests_failed=sys.exc_info()[1] is not None)
         if input_identity() != identity:
             raise RuntimeError('Inputs changed during testing; rerun on a stable source state')
 
-    def export_screenshots(self):
-        """Export the run's screenshots to screens/, named per screen, and list them in the manifest."""
+    def export_screenshots(self, tests_failed=False):
+        """Export the run's screenshots to screens/, named per screen, with INDEX.md, and list them in the manifest.
+
+        After a failed test an export error is only recorded, so it can't hide the failure."""
+        try:
+            self._export_screenshots()
+        except (RuntimeError, OSError, subprocess.SubprocessError) as error:
+            if not tests_failed:
+                raise
+            self.manifest['screenshot_export_error'] = repr(error)
+            self.save()
+
+    def _export_screenshots(self):
         exported = self.output / 'attachments'
         self.command('export-screenshots', ['xcrun', 'xcresulttool', 'export', 'attachments',
                      '--path', str(self.output / 'tests.xcresult'), '--output-path', str(exported)], timeout=120)
@@ -2249,6 +2350,7 @@ class Run:
             shutil.copytree(exported, screens, ignore=shutil.ignore_patterns('manifest.json'))
             names = sorted(path.name for path in screens.iterdir())
         shutil.rmtree(exported, ignore_errors=True)
+        names = write_screen_index(screens, names)
         self.manifest['screenshots'] = names
         self.save()
         if not names:

@@ -1,0 +1,11 @@
+{
+  "sender": "Sam (synthetic)",
+  "voice": "Samantha",
+  "packageId": "ui-tour-sam-reply",
+  "createdAt": "2026-11-02T09:00:00Z",
+  "fileName": "sharing-loop-sam-reply",
+  "base": "../../../../artifacts/sharing-loop/sharing-loop-listener-margin.spokenmargins",
+  "margins": [
+    { "id": "sam-reply-1", "replyTo": { "margin": "margin-ui-listener" }, "createdAt": "2026-11-02T09:00:00Z", "text": "Agreed. I heard it the same way the second time." }
+  ]
+}

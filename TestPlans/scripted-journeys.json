@@ -54,6 +54,10 @@
     {
       "test": "SpokenMarginsAppUITests/Gate1FlowUITests/testLiveSessionAddMarginIsAboveTheKeyboardWhileTyping",
       "journey": "Live session: Add Margin is on the keyboard while typing a Margin (#2963)"
+    },
+    {
+      "test": "SpokenMarginsAppUITests/J12SharingLoopJourneyUITests",
+      "journey": "J12 steps 2-5: record two Margins, send, a friend's Margin on the Margins tab and heard first (#3222)"
     }
   ]
 }

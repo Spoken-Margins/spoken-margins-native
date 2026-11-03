@@ -68,6 +68,15 @@ enum UITestingLaunchSeedWriter {
         _ = try store.importCommentaryLayer(layer, interjections: [margin])
     }
 
+    /// A reply relaunch of the screen tour (#3237): records on the listener's Margin that it went out in the packet Sam's
+    /// reply fixture answers, so the reply links to it as it would after a real send. Does nothing without the switch.
+    static func markListenerMarginSharedIfRequested(into store: SQLiteSessionStore) throws {
+        guard UITestingHooks.marksListenerMarginShared,
+              let marked = UITestingLaunchSeed.listenerMarginMarkedShared(try store.loadInterjections(itemId: UITestingLaunchSeed.podcastItemId))
+        else { return }
+        try store.saveInterjection(marked)
+    }
+
     /// A quiet tone as small 8 kHz PCM, so writing a 25-minute episode takes well under a second.
     private static func writeEpisodeAudio(to url: URL, seconds: Int) throws -> Int64 {
         try? FileManager.default.removeItem(at: url)

@@ -3,11 +3,12 @@
 import { useCallback, useEffect, useState, type DragEvent, type ReactNode } from 'react';
 import { DataProvider } from './data.tsx';
 import { FollowingIcon, LibraryIcon, MarginsIcon, SettingsIcon } from './icons.tsx';
-import { openFileBytes, openFiles, useLaunchLink, useOpenMarginFile, useOpenShareLink, type OpenMarginFile } from './import.tsx';
+import { openFileBytes, openFiles, useOpenMarginFile, useOpenShareLink, type OpenMarginFile } from './import.tsx';
 import type { Landing } from './logic/import.ts';
 import type { ParsedLink } from './logic/share-link.ts';
 import { PlayerProvider, usePlayer } from './player.tsx';
 import { FeedRefreshProvider } from './refresh.tsx';
+import { Arrival } from './screens/Arrival.tsx';
 import { Following } from './screens/Following.tsx';
 import { Library } from './screens/Library.tsx';
 import { Margins } from './screens/Margins.tsx';
@@ -62,7 +63,13 @@ function Shell({ launchLink }: { launchLink: ParsedLink }) {
   useNativeOpenedFiles(openArrivedFile);
   useLaunchedFiles(openMarginFile);
   const openShareLink = useOpenShareLink(landed);
-  useLaunchLink(launchLink, openShareLink);
+  // A page opened at a share link starts on the arrival page, not in the app (#2168).
+  const [arriving, setArriving] = useState(launchLink.kind !== 'none');
+  const arrived = useCallback((playing: boolean) => {
+    setArriving(false);
+    if (playing) setNowPlaying(true);
+    else setTabState('library');
+  }, []);
 
   // A `.spokenmargins` file dropped anywhere on the app opens like a picked one.
   const carriesFiles = (event: DragEvent) => Array.from(event.dataTransfer.types).includes('Files');
@@ -83,9 +90,10 @@ function Shell({ launchLink }: { launchLink: ParsedLink }) {
   const player = usePlayer();
   const playingTitle = nowPlaying ? player.episode?.title : undefined;
   useEffect(() => {
+    if (arriving) return;
     const label = TABS.find((t) => t.id === tab)?.label ?? 'Library';
     document.title = playingTitle ? `${playingTitle}, Now Playing · Spoken Margins` : `${label} · Spoken Margins`;
-  }, [tab, playingTitle]);
+  }, [tab, playingTitle, arriving]);
 
   return (
     <div
@@ -97,7 +105,7 @@ function Shell({ launchLink }: { launchLink: ParsedLink }) {
       }}
       onDrop={onDrop}
     >
-      <nav className="tabbar" aria-label="Sections" inert={nowPlaying}>
+      <nav className="tabbar" aria-label="Sections" inert={nowPlaying || arriving}>
         <span className="brand" aria-hidden="true">
           <img src="./icons/icon.svg" alt="" width="28" height="28" />
           Spoken Margins
@@ -109,7 +117,7 @@ function Shell({ launchLink }: { launchLink: ParsedLink }) {
           </button>
         ))}
       </nav>
-      <main className="content" inert={nowPlaying}>
+      <main className="content" inert={nowPlaying || arriving}>
         {tab === 'library' && (
           <Library
             onPlay={openPlayer}
@@ -124,7 +132,8 @@ function Shell({ launchLink }: { launchLink: ParsedLink }) {
         {tab === 'margins' && <Margins onPlay={openPlayer} onOpenFile={openMarginFile} onOpenLink={openShareLink} />}
         {tab === 'settings' && <Settings />}
       </main>
-      {!nowPlaying && <MiniPlayer onOpen={openPlayer} />}
+      {!nowPlaying && !arriving && <MiniPlayer onOpen={openPlayer} />}
+      {arriving && <Arrival link={launchLink} onDone={arrived} />}
       {nowPlaying && (
         <NowPlaying
           landing={landing}

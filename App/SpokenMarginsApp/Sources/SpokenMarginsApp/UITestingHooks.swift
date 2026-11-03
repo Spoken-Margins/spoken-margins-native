@@ -1,5 +1,6 @@
 import Foundation
 import SessionKit
+import SessionKitSharing
 
 /// Every launch argument and environment value that lets a UI test steer the app.
 ///
@@ -84,6 +85,24 @@ enum UITestingHooks {
         return environment("SPOKEN_MARGINS_UI_TEST_INTERJECTION")
     }
 
+    /// A keep-library relaunch marks the listener's Margin as sent in the packet Sam's reply fixture answers (#3237).
+    static var marksListenerMarginShared: Bool {
+        UITestingLaunchSeed.marksListenerMarginShared(arguments: CommandLine.arguments, environment: ProcessInfo.processInfo.environment)
+    }
+
+    /// A packet to open at launch as if the listener had tapped it (#3237): its bytes, base64, in
+    /// `SPOKEN_MARGINS_UI_TEST_OPEN_PACKET`, written to a temporary `.spokenmargins` file named by
+    /// `SPOKEN_MARGINS_UI_TEST_OPEN_PACKET_NAME`. The bytes travel in the launch, not as a path, because the app can't
+    /// read the test runner's bundle. Nil when there is none or it can't be written.
+    static func packetToOpen() -> URL? {
+        guard isActive, let encoded = environment("SPOKEN_MARGINS_UI_TEST_OPEN_PACKET"),
+              let bytes = Data(base64Encoded: encoded) else { return nil }
+        let name = environment("SPOKEN_MARGINS_UI_TEST_OPEN_PACKET_NAME") ?? "ui-test-packet"
+        let url = FileManager.default.temporaryDirectory
+            .appending(path: "\(name).\(SpokenMarginsPackageArchive.fileExtension)")
+        return (try? bytes.write(to: url, options: .atomic)) == nil ? nil : url
+    }
+
     /// The text size to show the Live Activity's Lock Screen card at, in place of the app (#1940), as a
     /// `DynamicTypeSize` case name such as `large` or `accessibility5`.
     static var liveActivityPreviewTextSize: String? {
@@ -105,5 +124,7 @@ enum UITestingHooks {
     static var usesSupertonic: Bool { false }
     static var summaryInterjectionNote: String? { nil }
     static var liveActivityPreviewTextSize: String? { nil }
+    static var marksListenerMarginShared: Bool { false }
+    static func packetToOpen() -> URL? { nil }
     #endif
 }

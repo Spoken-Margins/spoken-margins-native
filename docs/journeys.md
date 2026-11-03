@@ -162,6 +162,27 @@ Measure while you go. Start a stopwatch at the first launch, and count every tap
 
 The script `J11FirstMinuteJourneyUITests` runs steps 2 and 3 with stand-in microphone and speech services (`SPOKEN_MARGINS_UI_TEST_FIRST_RUN=1` wipes the defaults and the Library, then seeds nothing), asserts the Terms buttons are reachable, and attaches the seconds and taps. Picking a show or a Substack needs the network, so step 1, the real microphone prompt and the "Don't Allow" fallback stay with this agent run, and a script pass never stands in for them.
 
+## J12 — The sharing loop, from the sender to a friend and back
+
+The whole loop (#3222, part of #3216), with an eye on the human side: how many taps, how long each wait is, and where a first-time friend could get lost. It needs two installs (a second simulator), or a prepared packet in place of the friend ([sharing test kit](sharing-test-kit/README.md)). Count taps and time each wait with a stopwatch, and report both for every step.
+
+1. The sender adds a podcast episode by searching for its name, and plays well into it.
+   - Pass: the episode is in the Library and plays. Record taps from launch to the first audio.
+2. The sender records two Margins, one after the other.
+   - Pass: each saves on the item without leaving the playback screen, and the episode carries on.
+3. The sender taps Share and sends the Margins to the friend.
+   - Pass: Review shows the package details with the file size, and Share opens the system share sheet. Record the packet size at this send, the seconds from Preview package details to the size showing, and the taps from the playback screen to the share sheet.
+4. The friend (second simulator) opens the packet. They have not added the episode beforehand.
+   - Pass: the episode appears in their Library and the Margins are listed. The Margins tab and the Now tab show the Margins without leaving the screen or restarting (#3263). Record the seconds from opening the packet to the Margins being listed.
+5. The friend hears the Margins in both modes (the big button, and "Hear new Margins first").
+   - Pass: a short two-note chime, then the sender's voice, at the right place in the episode. Record the seconds from import to the first audio and the taps it took. The owner checks by ear that the voice and the place match.
+6. The friend replies to a Margin, in voice once and in writing once, then sends the replies back.
+   - Pass: each reply is saved at that moment of the episode. Record the packet size at this send.
+7. The sender opens the replies packet.
+   - Pass: each reply plays right after the Margin it answers (#3257), and the sender can reply again.
+
+The script `J12SharingLoopJourneyUITests` runs step 2, step 3 up to the package details (not the system share sheet), and, with the friend's packet as a fixture (`SPOKEN_MARGINS_UI_TEST_COOP`, as J9), steps 4 and 5's offer, the in-place play and the Margins tab. It attaches the taps and seconds per step and the packet size. The fixture imports the friend's Margin at launch, so the script cannot catch #3263 (Margins missing until a restart); step 4 of the agent run does. Adding the episode by search needs the network, the system share sheet and the second install are outside what a script can drive, and replying then importing back needs both, so step 1's search, step 3's share sheet, and steps 6 and 7 stay with the agent run. A script pass never stands in for them, and audible content stays with the owner.
+
 ## Writing scripted journeys
 
 The Test Desk keeps this guide. Threads writing a first pass follow it, and the desk corrects it when a script teaches it something.

@@ -1,0 +1,11 @@
+{
+  "sender": "You (synthetic)",
+  "voice": "Samantha",
+  "packageId": "ui-tour-listener-margin",
+  "createdAt": "2026-11-01T17:00:00Z",
+  "fileName": "sharing-loop-listener-margin",
+  "item": {"itemType":"podcast","canonicalURL":"https://example.invalid/ui-test/episode","originalURL":"https://example.invalid/ui-test/episode","title":"UI Test Episode","enclosureURL":"https://cdn.example.invalid/ui-test-episode.caf","durationMs":1500000},
+  "margins": [
+    { "id": "margin-ui-listener", "atMs": 1200000, "spoken": false, "createdAt": "2026-11-01T17:00:00Z", "text": "The listener's own Margin, as their packet carried it." }
+  ]
+}

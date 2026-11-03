@@ -83,6 +83,48 @@ class AttachmentTests(unittest.TestCase):
         self.assertEqual(len(result['files']), 1)
         self.assertTrue(result['manifest'].endswith('/manifest.json'))
 
+    def test_files_are_renamed_after_their_attachments_not_left_as_uuids(self):
+        uuid, uuid2 = '1A2B3C4D-0000-0000-0000-000000000001', '1A2B3C4D-0000-0000-0000-000000000002'
+        groups = [{'testIdentifierURL': URL, 'attachments': [
+            {'exportedFileName': f'{uuid}.png', 'suggestedHumanReadableName': f'J9 step 2_0_{uuid}.png'},
+            {'exportedFileName': f'{uuid2}.png', 'suggestedHumanReadableName': f'J9 step 2_1_{uuid2}.png'},
+            {'exportedFileName': 'recording.mp4'}]}]
+        with tempfile.TemporaryDirectory() as tmp, patch.object(
+                attachments.subprocess, 'run', side_effect=self.export(groups, [f'{uuid}.png', f'{uuid2}.png', 'recording.mp4'])):
+            result = attachments.export_failed_attachments('retained.xcresult', {TEST: {'status': 'failed'}}, PAYLOAD, Path(tmp))[0]
+            self.assertNotIn('error', result)
+            self.assertEqual([Path(path).name for path in result['files']], ['J9 step 2.png', 'J9 step 2-2.png', 'recording.mp4'])
+            self.assertTrue(all(Path(path).is_file() for path in result['files']))
+            names = [a['exportedFileName'] for a in json.loads(Path(result['manifest']).read_text())[0]['attachments']]
+            self.assertEqual(names, ['J9 step 2.png', 'J9 step 2-2.png', 'recording.mp4'])
+
+    def test_names_the_artifact_upload_refuses_become_dashes(self):
+        # Hosted run 41576228151: one failure snapshot named after its query lost the whole tour's evidence (#3237).
+        refused = '<>|*?"\r\n'
+        for human in ['Debug description for `"margins.shareItem.item-ui-podcast" Any`.txt',
+                      'Debug description for `Any (First Match)`.txt', 'step: a/b\\c <1>|*?.png', 'quote"only.png']:
+            name = attachments.readable_attachment_name({'exportedFileName': 'x.txt', 'suggestedHumanReadableName': human}, [])
+            self.assertFalse(set(name) & set(refused + ':/\\'), name)
+            self.assertTrue(name.endswith(('.txt', '.png')), name)
+        first = attachments.readable_attachment_name(
+            {'exportedFileName': 'x.txt', 'suggestedHumanReadableName': 'a"b.txt'}, [])
+        clash = attachments.readable_attachment_name(
+            {'exportedFileName': 'x.txt', 'suggestedHumanReadableName': 'a|b.txt'}, [first])
+        self.assertEqual((first, clash), ('a-b.txt', 'a-b-2.txt'))
+
+    def test_a_bad_attachment_later_in_the_list_renames_nothing(self):
+        uuid = '1A2B3C4D-0000-0000-0000-000000000001'
+        groups = [{'testIdentifierURL': URL, 'attachments': [
+            {'exportedFileName': f'{uuid}.png', 'suggestedHumanReadableName': f'J9 step 2_0_{uuid}.png'},
+            {'exportedFileName': 'missing.png'}]}]
+        with tempfile.TemporaryDirectory() as tmp, patch.object(
+                attachments.subprocess, 'run', side_effect=self.export(groups, [f'{uuid}.png'])):
+            result = attachments.export_failed_attachments('retained.xcresult', {TEST: {'status': 'failed'}}, PAYLOAD, Path(tmp))[0]
+            self.assertIn('missing or outside', result['error'])
+            folder = Path(result['manifest']).parent
+            self.assertTrue((folder / f'{uuid}.png').is_file(), 'the manifest still names this file')
+            self.assertFalse((folder / 'J9 step 2.png').exists())
+
     def test_empty_export_warns_instead_of_claiming_no_retained_media(self):
         result = self.recover([])[0]
         self.assertIn('absence of retained media is not established', result['error'])

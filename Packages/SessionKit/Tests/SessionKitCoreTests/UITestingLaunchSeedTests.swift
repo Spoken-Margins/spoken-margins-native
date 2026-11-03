@@ -6,6 +6,7 @@ final class UITestingLaunchSeedTests: XCTestCase {
     private let everySeedVariable = [
         "SPOKEN_MARGINS_UI_TEST_KEEP_LIBRARY": "1",
         "SPOKEN_MARGINS_UI_TEST_COOP": "1",
+        "SPOKEN_MARGINS_UI_TEST_LISTENER_SHARED": "1",
         "SPOKEN_MARGINS_UI_TEST_SOURCE_TEXT": "Some text.",
         "SPOKEN_MARGINS_UI_TEST_PODCAST": "1",
         "SPOKEN_MARGINS_UI_TEST_PDF": "1",
@@ -20,9 +21,11 @@ final class UITestingLaunchSeedTests: XCTestCase {
             XCTAssertNil(seed.podcastDownload(bytesWritten: 1), key)
             XCTAssertFalse(seed.seedsGeneratedTimeline, key)
             XCTAssertFalse(UITestingLaunchSeed.importsCoopLayer(arguments: ["SpokenMarginsApp"], environment: [key: value]), key)
+            XCTAssertFalse(UITestingLaunchSeed.marksListenerMarginShared(arguments: ["SpokenMarginsApp"], environment: [key: value]), key)
         }
         XCTAssertEqual(UITestingLaunchSeed(arguments: ["SpokenMarginsApp"], environment: everySeedVariable), .none)
         XCTAssertFalse(UITestingLaunchSeed.importsCoopLayer(arguments: ["SpokenMarginsApp"], environment: everySeedVariable))
+        XCTAssertFalse(UITestingLaunchSeed.marksListenerMarginShared(arguments: ["SpokenMarginsApp"], environment: everySeedVariable))
     }
 
     func testAUITestLaunchWithNoSeedVariablesKeepsTheFixtureArticle() {
@@ -182,5 +185,40 @@ final class UITestingLaunchSeedTests: XCTestCase {
         XCTAssertFalse(entry.isApproximate)
         XCTAssertEqual(SharedMarginReview.offerMessage(for: entries),
                        "1 new Margin from Sam. Hear it in place first, then carry on from where you were.")
+    }
+
+    /// #3237: only a keep-library relaunch that asks marks the listener's Margin as sent.
+    func testOnlyAKeepLibraryRelaunchMarksTheListenersMarginShared() {
+        let ui = ["SpokenMarginsApp", "--ui-testing"]
+        XCTAssertTrue(UITestingLaunchSeed.marksListenerMarginShared(arguments: ui, environment: [
+            "SPOKEN_MARGINS_UI_TEST_KEEP_LIBRARY": "1", "SPOKEN_MARGINS_UI_TEST_LISTENER_SHARED": "1",
+        ]))
+        XCTAssertFalse(UITestingLaunchSeed.marksListenerMarginShared(arguments: ui, environment: [
+            "SPOKEN_MARGINS_UI_TEST_LISTENER_SHARED": "1",
+        ]), "a fresh seed wipes the Margin it would mark")
+        XCTAssertFalse(UITestingLaunchSeed.marksListenerMarginShared(arguments: ui, environment: [
+            "SPOKEN_MARGINS_UI_TEST_KEEP_LIBRARY": "1",
+        ]))
+    }
+
+    /// #3237: the listener's first Margin on the seeded podcast gets the identity Sam's reply names, once.
+    func testTheListenersFirstPodcastMarginIsMarkedSentOnce() throws {
+        func margin(_ id: String, item: String, at seconds: TimeInterval) -> Interjection {
+            Interjection(
+                id: id, itemId: item, sessionId: "session", targetType: .item, targetId: item,
+                createdAt: Date(timeIntervalSince1970: seconds), roughPercent: 80,
+                anchor: Anchor(anchorType: .media, startChar: 0, endChar: 0, anchorBefore: "", anchorAfter: "", mediaTimeMs: 1_200_000),
+                audioPath: nil, audioStatus: "none", transcriptionStatus: "complete", transcript: nil, cleanedTranscript: nil,
+                displayText: id, status: "active"
+            )
+        }
+        let podcast = UITestingLaunchSeed.podcastItemId
+        let margins = [margin("later", item: podcast, at: 200), margin("other-item", item: "item-other", at: 50),
+                       margin("first", item: podcast, at: 100)]
+        let marked = try XCTUnwrap(UITestingLaunchSeed.listenerMarginMarkedShared(margins))
+        XCTAssertEqual(marked.id, "first")
+        XCTAssertEqual(marked.sharedAs, [UITestingLaunchSeed.listenerSharedIdentity])
+        XCTAssertNil(UITestingLaunchSeed.listenerMarginMarkedShared([marked]), "a second relaunch marks nothing")
+        XCTAssertNil(UITestingLaunchSeed.listenerMarginMarkedShared([margin("other-item", item: "item-other", at: 50)]))
     }
 }

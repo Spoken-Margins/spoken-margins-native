@@ -11,6 +11,8 @@ export const OFFLINE_MESSAGE = "You're offline. Reconnect, then reload this page
 export const SERVER_MESSAGE = 'The server had a problem. Try again in a minute.';
 
 const LINK_ID = /^[0-9a-f]{32}$/;
+// An origin the server was started with (-links-web-url, #2168): scheme, host and an optional port, nothing else.
+const WEB_ORIGIN = /^https?:\/\/[a-z0-9.-]+(:\d{1,5})?$/;
 
 function element(doc, name, text) {
   const node = doc.createElement(name);
@@ -49,6 +51,20 @@ export function renderPreview(doc, section, preview) {
 }
 
 /**
+ * Where a browser holding the key goes to hear the Margins (#2168): the web app's page for this link, with the same `#`
+ * part. Undefined when the server names no web app, the link or its key is malformed, or the address asks for the report
+ * form (`?report`), and then this page stays. The key travels only in the address's `#` part, to the web app's own page.
+ */
+export function playingPageAddress(doc, hash, search) {
+  const section = doc.getElementById('margins');
+  const web = section?.dataset.web ?? '';
+  const id = section?.dataset.link ?? '';
+  if (!WEB_ORIGIN.test(web) || !LINK_ID.test(id) || !keyFromFragment(hash)) return undefined;
+  if (new URLSearchParams(search ?? '').has('report')) return undefined;
+  return `${web}/l/${id}${hash}`;
+}
+
+/**
  * Opens the link this page was loaded for. `fetchPreview(path)` resolves to a Response-like
  * `{ status, arrayBuffer() }`. Returns the status message shown, or '' when the Margins are shown.
  */
@@ -84,7 +100,12 @@ export async function showSharedMargins(doc, hash, fetchPreview) {
 }
 
 if (typeof document !== 'undefined' && typeof location !== 'undefined') {
-  showSharedMargins(document, location.hash, (path) =>
-    fetch(path, { cache: 'no-store', credentials: 'omit', redirect: 'error', referrerPolicy: 'no-referrer' }),
-  );
+  const playing = playingPageAddress(document, location.hash, location.search);
+  if (playing) {
+    location.replace(playing);
+  } else {
+    showSharedMargins(document, location.hash, (path) =>
+      fetch(path, { cache: 'no-store', credentials: 'omit', redirect: 'error', referrerPolicy: 'no-referrer' }),
+    );
+  }
 }

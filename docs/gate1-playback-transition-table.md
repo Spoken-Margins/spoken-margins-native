@@ -81,7 +81,7 @@ The two parts, which the claim holds independently of the card on screen and of 
 
 | Event (model member) | Claim call | Decision |
 | --- | --- | --- |
-| A prompt is shown (`presentImportedCommentaryPrompt`) | `promptShown(sourceWasPlaying:)` | none; the model then pauses the source if it was playing |
+| A prompt is shown (`presentImportedCommentaryPrompt`) | `promptShown(sourceWasPlaying:)` | none; the model then pauses the source if it was playing and `SharedMarginPromptStyle` says the prompt pauses it. Auto-play on, or a Margin the listener jumped to, pauses; auto-play off with playback reaching the Margin does not (a tone and a card, #3059), so `sourceWasPlaying` is passed as false and nothing is owed back |
 | The card is dismissed (`dismissPendingImportedCommentary`) | `promptDismissed()` | resume the source if owed (the model also requires the source to be `.paused`) |
 | Listen starts (`listenToImportedCommentary(_:)`) | `listenRequested(sourceIsPlaying:voiceIsPlaying:)`, then `voiceStopped()`, then `voiceStarted(returnToSource:)` | the captured value is whether the source comes back when this voice ends |
 | The common stop (`stopInterjectionAudioPlayback`) | `voiceStopped()` | none |

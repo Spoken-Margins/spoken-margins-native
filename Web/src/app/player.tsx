@@ -9,12 +9,15 @@ import { plainError } from './logic/messages.ts';
 import { NotSavedError } from './logic/storage.ts';
 import { FINISHED_WITHIN_SECONDS } from './logic/library.ts';
 import { services } from './services.ts';
+import { readWrittenMargin, type Reading } from './speech.ts';
 import { useRelay, useUi } from './ui.tsx';
 
 export const SKIP_SECONDS = 15;
 const SAVE_EVERY_MS = 5000;
 /** How long a written Margin stays on the screen after its moment. */
 const WRITTEN_SHOWN_MS = 10_000;
+/** The episode's volume while the browser's voice reads a friend's written Margin. */
+const DUCKED_VOLUME = 0.25;
 
 /** A friend's Margin that has just come up in the episode. `blocked`: the browser would not start its clip. */
 export interface Arrived {
@@ -65,6 +68,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const lastTime = useRef<number | undefined>(undefined);
   const clip = useRef<{ element: HTMLAudioElement; url: string } | null>(null);
   const clipQueue = useRef<Margin[]>([]);
+  // The voice reading a friend's written Margin aloud, while it does.
+  const reading = useRef<Reading | undefined>(undefined);
   // Margins that have come up since the last seek. A browser may resume the episode a hair before the moment it paused
   // at, which would cross the same Margin again; a seek (the listener rewinding over it) lets it fire again.
   const comeUp = useRef(new Set<string>());
@@ -88,7 +93,14 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     void dataRef.current.savePosition({ episodeId: id, seconds: audio.currentTime, updatedAt: new Date().toISOString() });
   }, []);
 
+  const stopReading = useCallback(() => {
+    const current = reading.current;
+    reading.current = undefined;
+    current?.cancel();
+  }, []);
+
   const stopClip = useCallback(() => {
+    stopReading();
     clipQueue.current = [];
     const current = clip.current;
     clip.current = null;
@@ -96,7 +108,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     current.element.onended = null;
     current.element.pause();
     URL.revokeObjectURL(current.url);
-  }, []);
+  }, [stopReading]);
 
   /** Plays a voice Margin's clip with the episode paused, then resumes the episode (or the next queued clip). */
   const playClip = useCallback((margin: Margin) => {
@@ -142,6 +154,19 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           setArrived({ margin, blocked: false });
           clearTimeout(shownTimer.current);
           shownTimer.current = setTimeout(() => setArrived((a) => (a?.margin.id === margin.id ? undefined : a)), WRITTEN_SHOWN_MS);
+          // A tone, then "Cole wrote:" and the words in this browser's own voice, with the episode turned down.
+          reading.current?.cancel();
+          const audio = audioRef.current;
+          const heard = readWrittenMargin(margin.author, margin.text ?? '', {
+            onStart: () => {
+              if (audio) audio.volume = DUCKED_VOLUME;
+            },
+            onEnd: () => {
+              if (audio) audio.volume = 1;
+              if (reading.current === heard) reading.current = undefined;
+            },
+          });
+          reading.current = heard;
         }
       }
     },
@@ -315,6 +340,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           if (Number.isFinite(d)) setMediaDuration(d);
         }}
         onSeeking={() => {
+          stopReading();
           lastTime.current = undefined;
           comeUp.current.clear();
         }}

@@ -862,6 +862,66 @@ button:disabled {
   text-align: center;
 }
 
+.arrived-margin-head,
+.arrived-margin-note {
+  margin: 0;
+  text-align: center;
+}
+
+.arrived-margin-note {
+  font-size: 0.875rem;
+}
+
+/* The countdown to a friend's next Margin, and the Skip toward it (#2168). The orange edge and the sender's name
+   carry it together: colour alone never does. */
+.margin-cue {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 2px solid var(--orange-mark);
+  border-radius: var(--panel-radius);
+  background: var(--orange-soft);
+  color: var(--ink);
+}
+
+.margin-cue-line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0;
+  font-weight: 700;
+}
+
+.margin-cue-clock {
+  font-size: 1.375rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.margin-cue-note {
+  margin: 0;
+  font-size: 0.9375rem;
+}
+
+.margin-cue-meter {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--rule);
+  overflow: hidden;
+}
+
+.margin-cue-meter i {
+  display: block;
+  height: 100%;
+  background: var(--orange-mark);
+}
+
+.margin-cue-skip {
+  min-height: 48px;
+  width: 100%;
+}
+
 /* The timeline: Margins stand above the track as orange posts you can tap; the track fills blue. */
 .timeline {
   padding-top: 8px;
@@ -1548,4 +1608,118 @@ body:not(:has(.mini-player)) .toasts {
   .tab[aria-current='page'] {
     outline: 2px solid Highlight;
   }
+}
+
+/* ---------- The page a share link opens (#2168) ---------- */
+
+.arrival {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  overflow-y: auto;
+  background: var(--page);
+  color: var(--ink);
+  padding: calc(env(safe-area-inset-top) + 24px) var(--gutter) calc(24px + env(safe-area-inset-bottom));
+}
+
+.arrival-body {
+  max-width: 480px;
+  min-height: 100%;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.arrival-centered {
+  justify-content: center;
+}
+
+.arrival-brand {
+  margin: 0;
+  color: var(--muted);
+  font-weight: 650;
+}
+
+.arrival-from {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 0 0;
+  color: var(--tint);
+  font-weight: 700;
+  font-size: 1.0625rem;
+}
+
+.arrival-avatar {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--tint);
+  color: var(--on-tint);
+  font-size: 0.9375rem;
+}
+
+.arrival-title {
+  margin: 0;
+  font-family: var(--display);
+  font-size: 1.875rem;
+  line-height: 1.12;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.arrival-sub,
+.arrival-hint,
+.arrival-status {
+  margin: 0;
+  color: var(--muted);
+}
+
+.arrival-count {
+  margin: 0;
+  font-weight: 650;
+  color: var(--orange-ink);
+}
+
+.arrival-explain,
+.arrival-text {
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: var(--control-radius);
+  background: var(--tint-soft);
+}
+
+.arrival-centered .arrival-text {
+  padding: 0;
+  background: none;
+}
+
+.arrival-play {
+  min-height: 56px;
+  width: 100%;
+  font-size: 1.125rem;
+}
+
+.arrival-foot {
+  margin-top: auto;
+  padding-top: 16px;
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.arrival-foot p {
+  margin: 0;
+}
+
+.arrival-foot a {
+  display: inline-block;
+  min-height: 44px;
+  line-height: 44px;
+  color: var(--tint);
 }
