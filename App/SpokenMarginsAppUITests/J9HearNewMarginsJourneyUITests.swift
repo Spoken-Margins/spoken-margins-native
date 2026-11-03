@@ -114,6 +114,37 @@ final class J9HearNewMarginsJourneyUITests: XCTestCase {
         }
     }
 
+    /// #3219: the item screen of an item with a friend's unheard Margin offers two labelled choices, and the big one
+    /// starts the episode at once, without the "New Margins to hear" question.
+    func testItemScreenOffersTwoChoicesForAFriendsNewMargin() throws {
+        XCTContext.runActivity(named: "J9 item screen, step 1: The episode is in the Library (offline seed)") { _ in
+            app.launch()
+            XCTAssertTrue(element("library.row.\(itemId)").waitForExistence(timeout: 8), "Seeded episode did not appear in the Library")
+        }
+
+        XCTContext.runActivity(named: "J9 item screen, step 2: Force-quit; a friend's Margin arrives; open the item") { _ in
+            app.terminate()
+            app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_KEEP_LIBRARY"] = "1"
+            app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_COOP"] = "1"
+            app.launch()
+            tap("library.row.\(itemId)")
+            XCTAssertTrue(element("item.screen").waitForExistence(timeout: 8), "The item screen did not open")
+        }
+
+        XCTContext.runActivity(named: "J9 item screen, step 3: Two choices, and the big one plays at once") { _ in
+            let play = app.buttons["item.start.button"].firstMatch
+            XCTAssertTrue(play.waitForExistence(timeout: 5), "The big button is missing")
+            XCTAssertEqual(play.label, "Play episode with Margins")
+            let marginsOnly = app.buttons["item.reviewNewMargins.button"].firstMatch
+            XCTAssertTrue(marginsOnly.exists, "The second choice is missing")
+            XCTAssertTrue(marginsOnly.label.hasPrefix("Hear just the Margins"), "The second choice reads \(marginsOnly.label)")
+            play.tap()
+            XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8), "The episode did not start")
+            XCTAssertFalse(app.buttons["newMarginsOffer.review"].exists, "The big button asked a question before playing")
+            XCTAssertFalse(element("item.lastFailure").exists, "A playback problem was reported")
+        }
+    }
+
     private var playPause: XCUIElement { app.buttons["playback.play.button"] }
 
     private func offerButton(_ identifier: String, orLabel label: String) -> XCUIElement {

@@ -18,7 +18,7 @@ struct ExperienceItemDetailScreen: View {
     @State private var confirmsTrash = false
     @State private var confirmsNewSession = false
     @State private var showsAdvanced = false
-    /// Set while Continue waits on the "hear new Margins first?" question (#474).
+    /// Set while Continue waits on the "hear new Margins first?" question (#474). The item screen asks it only when no friend Margins wait (#3219).
     @State private var pendingNewMarginsOffer: NewMarginsOfferRequest?
     @State private var episodeLinkStatus = ImportedFileEpisodeLinker.Status()
     /// True while a link or unlink saves, so a second tap cannot race it.
@@ -320,10 +320,12 @@ struct ExperienceItemDetailScreen: View {
 
     @ViewBuilder
     private var secondaryActions: some View {
-        if model.selectedItemPreferredContinuationSession != nil || hasItemMargins || !newSharedMargins.isEmpty {
+        if model.selectedItemPreferredContinuationSession != nil || hasItemMargins {
+            // Read once per render: the choices look through the item's Margins, and ViewThatFits builds its content twice.
+            let quietMarginsLink = listeningChoices.marginsOnlyTitle != nil
             ViewThatFits(in: .horizontal) {
-                HStack(spacing: 10) { secondaryActionButtons }
-                VStack(alignment: .leading, spacing: 8) { secondaryActionButtons }
+                HStack(spacing: 10) { secondaryActionButtons(quietMarginsLink: quietMarginsLink) }
+                VStack(alignment: .leading, spacing: 8) { secondaryActionButtons(quietMarginsLink: quietMarginsLink) }
             }
         }
     }
@@ -367,29 +369,46 @@ struct ExperienceItemDetailScreen: View {
             .accessibilityLabel(model.selectedItemStartupAudioProgressDescription)
             .accessibilityIdentifier("item.start.preparing")
         }
+        let choices = listeningChoices
         Button {
+            if choices.skipsNewMarginsQuestion {
+                // The friend's Margins play in place as the episode reaches them; no question first (#3219).
+                model.startItem(id: model.selectedItem.id)
+            } else {
                 model.continueListening(itemId: model.selectedItem.id) { pendingNewMarginsOffer = $0 }
-            } label: {
-                Label([.waiting, .preparing].contains(model.selectedItemStartupAudioState) ? "Listen now" : primaryPlaybackLabel, systemImage: "play.fill")
-                    .frame(maxWidth: .infinity, minHeight: 52)
             }
-            .filledActionButton()
-            .accessibilityIdentifier("item.start.button")
-    }
-
-    @ViewBuilder
-    private var secondaryActionButtons: some View {
-        if !newSharedMargins.isEmpty {
+        } label: {
+            Label(choices.primaryTitle, systemImage: "play.fill")
+                .frame(maxWidth: .infinity, minHeight: 52)
+        }
+        .filledActionButton()
+        .accessibilityIdentifier("item.start.button")
+        if let marginsOnlyTitle = choices.marginsOnlyTitle {
             Button {
                 model.reviewNewMargins(itemId: model.selectedItem.id, thenContinue: false)
             } label: {
-                Label("Review new Margins (\(newSharedMargins.count))", systemImage: "person.2")
-                    .frame(minHeight: 40)
+                Label(marginsOnlyTitle, systemImage: "person.2")
+                    .frame(maxWidth: .infinity, minHeight: 44)
             }
-            .filledActionButton()
+            .buttonStyle(.bordered)
+            .tint(AppColors.evergreen)
+            .accessibilityLabel(choices.marginsOnlyAccessibilityLabel ?? marginsOnlyTitle)
             .accessibilityIdentifier("item.reviewNewMargins.button")
         }
+    }
 
+    /// The start controls for this item: today's single button, or the two choices when a friend's Margins wait (#3219).
+    private var listeningChoices: ItemListeningChoices {
+        ItemListeningChoices(
+            unheardFriendMarginCount: newSharedMargins.count,
+            hasFinishedSession: hasFinishedSession,
+            hasContinuationSession: model.selectedItemPreferredContinuationSession != nil,
+            isPreparingAudio: [.waiting, .preparing].contains(model.selectedItemStartupAudioState)
+        )
+    }
+
+    @ViewBuilder
+    private func secondaryActionButtons(quietMarginsLink: Bool) -> some View {
         if model.selectedItemPreferredContinuationSession != nil {
             Button {
                 confirmsNewSession = true
@@ -412,15 +431,11 @@ struct ExperienceItemDetailScreen: View {
                     .frame(minHeight: 40)
                     .expandedHitArea(vertical: 2)
             }
+            // Beside the two start choices it is a quiet link, not a third peer button (#3219).
             .buttonStyle(.bordered)
-            .tint(AppColors.evergreen)
+            .tint(quietMarginsLink ? AppColors.secondaryText : AppColors.evergreen)
             .accessibilityIdentifier("item.reviewMargins.button")
         }
-    }
-
-    private var primaryPlaybackLabel: String {
-        if hasFinishedSession { return "Replay" }
-        return model.selectedItemPreferredContinuationSession == nil ? "Start listening" : "Continue"
     }
 
     private var hasFinishedSession: Bool {

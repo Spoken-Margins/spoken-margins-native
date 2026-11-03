@@ -274,7 +274,7 @@
               "file": "ExperienceLibraryScreen.swift"
             }
           ],
-          "note": "Needs a session above 0% and below 99%. Unheard shared Margins add a dialog tap (newMarginsOffer.skip)."
+          "note": "Needs a session above 0% and below 99%. Unheard shared Margins add a dialog tap (newMarginsOffer.skip) on this Library row; the item screen asks nothing (#3219)."
         }
       ]
     },

@@ -114,10 +114,10 @@ The owner's one-phone version, with prepared packets and an episode that shares 
 ## J9 — Hear a friend's new Margins before carrying on
 
 1. Listen to a podcast episode well past its start, save a Margin of your own, and pause. Get a co-op packet from a friend for the same episode, with one Margin from before the place you reached, and import it.
-   - Pass: the item shows "Review new Margins (1)", and the Margin is marked new in the Timeline.
-2. Press Continue on the item (or on its row in the Library).
-   - Pass: the app asks whether to hear the new Margin first, before anything plays.
-3. Choose "Hear new Margins first".
+   - Pass: the item screen shows two choices, "Play episode with Margins" and "Hear just the Margins", whatever state the item is in (not started, part way, finished). The Margin is marked new in the Timeline.
+2. Press "Play episode with Margins".
+   - Pass: the episode plays at once, with no question first, and the friend's Margin plays in place when the episode reaches it. A Margin from before the place the listener is at stays new; "Hear just the Margins" plays it. (Continue on the item's row in the Library still asks whether to hear the new Margin first.)
+3. Back out, then choose "Hear just the Margins" on the item screen (or "Hear new Margins first" on the Library row's question).
    - Pass: the episode jumps to about 20 s before the friend's Margin and plays on. The card says "Reviewing new Margins · 1 of 1" with the friend's name. A short two-note chime, then the friend's voice. The owner checks by ear that the lead-in sounds natural.
 4. Let the voice finish.
    - Pass: the episode goes back to where it was paused and carries on. The Margin is no longer marked new.
