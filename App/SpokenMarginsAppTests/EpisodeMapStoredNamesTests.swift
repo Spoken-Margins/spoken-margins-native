@@ -10,7 +10,7 @@ import XCTest
 /// P19: read the rows saved by the app, rather than rebuilding its private naming rules in tests.
 @MainActor
 final class EpisodeMapStoredNamesTests: XCTestCase {
-    func testUndownloadedPodcastJobIDsKeepSanitizingAndNinetySixCharacterLimit() throws {
+    func testUndownloadedPodcastJobIDsKeepSanitizingAndNinetySixCharacterLimit() async throws {
         preserveVoiceDefaults()
         // Every expected saved name is a literal. In particular, do not use the production sanitizer here.
         let cases: [(itemID: String, jobID: String)] = [
@@ -34,12 +34,16 @@ final class EpisodeMapStoredNamesTests: XCTestCase {
             let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(),
                                       databaseURLOverride: root.appending(path: "library.sqlite"))
             let store = try model.libraryStoreForTesting()
-            // No local copy and no remote URL: the job must be saved before waiting, without starting networking.
+            // No local copy and no remote URL: the job is saved behind the tap (#2509) before the request waits,
+            // without starting networking. The row lands a moment after `prepareEpisodeMap` returns, so wait for it.
             try store.saveItem(Item(id: entry.itemID, title: "P19 undownloaded podcast",
                 mediaType: TargetType.transcriptBackedMedia.rawValue, text: nil,
                 externalReference: nil, status: "ready",
                 media: ItemMedia(sourceType: .remoteStream, durationMs: 10_000)))
             model.prepareEpisodeMap(itemId: entry.itemID)
+            for _ in 0..<2_000 where ((try? store.loadEpisodeMapPreparationJobs())?.isEmpty ?? true) {
+                try await Task.sleep(for: .milliseconds(5))
+            }
             let jobs = try store.loadEpisodeMapPreparationJobs()
             XCTAssertEqual(jobs.count, 1, entry.itemID.debugDescription)
             let job = try XCTUnwrap(jobs.first)

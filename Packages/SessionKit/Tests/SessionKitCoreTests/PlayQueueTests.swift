@@ -90,4 +90,51 @@ final class PlayQueueTests: XCTestCase {
         try Data("not json".utf8).write(to: file)
         XCTAssertTrue(PlayQueueStore(fileURL: file).load().isEmpty)
     }
+
+    // MARK: Queue screen rows (#1990)
+
+    private func item(_ id: String, title: String? = nil, author: String? = nil, source: String? = nil) -> LibraryItemRow {
+        LibraryItemRow(id: id, title: title ?? id, status: "ready", canDelete: true, sourceTitle: source, author: author)
+    }
+
+    func testRowsFollowQueueOrderNotLibraryOrder() {
+        let queue = PlayQueue(itemIds: ["c", "a"])
+        let rows = PlayQueueRows.rows(for: queue, items: [item("a"), item("b"), item("c")])
+        XCTAssertEqual(rows.map(\.id), ["c", "a"])
+    }
+
+    func testADeletedItemHasNoRowAndNeitherJamsNorShifts() {
+        let queue = PlayQueue(itemIds: ["gone", "a", "also-gone", "b"])
+        let rows = PlayQueueRows.rows(for: queue, items: [item("a"), item("b")])
+        XCTAssertEqual(rows.map(\.id), ["a", "b"])
+    }
+
+    func testPruneMakesTheQueueTheSameListAsTheRowsSoAReorderHitsTheRightItem() {
+        var queue = PlayQueue(itemIds: ["gone", "a", "b", "c"])
+        let items = [item("a"), item("b"), item("c")]
+        queue.prune { id in items.contains { $0.id == id } }
+        XCTAssertEqual(queue.itemIds, ["a", "b", "c"])
+        // The screen's row 2 ("c") dragged to the top.
+        queue.move(fromOffsets: IndexSet(integer: 2), toOffset: 0)
+        XCTAssertEqual(queue.itemIds, ["c", "a", "b"])
+    }
+
+    func testSubtitleIsTheAuthorElseTheSourceElseNothing() {
+        let queue = PlayQueue(itemIds: ["a", "b", "c", "d"])
+        let rows = PlayQueueRows.rows(for: queue, items: [
+            item("a", author: " Ada "),
+            item("b", author: "  ", source: "Hakai"),
+            item("c", source: "Hakai"),
+            item("d"),
+        ])
+        XCTAssertEqual(rows.map(\.subtitle), ["Ada", "Hakai", "Hakai", nil])
+    }
+
+    func testTheCountAndNextLines() {
+        XCTAssertEqual(PlayQueueRows.countLine(1), "1 item")
+        XCTAssertEqual(PlayQueueRows.countLine(3), "3 items")
+        let rows = PlayQueueRows.rows(for: PlayQueue(itemIds: ["a"]), items: [item("a", title: "How whales sleep")])
+        XCTAssertEqual(PlayQueueRows.nextLine(rows), "Next: How whales sleep")
+        XCTAssertNil(PlayQueueRows.nextLine([]))
+    }
 }

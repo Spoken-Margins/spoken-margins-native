@@ -19,10 +19,11 @@ final class ShareLinkUploadTests: XCTestCase {
         recorder: Recorder,
         status: Int = 201,
         body: String = #"{"id":"0123456789abcdef0123456789abcdef","path":"/l/0123456789abcdef0123456789abcdef","expiresAt":"2026-12-03T00:00:00Z"}"#,
-        fail: Bool = false
+        fail: Bool = false,
+        consent: Bool = true
     ) -> ShareLinkClient {
         let key = self.key
-        return ShareLinkClient(server: { URL(string: "https://links.example.test\($0)")! }, key: { key }) { url, contentType, data in
+        return ShareLinkClient(server: { URL(string: "https://links.example.test\($0)")! }, key: { key }, consent: { consent }) { url, contentType, data in
             recorder.add(url, contentType, data)
             if fail { throw URLError(.notConnectedToInternet) }
             return (status, Data(body.utf8))
@@ -246,6 +247,18 @@ final class ShareLinkUploadTests: XCTestCase {
         XCTAssertEqual(margins.map { Set($0.keys) }, [["text"]], "no before or after excerpt: a link never quotes the source")
         let source = try XCTUnwrap(object["source"] as? [String: Any])
         XCTAssertEqual(Set(source.keys), ["title", "show", "url"])
+    }
+
+    func testAnItemWithNoPublicWebAddressNeedsTheFileInTheSameMessage() throws {
+        let words = ["Listen to this part."]
+        let page = try ShareLinkPreviewBuilder.make(title: "T", show: nil, pageURL: "https://example.com/post", enclosureURL: nil, marginTexts: words)
+        XCTAssertFalse(page.needsCompanionFile)
+        // Every way an item ends up with no public page: none at all, a feed or audio address, a private address.
+        for address in [nil, "", "https://example.com/feed/podcast/", "https://cdn.example.com/ep.mp3",
+                        "https://example.com/post?token=abc", "http://example.com/post", "file:///private/doc.pdf"] as [String?] {
+            let made = try ShareLinkPreviewBuilder.make(title: "T", show: nil, pageURL: address, enclosureURL: nil, marginTexts: words)
+            XCTAssertTrue(made.needsCompanionFile, "\(address ?? "nil")")
+        }
     }
 
     func testTheLinksServiceNameMatchesTheServersConfig() {

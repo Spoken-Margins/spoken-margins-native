@@ -70,7 +70,10 @@ final class CommunityMapFetchService {
                     guard let audioFile else { return nil }
                     return await CommunityMapUploadService.measuredDurationMs(audioFile)
                 },
-                store: { map in try store.saveCommunityMap(proposal: map.proposal, projection: map.projection) }
+                // Written off the main actor (#2509); `saveCommunityMap` still decides inside its transaction.
+                store: { map in
+                    try await StoreReader(store).read { try $0.saveCommunityMap(proposal: map.proposal, projection: map.projection) }
+                }
             )
             if let wait = outcome.retryAfter, let episodeKey {
                 var log = Self.loadLog()

@@ -82,6 +82,16 @@ public enum PublisherNarrationEvidence {
         return post["has_voiceover"] as? Bool == true ? "no_recording_listed" : "no_recording"
     }
 
+    /// Whether an `absence` reason says the recording is not ready yet, so looking again later may find it (#3297):
+    /// an author's voiceover or Substack's automatic narration still `pending`, `processing` or `queued`. Every other
+    /// reason (no recording, paywalled, flag off, another post's page, unreadable) is final for the launch.
+    public static func isNotYet(absence reason: String) -> Bool {
+        for prefix in ["voiceover_", "generated_voice_"] where reason.hasPrefix(prefix) {
+            return ["pending", "processing", "queued", "in_progress"].contains(String(reason.dropFirst(prefix.count)))
+        }
+        return false
+    }
+
     /// `window._preloads` as a dictionary, decoded as data (publisher scripts never run). Substack has served it two
     /// ways: as a string literal, `window._preloads = JSON.parse("…")`, and, since October 2026, as a JSON script tag,
     /// `<script type="application/json" id="preloads-json">{…}</script>`, that an inline script parses (#2024).
