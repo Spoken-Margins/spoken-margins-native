@@ -51,6 +51,7 @@ Serverless first (packets in a group chat). A server later makes it effortless: 
   - A club is created with an invite link. Members' new Margins arrive without passing files around. A member is notified when someone has finished an item and left Margins.
   - The design, reviewed by the owner before building, states what the server can read. Recommendation: end-to-end encrypted Margins, so the server relays but can't listen.
   - Works for a club of 10 on the lane with simulated members.
+- Design note (what the server stores and logs, for the owner's read): [docs/design/club-mailbox.md](../../design/club-mailbox.md).
 
 **M4: Large clubs.**
 - Done when, for an item with 100 simulated members' Margins, the listener can hear a summary of each hot spot ("10 people reacted here: 2 argued X, 2 argued the opposite, 6 found it funny") with attribution preserved and the individual Margins one tap away. Where the clustering runs (on device, or server with consent) is decided with the owner in M3.

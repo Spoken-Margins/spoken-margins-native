@@ -341,6 +341,9 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
         networkChanged(to: transport)
     }
 
+    /// Loads the rows and repairs what a kill or a deleted file left behind. The repairs show in memory at once and
+    /// are written behind on the row queue, in the order made (#2509): a launch does not wait on a write per row, and
+    /// a repair that never lands is made again on the next launch, because the stored row still says the old thing.
     private func restoreRecords() throws {
         for var record in try store.loadPodcastDownloads() {
             if record.state == .failed, let retained = retainedLocalFile(for: record) {
@@ -348,24 +351,29 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
                 record.bytesWritten = retained.size
                 record.expectedBytes = retained.size
                 record.failureReason = "Replacement download failed; saved audio is still available."
-                try store.savePodcastDownload(record)
+                writeBehind(record)
             }
             if record.state == .availableOffline {
                 guard let url = localURL(for: record), FileManager.default.fileExists(atPath: url.path) else {
                     record.state = .failed
                     record.localRelativePath = nil
                     record.failureReason = "Downloaded file is missing. Retry to download it again."
-                    try store.savePodcastDownload(record)
+                    writeBehind(record)
                     recordsByItemId[record.itemId] = record
                     continue
                 }
                 onLocalAssetReady?(record.itemId, url)
             } else if record.state == .downloading {
                 record.state = .waitingForWiFi
-                try store.savePodcastDownload(record)
+                writeBehind(record)
             }
             recordsByItemId[record.itemId] = record
         }
+    }
+
+    /// Writes one row on the row queue, after every row already queued.
+    private func writeBehind(_ row: PodcastDownloadRecord) {
+        rowWriter.async { [store] in try? store.savePodcastDownload(row) }
     }
 
     private func networkChanged(to transport: PodcastNetworkTransport) {

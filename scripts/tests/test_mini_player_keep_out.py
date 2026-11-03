@@ -21,6 +21,7 @@ NO_PILL = {
     ("CatalogDrawer.swift", "CatalogDrawerView"): "the catalog drawer is a sheet",
     ("ExperienceAudioPreparationQueueScreen.swift", "*"): "a sheet from the Library",
     ("ExperienceMarginDetailView.swift", "*"): "a sheet from Margins",
+    ("ExperiencePlayQueueScreen.swift", "*"): "a sheet from the Library",
     ("ExperienceAddSourceFlow.swift", "*"): "the add-source sheet",
     ("ExperienceReactionsScreen.swift", "*"): "a sheet from the item screen",
     ("ExperienceMarginsScreen.swift", "SharedMarginDetailView"): "a sheet from Margins",

@@ -17,13 +17,18 @@ final class ShareLinkSender: ObservableObject {
     enum State: Equatable {
         case idle
         case making
-        case ready(URL)
+        /// The link to share. `companionFile` is the packet to put in the same message when the item has no web
+        /// address, so the friend can import the item itself (owner, 2026-10-20).
+        case ready(URL, companionFile: URL?)
         /// No link was made; the file share is still there. Holds the one line to show.
         case useFile(String)
     }
 
     @Published private(set) var state: State = .idle
+    /// Shown while the link is made and after, when the share will carry the file too.
+    @Published private(set) var companionNote: String?
     private let bridge = BridgeService.makeStore()
+    private static let companionLine = "This item has no public web page, so the file goes in the same message as the link."
 
     /// Whether to show the button at all. The cached config decides; with none, or a stale one, the sender's own
     /// screen asks the server once (our server, no one else's) so a fresh install can offer the button.
@@ -51,7 +56,9 @@ final class ShareLinkSender: ObservableObject {
             let packet: Data
             let preview: ShareLinkPreview
             switch prepared {
-            case .success(let made): (packet, preview) = made
+            case .success(let made):
+                (packet, preview) = made
+                companionNote = preview.needsCompanionFile ? Self.companionLine : nil
             case .failure(let fallback):
                 state = .useFile(fallback.message)
                 return
@@ -64,13 +71,19 @@ final class ShareLinkSender: ObservableObject {
             }
             let client = ShareLinkClient(post: ShareLinkTransport.post)
             switch await client.makeLink(packet: packet, preview: preview, linksState: linksState) {
-            case .link(let url, _): state = .ready(url)
-            case .useFile(let fallback): state = .useFile(fallback.message)
+            case .link(let url, _): state = .ready(url, companionFile: preview.needsCompanionFile ? packageURL : nil)
+            case .useFile(let fallback):
+                // No link, so nothing goes with it: the file share beside the button is the way.
+                companionNote = nil
+                state = .useFile(fallback.message)
             }
         }
     }
 
-    func reset() { state = .idle }
+    func reset() {
+        state = .idle
+        companionNote = nil
+    }
 
     /// The packet's bytes and the preview read from it. The audio the read extracts is only for the read, and goes.
     nonisolated private static func prepare(packageURL: URL) -> Result<(Data, ShareLinkPreview), ShareLinkFallback> {
@@ -117,6 +130,14 @@ struct ShareLinkSendControl: View {
                     .accessibilityHint("Uploads the verified package, sealed so only the link can open it, and opens the share sheet with the link")
                     .accessibilityIdentifier("build23.sender.share.link")
 
+                    if let note = sender.companionNote {
+                        Text(note)
+                            .font(.subheadline)
+                            .foregroundStyle(AppColors.secondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier("build23.sender.share.link.companion")
+                    }
+
                     if case .useFile(let message) = sender.state {
                         Text(message)
                             .font(.subheadline)
@@ -132,8 +153,8 @@ struct ShareLinkSendControl: View {
             get: { if case .ready = sender.state { return true } else { return false } },
             set: { if !$0 { sender.reset() } }
         )) {
-            if case .ready(let url) = sender.state {
-                ShareLinkActivityView(link: url)
+            if case .ready(let url, let file) = sender.state {
+                ShareLinkActivityView(link: url, companionFile: file)
                     .presentationDetents([.medium, .large])
             }
         }
@@ -143,9 +164,13 @@ struct ShareLinkSendControl: View {
 #if canImport(UIKit)
 private struct ShareLinkActivityView: UIViewControllerRepresentable {
     let link: URL
+    /// The `.spokenmargins` file for an item with no web address: the same share, so one message holds both.
+    let companionFile: URL?
 
     func makeUIViewController(context: Context) -> UIActivityViewController {
-        UIActivityViewController(activityItems: [link], applicationActivities: nil)
+        var items: [Any] = [link]
+        if let companionFile { items.append(SpokenMarginsPackageActivityItem(packageURL: companionFile)) }
+        return UIActivityViewController(activityItems: items, applicationActivities: nil)
     }
 
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
