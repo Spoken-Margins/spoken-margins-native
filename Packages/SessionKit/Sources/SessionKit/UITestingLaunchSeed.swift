@@ -38,6 +38,23 @@ public enum UITestingLaunchSeed: Equatable, Sendable {
     public static let coopMarginMediaTimeMs = 300_000
     public static let coopMarginDurationMs = 6_000
 
+    /// The packet the screen tour's listener is taken to have sent (#3237): Sam's reply fixture,
+    /// `App/TestFixtures/sharing-loop-sam-reply.spokenmargins`, answers the Margin `margin-ui-listener` in it. The
+    /// listener's real export gets a digest of its own each run, so a checked-in reply can't name it; a reply relaunch
+    /// records this identity on the listener's Margin instead, as `SpokenMarginsPackageExportRecord.recordExport` would.
+    public static let listenerSharedIdentity = MarginPacketIdentity(
+        packageDigest: "77840c24cc7d8c6854165504894b46cbc3222557310a4aaf7af2b16e9bd1f903",
+        packageScopedId: "margin-ui-listener"
+    )
+
+    /// The listener's first Margin on the seeded podcast, marked as sent in `listenerSharedIdentity`, so Sam's reply
+    /// finds it. Nil when the listener has no Margin there or it is already marked.
+    public static func listenerMarginMarkedShared(_ margins: [Interjection]) -> Interjection? {
+        guard let first = margins.filter({ $0.itemId == podcastItemId }).min(by: { $0.createdAt < $1.createdAt }),
+              !(first.sharedAs ?? []).contains(listenerSharedIdentity) else { return nil }
+        return first.recordingShare(as: listenerSharedIdentity)
+    }
+
     // The parsing below names the launch argument and environment values. A Release build compiles
     // none of it (#517); the app reads them only through `UITestingHooks`, in Debug.
     #if DEBUG
@@ -166,6 +183,14 @@ public enum UITestingLaunchSeed: Equatable, Sendable {
         arguments.contains("--ui-testing")
             && environment["SPOKEN_MARGINS_UI_TEST_KEEP_LIBRARY"] == "1"
             && environment["SPOKEN_MARGINS_UI_TEST_COOP"] == "1"
+    }
+
+    /// Whether a keep-library UI-test relaunch marks the listener's Margin as sent in `listenerSharedIdentity`:
+    /// `SPOKEN_MARGINS_UI_TEST_LISTENER_SHARED=1` (the screen tour's replies, #3237).
+    public static func marksListenerMarginShared(arguments: [String], environment: [String: String]) -> Bool {
+        arguments.contains("--ui-testing")
+            && environment["SPOKEN_MARGINS_UI_TEST_KEEP_LIBRARY"] == "1"
+            && environment["SPOKEN_MARGINS_UI_TEST_LISTENER_SHARED"] == "1"
     }
 
     /// Whether a UI-test launch swaps the microphone and speech recognition for

@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[2]
 # file (relative to the repo root) -> why a direct save is safe there
 ALLOWED = {
     'App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+UITestingSeeds.swift': 'seeds a new Margin for UI tests',
+    'App/SpokenMarginsApp/Sources/SpokenMarginsApp/UITestingLaunchSeedWriter.swift': 'a Debug-only UI-test relaunch marks the seeded Margin as sent, before the app runs anything else',
     'Packages/SessionKit/Sources/SessionKit/Protocols.swift': 'the protocol declarations',
     'Packages/SessionKit/Sources/SessionKit/InMemoryRepository.swift': 'the in-memory repository (tests)',
     'Packages/SessionKit/Sources/SessionKit/SessionEngine.swift': 'new Margins; updates go through updateInterjection, in one transaction',
