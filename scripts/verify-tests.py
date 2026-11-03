@@ -44,7 +44,8 @@ PLANS = {
     'release': ('SpokenMarginsReleaseTests', 'Release', 3600),
     # The scripted journeys in TestPlans/scripted-journeys.json, from the Release plan (it holds every UI test).
     'journeys': ('SpokenMarginsReleaseTests', 'Release', 1800),
-    'tour': ('SpokenMarginsUISeams', 'ScreenTour', 600),
+    # The tour includes the sharing-loop tests (#3237), about 2-3 minutes each, run twice on a failure; a stopped run exports no screenshots.
+    'tour': ('SpokenMarginsUISeams', 'ScreenTour', 1800),
 }
 
 # Plans whose screenshots are exported from the result bundle, one file per screen, for the critics (#381).

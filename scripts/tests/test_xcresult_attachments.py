@@ -98,6 +98,19 @@ class AttachmentTests(unittest.TestCase):
             names = [a['exportedFileName'] for a in json.loads(Path(result['manifest']).read_text())[0]['attachments']]
             self.assertEqual(names, ['J9 step 2.png', 'J9 step 2-2.png', 'recording.mp4'])
 
+    def test_a_bad_attachment_later_in_the_list_renames_nothing(self):
+        uuid = '1A2B3C4D-0000-0000-0000-000000000001'
+        groups = [{'testIdentifierURL': URL, 'attachments': [
+            {'exportedFileName': f'{uuid}.png', 'suggestedHumanReadableName': f'J9 step 2_0_{uuid}.png'},
+            {'exportedFileName': 'missing.png'}]}]
+        with tempfile.TemporaryDirectory() as tmp, patch.object(
+                attachments.subprocess, 'run', side_effect=self.export(groups, [f'{uuid}.png'])):
+            result = attachments.export_failed_attachments('retained.xcresult', {TEST: {'status': 'failed'}}, PAYLOAD, Path(tmp))[0]
+            self.assertIn('missing or outside', result['error'])
+            folder = Path(result['manifest']).parent
+            self.assertTrue((folder / f'{uuid}.png').is_file(), 'the manifest still names this file')
+            self.assertFalse((folder / 'J9 step 2.png').exists())
+
     def test_empty_export_warns_instead_of_claiming_no_retained_media(self):
         result = self.recover([])[0]
         self.assertIn('absence of retained media is not established', result['error'])
