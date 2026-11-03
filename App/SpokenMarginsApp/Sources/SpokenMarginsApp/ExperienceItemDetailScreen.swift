@@ -33,12 +33,17 @@ struct ExperienceItemDetailScreen: View {
         NavigationStack {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 22) {
+                    // A friend's waiting Margins lead: who sent them, then the title, then how many and what a
+                    // Margin is (#3219). Mark complete stays in the options menu until they're heard (2026-11-02).
+                    let friendIntro = FriendMarginsIntro(unheardFriendMargins: newSharedMargins.map(\.waitingMargin))
+                    if let friendIntro { FriendMarginsSenderLine(intro: friendIntro) }
                     hero
+                    if let friendIntro { FriendMarginsSummary(intro: friendIntro) }
                     if let description = model.selectedItem.descriptionText {
                         ItemDescriptionPreview(text: description).id(model.selectedItem.id)
                     }
                     secondaryActions
-                    completionControl
+                    if friendIntro == nil { completionControl }
                     downloadRecovery
                     ItemLastFailureCard(itemId: model.selectedItem.id)
                     if !sharingCoordinator.importedLayers.isEmpty {

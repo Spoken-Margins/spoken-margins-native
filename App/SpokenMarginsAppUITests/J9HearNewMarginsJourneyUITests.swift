@@ -138,6 +138,12 @@ final class J9HearNewMarginsJourneyUITests: XCTestCase {
             let marginsOnly = app.buttons["item.reviewNewMargins.button"].firstMatch
             XCTAssertTrue(marginsOnly.exists, "The second choice is missing")
             XCTAssertTrue(marginsOnly.label.hasPrefix("Hear only "), "The second choice reads \(marginsOnly.label)")
+            XCTAssertTrue(element("item.friendIntro.sender").exists, "The item doesn't say who sent the Margins")
+            XCTAssertTrue(element("item.friendIntro.explanation").exists, "The item doesn't say what a Margin is")
+            XCTAssertFalse(
+                app.buttons["item.markCompleteVisible.button"].exists,
+                "Mark complete leads the item before the friend's Margins are heard"
+            )
             play.tap()
             XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8), "The episode did not start")
             XCTAssertFalse(app.buttons["newMarginsOffer.review"].exists, "The big button asked a question before playing")
