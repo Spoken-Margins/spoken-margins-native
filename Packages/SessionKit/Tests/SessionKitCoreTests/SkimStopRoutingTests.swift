@@ -72,13 +72,39 @@ final class SkimStopRoutingTests: XCTestCase {
         XCTAssertEqual(SkimStopRouting.press(direction: .backward, moment: .voice), .endMomentThenNavigate)
     }
 
-    func testTheMomentStateFollowsTheSequencePhase() {
-        XCTAssertEqual(SkimStopRouting.MomentState(nil), .none)
+    func testTheMomentStateFollowsTheSequencePhaseAndWhereTheSourceIs() {
+        XCTAssertEqual(SkimStopRouting.MomentState(nil, positionMs: 0), .none)
         var sequence = MarginMomentSequence(
             itemId: "i", target: MarginMomentAnchor(marginId: "m", mediaTimeMs: 100_000), otherMargins: [])
-        XCTAssertEqual(SkimStopRouting.MomentState(sequence), .leadIn)
+        XCTAssertEqual(SkimStopRouting.MomentState(sequence, positionMs: 80_000), .leadIn)
+        XCTAssertEqual(SkimStopRouting.MomentState(sequence, positionMs: nil), .leadIn)
+        // The listener scrubbed or jumped a chapter away: the old lead-in no longer waits on a press.
+        XCTAssertEqual(SkimStopRouting.MomentState(sequence, positionMs: 500_000), .staleLeadIn)
+        XCTAssertEqual(SkimStopRouting.MomentState(sequence, positionMs: 10_000), .staleLeadIn)
         _ = sequence.jumpToTarget()
-        XCTAssertEqual(SkimStopRouting.MomentState(sequence), .voice)
+        XCTAssertEqual(SkimStopRouting.MomentState(sequence, positionMs: 500_000), .voice)
+    }
+
+    func testAStaleLeadInEndsAndTheNextStopIsFound() {
+        XCTAssertEqual(SkimStopRouting.press(direction: .forward, moment: .staleLeadIn), .endMomentThenNavigate)
+        XCTAssertEqual(SkimStopRouting.press(direction: .backward, moment: .staleLeadIn), .endMomentThenNavigate)
+    }
+
+    // MARK: Starting a Margin stop
+
+    func testAMarginAheadOfItsLeadInStartsALeadInAndOneInsideItPlaysNow() {
+        let skim = SkimStops(chapters: [], margins: [margin("m1", 100_000), margin("m2", 110_000)])
+        let farAhead = skim.next(playhead: 0)!
+        XCTAssertEqual(SkimStopRouting.startAction(playhead: 0, target: farAhead), .leadIn)
+        // Scenario: m1 just played; the source is at 100.4 s and m2 is 10 s away. The lead-in is clamped to m1, so
+        // it is already inside: play m2 now, never seeking back to 80 s where m1 would play again.
+        let second = skim.next(playhead: 100_400)!
+        XCTAssertEqual(second.stop.id, "m2")
+        XCTAssertEqual(second.leadInStart, 100_000)
+        XCTAssertEqual(SkimStopRouting.startAction(playhead: 100_400, target: second), .playNow)
+        // A forward press at 90 s with m1 at 100 s: 10 s from the Margin, so no seek back to 70 s.
+        let near = skim.next(playhead: 90_000)!
+        XCTAssertEqual(SkimStopRouting.startAction(playhead: 90_000, target: near), .playNow)
     }
 
     // MARK: Walking the interleaved list

@@ -15,22 +15,28 @@ extension Gate1AppModel {
         let usesText = source.usesTextPositions
         let unit: SkimStops.PositionUnit = usesText
             ? .characters(perSecond: ListeningTimeEstimator.defaultCharactersPerSecond) : .milliseconds
-        let own = marginRows.lazy.map(\.interjection).filter { $0.itemId == itemId && $0.isSpokenItemMargin }
-        let shared = sharedMarginRows.lazy.filter { row in
-            row.layer.itemId == itemId && row.interjection.audioPath != nil
-                && Self.isImportedCommentaryLayerPlaybackEligible(
-                    row.layer, records: self.selectedItem.importedCommentaryInterjections[row.layer.id] ?? [])
+        let own = marginRows.map(\.interjection).filter { $0.itemId == itemId && $0.isSpokenItemMargin }
+        var layerIsEligible: [String: Bool] = [:] // once per layer, not once per Margin
+        let shared = sharedMarginRows.filter { row in
+            guard row.layer.itemId == itemId, row.interjection.audioPath != nil else { return false }
+            if let known = layerIsEligible[row.layer.id] { return known }
+            let eligible = Self.isImportedCommentaryLayerPlaybackEligible(
+                row.layer, records: selectedItem.importedCommentaryInterjections[row.layer.id] ?? [])
+            layerIsEligible[row.layer.id] = eligible
+            return eligible
         }.map(\.interjection)
         return SkimStopRouting.stops(
             textChapters: selectedItem.chapters,
             mediaChapters: selectedItem.mediaChapters.isEmpty ? selectedItem.listeningMapScenes : selectedItem.mediaChapters,
-            ownMargins: Array(own), sharedMargins: Array(shared), unit: unit)
+            ownMargins: own, sharedMargins: shared, unit: unit)
     }
 
     func skimStopChoice(direction: SkimDirection, at position: Int, summaryDestination: Int?) -> SkimStopRouting.Choice {
         let target: SkimStops.Target?
         if let stops = skimStopList {
-            target = direction == .forward ? stops.next(playhead: position) : stops.previous(playhead: position)
+            target = direction == .forward
+                ? stops.next(playhead: position, leadInMs: MarginMomentSequence.defaultLeadInMs)
+                : stops.previous(playhead: position, leadInMs: MarginMomentSequence.defaultLeadInMs)
         } else {
             target = nil
         }
@@ -38,7 +44,7 @@ extension Gate1AppModel {
     }
 
     func skimMomentPress(direction: SkimDirection) -> SkimStopRouting.MomentPress {
-        SkimStopRouting.press(direction: direction, moment: SkimStopRouting.MomentState(marginMoment))
+        SkimStopRouting.press(direction: direction, moment: SkimStopRouting.MomentState(marginMoment, positionMs: marginMomentPositionMs))
     }
 
     func skimRunMomentPress(_ press: SkimStopRouting.MomentPress) {
@@ -46,7 +52,9 @@ extension Gate1AppModel {
         case .navigate: break
         case .playMarginNow: playMarginMomentNow()
         case .skipVoice: skipMarginMomentVoice()
-        case .endMomentThenNavigate: endMarginMoment()
+        case .endMomentThenNavigate:
+            // A voice that was sounding had paused the source: bringing it back is the moment's to do (#1538).
+            if endMarginMomentVoiceIfPlaying() { resumePlayback() } else { endMarginMoment() }
         }
     }
 
@@ -58,7 +66,17 @@ extension Gate1AppModel {
         let stop = target.stop
         switch stop.kind {
         case .chapter: goToSkimChapter(id: stop.id)
-        case .margin: startSkimMargin(id: stop.id, itemId: itemId)
+        case .margin:
+            let playhead = skimCurrentMediaTimeMs ?? 0
+            let started = startSkimMargin(id: stop.id, itemId: itemId)
+            if started {
+                // Already inside the lead-in window: never seek back (and replay the Margin before it); play it now.
+                if SkimStopRouting.startAction(playhead: playhead, target: target) == .playNow { playMarginMomentNow() }
+            } else {
+                // The Margin could not start. Move to it anyway, so the next press goes on to the stop after it
+                // instead of meeting this one again.
+                if isTextReadingSnapshot { seekText(toCharOffset: stop.position) } else { seekMedia(toMediaTimeMs: stop.position) }
+            }
         }
     }
 
@@ -73,18 +91,19 @@ extension Gate1AppModel {
     }
 
     /// A Margin stop starts that Margin's moment: a lead-in, then the Margin inline, then the source carries on.
-    private func startSkimMargin(id: String, itemId: String) {
+    /// False when nothing started.
+    private func startSkimMargin(id: String, itemId: String) -> Bool {
         if let row = marginRows.first(where: { $0.interjection.id == id && $0.interjection.itemId == itemId }) {
-            playMarginMoment(row)
-        } else if let row = sharedMarginRows.first(where: { $0.interjection.id == id && $0.layer.itemId == itemId }) {
-            if isTextReadingSnapshot {
-                // Text read aloud has no lead-in to seek to: a friend's Margin goes straight to it (#3220).
-                if let prompt = importedCommentaryPrompts(includeAnnounced: true).first(where: { $0.interjection.id == id }) {
-                    playSharedMarginNow(prompt)
-                }
-            } else {
-                playSharedMarginMoment(row)
-            }
+            return playMarginMoment(row)
         }
+        guard let row = sharedMarginRows.first(where: { $0.interjection.id == id && $0.layer.itemId == itemId }) else { return false }
+        if isTextReadingSnapshot {
+            // Text read aloud has no lead-in to seek to: a friend's Margin goes straight to it (#3220).
+            guard let prompt = importedCommentaryPrompts(includeAnnounced: true).first(where: { $0.interjection.id == id }) else { return false }
+            playSharedMarginNow(prompt)
+            return true
+        }
+        playSharedMarginMoment(row) // reports its own failures and starts no moment then
+        return marginMoment != nil
     }
 }

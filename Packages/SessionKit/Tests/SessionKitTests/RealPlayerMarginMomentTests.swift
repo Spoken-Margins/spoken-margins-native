@@ -137,8 +137,8 @@ final class RealPlayerMarginMomentTests: XCTestCase {
             source: source, voiceURL: { $0 == "ij-001" ? marginURL : nil })
         conductor.voiceVolume = 0
         conductor.start()
-        XCTAssertEqual(SkimStopRouting.MomentState(conductor.sequence), .leadIn)
-        XCTAssertEqual(SkimStopRouting.press(direction: .forward, moment: SkimStopRouting.MomentState(conductor.sequence)), .playMarginNow)
+        XCTAssertEqual(SkimStopRouting.MomentState(conductor.sequence, positionMs: nil), .leadIn)
+        XCTAssertEqual(SkimStopRouting.press(direction: .forward, moment: SkimStopRouting.MomentState(conductor.sequence, positionMs: nil)), .playMarginNow)
 
         // Let the lead-in run a little, then press Skim again: the Margin plays at once, well before its 6 s.
         RunLoop.main.run(until: Date().addingTimeInterval(0.5))

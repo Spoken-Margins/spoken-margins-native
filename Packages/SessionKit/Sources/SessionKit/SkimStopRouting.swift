@@ -46,22 +46,45 @@ public enum SkimStopRouting {
         }
     }
 
-    /// A Margin moment that is already running, from the conductor's phase.
+    /// A Margin moment that is already running, from the conductor's phase and where the source is.
     public enum MomentState: Equatable, Sendable {
         case none
         /// The source plays up to the Margin.
         case leadIn
         /// The Margin's voice has the floor.
         case voice
+        /// A lead-in the listener has moved away from (a scrub or a chapter jump): it is over, not waiting on a press.
+        case staleLeadIn
 
-        public init(_ moment: MarginMomentSequence?) {
+        /// - Parameter positionMs: the source's place in the moment's own clock (`MarginMomentSequence` counts media
+        ///   milliseconds, or narration milliseconds for read-aloud text), nil when not known.
+        public init(_ moment: MarginMomentSequence?, positionMs: Int?) {
             guard let moment else { self = .none; return }
             switch moment.phase {
-            case .leadIn: self = .leadIn
+            case .leadIn:
+                // The seek to the lead-in's start can land a little short of it.
+                let waiting = positionMs.map { $0 >= moment.startMediaTimeMs - Self.seekToleranceMs && $0 <= moment.target.mediaTimeMs } ?? true
+                self = waiting ? .leadIn : .staleLeadIn
             case .playingMargin: self = .voice
             case .listening: self = .none
             }
         }
+
+        static let seekToleranceMs = 2_000
+    }
+
+    /// How to start a Margin stop from where the listener is (#460).
+    public enum StartAction: Equatable, Sendable {
+        /// The playhead is before the Margin's lead-in: seek to the lead-in and let it run.
+        case leadIn
+        /// The playhead is already inside the lead-in window (the Margin is less than a lead-in ahead, or the stop
+        /// before it is closer than that): play the Margin now. A forward press never seeks backwards, and never
+        /// replays the Margin before it.
+        case playNow
+    }
+
+    public static func startAction(playhead: Int, target: SkimStops.Target) -> StartAction {
+        playhead >= target.startPosition && playhead < target.stop.position ? .playNow : .leadIn
     }
 
     /// What a press does about a running moment before it looks for a stop.
@@ -79,6 +102,7 @@ public enum SkimStopRouting {
     public static func press(direction: SkimDirection, moment: MomentState) -> MomentPress {
         switch (direction, moment) {
         case (_, .none): return .navigate
+        case (_, .staleLeadIn): return .endMomentThenNavigate
         case (.forward, .leadIn): return .playMarginNow
         case (.forward, .voice): return .skipVoice
         case (.backward, _): return .endMomentThenNavigate
