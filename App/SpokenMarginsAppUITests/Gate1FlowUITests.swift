@@ -676,7 +676,10 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(waitForDisappearance(libraryRow, timeout: 4))
 
         openLibrarySettings()
-        let delete = scrollToButton(containingLabel: "Delete \(itemTitle) Permanently")
+        // Delete Permanently sits behind the row's menu, away from Restore (#3206).
+        scrollToButton(containingLabel: "More options for \(itemTitle)").tap()
+        let delete = app.buttons["Delete Permanently"].firstMatch
+        XCTAssertTrue(delete.waitForExistence(timeout: 2))
         delete.tap()
         let confirmation = app.alerts["Delete Permanently?"]
         XCTAssertTrue(confirmation.waitForExistence(timeout: 2))
@@ -690,13 +693,19 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8))
         app.buttons["home.addSource.button"].tap()
 
-        for route in ["linkOrPodcast", "pastedText", "documentOrBook", "audiobook", "quickFolder"] {
-            XCTAssertTrue(scrollToElement("addSource.route.\(route)").exists, "Missing typed intake route \(route)")
+        // Every way in is on screen at once, with no scrolling (#3217).
+        XCTAssertTrue(element("addSource.sheet").waitForExistence(timeout: 4))
+        let screenBottom = app.windows.firstMatch.frame.maxY
+        for route in ["linkOrPodcast", "findPodcast", "pastedText", "importFromFiles", "quickFolder", "liveSession"] {
+            let tile = element("addSource.route.\(route)")
+            XCTAssertTrue(tile.waitForExistence(timeout: 4), "Missing typed intake route \(route)")
+            XCTAssertTrue(tile.isHittable, "\(route) needs scrolling to reach")
+            XCTAssertLessThanOrEqual(tile.frame.maxY, screenBottom, "\(route) runs past the bottom of the screen")
         }
-        scrollToElement("addSource.route.audiobook").tap()
-        XCTAssertTrue(scrollToElement("audiobook.import.button").exists)
-        element("addSource.route.back").tap()
-        scrollToElement("addSource.route.quickFolder").tap()
+        // Documents, books, audiobooks and packets share one Files tile; there is no separate document or audiobook one.
+        XCTAssertFalse(element("addSource.route.documentOrBook").exists)
+        XCTAssertFalse(element("addSource.route.audiobook").exists)
+        element("addSource.route.quickFolder").tap()
         XCTAssertTrue(scrollToElement("quickFolder.choose.button").exists)
     }
 
@@ -792,13 +801,17 @@ final class Gate1FlowUITests: XCTestCase {
 
         tapRoot("Following")
         XCTAssertTrue(element("sources.screen").waitForExistence(timeout: 4))
-        // Following opens on its entries; the feed field lives on Manage Feeds (#141).
+        // Following opens on its entries; the feed field lives on the Follow sheet (#141, #3205).
         XCTAssertFalse(element("sources.follow.url").exists)
         element("sources.manageFeeds").tap()
         XCTAssertTrue(element("sources.follow.url").waitForExistence(timeout: 4))
+        XCTAssertTrue(element("sources.follow.paste").exists)
         XCTAssertTrue(element("sources.follow.button").exists)
         XCTAssertTrue(element("sources.browseCatalog").exists)
-        app.navigationBars.buttons.element(boundBy: 0).tap()
+        // Read Later and Listening Edition imports are in Settings, not on this sheet.
+        XCTAssertFalse(app.buttons["Read Later Services"].exists)
+        XCTAssertFalse(app.buttons["Import Listening Edition"].exists)
+        element("sources.follow.cancel").tap()
         XCTAssertTrue(element("sources.manageFeeds").waitForExistence(timeout: 4))
         tapRoot("Settings")
         XCTAssertTrue(element("settings.screen").waitForExistence(timeout: 5))
@@ -1199,14 +1212,14 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(integrity.exists)
         XCTAssertTrue(app.staticTexts["Add the source to continue"].exists)
 
-        let addSource = app.buttons["Add Source"].firstMatch
+        let addSource = element("build23.recipient.addToLibrary")
         XCTAssertTrue(addSource.waitForExistence(timeout: 4))
         let pinnedImport = app.buttons["Import"].firstMatch
         for _ in 0..<6 where addSource.frame.maxY >= pinnedImport.frame.minY {
             app.scrollViews["build23.recipient.experience"].swipeUp()
         }
         XCTAssertLessThan(addSource.frame.maxY, pinnedImport.frame.minY,
-                          "Add Source remains covered by the pinned import actions.")
+                          "Add to Library remains covered by the pinned import actions.")
         addSource.tap()
         XCTAssertTrue(element("addSource.sheet").waitForExistence(timeout: 5))
         app.buttons["Close"].firstMatch.tap()

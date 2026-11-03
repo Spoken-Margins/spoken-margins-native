@@ -20,9 +20,10 @@ struct Build23SenderSharingExperience: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 HStack(alignment: .center) {
-                    Text("Share Margins")
+                    Text(coordinator.senderHeading)
                         .font(.headline)
                         .foregroundStyle(AppColors.text)
+                        .accessibilityIdentifier("build23.sender.heading")
                     Spacer()
                     Button("Cancel", role: .cancel) {
                         coordinator.send(.cancel)

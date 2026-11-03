@@ -32,6 +32,7 @@ phone = importlib.util.module_from_spec(spec)
 loader.exec_module(phone)
 sys.path.insert(0, str(phone.PUBLIC / 'scripts'))
 import lane_ledger
+import ops_checkout
 
 
 def atomic(path, value):
@@ -220,6 +221,8 @@ VALIDATORS = ('Packages/SessionKitTools/.build/release/phone-plan', 'Packages/Se
 def validator_command():
     if 'SM_DAILY_VALIDATOR' in os.environ:
         return shlex.split(os.environ['SM_DAILY_VALIDATOR'])
+    if ops_checkout.pinned_repo():  # the pinned checkout builds its own tool, and again when its sources change (#2372)
+        return [str(ops_checkout.ensure_validator(phone.PUBLIC))]
     paths = [phone.PUBLIC / path for path in VALIDATORS]
     return [str(next((path for path in paths if path.exists()), paths[0]))]
 
@@ -311,6 +314,7 @@ def deliver(now, state, state_path, on_request=False):
     else:
         started = time.monotonic()
         try:
+            validator_command()  # build the validator first (#2372): a failed build must not follow a paid writer pass
             proposal = propose(items, catalog, archive)
             add_omitted(proposal, items)
             # A writer cannot turn an explicitly blocked prerequisite into a check.
@@ -468,6 +472,7 @@ def main(argv=None):
     parser.add_argument('--on-request', action='store_true')
     parser.add_argument('--results', type=Path, help='coordinator supplies the exact pasted owner reply')
     args = parser.parse_args(argv)
+    ops_checkout.pin_from_env(phone.notify, reexec=True)  # a scheduled job runs from the pinned ops checkout (#2372)
     root = phone.phone_dir()
     root.mkdir(parents=True, exist_ok=True)
     state_path = root / 'daily-plan-state.json'

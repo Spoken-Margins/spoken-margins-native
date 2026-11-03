@@ -182,7 +182,7 @@ struct ImportListeningEditionIntent: AppIntent {
         guard let model = ListeningEditionShortcutBridge.model else {
             throw EditionError.invalid("Spoken Margins could not open its Library. Try the import again.")
         }
-        try model.importListeningEditionDataForShortcut(try ListeningEdition.shortcutInput(file: file?.data, text: json))
+        try await model.importListeningEditionDataForShortcut(try ListeningEdition.shortcutInput(file: file?.data, text: json))
         return .result()
     }
 }

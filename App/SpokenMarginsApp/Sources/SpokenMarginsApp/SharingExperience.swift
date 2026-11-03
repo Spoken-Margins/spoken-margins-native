@@ -47,6 +47,8 @@ struct InterjectionSharingState {
     var isExporting = false
     var errorMessage: String?
     var draftFilter: ShareMarginDraftFilter = .all
+    /// "Send replies to Ana" when the sheet was opened to send replies back (#3221); nil for an ordinary share.
+    var replyBackTitle: String?
     var autoCleanSelectedEnabled = ShareAutoCleanPreference.isEnabled
     var needsAutoCleanDecision = !ShareAutoCleanPreference.hasRecordedDecision
     var automaticallyCleanedDraftIDs: Set<String> = []
@@ -882,6 +884,8 @@ struct SharedSpokenMarginsPackageReadyView: View {
     @EnvironmentObject private var model: Gate1AppModel
     let packageURL: URL
     @State private var isActivityPresented = false
+    /// The packet file's size, read off the main thread, so the sender sees it before sending (#3218).
+    @State private var packetSizeText: String?
 
     var body: some View {
         NavigationStack {
@@ -893,6 +897,12 @@ struct SharedSpokenMarginsPackageReadyView: View {
                         Text(packageURL.lastPathComponent)
                             .font(.caption)
                             .foregroundStyle(AppColors.secondaryText)
+                        if let packetSizeText {
+                            Text("Size: \(packetSizeText)")
+                                .font(.caption)
+                                .foregroundStyle(AppColors.secondaryText)
+                                .accessibilityIdentifier("sharing.packetSize")
+                        }
                     }
                 }
                 Button("Share File") { isActivityPresented = true }
@@ -904,6 +914,13 @@ struct SharedSpokenMarginsPackageReadyView: View {
             .padding(20)
             .navigationTitle("Share Margins")
             .navigationBarTitleDisplayMode(.inline)
+        }
+        .task(id: packageURL) {
+            let url = packageURL
+            let bytes = await Task.detached(priority: .utility) {
+                (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize
+            }.value
+            packetSizeText = bytes.map { ByteCountFormatter.string(fromByteCount: Int64($0), countStyle: .file) }
         }
         .sheet(isPresented: $isActivityPresented) {
             SharedSpokenMarginsPackageActivityView(packageURL: packageURL) {

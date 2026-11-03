@@ -37,6 +37,15 @@ enum AppRoot: String, CaseIterable, Identifiable, Hashable, Sendable {
         }
     }
 
+    /// What the Item screen's back button says: the tab it returns to (#3214). Settings has no items, so it
+    /// reads just "Back".
+    var itemBackTitle: String {
+        switch self {
+        case .library, .sources, .margins: title
+        case .settings: "Back"
+        }
+    }
+
     var systemImage: String {
         switch self {
         case .library: "books.vertical"
@@ -102,8 +111,9 @@ enum TimelineTextPresentation {
 enum AddSourceRoute: String, CaseIterable, Identifiable, Hashable, Sendable {
     case linkOrPodcast
     case pastedText
-    case documentOrBook
-    case audiobook
+    /// One tile for everything that comes from Files: documents, books, audiobooks and `.spokenmargins` packets.
+    /// The file's own type picks the import after the pick (`AddFromFilesPlan`, #3217).
+    case importFromFiles
     case quickFolder
 
     var id: String { rawValue }
@@ -112,8 +122,7 @@ enum AddSourceRoute: String, CaseIterable, Identifiable, Hashable, Sendable {
         switch self {
         case .linkOrPodcast: "Link or Podcast"
         case .pastedText: "Paste Text"
-        case .documentOrBook: "Document or Book"
-        case .audiobook: "Audiobook"
+        case .importFromFiles: "Import from Files"
         case .quickFolder: "Quick Folder"
         }
     }
@@ -122,9 +131,8 @@ enum AddSourceRoute: String, CaseIterable, Identifiable, Hashable, Sendable {
         switch self {
         case .linkOrPodcast: "Podcast episode, RSS feed, public audio, or readable web link"
         case .pastedText: "Create a listening item from text already on your clipboard"
-        case .documentOrBook: "Plain text, Markdown, text-based PDF, DRM-free EPUB, or a Listening Edition"
-        case .audiobook: "Import an app-owned MP3, M4A, M4B, or audio-bearing MP4"
-        case .quickFolder: "Choose a folder whose eligible files appear in Sources"
+        case .importFromFiles: "A document, book, audiobook, or Margins packet from Files"
+        case .quickFolder: "Choose a folder whose eligible files appear in Following"
         }
     }
 
@@ -132,20 +140,74 @@ enum AddSourceRoute: String, CaseIterable, Identifiable, Hashable, Sendable {
         switch self {
         case .linkOrPodcast: "link"
         case .pastedText: "text.quote"
-        case .documentOrBook: "doc.richtext"
-        case .audiobook: "headphones"
+        case .importFromFiles: "folder.badge.plus"
         case .quickFolder: "folder"
         }
     }
 }
 
+/// A tile in the Add sheet's top grid. Each is a different way in; none repeats another (#3217).
+enum AddSourceTile: String, CaseIterable, Identifiable, Hashable, Sendable {
+    case linkOrPodcast
+    case findPodcast
+    case pastedText
+    case importFromFiles
+    case quickFolder
+    case liveSession
+
+    var id: String { rawValue }
+
+    /// The route a tile opens inside the sheet, for the tiles that swap the sheet's content.
+    var route: AddSourceRoute? {
+        switch self {
+        case .linkOrPodcast: .linkOrPodcast
+        case .pastedText: .pastedText
+        case .importFromFiles: .importFromFiles
+        case .quickFolder: .quickFolder
+        case .findPodcast, .liveSession: nil
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .findPodcast: "Find a Podcast"
+        case .liveSession: "Live Session"
+        default: route?.title ?? ""
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .linkOrPodcast: "A web article, podcast episode, feed, or public audio link"
+        case .findPodcast: "Search podcasts by name"
+        case .pastedText: "Words already copied to your clipboard"
+        case .importFromFiles: "A document, book, audiobook, or Margins packet"
+        case .quickFolder: "A folder of eligible local files"
+        case .liveSession: "Margins on a meeting or book"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .findPodcast: "magnifyingglass"
+        case .liveSession: "clock.badge"
+        default: route?.systemImage ?? "plus"
+        }
+    }
+}
+
 enum AddSourcePresentation {
-    static let primaryObjectRoutes: [AddSourceRoute] = [
-        .linkOrPodcast,
-        .pastedText,
-        .documentOrBook,
-        .audiobook
+    /// The grid's order: the two ways to bring in a podcast sit together, then the two from the device, then the rest.
+    static let tiles: [AddSourceTile] = [
+        .linkOrPodcast, .findPodcast,
+        .pastedText, .importFromFiles,
+        .quickFolder, .liveSession
     ]
+
+    /// Find a Podcast needs the catalog to open from the sheet; without that, the tile is left out.
+    static func tiles(canSearchPodcasts: Bool) -> [AddSourceTile] {
+        canSearchPodcasts ? tiles : tiles.filter { $0 != .findPodcast }
+    }
 }
 
 /// Scene-local presentation state. Playback and persistence remain in

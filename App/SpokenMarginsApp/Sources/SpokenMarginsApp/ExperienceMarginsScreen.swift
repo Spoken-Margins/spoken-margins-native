@@ -151,6 +151,29 @@ struct ExperienceMarginsScreen: View {
     /// row under the title instead of squeezing it (#1938).
     @ViewBuilder
     private func groupHeading(_ group: MarginGroup) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            groupHeadingRow(group)
+            sendRepliesButton(group)
+        }
+    }
+
+    /// "Send replies to Ana" under an item whose Margins the listener has answered or added since they opened a
+    /// friend's (#3221): the two-tap way back to the person who shared.
+    @ViewBuilder
+    private func sendRepliesButton(_ group: MarginGroup) -> some View {
+        if let offer = model.replyBackOffer(itemID: group.itemID) {
+            Button { model.openReplyBackExport(itemID: group.itemID) } label: {
+                Label(offer.title, systemImage: "arrowshape.turn.up.left")
+                    .frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .buttonStyle(SecondaryButtonStyle())
+            .accessibilityHint("Opens the Share sheet with your replies selected.")
+            .accessibilityIdentifier("margins.sendReplies.\(group.itemID)")
+        }
+    }
+
+    @ViewBuilder
+    private func groupHeadingRow(_ group: MarginGroup) -> some View {
         if dynamicTypeSize.isAccessibilitySize {
             VStack(alignment: .leading, spacing: 0) {
                 groupOpenItemButton(group)

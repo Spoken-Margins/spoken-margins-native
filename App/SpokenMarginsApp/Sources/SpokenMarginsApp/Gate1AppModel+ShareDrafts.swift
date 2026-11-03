@@ -45,7 +45,9 @@ extension Gate1AppModel {
         prepareShareInterjections(candidates: selectedItem.interjections)
     }
 
-    private func prepareShareInterjections(candidates source: [Interjection]) {
+    /// `replyBack` turns the sheet into "Send replies to <friend>" (#3221): `source` is the offer's own list, the
+    /// replies start included and the listener's other new Margins start out, and nothing else is listed.
+    func prepareShareInterjections(candidates source: [Interjection], replyBack: ReplyBackOffer? = nil) {
         cancelBulkSharePreparation()
         let candidates = source.filter {
             $0.status == "active" && $0.targetType == .item
@@ -54,8 +56,9 @@ extension Gate1AppModel {
             reportFailure("Record at least one Margin on this item before sharing.")
             return
         }
-        let hasStarredCandidates = candidates.contains { $0.isStarredForSharing == true }
+        let hasStarredCandidates = replyBack == nil && candidates.contains { $0.isStarredForSharing == true }
         sharingState = InterjectionSharingState(isPreparing: true)
+        sharingState.replyBackTitle = replyBack?.title
         sharingState.draftFilter = hasStarredCandidates ? .starred : .all
         isSharingInterjectionsPresented = true
         // The summary: the sheet needs the address, the type and whether there is text, not the article (#2506).
@@ -72,7 +75,8 @@ extension Gate1AppModel {
         sharingState.drafts = candidates.map { interjection in
             ShareInterjectionDraft.initial(
                 for: interjection,
-                isIncluded: !hasStarredCandidates || interjection.isStarredForSharing == true,
+                isIncluded: replyBack.map { $0.isPreselected(interjection) }
+                    ?? (!hasStarredCandidates || interjection.isStarredForSharing == true),
                 hasVoice: interjection.audioPath.flatMap(resolvedInterjectionAudioURL(for:)) != nil,
                 itemTitle: selectedItem.title,
                 anchorWarning: shareAnchorWarning(for: interjection)

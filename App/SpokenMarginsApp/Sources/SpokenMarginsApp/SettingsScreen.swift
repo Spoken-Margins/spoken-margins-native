@@ -16,6 +16,7 @@ struct SettingsScreen: View {
     @State private var pendingPermanentDeletion: LibraryItemRow?
     @State private var pendingInboxDeletion: ImportInboxEntry?
     @State private var isEmptyRecentlyDeletedConfirmationPresented = false
+    @State private var showsAllRecentlyDeleted = false
     @State private var isResetConfirmationPresented = false
     @State private var diagnosticsExportURL: URL?
     @State private var isDiagnosticsSharePresented = false
@@ -159,7 +160,7 @@ struct SettingsScreen: View {
                     .onCompatibleChange(of: model.skipUnit) { _ in
                         model.skipUnitChanged()
                     }
-                    Picker("Native Audio Back", selection: $model.mediaSkipBackSeconds) {
+                    Picker("Podcast Skip Back", selection: $model.mediaSkipBackSeconds) {
                         ForEach(Gate1AppModel.supportedMediaSkipSeconds, id: \.self) { seconds in
                             Text("\(seconds) seconds").tag(seconds)
                         }
@@ -176,7 +177,7 @@ struct SettingsScreen: View {
                     Text("Skip forward is the normal double-press. Add a Margin starts a Margin instead, but a headphone press can't end one: stop talking or use the button on the screen. Triple-press still skips back.")
                         .font(.caption)
                         .foregroundStyle(AppColors.secondaryText)
-                    Picker("Native Audio Forward", selection: $model.mediaSkipForwardSeconds) {
+                    Picker("Podcast Skip Forward", selection: $model.mediaSkipForwardSeconds) {
                         ForEach(Gate1AppModel.supportedMediaSkipSeconds, id: \.self) { seconds in
                             Text("\(seconds) seconds").tag(seconds)
                         }
@@ -217,7 +218,7 @@ struct SettingsScreen: View {
                     .onCompatibleChange(of: model.automaticAudioPreparationPolicy) { _ in
                         model.automaticAudioPreparationPolicyChanged()
                     }
-                    Picker("Automatic Episode Map Preparation", selection: $model.automaticEpisodeMapPreparationPolicy) {
+                    Picker("Prepare Chapters and Scenes Ahead", selection: $model.automaticEpisodeMapPreparationPolicy) {
                         ForEach(AutomaticEpisodeMapPreparationPolicy.allCases, id: \.self) { policy in
                             Text(policy.displayName).tag(policy)
                         }
@@ -226,7 +227,7 @@ struct SettingsScreen: View {
                     .onCompatibleChange(of: model.automaticEpisodeMapPreparationPolicy) { _ in
                         model.automaticEpisodeMapPreparationPolicyChanged()
                     }
-                    Text("Episode maps are private and off by default. While Charging only prepares already-downloaded episodes; full transcripts and temporary audio are deleted after derivative artifacts commit.")
+                    Text("Chapters and scenes for podcasts are prepared on your device and are off by default. While Charging only prepares episodes that are already downloaded; the full transcript and temporary audio are deleted once the chapters and scenes are saved.")
                         .font(.caption)
                         .foregroundStyle(AppColors.secondaryText)
                     Text("While Charging uses durable jobs and pauses between parts of an item when power, thermal, or storage safety changes. Completion timing is not guaranteed.")
@@ -241,23 +242,44 @@ struct SettingsScreen: View {
                                 isEmptyRecentlyDeletedConfirmationPresented = true
                             }
                             .accessibilityIdentifier("recentlyDeleted.empty.button")
-                            ForEach(model.recentlyDeletedItems) { item in
-                                VStack(alignment: .leading, spacing: 8) {
+                            let list = CollapsedListPresentation(
+                                total: model.recentlyDeletedItems.count, isExpanded: showsAllRecentlyDeleted)
+                            ForEach(Array(model.recentlyDeletedItems.prefix(list.shownCount))) { item in
+                                VStack(alignment: .leading, spacing: 4) {
                                     Text(item.title)
                                         .font(.headline)
                                     HStack {
-                                        Button("Restore") { model.restoreItem(id: item.id) }
-                                            .buttonStyle(.borderless)
-                                            .accessibilityLabel("Restore \(item.title)")
-                                            .accessibilityIdentifier("recentlyDeleted.restore.\(item.id)")
-                                        Button("Delete Permanently", role: .destructive) {
-                                            pendingPermanentDeletion = item
+                                        Button { model.restoreItem(id: item.id) } label: {
+                                            Text("Restore").frame(minHeight: 44)
                                         }
                                         .buttonStyle(.borderless)
-                                        .accessibilityLabel("Delete \(item.title) Permanently")
-                                        .accessibilityIdentifier("recentlyDeleted.delete.\(item.id)")
+                                        .accessibilityLabel("Restore \(item.title)")
+                                        .accessibilityIdentifier("recentlyDeleted.restore.\(item.id)")
+                                        Spacer()
+                                        // Permanent delete sits behind a menu, not beside Restore, so a slip of the
+                                        // thumb restores instead of deleting (#3206). The confirmation stays.
+                                        Menu {
+                                            Button("Delete Permanently", role: .destructive) {
+                                                pendingPermanentDeletion = item
+                                            }
+                                            .accessibilityIdentifier("recentlyDeleted.delete.\(item.id)")
+                                        } label: {
+                                            Image(systemName: "ellipsis.circle")
+                                                .frame(minWidth: 44, minHeight: 44)
+                                        }
+                                        .buttonStyle(.borderless)
+                                        .accessibilityLabel("More options for \(item.title)")
+                                        .accessibilityIdentifier("recentlyDeleted.more.\(item.id)")
                                     }
                                 }
+                            }
+                            if list.showsToggle {
+                                Button(list.toggleTitle) {
+                                    withAnimation { showsAllRecentlyDeleted.toggle() }
+                                }
+                                .frame(minHeight: 44)
+                                .accessibilityHint(list.toggleHint)
+                                .accessibilityIdentifier("recentlyDeleted.toggle.button")
                             }
                         }
                     }
@@ -272,7 +294,7 @@ struct SettingsScreen: View {
                     )) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Queue New Quick Folder Files")
-                            Text("Files that appear in your Quick Folder are imported and added to the end of your play queue, in filename order. Choose the folder under Add Source.")
+                            Text("Files that appear in your Quick Folder are imported and added to the end of your play queue, in filename order. Choose the folder under Add to Library.")
                                 .font(.caption)
                                 .foregroundStyle(AppColors.secondaryText)
                         }

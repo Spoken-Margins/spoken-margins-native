@@ -10,7 +10,9 @@ struct ReviewNewMarginsCard: View {
     @State private var playbackTick = 0 // bumped by each progress tick: the countdown follows the playhead (#2074)
 
     private var current: MarginMomentAnchor { moment.playing ?? moment.target }
-    private var whose: String { current.label.map { "\($0)'s Margin" } ?? "A friend's Margin" }
+    private var whose: String {
+        current.isYours ? "Your Margin" : current.label.map { "\($0)'s Margin" } ?? "A friend's Margin"
+    }
     private var isLast: Bool { moment.unplayed.isEmpty }
 
     var body: some View {
@@ -20,6 +22,13 @@ struct ReviewNewMarginsCard: View {
                 .font(.footnote.weight(.semibold))
                 .foregroundStyle(.white.opacity(0.85))
                 .accessibilityIdentifier("review.progress")
+            // What a reply answers: "Reply to your Margin at 12:34" (#3221).
+            if let caption = current.caption {
+                Text(caption)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .accessibilityIdentifier("review.replyCaption")
+            }
             // A shared Margin still being placed says so (#872); it plays from its approximate time meanwhile.
             if let placing = model.sharedMarginRows.first(where: { $0.id == current.marginId })?.placementStatus.positionDescription {
                 Text(placing)

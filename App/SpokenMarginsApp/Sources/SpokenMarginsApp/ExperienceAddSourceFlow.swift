@@ -21,7 +21,7 @@ struct ExperienceAddSourceFlow: View {
     @FocusState private var focusedField: Field?
 
     private enum Field { case link, title, text }
-    private enum FileRequest { case documentOrBook, audiobook, quickFolder }
+    private enum FileRequest { case files, quickFolder }
 
     /// Closes the sheet and opens the podcast catalog's search by name; nil hides the button (#1784).
     private let onSearchPodcasts: (() -> Void)?
@@ -73,7 +73,7 @@ struct ExperienceAddSourceFlow: View {
             }
             .scrollDismissesKeyboard(.interactively)
             .background(AppColors.bone)
-            .navigationTitle(showsPinnedTextAction ? "Add Text" : "Add Source")
+            .navigationTitle(showsPinnedTextAction ? "Add Text" : "Add to Library")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 if showsPinnedTextAction {
@@ -101,7 +101,7 @@ struct ExperienceAddSourceFlow: View {
             .fileImporter(
                 isPresented: $showsFileImporter,
                 allowedContentTypes: allowedContentTypes,
-                allowsMultipleSelection: fileRequest == .documentOrBook,
+                allowsMultipleSelection: fileRequest == .files,
                 onCompletion: handleFileImport
             )
             .onChange(of: model.sourceLinkImportState) { _, state in
@@ -109,7 +109,8 @@ struct ExperienceAddSourceFlow: View {
             }
             .onAppear { model.resetSourceLinkImportState() }
         }
-        .presentationDetents(showsRoutePicker && !dynamicTypeSize.isAccessibilitySize ? [.medium, .large] : [.large])
+        // Every way in fits at the large detent without scrolling (#3217); a half-height sheet would hide some of them.
+        .presentationDetents([.large])
         .presentationDragIndicator(.visible)
         .accessibilityIdentifier("addSource.sheet")
     }
@@ -165,61 +166,58 @@ struct ExperienceAddSourceFlow: View {
                 .foregroundStyle(AppColors.text)
             // One column at accessibility sizes: two columns broke headline titles mid-word (#1934).
             LazyVGrid(columns: dynamicTypeSize.isAccessibilitySize ? [GridItem(.flexible())] : [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-                ForEach(primaryRoutes) { route in
-                    Button {
-                        if route == .documentOrBook {
-                            presentFileImporter(.documentOrBook)
-                            return
-                        }
-                        selectedRoute = route
-                        showsRoutePicker = false
-                    } label: {
-                        VStack(alignment: .leading, spacing: 10) {
-                            Image(systemName: route.systemImage)
-                                .font(.title2)
+                ForEach(AddSourcePresentation.tiles(canSearchPodcasts: onSearchPodcasts != nil)) { tile in
+                    Button { choose(tile) } label: {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Image(systemName: tile.systemImage)
+                                .font(.title3)
                                 .foregroundStyle(AppColors.evergreen)
-                                .frame(width: 46, height: 46)
-                                .background(AppColors.softGreen, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+                                .frame(width: 40, height: 40)
+                                .background(AppColors.softGreen, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                                 .accessibilityHidden(true)
-                            Text(route.title)
+                            Text(tile.title)
                                 .font(.headline)
                                 .foregroundStyle(AppColors.text)
                                 .multilineTextAlignment(.leading)
-                            Text(shortDetail(route))
+                            Text(tile.detail)
                                 .font(.caption)
                                 .foregroundStyle(AppColors.secondaryText)
                                 .multilineTextAlignment(.leading)
                         }
-                        .padding(15)
-                        .frame(maxWidth: .infinity, minHeight: 142, alignment: .topLeading)
+                        .padding(14)
+                        .frame(maxWidth: .infinity, minHeight: 124, alignment: .topLeading)
                         .background(AppColors.panel, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
                         .overlay { RoundedRectangle(cornerRadius: 18).stroke(AppColors.border) }
                     }
                     .buttonStyle(.plain)
-                    .accessibilityIdentifier("addSource.route.\(route.rawValue)")
+                    .accessibilityIdentifier("addSource.route.\(tile.rawValue)")
                 }
             }
-            Divider()
-            Button {
-                selectedRoute = .quickFolder
-                showsRoutePicker = false
-            } label: {
-                Label("Manage Quick Folder", systemImage: "folder")
-                    .frame(minHeight: 44)
+            if let fileImportError {
+                FailureMessageLabel(fileImportError)
+                    .accessibilityIdentifier("document.import.error")
             }
-            .buttonStyle(.bordered)
-            .accessibilityIdentifier("addSource.route.quickFolder")
-            Button {
-                showsLiveSession = true
-            } label: {
-                Label("Live Session: Margins on a Meeting or Book", systemImage: "clock.badge")
-                    .frame(minHeight: 44)
-            }
-            .buttonStyle(.bordered)
-            .accessibilityIdentifier("addSource.route.liveSession")
-            .fullScreenCover(isPresented: $showsLiveSession, onDismiss: { dismiss() }) {
-                LiveSessionView().environmentObject(model)
-            }
+        }
+        .fullScreenCover(isPresented: $showsLiveSession, onDismiss: { dismiss() }) {
+            LiveSessionView().environmentObject(model)
+        }
+    }
+
+    /// A tile either swaps the sheet to its page, opens the Files picker, closes the sheet to search the catalog,
+    /// or starts a Live Session.
+    private func choose(_ tile: AddSourceTile) {
+        switch tile {
+        case .importFromFiles:
+            presentFileImporter(.files)
+        case .findPodcast:
+            focusedField = nil
+            onSearchPodcasts?()
+        case .liveSession:
+            showsLiveSession = true
+        case .linkOrPodcast, .pastedText, .quickFolder:
+            guard let route = tile.route else { return }
+            selectedRoute = route
+            showsRoutePicker = false
         }
     }
 
@@ -244,27 +242,12 @@ struct ExperienceAddSourceFlow: View {
         }
     }
 
-    private var primaryRoutes: [AddSourceRoute] {
-        AddSourcePresentation.primaryObjectRoutes
-    }
-
-    private func shortDetail(_ route: AddSourceRoute) -> String {
-        switch route {
-        case .linkOrPodcast: "A web article, podcast episode, feed, or public audio link"
-        case .pastedText: "Words already copied to your clipboard"
-        case .documentOrBook: "Text, Markdown, PDF, DRM-free EPUB, or a Listening Edition"
-        case .audiobook: "An MP3, M4A, M4B, or audio MP4 file"
-        case .quickFolder: "A folder of eligible local files"
-        }
-    }
-
     @ViewBuilder
     private var routeContent: some View {
         switch selectedRoute {
         case .linkOrPodcast: linkSource
         case .pastedText: pastedTextSource
-        case .documentOrBook: documentSource
-        case .audiobook: audiobookSource
+        case .importFromFiles: filesSource
         case .quickFolder: quickFolderSource
         }
     }
@@ -304,16 +287,6 @@ struct ExperienceAddSourceFlow: View {
                     .accessibilityIdentifier("sourceLink.import.button")
                 }
                 SourceLinkImportStatusView()
-                if let onSearchPodcasts {
-                    Button {
-                        focusedField = nil
-                        onSearchPodcasts()
-                    } label: {
-                        Label("Search podcasts by name", systemImage: "magnifyingglass")
-                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                    }
-                    .accessibilityIdentifier("sourceLink.searchPodcasts.button")
-                }
                 Text("Adding a source never replaces the item already in Now Playing.")
                     .font(.caption)
                     .foregroundStyle(AppColors.secondaryText)
@@ -366,38 +339,22 @@ struct ExperienceAddSourceFlow: View {
         .tint(AppColors.evergreen)
     }
 
-    private var documentSource: some View {
+    private var filesSource: some View {
         ExperienceSurface {
             VStack(alignment: .leading, spacing: 12) {
-                Button("Choose Document or Book", systemImage: "doc.badge.plus") {
-                    presentFileImporter(.documentOrBook)
+                Button("Choose Files", systemImage: "folder.badge.plus") {
+                    presentFileImporter(.files)
                 }
                 .filledActionButton()
                 .frame(minHeight: 44)
-                .accessibilityIdentifier("document.import.button")
-                Text("Documents and books stay local and retain authored structure when the format provides it. A Listening Edition collection (.json) can be chosen here too.")
+                .accessibilityIdentifier("files.import.button")
+                Text("Documents and books stay local and retain authored structure when the format provides it. Audiobooks are copied into app-owned storage and protected from automatic eviction. A Listening Edition collection (.json) or a Margins packet (.spokenmargins) can be chosen here too.")
                     .font(.caption)
                     .foregroundStyle(AppColors.secondaryText)
                 if let fileImportError {
                     FailureMessageLabel(fileImportError)
                         .accessibilityIdentifier("document.import.error")
                 }
-            }
-        }
-    }
-
-    private var audiobookSource: some View {
-        ExperienceSurface {
-            VStack(alignment: .leading, spacing: 12) {
-                Button("Choose Audiobook", systemImage: "headphones") {
-                    presentFileImporter(.audiobook)
-                }
-                .filledActionButton()
-                .frame(minHeight: 44)
-                .accessibilityIdentifier("audiobook.import.button")
-                Text("Audiobooks are copied into app-owned storage and protected from automatic eviction.")
-                    .font(.caption)
-                    .foregroundStyle(AppColors.secondaryText)
             }
         }
     }
@@ -474,22 +431,54 @@ struct ExperienceAddSourceFlow: View {
         }
     }
 
+    /// One picker for everything the Files tile takes; `AddFromFilesPlan` routes each pick by its file type.
     private var allowedContentTypes: [UTType] {
         switch fileRequest {
-        case .documentOrBook, .none:
-            [UTType(filenameExtension: "md") ?? .plainText, .plainText, .pdf, UTType(filenameExtension: "epub") ?? .data, .json, .folder]
-        case .audiobook:
-            [.mp3, .mpeg4Audio, .mpeg4Movie, UTType(filenameExtension: "m4b") ?? .audio]
+        case .files, .none:
+            Self.filesContentTypes
         case .quickFolder:
             [.folder]
         }
     }
+
+    private static let filesContentTypes: [UTType] = [
+        // Documents and books, and Listening Edition collections (`.json`) and folders of them.
+        UTType(filenameExtension: "md") ?? .plainText, .plainText, .pdf, UTType(filenameExtension: "epub") ?? .data, .json, .folder,
+        // Audiobooks.
+        .mp3, .mpeg4Audio, .mpeg4Movie, UTType(filenameExtension: "m4b") ?? .audio,
+        // A Margins packet. The app exports this type; the fallback keeps the picker usable if it ever failed to register.
+        UTType("com.spokenmargins.package") ?? UTType(filenameExtension: AddFromFilesPlan.packetExtension) ?? .data,
+    ]
 
     private func presentFileImporter(_ request: FileRequest) {
         focusedField = nil
         fileImportError = nil
         fileRequest = request
         showsFileImporter = true
+    }
+
+    /// Sends each picked file the way its type goes (#3217): a packet to the review, an audio file to the audiobook
+    /// import, a collection, folder or document to the document import, which is what the old tiles did. A mixed pick
+    /// runs every part. The sheet closes unless the document import could not take something, and then it says what.
+    private func routeFilePick(_ picked: [URL]) {
+        let plan = AddFromFilesPlan(picking: picked) { url in
+            url.hasDirectoryPath || ((try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true)
+        }
+        guard !plan.isEmpty else { return }
+        // An EPUB goes in alone. Say so before anything else starts, so a re-pick does not meet the audio or packet
+        // that already began importing.
+        if plan.documents.count > 1, plan.documents.contains(where: { $0.pathExtension.lowercased() == "epub" }) {
+            model.reportImportFailure(ExperienceFileImportError.epubMustBeImportedAlone)
+            return
+        }
+        fileImportError = nil
+        for packet in plan.packets { model.stageSpokenMarginsPackageImportInBackground(from: packet) }
+        for audio in plan.audio { model.importAudiobookFile(url: audio, openWhenFinished: false) }
+        if plan.documentsAndCollections.isEmpty {
+            dismiss()
+        } else {
+            importDocumentsAndCollections(plan.documentsAndCollections)
+        }
     }
 
     /// A Listening Edition collection (`.json`) goes to the edition import, like a PDF added from here: it lands in
@@ -531,10 +520,8 @@ struct ExperienceAddSourceFlow: View {
         switch result {
         case .success(let urls):
             switch request {
-            case .documentOrBook:
-                importDocumentsAndCollections(urls)
-            case .audiobook:
-                if let url = urls.first { model.importAudiobookFile(url: url, openWhenFinished: false); dismiss() }
+            case .files:
+                routeFilePick(urls)
             case .quickFolder:
                 if let url = urls.first { model.configureQuickAccessFolder(url: url) }
             case .none:

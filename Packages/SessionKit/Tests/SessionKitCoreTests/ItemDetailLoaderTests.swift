@@ -277,6 +277,7 @@ final class ItemDetailLoaderTests: XCTestCase {
             var episode = item("episode")
             episode.publishedAt = "Tue, 29 Sep 2026 10:00:00 GMT"
             episode.descriptionText = String(repeating: "A long description. ", count: 200)
+            episode.createdAt = Date().addingTimeInterval(-86_400)
             try store.saveItem(episode)
             try store.saveItem(item("pasted"))
             var garbage = item("garbage")
@@ -291,6 +292,8 @@ final class ItemDetailLoaderTests: XCTestCase {
             XCTAssertNil(missing.descriptionText)
             let unreadable = try ItemDetailLoader.load(id: "garbage", store: store, snapshotItemId: nil, snapshotSessionId: nil, placementPasses: SharedMarginPlacementPasses())
             XCTAssertNil(unreadable.publishedDateText, "an unreadable date is omitted, not shown as written")
+            XCTAssertNotNil(present.addedDateText, "#3212: an item with a createdAt shows when it was added")
+            XCTAssertNil(missing.addedDateText, "#3212: an item with no createdAt says nothing")
         }
     }
 

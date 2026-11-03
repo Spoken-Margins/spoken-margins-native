@@ -3,17 +3,17 @@ import SwiftUI
 
 /// Following (#1865): one row per followed show, newest episode first, with "N new", a play button for the
 /// newest unplayed episode and a chevron into the show's own screen. Quiet shows sit in a collapsed group
-/// at the bottom. The plus follows a show (it opens the old Manage Feeds screen, which keeps Follow by
-/// link, Browse, OPML import, Read Later and Listening Edition import until the Follow sheet, #1784, replaces it).
+/// at the bottom. The plus opens the Follow sheet (#3205): Paste, Browse and Import from another app.
 struct ExperienceSourcesScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.isEdgeSwipePreview) private var isEdgeSwipePreview
     @EnvironmentObject private var catalogDrawer: CatalogDrawerModel
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
-    /// Following's follow flow lives on its own screen so this tab stays a list of shows (#141).
-    @State private var isManagingFeeds = false
-    @State private var focusFeedURLOnManage = false
+    /// Following's follow flow lives on its own sheet so this tab stays a list of shows (#141, #3205).
+    @State private var isShowingFollowSheet = false
+    /// Browse opens the catalog sheet, which sits on the root view: the Follow sheet closes first.
+    @State private var opensCatalogAfterFollowSheet = false
     @State private var isShowingQuickFolder = false
     @State private var path: [String] = []
     @State private var isQuietExpanded = false
@@ -49,8 +49,15 @@ struct ExperienceSourcesScreen: View {
                         detail: "Follow a podcast or a writer. Each show is one row here, with how many episodes are new.",
                         actionTitle: "Paste a feed link"
                     ) {
-                        // Paste when the clipboard holds a link; otherwise leave the field ready for typing.
-                        openManageFeeds(focusingFeedURL: !model.pasteFollowedSourceFromClipboard())
+                        // A copied link is followed at once; otherwise the sheet opens ready for a link.
+                        if case .follow = model.clipboardFollowDecision {
+                            Task {
+                                // Several feeds behind one link: the choice is on the sheet.
+                                if case .needsChoice = await model.followFromClipboard() { isShowingFollowSheet = true }
+                            }
+                        } else {
+                            isShowingFollowSheet = true
+                        }
                     }
                     .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
                 }
@@ -82,9 +89,9 @@ struct ExperienceSourcesScreen: View {
                     }
                     .frame(minWidth: 44, minHeight: 44)
                     .disabled(model.isRefreshingQuickAddFeed)
-                    .accessibilityLabel("Refresh Sources")
+                    .accessibilityLabel("Refresh Following")
                     .accessibilityIdentifier("quickAdd.refresh.button")
-                    Button(action: { openManageFeeds(focusingFeedURL: false) }) {
+                    Button(action: { isShowingFollowSheet = true }) {
                         Image(systemName: "plus")
                     }
                     .frame(minWidth: 44, minHeight: 44)
@@ -101,9 +108,17 @@ struct ExperienceSourcesScreen: View {
                 )
                 .miniPlayerKeepOut()
             }
-            .navigationDestination(isPresented: $isManagingFeeds) {
-                ManageFeedsScreen(focusFeedURLOnAppear: focusFeedURLOnManage)
-                    .miniPlayerKeepOut()
+            .sheet(isPresented: $isShowingFollowSheet, onDismiss: {
+                guard opensCatalogAfterFollowSheet else { return }
+                opensCatalogAfterFollowSheet = false
+                catalogDrawer.present()
+            }) {
+                FollowSheet(browse: {
+                    opensCatalogAfterFollowSheet = true
+                    isShowingFollowSheet = false
+                })
+                .environmentObject(model)
+                .environmentObject(catalogDrawer)
             }
             .navigationDestination(isPresented: $isShowingQuickFolder) {
                 QuickFolderFilesScreen(artwork: artwork)
@@ -227,11 +242,6 @@ struct ExperienceSourcesScreen: View {
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("sources.quickFolder")
-    }
-
-    private func openManageFeeds(focusingFeedURL: Bool) {
-        focusFeedURLOnManage = focusingFeedURL
-        isManagingFeeds = true
     }
 
     private struct ShowRowsKey: Equatable {
@@ -402,109 +412,16 @@ private struct QuickFolderFilesScreen: View {
     }
 }
 
-/// Following a show: by link, from the catalog, by OPML or from a read-later service. Pushed from Following's plus.
-/// The followed shows themselves are Following's rows now, and Quiet, Unfollow and "new items" live on each show's screen (#1865).
-private struct ManageFeedsScreen: View {
-    @EnvironmentObject private var model: Gate1AppModel
-    @EnvironmentObject private var catalogDrawer: CatalogDrawerModel
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-
-    /// Following's empty state found no link on the clipboard, so the field opens ready for typing.
-    let focusFeedURLOnAppear: Bool
-    @State private var didFocusOnAppear = false
-    @FocusState private var feedURLIsFocused: Bool
-
-    var body: some View {
-        List {
-            intakeHeader
-                .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
-            Section {
-                Button {
-                    catalogDrawer.present()
-                } label: {
-                    Label("Browse podcasts and writers", systemImage: "square.grid.2x2")
-                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                }
-                .accessibilityIdentifier("sources.browseCatalog")
-                if let makeOPMLImport = catalogDrawer.makeOPMLImport {
-                    NavigationLink {
-                        OPMLImportScreen(importer: makeOPMLImport())
-                            .miniPlayerKeepOut()
-                    } label: {
-                        Label("Import from another app", systemImage: "square.and.arrow.down")
-                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                    }
-                    .accessibilityIdentifier("sources.importOPML")
-                }
-                NavigationLink("Read Later Services") { ReadLaterScreen().miniPlayerKeepOut() }
-                NavigationLink("Import Listening Edition") { ListeningEditionImportScreen().miniPlayerKeepOut() }
-            }
-        }
-        .background(AppColors.bone)
-        .scrollContentBackground(.hidden)
-        .listStyle(.plain)
-        .accessibilityIdentifier("sources.manageFeeds.screen")
-        .navigationTitle("Follow a Show")
-        .navigationBarTitleDisplayMode(.inline)
-        .task {
-            // Once: coming back from Read Later shouldn't raise the keyboard again.
-            guard focusFeedURLOnAppear, !didFocusOnAppear else { return }
-            didFocusOnAppear = true
-            // Focus after the push settles; a field focused mid-transition can drop the keyboard.
-            try? await Task.sleep(for: .milliseconds(450))
-            feedURLIsFocused = true
-        }
-    }
-
-    private var intakeHeader: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 10) {
-                    feedURLField
-                    followButton
-                }
-                VStack(alignment: .leading, spacing: 10) {
-                    feedURLField
-                    followButton
-                }
-            }
-            FollowCandidateChoices()
-        }
-    }
-
-    private var feedURLField: some View {
-        TextField("Paste an RSS feed link", text: $model.followedSourceURL)
-            .textInputAutocapitalization(.never)
-            .autocorrectionDisabled()
-            .textContentType(.URL)
-            .keyboardType(.URL)
-            .submitLabel(.go)
-            .focused($feedURLIsFocused)
-            .onSubmit(model.followSource)
-            .padding(.horizontal, 14)
-            .frame(maxWidth: .infinity, minHeight: 48)
-            .background(AppColors.panel, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .overlay { RoundedRectangle(cornerRadius: 14).stroke(AppColors.border) }
-            .accessibilityIdentifier("sources.follow.url")
-    }
-
-    private var followButton: some View {
-        Button("Follow", action: model.followSource)
-            .frame(minHeight: 46)
-            .filledActionButton()
-            .disabled(model.followedSourceURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            .accessibilityIdentifier("sources.follow.button")
-    }
-}
-
 /// The feeds a link or an item's Follow found, when there is more than one to choose from.
 struct FollowCandidateChoices: View {
     @EnvironmentObject private var model: Gate1AppModel
+    /// The Follow sheet takes the pick itself, to close and offer Undo; Following's list follows it as before.
+    var choose: ((SourceCandidateEvidence) -> Void)? = nil
 
     var body: some View {
         ForEach(model.followedSourceCandidates) { candidate in
             Button {
-                model.followSourceCandidate(candidate)
+                if let choose { choose(candidate) } else { model.followSourceCandidate(candidate) }
             } label: {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(candidate.source.title ?? candidate.source.host)

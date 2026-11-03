@@ -132,6 +132,7 @@ struct ExperienceLibraryScreen: View {
                 Label("Add", systemImage: "plus")
             }
             .disabled(!screenState.allowsAddingContent)
+            .accessibilityLabel("Add to Library")
             .accessibilityIdentifier("home.addSource.button")
         }
     }
@@ -419,7 +420,7 @@ struct ExperienceLibraryScreen: View {
                 systemImage: "books.vertical",
                 title: "Your Library is ready",
                 detail: "Add a link, text, document, book, or audiobook to begin.",
-                actionTitle: "Add Source"
+                actionTitle: "Add to Library"
             ) { addSourceRoute = .linkOrPodcast }
             .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
         case .caughtUp:

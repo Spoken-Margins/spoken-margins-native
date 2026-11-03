@@ -10,7 +10,7 @@ extension Gate1AppModel {
             title: "Guided Tour: Add and Prepare Sources",
             mediaType: "guided_tour",
             text: """
-            Welcome to Spoken Margins. Add text, PDF, a readable webpage, or a podcast from Add Source. You can also import a DRM-free EPUB or an MP3, M4A, M4B, or audio-bearing MP4 audiobook. Native text and EPUB chapters can be prepared for offline listening. Preparation progress, storage use, retry, and cancellation stay visible; changing playback speed does not regenerate prepared audio. Followed sources appear in New from Sources and never import until you choose an entry. Use the sleep timer for a timed pause or the end of the current chapter.
+            Welcome to Spoken Margins. Add text, PDF, a readable webpage, or a podcast with Add to Library, the plus on the Library tab. You can also import a DRM-free EPUB or an MP3, M4A, M4B, or audio-bearing MP4 audiobook. Native text and EPUB chapters can be prepared for offline listening. Preparation progress, storage use, retry, and cancellation stay visible; changing playback speed does not regenerate prepared audio. Shows you follow appear in Following and are never added to your Library until you choose an episode. Use the sleep timer for a timed pause or the end of the current chapter.
             """,
             externalReference: "bundled://guided-onboarding.v1",
             status: "ready",

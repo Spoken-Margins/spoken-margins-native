@@ -14,12 +14,17 @@ public enum SharedMarginReview {
         public let mediaTimeMs: Int
         /// Placed by a clock time or a map rather than a match, so the position is a best guess.
         public let isApproximate: Bool
+        /// What this Margin answers when it is a reply (#3221); nil for any other Margin.
+        public var replyContext: ReplyContext?
 
         /// The identity the playback screen, the conductor and the Timeline all use for this Margin.
         public var marginId: String { SharedMarginReview.marginId(layerId: layer.id, interjectionId: interjection.id) }
         public var senderLabel: String { SharedMarginReview.senderLabel(of: layer) }
         public var anchor: MarginMomentAnchor {
-            MarginMomentAnchor(marginId: marginId, mediaTimeMs: mediaTimeMs, label: senderLabel, isApproximate: isApproximate)
+            MarginMomentAnchor(
+                marginId: marginId, mediaTimeMs: mediaTimeMs, label: senderLabel, isApproximate: isApproximate,
+                caption: replyContext?.caption
+            )
         }
     }
 
@@ -35,11 +40,15 @@ public enum SharedMarginReview {
 
     /// The item's new shared Margins in playing order: by place in the episode, then, where two share a place,
     /// by sender label and then by when it was made, so the same Margins always play the same way round.
+    ///
+    /// `ownMargins` are the listener's own Margins on the item. A friend's reply to one of them says so (#3221).
     public static func entries(
         layers: [ImportedCommentaryLayer],
-        records: [String: [ImportedCommentaryInterjection]]
+        records: [String: [ImportedCommentaryInterjection]],
+        ownMargins: [Interjection] = []
     ) -> [Entry] {
-        layers.flatMap { layer -> [Entry] in
+        let contexts = replyContexts(layers: layers, records: records, ownMargins: ownMargins)
+        return layers.flatMap { layer -> [Entry] in
             let layerRecords = records[layer.id] ?? []
             guard SharedMarginPrompts.isLayerPlaybackEligible(layer, records: layerRecords) else { return [] }
             return layerRecords.compactMap { record -> Entry? in
@@ -49,18 +58,21 @@ public enum SharedMarginReview {
                 return Entry(
                     layer: layer, interjection: record, mediaTimeMs: mediaTimeMs,
                     isApproximate: record.resolution.evidenceClass == .mapInterpolated
-                        || record.resolution.evidenceClass == .timestampFallback
+                        || record.resolution.evidenceClass == .timestampFallback,
+                    replyContext: contexts[record.id]
                 )
             }
         }.sorted(by: playsBefore)
     }
 
     /// The same, read from the repository for an item that isn't open.
-    public static func entries(itemId: String, in repository: some ListeningSessionRepository) throws -> [Entry] {
+    public static func entries(
+        itemId: String, in repository: some ListeningSessionRepository, ownMargins: [Interjection] = []
+    ) throws -> [Entry] {
         let layers = try repository.loadImportedCommentaryLayers(itemId: itemId)
         var records: [String: [ImportedCommentaryInterjection]] = [:]
         for layer in layers { records[layer.id] = try repository.loadImportedCommentaryInterjections(layerId: layer.id) }
-        return entries(layers: layers, records: records)
+        return entries(layers: layers, records: records, ownMargins: ownMargins)
     }
 
     /// The text of the offer shown before Continue: how many Margins and whose.

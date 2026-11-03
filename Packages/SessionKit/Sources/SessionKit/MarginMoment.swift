@@ -20,12 +20,21 @@ public struct MarginMomentAnchor: Sendable, Equatable {
     public let label: String?
     /// Its position is a best guess (another copy of the episode), and the card says so.
     public let isApproximate: Bool
+    /// What a reply answers, for the card: "Reply to your Margin at 12:34" (#3221). Nil for any other Margin.
+    public let caption: String?
+    /// The listener's own Margin, played in a review as the parent of a friend's reply (#3221).
+    public let isYours: Bool
 
-    public init(marginId: String, mediaTimeMs: Int, label: String? = nil, isApproximate: Bool = false) {
+    public init(
+        marginId: String, mediaTimeMs: Int, label: String? = nil, isApproximate: Bool = false,
+        caption: String? = nil, isYours: Bool = false
+    ) {
         self.marginId = marginId
         self.mediaTimeMs = mediaTimeMs
         self.label = label
         self.isApproximate = isApproximate
+        self.caption = caption
+        self.isYours = isYours
     }
 }
 

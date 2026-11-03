@@ -239,14 +239,15 @@ struct Build23RecipientSharingExperience: View {
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)
-                    .accessibilityHint("Opens Add Source and keeps this package ready to resume")
+                    .accessibilityHint("Opens Add to Library and keeps this package ready to resume")
                 } else {
                     Button(action: requestMissingSource) {
-                        Label("Add Source", systemImage: "plus")
+                        Label("Add to Library", systemImage: "plus")
                             .frame(maxWidth: .infinity)
                     }
                     .filledActionButton()
-                    .accessibilityHint("Opens Add Source and keeps this package ready to resume")
+                    .accessibilityIdentifier("build23.recipient.addToLibrary")
+                    .accessibilityHint("Opens Add to Library and keeps this package ready to resume")
                 }
             }
         }
