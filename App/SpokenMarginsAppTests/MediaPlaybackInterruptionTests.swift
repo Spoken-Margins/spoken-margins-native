@@ -777,6 +777,11 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         let model = fixture.model
         defer { model.endMarginMoment(); model.pause() }
 
+        // The listener is past the Margin at 1 s, so Continue would skip it (#3059: only that case asks).
+        model.startItem(id: "declined-source")
+        XCTAssertTrue(model.seekMedia(toMediaTimeMs: 12_000))
+        model.pause()
+
         var offered: NewMarginsOfferRequest?
         model.continueListening(itemId: "declined-source") { offered = $0 }
         XCTAssertEqual(offered?.itemId, "declined-source")
@@ -792,26 +797,46 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         XCTAssertNil(offered, "turned down, so Continue just continues")
     }
 
-    /// #474 (owner's co-op test): Continue on an item with new shared Margins asks first, and starts the item at once
-    /// when there is nothing new to hear.
-    func testContinueOffersNewMarginsBeforeStartingTheItem() throws {
+    /// #474 (owner's co-op test), narrowed by #3059: Continue asks first only when the new shared Margins are behind the
+    /// listener's place, where the episode would skip them; it starts the item at once when there is nothing new to hear.
+    func testContinueOffersNewMarginsTheListenerHasPassedBeforeStartingTheItem() throws {
         let fixture = try SharedMarginHearingFixture(itemID: "real-source", makeWAV: makeTestWAV)
         defer { fixture.cleanUp() }
         let model = fixture.model
         defer { model.endMarginMoment(); model.pause() }
+        model.startItem(id: "real-source")
+        XCTAssertTrue(model.seekMedia(toMediaTimeMs: 12_000))
+        model.pause()
 
         var offered: NewMarginsOfferRequest?
         model.continueListening(itemId: "real-source") { offered = $0 }
-        XCTAssertEqual(offered?.itemId, "real-source", "the question comes before anything plays")
+        XCTAssertEqual(offered?.itemId, "real-source", "the question comes before the episode carries on past the Margin")
         XCTAssertEqual(offered?.entries.map(\.interjection.id), [fixture.record.id], "the offer's Margins are the ones it read")
-        XCTAssertNotEqual(model.snapshot.itemId, "real-source")
+        XCTAssertEqual(model.snapshot.status, .paused, "nothing plays until the listener answers")
         XCTAssertNil(model.marginMoment)
 
         _ = try fixture.store.markImportedCommentaryInterjectionHeard(id: fixture.record.id, at: Date())
+        model.refreshSelectedItem() // the item is open now, so Continue reads the model's copy, not the store
         offered = nil
         model.continueListening(itemId: "real-source") { offered = $0 }
         XCTAssertNil(offered, "nothing is new, so Continue just continues")
         XCTAssertEqual(model.snapshot.itemId, "real-source")
+    }
+
+    /// #3059: the big button plays the episode, and a friend's Margin ahead of the listener plays in place when the
+    /// episode reaches it. Continue asks nothing first.
+    func testContinueJustPlaysWhenTheNewMarginIsStillAhead() throws {
+        let fixture = try SharedMarginHearingFixture(itemID: "real-source", makeWAV: makeTestWAV)
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        defer { model.endMarginMoment(); model.pause() }
+        XCTAssertEqual(model.newSharedMargins(itemId: "real-source").count, 1, "there is a new Margin")
+
+        var offered: NewMarginsOfferRequest?
+        model.continueListening(itemId: "real-source") { offered = $0 }
+        XCTAssertNil(offered, "the Margin is ahead, so there is nothing to ask")
+        XCTAssertEqual(model.snapshot.itemId, "real-source", "the episode started")
+        XCTAssertNil(model.marginMoment, "and it is not a review")
     }
 
     /// #474 review: a Margin voice already playing when a review starts stops, instead of playing over it, and its

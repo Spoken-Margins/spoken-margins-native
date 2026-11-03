@@ -2977,7 +2977,7 @@ final class Gate1AppModel: ObservableObject {
             refreshSelectedItem()
             reportConfirmation(enabled
                 ? "Shared Margins will play automatically after their cue."
-                : "Shared Margins will wait for you to choose Listen or Dismiss.")
+                : "A tone will mark each shared Margin and the episode will play on. Tap Listen to hear it.")
         } catch {
             reportFailure(error, context: "Shared Margin auto-play setting could not be saved")
         }

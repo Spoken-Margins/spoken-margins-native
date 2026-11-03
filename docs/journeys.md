@@ -116,7 +116,7 @@ The owner's one-phone version, with prepared packets and an episode that shares 
 1. Listen to a podcast episode well past its start, save a Margin of your own, and pause. Get a co-op packet from a friend for the same episode, with one Margin from before the place you reached, and import it.
    - Pass: the item shows "Review new Margins (1)", and the Margin is marked new in the Timeline.
 2. Press Continue on the item (or on its row in the Library).
-   - Pass: the app asks whether to hear the new Margin first, before anything plays.
+   - Pass: the app asks whether to hear the new Margin first, before anything plays. It asks because the Margin is behind your place; for an episode you haven't reached it (#3059), Continue just plays and the Margin plays in place when the episode gets there, with the auto-play switch on the Now tab (on by default) deciding between the voice and a tone.
 3. Choose "Hear new Margins first".
    - Pass: the episode jumps to about 20 s before the friend's Margin and plays on. The card says "Reviewing new Margins · 1 of 1" with the friend's name. A short two-note chime, then the friend's voice. The owner checks by ear that the lead-in sounds natural.
 4. Let the voice finish.

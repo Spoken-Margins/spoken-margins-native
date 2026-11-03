@@ -641,6 +641,13 @@ struct PlaybackScreen: View {
             .tint(AppColors.accent)
             .padding(.horizontal, 4)
             .accessibilityIdentifier("importedCommentary.autoPlay")
+            if !model.importedCommentaryAutoPlayEnabled {
+                Text("Off: a tone marks each shared Margin and the episode plays on.")
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.72))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 4)
+            }
         }
 
     }
