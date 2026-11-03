@@ -12,11 +12,37 @@ final class PinnedMarginCardTests: XCTestCase {
         XCTAssertEqual(PinnedMarginCard(subject: cole, stage: .voicePaused).headline, "Cole's Margin is paused")
         XCTAssertEqual(PinnedMarginCard(subject: cole, stage: .comingUp(msRemaining: 8_000)).headline, "Cole's Margin in 0:08")
         XCTAssertEqual(PinnedMarginCard(subject: cole, stage: .comingUp(msRemaining: nil)).headline, "Getting to Cole's Margin")
-        XCTAssertEqual(PinnedMarginCard(subject: cole, stage: .upNext(msRemaining: 80_000)).headline, "Next: Cole's Margin in 1:20")
+        XCTAssertEqual(PinnedMarginCard(subject: cole, stage: .upNext(msRemaining: 80_000, arrival: .playsByItself)).headline, "Next: Cole's Margin in 1:20")
         XCTAssertEqual(PinnedMarginCard(subject: cole, stage: .waitingForTap).headline, "Cole's Margin is here")
         XCTAssertEqual(PinnedMarginCard(subject: .yours, stage: .speaking).headline, "You are speaking")
         XCTAssertEqual(PinnedMarginCard(subject: .friend(nil), stage: .speaking).headline, "A friend is speaking")
         XCTAssertEqual(PinnedMarginCard(subject: .friend(nil), stage: .failed).headline, "A friend's Margin could not play")
+    }
+
+    func testWhatHappensAtTheNextMarginIsSaidPlainly() {
+        func detail(_ arrival: PinnedMarginCard.Arrival) -> String {
+            PinnedMarginCard(subject: cole, stage: .upNext(msRemaining: 5_000, arrival: arrival)).detail
+        }
+        XCTAssertEqual(detail(.playsByItself), "It plays by itself when the episode gets there.")
+        XCTAssertEqual(detail(.toneThenTap), "You will hear a tone. Tap Listen to hear it.")
+        XCTAssertEqual(detail(.onRequest), "You have heard this one. Tap Next Margin to hear it again.",
+                       "a Margin that was announced already is not promised")
+    }
+
+    func testAPlayingVoiceShowsHowFarThroughItIs() {
+        XCTAssertEqual(PinnedMarginCard.voiceTime(current: 14.4, duration: 40.2), "0:14 of 0:41")
+        XCTAssertEqual(PinnedMarginCard.voiceTime(current: 99, duration: 40), "0:40 of 0:40", "never past the end")
+        XCTAssertEqual(PinnedMarginCard.voiceTime(current: -1, duration: 40), "0:00 of 0:40")
+        XCTAssertNil(PinnedMarginCard.voiceTime(current: 3, duration: .nan), "a clock that is not a number yet")
+        XCTAssertNil(PinnedMarginCard.voiceTime(current: .nan, duration: 40))
+        XCTAssertNil(PinnedMarginCard.voiceTime(current: 3, duration: 0))
+        let card = PinnedMarginCard(subject: cole, stage: .speaking, voiceTime: "0:14 of 0:41")
+        XCTAssertEqual(card.detail, "0:14 of 0:41 · The episode is paused.")
+        XCTAssertEqual(PinnedMarginCard(subject: cole, stage: .speaking).detail, "The episode is paused while this plays.")
+    }
+
+    func testAFailedVoiceSaysTheEpisodeStaysPaused() {
+        XCTAssertTrue(PinnedMarginCard(subject: cole, stage: .failed).detail.hasPrefix("The episode is paused."))
     }
 
     func testOneMarginIsNotCounted() {
@@ -35,7 +61,7 @@ final class PinnedMarginCardTests: XCTestCase {
 
     func testEveryStageHasAnExplanationSoTheCardKeepsOneShape() {
         let stages: [PinnedMarginCard.Stage] = [
-            .speaking, .voicePaused, .loading, .failed, .comingUp(msRemaining: 1_000), .waitingForTap, .upNext(msRemaining: nil),
+            .speaking, .voicePaused, .loading, .failed, .comingUp(msRemaining: 1_000), .waitingForTap, .upNext(msRemaining: nil, arrival: .toneThenTap),
         ]
         for stage in stages {
             let card = PinnedMarginCard(subject: cole, stage: stage)

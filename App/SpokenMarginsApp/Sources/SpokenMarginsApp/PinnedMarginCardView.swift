@@ -16,7 +16,12 @@ struct PinnedMarginCardView: View {
     var body: some View {
         let _ = playbackTick
         Group {
-            if let card = model.pinnedMarginCard { content(card) }
+            // The voice's own clock runs while the episode is paused, so no playback tick moves this: refresh twice a second.
+            if model.pinnedMarginCard != nil {
+                TimelineView(.periodic(from: .now, by: 0.5)) { _ in
+                    if let card = model.pinnedMarginCard { content(card) }
+                }
+            }
         }
         .followsPlaybackClock(model.playbackClock, tick: $playbackTick)
     }

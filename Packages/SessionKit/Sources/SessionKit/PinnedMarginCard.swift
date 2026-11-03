@@ -42,19 +42,42 @@ public struct PinnedMarginCard: Equatable, Sendable {
         /// A Margin is here and waits for the listener's tap (tone-only or jumped to).
         case waitingForTap
         /// Between Margins of a friend's listen: the next one is `msRemaining` ahead, nil when that is not known.
-        case upNext(msRemaining: Int?)
+        case upNext(msRemaining: Int?, arrival: Arrival)
+    }
+
+    /// What happens when the episode gets to the next Margin.
+    public enum Arrival: Equatable, Sendable {
+        /// Auto-play is on and the Margin is new to this run of the episode: it plays by itself.
+        case playsByItself
+        /// Auto-play is off: a tone sounds and the listener taps Listen.
+        case toneThenTap
+        /// The Margin was announced already (a finished review, or heard before the listener scrubbed back), so
+        /// reaching it plays nothing. Next Margin plays it.
+        case onRequest
     }
 
     public let subject: Subject
     public let stage: Stage
     /// Which Margin of how many, "1 of 3". Nil when the card is not counting (a single Margin of your own).
     public let position: String?
+    /// How far through the voice, "0:14 of 0:41", while it plays. Nil when the voice has no readable clock yet.
+    public let voiceTime: String?
 
-    public init(subject: Subject, stage: Stage, position: String? = nil) {
+    public init(subject: Subject, stage: Stage, position: String? = nil, voiceTime: String? = nil) {
         self.subject = subject
         self.stage = stage
         self.position = position
+        self.voiceTime = voiceTime
     }
+
+    /// "0:14 of 0:41" from a voice clock, nil when the duration or the time is not a real number yet.
+    public static func voiceTime(current: Double, duration: Double) -> String? {
+        guard current.isFinite, duration.isFinite, duration > 0 else { return nil }
+        let now = min(max(0, current), duration)
+        return "\(clock(Int(now.rounded(.down)))) of \(clock(Int(duration.rounded(.up))))"
+    }
+
+    private static func clock(_ seconds: Int) -> String { String(format: "%d:%02d", seconds / 60, seconds % 60) }
 
     public static func position(_ index: Int, of count: Int) -> String? {
         count > 1 ? "\(index) of \(count)" : nil
@@ -70,7 +93,7 @@ public struct PinnedMarginCard: Equatable, Sendable {
         case .comingUp(let ms):
             ms.map { "\(subject.possessive) in \(Self.countdown($0))" } ?? "Getting to \(subject.possessive)"
         case .waitingForTap: "\(subject.possessive) is here"
-        case .upNext(let ms):
+        case .upNext(let ms, _):
             ms.map { "Next: \(subject.possessive) in \(Self.countdown($0))" } ?? "Next: \(subject.possessive)"
         }
     }
@@ -78,13 +101,18 @@ public struct PinnedMarginCard: Equatable, Sendable {
     /// The second line, which says what the episode is doing, so the card keeps one shape in every stage.
     public var detail: String {
         switch stage {
-        case .speaking: "The episode is paused while this plays."
-        case .voicePaused: "The episode stays paused until this is done."
+        case .speaking: voiceTime.map { "\($0) · The episode is paused." } ?? "The episode is paused while this plays."
+        case .voicePaused: voiceTime.map { "\($0) · The episode stays paused." } ?? "The episode stays paused until this is done."
         case .loading: "Hold on, this is getting ready."
-        case .failed: "The episode carries on without it."
+        case .failed: "The episode is paused. Tap Retry, or Next Margin to move on."
         case .comingUp: "It plays by itself when the episode gets there."
         case .waitingForTap: "The episode is paused. Tap Listen to hear it."
-        case .upNext: "It plays by itself when the episode gets there."
+        case .upNext(_, let arrival):
+            switch arrival {
+            case .playsByItself: "It plays by itself when the episode gets there."
+            case .toneThenTap: "You will hear a tone. Tap Listen to hear it."
+            case .onRequest: "You have heard this one. Tap Next Margin to hear it again."
+            }
         }
     }
 

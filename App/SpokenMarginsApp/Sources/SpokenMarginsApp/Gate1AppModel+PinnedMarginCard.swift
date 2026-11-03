@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 import SessionKit
 
@@ -41,7 +42,7 @@ extension Gate1AppModel {
             }
             return PinnedMarginCard(
                 subject: .friend(playing.senderLabel), stage: stage,
-                position: PinnedMarginCard.position(playing.index, of: playing.count))
+                position: PinnedMarginCard.position(playing.index, of: playing.count), voiceTime: playingVoiceTime)
         }
         if let pending = pendingImportedCommentary {
             return PinnedMarginCard(
@@ -54,20 +55,37 @@ extension Gate1AppModel {
                 ? .yours : .friend(current.label)
             let position = moment.review.map { "\(moment.reviewNumber ?? 1) of \($0.count)" } // a review always counts, even one Margin
             if moment.isPlayingMargin {
-                return PinnedMarginCard(subject: subject, stage: marginMomentVoiceIsPaused ? .voicePaused : .speaking, position: position)
+                return PinnedMarginCard(
+                    subject: subject, stage: marginMomentVoiceIsPaused ? .voicePaused : .speaking, position: position,
+                    voiceTime: playingVoiceTime)
             }
             // A plain moment that has played its Margin keeps listening for the others: the slot stays, saying so.
             if !moment.isReview, moment.phase == .listening {
-                return PinnedMarginCard(subject: .yours, stage: .upNext(msRemaining: nil), position: nil)
+                return PinnedMarginCard(subject: .yours, stage: .upNext(msRemaining: nil, arrival: .playsByItself), position: nil)
             }
             let remaining = moment.msUntilTarget(currentMediaTimeMs: moment.review == nil ? (marginMomentPositionMs ?? moment.startMediaTimeMs) : snapshot.currentMediaTimeMs)
             return PinnedMarginCard(subject: subject, stage: .comingUp(msRemaining: remaining), position: position)
         }
-        guard importedCommentaryAutoPlayEnabled, let next = nextSharedMargin else { return nil }
+        // Auto-play off still holds the slot: Next Margin is reachable between Margins and the title never moves.
+        guard let next = nextSharedMargin else { return nil }
         let remaining = next.mediaTimeMs.flatMap { ms in snapshot.currentMediaTimeMs.map { max(0, ms - $0) } }
+        let arrival: PinnedMarginCard.Arrival = sharedMarginOffers.announcedIDs.contains(next.prompt.id)
+            ? .onRequest : (importedCommentaryAutoPlayEnabled ? .playsByItself : .toneThenTap)
         return PinnedMarginCard(
-            subject: .friend(next.prompt.senderLabel), stage: .upNext(msRemaining: remaining),
+            subject: .friend(next.prompt.senderLabel), stage: .upNext(msRemaining: remaining, arrival: arrival),
             position: PinnedMarginCard.position(next.prompt.index, of: next.prompt.count))
+    }
+
+    /// How far through the sounding Margin voice is, from whichever player has it: a moment's (the conductor) or a
+    /// friend's that plays by itself.
+    private var playingVoiceTime: String? {
+        if let reading = marginMomentConductor?.voiceReading {
+            return PinnedMarginCard.voiceTime(current: reading.current, duration: reading.duration)
+        }
+        if playingImportedCommentary != nil, let item = marginVoicePlayer.currentPlayer?.currentItem {
+            return PinnedMarginCard.voiceTime(current: item.currentTime().seconds, duration: item.duration.seconds)
+        }
+        return nil
     }
 
     private var nextMarginContext: NextMarginPress.Context? {
@@ -105,6 +123,9 @@ extension Gate1AppModel {
         case .skipVoice:
             skipMarginMomentVoice()
         case .seekToLeadIn(let ms):
+            // An announced Margin is not offered when the episode crosses it again, so give it back first: the lead-in
+            // the press goes to must end with the Margin playing (#460).
+            if let next = nextSharedMargin { sharedMarginOffers.markUnannounced([next.prompt.id]) }
             if playingImportedCommentary != nil { stopImportedCommentaryPlayback(resumeSource: true) }
             dismissPendingImportedCommentary()
             seekMedia(toMediaTimeMs: ms)
