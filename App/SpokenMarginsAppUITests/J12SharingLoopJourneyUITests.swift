@@ -2,7 +2,7 @@ import XCTest
 
 // J12: the sharing loop, as far as one simulator can script it (#3222). The listener records two Margins, sends
 // them (the packet's size is read off the package details), and then a friend's packet arrives for the same episode:
-// the Margins tab lists it without a relaunch of the screen, and "Hear new Margins first" plays it in place.
+// the Margins tab lists it, and "Hear new Margins first" plays it in place.
 // The two-device hand-off is a fixture: the relaunch with SPOKEN_MARGINS_UI_TEST_KEEP_LIBRARY and
 // SPOKEN_MARGINS_UI_TEST_COOP imports one Margin from "Sam", the way J9 does. Adding the podcast by search needs the
 // network, and replying then importing the replies back needs a second install, so those steps, the system share
@@ -66,7 +66,7 @@ final class J12SharingLoopJourneyUITests: XCTestCase {
         XCTContext.runActivity(named: "J12 step 3: Send them: the packet is built and its size is shown") { _ in
             beginStep()
             tap("playback.margins.button")
-            tap("margins.shareItem.item-pill")
+            tap("margins.shareItem.\(itemId)")
             XCTAssertTrue(element("build23.sender.experience").waitForExistence(timeout: 8), "The Share Margins sheet did not open")
             let cleanUpQuestion = app.alerts["Clean selected Margins automatically?"]
             if cleanUpQuestion.waitForExistence(timeout: 2) { cleanUpQuestion.buttons["Not now"].tap() } // first share only
@@ -103,7 +103,7 @@ final class J12SharingLoopJourneyUITests: XCTestCase {
             XCTAssertFalse(element("item.lastFailure").exists, "A playback problem was reported")
         }
 
-        XCTContext.runActivity(named: "J12 step 5: The Margins tab lists the friend's Margin without a relaunch (#3263)") { _ in
+        XCTContext.runActivity(named: "J12 step 5: The Margins tab lists the friend's Margin") { _ in
             waitUntil("The review card did not go away after the Margin", timeout: 40) { !self.element("review.progress").exists }
             let tab = element("playback.margins.button")
             XCTAssertTrue(tab.waitForExistence(timeout: 8), "The Margins tab button is missing")
