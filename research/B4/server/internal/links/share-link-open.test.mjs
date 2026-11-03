@@ -15,7 +15,7 @@ import {
   openPreview,
   safeSourceURL,
 } from './share-link-open.mjs';
-import { EXPIRED_MESSAGE, OFFLINE_MESSAGE, SERVER_MESSAGE, playingPageAddress, showSharedMargins } from './share-link-page.mjs';
+import { EXPIRED_MESSAGE, FILE_NOTE, OFFLINE_MESSAGE, SERVER_MESSAGE, playingPageAddress, showSharedMargins } from './share-link-page.mjs';
 
 const vector = JSON.parse(
   readFileSync(new URL('../../../contracts/fixtures/share-link-sealing-vector.json', import.meta.url), 'utf8'),
@@ -206,6 +206,7 @@ test('the page opens the vector preview from the server and shows it as text', a
   assert.match(article.textContent, /Signals & Noise/);
   assert.match(article.textContent, /Quotation from the source · before this Margin/);
   assert.equal(document.querySelector('a'), null, 'the vector has no source URL');
+  assert.ok(document.getElementById('margins').textContent.includes(FILE_NOTE), 'no public page, so the note shows');
   assert.equal(document.getElementById('status').textContent, '');
 });
 
@@ -231,6 +232,32 @@ test('HTML in a sealed preview is shown as text, and only a safe source URL is l
   const link = second.querySelector('a');
   assert.equal(link.getAttribute('href'), 'https://example.org/episode');
   assert.equal(link.getAttribute('rel'), 'noreferrer noopener');
+});
+
+test('a link whose item has no public page says the item came as a file, once, and a public one does not', async () => {
+  const withUrl = (url) => ({
+    source: { title: 'A pasted article', show: 'My notes', url },
+    margins: [{ text: 'One', before: '', after: '' }, { text: 'Two', before: '', after: '' }],
+  });
+  const none = shell();
+  const sealedNone = await sealJSON(withUrl(''));
+  await showSharedMargins(none, linkHash, async () => answer(200, sealedNone));
+  const text = none.getElementById('margins').textContent;
+  assert.equal(text.split(FILE_NOTE).length - 1, 1, 'one note, however many Margins');
+  assert.match(text, /A pasted article/);
+  assert.match(text, /My notes/);
+
+  // A private-feed address is left off the page, so the friend is pointed at the file too.
+  const feed = shell();
+  const sealedFeed = await sealJSON(withUrl('https://example.org/feed?token=PRIVATE'));
+  await showSharedMargins(feed, linkHash, async () => answer(200, sealedFeed));
+  assert.match(feed.getElementById('margins').textContent, new RegExp(FILE_NOTE));
+  assert.doesNotMatch(feed.getElementById('margins').innerHTML, /PRIVATE/);
+
+  const publicPage = shell();
+  const sealedPublic = await sealJSON(withUrl('https://example.org/episode'));
+  await showSharedMargins(publicPage, linkHash, async () => answer(200, sealedPublic));
+  assert.doesNotMatch(publicPage.getElementById('margins').textContent, new RegExp(FILE_NOTE));
 });
 
 test('the page says plainly when the link is missing its key, expired, damaged or unreachable', async () => {
