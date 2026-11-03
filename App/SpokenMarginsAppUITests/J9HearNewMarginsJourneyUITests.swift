@@ -134,10 +134,10 @@ final class J9HearNewMarginsJourneyUITests: XCTestCase {
         XCTContext.runActivity(named: "J9 item screen, step 3: Two choices, and the big one plays at once") { _ in
             let play = app.buttons["item.start.button"].firstMatch
             XCTAssertTrue(play.waitForExistence(timeout: 5), "The big button is missing")
-            XCTAssertEqual(play.label, "Play episode with Margins")
+            XCTAssertEqual(play.label, "Play")
             let marginsOnly = app.buttons["item.reviewNewMargins.button"].firstMatch
             XCTAssertTrue(marginsOnly.exists, "The second choice is missing")
-            XCTAssertTrue(marginsOnly.label.hasPrefix("Hear just the Margins"), "The second choice reads \(marginsOnly.label)")
+            XCTAssertTrue(marginsOnly.label.hasPrefix("Hear only "), "The second choice reads \(marginsOnly.label)")
             play.tap()
             XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8), "The episode did not start")
             XCTAssertFalse(app.buttons["newMarginsOffer.review"].exists, "The big button asked a question before playing")

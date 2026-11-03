@@ -387,7 +387,9 @@ struct ExperienceItemDetailScreen: View {
             Button {
                 model.reviewNewMargins(itemId: model.selectedItem.id, thenContinue: false)
             } label: {
-                Label(marginsOnlyTitle, systemImage: "person.2")
+                // Words only, as on the screens the owner reviewed (#3247): the line already says whose Margins.
+                Text(marginsOnlyTitle)
+                    .fontWeight(.semibold)
                     .frame(maxWidth: .infinity, minHeight: 44)
             }
             .buttonStyle(.bordered)
@@ -400,7 +402,7 @@ struct ExperienceItemDetailScreen: View {
     /// The start controls for this item: today's single button, or the two choices when a friend's Margins wait (#3219).
     private var listeningChoices: ItemListeningChoices {
         ItemListeningChoices(
-            unheardFriendMarginCount: newSharedMargins.count,
+            unheardFriendMargins: newSharedMargins.map(\.waitingMargin),
             hasFinishedSession: hasFinishedSession,
             hasContinuationSession: model.selectedItemPreferredContinuationSession != nil,
             isPreparingAudio: [.waiting, .preparing].contains(model.selectedItemStartupAudioState)
