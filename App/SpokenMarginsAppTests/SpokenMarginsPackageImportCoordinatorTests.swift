@@ -317,6 +317,37 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
         XCTAssertEqual(h.coordinator.review?.opensDirectly, false, "re-matched in the sheet: it stays there")
     }
 
+    /// The audit on PR #3298: a friend's file that arrives while the listener writes a Margin must not import and
+    /// switch items under the draft. It waits, and opens once the draft is closed.
+    func testAFileThatOpensDirectlyWaitsWhileAMarginIsBeingWritten() async throws {
+        let h = try makeHarness()
+        let packet = try h.writePacket(named: "alpha", text: Self.alphaText)
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            databaseURLOverride: h.root.appendingPathComponent("model.sqlite")
+        )
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        await model.settleLibraryReload()
+        model.beginWrittenMargin()
+        XCTAssertTrue(model.recordingNavigationIsLocked)
+
+        model.handleIncomingURL(packet.url)
+        await model.waitForPackageStaging()
+        let review = try XCTUnwrap(model.spokenMarginsPackageImportReview)
+        XCTAssertTrue(review.opensDirectly)
+        XCTAssertNil(model.openSharedPacketDirectlyIfReady(), "the draft holds the listener where they are")
+        XCTAssertEqual(model.activeItemId, "item-pill")
+        XCTAssertEqual(model.spokenMarginsPackageImportReview?.id, review.id, "the file waits")
+
+        model.cancelWrittenMargin()
+        let opening = try XCTUnwrap(model.openSharedPacketDirectlyIfReady(), "the draft is closed: the file opens")
+        await opening.value
+        XCTAssertNil(model.spokenMarginsPackageImportReview)
+        XCTAssertEqual(model.activeItemId, "item-shared-\(packet.digest.prefix(20))")
+        XCTAssertEqual(model.screen, .item)
+    }
+
     /// #2122: a packet opened while another imports waits its turn. A's success brings B up for review instead of
     /// clearing it, and B can then be imported.
     func testAPacketOpenedDuringAnImportWaitsAndIsShownWhenTheImportSucceeds() async throws {

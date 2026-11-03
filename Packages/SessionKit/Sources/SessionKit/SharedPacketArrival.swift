@@ -15,9 +15,12 @@ public enum SharedPacketArrival {
 
     /// A file opens straight onto its item unless only the listener can finish it: a source they must supply (an
     /// audiobook or PDF of their own), or a Listening Map, which carries no friend's Margins and can replace the map
-    /// their copy already has.
-    public static func route(isListeningMap: Bool, requiresRecipientItem: Bool) -> Route {
-        isListeningMap || requiresRecipientItem ? .review : .openItem
+    /// their copy already has. A file an earlier launch already showed keeps the sheet too: opening fetches the item,
+    /// and on this launch the listener did nothing (the 2026-10-21 rule; the audit on PR #3298).
+    public static func route(
+        isListeningMap: Bool, requiresRecipientItem: Bool, shownOnAnEarlierLaunch: Bool = false
+    ) -> Route {
+        isListeningMap || requiresRecipientItem || shownOnAnEarlierLaunch ? .review : .openItem
     }
 
     /// Shown while the file's item is placed (a podcast episode may need fetching first).

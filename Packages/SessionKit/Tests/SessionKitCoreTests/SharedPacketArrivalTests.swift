@@ -11,6 +11,9 @@ final class SharedPacketArrivalTests: XCTestCase {
         XCTAssertEqual(SharedPacketArrival.route(isListeningMap: true, requiresRecipientItem: false), .review,
                        "a Listening Map can replace the one their copy has")
         XCTAssertEqual(SharedPacketArrival.route(isListeningMap: true, requiresRecipientItem: true), .review)
+        XCTAssertEqual(
+            SharedPacketArrival.route(isListeningMap: false, requiresRecipientItem: false, shownOnAnEarlierLaunch: true),
+            .review, "a file kept in the inbox from an earlier launch waits for a tap")
     }
 
     /// First arrival: the item screen already says "From Cole · 3 Margins", so nothing more is said.

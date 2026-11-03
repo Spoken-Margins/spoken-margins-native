@@ -189,7 +189,8 @@ final class SpokenMarginsPackageImportCoordinator {
     /// too (#2510): both scale with the packet. The staging folder is registered in `stagingFolders` from its creation to the end of the call,
     /// so the launch sweep and a second `stage` that runs while this one waits leave it alone.
     func stage(
-        from sourceURL: URL, announcesRejection: Bool = true, releaseSource: (@MainActor () -> Void)? = nil
+        from sourceURL: URL, announcesRejection: Bool = true, shownOnAnEarlierLaunch: Bool = false,
+        releaseSource: (@MainActor () -> Void)? = nil
     ) async -> StageResult {
         var workingDirectory: URL?
         do {
@@ -228,7 +229,8 @@ final class SpokenMarginsPackageImportCoordinator {
                                               store: store, releaseSource: releaseSource)
             // Decided once, on arrival: a review re-matched after Add Source keeps the sheet the listener is in.
             staged.opensDirectly = SharedPacketArrival.route(
-                isListeningMap: staged.isListeningMap, requiresRecipientItem: staged.requiresRecipientItem) == .openItem
+                isListeningMap: staged.isListeningMap, requiresRecipientItem: staged.requiresRecipientItem,
+                shownOnAnEarlierLaunch: shownOnAnEarlierLaunch) == .openItem
             if review == nil { importError = nil }
             if case .waiting = queue.offer(staged) {
                 environment.recordDiagnostic("lastSpokenMarginsPackageImport", "queued:\(digest)")
