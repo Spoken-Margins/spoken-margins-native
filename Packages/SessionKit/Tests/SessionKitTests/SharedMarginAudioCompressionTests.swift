@@ -1,6 +1,6 @@
 import Foundation
 @testable import SessionKit
-import SessionKitSharing
+@testable import SessionKitSharing
 import XCTest
 #if canImport(AVFoundation)
 import AVFoundation
@@ -267,6 +267,31 @@ final class SharedMarginAudioCompressionTests: XCTestCase {
 
         // The sender's recording is untouched.
         XCTAssertEqual(try seconds(of: original), 20, accuracy: 0.25)
+    }
+
+    /// The padded file is the last resort when the remux fails. It is measured against the recording like the remux
+    /// is, so a saved file that came out short is refused and the recording goes out (#3218 audit note).
+    func testWhenTheRemuxFailsTheEncodedFileIsUsedOnlyIfItIsTheRecordingsLength() async throws {
+        let source = root.appendingPathComponent("source.m4a")
+        let shortCopy = root.appendingPathComponent("short.encoded.m4a")
+        let fullCopy = root.appendingPathComponent("full.encoded.m4a")
+        try Self.writeSpeechLikeAAC(to: source, seconds: 20)
+        try Self.writeSpeechLikeAAC(to: shortCopy, seconds: 5)
+        try Self.writeSpeechLikeAAC(to: fullCopy, seconds: 20)
+        let refused = root.appendingPathComponent("refused.m4a")
+        let accepted = root.appendingPathComponent("accepted.m4a")
+
+        do {
+            try await AVFoundationMarginAudioTranscoder.place(shortCopy, at: refused, matchingSecondsOf: source) { _, _ in false }
+            XCTFail("a 5 s file must not stand in for a 20 s recording")
+        } catch let error as SharedMarginAudioTranscodingError {
+            guard case .conversionFailed = error else { return XCTFail("unexpected \(error)") }
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: refused.path))
+
+        try await AVFoundationMarginAudioTranscoder.place(fullCopy, at: accepted, matchingSecondsOf: source) { _, _ in false }
+        XCTAssertEqual(try seconds(of: accepted), 20, accuracy: 0.25)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fullCopy.path), "the encoded file moved into place")
     }
 
     func testAFileThatIsNotAudioIsKeptAsItIs() async throws {
