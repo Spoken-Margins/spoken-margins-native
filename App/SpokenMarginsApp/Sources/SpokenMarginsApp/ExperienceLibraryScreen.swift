@@ -15,6 +15,8 @@ struct ExperienceLibraryScreen: View {
     @State private var scrollTracker = ListScrollTracker()
     @State private var restoredScroll = false
     @State private var isAudioPreparationQueuePresented = false
+    @State private var isPlayQueuePresented = false
+    @ObservedObject private var playQueue = PlayQueueState.shared
     /// The item whose Continue is waiting on the "hear new Margins first?" question (#474).
     @State private var pendingNewMarginsOffer: NewMarginsOfferRequest?
     @State private var collectionItem: LibraryItemRow?
@@ -25,6 +27,11 @@ struct ExperienceLibraryScreen: View {
 
     private var continueItem: LibraryItemRow? {
         LibraryPresentation.continueItem(in: model.libraryItems, activeItemId: model.activePlaybackItemId)
+    }
+
+    /// The play queue's rows (#1990); empty while nothing is queued, which is when the Library shows no entry.
+    private var queuedRows: [PlayQueueRow] {
+        PlayQueueRows.rows(for: PlayQueue(itemIds: playQueue.itemIds), items: model.libraryItems)
     }
 
     /// One identity per item, the Continue row included, so completing the top row removes that row (#585).
@@ -49,6 +56,11 @@ struct ExperienceLibraryScreen: View {
 
                 if model.sourceLinksWaitingForNetwork > 0 {
                     PendingLinksWaitingLine(count: model.sourceLinksWaitingForNetwork)
+                        .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
+                }
+
+                if !queuedRows.isEmpty {
+                    PlayQueueSummaryRow(rows: queuedRows) { isPlayQueuePresented = true }
                         .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
                 }
 
@@ -86,6 +98,11 @@ struct ExperienceLibraryScreen: View {
             ExperienceAudioPreparationQueueScreen()
                 .environmentObject(model)
         }
+        .sheet(isPresented: $isPlayQueuePresented) {
+            ExperiencePlayQueueScreen()
+                .environmentObject(model)
+        }
+        .onAppear { model.loadPlayQueue() }
         .sheet(item: $collectionItem) { item in
             ItemCollectionSheet(item: item)
                 .environmentObject(model)

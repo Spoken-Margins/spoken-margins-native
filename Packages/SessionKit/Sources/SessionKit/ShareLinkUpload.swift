@@ -27,6 +27,11 @@ public struct ShareLinkPreview: Codable, Equatable, Sendable {
     public var schema: String
     public var source: Source
     public var margins: [Margin]
+
+    /// True when the source has no public web page (a pasted article, a PDF, an imported file, a private feed). The
+    /// friend can't fetch the item from the link, so the share goes out as the link plus the `.spokenmargins`
+    /// file in one message (owner, 2026-10-20). The file travels through the share sheet, never our server.
+    public var needsCompanionFile: Bool { source.url == nil }
 }
 
 public enum ShareLinkPreviewBuilder {
