@@ -46,6 +46,9 @@ public enum ServerService {
     public static let attest = "attest"
     /// Community listening maps: transcript uploads (#552) and map fetches (#553).
     public static let maps = "maps"
+    /// Share links (#487). Only a kill switch: a build makes links only if it was built to (`SM_SHARE_LINK_CREATION`),
+    /// and this service being on never enables anything the build left off.
+    public static let links = "links"
 }
 
 /// Why a server feature is off. Shown in diagnostics; the listener sees "not updating".
