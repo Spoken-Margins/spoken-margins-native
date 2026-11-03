@@ -508,7 +508,9 @@ final class Gate1AppModel: ObservableObject {
         UserDefaults.standard.stringArray(forKey: Gate1AppModel.suppressedAudioPreparationItemIdsKey) ?? []
     )
     var startupAudioPreparation = StartupAudioPreparationState() // pending, failed and cooling-down items (#2653)
-    var isImportingPendingSourceLinkHandoffs = false
+    var pendingHandoffDrainGate = RunAgainGate() // a Retry or a link opened during a drain makes it go round again (#2136)
+    var isImportingPendingSourceLinkHandoffs: Bool { pendingHandoffDrainGate.isRunning } // held across the extra rounds
+    var followedSourceRefreshGate = RunAgainGate() // a pull to refresh during a refresh makes it go round again (#2136)
     /// Browser-text payloads one path is importing now; the link open and the drain both suspend, so each skips what the other holds (#2510).
     var browserTextPayloadsInFlight = Set<String>()
     let pendingHandoffNetworkRetry = PendingHandoffNetworkRetry()

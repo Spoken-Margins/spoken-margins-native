@@ -137,13 +137,16 @@ extension Gate1AppModel {
     }
 
     private func importPendingHandoffsAsync() async {
-        guard !isImportingPendingSourceLinkHandoffs else { return }
-        isImportingPendingSourceLinkHandoffs = true
-        defer {
-            isImportingPendingSourceLinkHandoffs = false
-            refreshImportInbox()
-        }
+        // A request made while a drain runs (Retry, a link opened) makes it go round once more; before, it was
+        // dropped and the "queued" banner was false (#2136).
+        guard pendingHandoffDrainGate.request() else { return }
+        defer { refreshImportInbox() }
+        repeat {
+            await drainPendingHandoffsOnce()
+        } while pendingHandoffDrainGate.finishPass() != nil
+    }
 
+    private func drainPendingHandoffsOnce() async {
         do {
             try await consumePendingSpokenMarginsPackageHandoffs(
                 from: SpokenMarginsPackageHandoffStore.appGroup()
