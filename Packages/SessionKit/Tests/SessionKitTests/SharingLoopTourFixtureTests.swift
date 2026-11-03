@@ -1,16 +1,14 @@
 import XCTest
 @testable import SessionKit
 @testable import SessionKitSharing
+import SessionKitTestInputs
 
 /// #3237: the screen tour opens two checked-in packets from "Sam" on the seeded podcast. They must still match the
 /// episode the tour seeds, and the reply must still name the identity the tour marks on the listener's Margin, or the
 /// tour would capture a "find this item" screen and an unlinked reply instead of the loop.
 final class SharingLoopTourFixtureTests: XCTestCase {
     private func fixture(_ name: String) throws -> VerifiedSpokenMarginsPackage {
-        let url = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("App/TestFixtures/\(name).spokenmargins")
+        let url = try TestInputs.url(.appTestFixtures, "\(name).spokenmargins")
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         addTeardownBlock { try? FileManager.default.removeItem(at: folder) }

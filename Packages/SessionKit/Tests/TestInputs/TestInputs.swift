@@ -28,6 +28,8 @@ public enum TestInputs {
         case research = "research"
         /// The app's Swift sources, for guards that check the app still calls an extracted helper.
         case appSources = "App/SpokenMarginsApp/Sources/SpokenMarginsApp"
+        /// Packets and other files the app's UI tests launch with, checked in as bytes (#3237).
+        case appTestFixtures = "App/TestFixtures"
         /// The app's test sources, for the shipped-reader gate's scan.
         case appTests = "App/SpokenMarginsAppTests"
         /// Supertonic's licences and `asset-manifest.json`, which pins the model's hashes (#1820); not the model.
