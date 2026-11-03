@@ -135,6 +135,8 @@ public enum ShareLinkResult: Equatable, Sendable {
     case link(URL, expiresAt: String?)
     /// No link was made. The file share still works exactly as it does today.
     case useFile(ShareLinkFallback)
+    /// The listener hasn't agreed to the upload yet (`ServerSendConsent`). Nothing was sealed or sent.
+    case needsConsent
 }
 
 public enum ShareLinkFallback: Error, Equatable, Sendable {
@@ -175,20 +177,26 @@ public struct ShareLinkClient: Sendable {
     private let server: @Sendable (String) -> URL
     private let post: ShareLinkPost
     private let makeKey: @Sendable () -> ShareLinkSealing.Key
+    private let hasConsent: @Sendable () -> Bool
 
+    /// `consent` has no default on purpose: a caller must say where the listener's agreement is read from, so no
+    /// upload path can skip it (#2842).
     public init(
         server: @escaping @Sendable (String) -> URL = { ProductServer.url(path: $0) },
         key: @escaping @Sendable () -> ShareLinkSealing.Key = { ShareLinkSealing.Key.random() },
+        consent: @escaping @Sendable () -> Bool,
         post: @escaping ShareLinkPost
     ) {
         self.server = server
         self.makeKey = key
+        self.hasConsent = consent
         self.post = post
     }
 
     /// Seals and uploads. Never throws: every way it can fail comes back as `.useFile`, so the sender screen has
-    /// one thing to handle. Nothing is sealed or sent unless `linksState` is on.
+    /// one thing to handle. Nothing is sealed or sent unless the listener has agreed and `linksState` is on.
     public func makeLink(packet: Data, preview: ShareLinkPreview, linksState: ServerFeatureState) async -> ShareLinkResult {
+        guard hasConsent() else { return .needsConsent }
         guard linksState.isOn else { return .useFile(.unavailable) }
         let sealed: ShareLinkSealing.SealedLink
         let key = makeKey()

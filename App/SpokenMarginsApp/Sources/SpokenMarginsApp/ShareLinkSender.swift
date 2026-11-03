@@ -20,6 +20,8 @@ final class ShareLinkSender: ObservableObject {
         /// The link to share. `companionFile` is the packet to put in the same message when the item has no web
         /// address, so the friend can import the item itself (owner, 2026-10-20).
         case ready(URL, companionFile: URL?)
+        /// The listener hasn't agreed to the upload yet (#2842). The screen asks; nothing has been sealed or sent.
+        case needsConsent
         /// No link was made; the file share is still there. Holds the one line to show.
         case useFile(String)
     }
@@ -46,6 +48,11 @@ final class ShareLinkSender: ObservableObject {
     /// Seals and uploads the packet at `packageURL`, the file the sender would otherwise share.
     func makeLink(packageURL: URL) {
         guard state != .making else { return }
+        // Before anything is read, sealed or sent, and before any key is made: the first link asks (#2842).
+        guard ServerSendConsent.hasConsented(to: .shareLinks) else {
+            state = .needsConsent
+            return
+        }
         state = .making
         let bridge = self.bridge
         Task {
@@ -69,13 +76,16 @@ final class ShareLinkSender: ObservableObject {
                 await bridge.refreshConfigOnly()
                 linksState = await bridge.state(of: ServerService.links)
             }
-            let client = ShareLinkClient(post: ShareLinkTransport.post)
+            let client = ShareLinkClient(consent: { ServerSendConsent.hasConsented(to: .shareLinks) }, post: ShareLinkTransport.post)
             switch await client.makeLink(packet: packet, preview: preview, linksState: linksState) {
             case .link(let url, _): state = .ready(url, companionFile: preview.needsCompanionFile ? packageURL : nil)
             case .useFile(let fallback):
                 // No link, so nothing goes with it: the file share beside the button is the way.
                 companionNote = nil
                 state = .useFile(fallback.message)
+            case .needsConsent:
+                companionNote = nil
+                state = .needsConsent
             }
         }
     }
@@ -83,6 +93,13 @@ final class ShareLinkSender: ObservableObject {
     func reset() {
         state = .idle
         companionNote = nil
+    }
+
+    /// The listener tapped the agreeing button on the consent alert: remember it, then make the link they asked for.
+    func agreeAndMakeLink(packageURL: URL) {
+        ServerSendConsent.record(.shareLinks)
+        state = .idle
+        makeLink(packageURL: packageURL)
     }
 
     /// The packet's bytes and the preview read from it. The audio the read extracts is only for the read, and goes.
@@ -149,6 +166,19 @@ struct ShareLinkSendControl: View {
             }
         }
         .task { isOffered = await sender.isOffered() }
+        .alert(ShareLinkConsentCopy.title, isPresented: Binding(
+            get: { sender.state == .needsConsent },
+            set: { if !$0, sender.state == .needsConsent { sender.reset() } }
+        )) {
+            Button(ShareLinkConsentCopy.accept) {
+                if let packageURL { sender.agreeAndMakeLink(packageURL: packageURL) } else { sender.reset() }
+            }
+            .accessibilityIdentifier("build23.sender.share.link.consent.agree")
+            Button(ShareLinkConsentCopy.decline, role: .cancel) { sender.reset() }
+                .accessibilityIdentifier("build23.sender.share.link.consent.decline")
+        } message: {
+            Text(ShareLinkConsentCopy.message)
+        }
         .sheet(isPresented: Binding(
             get: { if case .ready = sender.state { return true } else { return false } },
             set: { if !$0 { sender.reset() } }
