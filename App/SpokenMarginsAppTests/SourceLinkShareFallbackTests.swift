@@ -112,6 +112,8 @@ final class SourceLinkShareFallbackTests: XCTestCase {
     /// A clip made while something is in Now Playing opens its item (#1437), and opening looks for a voiceover
     /// too. The clip and the open share one lookup: the post page is fetched once (Claude audit on 34af58c).
     func testClipDuringPlaybackFetchesThePostPageOnce() async throws {
+        let voicePreferences = VoicePreferencesSnapshot.capture()
+        addTeardownBlock { voicePreferences.restore() }
         let requests = RequestedURLs()
         let (model, _, _) = try makeVoiceoverShareModel(requests: requests, postPageHasVoiceover: false)
         model.sharedLinkVoiceover.fetchPage = { url in
@@ -119,6 +121,7 @@ final class SourceLinkShareFallbackTests: XCTestCase {
             return (html: "<html><head></head></html>", finalURL: url)
         }
         let playingID = try XCTUnwrap(model.libraryItems.first?.id)
+        model.declineCurrentTerms() // on a fresh simulator the terms sheet would hold the start; the snapshot undoes this on teardown
         model.startItem(id: playingID)
         model.pause()
         XCTAssertTrue(model.hasActiveSession)
