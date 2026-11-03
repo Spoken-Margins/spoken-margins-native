@@ -1627,6 +1627,29 @@ class VerificationTests(unittest.TestCase):
         self.assertEqual((retried['status'], retried.get('passed_on_retry')), ('passed', True))
         self.assertEqual(verification.xcresult_test_records(runs('Failed', 'Failed'))[name]['status'], 'failed')
 
+    def test_a_retried_tests_first_failure_message_is_kept_without_the_runners_path(self):
+        # #3286: three reports said only "passed on retry", and the flake could not be fixed from them.
+        name = 'App/ExportTests/testIsolation'
+        started = "Test Case '-[App.ExportTests testIsolation]' started.\n"
+        failed = ("/Users/runner/work/x/ExportTests.swift:171: error: -[App.ExportTests testIsolation] : "
+                  "XCTAssertTrue failed - A tap  at the leading edge\n  did not move\n"
+                  "Test Case '-[App.ExportTests testIsolation]' failed (0.1 seconds).\n")
+        passed = "Test Case '-[App.ExportTests testIsolation]' passed (0.1 seconds).\n"
+        records = verification.test_records(started + failed + started + passed)
+        self.assertEqual(records[name]['retry_failures'],
+                         ['XCTAssertTrue failed - A tap at the leading edge'])
+        self.assertNotIn('/Users', json.dumps(records))
+        long = failed.replace('A tap', 'x' * 400)
+        self.assertLessEqual(len(verification.test_records(long + passed)[name]['retry_failures'][0]), 240)
+        # a test that never passed, or never failed, keeps no message: its failure is reported the usual way
+        twice = verification.test_records(failed + failed)
+        self.assertNotIn('retry_failures', twice[name])
+        clean = verification.test_records(passed)
+        self.assertNotIn('retry_failures', clean[name])
+        # a log with a retry-pass but no error line is today's record
+        self.assertNotIn('retry_failures', verification.test_records(
+            failed.split('\n', 1)[1] + passed)[name])
+
     def test_result_bundle_counts_cannot_replace_individual_records(self):
         payload = {'testNodes': [{'nodeType': 'Test Plan', 'name': 'App', 'result': 'Passed'}],
                    'passedTests': 591}

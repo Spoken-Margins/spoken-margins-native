@@ -228,6 +228,36 @@ class VerdictTests(unittest.TestCase):
         both = run.settle(failing, [run.summarize(manifest({TEST: 'passed', OTHER: 'passed'}, retried=[TEST]))] * 2)
         self.assertEqual((both['verdict'], both['flaky']), ('PASS', sorted([TEST, OTHER])))
 
+    def test_a_retry_pass_reports_what_its_first_attempt_said(self):
+        # #3286: "passed on retry: <name>" alone gave a flake no cause to fix.
+        said = 'XCTAssertTrue failed - A tap at the leading edge did not move to the next chapter'
+        raw = manifest({TEST: 'passed', OTHER: 'passed'}, retried=[TEST])
+        raw['steps'][0]['retry_failures'] = {TEST: [said], OTHER: ['not a retry-pass, so not reported']}
+        first = run.summarize(raw)
+        self.assertEqual(first['retry_failures'], {TEST: [said]})
+        settled = run.settle(first, [])
+        counts = {'passed': 0, 'failed': 0, 'skipped': 0}
+        text = run.report_text('a' * 40, dict(settled, reruns=0, crashes=[], counts=counts),
+                               started=0, finished=1, previous=None, suspects=[], evidence=Path('/e'))
+        self.assertIn(f'passed on retry: {TEST} (first attempt: {said})', text)
+        self.assertNotIn('not a retry-pass', text)
+        ops = types.SimpleNamespace(posted=[], post_tally=lambda body: ops.posted.append(body),
+                                    tally_comments=lambda: [], open_flake_markers=lambda: [],
+                                    closed_flake_markers=lambda: {}, log=print)
+        run.record_flakes(ops, settled['flaky'], SHA, '1', settled['retry_failures'])
+        self.assertIn(f'Its first attempt said: {said}', ops.posted[0])
+        # a re-run that cleared a failed test brings its own message when the first run had none
+        failing = run.summarize(manifest({TEST: 'failed'}))
+        rerun = manifest({TEST: 'passed'}, retried=[TEST])
+        rerun['steps'][0]['retry_failures'] = {TEST: [said]}
+        both = run.settle(failing, [run.summarize(rerun)])
+        self.assertEqual(both['retry_failures'], {TEST: [said]})
+        # no message recorded: today's wording, unchanged
+        plain = run.settle(run.summarize(manifest({TEST: 'passed'}, retried=[TEST])), [])
+        self.assertIn(f'passed on retry: {TEST}\n', run.report_text(
+            'a' * 40, dict(plain, reruns=0, crashes=[], counts=counts), started=0, finished=1, previous=None,
+            suspects=[], evidence=Path('/e')) + '\n')
+
     def test_a_run_with_no_retries_says_none(self):
         counts = {'passed': 0, 'failed': 0, 'skipped': 0}
         settled = run.settle(run.summarize(manifest({TEST: 'passed'})), [])

@@ -404,7 +404,23 @@ def test_records(log):
             previous['seconds'] = seconds_total
         else:
             records[identifier] = result
+    # What a failed attempt said, kept only for a test that then passed on its retry: the report is otherwise all
+    # that is left of the first attempt, and a flake with no message cannot be fixed (#3286).
+    for module, name, method, message in ATTEMPT_FAILURE.findall(log):
+        record = records.get(f'{module}/{name}/{method}')
+        if record and record.get('passed_on_retry'):
+            messages = record.setdefault('retry_failures', [])
+            message = re.sub(r'\s+', ' ', message).strip()[:RETRY_FAILURE_WIDTH]
+            if message and message not in messages and len(messages) < RETRY_FAILURES_KEPT:
+                messages.append(message)
     return records
+
+
+# `/path/File.swift:171: error: -[Module.Class testName] : XCTAssertTrue failed - the message`, one per failed
+# assertion. The path stays out of the capture: it is the runner's checkout.
+ATTEMPT_FAILURE = re.compile(r'^.*?: error: -\[(\w+)\.(\w+) (test\w+)\] : (.+)$', re.M)
+RETRY_FAILURES_KEPT = 2
+RETRY_FAILURE_WIDTH = 240
 
 
 TEST_STARTED = re.compile(r"Test Case '-\[(\w+)\.(\w+) (test\w+)\]' started\.")
@@ -1662,6 +1678,8 @@ class Run:
             entry['counts'] = {status: sum(r['status'] == status for r in records.values())
                                for status in ('passed', 'failed', 'skipped')}
             entry['passed_on_retry'] = sorted(n for n, r in records.items() if r.get('passed_on_retry'))
+            entry['retry_failures'] = {n: r['retry_failures'] for n, r in sorted(records.items())
+                                       if r.get('passed_on_retry') and r.get('retry_failures')}
             errors.extend(reconcile(expected, records, allowed_skips, probation or ()))
             if probation is not None:  # scripted journeys: each listed test's result, by status
                 entry['gating'] = {test: records.get(test, {}).get('status', 'missing')

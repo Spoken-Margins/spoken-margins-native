@@ -207,6 +207,7 @@ def summarize(manifest: dict) -> dict:
     failed, journeys, errors, attachments, crashes = [], {}, [], [], []
     statuses = {}
     retried = set()
+    retry_failures = {}
     incomplete = False
     for step in manifest.get('steps', []):
         errors.extend(step.get('errors', []))
@@ -229,6 +230,10 @@ def summarize(manifest: dict) -> dict:
         # records a fail-then-pass as status 'passed' with passed_on_retry); only a test that ended passed counts.
         retried.update(name for name in step.get('passed_on_retry') or []
                        if step.get('tests', {}).get(name, {}).get('status') == 'passed')
+        # What the failed first attempt said (#3286), for the tests that did end passed.
+        for name, messages in (step.get('retry_failures') or {}).items():
+            if name in retried and isinstance(messages, list):
+                retry_failures.setdefault(name, [str(m) for m in messages if m])
     if not any(status in ('passed', 'failed') for status in statuses.values()):
         # A plan that ran no test proves nothing, whatever its manifest says (#2590: a hosted run with no
         # xcodegen posted INCONCLUSIVE with 0 tests while its job showed green).
@@ -249,7 +254,7 @@ def summarize(manifest: dict) -> dict:
             # A run that executed nothing proves nothing, whatever its status says (#2590).
             errors.append('the app plan ran 0 tests, so nothing was verified')
     return {'verdict': verdict, 'counts': counts, 'failed': sorted(set(failed)), 'tests': statuses,
-            'retried': sorted(retried), 'journeys': journeys, 'attachments': attachments, 'crashes': crashes,
+            'retried': sorted(retried), 'retry_failures': retry_failures, 'journeys': journeys, 'attachments': attachments, 'crashes': crashes,
             'errors': errors + ([manifest['error']] if manifest.get('error') else [])}
 
 
@@ -266,8 +271,12 @@ def settle(first: dict, reruns: list[dict]) -> dict:
     # Retry-passes come from the verify-tests manifest (`retried`, from every step of every run) plus any
     # test this script re-ran and saw pass. A verdict of PASS or INCONCLUSIVE still reports the first.
     reported = set(first.get('retried', []))
+    messages = dict(first.get('retry_failures', {}))
     for rerun in reruns:
         reported.update(rerun.get('retried', []))
+        for test, said in rerun.get('retry_failures', {}).items():
+            messages.setdefault(test, said)
+    first = dict(first, retry_failures=messages)
     if first['verdict'] != 'FAIL':
         return dict(first, flaky=sorted(reported), confirmed=[], first_failures=first['failed'])
     completed = [r for r in reruns if r['verdict'] != 'INCONCLUSIVE']
@@ -340,12 +349,16 @@ def outcome_of(result: dict, trunk: bool = True) -> Outcome:
     """The Outcome of a result dict (`run_tests`'s, or an error result with only a verdict and failed list)."""
     verdict = result['verdict']
     failed = result.get('failed', [])
+    notes = dict(result.get('flaky_notes') or {})
+    for test, said in (result.get('retry_failures') or {}).items():
+        if said:  # the report line names the test; this says what its failed attempt reported (#3286)
+            notes[test] = notes.get(test, '') + f' (first attempt: {said[0]})'
     return outcome(verdict,
                    first_failures=result.get('first_failures', failed if verdict == 'INCONCLUSIVE' else []),
                    confirmed=result.get('confirmed', failed if verdict == 'FAIL' else []),
                    retry_passes=result.get('flaky', []), gating_failed=result.get('gating_failed', []),
                    probation_failed=result.get('probation_failed', []), trunk=trunk,
-                   reruns=result.get('reruns', 0), notes=result.get('flaky_notes'))
+                   reruns=result.get('reruns', 0), notes=notes)
 
 
 def failure_basis(journey: bool) -> str:
@@ -1003,14 +1016,15 @@ def flake_issue_text(test: str, runs: list[str]) -> tuple[str, str]:
     return flake_tally.flake_issue_text(test, runs, REPO, 'hosted integration runs')
 
 
-def record_flakes(ops, flaky: list[str], sha: str, run_id: str) -> list[str]:
+def record_flakes(ops, flaky: list[str], sha: str, run_id: str, said: dict | None = None) -> list[str]:
     """Hosted trunk runs only: one comment per retry-pass on #2176, then open an issue for any test over the
     threshold. Never raises: the report is already out. Returns the issue lines opened."""
     opened = []
     try:
         now = dt.datetime.now(dt.timezone.utc)
         for test in flaky:
-            ops.post_tally(tally_line(test, sha, run_id, now) + f'\n\n`{test}` passed on retry in run {run_id}.')
+            detail = f' Its first attempt said: {said[test][0]}' if (said or {}).get(test) else ''
+            ops.post_tally(tally_line(test, sha, run_id, now) + f'\n\n`{test}` passed on retry in run {run_id}.' + detail)
         counts = tally_counts(ops.tally_comments(), now, ops.closed_flake_markers())
         for test in tests_due_an_issue(counts, ops.open_flake_markers()):
             if test in flaky:
@@ -1529,7 +1543,7 @@ def hosted_run(ops: Ops, sha: str, *, post: bool = True) -> str:
         report = f'not posted ({evidence / "report.md"})'
     ops.log(f"{result['verdict']} {sha[:7]}: {report}")
     if post and result.get('flaky') and os.environ.get('GITHUB_RUN_ID'):  # the trunk's tip only, as with the report
-        for line in record_flakes(ops, result['flaky'], sha, os.environ['GITHUB_RUN_ID']):
+        for line in record_flakes(ops, result['flaky'], sha, os.environ['GITHUB_RUN_ID'], result.get('retry_failures')):
             ops.log('opened ' + line)
     return result['verdict']
 
