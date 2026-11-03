@@ -26,7 +26,8 @@ public struct SharedMarginPromptStyle: Sendable, Equatable {
     /// The card goes away unanswered after this long. Nil when it waits for an answer.
     public let expiresAfterMs: Int?
 
-    public static func style(revealMode: ImportedCommentaryRevealMode, arrival: Arrival) -> SharedMarginPromptStyle {
+    /// A layer with no reveal mode set is not auto-play (as before: only `.guided` plays by itself).
+    public static func style(revealMode: ImportedCommentaryRevealMode?, arrival: Arrival) -> SharedMarginPromptStyle {
         if revealMode == .guided {
             return SharedMarginPromptStyle(pausesSource: true, autoPlayAfterMs: autoPlayDelayMs, expiresAfterMs: nil)
         }

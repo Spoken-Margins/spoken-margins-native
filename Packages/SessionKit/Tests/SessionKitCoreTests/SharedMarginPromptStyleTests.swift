@@ -21,6 +21,12 @@ final class SharedMarginPromptStyleTests: XCTestCase {
         }
     }
 
+    func testALayerWithNoRevealModeIsNotAutoPlay() {
+        let style = SharedMarginPromptStyle.style(revealMode: nil, arrival: .crossed)
+        XCTAssertNil(style.autoPlayAfterMs)
+        XCTAssertFalse(style.pausesSource)
+    }
+
     func testGoingToAMarginYourselfStillWaitsThereWithAutoPlayOff() {
         let style = SharedMarginPromptStyle.style(revealMode: .companion, arrival: .jumpedTo)
         XCTAssertTrue(style.pausesSource)
