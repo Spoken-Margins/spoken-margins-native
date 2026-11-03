@@ -28,6 +28,7 @@ final class ShareLinkSender: ObservableObject {
     /// Shown while the link is made and after, when the share will carry the file too.
     @Published private(set) var companionNote: String?
     private let bridge = BridgeService.makeStore()
+    private static let companionLine = "This item has no public web page, so the file goes in the same message as the link."
 
     /// Whether to show the button at all. The cached config decides; with none, or a stale one, the sender's own
     /// screen asks the server once (our server, no one else's) so a fresh install can offer the button.
@@ -83,8 +84,6 @@ final class ShareLinkSender: ObservableObject {
         state = .idle
         companionNote = nil
     }
-
-    static let companionLine = "This item has no public web page, so the file goes in the same message as the link."
 
     /// The packet's bytes and the preview read from it. The audio the read extracts is only for the read, and goes.
     nonisolated private static func prepare(packageURL: URL) -> Result<(Data, ShareLinkPreview), ShareLinkFallback> {
