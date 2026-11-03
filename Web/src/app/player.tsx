@@ -4,7 +4,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { Episode, Margin } from '../shared/model.ts';
 import { useData } from './data.tsx';
-import { dueMargins } from './logic/margin-autoplay.ts';
+import { CrossingClock } from './logic/margin-autoplay.ts';
 import { plainError } from './logic/messages.ts';
 import { NotSavedError } from './logic/storage.ts';
 import { FINISHED_WITHIN_SECONDS } from './logic/library.ts';
@@ -64,8 +64,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const lastSave = useRef(0);
   const pendingSeek = useRef<number | undefined>(undefined);
   const [arrived, setArrived] = useState<Arrived>();
-  // The previous time update while playing, for spotting a Margin's moment being crossed. Undefined after a seek.
-  const lastTime = useRef<number | undefined>(undefined);
+  // Where playback last was, for spotting a Margin's moment being crossed.
+  const crossing = useRef(new CrossingClock());
   const clip = useRef<{ element: HTMLAudioElement; url: string } | null>(null);
   const clipQueue = useRef<Margin[]>([]);
   // The voice reading a friend's written Margin aloud, while it does.
@@ -217,6 +217,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       const resume = dataRef.current.positions.find((p) => p.episodeId === id)?.seconds;
       const finished = target.durationSeconds && resume && resume >= target.durationSeconds - FINISHED_WITHIN_SECONDS;
       pendingSeek.current = options.at ?? (finished ? 0 : resume);
+      crossing.current.reset();
       loadedId.current = id;
       setEpisodeId(id);
       setMediaDuration(undefined);
@@ -339,13 +340,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           const d = event.currentTarget.duration;
           if (Number.isFinite(d)) setMediaDuration(d);
         }}
-        onSeeking={() => {
+        onSeeking={(event) => {
           stopReading();
-          lastTime.current = undefined;
+          crossing.current.seeking(event.currentTarget.currentTime);
           comeUp.current.clear();
         }}
         onPlaying={(event) => {
-          lastTime.current = event.currentTarget.currentTime;
+          crossing.current.playing(event.currentTarget.currentTime);
           setPlaying(true);
           setLoading(false);
         }}
@@ -368,13 +369,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           const audio = event.currentTarget;
           setTime(audio.currentTime);
           if (!audio.paused && !audio.seeking && loadedId.current) {
-            const due = dueMargins(
+            const due = crossing.current.update(
               dataRef.current.margins.filter((m) => m.episodeId === loadedId.current && !comeUp.current.has(m.id)),
-              lastTime.current,
               audio.currentTime,
             );
             for (const m of due) comeUp.current.add(m.id);
-            lastTime.current = audio.currentTime;
             if (due.length > 0) fire(due);
           }
           if (Date.now() - lastSave.current > SAVE_EVERY_MS) save();

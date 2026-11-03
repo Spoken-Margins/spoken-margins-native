@@ -71,6 +71,18 @@ async function openFile(page: Page) {
   return nowPlaying;
 }
 
+/**
+ * Lets the opened file start at its first Margin: by itself where the browser allows it, or with the offer's tap where
+ * it waits for one (WebKit). Waits for one or the other, since a single look while the audio still loads sees neither
+ * and would leave the episode unstarted (#3254).
+ */
+async function startAtLanding(nowPlaying: ReturnType<Page['getByRole']>) {
+  const offer = nowPlaying.getByRole('button', { name: /Play from the first Margin/ });
+  const started = nowPlaying.getByRole('button', { name: 'Pause' }).or(nowPlaying.getByTestId('arrived-margin'));
+  await expect(offer.or(started).first()).toBeVisible({ timeout: 15_000 });
+  if (await offer.isVisible()) await offer.click();
+}
+
 test.beforeEach(async ({ page }) => {
   await serveFixtures(page);
 });
@@ -79,8 +91,7 @@ test('each spoken Margin plays by itself at its moment, in order, and the episod
   await watchPlays(page, false);
   const nowPlaying = await openFile(page);
   // The first Margin is where the file lands; play from there if the browser waited for a tap.
-  const offer = nowPlaying.getByRole('button', { name: /Play from the first Margin/ });
-  if (await offer.isVisible().catch(() => false)) await offer.click();
+  await startAtLanding(nowPlaying);
 
   // Two clips, each played with the episode paused, and the episode playing again after each.
   await expect
@@ -106,8 +117,7 @@ test('each spoken Margin plays by itself at its moment, in order, and the episod
 test('a browser that blocks the clip leaves the episode paused at the Margin, with a Play', async ({ page }, info) => {
   await watchPlays(page, true);
   const nowPlaying = await openFile(page);
-  const offer = nowPlaying.getByRole('button', { name: /Play from the first Margin/ });
-  if (await offer.isVisible().catch(() => false)) await offer.click();
+  await startAtLanding(nowPlaying);
 
   const play = nowPlaying.getByRole('button', { name: 'Play Sam’s Margin' });
   await expect(play).toBeVisible({ timeout: 15_000 });
@@ -130,8 +140,7 @@ test('a browser that blocks the clip leaves the episode paused at the Margin, wi
 test('skipping forward past a Margin does not play it', async ({ page }) => {
   await watchPlays(page, false);
   const nowPlaying = await openFile(page);
-  const offer = nowPlaying.getByRole('button', { name: /Play from the first Margin/ });
-  if (await offer.isVisible().catch(() => false)) await offer.click();
+  await startAtLanding(nowPlaying);
   await expect.poll(async () => (await plays(page)).filter((p) => p.kind === 'clip').length, { timeout: 25_000 }).toBe(1);
   // Jump to well past the second Margin before it comes up (the first clip may still be playing).
   await nowPlaying.getByLabel('Position').fill('100');
