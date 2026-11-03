@@ -1,3 +1,4 @@
+import SessionKitPersistence
 import XCTest
 @testable import SessionKit
 @testable import SpokenMarginsApp
@@ -37,6 +38,71 @@ final class PlayQueueAppTests: XCTestCase {
 
         XCTAssertEqual(model.snapshot.itemId, Gate1AppModel.welcomeSampleItemId)
         XCTAssertTrue(PlayQueueController.current(model).isEmpty, "the started item leaves the queue")
+    }
+
+    /// Verification of #1990 (Done when 3): three queued items play one after another through the real model. Each hop is
+    /// the finish edge of the session that is actually playing, so a hop that started the wrong item, started two, or did
+    /// not leave the queue would show here. A queued item deleted from the Library in between is skipped.
+    func testThreeQueuedItemsPlayInOrderAndADeletedOneIsSkipped() async throws {
+        let model = makeModel()
+        model.addSampleItem()
+        let store = try model.requireStore()
+        for id in ["queue-third", "queue-gone"] {
+            try store.saveItem(Item(id: id, title: id, mediaType: "text", text: "One.\n\nTwo.", externalReference: nil, status: "Ready"))
+        }
+        try model.refreshLibraryRows(store: store)
+        let first = "item-pill", second = Gate1AppModel.welcomeSampleItemId, third = "queue-third"
+        model.startItem(id: first)
+        model.queueAppend(itemId: second)
+        model.queueAppend(itemId: "queue-gone")
+        model.queueAppend(itemId: third)
+        try store.deleteItem(id: "queue-gone")
+        try model.refreshLibraryRows(store: store)
+
+        var played = [try XCTUnwrap(model.snapshot.itemId)]
+        for _ in 0..<2 {
+            var before = model.snapshot
+            before.phase = .itemPlayback
+            var after = before
+            after.phase = .finished
+            model.playQueueSnapshotChanged(from: before, to: after)
+            await Task.yield()
+            await Task.yield()
+            played.append(try XCTUnwrap(model.snapshot.itemId))
+        }
+        XCTAssertEqual(played, [first, second, third])
+        XCTAssertTrue(PlayQueueController.current(model).isEmpty, "every started item left the queue")
+
+        // The queue is now empty: the third item finishing starts nothing.
+        var before = model.snapshot
+        before.phase = .itemPlayback
+        var after = before
+        after.phase = .finished
+        model.playQueueSnapshotChanged(from: before, to: after)
+        await Task.yield()
+        XCTAssertEqual(model.snapshot.itemId, third)
+    }
+
+    /// The sleep timer ends the whole run (the Default taken on #1990): a finish while it runs starts nothing and the
+    /// queue keeps its items.
+    func testAFinishWhileTheSleepTimerRunsStartsNothingAndKeepsTheQueue() async throws {
+        let model = makeModel()
+        model.addSampleItem()
+        model.startItem(id: "item-pill")
+        model.queueAppend(itemId: Gate1AppModel.welcomeSampleItemId)
+        model.armSleepTimer(.minutes15)
+        defer { model.cancelSleepTimer() }
+        XCTAssertTrue(model.sleepTimerIsActive)
+
+        var before = model.snapshot
+        before.phase = .itemPlayback
+        var after = before
+        after.phase = .finished
+        model.playQueueSnapshotChanged(from: before, to: after)
+        await Task.yield()
+
+        XCTAssertEqual(model.snapshot.itemId, "item-pill")
+        XCTAssertEqual(PlayQueueController.current(model).itemIds, [Gate1AppModel.welcomeSampleItemId])
     }
 
     func testNothingStartsWhenTheQueueIsEmpty() async throws {
