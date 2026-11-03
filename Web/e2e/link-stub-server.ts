@@ -7,6 +7,7 @@
 //   AbCdEf123456   the vector's own sealed packet and preview, byte for byte (its packet is not a real packet)
 //   vectorvoice01  Contracts/fixtures/web-packets/web-voice.spokenmargins sealed under the vector's key
 //   expired00001   answers 410, as an expired link does
+//   switchedoff1   answers 503 `disabled`, as the server does while links are switched off
 // Run: node e2e/link-stub-server.ts (Node 24 strips the types). Port 4174, or SM_LINK_STUB_PORT.
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { randomBytes } from 'node:crypto';
@@ -30,6 +31,7 @@ interface Stored {
 }
 const links = new Map<string, Stored>();
 const GONE = 'expired00001';
+const OFF = 'switchedoff1';
 
 links.set('AbCdEf123456', { preview: b64(vector.preview.sealedBase64), packet: b64(vector.packet.sealedBase64) });
 const voicePacket = new Uint8Array(readFileSync(join(repo, 'Contracts/fixtures/web-packets/web-voice.spokenmargins')));
@@ -116,6 +118,7 @@ createServer((req, res) => {
   if (req.method !== 'GET') return json(res, 405, { error: 'method' });
   if (parts && parts[2]) {
     if (parts[1] === GONE) return json(res, 410, { error: 'expired' });
+    if (parts[1] === OFF) return json(res, 503, { error: 'disabled' });
     const stored = links.get(parts[1]);
     if (!stored) return json(res, 404, { error: 'not_found' });
     res.writeHead(200, { 'content-type': 'application/octet-stream', 'cache-control': 'no-store' });

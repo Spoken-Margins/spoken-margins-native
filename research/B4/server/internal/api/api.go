@@ -108,6 +108,9 @@ type Server struct {
 	// Links stores optional share packets; the install invitation is owner supplied.
 	Links          *links.Store
 	LinkInstallURL string
+	// LinkWebURL is the origin of the web app whose page plays a link (#2168), such as https://app.spokenmargins.com.
+	// Empty, the share page stays text and offers no hand-off.
+	LinkWebURL string
 
 	// Reports keeps the "Report this link" records (#2239). Nil answers 503 on a report, so a build
 	// that wires links must wire this too. ReportRules zero means reportrules.DefaultConfig.

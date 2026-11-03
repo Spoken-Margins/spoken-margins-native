@@ -5,7 +5,8 @@ import { capacitorBridge } from '../../sources/native-http.ts';
 import { useData } from '../data.tsx';
 import { downloadFile } from '../download.ts';
 import { useRestoreFocus } from '../focus.ts';
-import { BackIcon, DownIcon, DownloadIcon, ForwardIcon, MicIcon, PauseIcon, PenIcon, PlayIcon, ShareIcon, StopIcon } from '../icons.tsx';
+import { BackIcon, DownIcon, DownloadIcon, ForwardIcon, MicIcon, PauseIcon, PenIcon, PlayIcon, ShareIcon, SkipIcon, StopIcon } from '../icons.tsx';
+import { cueFor, friendMargins, leading, possessive, senderName, speakingLine } from '../logic/arrival.ts';
 import { landingOffer, type Landing } from '../logic/import.ts';
 import { nextSpeed, timelineFraction, timelinePosts } from '../logic/library.ts';
 import { plainError } from '../logic/messages.ts';
@@ -52,27 +53,87 @@ function LandingOffer({ landing }: { landing?: Landing }) {
 }
 
 /**
- * A friend's Margin that has just come up in the episode (#3058): the words of a written one, the words and a note for
- * a spoken one. When the browser wouldn't start the spoken clip, the episode waits here with a Play for it.
+ * A friend's Margin that has just come up in the episode (#3058): who is speaking and which of how many, then the
+ * words of a written one, the words and a note for a spoken one. A written Margin is read aloud by this browser's own
+ * voice, and the card says so, so a synthetic voice never passes for the sender's. When the browser wouldn't start the
+ * spoken clip, the episode waits here with a Play for it.
  */
-function ArrivedMargin() {
+function ArrivedMargin({ margins }: { margins: readonly Margin[] }) {
   const player = usePlayer();
   const arrived = player.arrived;
   if (!arrived) return null;
   const { margin, blocked } = arrived;
   const words = margin.text ?? (margin.voice ? 'A spoken Margin' : '');
+  const line = speakingLine(margin, margins, friendMargins(margins)[0]?.author);
+  const voiced = !margin.voice && typeof window !== 'undefined' && 'speechSynthesis' in window;
   return (
     <div className="arrived-margin" role="status" data-testid="arrived-margin">
+      <p className="arrived-margin-head">
+        <strong>{line.title}</strong>
+        {line.position && <span> · {line.position}</span>}
+      </p>
       <p className="arrived-margin-text">
         {margin.author ? <strong>{margin.author}</strong> : null} {formatClock(margin.atSeconds)}: {words}
       </p>
+      {voiced && <p className="arrived-margin-note">Your device’s voice is reading {possessive(senderName(margin.author))} words.</p>}
       {blocked && (
         <button type="button" className="button button-primary" onClick={player.playArrived}>
           <PlayIcon size={18} />
-          Play {margin.author ? `${margin.author}’s` : 'this'} Margin
+          Play {margin.author ? `${leading(possessive(senderName(margin.author)))}` : 'this'} Margin
         </button>
       )}
     </div>
+  );
+}
+
+/**
+ * The countdown to the next Margin a friend left, always in reach while the episode plays (owner, 2026-11-02: "it is
+ * clear that there's a countdown to the friend's margins" and "obvious what the user can do to skip directly to the
+ * margin"). The first Skip lands 20 seconds before it, so the episode's own lead-in is heard; inside the lead-in the
+ * Skip goes straight to the Margin. After the last, it points at the Margin buttons below, which are how to answer.
+ */
+function MarginCue({ margins }: { margins: readonly Margin[] }) {
+  const player = usePlayer();
+  const sender = friendMargins(margins)[0]?.author;
+  if (player.arrived) return null;
+  const cue = cueFor(margins, player.time, sender);
+  if (!cue) return null;
+  if (cue.kind === 'after-last') {
+    return (
+      <section className="margin-cue" aria-label={`${cue.lead}’s Margins`} data-testid="margin-cue">
+        <p className="margin-cue-line">
+          <strong>That was {cue.who}’s last Margin.</strong>
+        </p>
+        <p className="margin-cue-note">To answer {cue.who}, add a Margin of your own: write one or record one below.</p>
+      </section>
+    );
+  }
+  return (
+    <section className={`margin-cue${cue.leadIn ? ' margin-cue-lead-in' : ''}`} aria-label={`Next Margin from ${senderName(sender)}`} data-testid="margin-cue">
+      <p className="margin-cue-line">
+        <span aria-hidden="true">{cue.label}</span>
+        <span className="margin-cue-clock" aria-hidden="true" data-testid="margin-cue-clock">
+          {cue.clock}
+        </span>
+        <span className="visually-hidden">{cue.spoken}</span>
+      </p>
+      {cue.leadIn && (
+        <div className="margin-cue-meter" aria-hidden="true">
+          <i style={{ width: `${cue.leadInLeft * 100}%` }} />
+        </div>
+      )}
+      <button
+        type="button"
+        className="button button-primary margin-cue-skip"
+        onClick={() => {
+          player.seek(cue.skip.to);
+          if (!player.playing) player.toggle();
+        }}
+      >
+        <SkipIcon />
+        {cue.skip.label}
+      </button>
+    </section>
   );
 }
 
@@ -197,7 +258,8 @@ export function NowPlaying({ onClose, landing }: { onClose: () => void; landing?
         </div>
         {player.loading && <p className="muted np-status">Loading audio…</p>}
         <LandingOffer landing={landing} />
-        <ArrivedMargin />
+        <MarginCue margins={margins} />
+        <ArrivedMargin margins={margins} />
 
         {composer ? (
           composer.kind === 'write' ? (

@@ -62,7 +62,15 @@ if ! (cd "${stage}/Web" && npm ci --no-audit --no-fund --loglevel=error &&
   die "build failed; nothing was copied"
 fi
 dist="${stage}/dist"
-[[ -f "${dist}/index.html" && -f "${dist}/sw.js" && -f "${dist}/manifest.webmanifest" ]] || die "build is missing index.html, sw.js or the manifest"
+# The page a share link opens (#2168): https://app.spokenmargins.com/l/<id>#<key> serves link.html, which is the app's
+# own page with a <base href="/">, because the build's URLs are relative and /l/<id> is one folder down.
+if [[ -f "${dist}/index.html" ]]; then
+  base_tag='<base href="/" />'
+  grep -q '<head>' "${dist}/index.html" || die "index.html has no <head> to put the base tag in"
+  awk -v tag="${base_tag}" '{ print } /<head>/ && !done { print "    " tag; done = 1 }' "${dist}/index.html" >"${dist}/link.html"
+  grep -qF -- "${base_tag}" "${dist}/link.html" || die "link.html did not get its base tag"
+fi
+[[ -f "${dist}/index.html" && -f "${dist}/link.html" && -f "${dist}/sw.js" && -f "${dist}/manifest.webmanifest" ]] || die "build is missing index.html, link.html, sw.js or the manifest"
 grep -rqF -- "${relay_origin}" "${dist}/assets" || die "the relay origin is not in the build; VITE_RELAY_ORIGIN was not applied"
 ! grep -rqE -- 'relay\.test|127\.0\.0\.1:4174' "${dist}" || die "the build carries a test relay origin"
 echo "built: $(find "${dist}" -type f | wc -l | tr -d ' ') files, $(du -sk "${dist}" | cut -f1) KB"
@@ -94,7 +102,7 @@ if ((dry_run)); then
   exit 0
 fi
 echo "== checking from this machine"
-for path in / /sw.js /manifest.webmanifest; do
+for path in / /l/0123456789abcdef0123456789abcdef /sw.js /manifest.webmanifest; do
   echo "$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "https://${web_host}${path}" || true) https://${web_host}${path}"
 done
 echo "== deployed ${commit} to https://${web_host}/"

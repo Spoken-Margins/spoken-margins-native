@@ -173,7 +173,7 @@ func (s *Server) getLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var page bytes.Buffer
-	if err := links.Render(&page, id, s.LinkInstallURL); err != nil {
+	if err := links.Render(&page, id, s.LinkInstallURL, s.LinkWebURL); err != nil {
 		s.linkUnavailablePage(w, http.StatusInternalServerError, links.UnavailableError)
 		return
 	}
