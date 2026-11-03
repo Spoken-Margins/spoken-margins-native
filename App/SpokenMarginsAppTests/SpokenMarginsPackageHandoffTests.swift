@@ -960,7 +960,12 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         let localURL = root.appendingPathComponent("recipient.mp3")
         try Data("recipient-edition".utf8).write(to: localURL)
         model.podcastLocalAssetDidBecomeReady(itemId: item.id, url: localURL)
-        try await Task.sleep(for: .milliseconds(400))
+        // The placement pass reads the store off the main actor and records both answers when it returns, so wait for
+        // the last one it writes. A fixed sleep here failed on slow runners (#3295).
+        let afterDownloadKey = "sourceTranscriptionAfterDownload:\(item.id)"
+        for _ in 0..<500 where model.diagnostics[afterDownloadKey] == nil {
+            try await Task.sleep(for: .milliseconds(20))
+        }
 
         XCTAssertEqual(model.diagnostics["podcastPlacementDeferred:\(item.id)"], "session_keeps_its_edition")
         // The caller decides this before the background placement pass has recorded its own deferral (#2507).
