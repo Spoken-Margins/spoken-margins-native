@@ -55,6 +55,24 @@ final class SharedMarginReturnAppTests: XCTestCase {
         XCTAssertNil(model.pendingImportedCommentary)
     }
 
+    // #3059: with auto-play off, playback reaching a shared Margin sounds a tone and the episode plays on. The card
+    // waits for a tap without having paused anything, so dismissing it owes the source nothing.
+    func testToneOnlyLeavesThePlayingSourcePlayingAndDismissingOwesNothing() async throws {
+        let fixture = try await ReturnFixture.make(sourcePlaying: true)
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        try await fixture.waitUntil("playback reaches the shared Margin at 1 s and offers it", timeout: 8) {
+            model.pendingImportedCommentary != nil
+        }
+        XCTAssertEqual(model.snapshot.status, .playing, "a tone, not a stop")
+        XCTAssertEqual(model.sharedMarginReturn, .none, "nothing was paused, so nothing is owed back")
+
+        model.dismissPendingImportedCommentary()
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(model.snapshot.status, .playing)
+        XCTAssertNil(model.pendingImportedCommentary)
+    }
+
     // R02, R04: the source was already paused when the offer arrived, so dismissing leaves it paused.
     func testDismissingAPromptOverAnAlreadyPausedSourceLeavesItPaused() async throws {
         let fixture = try await ReturnFixture.make(sourcePlaying: true)

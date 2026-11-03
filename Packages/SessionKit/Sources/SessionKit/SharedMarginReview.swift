@@ -75,6 +75,13 @@ public enum SharedMarginReview {
         return entries(layers: layers, records: records, ownMargins: ownMargins)
     }
 
+    /// The Margins Continue should ask about: the ones the listener is already past (#3059). A Margin still ahead of
+    /// their place plays in place as the episode reaches it, so the big button just plays; only a Margin behind the
+    /// place would be skipped, and the review is the way to hear it.
+    public static func entriesBehind(_ entries: [Entry], placeMs: Int) -> [Entry] {
+        entries.filter { $0.mediaTimeMs < placeMs }
+    }
+
     /// The text of the offer shown before Continue: how many Margins and whose.
     public static func offerMessage(for entries: [Entry]) -> String {
         var senders: [String] = []

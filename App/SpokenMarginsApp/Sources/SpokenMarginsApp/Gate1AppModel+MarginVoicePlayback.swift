@@ -234,21 +234,36 @@ extension Gate1AppModel {
         presentImportedCommentaryPrompt(prompt, sourceWasPlaying: current.status.isPlaybackActive)
     }
 
+    /// Puts a shared Margin to the listener. With auto-play on (`guided`) the episode pauses, a tone sounds and the
+    /// Margin plays. With it off the tone sounds and the episode plays on; the card stays up for a few seconds so one
+    /// tap hears the Margin (owner's call on #3059). A Margin the listener jumped to waits for them with the episode
+    /// paused, as before. What each case does is `SharedMarginPromptStyle`.
     private func presentImportedCommentaryPrompt(
         _ prompt: ImportedCommentaryPrompt,
-        sourceWasPlaying: Bool
+        sourceWasPlaying: Bool,
+        arrival: SharedMarginPromptStyle.Arrival = .crossed
     ) {
-        sharedMarginReturn.promptShown(sourceWasPlaying: sourceWasPlaying)
-        if sourceWasPlaying, snapshot.status.isPlaybackActive { pause() }
+        let style = SharedMarginPromptStyle.style(revealMode: prompt.layer.revealMode, arrival: arrival)
+        let pausesSource = sourceWasPlaying && style.pausesSource
+        sharedMarginReturn.promptShown(sourceWasPlaying: pausesSource)
+        if pausesSource, snapshot.status.isPlaybackActive { pause() }
         if !prompt.layer.isMuted { playImportedCommentaryCue() }
         pendingImportedCommentary = prompt
-        if prompt.layer.revealMode == .guided {
-            importedCommentaryAutoPlayTask?.cancel()
+        importedCommentaryAutoPlayTask?.cancel()
+        importedCommentaryAutoPlayTask = nil
+        if let delayMs = style.autoPlayAfterMs {
             importedCommentaryAutoPlayTask = Task { @MainActor [weak self] in
-                try? await Task.sleep(for: .milliseconds(420))
+                try? await Task.sleep(for: .milliseconds(delayMs))
                 guard !Task.isCancelled, let self,
                       self.pendingImportedCommentary?.id == prompt.id else { return }
                 self.hangTelemetry.labels.scoped("importedCommentaryAutoPlay") { self.listenToPendingImportedCommentary() }
+            }
+        } else if let expiresMs = style.expiresAfterMs {
+            importedCommentaryAutoPlayTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .milliseconds(expiresMs))
+                guard !Task.isCancelled, let self,
+                      self.pendingImportedCommentary?.id == prompt.id else { return }
+                self.dismissPendingImportedCommentary()
             }
         }
     }
@@ -270,7 +285,7 @@ extension Gate1AppModel {
             reportFailure("The selected Shared Margin does not have a verified local position.")
             return false
         }
-        presentImportedCommentaryPrompt(prompt, sourceWasPlaying: sourceWasPlaying)
+        presentImportedCommentaryPrompt(prompt, sourceWasPlaying: sourceWasPlaying, arrival: .jumpedTo)
         screen = .playback
         diagnostics["lastSharedMarginNavigation"] = "opened:\(interjectionID)"
         return true

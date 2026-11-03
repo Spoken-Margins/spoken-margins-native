@@ -35,6 +35,18 @@ final class SharedMarginReviewTests: XCTestCase {
 
     private func ids(_ entries: [SharedMarginReview.Entry]) -> [String] { entries.map(\.interjection.id) }
 
+    /// #3059: the big button just plays when the new Margins are still ahead; it asks only about the ones passed.
+    func testContinueAsksOnlyAboutMarginsTheListenerIsAlreadyPast() {
+        let entries = SharedMarginReview.entries(
+            layers: [layer("ana")],
+            records: ["ana": [margin("passed", at: 60_000), margin("here", at: 120_000), margin("ahead", at: 300_000)]]
+        )
+        XCTAssertEqual(ids(SharedMarginReview.entriesBehind(entries, placeMs: 0)), [], "an episode not started: just play")
+        XCTAssertEqual(ids(SharedMarginReview.entriesBehind(entries, placeMs: 60_000)), [], "a Margin at the place is still ahead")
+        XCTAssertEqual(ids(SharedMarginReview.entriesBehind(entries, placeMs: 120_001)), ["passed", "here"])
+        XCTAssertEqual(ids(SharedMarginReview.entriesBehind(entries, placeMs: 1_200_000)), ["passed", "here", "ahead"])
+    }
+
     func testOnlyMarginsTheListenerHasntHeardAreOffered() {
         let entries = SharedMarginReview.entries(
             layers: [layer("ana")],

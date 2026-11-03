@@ -44,17 +44,29 @@ extension Gate1AppModel {
         selectedItem.id == itemId ? selectedItem.interjections : marginRows.map(\.interjection).filter { $0.itemId == itemId }
     }
 
-    /// Continue for an item. Starts it, or hands `offer` the item when it has new shared Margins that the listener
-    /// should be asked about first: after an import, Continue used to land past them (owner's co-op test). An offer
+    /// Continue for an item. Starts it, and a friend's Margins play in place as it reaches them (owner's call on
+    /// #3059: the big button plays the episode with them on auto-play, no question first). The one case it still asks
+    /// is the one the episode would skip: new Margins behind the listener's place, after an import into an episode
+    /// they were partway through (owner's co-op test, #474). `offer` gets the item with only those Margins. An offer
     /// the listener already turned down isn't made again until another Margin arrives.
     func continueListening(itemId: String, offer: (NewMarginsOfferRequest) -> Void) {
-        let entries = newSharedMargins(itemId: itemId)
+        let entries = SharedMarginReview.entriesBehind(newSharedMargins(itemId: itemId), placeMs: listenerPlaceMs(itemId: itemId))
         let new = entries.map(\.marginId)
         if new.isEmpty || Self.declinedNewMargins.isDeclined(itemId: itemId, margins: new) {
             startItem(id: itemId)
         } else {
             offer(NewMarginsOfferRequest(itemId: itemId, entries: entries))
         }
+    }
+
+    /// Where Continue would start `itemId`, in media milliseconds: the open item's playhead, else the place its
+    /// continuing session was left at, else the start (an episode not begun, or one that was finished).
+    private func listenerPlaceMs(itemId: String) -> Int {
+        if hasActiveSession, snapshot.itemId == itemId { return snapshot.currentMediaTimeMs ?? 0 }
+        guard let store, let sessions = try? store.loadSessions(itemId: itemId),
+              let continuation = Self.preferredContinuationSession(in: sessions),
+              continuation.phase != .finished, continuation.status != "finished", continuation.completionPercent < 100 else { return 0 }
+        return continuation.position.mediaTimeMs ?? 0
     }
 
     /// "Listen without them" on the offer: starts the item, and doesn't ask about these Margins again.
