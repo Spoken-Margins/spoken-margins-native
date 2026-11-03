@@ -17,6 +17,9 @@ import XCTest
 @MainActor
 final class RealPlaybackMarginCaptureTests: XCTestCase {
     func testStreamedMarginStoresPreAndPostEvidence() async throws {
+        // The waits below add up to 131 s at their limits, past the AppBehavior plan's 120 s default. A hosted
+        // runner under audio overload took 147 s to pass once (#3275), so ask for the plan's 180 s maximum.
+        executionTimeAllowance = 180
         let root = FileManager.default.temporaryDirectory.appending(path: "margin-capture-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let episode = try Self.writeQuietEpisode(to: root.appending(path: "episode.caf"), seconds: 60)
@@ -44,10 +47,18 @@ final class RealPlaybackMarginCaptureTests: XCTestCase {
         model.finishInterjection()
         try await waitFor("playback to resume", seconds: 15) { model.snapshot.status == .playing }
 
-        try await waitFor("pre and post evidence to be stored", seconds: 40) {
-            let roles = Set((model.selectedItem.interjections.first?.podcastAnchorEvidence ?? []).compactMap(\.windowRole))
-            return roles.contains(.preInterjection) && roles.contains(.postResume)
-        }
+        // The post window needs about 16 s of playback after the rejoin, and the tap restarts a window when it
+        // drops a buffer, which a loaded hosted runner does (#3275). The app gives up on a pending capture after
+        // 60 s and stores the reason, so wait past that instead of guessing a shorter limit, and name the stored
+        // status and reasons when evidence never arrives.
+        try await waitUntil(
+            "pre and post evidence to be stored", seconds: 65,
+            diagnostics: { Self.captureSummary(model.selectedItem.interjections.first) },
+            condition: {
+                let roles = Set((model.selectedItem.interjections.first?.podcastAnchorEvidence ?? []).compactMap(\.windowRole))
+                return roles.contains(.preInterjection) && roles.contains(.postResume)
+            }
+        )
         let margin = try XCTUnwrap(model.selectedItem.interjections.first)
         XCTAssertEqual(margin.podcastAnchorEvidenceCaptureStatus, .ready, margin.podcastAnchorEvidenceFailureReason ?? "")
         if model.snapshot.status == .playing { model.playPause() }
@@ -89,13 +100,32 @@ final class RealPlaybackMarginCaptureTests: XCTestCase {
     private struct Timeout: Error { let label: String }
 
     private func waitFor(_ label: String, seconds: Double, _ condition: () -> Bool) async throws {
+        try await waitUntil(label, seconds: seconds, diagnostics: { "" }, condition: condition)
+    }
+
+    /// Waits for `condition`. `diagnostics` is added to the failure so a hosted-runner flake names its cause (#3275).
+    private func waitUntil(
+        _ label: String, seconds: Double,
+        diagnostics: () -> String,
+        condition: () -> Bool
+    ) async throws {
         let deadline = Date().addingTimeInterval(seconds)
         while Date() < deadline {
             if condition() { return }
             try await Task.sleep(for: .milliseconds(100))
         }
-        XCTAssertTrue(condition(), "Timed out waiting for \(label)")
-        if !condition() { throw Timeout(label: label) }
+        if condition() { return }
+        let detail = diagnostics()
+        XCTFail("Timed out waiting for \(label)\(detail.isEmpty ? "" : ": \(detail)")")
+        throw Timeout(label: label)
+    }
+
+    private static func captureSummary(_ margin: Interjection?) -> String {
+        guard let margin else { return "no Margin was stored" }
+        let roles = (margin.podcastAnchorEvidence ?? []).map { $0.windowRole?.rawValue ?? "unknown" }.sorted()
+        return "status=\(margin.podcastAnchorEvidenceCaptureStatus?.rawValue ?? "none"); "
+            + "roles=\(roles.isEmpty ? "none" : roles.joined(separator: ",")); "
+            + "reasons=\(margin.podcastAnchorEvidenceFailureReason ?? "none")"
     }
 
     /// Speech-like noise bursts at a low level: enough features for ShazamKit, quiet on the Mac's speakers.
