@@ -1176,7 +1176,7 @@ final class Gate1AppModel: ObservableObject {
         sharedMarginOffers.markAnnounced(row.interjection.id)
         let targetID = "shared::\(row.layer.id)::\(row.interjection.id)"
         startMarginMoment(
-            sequence: MarginMomentSequence(itemId: itemID, target: MarginMomentAnchor(marginId: targetID, mediaTimeMs: position.mediaTimeMs), otherMargins: []),
+            sequence: MarginMomentSequence(itemId: itemID, target: MarginMomentAnchor(marginId: targetID, mediaTimeMs: position.mediaTimeMs, label: row.collectionLabel), otherMargins: []),
             voiceURLs: [targetID: voiceURL],
             title: "\(row.collectionLabel)'s Margin",
             isApproximate: position.isApproximate

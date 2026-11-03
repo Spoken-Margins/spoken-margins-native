@@ -86,7 +86,7 @@ This is the normal case. Do it once the page for episode A shows **Download Agai
 4. Margin A four has no voice. It shows its text and no **Listen** button.
 5. Optional. Play episode A and drag the scrubber to about 0:20. Let it play.
 
-**You should see and hear:** at about 0:30 the episode pauses, you hear a two-note chime, and a card appears with **Shared Margin 1 of 4**, **Listen** and **Dismiss**. Tap **Listen** and Ada's voice plays. If no card appears, say so, with the label you wrote down for Margin A one.
+**You should see and hear:** at about 0:30 the episode pauses, you hear a two-note chime, and a card pinned at the top of the screen says it is Ada's Margin, 1 of 4, with **Listen** and **Dismiss**. Tap **Listen** and Ada's voice plays. If no card appears, say so, with the label you wrote down for Margin A one.
 
 ## 3. Import the same packet again (30 seconds)
 

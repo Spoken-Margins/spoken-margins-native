@@ -276,7 +276,8 @@ extension Gate1AppModel {
         let sourceWasPlaying = snapshot.status.isPlaybackActive
         sharedMarginOffers.markAnnounced(prompt.id)
         if sourceWasPlaying { pause() }
-        if let mediaTimeMs = prompt.interjection.resolution.localMediaTimeMs {
+        // A Margin still waiting for its placement pass is at the sender's time (#3059), as it is when the episode reaches it.
+        if let mediaTimeMs = SharedMarginPrompts.mediaTimeMs(prompt.interjection, in: prompt.layer) {
             seekMedia(toMediaTimeMs: mediaTimeMs)
         } else if let charOffset = prompt.interjection.resolution.localStartChar {
             seekText(toCharOffset: charOffset)

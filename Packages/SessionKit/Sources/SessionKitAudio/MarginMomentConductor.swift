@@ -72,6 +72,10 @@ public final class MarginMomentConductor {
     /// A Margin's voice is loaded, playing or paused.
     public var isPlayingVoice: Bool { voice != nil }
     public private(set) var isVoicePaused = false
+    /// How far through the sounding voice is, for the pinned card (#3220). Nil while no voice has the floor.
+    public var voiceReading: MarginVoiceClockReading? {
+        voice.map { MarginVoiceClockReading(duration: $0.duration, current: $0.currentTime) }
+    }
     /// The shared-Margin chime is sounding (#932).
     public var isPlayingChime: Bool { chime?.isPlaying == true }
 
