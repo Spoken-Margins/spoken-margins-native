@@ -106,9 +106,27 @@ public struct AVFoundationMarginAudioTranscoder: SharedMarginAudioTranscoding {
         // AVAudioFile reserves a `free` atom of about 20–30 KB in front of the audio: a third of a 20 s Margin at
         // 24 kbps. A passthrough remux copies the same HE-AAC packets into an `.m4a` without it. If the remux fails or
         // comes out a different length, the padded file still plays, so it goes out instead.
+        try await Self.place(encoded, at: destination, matchingSecondsOf: source) { encoded, destination in
+            await Self.remuxed(encoded, to: destination, matchingSecondsOf: source)
+        }
+    }
+
+    /// Puts the encoded file at `destination`: the remuxed copy when `remux` makes one, else the encoded file itself.
+    /// Either way the file that lands is opened and measured against the recording, because the length check at the
+    /// end of encoding counts frames handed to the writer, not what the saved file holds. A file that is too short
+    /// throws, so the recording goes out instead (the caller's fallback).
+    static func place(
+        _ encoded: URL,
+        at destination: URL,
+        matchingSecondsOf source: URL,
+        remux: (URL, URL) async -> Bool
+    ) async throws {
         try? FileManager.default.removeItem(at: destination)
-        if await Self.remuxed(encoded, to: destination, matchingSecondsOf: source) { return }
+        if await remux(encoded, destination) { return }
         try? FileManager.default.removeItem(at: destination)
+        guard let expected = try? seconds(of: source), let held = try? seconds(of: encoded), abs(held - expected) <= 0.5 else {
+            throw SharedMarginAudioTranscodingError.conversionFailed("saved copy is not the recording's length")
+        }
         try FileManager.default.moveItem(at: encoded, to: destination)
     }
 
