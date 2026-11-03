@@ -123,6 +123,11 @@ final class CatalogDrawerModel: ObservableObject {
         return CatalogFollowedSummary.text(followedKinds: followed.map(\.contentKind))
     }
 
+    /// `noteLaunch` with what the model knows once the Library has been bootstrapped.
+    func noteLaunch(of model: Gate1AppModel) {
+        noteLaunch(libraryWasEmptyAtLaunch: model.libraryWasEmptyAtLaunch, followedSourceCount: model.feedSubscriptions.count)
+    }
+
     /// The first-run opening at once, as for a launch with no friend's file that has settled on the Library.
     func presentIfFirstRun(libraryWasEmptyAtLaunch: Bool, followedSourceCount: Int) {
         noteLaunch(libraryWasEmptyAtLaunch: libraryWasEmptyAtLaunch, followedSourceCount: followedSourceCount)
@@ -703,5 +708,32 @@ extension FirstLaunchWelcomeOrder.Place {
         } else {
             self = .elsewhere
         }
+    }
+}
+
+/// The first-run drawer waits a moment for a file the system opened the app with, so a friend's file comes first
+/// (#3291); after that it waits for the friend's item and then the Library. The root view notes the launch first.
+private struct FirstLaunchWelcomeOrderModifier: ViewModifier {
+    @ObservedObject var model: Gate1AppModel
+    @ObservedObject var drawer: CatalogDrawerModel
+
+    private var place: FirstLaunchWelcomeOrder.Place { FirstLaunchWelcomeOrder.Place(model) }
+
+    func body(content: Content) -> some View {
+        content
+            .task {
+                try? await Task.sleep(for: .milliseconds(500))
+                drawer.settleFirstRun(at: place)
+            }
+            .onChange(of: place) { _, place in drawer.listenerMoved(to: place) }
+            .onChange(of: model.spokenMarginsPackageImportReview != nil) { _, arrived in
+                if arrived { drawer.friendFileArrived() } // also files from the Share extension's inbox
+            }
+    }
+}
+
+extension View {
+    func firstLaunchWelcomeOrder(model: Gate1AppModel, drawer: CatalogDrawerModel) -> some View {
+        modifier(FirstLaunchWelcomeOrderModifier(model: model, drawer: drawer))
     }
 }
