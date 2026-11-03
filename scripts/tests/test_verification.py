@@ -1641,14 +1641,74 @@ class VerificationTests(unittest.TestCase):
         self.assertNotIn('/Users', json.dumps(records))
         long = failed.replace('A tap', 'x' * 400)
         self.assertLessEqual(len(verification.test_records(long + passed)[name]['retry_failures'][0]), 240)
-        # a test that never passed, or never failed, keeps no message: its failure is reported the usual way
+        # a test that failed every attempt keeps its message too: this script's own re-run may still clear it (#3286)
         twice = verification.test_records(failed + failed)
-        self.assertNotIn('retry_failures', twice[name])
+        self.assertEqual(twice[name]['status'], 'failed')
+        self.assertEqual(twice[name]['retry_failures'], ['XCTAssertTrue failed - A tap at the leading edge'])
         clean = verification.test_records(passed)
         self.assertNotIn('retry_failures', clean[name])
         # a log with a retry-pass but no error line is today's record
         self.assertNotIn('retry_failures', verification.test_records(
             failed.split('\n', 1)[1] + passed)[name])
+
+    def test_a_failure_message_loses_the_runners_paths_and_ids_wherever_they_sit(self):
+        # Audit on e0ffbf2: a path inside the assertion text reached the report and the #2176 comment.
+        uuid = '1A2B3C4D-0000-4000-8000-00000000ABCD'
+        base = f'/Users/runner/Library/Developer/CoreSimulator/Devices/{uuid}/data/Containers/Data/Application/{uuid}'
+        rows = [
+            (f'XCTAssertEqual failed: ("file://{base}/Library/a%20b.m4a") is not equal to ("x")',
+             'XCTAssertEqual failed: ("<path>") is not equal to ("x")'),
+            (f'/Users/runner/work/App.swift:9: error: XCTAssertTrue failed - {base}/tmp/x.m4a missing',
+             'XCTAssertTrue failed - <path> missing'),
+            ('App.swift:171: XCTAssertTrue failed - ~/Library/x and /private/var/mobile/y', 
+             'XCTAssertTrue failed - <path> and <path>'),
+            (f'XCTAssertNotNil failed - device {uuid} not booted', 'XCTAssertNotNil failed - device <id> not booted'),
+            ('XCTAssertTrue failed - thanks @someone, see #1234 and `code`', "XCTAssertTrue failed - thanks @someone, see #1234 and 'code'"),
+            ('XCTAssertTrue failed - the /Usersful word stays', 'XCTAssertTrue failed - the /Usersful word stays'),
+            ('', ''),
+        ]
+        for raw, expected in rows:
+            with self.subTest(raw=raw[:40]):
+                self.assertEqual(verification.clean_failure_message(raw), expected)
+        self.assertLessEqual(len(verification.clean_failure_message('x ' * 400)), 240)
+        # the same cleaning on the log path
+        log = ("Test Case '-[App.ExportTests testIsolation]' started.\n"
+               f"/a/B.swift:1: error: -[App.ExportTests testIsolation] : XCTAssertEqual failed: (\"{base}/x\") is not\n"
+               "Test Case '-[App.ExportTests testIsolation]' failed (0.1 seconds).\n"
+               "Test Case '-[App.ExportTests testIsolation]' passed (0.1 seconds).\n")
+        said = verification.test_records(log)['App/ExportTests/testIsolation']['retry_failures']
+        self.assertEqual(said, ['XCTAssertEqual failed: ("<path>") is not'])
+
+    def test_failure_messages_come_from_the_xcresult_when_the_log_has_none(self):
+        # Audit on e0ffbf2 (#3286 Done when 1 and 3): the result bundle is the source that survives interleaved output.
+        name = 'App/ExportTests/testIsolation'
+        message = {'nodeType': 'Failure Message',
+                   'name': 'ExportTests.swift:171: XCTAssertTrue failed - A tap at /Users/runner/x did not move'}
+        runs = self.xcresult_payload(children=[
+            {'nodeType': 'Test Case Run', 'result': 'Failed', 'children': [message]},
+            {'nodeType': 'Test Case Run', 'result': 'Passed'}])
+        record = verification.xcresult_test_records(runs)[name]
+        self.assertEqual((record['status'], record['passed_on_retry']), ('passed', True))
+        self.assertEqual(record['retry_failures'], ['XCTAssertTrue failed - A tap at <path> did not move'])
+        # a payload with no Failure Message node: today's record, no message
+        bare = verification.xcresult_test_records(self.xcresult_payload(children=[
+            {'nodeType': 'Test Case Run', 'result': 'Failed'}, {'nodeType': 'Test Case Run', 'result': 'Passed'}]))[name]
+        self.assertTrue(bare['passed_on_retry'])
+        self.assertNotIn('retry_failures', bare)
+        # a message under a passing attempt is not a failure
+        passing = {'nodeType': 'Test Case Run', 'result': 'Passed', 'children': [message]}
+        self.assertNotIn('retry_failures', verification.xcresult_test_records(
+            self.xcresult_payload(children=[passing]))[name])
+        # merged with a log that printed nothing for the test
+        log = "Test Case '-[App.ExportTests testIsolation]' failed (0.1 seconds).\nTest Case '-[App.ExportTests testIsolation]' passed (0.1 seconds)."
+        with patch.object(verification.subprocess, 'check_output', return_value=json.dumps(runs)):
+            merged, _ = verification.completed_test_records(log, 'tests.xcresult')
+        self.assertEqual(merged[name]['retry_failures'], ['XCTAssertTrue failed - A tap at <path> did not move'])
+        # and the log's own message wins when both have one
+        log_said = ("/a/B.swift:1: error: -[App.ExportTests testIsolation] : from the log\n" + log)
+        with patch.object(verification.subprocess, 'check_output', return_value=json.dumps(runs)):
+            merged, _ = verification.completed_test_records(log_said, 'tests.xcresult')
+        self.assertEqual(merged[name]['retry_failures'], ['from the log'])
 
     def test_result_bundle_counts_cannot_replace_individual_records(self):
         payload = {'testNodes': [{'nodeType': 'Test Plan', 'name': 'App', 'result': 'Passed'}],

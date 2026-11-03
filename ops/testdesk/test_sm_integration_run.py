@@ -234,7 +234,7 @@ class VerdictTests(unittest.TestCase):
         raw = manifest({TEST: 'passed', OTHER: 'passed'}, retried=[TEST])
         raw['steps'][0]['retry_failures'] = {TEST: [said], OTHER: ['not a retry-pass, so not reported']}
         first = run.summarize(raw)
-        self.assertEqual(first['retry_failures'], {TEST: [said]})
+        self.assertEqual(first['retry_failures'], {TEST: [said], OTHER: ['not a retry-pass, so not reported']})
         settled = run.settle(first, [])
         counts = {'passed': 0, 'failed': 0, 'skipped': 0}
         text = run.report_text('a' * 40, dict(settled, reruns=0, crashes=[], counts=counts),
@@ -245,7 +245,7 @@ class VerdictTests(unittest.TestCase):
                                     tally_comments=lambda: [], open_flake_markers=lambda: [],
                                     closed_flake_markers=lambda: {}, log=print)
         run.record_flakes(ops, settled['flaky'], SHA, '1', settled['retry_failures'])
-        self.assertIn(f'Its first attempt said: {said}', ops.posted[0])
+        self.assertIn(f"Its first attempt said: `{said}`", ops.posted[0])
         # a re-run that cleared a failed test brings its own message when the first run had none
         failing = run.summarize(manifest({TEST: 'failed'}))
         rerun = manifest({TEST: 'passed'}, retried=[TEST])
@@ -257,6 +257,26 @@ class VerdictTests(unittest.TestCase):
         self.assertIn(f'passed on retry: {TEST}\n', run.report_text(
             'a' * 40, dict(plain, reruns=0, crashes=[], counts=counts), started=0, finished=1, previous=None,
             suspects=[], evidence=Path('/e')) + '\n')
+
+    def test_a_test_the_scripts_own_rerun_clears_keeps_its_first_runs_message(self):
+        # Audit on e0ffbf2: xcodebuild's retries failed too, so no message was kept for the later re-run pass.
+        said = 'XCTAssertTrue failed - A tap at the leading edge did not move'
+        raw = manifest({TEST: 'failed'})
+        raw['steps'][0]['retry_failures'] = {TEST: [said]}
+        first = run.summarize(raw)
+        self.assertEqual(first['failed'], [TEST])
+        settled = run.settle(first, [run.summarize(manifest({TEST: 'passed'})), run.summarize(manifest({TEST: 'passed'}))])
+        self.assertEqual((settled['verdict'], settled['flaky']), ('PASS', [TEST]))
+        counts = {'passed': 0, 'failed': 0, 'skipped': 0}
+        text = run.report_text('a' * 40, dict(settled, reruns=2, crashes=[], counts=counts),
+                               started=0, finished=1, previous=None, suspects=[], evidence=Path('/e'))
+        self.assertIn(f'passed on retry: {TEST} (first attempt: {said})', text)
+        # a test that stays failed is not a retry-pass, so no message rides on the pass line
+        stays = run.settle(first, [run.summarize(manifest({TEST: 'failed'}))] * 2)
+        self.assertEqual((stays['verdict'], stays['flaky']), ('FAIL', []))
+        self.assertNotIn('first attempt', run.report_text(
+            'a' * 40, dict(stays, reruns=2, crashes=[], counts=counts), started=0, finished=1, previous=None,
+            suspects=[], evidence=Path('/e')))
 
     def test_a_run_with_no_retries_says_none(self):
         counts = {'passed': 0, 'failed': 0, 'skipped': 0}

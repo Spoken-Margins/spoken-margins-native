@@ -230,9 +230,10 @@ def summarize(manifest: dict) -> dict:
         # records a fail-then-pass as status 'passed' with passed_on_retry); only a test that ended passed counts.
         retried.update(name for name in step.get('passed_on_retry') or []
                        if step.get('tests', {}).get(name, {}).get('status') == 'passed')
-        # What the failed first attempt said (#3286), for the tests that did end passed.
+        # What failed attempts said (#3286). Kept for every test, not only the ones that ended passed: a test whose
+        # retries failed and that this script's own re-run then cleared is a retry-pass with a first-run message.
         for name, messages in (step.get('retry_failures') or {}).items():
-            if name in retried and isinstance(messages, list):
+            if isinstance(messages, list):
                 retry_failures.setdefault(name, [str(m) for m in messages if m])
     if not any(status in ('passed', 'failed') for status in statuses.values()):
         # A plan that ran no test proves nothing, whatever its manifest says (#2590: a hosted run with no
@@ -351,7 +352,7 @@ def outcome_of(result: dict, trunk: bool = True) -> Outcome:
     failed = result.get('failed', [])
     notes = dict(result.get('flaky_notes') or {})
     for test, said in (result.get('retry_failures') or {}).items():
-        if said:  # the report line names the test; this says what its failed attempt reported (#3286)
+        if said and test in (result.get('flaky') or ()):  # what its failed attempt reported (#3286)
             notes[test] = notes.get(test, '') + f' (first attempt: {said[0]})'
     return outcome(verdict,
                    first_failures=result.get('first_failures', failed if verdict == 'INCONCLUSIVE' else []),
@@ -1023,7 +1024,7 @@ def record_flakes(ops, flaky: list[str], sha: str, run_id: str, said: dict | Non
     try:
         now = dt.datetime.now(dt.timezone.utc)
         for test in flaky:
-            detail = f' Its first attempt said: {said[test][0]}' if (said or {}).get(test) else ''
+            detail = f' Its first attempt said: `{said[test][0]}`' if (said or {}).get(test) else ''
             ops.post_tally(tally_line(test, sha, run_id, now) + f'\n\n`{test}` passed on retry in run {run_id}.' + detail)
         counts = tally_counts(ops.tally_comments(), now, ops.closed_flake_markers())
         for test in tests_due_an_issue(counts, ops.open_flake_markers()):

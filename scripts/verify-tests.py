@@ -404,15 +404,13 @@ def test_records(log):
             previous['seconds'] = seconds_total
         else:
             records[identifier] = result
-    # What a failed attempt said, kept only for a test that then passed on its retry: the report is otherwise all
-    # that is left of the first attempt, and a flake with no message cannot be fixed (#3286).
+    # What failed attempts said. The report is otherwise all that is left of a first attempt, and a flake with no
+    # message cannot be fixed (#3286). Kept for every test that failed an attempt, because a test that then fails
+    # its retries but passes the Test Desk's own re-run still needs its first message.
     for module, name, method, message in ATTEMPT_FAILURE.findall(log):
         record = records.get(f'{module}/{name}/{method}')
-        if record and record.get('passed_on_retry'):
-            messages = record.setdefault('retry_failures', [])
-            message = re.sub(r'\s+', ' ', message).strip()[:RETRY_FAILURE_WIDTH]
-            if message and message not in messages and len(messages) < RETRY_FAILURES_KEPT:
-                messages.append(message)
+        if record:
+            keep_failure_message(record, message)
     return records
 
 
@@ -421,6 +419,28 @@ def test_records(log):
 ATTEMPT_FAILURE = re.compile(r'^.*?: error: -\[(\w+)\.(\w+) (test\w+)\] : (.+)$', re.M)
 RETRY_FAILURES_KEPT = 2
 RETRY_FAILURE_WIDTH = 240
+# A path, wherever it sits in the text: a file URL, or one under the places a runner's files live. `[^\s"'),;\]]*`
+# stops at the quote or bracket a message wraps it in, so the closing `")` of `("path")` survives.
+FAILURE_PATH = re.compile(r'(?:file://)?(?:/(?:Users|private|var|tmp|Volumes|home|Library|Applications|System|opt)\b|~/)'
+                          r'[^\s"\'),;\]]*')
+FAILURE_UUID = re.compile(r'\b[0-9A-Fa-f]{8}-(?:[0-9A-Fa-f]{4}-){3}[0-9A-Fa-f]{12}\b')
+FAILURE_SOURCE_PREFIX = re.compile(r'^(?:\S*?[\w+.-]+\.(?:swift|m|mm|h):\d+:\s*)?(?:error:\s*)?')
+
+
+def clean_failure_message(text):
+    """One line of at most RETRY_FAILURE_WIDTH characters that is safe to post: no source-file prefix, paths from
+    the runner (file URLs, home and container folders), simulator ids, or backticks that would break a code span."""
+    text = FAILURE_SOURCE_PREFIX.sub('', re.sub(r'\s+', ' ', text).strip())
+    text = FAILURE_UUID.sub('<id>', FAILURE_PATH.sub('<path>', text)).replace('`', "'")
+    return text[:RETRY_FAILURE_WIDTH].strip()
+
+
+def keep_failure_message(record, text):
+    """Adds the cleaned message to the record's `retry_failures` (no repeats, RETRY_FAILURES_KEPT at most)."""
+    message = clean_failure_message(text)
+    messages = record.setdefault('retry_failures', [])
+    if message and message not in messages and len(messages) < RETRY_FAILURES_KEPT:
+        messages.append(message)
 
 
 TEST_STARTED = re.compile(r"Test Case '-\[(\w+)\.(\w+) (test\w+)\]' started\.")
@@ -488,6 +508,14 @@ def xcresult_test_records(payload):
                 yield status(child)
             yield from attempts(child)
 
+    def failure_messages(node):
+        """The `Failure Message` nodes under each failed attempt of a test case (#3286)."""
+        for child in node.get('children', []):
+            if child['nodeType'] == 'Failure Message':
+                yield str(child.get('name', ''))
+            elif child['nodeType'] != 'Test Case Run' or child.get('result') == 'Failed':
+                yield from failure_messages(child)
+
     def visit(nodes, bundle=None):
         for node in nodes:
             if node['nodeType'] in ('Unit test bundle', 'UI test bundle'):
@@ -504,10 +532,14 @@ def xcresult_test_records(payload):
                           'seconds': float(node.get('durationInSeconds', 0))}
                 if retried:
                     result['passed_on_retry'] = True
+                for message in failure_messages(node):
+                    keep_failure_message(result, message)
                 if identifier in records:
                     previous = records[identifier]
                     result['status'] = worst([previous['status'], result['status']])
                     result['seconds'] += previous['seconds']
+                    for message in previous.get('retry_failures', []):
+                        keep_failure_message(result, message)
                     if result['status'] != 'passed' or not (previous.get('passed_on_retry') or result.get('passed_on_retry')):
                         result.pop('passed_on_retry', None)
                     else:
@@ -536,6 +568,9 @@ def completed_test_records(log, result_bundle):
             previous = records[identifier]
             previous['status'] = next(s for s in ('failed', 'skipped', 'passed')
                                       if s in (previous['status'], result['status']))
+            # The log is the first source of a failed attempt's message; the xcresult fills in what it missed.
+            if result.get('retry_failures') and not previous.get('retry_failures'):
+                previous['retry_failures'] = list(result['retry_failures'])
             if previous['status'] == 'passed' and result.get('passed_on_retry'):
                 previous['passed_on_retry'] = True
             elif previous['status'] != 'passed':
@@ -1679,7 +1714,7 @@ class Run:
                                for status in ('passed', 'failed', 'skipped')}
             entry['passed_on_retry'] = sorted(n for n, r in records.items() if r.get('passed_on_retry'))
             entry['retry_failures'] = {n: r['retry_failures'] for n, r in sorted(records.items())
-                                       if r.get('passed_on_retry') and r.get('retry_failures')}
+                                       if r.get('retry_failures')}
             errors.extend(reconcile(expected, records, allowed_skips, probation or ()))
             if probation is not None:  # scripted journeys: each listed test's result, by status
                 entry['gating'] = {test: records.get(test, {}).get('status', 'missing')
