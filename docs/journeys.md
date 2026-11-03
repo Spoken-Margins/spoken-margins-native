@@ -118,10 +118,10 @@ The owner's one-phone version, with prepared packets and an episode that shares 
 2. Press "Play".
    - Pass: the episode plays at once, with no question first, and the friend's Margin plays in place when the episode reaches it. A Margin from before the place the listener is at stays new; "Hear only…" plays it. (Continue on the item's row in the Library still asks whether to hear the new Margin first.)
 3. Back out, then choose "Hear only…" on the item screen (or "Hear new Margins first" on the Library row's question).
-   - Pass: the episode jumps to about 20 s before the friend's Margin and plays on. The card says "Reviewing new Margins · 1 of 1" with the friend's name. A short two-note chime, then the friend's voice. The owner checks by ear that the lead-in sounds natural.
+   - Pass: the episode jumps to about 20 s before the friend's Margin and plays on. The card is pinned at the top of the Now screen and says "1 of 1" with the friend's name. A short two-note chime, then the friend's voice. The owner checks by ear that the lead-in sounds natural.
 4. Let the voice finish.
    - Pass: the episode goes back to where it was paused and carries on. The Margin is no longer marked new.
-5. Repeat with three new Margins, one of them close to another. Use "Skip to the next Margin", "Play it now" and "Stop review" once each.
+5. Repeat with three new Margins, one of them close to another. Use "Skip Margin", "Next Margin", "Play it now" and "Stop review" once each. The title does not move between the Margins.
    - Pass: close Margins play without an extra jump back. Stop leaves the episode paused where it was. Pause and Stop behave as they do for "Play this moment".
 
 ## J10 — Everything local works with the product server unreachable

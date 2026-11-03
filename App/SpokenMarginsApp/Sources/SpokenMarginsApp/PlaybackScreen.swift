@@ -84,8 +84,6 @@ struct PlaybackScreen: View {
                                     if model.snapshot.phase == .finished {
                                         Text("Finished").font(.headline).foregroundStyle(AppColors.listeningAccent)
                                     }
-                                    // Keep the promised Margin visible before the large source header (#1577).
-                                    marginMomentControl
                                     if model.isFirstMarginPromptShowing { FirstMarginPromptCard() }
                                     playbackHeader
                                     capturePermissionRecovery
@@ -148,12 +146,17 @@ struct PlaybackScreen: View {
                     // Pinned above every pane, not inside the Now pane's scrolling header: a failure about this
                     // listen hides the top banner, so the tag must stay in sight on Timeline and Margins too (#430).
                     .safeAreaInset(edge: .top, spacing: 0) {
-                        if !model.recordingNavigationIsLocked, let feedback = model.playbackFeedbackTag {
-                            PlaybackFeedbackTagView(event: feedback.event, tag: feedback.tag)
-                                .padding(.horizontal, horizontalSizeClass == .regular ? 36 : 22)
-                                .frame(maxWidth: 620)
-                                .frame(maxWidth: .infinity)
-                                .background(AppColors.listeningBackground)
+                        VStack(spacing: 0) {
+                            // A friend's Margin or a review has one fixed place above the title, never in the
+                            // scrolling stack, so it can't scroll away or shove the header down (#3220, #1577).
+                            if selectedPane == .now { PinnedMarginCardView() }
+                            if !model.recordingNavigationIsLocked, let feedback = model.playbackFeedbackTag {
+                                PlaybackFeedbackTagView(event: feedback.event, tag: feedback.tag)
+                                    .padding(.horizontal, horizontalSizeClass == .regular ? 36 : 22)
+                                    .frame(maxWidth: 620)
+                                    .frame(maxWidth: .infinity)
+                                    .background(AppColors.listeningBackground)
+                            }
                         }
                     }
                     .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -549,83 +552,9 @@ struct PlaybackScreen: View {
         }
     }
 
-    /// What the shared Margin's voice is doing, from the player's own report (#941).
-    @ViewBuilder
-    private var importedCommentaryStatus: some View {
-        switch model.importedCommentaryPhase {
-        case .loading:
-            Label("Loading Margin…", systemImage: "hourglass")
-                .font(.caption2)
-                .foregroundStyle(.white.opacity(0.72))
-                .accessibilityIdentifier("importedCommentary.status.loading")
-        case .playing:
-            Label("Playing at \(model.playingInterjectionAudioRate.formatted(.number.precision(.fractionLength(0...2))))× to match the item", systemImage: "waveform")
-                .font(.caption2)
-                .foregroundStyle(.white.opacity(0.72))
-                .accessibilityIdentifier("importedCommentary.status.playing")
-        case .paused:
-            Label("Paused", systemImage: "pause.fill")
-                .font(.caption2)
-                .foregroundStyle(.white.opacity(0.72))
-                .accessibilityIdentifier("importedCommentary.status.paused")
-        case .failed:
-            VStack(spacing: 8) {
-                Label("Margin audio could not play", systemImage: "exclamationmark.triangle")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.white)
-                    .accessibilityIdentifier("importedCommentary.status.failed")
-                Button("Retry", systemImage: "arrow.clockwise", action: model.retryImportedCommentary)
-                    .buttonStyle(SecondaryButtonStyle())
-                    .accessibilityIdentifier("importedCommentary.retry")
-            }
-        }
-    }
-
     @ViewBuilder
     private var importedCommentaryControl: some View {
-        if let playing = model.playingImportedCommentary {
-            VStack(spacing: 8) {
-                Text(playing.senderLabel)
-                    .font(.headline)
-                    .foregroundStyle(.white)
-                Text("Shared Margin \(playing.index) of \(playing.count)")
-                    .font(.caption)
-                    .foregroundStyle(.white.opacity(0.72))
-                importedCommentaryStatus
-                Text(playing.interjection.approvedTranscript)
-                    .font(.caption)
-                    .foregroundStyle(.white.opacity(0.85))
-                    .lineLimit(3)
-
-            }
-            .padding(12)
-            .frame(maxWidth: .infinity)
-            .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 16))
-        } else if let pending = model.pendingImportedCommentary {
-            VStack(spacing: 8) {
-                Text(pending.senderLabel)
-                    .font(.headline)
-                    .foregroundStyle(.white)
-                Text("Shared Margin \(pending.index) of \(pending.count)")
-                    .font(.caption)
-                    .foregroundStyle(.white.opacity(0.72))
-                Text(pending.interjection.approvedTranscript)
-                    .font(.caption)
-                    .foregroundStyle(.white.opacity(0.85))
-                    .lineLimit(3)
-                VStack(spacing: 10) {
-                    Button("Listen", action: model.listenToPendingImportedCommentary)
-                        .buttonStyle(PrimaryButtonStyle())
-                        .accessibilityIdentifier("importedCommentary.listen")
-                    Button("Dismiss", action: model.dismissPendingImportedCommentary)
-                        .buttonStyle(SecondaryButtonStyle())
-                        .accessibilityIdentifier("importedCommentary.dismiss")
-                }
-            }
-            .padding(12)
-            .frame(maxWidth: .infinity)
-            .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 16))
-        }
+        // The playing and waiting Margin is on the pinned card (#3220); only the auto-play switch is left here.
         if model.hasEnabledImportedCommentary {
             Toggle(
                 "Auto-play shared Margins",
@@ -650,64 +579,6 @@ struct PlaybackScreen: View {
             }
         }
 
-    }
-
-    /// "Play this moment" (#159): the lead-in countdown with a way to skip it, then the Margin playing inline.
-    @ViewBuilder
-    private var marginMomentControl: some View {
-        if let moment = model.marginMoment, moment.isReview {
-            ReviewNewMarginsCard(moment: moment)
-        } else if let moment = model.marginMoment {
-            VStack(alignment: .leading, spacing: 10) {
-                // A shared Margin still being placed says so for the whole moment (#872); it plays from its
-                // approximate time meanwhile.
-                if let placing = model.sharedMarginRows.first(where: { $0.id == moment.target.marginId })?
-                    .placementStatus.positionDescription {
-                    Text(placing)
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(.white.opacity(0.85))
-                        .accessibilityIdentifier("marginMoment.placing")
-                }
-                if moment.isPlayingMargin {
-                    Label(model.marginMomentVoiceIsPaused ? "\(model.marginMomentTitle) is paused" : "Playing \(model.marginMomentTitle)",
-                          systemImage: "waveform")
-                        .font(.headline)
-                        .foregroundStyle(.white)
-                    Button("Skip to the item", systemImage: "forward.end.fill", action: model.skipMarginMomentVoice)
-                        .buttonStyle(SecondaryButtonStyle())
-                        .accessibilityIdentifier("marginMoment.skip")
-                } else if let countdown = moment.targetCountdown(currentMediaTimeMs: model.marginMomentPositionMs) {
-                    Label("\(model.marginMomentTitle) in \(countdown)", systemImage: "text.bubble")
-                        .font(.headline)
-                        .foregroundStyle(.white)
-                        .numericTextTransition()
-                        .accessibilityIdentifier("marginMoment.countdown")
-                    if model.marginMomentPositionIsApproximate {
-                        Text("Approximate position: ads can differ between copies.")
-                            .font(.footnote)
-                            .foregroundStyle(.white.opacity(0.75))
-                    }
-                    Button("Play it now", systemImage: "play.fill", action: model.playMarginMomentNow)
-                        .buttonStyle(PrimaryButtonStyle())
-                        .accessibilityIdentifier("marginMoment.playNow")
-                } else {
-                    Text("Your Margins play as you reach them.")
-                        .font(.subheadline)
-                        .foregroundStyle(.white.opacity(0.85))
-                }
-                if !moment.isPlayingMargin {
-                    Button(moment.phase == .leadIn ? "Cancel" : "Stop playing my Margins", action: model.endMarginMoment)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.white.opacity(0.85))
-                        .frame(minHeight: 44)
-                        .accessibilityIdentifier("marginMoment.end")
-                }
-            }
-            .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 16))
-            .accessibilityElement(children: .contain)
-        }
     }
 
     private var playbackHeader: some View {
