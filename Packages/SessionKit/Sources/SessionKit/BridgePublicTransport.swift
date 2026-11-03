@@ -90,9 +90,10 @@ public enum ShareLinkTransport {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue(contentType, forHTTPHeaderField: "Content-Type")
+        request.httpBody = body
         let session = URLSession(configuration: configuration, delegate: BridgePublicSessionDelegate(), delegateQueue: nil)
         defer { session.invalidateAndCancel() }
-        let (answer, response) = try await session.upload(for: request, from: body)
+        let (answer, response) = try await session.data(for: request)
         guard answer.count <= maximumAnswerBytes else { throw URLError(.dataLengthExceedsMaximum) }
         return ((response as? HTTPURLResponse)?.statusCode ?? 0, answer)
     }

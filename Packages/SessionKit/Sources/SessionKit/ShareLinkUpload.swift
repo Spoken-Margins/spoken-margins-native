@@ -47,7 +47,8 @@ public enum ShareLinkPreviewBuilder {
     private static let audioOrFeedExtensions: Set<String> = [
         "mp3", "m4a", "m4b", "aac", "wav", "ogg", "oga", "opus", "flac", "mp4", "m4v", "xml", "rss", "atom", "json"
     ]
-    private static let feedLastComponents: Set<String> = ["feed", "rss", "atom", "podcast.xml", "feed.xml"]
+    /// A path part that names a feed anywhere in the path (`/feed/podcast/`, `/rss.php`), not only at its end.
+    private static let feedComponents: Set<String> = ["feed", "feeds", "rss", "atom", "rss.php", "feed.php", "rss.xml", "feed.xml", "atom.xml", "podcast.xml", "podcast.rss"]
 
     /// Builds the preview. Margins past what fits in 16 KB are left out of the preview only: the packet still holds
     /// every Margin, so a friend with the app hears them all.
@@ -100,8 +101,11 @@ public enum ShareLinkPreviewBuilder {
               components.user == nil, components.password == nil, components.port == nil,
               components.query == nil, components.fragment == nil else { return nil }
         if let enclosure = enclosureURL.map(trimmed), !enclosure.isEmpty, enclosure == page { return nil }
-        let lastComponent = components.path.split(separator: "/").last.map { String($0).lowercased() } ?? ""
-        if feedLastComponents.contains(lastComponent) { return nil }
+        let lowerHost = host.lowercased()
+        if lowerHost.hasPrefix("feed.") || lowerHost.hasPrefix("feeds.") || lowerHost.contains("feedburner") { return nil }
+        let pathParts = components.path.split(separator: "/").map { String($0).lowercased() }
+        if pathParts.contains(where: feedComponents.contains) { return nil }
+        let lastComponent = pathParts.last ?? ""
         if let dot = lastComponent.lastIndex(of: "."), audioOrFeedExtensions.contains(String(lastComponent[lastComponent.index(after: dot)...])) {
             return nil
         }

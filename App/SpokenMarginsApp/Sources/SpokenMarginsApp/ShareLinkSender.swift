@@ -95,7 +95,9 @@ struct ShareLinkSendControl: View {
     @State private var isOffered = false
 
     var body: some View {
-        Group {
+        // A real container, not a Group: `.task` and `.sheet` must stay attached while the button is hidden, or the
+        // config is never asked for and the button never appears.
+        VStack(alignment: .leading, spacing: 0) {
             if isOffered, let packageURL {
                 VStack(alignment: .leading, spacing: 8) {
                     Button {
