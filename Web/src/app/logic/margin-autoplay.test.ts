@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Margin } from '../../shared/model.ts';
-import { dueMargins, firesByItself, MAX_PLAYING_STEP_SECONDS } from './margin-autoplay.ts';
+import { CrossingClock, dueMargins, firesByItself, MAX_PLAYING_STEP_SECONDS } from './margin-autoplay.ts';
 
 const margin = (id: string, atSeconds: number, author: string | null = 'Sam'): Margin => ({
   id,
@@ -29,7 +29,7 @@ test('skipping forward past a Margin does not fire it', () => {
   assert.deepEqual(ids(dueMargins(m, 41, 41 + MAX_PLAYING_STEP_SECONDS + 0.1)), []);
 });
 
-test('no previous time (first update after play or a seek) fires nothing', () => {
+test('no previous time fires nothing', () => {
   assert.deepEqual(dueMargins([margin('a', 42)], undefined, 42.1), []);
 });
 
@@ -48,4 +48,37 @@ test('the listener’s own Margins never fire by themselves', () => {
   const m = [margin('mine', 42, null), margin('blank', 42, '')];
   assert.equal(firesByItself(m[0]), false);
   assert.deepEqual(dueMargins(m, 41.9, 42.2), []);
+});
+
+test('a seek that lands on a Margin plays it, even when the first update after the seek is already past it (#3254)', () => {
+  const m = [margin('a', 42)];
+  const clock = new CrossingClock();
+  clock.seeking(42);
+  // A slow machine: the clock ran on before the first update, and 'playing' arrives after it.
+  assert.deepEqual(ids(clock.update(m, 42.4)), ['a']);
+  const late = new CrossingClock();
+  late.seeking(42);
+  late.playing(42.3);
+  assert.deepEqual(ids(late.update(m, 42.5)), ['a']);
+});
+
+test('the clock fires nothing for a new episode until it has played, then counts from where it started', () => {
+  const m = [margin('a', 0.1)];
+  const clock = new CrossingClock();
+  clock.seeking(30);
+  clock.reset();
+  assert.deepEqual(clock.update(m, 0.2), []);
+  const fresh = new CrossingClock();
+  fresh.playing(0);
+  assert.deepEqual(ids(fresh.update(m, 0.25)), ['a']);
+});
+
+test('a seek forward past a Margin, then playing on, does not fire it; a seek back before it does', () => {
+  const m = [margin('a', 42)];
+  const clock = new CrossingClock();
+  clock.playing(30);
+  clock.seeking(50);
+  assert.deepEqual(clock.update(m, 50.25), []);
+  clock.seeking(41);
+  assert.deepEqual(ids(clock.update(m, 42.1)), ['a']);
 });

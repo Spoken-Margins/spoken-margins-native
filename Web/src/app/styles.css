@@ -662,6 +662,13 @@ button:disabled {
   margin-bottom: -2px;
 }
 
+/* A link in a Settings paragraph keeps a 44 px tap target, as every other control does. */
+.settings-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+}
+
 .switch-row {
   display: flex;
   align-items: center;
