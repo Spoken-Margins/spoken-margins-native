@@ -27,7 +27,7 @@ POSITION_DERIVED = (
     "marginMomentPositionMs", "currentChapter", "playbackHeaderTitle", "playbackChapterHeaderTitle",
     "isCurrentTimelineChapter", "isCurrentTimelineListeningMapScene", "nextPlaybackMediaChapter",
     "nextPlaybackChapter", "canJumpToNextChapter", "chapterRowForwardControl", "canUseEndOfChapterSleepTimer",
-    "playbackCompletionPresence",
+    "playbackCompletionPresence", "pinnedMarginCard", "canGoToNextMargin",
 )
 POSITION_READ = re.compile(POSITION_FIELDS + r"|model\.(?:" + "|".join(POSITION_DERIVED) + r")\b")
 VIEW_START = re.compile(r"^(?:(?:private|fileprivate|public|internal)\s+)?struct\s+(\w+)\s*:\s*[^{]*\bView\b[^{]*\{", re.M)
@@ -106,7 +106,7 @@ struct ClockReader: View {
     def test_the_scan_sees_the_known_playhead_views(self):
         sources = {path.name: re.sub(r"//[^\n]*", "", path.read_text()) for path in SOURCES.rglob("*.swift")}
         readers = {view for text in sources.values() for view, body in view_structs(text) if POSITION_READ.search(body)}
-        for view in ("PlaybackScreen", "PlaybackNowView", "ReviewNewMarginsCard", "ExperienceTimelineRailScreen"):
+        for view in ("PlaybackScreen", "PlaybackNowView", "PinnedMarginCardView", "ExperienceTimelineRailScreen"):
             self.assertIn(view, readers)
 
 

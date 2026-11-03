@@ -38,7 +38,7 @@ class ReduceMotionTests(unittest.TestCase):
             text = _read(name)
             self.assertIn(".motionAnimation(.smooth", text, name)
             self.assertNotRegex(text, r"(?<![\w.])\.animation\(\.smooth", name)
-        for name in ("PlaybackScreen.swift", "PlaybackMarginRowView.swift"):
+        for name in ("PinnedMarginCardView.swift", "PlaybackMarginRowView.swift"):
             text = _read(name)
             self.assertIn(".numericTextTransition()", text, name)
             self.assertNotIn(".contentTransition(.numericText())", text, name)
