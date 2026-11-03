@@ -77,7 +77,57 @@ public enum SharedPodcastResolutionPolicy {
                 throw SessionKitError.persistenceFailed("shared_podcast_item_is_ambiguous")
             }
         }
+        if result.status == .playable {
+            result = namingTheEpisodeAsThePacketDoes(result, item: item)
+        }
         return (result, diagnostic)
+    }
+
+    /// A packet whose page link is the audio file itself resolves as a bare file, and the resolver names that item
+    /// after the file ("hpr4736"). The sender's title is the episode's name, so it replaces a title that is only
+    /// the name of a file the packet points at; a title read from a feed or a page is kept (#3262).
+    static func namingTheEpisodeAsThePacketDoes(_ result: LinkResolutionResult, item: SharedItemIdentity) -> LinkResolutionResult {
+        let packetTitle = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard item.itemType == .podcast, !packetTitle.isEmpty else { return result }
+        let packetFiles = [item.canonicalURL, item.enclosureURL].compactMap { $0 }
+        func isFileName(_ title: String?, provider: String?, audioURL: String?) -> Bool {
+            if provider == "direct_audio" { return true }
+            guard let title else { return false }
+            let key = fileNameKey(title)
+            guard !key.isEmpty else { return false }
+            return (packetFiles + [audioURL].compactMap { $0 }).contains { fileNameKey(fileStem(of: $0)) == key }
+        }
+        func renamed(_ link: SourceLink, audioURL: String?) -> SourceLink {
+            guard isFileName(link.title, provider: link.provider, audioURL: audioURL) else { return link }
+            var link = link
+            link.title = packetTitle
+            return link
+        }
+        func renamed(_ candidate: LinkResolutionCandidate) -> LinkResolutionCandidate {
+            guard isFileName(candidate.title, provider: candidate.sourceLink.provider, audioURL: candidate.audioURL) else { return candidate }
+            var candidate = candidate
+            candidate.title = packetTitle
+            candidate.sourceLink = renamed(candidate.sourceLink, audioURL: candidate.audioURL)
+            if candidate.showTitle?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true {
+                candidate.showTitle = item.showTitle
+            }
+            return candidate
+        }
+        var result = result
+        result.originalLink = renamed(result.originalLink, audioURL: result.selectedCandidate?.audioURL)
+        result.selectedCandidate = result.selectedCandidate.map(renamed)
+        result.candidates = result.candidates.map(renamed)
+        return result
+    }
+
+    private static func fileStem(of urlString: String) -> String {
+        guard let url = URL(string: urlString) else { return urlString }
+        return url.deletingPathExtension().lastPathComponent
+    }
+
+    /// Case, spaces, hyphens and underscores don't tell one file name from another ("hpr 4736" and "HPR4736").
+    private static func fileNameKey(_ text: String) -> String {
+        text.lowercased().filter { $0.isLetter || $0.isNumber }
     }
 
     private static func durationIsCompatible(_ lhs: Int?, _ rhs: Int?) -> Bool {

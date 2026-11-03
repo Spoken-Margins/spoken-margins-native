@@ -5,7 +5,7 @@ import type { PacketRead } from '../ports.ts';
 import { episode as fixtureEpisode, voiceMargins } from '../../packet/fixtures.ts';
 import { readPacket } from '../../packet/read.ts';
 import { writePacket } from '../../packet/write.ts';
-import { findEpisode, importSummary, landingOffer, placeImport, sharedShowFor } from './import.ts';
+import { UNNAMED_SENDER, findEpisode, importSummary, landingOffer, placeImport, sharedShowFor } from './import.ts';
 
 const show: Show = { id: 'feed:https://feeds.test/show.rss', kind: 'podcast', title: 'Show', feedUrl: 'https://feeds.test/show.rss', followedAt: 'T0' };
 const mine: Episode = {
@@ -130,4 +130,13 @@ test('after a file opens, Now Playing offers to start at the first Margin until 
   assert.equal(landingOffer(landing, { ...waiting, loading: true }), undefined);
   assert.equal(landingOffer(landing, { ...waiting, episodeId: 'e2' }), undefined);
   assert.equal(landingOffer(undefined, waiting), undefined);
+});
+
+test('opened from a link, a Margin with no sender name is still a friend’s: it gets the author "Your friend" (#2168)', () => {
+  const unnamed = placeImport(read({ title: 'T', guid: 'g-1' }), [show], [mine], undefined, [], { unnamedAuthor: UNNAMED_SENDER });
+  assert.deepEqual(unnamed.margins.map((m) => m.author), ['Your friend', 'Your friend']);
+  const named = placeImport(read({ title: 'T', guid: 'g-1' }, { margins: [{ ...margin('a', 1), author: ' Ada ' }] }), [show], [mine], undefined, [], { unnamedAuthor: UNNAMED_SENDER });
+  assert.deepEqual(named.margins.map((m) => m.author), [' Ada ']);
+  // A restored backup or an opened file keeps its own Margins as the listener's own.
+  assert.deepEqual(placeImport(read({ title: 'T', guid: 'g-1' }), [show], [mine]).margins.map((m) => m.author), [undefined, undefined]);
 });

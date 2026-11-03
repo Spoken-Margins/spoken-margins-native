@@ -124,6 +124,29 @@ final class PrivateFeedLinkTests: XCTestCase {
         }
     }
 
+    /// A share link's preview (#487) is built from the packet, so it can't name a private address the packet withheld.
+    func testShareLinkPreviewOfAPrivateFeedPacketHoldsNoSecretAndNoFeedOrAudioAddress() throws {
+        for feed in privateFeeds {
+            let root = try temporaryDirectory()
+            defer { try? FileManager.default.removeItem(at: root) }
+            let packageURL = root.appendingPathComponent("private.spokenmargins")
+            _ = try exportPacket(try prepare(feed), to: packageURL)
+
+            let preview = try ShareLinkPacketPreview.preview(ofPackageAt: packageURL, scratch: root.appendingPathComponent("assets"))
+            let text = String(decoding: try ShareLinkPreviewBuilder.encoded(preview), as: UTF8.self)
+
+            XCTAssertEqual(preview.margins.map(\.text), ["A sender-reviewed thought."], feed.name)
+            XCTAssertEqual(preview.source.title, "Episode 12: The Private One", feed.name)
+            XCTAssertEqual(preview.source.show, "Members Only Show", feed.name)
+            XCTAssertFalse(text.contains(feed.secret), "\(feed.name): the preview leaks the subscriber secret")
+            for address in [feed.feedURL, feed.enclosureURL] {
+                XCTAssertFalse(text.contains(address), "\(feed.name): the preview names \(address)")
+            }
+            XCTAssertTrue(preview.source.url == nil || preview.source.url == feed.publicEpisodeURL, "\(feed.name): \(preview.source.url ?? "")")
+            XCTAssertNil(preview.source.url.flatMap { URLComponents(string: $0)?.query }, feed.name)
+        }
+    }
+
     func testPacketFromAPrivateFeedStillImportsAndIdentifiesTheEpisode() throws {
         for feed in privateFeeds {
             let root = try temporaryDirectory()

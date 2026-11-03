@@ -53,6 +53,11 @@ export const PauseIcon = ({ size }: { size?: number }) => (
     <path d="M8 5.5v13M16 5.5v13" strokeWidth="3.2" />
   </Icon>
 );
+export const SkipIcon = () => (
+  <Icon>
+    <path d="M5 5.5v13l8-6.5zM13 5.5v13l8-6.5z" fill="currentColor" />
+  </Icon>
+);
 export const BackIcon = () => (
   <Icon>
     <path d="M4 12a8 8 0 1 0 2.4-5.7M4 4v4h4" />

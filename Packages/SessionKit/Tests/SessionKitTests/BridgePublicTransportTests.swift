@@ -184,6 +184,90 @@ final class CommunityMapTransportTests: XCTestCase {
     }
 }
 
+/// The share link upload wire (#487): real URLSession requests with the network boundary replaced, like the community
+/// map upload above.
+final class ShareLinkTransportTests: XCTestCase {
+    private let url = ProductServer.url(path: ShareLinkClient.linksPath)
+    private let contentType = "multipart/form-data; boundary=SM-TEST"
+
+    override func setUp() {
+        super.setUp()
+        BridgeResponseProtocol.reset()
+    }
+
+    private func stubbedConfiguration() -> URLSessionConfiguration {
+        let configuration = BridgePublicTransport.configuration(resourceTimeout: 180)
+        configuration.protocolClasses = [BridgeResponseProtocol.self]
+        return configuration
+    }
+
+    func testPostsTheSealedBodyByteForByteToThePinnedHostWithNoIdentity() async throws {
+        let body = Data((0..<50_000).map { UInt8(truncatingIfNeeded: $0 &* 31) })
+        BridgeResponseProtocol.reply(.answer(status: 201, body: Data(#"{"id":"a","path":"/l/a"}"#.utf8), declaredLength: nil))
+
+        let answer = try await ShareLinkTransport.post(url, contentType, body, configuration: stubbedConfiguration())
+
+        XCTAssertEqual(answer.status, 201)
+        XCTAssertEqual(String(decoding: answer.body, as: UTF8.self), #"{"id":"a","path":"/l/a"}"#)
+        let request = try XCTUnwrap(BridgeResponseProtocol.requests.first)
+        XCTAssertEqual(BridgeResponseProtocol.requests.count, 1)
+        XCTAssertEqual(request.url, url)
+        XCTAssertEqual(request.method, "POST")
+        XCTAssertEqual(request.contentType, contentType)
+        XCTAssertEqual(request.body, body)
+        XCTAssertNil(request.cookie)
+        XCTAssertNil(request.authorization)
+    }
+
+    func testStatusesPassThroughToTheClient() async throws {
+        for status in [201, 413, 429, 503, 500] {
+            BridgeResponseProtocol.reset()
+            BridgeResponseProtocol.reply(.answer(status: status, body: Data(), declaredLength: nil))
+            let answer = try await ShareLinkTransport.post(url, contentType, Data([1]), configuration: stubbedConfiguration())
+            XCTAssertEqual(answer.status, status)
+        }
+    }
+
+    func testRedirectIsNotFollowedSoTheSealedPacketGoesToNoOtherHost() async throws {
+        let elsewhere = URL(string: "https://elsewhere.example.org/api/v1/links")!
+        BridgeResponseProtocol.reply(.redirect(status: 307, to: elsewhere))
+
+        let answer = try await ShareLinkTransport.post(url, contentType, Data([1, 2, 3]), configuration: stubbedConfiguration())
+
+        XCTAssertEqual(answer.status, 307)
+        XCTAssertEqual(BridgeResponseProtocol.requests.map(\.url), [url])
+    }
+
+    func testAnAnswerLargerThanASmallJSONObjectIsRefused() async {
+        BridgeResponseProtocol.reply(.answer(status: 201, body: Data(count: ShareLinkTransport.maximumAnswerBytes + 1), declaredLength: nil))
+        do {
+            _ = try await ShareLinkTransport.post(url, contentType, Data([1]), configuration: stubbedConfiguration())
+            XCTFail("an oversized answer must be refused")
+        } catch let error as URLError {
+            XCTAssertEqual(error.code, .dataLengthExceedsMaximum)
+        } catch {
+            XCTFail("unexpected error: \(error)")
+        }
+    }
+
+    func testUntrustedEndpointIsRefusedBeforeNetworking() async throws {
+        BridgeResponseProtocol.reply(.answer(status: 201, body: Data(), declaredLength: nil))
+        for untrusted in [
+            "https://elsewhere.example.org/api/v1/links",
+            "http://spokenmargins.proximitytoprogress.com/api/v1/links",
+            "https://spokenmargins.proximitytoprogress.com:8443/api/v1/links",
+        ] {
+            do {
+                _ = try await ShareLinkTransport.post(URL(string: untrusted)!, contentType, Data([1]), configuration: stubbedConfiguration())
+                XCTFail("\(untrusted) must be refused")
+            } catch {
+                XCTAssertEqual(error as? BridgeRefreshError, .untrustedURL, untrusted)
+            }
+        }
+        XCTAssertTrue(BridgeResponseProtocol.requests.isEmpty, "the refusal must come before any request")
+    }
+}
+
 /// URLSession still builds and sends each request, encodes its body, and streams the response; only the
 /// network boundary is replaced. It records every request that reaches it, so a test can tell which URLs
 /// were asked for. No test needs a reachable VPS or local listener.

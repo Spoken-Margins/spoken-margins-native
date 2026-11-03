@@ -25,27 +25,53 @@ extension Gate1AppModel {
         let entries: [SharedMarginReview.Entry]
         if selectedItem.id == itemId {
             entries = SharedMarginReview.entries(
-                layers: selectedItem.importedCommentaryLayers, records: selectedItem.importedCommentaryInterjections
+                layers: selectedItem.importedCommentaryLayers, records: selectedItem.importedCommentaryInterjections,
+                ownMargins: selectedItem.interjections
             )
         } else if let store {
-            entries = (try? SharedMarginReview.entries(itemId: itemId, in: store)) ?? []
+            // The listener's own Margins let a friend's reply say which of them it answers (#3221). They come from the
+            // Margins screen's published rows, so this adds no store read to the main thread.
+            entries = (try? SharedMarginReview.entries(itemId: itemId, in: store, ownMargins: ownMargins(itemId: itemId))) ?? []
         } else {
             entries = []
         }
         return entries.filter { $0.interjection.audioPath.flatMap(resolvedApplicationSupportAssetURL(for:)) != nil }
     }
 
-    /// Continue for an item. Starts it, or hands `offer` the item when it has new shared Margins that the listener
-    /// should be asked about first: after an import, Continue used to land past them (owner's co-op test). An offer
+    /// The listener's own Margins on `itemId`, read from what the app already holds: the open item's, else the rows
+    /// the Margins screen published.
+    private func ownMargins(itemId: String) -> [Interjection] {
+        selectedItem.id == itemId ? selectedItem.interjections : marginRows.map(\.interjection).filter { $0.itemId == itemId }
+    }
+
+    /// Continue for an item. Starts it, and a friend's Margins play in place as it reaches them (owner's call on
+    /// #3059: the big button plays the episode with them on auto-play, no question first). The one case it still asks
+    /// is the one the episode would skip: new Margins behind the listener's place, after an import into an episode
+    /// they were partway through (owner's co-op test, #474). `offer` gets the item with only those Margins. An offer
     /// the listener already turned down isn't made again until another Margin arrives.
     func continueListening(itemId: String, offer: (NewMarginsOfferRequest) -> Void) {
-        let entries = newSharedMargins(itemId: itemId)
+        let entries = SharedMarginReview.entriesBehind(newSharedMargins(itemId: itemId), placeMs: listenerPlaceMs(itemId: itemId))
         let new = entries.map(\.marginId)
         if new.isEmpty || Self.declinedNewMargins.isDeclined(itemId: itemId, margins: new) {
             startItem(id: itemId)
         } else {
             offer(NewMarginsOfferRequest(itemId: itemId, entries: entries))
         }
+    }
+
+    /// Where Continue would start `itemId`, in media milliseconds, from what the model already holds (no store read on
+    /// the main thread): the open item's playhead, else the place the selected item's continuing session was left at.
+    /// An episode not begun, or finished, starts at 0. Nil when it can't be told cheaply: a started episode in the
+    /// Library that isn't the selected item. Continue then asks about every new Margin, as it always did.
+    private func listenerPlaceMs(itemId: String) -> Int? {
+        if hasActiveSession, snapshot.itemId == itemId { return snapshot.currentMediaTimeMs ?? 0 }
+        if selectedItem.id == itemId {
+            guard let continuation = selectedItemPreferredContinuationSession,
+                  continuation.phase != .finished, continuation.status != "finished", continuation.completionPercent < 100 else { return 0 }
+            return continuation.position.mediaTimeMs ?? 0
+        }
+        guard let row = libraryItems.first(where: { $0.id == itemId }) else { return 0 }
+        return row.hasContinuationSession && !row.isCompleted ? nil : 0
     }
 
     /// "Listen without them" on the offer: starts the item, and doesn't ask about these Margins again.
@@ -73,16 +99,24 @@ extension Gate1AppModel {
         _ = sharedMarginReturn.promptDismissed()
         stopImportedCommentaryPlayback(resumeSource: false)
         if snapshot.itemId != itemId || !hasActiveSession { startItem(id: itemId) }
+        // A friend's reply to one of the listener's own spoken Margins plays after that Margin (#3221): the lead-in,
+        // the Margin, then the reply. Skip on the card goes past the Margin to the reply.
+        var voiceURLs: [String: URL] = [:]
+        let steps = SharedMarginReview.playlist(for: entries, ownMargins: ownMargins(itemId: itemId)).filter { step in
+            guard let parent = step.ownParent else { return true }
+            guard let url = parent.audioPath.flatMap(resolvedInterjectionAudioURL(for:)) else { return false }
+            voiceURLs[step.anchor.marginId] = url
+            return true
+        }
         guard snapshot.itemId == itemId,
               let sequence = MarginMomentSequence(
-                  itemId: itemId, reviewing: entries.map(\.anchor),
+                  itemId: itemId, reviewing: steps.map(\.anchor),
                   returnToMediaTimeMs: snapshot.currentMediaTimeMs, resumesAtEnd: thenContinue
               ) else { return }
         // The review plays these voices; the automatic shared-Margin prompts mustn't play them again.
         entries.forEach { sharedMarginOffers.markAnnounced($0.interjection.id) }
         // Written down before the review first moves the source, for the endings it can't give the place back at.
         if let place = ReviewReturnPlace(sequence: sequence) { reviewPlaces.owe(place) }
-        var voiceURLs: [String: URL] = [:]
         var heard: [String: ImportedCommentaryInterjection] = [:]
         for entry in entries {
             heard[entry.marginId] = entry.interjection
@@ -93,7 +127,7 @@ extension Gate1AppModel {
             if let margin = heard[$0] { self?.markSharedMarginHeard(margin) }
         }
         // Their voices get the same chime as the automatic prompt, except for a muted layer's (#932).
-        marginMomentConductor?.chimedMarginIds = Set(entries.filter { !$0.layer.isMuted }.map(\.marginId))
+        marginMomentConductor?.chimedMarginIds = SharedMarginReview.chimedMarginIds(steps)
         marginMomentConductor?.onChimeStarted = { [weak self] in self?.diagnostics["marginMoment.chime"] = "played:\($0)" }
         if !snapshot.status.isPlaybackActive { resumePlayback() }
         screen = .playback

@@ -129,12 +129,16 @@ func serve(args []string) error {
 	installURL := fs.String("links-install-url", "", "App Store listing or TestFlight invitation (required for links)")
 	relayOrigins := fs.String("relay-origins", "", "comma-separated web app origins that may use the feed relay (required for relay)")
 	linkOrigins := fs.String("link-origins", "", "comma-separated web app origins that may read sealed link packets and previews (CORS); empty sends no CORS headers")
+	linkWebURL := fs.String("links-web-url", "", "origin of the web app whose page plays a share link (https://app.example.com); empty keeps the share page text only")
 	var mf mapsFlags
 	mf.register(fs)
 	fs.Parse(args)
 
 	if *installURL != "" && !links.ValidInstallURL(*installURL) {
 		return errors.New("links: install URL must be an App Store listing or TestFlight invitation")
+	}
+	if *linkWebURL != "" && !links.ValidWebOrigin(*linkWebURL) {
+		return errors.New("links: -links-web-url must be an origin like https://app.example.com")
 	}
 	var feedRelay *relay.Relay
 	if *relayOrigins != "" {
@@ -218,6 +222,7 @@ func serve(args []string) error {
 		Links:             linkStore,
 		Reports:           reportStore,
 		LinkInstallURL:    *installURL,
+		LinkWebURL:        *linkWebURL,
 		Relay:             feedRelay,
 		LinkOrigins:       webOrigins,
 	}

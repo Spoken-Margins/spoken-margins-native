@@ -34,9 +34,18 @@ One writer per folder while the first wave runs in parallel.
     it false, and the upload code is compiled out (`e2e/share-links.spec.ts` checks both).
   - Opening a link needs no flag: a `/l/<id>#<key>` address, or the same pasted under Margins › Open a link,
     fetches `/l/<id>/packet` from the link's own server and opens it with the key in the `#` part.
-  - A host that serves the app at `/l/<id>` adds `<base href="<app root>">`, as the stub server does. A host on
-    another origin than the link server needs that server to allow cross-origin reads of `/l/<id>/packet`;
-    it doesn't yet.
+  - **A page loaded at a link starts on the arrival page** (`src/app/screens/Arrival.tsx`, #2168): "From Cole", the
+    episode, how many Margins and how long, the one-time explanation of "Margin", and one Play. Play starts the episode
+    from the beginning inside the friend's own tap (so every browser allows sound), and Now Playing shows the countdown
+    to the sender's next Margin with Skip (`MarginCue`; the first Skip lands 20 s before the Margin, the second on it).
+    A written Margin is read aloud after a tone by the browser's own voice (`src/app/speech.ts`). The words and rules are
+    in `src/app/logic/arrival.ts` (host-tested). Failures read as one plain sentence each, the same for an expired, removed
+    or unknown link. A pasted link still opens straight into Now Playing.
+  - The link server's `/l/<id>` page (`research/B4`) sends a browser that holds the key to the web app's page for the
+    same link when started with `-links-web-url https://app.spokenmargins.com`; `?report` keeps it on the report form.
+    `deploy-web.sh` writes `link.html` (the app with `<base href="/">`) and `caddy-web.caddy` serves it at `/l/<id>`.
+  - A host that serves the app at `/l/<id>` adds `<base href="<app root>">`, as the stub server does. The arrival page
+    reads the packet from the link server (`VITE_RELAY_ORIGIN`), which allows the app's origin through `-link-origins`.
 - **Feeds:** read directly from the browser first. Only when a feed blocks that, ask once and then read
   it through the Spoken Margins server, which keeps nothing. A Substack post page is read only when the
   listener taps that post (owner, 2026-10-21).

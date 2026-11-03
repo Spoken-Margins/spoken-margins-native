@@ -313,10 +313,12 @@ final class ImportedPodcastPlacementCoordinator {
                     }
                     resolvedWork.append((layer, updated, mapOutcome))
                 }
-                await MainActor.run {
-                    guard !Task.isCancelled, let self, self.matching.isCurrent(context) else { return }
+                // The store this hop saved to, when the saved Margins may still want a transcript of the listener's copy.
+                // The question reads that store, so it is asked after this hop, off the main actor (#2507).
+                let storeToAsk: SQLiteSessionStore? = await MainActor.run {
+                    guard !Task.isCancelled, let self, self.matching.isCurrent(context) else { return nil }
                     defer { self.passes.end(.matching, itemId: itemId) }
-                    guard let store = self.deps.store() else { return }
+                    guard let store = self.deps.store() else { return nil }
                     do {
                         let livingWork = try resolvedWork.filter { try store.isLiveImportedCommentaryLayer(id: $0.0.id) } // #915
                         let outcomes = livingWork.sorted { $0.0.importedAt < $1.0.importedAt }.compactMap(\.2)
@@ -355,11 +357,18 @@ final class ImportedPodcastPlacementCoordinator {
                         self.deps.refreshSelectedItemIfShowing(itemId)
                         let resolvedCount = livingWork.filter { $0.0.sourceResolutionStatus == .resolved }.count
                         self.deps.recordDiagnostic("importedPodcastAnchorResolution:\(itemId)", "complete:\(resolvedCount)/\(livingWork.count) \(SharedMarginPlacementSummary(livingWork.map { ($0.0, $0.1) }).diagnosticValue)")
-                        if recipientTranscript == nil, self.commentaryNeedsTranscript(itemId: itemId, store: store) {
-                            self.scheduleTransientTranscript(for: item, localSourceURL: localURL)
-                        }
+                        return recipientTranscript == nil ? store : nil
                     } catch {
                         self.deps.recordDiagnostic("importedPodcastAnchorResolution:\(itemId)", "persistence_failed:\(error.localizedDescription)")
+                        return nil
+                    }
+                }
+                if let storeToAsk, !Task.isCancelled,
+                   await Self.commentaryNeedsTranscript(itemId: itemId, reader: StoreReader(storeToAsk)) {
+                    // A newer request may have replaced this pass while the read ran; it asks for its own file's transcript.
+                    await MainActor.run {
+                        guard !Task.isCancelled, let self, self.matching.isCurrent(context) else { return }
+                        self.scheduleTransientTranscript(for: item, localSourceURL: localURL)
                     }
                 }
             } catch {
@@ -378,7 +387,14 @@ final class ImportedPodcastPlacementCoordinator {
         return .scheduled(joined: submission.joined)
     }
 
-    func commentaryNeedsTranscript(itemId: String, store: SQLiteSessionStore) -> Bool {
+    /// Whether any Margin on the item's podcast layers could still be placed by a transcript of the listener's copy.
+    /// The layers and their Margins are read on `StoreReader`'s background task; only the answer comes back (#2507).
+    nonisolated static func commentaryNeedsTranscript(itemId: String, reader: StoreReader) async -> Bool {
+        (try? await reader.read { layersNeedTranscript(itemId: itemId, store: $0) }) ?? false
+    }
+
+    /// The same question for a caller that is already off the main actor, inside a `StoreReader` closure.
+    nonisolated static func layersNeedTranscript(itemId: String, store: SQLiteSessionStore) -> Bool {
         guard let layers = try? store.loadImportedCommentaryLayers(itemId: itemId) else { return false }
         return ImportedPodcastPlacementPolicy.commentaryNeedsTranscript(
             layers: layers,

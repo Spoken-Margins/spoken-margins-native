@@ -131,8 +131,7 @@ final class EpisodeMapPreparer {
                 job.nextUnitIndex = 0
             }
             job.lastFailureCode = nil
-            // Saved behind the tap (#2509). Queued before a run's own first save, so that one lands after it.
-            saveJobBehindTheTap(job, store: store)
+            try store.saveEpisodeMapPreparationJob(job)
 
             guard let localURL = host.podcastDownloadCoordinator?.validatedLocalURL(for: requestedItemId)
                 ?? item.media?.url.flatMap(URL.init(string:)).flatMap({ $0.isFileURL ? $0 : nil }) else {
@@ -471,28 +470,10 @@ final class EpisodeMapPreparer {
     }
 
     /// Saves the job on a background thread. It is not tied to the run's cancellation: a cancelled run still records
-    /// where it stopped, as the synchronous save did. Saves run in the order they were asked, in line with the
-    /// automatic queueing's saves and the job deletes, so the request's save can't land after the run's first save
-    /// and put the older stage back, or bring back a deleted job (#2509).
+    /// where it stopped, as the synchronous save did.
     private func saveJob(_ job: EpisodeMapPreparationJob, store: SQLiteSessionStore?) async throws {
         guard let store else { return }
-        try await StoreReader(store).readInOrder(AutomaticEpisodeMapJobs.orderKey) { try $0.saveEpisodeMapPreparationJob(job) }
-    }
-
-    /// The start of a request: the job row is written behind the tap, ahead of the run's own first save. A save that
-    /// fails fails the start, as the synchronous save did, only when the request is still waiting for its download; a
-    /// run that has started saves the job again and reports its own failure.
-    private func saveJobBehindTheTap(_ job: EpisodeMapPreparationJob, store: SQLiteSessionStore) {
-        let itemId = job.itemId
-        Task { [weak self] in
-            do {
-                try await self?.saveJob(job, store: store)
-            } catch {
-                guard let self, let host = self.host, self.task == nil, self.pendingRequestItemId == itemId else { return }
-                self.status = "Failed"
-                host.episodeMapFailedToStart(error)
-            }
-        }
+        try await Gate1AppModel.offMain { try store.saveEpisodeMapPreparationJob(job) }
     }
 
     /// Reads the phone's heat while the run works, and pauses it at serious heat (#2092). Before this, heat was

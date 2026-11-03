@@ -372,6 +372,34 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         XCTAssertEqual(model.diagnostics["lastSharedPodcastAcquisition"], "package_reference_after_resolution_failure")
     }
 
+    /// The Margins and Now tabs read `sharedMarginRows`; an import that reloaded only the item left them empty (#3263).
+    @MainActor
+    func testImportedMarginsReachTheMarginsTabWithoutARelaunch() async throws {
+        let root = try temporaryDirectory(named: "spoken-margins-import-margin-rows")
+        let databaseURL = root.appendingPathComponent("recipient.sqlite")
+        let packageURL = root.appendingPathComponent("referenced-episode.spokenmargins")
+        _ = try writePodcastPackage(to: packageURL, packageID: "package-import-margin-rows")
+        let model = Gate1AppModel(
+            sourceLinkResolver: FailingPackagePodcastLinkResolver(),
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            databaseURLOverride: databaseURL
+        )
+        model.resetAndSeed()
+        await model.settleMarginRows()
+
+        model.handleIncomingURL(packageURL)
+        await model.waitForPackageStaging()
+        model.confirmSpokenMarginsPackageImport()
+        try await waitForImportToFinish(model)
+        await model.settleMarginRows()
+
+        let itemID = model.selectedItem.id
+        let timeline = model.selectedItem.importedCommentaryInterjections.values.reduce(0) { $0 + $1.count }
+        XCTAssertGreaterThan(timeline, 0, "the packet should carry Margins")
+        let shared = model.sharedMarginRows.filter { $0.layer.itemId == itemID }
+        XCTAssertEqual(shared.count, timeline, "the Margins tab should list what the Timeline shows")
+    }
+
     @MainActor
     func testPodcastPackageUsesItsOwnEnclosureWhenThePageLookupFindsNoAudio() async throws {
         // Omny-style: the page resolves, but only to a title with no audio (#157).
@@ -992,7 +1020,9 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         XCTAssertNil(kept.resolvedRecipientEditionSHA256, "no pass has run before the download")
         XCTAssertNotEqual(kept.sourceResolutionStatus, .resolved)
         XCTAssertTrue(kept.isEnabled, "an imported layer starts on")
-        XCTAssertNotEqual(kept.revealMode, .guided)
+        // A friend's Margins arrive playing in place (2026-10-31, #3059), so the layer starts guided. The listener's
+        // switch below must therefore go to a different mode, or it would change nothing for the pass to keep.
+        XCTAssertEqual(kept.revealMode, .guided, "an imported layer starts guided, whatever the sender suggested")
 
         let localURL = root.appendingPathComponent("recipient.mp3")
         try Data("recipient-edition".utf8).write(to: localURL)
@@ -1008,7 +1038,7 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
 
         // While it runs: the listener turns one layer off, switches its reveal mode, and deletes the other.
         model.setImportedCommentaryLayerEnabled(kept.id, enabled: false)
-        model.setImportedCommentaryRevealMode(kept.id, mode: .guided)
+        model.setImportedCommentaryRevealMode(kept.id, mode: .companion)
         // The app has no delete control for a shared layer today (3d52686c removed the unused entry point);
         // this is the same write it made.
         var removed = try XCTUnwrap(store.loadImportedCommentaryLayer(id: deleted.id))
@@ -1025,7 +1055,7 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
 
         let keptAfter = try XCTUnwrap(store.loadImportedCommentaryLayer(id: kept.id))
         XCTAssertFalse(keptAfter.isEnabled, "turning the layer off stands")
-        XCTAssertEqual(keptAfter.revealMode, .guided, "the reveal mode stands")
+        XCTAssertEqual(keptAfter.revealMode, .companion, "the reveal mode stands")
         XCTAssertEqual(keptAfter.sourceResolutionStatus, .resolved, "the pass's own result is saved")
         XCTAssertEqual(keptAfter.resolvedRecipientEditionSHA256, recipientDigest)
         let keptMargin = try XCTUnwrap(store.loadImportedCommentaryInterjections(layerId: kept.id).first)

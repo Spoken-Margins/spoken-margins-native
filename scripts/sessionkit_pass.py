@@ -29,6 +29,8 @@ READS = (
     # Source-scraping tests (appSource(...), Gate1AppModel.swift) and the shipped-reader gate that scans the app tests.
     'App/SpokenMarginsApp/Sources/SpokenMarginsApp/',
     'App/SpokenMarginsAppTests/',
+    # The screen tour's checked-in packets from Sam (the appTestFixtures input), which a package test checks against the seeded episode (#3237).
+    'App/TestFixtures/',
     # Supertonic's narration tests read its model from artifacts/voice-catalog/files/ (the supertonicModel input),
     # which is git-ignored: `scripts/voice-catalog fetch` writes it, each file pinned by sha256 in
     # Contracts/voice-models/sources.json, which Contracts/ above covers (#1820).

@@ -1,0 +1,11 @@
+{
+  "sender": "Sam (synthetic)",
+  "voice": "Samantha",
+  "packageId": "ui-tour-sam-margin",
+  "createdAt": "2026-11-01T18:00:00Z",
+  "fileName": "sharing-loop-sam-margin",
+  "item": {"itemType":"podcast","canonicalURL":"https://example.invalid/ui-test/episode","originalURL":"https://example.invalid/ui-test/episode","title":"UI Test Episode","enclosureURL":"https://cdn.example.invalid/ui-test-episode.caf","durationMs":1500000},
+  "margins": [
+    { "id": "sam-1", "atMs": 300000, "createdAt": "2026-11-01T18:00:00Z", "text": "This is where the host changes their mind. Listen for it." }
+  ]
+}

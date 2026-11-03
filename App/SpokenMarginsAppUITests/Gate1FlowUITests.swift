@@ -801,13 +801,17 @@ final class Gate1FlowUITests: XCTestCase {
 
         tapRoot("Following")
         XCTAssertTrue(element("sources.screen").waitForExistence(timeout: 4))
-        // Following opens on its entries; the feed field lives on Manage Feeds (#141).
+        // Following opens on its entries; the feed field lives on the Follow sheet (#141, #3205).
         XCTAssertFalse(element("sources.follow.url").exists)
         element("sources.manageFeeds").tap()
         XCTAssertTrue(element("sources.follow.url").waitForExistence(timeout: 4))
+        XCTAssertTrue(element("sources.follow.paste").exists)
         XCTAssertTrue(element("sources.follow.button").exists)
         XCTAssertTrue(element("sources.browseCatalog").exists)
-        app.navigationBars.buttons.element(boundBy: 0).tap()
+        // Read Later and Listening Edition imports are in Settings, not on this sheet.
+        XCTAssertFalse(app.buttons["Read Later Services"].exists)
+        XCTAssertFalse(app.buttons["Import Listening Edition"].exists)
+        element("sources.follow.cancel").tap()
         XCTAssertTrue(element("sources.manageFeeds").waitForExistence(timeout: 4))
         tapRoot("Settings")
         XCTAssertTrue(element("settings.screen").waitForExistence(timeout: 5))
@@ -1208,14 +1212,14 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(integrity.exists)
         XCTAssertTrue(app.staticTexts["Add the source to continue"].exists)
 
-        let addSource = app.buttons["Add Source"].firstMatch
+        let addSource = element("build23.recipient.addToLibrary")
         XCTAssertTrue(addSource.waitForExistence(timeout: 4))
         let pinnedImport = app.buttons["Import"].firstMatch
         for _ in 0..<6 where addSource.frame.maxY >= pinnedImport.frame.minY {
             app.scrollViews["build23.recipient.experience"].swipeUp()
         }
         XCTAssertLessThan(addSource.frame.maxY, pinnedImport.frame.minY,
-                          "Add Source remains covered by the pinned import actions.")
+                          "Add to Library remains covered by the pinned import actions.")
         addSource.tap()
         XCTAssertTrue(element("addSource.sheet").waitForExistence(timeout: 5))
         app.buttons["Close"].firstMatch.tap()

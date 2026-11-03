@@ -5,7 +5,10 @@ import (
 	"html/template"
 	"io"
 	"net/url"
+	"regexp"
 	"strings"
+
+	"spokenmargins.dev/bridge/internal/weborigin"
 )
 
 // The landing page holds no Margin, excerpt or title: the preview is sealed (#805), so the server
@@ -13,6 +16,10 @@ import (
 // key in location.hash, checks it (the excerpt ceilings, a title, at least one Margin) and fills in
 // the Margins as text. The install link and the report form stay server-rendered, so they work
 // without the key and without JavaScript.
+//
+// With a web app origin configured (-links-web-url, #2168) the same script instead sends a browser that has the key
+// to the web app's page for this link, which plays the episode with the Margins. The key stays in the address's #
+// part and goes only to the web app's own page. "?report" keeps the browser here, on the report form.
 
 // InstallURL must be a real app listing or a TestFlight invitation supplied by
 // the owner, never a guessed listing or an arbitrary redirect on the page.
@@ -30,7 +37,7 @@ var landing = template.Must(template.New("landing").Parse(`<!doctype html>
 <style>body{font:17px/1.6 system-ui,sans-serif;margin:0;background:#faf9f6;color:#252524}main{max-width:42rem;margin:auto;padding:1.5rem}article{margin:2rem 0;padding:1rem;background:white;border:1px solid #ddd;border-radius:.7rem}blockquote{margin:1rem 0;border-left:3px solid #aaa;padding-left:1rem}p{white-space:pre-wrap;overflow-wrap:anywhere}a{color:#305d78}button,select{font:inherit;padding:.5rem;max-width:100%}small{color:#555}</style>
 <script type="module" src="/l/share-link-page.mjs"></script></head>
 <body><main><header><p>Spoken Margins</p><h1>Shared Margins</h1><p>These Margins are available for 30 days. Source audio is not served here.</p></header>
-<section id="margins" data-link="{{.ID}}"><p id="status" role="status"></p><noscript><p>Turn on JavaScript to read these Margins. They are sealed, and only your browser can open them with the key in the link.</p></noscript></section>
+<section id="margins" data-link="{{.ID}}"{{if .WebURL}} data-web="{{.WebURL}}"{{end}}><p id="status" role="status"></p><noscript><p>Turn on JavaScript to read these Margins. They are sealed, and only your browser can open them with the key in the link.</p></noscript></section>
 <p><a href="{{.InstallURL}}" rel="noreferrer noopener">Install Spoken Margins (App Store / TestFlight)</a></p>
 <form method="post" action="/l/{{.ID}}/report"><h2>Report this link</h2><p>Anyone can report this link. It is taken down at once and nobody reads what it held.</p><p><label for="category">What is wrong?</label> <select id="category" name="category" required><option value="" selected disabled>Choose one</option><option value="intimate_images">Intimate images shared without consent</option><option value="abuse_material">Child sexual abuse material</option><option value="harassment">Harassment or defamation</option><option value="hateful_conduct">Hateful conduct</option><option value="copyright">Copyright (see the copyright page for a formal notice)</option><option value="other">Other</option></select></p><p><label for="link">Only for child sexual abuse material: paste the full link from the address bar, including the part after the #. Leave this empty for everything else.</label> <input id="link" name="link" type="text" maxlength="2048" autocomplete="off"></p> <button type="submit">Report this link</button></form>
 <footer><p>{{range $i, $l := .Policies}}{{if $i}} · {{end}}<a href="{{$l.Path}}">{{$l.Title}}</a>{{end}}</p></footer>
@@ -48,16 +55,24 @@ var PolicyLinks = []PolicyLink{
 	{"Terms of Use", "/terms/"},
 }
 
-// Render writes the landing page shell for one link.
-func Render(w io.Writer, id string, installURL string) error {
-	if !ValidID(id) || !ValidInstallURL(installURL) {
+// pageWebOrigin is the shape the page's script follows (share-link-page.mjs checks the same): a plain host, no
+// punctuation weborigin.Valid would let through.
+var pageWebOrigin = regexp.MustCompile(`^https?://[a-z0-9.-]+(:[0-9]{1,5})?$`)
+
+// ValidWebOrigin reports whether s may be the web app origin a share page hands browsers to.
+func ValidWebOrigin(s string) bool { return weborigin.Valid(s) && pageWebOrigin.MatchString(s) }
+
+// Render writes the landing page shell for one link. webURL is the web app's origin, or empty for none.
+func Render(w io.Writer, id string, installURL string, webURL string) error {
+	if !ValidID(id) || !ValidInstallURL(installURL) || (webURL != "" && !ValidWebOrigin(webURL)) {
 		return errors.New("links: invalid page configuration")
 	}
 	return landing.Execute(w, struct {
 		ID         string
 		InstallURL string
+		WebURL     string
 		Policies   []PolicyLink
-	}{id, installURL, PolicyLinks})
+	}{id, installURL, webURL, PolicyLinks})
 }
 
 // Unavailable is why a share page has nothing to show. Not found, expired and taken down share one

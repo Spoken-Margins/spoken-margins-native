@@ -20,9 +20,10 @@ struct Build23SenderSharingExperience: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 HStack(alignment: .center) {
-                    Text("Share Margins")
+                    Text(coordinator.senderHeading)
                         .font(.headline)
                         .foregroundStyle(AppColors.text)
+                        .accessibilityIdentifier("build23.sender.heading")
                     Spacer()
                     Button("Cancel", role: .cancel) {
                         coordinator.send(.cancel)
@@ -579,6 +580,13 @@ struct Build23SenderSharingExperience: View {
                         .accessibilityHint("Opens the system share sheet with the verified package file")
                         .accessibilityIdentifier("build23.sender.share.present")
                     }
+
+                    #if SM_SHARE_LINK_CREATION
+                    // Only in a build made to make links (#487); the file share above is unchanged.
+                    if snapshot.canShareVerifiedFile {
+                        ShareLinkSendControl(packageURL: coordinator.verifiedShareFileURL)
+                    }
+                    #endif
 
                     Build23VerifiedRecipientPreviewPanel(preview: verifiedPreview)
                 } else {

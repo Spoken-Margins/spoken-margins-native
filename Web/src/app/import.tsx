@@ -1,11 +1,12 @@
 // Opening a `.spokenmargins` file, however it arrives: the file picker on the Library and Margins tabs (#3039), a
 // file dropped on the app, a file the installed app is opened with (desktop Chrome and Edge), (installed on Android)
 // the share sheet through the service worker, or a share link (#3003), whose packet is fetched sealed and opened
-// with the key in its `#` part. Each lands the listener on the first Margin's moment in Now Playing (#2979).
-import { useCallback, useEffect, useRef, type ReactNode } from 'react';
+// with the key in its `#` part. Each lands the listener on the first Margin's moment in Now Playing (#2979). A page
+// opened at a link starts on the arrival page instead (screens/Arrival.tsx, #2168).
+import { useCallback, useRef, type ReactNode } from 'react';
 import { useData } from './data.tsx';
 import { packetsToOpen } from './logic/backup.ts';
-import { importSummary, placeImport, type Landing } from './logic/import.ts';
+import { UNNAMED_SENDER, importSummary, placeImport, type Landing } from './logic/import.ts';
 import { packetPickerAccept, packetRoute } from './logic/native-packets.ts';
 import { plainError } from './logic/messages.ts';
 import { NotSavedError } from './logic/storage.ts';
@@ -18,7 +19,7 @@ export type OpenMarginFile = (bytes: Uint8Array, fileName: string | undefined) =
 export type OpenShareLink = (parsed: ParsedLink) => Promise<void>;
 
 /** Reads a packet, stores its Margins (and its episode, when new) and opens Now Playing at the first one. */
-function useLandPacket(onLanded: (landing: Landing) => void): (bytes: Uint8Array, fileName: string | undefined) => Promise<void> {
+function useLandPacket(onLanded: (landing: Landing) => void): (bytes: Uint8Array, fileName: string | undefined, fromLink?: boolean) => Promise<void> {
   const data = useData();
   const player = usePlayer();
   const { toast } = useUi();
@@ -26,10 +27,10 @@ function useLandPacket(onLanded: (landing: Landing) => void): (bytes: Uint8Array
   dataRef.current = data;
 
   return useCallback(
-    async (bytes, fileName) => {
+    async (bytes, fileName, fromLink = false) => {
       const read = await services.packets.readPacket(bytes, fileName);
       const current = dataRef.current;
-      const placed = placeImport(read, current.shows, current.episodes, undefined, current.margins);
+      const placed = placeImport(read, current.shows, current.episodes, undefined, current.margins, fromLink ? { unnamedAuthor: UNNAMED_SENDER } : {});
       if (placed.show) await current.follow(placed.show, [placed.episode]);
       else if (placed.newEpisode) await current.updateEpisode(placed.episode);
       for (const margin of placed.margins) await current.addMargin(margin);
@@ -81,7 +82,7 @@ export function useOpenShareLink(onLanded: (landing: Landing) => void): OpenShar
         return;
       }
       try {
-        await land(bytes, 'shared.spokenmargins');
+        await land(bytes, 'shared.spokenmargins', true);
       } catch (error) {
         // A write that failed has already said what wasn't saved. Otherwise it opened under the key but isn't a
         // packet this app can read.
@@ -90,17 +91,6 @@ export function useOpenShareLink(onLanded: (landing: Landing) => void): OpenShar
     },
     [land, toast],
   );
-}
-
-/** Opens the link the app was loaded with (`…/l/<id>#<key>`), once storage is ready, so the episode can match. */
-export function useLaunchLink(link: ParsedLink, open: OpenShareLink): void {
-  const data = useData();
-  const handled = useRef(false);
-  useEffect(() => {
-    if (handled.current || !data.ready || link.kind === 'none') return;
-    handled.current = true;
-    void open(link);
-  }, [data.ready, link, open]);
 }
 
 /**

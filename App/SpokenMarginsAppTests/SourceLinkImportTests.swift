@@ -1768,7 +1768,12 @@ final class SourceLinkImportTests: XCTestCase {
         let itemId = try XCTUnwrap(model.snapshot.itemId)
         let localURL = FileManager.default.temporaryDirectory.appendingPathComponent("battery-safe.mp3")
         model.podcastLocalAssetDidBecomeReady(itemId: itemId, url: localURL)
-        await Task.yield()
+        // The imported-commentary question reads the store off the main actor (#2507), so the decision lands a moment later.
+        XCTAssertNil(model.diagnostics["sourceTranscriptionAfterDownload:\(itemId)"],
+                     "the download decision waits for the off-main read instead of reading the store on the tap")
+        try await waitFor("the download decision", timeoutNanoseconds: 5_000_000_000) {
+            model.diagnostics["sourceTranscriptionAfterDownload:\(itemId)"] != nil
+        }
 
         let fullRequestCount = await transcriber.fullRequestCount()
         XCTAssertEqual(fullRequestCount, 0)
@@ -1850,7 +1855,10 @@ final class SourceLinkImportTests: XCTestCase {
 
         let localURL = FileManager.default.temporaryDirectory.appendingPathComponent("mapped.mp3")
         model.podcastLocalAssetDidBecomeReady(itemId: itemId, url: localURL)
-        await Task.yield()
+        // The imported-commentary question reads the store off the main actor (#2507), so the decision lands a moment later.
+        try await waitFor("the download decision", timeoutNanoseconds: 5_000_000_000) {
+            model.diagnostics["sourceTranscriptionAfterDownload:\(itemId)"] != nil
+        }
 
         let fullRequestCount = await transcriber.fullRequestCount()
         XCTAssertEqual(fullRequestCount, 0)

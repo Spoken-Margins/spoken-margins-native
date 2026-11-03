@@ -57,11 +57,4 @@ extension Gate1AppModel {
         importedPodcastPlacement.resolve(
             itemId: itemId, localURL: localURL, recipientTranscriptOverride: recipientTranscriptOverride)
     }
-
-    func importedPodcastCommentaryNeedsTranscript(
-        itemId: String,
-        store: SQLiteSessionStore
-    ) -> Bool {
-        importedPodcastPlacement.commentaryNeedsTranscript(itemId: itemId, store: store)
-    }
 }

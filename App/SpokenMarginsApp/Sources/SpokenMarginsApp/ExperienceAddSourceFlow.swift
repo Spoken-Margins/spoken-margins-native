@@ -73,7 +73,7 @@ struct ExperienceAddSourceFlow: View {
             }
             .scrollDismissesKeyboard(.interactively)
             .background(AppColors.bone)
-            .navigationTitle(showsPinnedTextAction ? "Add Text" : "Add Source")
+            .navigationTitle(showsPinnedTextAction ? "Add Text" : "Add to Library")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 if showsPinnedTextAction {
