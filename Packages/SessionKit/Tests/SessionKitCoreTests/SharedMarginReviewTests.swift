@@ -45,6 +45,7 @@ final class SharedMarginReviewTests: XCTestCase {
         XCTAssertEqual(ids(SharedMarginReview.entriesBehind(entries, placeMs: 60_000)), [], "a Margin at the place is still ahead")
         XCTAssertEqual(ids(SharedMarginReview.entriesBehind(entries, placeMs: 120_001)), ["passed", "here"])
         XCTAssertEqual(ids(SharedMarginReview.entriesBehind(entries, placeMs: 1_200_000)), ["passed", "here", "ahead"])
+        XCTAssertEqual(ids(SharedMarginReview.entriesBehind(entries, placeMs: nil)), ["passed", "here", "ahead"], "place unknown: ask, as before")
     }
 
     func testOnlyMarginsTheListenerHasntHeardAreOffered() {

@@ -251,19 +251,18 @@ extension Gate1AppModel {
         pendingImportedCommentary = prompt
         importedCommentaryAutoPlayTask?.cancel()
         importedCommentaryAutoPlayTask = nil
-        if let delayMs = style.autoPlayAfterMs {
+        // One task for both: the auto-play delay, or the tone-only card's time to be tapped.
+        let autoPlays = style.autoPlayAfterMs != nil
+        if let waitMs = style.autoPlayAfterMs ?? style.expiresAfterMs {
             importedCommentaryAutoPlayTask = Task { @MainActor [weak self] in
-                try? await Task.sleep(for: .milliseconds(delayMs))
+                try? await Task.sleep(for: .milliseconds(waitMs))
                 guard !Task.isCancelled, let self,
                       self.pendingImportedCommentary?.id == prompt.id else { return }
-                self.hangTelemetry.labels.scoped("importedCommentaryAutoPlay") { self.listenToPendingImportedCommentary() }
-            }
-        } else if let expiresMs = style.expiresAfterMs {
-            importedCommentaryAutoPlayTask = Task { @MainActor [weak self] in
-                try? await Task.sleep(for: .milliseconds(expiresMs))
-                guard !Task.isCancelled, let self,
-                      self.pendingImportedCommentary?.id == prompt.id else { return }
-                self.dismissPendingImportedCommentary()
+                if autoPlays {
+                    self.hangTelemetry.labels.scoped("importedCommentaryAutoPlay") { self.listenToPendingImportedCommentary() }
+                } else {
+                    self.dismissPendingImportedCommentary()
+                }
             }
         }
     }
