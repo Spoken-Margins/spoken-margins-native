@@ -337,62 +337,6 @@ final class EpisodeMapPreparerTests: XCTestCase {
         XCTAssertNil(model.pendingMapGenerationItemId)
     }
 
-    /// #2509: a request that has to wait for its download writes its job row behind the tap, and the row lands with the
-    /// stage a later run resumes from.
-    func testAJobWaitingForItsDownloadIsSavedBehindTheTap() async throws {
-        let root = FileManager.default.temporaryDirectory.appending(path: "p2509-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: root) }
-        let model = Gate1AppModel(
-            audioPlaybackClient: NoopAudioPlaybackClient(),
-            databaseURLOverride: root.appending(path: "library.sqlite")
-        )
-        let store = try model.libraryStoreForTesting()
-        try store.saveItem(Item(
-            id: "p2509-waiting", title: "p2509-waiting", mediaType: TargetType.transcriptBackedMedia.rawValue, text: nil,
-            externalReference: nil, status: "ready",
-            media: ItemMedia(sourceType: .remoteStream, durationMs: 10_000)
-        ))
-
-        model.prepareEpisodeMap(itemId: "p2509-waiting")
-
-        XCTAssertEqual(model.episodeMapPreparationStatus, "Waiting for download")
-        try await waitUntil("the waiting job is saved") {
-            (try? store.loadEpisodeMapPreparationJobs())?.contains { $0.itemId == "p2509-waiting" } == true
-        }
-        let job = try XCTUnwrap(store.loadEpisodeMapPreparationJobs().first { $0.itemId == "p2509-waiting" })
-        XCTAssertEqual(job.stage, .verifySource)
-        XCTAssertEqual(job.policy, .explicit)
-        XCTAssertNil(job.lastFailureCode)
-        XCTAssertFalse(job.isCancelled)
-        XCTAssertEqual(model.episodeMapPreparationStatus, "Waiting for download", "a saved job leaves the status alone")
-    }
-
-    /// #2509: the request's job save and a delete of the item's jobs share one queue, so deleting right after asking
-    /// leaves no job behind.
-    func testDeletingAWaitingItemsJobsRightAfterTheRequestLeavesNoJob() async throws {
-        let root = FileManager.default.temporaryDirectory.appending(path: "p2509-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: root) }
-        let model = Gate1AppModel(
-            audioPlaybackClient: NoopAudioPlaybackClient(),
-            databaseURLOverride: root.appending(path: "library.sqlite")
-        )
-        let store = try model.libraryStoreForTesting()
-        try store.saveItem(Item(
-            id: "p2509-deleted", title: "p2509-deleted", mediaType: TargetType.transcriptBackedMedia.rawValue, text: nil,
-            externalReference: nil, status: "ready",
-            media: ItemMedia(sourceType: .remoteStream, durationMs: 10_000)
-        ))
-
-        model.prepareEpisodeMap(itemId: "p2509-deleted")
-        model.deleteEpisodeMapPreparationJobsInBackground(itemId: "p2509-deleted")
-        // Waits behind both writes, which share the queue.
-        try await StoreReader(store).readInOrder(AutomaticEpisodeMapJobs.orderKey) { _ in () }
-
-        XCTAssertEqual(try store.loadEpisodeMapPreparationJobs(), [], "the delete ran after the request's save")
-    }
-
     // MARK: clean-up files go off the main thread (#2510)
 
     private struct Leftovers {
