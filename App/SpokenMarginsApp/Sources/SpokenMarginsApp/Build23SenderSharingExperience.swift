@@ -581,6 +581,13 @@ struct Build23SenderSharingExperience: View {
                         .accessibilityIdentifier("build23.sender.share.present")
                     }
 
+                    #if SM_SHARE_LINK_CREATION
+                    // Only in a build made to make links (#487); the file share above is unchanged.
+                    if snapshot.canShareVerifiedFile {
+                        ShareLinkSendControl(packageURL: coordinator.verifiedShareFileURL)
+                    }
+                    #endif
+
                     Build23VerifiedRecipientPreviewPanel(preview: verifiedPreview)
                 } else {
                     unavailablePreview(
