@@ -1020,7 +1020,9 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         XCTAssertNil(kept.resolvedRecipientEditionSHA256, "no pass has run before the download")
         XCTAssertNotEqual(kept.sourceResolutionStatus, .resolved)
         XCTAssertTrue(kept.isEnabled, "an imported layer starts on")
-        XCTAssertNotEqual(kept.revealMode, .guided)
+        // A friend's Margins arrive playing in place (2026-10-31, #3059), so the layer starts guided. The listener's
+        // switch below must therefore go to a different mode, or it would change nothing for the pass to keep.
+        XCTAssertEqual(kept.revealMode, .guided, "an imported layer starts guided, whatever the sender suggested")
 
         let localURL = root.appendingPathComponent("recipient.mp3")
         try Data("recipient-edition".utf8).write(to: localURL)
@@ -1036,7 +1038,7 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
 
         // While it runs: the listener turns one layer off, switches its reveal mode, and deletes the other.
         model.setImportedCommentaryLayerEnabled(kept.id, enabled: false)
-        model.setImportedCommentaryRevealMode(kept.id, mode: .guided)
+        model.setImportedCommentaryRevealMode(kept.id, mode: .companion)
         // The app has no delete control for a shared layer today (3d52686c removed the unused entry point);
         // this is the same write it made.
         var removed = try XCTUnwrap(store.loadImportedCommentaryLayer(id: deleted.id))
@@ -1053,7 +1055,7 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
 
         let keptAfter = try XCTUnwrap(store.loadImportedCommentaryLayer(id: kept.id))
         XCTAssertFalse(keptAfter.isEnabled, "turning the layer off stands")
-        XCTAssertEqual(keptAfter.revealMode, .guided, "the reveal mode stands")
+        XCTAssertEqual(keptAfter.revealMode, .companion, "the reveal mode stands")
         XCTAssertEqual(keptAfter.sourceResolutionStatus, .resolved, "the pass's own result is saved")
         XCTAssertEqual(keptAfter.resolvedRecipientEditionSHA256, recipientDigest)
         let keptMargin = try XCTUnwrap(store.loadImportedCommentaryInterjections(layerId: kept.id).first)
