@@ -43,6 +43,12 @@ public struct PlayQueue: Codable, Equatable, Sendable {
         itemIds.removeAll()
     }
 
+    /// Drops queued items that no longer exist. The queue screen does this before it reorders, so the rows it shows
+    /// and the queue it edits are the same list.
+    public mutating func prune(isAvailable: (String) -> Bool) {
+        itemIds.removeAll { !isAvailable($0) }
+    }
+
     /// Takes the next item that still exists. Items that were deleted since they were queued are dropped on the way,
     /// so one of them never jams the queue.
     public mutating func popNext(isAvailable: (String) -> Bool) -> String? {

@@ -248,6 +248,18 @@ final class ShareLinkUploadTests: XCTestCase {
         XCTAssertEqual(Set(source.keys), ["title", "show", "url"])
     }
 
+    func testAnItemWithNoPublicWebAddressNeedsTheFileInTheSameMessage() throws {
+        let words = ["Listen to this part."]
+        let page = try ShareLinkPreviewBuilder.make(title: "T", show: nil, pageURL: "https://example.com/post", enclosureURL: nil, marginTexts: words)
+        XCTAssertFalse(page.needsCompanionFile)
+        // Every way an item ends up with no public page: none at all, a feed or audio address, a private address.
+        for address in [nil, "", "https://example.com/feed/podcast/", "https://cdn.example.com/ep.mp3",
+                        "https://example.com/post?token=abc", "http://example.com/post", "file:///private/doc.pdf"] as [String?] {
+            let made = try ShareLinkPreviewBuilder.make(title: "T", show: nil, pageURL: address, enclosureURL: nil, marginTexts: words)
+            XCTAssertTrue(made.needsCompanionFile, "\(address ?? "nil")")
+        }
+    }
+
     func testTheLinksServiceNameMatchesTheServersConfig() {
         XCTAssertEqual(ServerService.links, "links")
         let config = ServerConfig(serial: 1, services: ["links": .init(enabled: true, minimumBuild: 35)])
