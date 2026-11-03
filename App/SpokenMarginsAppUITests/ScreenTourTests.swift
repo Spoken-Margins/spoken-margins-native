@@ -116,7 +116,7 @@ final class ScreenTourTests: XCTestCase {
 
         // The first-run drawer opens by itself only on an empty Library; Manage Feeds (Following's plus) opens the same
         // drawer. Browse used to sit on Following itself, and the tour failed there on every run until #3237.
-        element("sources.manageFeeds").tap()
+        button("sources.manageFeeds").tap()
         scrollTo("sources.browseCatalog").tap()
         XCTAssertTrue(element("catalog.drawer.done").waitForExistence(timeout: 5), "The first-run drawer did not appear")
         capture("07-first-run-drawer", "Browse podcasts and writers drawer, from Manage Feeds")
@@ -195,7 +195,7 @@ final class ScreenTourTests: XCTestCase {
         let review = element("build23.recipient.experience")
         XCTAssertTrue(review.waitForExistence(timeout: 15), "Sam's packet did not open the import review")
         capture("20-import-review", "Sam's packet: the import review as it opens")
-        let importButton = element("build23.recipient.import")
+        let importButton = button("build23.recipient.import")
         waitFor(importButton, enabled: true, "The import review never offered Import")
         importButton.tap()
         capture("21-importing", "Just after Import")
@@ -274,7 +274,7 @@ final class ScreenTourTests: XCTestCase {
     private func openItem(_ itemId: String) {
         if !element("item.screen").exists {
             tapRoot("Library")
-            let row = app.buttons["library.row.\(itemId)"]
+            let row = app.buttons["library.row.\(itemId)"].firstMatch
             XCTAssertTrue(row.waitForExistence(timeout: 8), "The episode is missing from Library")
             row.tap()
         }
@@ -290,7 +290,7 @@ final class ScreenTourTests: XCTestCase {
         }
     }
 
-    private var playPause: XCUIElement { app.buttons["playback.play.button"] }
+    private var playPause: XCUIElement { app.buttons["playback.play.button"].firstMatch }
 
     private func tapButton(_ identifier: String) {
         let control = app.buttons[identifier].firstMatch
@@ -384,8 +384,16 @@ final class ScreenTourTests: XCTestCase {
         index.append((attachment.name ?? screen, shows))
     }
 
+    /// SwiftUI can put one identifier on a wrapper (`Other`) and the `Button` inside it, so the bare query matches
+    /// two nodes: a tap fails with "Multiple matching elements" and an `exists AND enabled` wait never passes (#3237).
+    /// `.firstMatch` takes the outermost node, the one that is present as soon as the screen is.
     private func element(_ identifier: String) -> XCUIElement {
-        app.descendants(matching: .any)[identifier]
+        app.descendants(matching: .any)[identifier].firstMatch
+    }
+
+    /// The `Button` node itself, for taps and for waits on whether it is enabled (the wrapper does not carry that).
+    private func button(_ identifier: String) -> XCUIElement {
+        app.buttons[identifier].firstMatch
     }
 
     private func tapRoot(_ name: String) {
