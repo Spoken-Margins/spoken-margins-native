@@ -12,6 +12,7 @@ enum PlayQueueController {
         if let queue { return queue }
         let loaded = store(model)?.load() ?? PlayQueue()
         queue = loaded
+        PlayQueueState.shared.itemIds = loaded.itemIds
         return loaded
     }
 
@@ -19,6 +20,7 @@ enum PlayQueueController {
         var value = current(model)
         change(&value)
         queue = value
+        PlayQueueState.shared.itemIds = value.itemIds
         do { try store(model)?.save(value) } catch { model.diagnostics["playQueueSave"] = "failed: \(error.localizedDescription)" }
     }
 
@@ -28,7 +30,43 @@ enum PlayQueueController {
     }
 }
 
+/// The queue's ids as views watch them (#1990), so the Library entry and the queue screen follow every change without a
+/// flag on `Gate1AppModel`. `PlayQueueController` is the only writer.
+@MainActor
+final class PlayQueueState: ObservableObject {
+    static let shared = PlayQueueState()
+    @Published fileprivate(set) var itemIds: [String] = []
+}
+
 extension Gate1AppModel {
+    /// Loads the queue file once, so the Library can show its entry at launch.
+    func loadPlayQueue() { _ = PlayQueueController.current(self) }
+
+    /// Plays a queued item now, from the queue screen. It leaves the queue once it has started, as it does when it
+    /// starts by advancing. A start that was refused (recording a Margin, an episode not downloaded while offline) keeps
+    /// its place in the queue.
+    func playQueuedItemNow(itemId: String) {
+        startItem(id: itemId)
+        guard snapshot.itemId == itemId else { return }
+        PlayQueueController.update(self) { $0.remove(itemId) }
+    }
+
+    func removeFromQueue(itemId: String) {
+        PlayQueueController.update(self) { $0.remove(itemId) }
+    }
+
+    func moveInQueue(fromOffsets source: IndexSet, toOffset destination: Int) {
+        let available = Set(libraryItems.map(\.id))
+        PlayQueueController.update(self) {
+            $0.prune(isAvailable: { available.contains($0) }) // the rows on screen are the queue, with no hidden items
+            $0.move(fromOffsets: source, toOffset: destination)
+        }
+    }
+
+    func clearPlayQueue() {
+        PlayQueueController.update(self) { $0.clear() }
+    }
+
     func queuePlayNext(itemId: String) {
         PlayQueueController.update(self) { $0.playNext(itemId) }
         reportSuccess("\(queuedTitle(itemId)) plays next.")
