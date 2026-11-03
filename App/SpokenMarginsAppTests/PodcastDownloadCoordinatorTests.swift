@@ -235,6 +235,34 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
         XCTAssertEqual(try fixture.store.loadPodcastDownloads().first { $0.itemId == "valid" }?.state, .failed)
     }
 
+    /// #2509: a launch repairs what a kill left behind in memory at once and writes the repair behind. Once the row
+    /// queue is flushed, the store says what memory says, so the next launch does not repeat the repair.
+    func testARelaunchWritesItsRepairsBehindTheLaunch() throws {
+        let fixture = try makeFixture()
+        try fixture.store.savePodcastDownload(PodcastDownloadRecord(
+            id: "download-interrupted", itemId: "interrupted", remoteURL: "https://example.com/interrupted.mp3",
+            state: .downloading, bytesWritten: 10, expectedBytes: 100
+        ))
+        try fixture.store.savePodcastDownload(PodcastDownloadRecord(
+            id: "download-gone", itemId: "gone", remoteURL: "https://example.com/gone.mp3",
+            localRelativePath: "gone.mp3", state: .availableOffline, bytesWritten: 4, expectedBytes: 4
+        ))
+
+        let coordinator = try PodcastDownloadCoordinator(
+            store: fixture.store, applicationSupportDirectory: fixture.support,
+            cacheLimit: .five, monitorsNetwork: false, usesBackgroundSession: false
+        )
+
+        XCTAssertEqual(coordinator.recordsByItemId["interrupted"]?.state, .waitingForWiFi)
+        XCTAssertEqual(coordinator.recordsByItemId["gone"]?.state, .failed)
+        coordinator.flushPendingRowWritesForTesting()
+        let rows = try fixture.store.loadPodcastDownloads()
+        XCTAssertEqual(rows.first { $0.itemId == "interrupted" }?.state, .waitingForWiFi)
+        XCTAssertEqual(rows.first { $0.itemId == "gone" }?.state, .failed)
+        XCTAssertNil(rows.first { $0.itemId == "gone" }?.localRelativePath)
+        coordinator.shutdown()
+    }
+
     func testFailedReplacementRetainsPreviouslyDownloadedEpisodeAcrossRelaunch() async throws {
         let fixture = try makeFixture()
         let directory = fixture.support.appending(path: "PodcastAudio")
