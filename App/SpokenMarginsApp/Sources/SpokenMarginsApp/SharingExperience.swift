@@ -283,7 +283,6 @@ struct InterjectionSharingView: View {
                                 }
                             }
                             .buttonStyle(PrimaryButtonStyle())
-                            .accessibilityIdentifier("sharing.send.button")
                             .disabled(
                                 model.sharingState.drafts.allSatisfy { !$0.isIncluded }
                                     || model.sharingState.isExporting
@@ -910,7 +909,6 @@ struct SharedSpokenMarginsPackageReadyView: View {
                     .buttonStyle(PrimaryButtonStyle())
                 Button("Done") { model.isSharedSpokenMarginsPackagePresented = false }
                     .buttonStyle(SecondaryButtonStyle())
-                    .accessibilityIdentifier("sharing.done.button")
                 Spacer()
             }
             .padding(20)

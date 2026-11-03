@@ -1,7 +1,7 @@
 import XCTest
 
 // J12: the sharing loop, as far as one simulator can script it (#3222). The listener records two Margins, sends
-// them (the packet's size is read off the ready screen), and then a friend's packet arrives for the same episode:
+// them (the packet's size is read off the package details), and then a friend's packet arrives for the same episode:
 // the Margins tab lists it without a relaunch of the screen, and "Hear new Margins first" plays it in place.
 // The two-device hand-off is a fixture: the relaunch with SPOKEN_MARGINS_UI_TEST_KEEP_LIBRARY and
 // SPOKEN_MARGINS_UI_TEST_COOP imports one Margin from "Sam", the way J9 does. Adding the podcast by search needs the
@@ -63,21 +63,23 @@ final class J12SharingLoopJourneyUITests: XCTestCase {
             endStep("two Margins recorded")
         }
 
-        XCTContext.runActivity(named: "J12 step 3: Send them: the packet is made and its size is shown") { _ in
+        XCTContext.runActivity(named: "J12 step 3: Send them: the packet is built and its size is shown") { _ in
             beginStep()
-            tap("playback.share.button")
-            tap("sharing.send.button")
-            let size = element("sharing.packetSize")
-            let madeAt = Date()
-            XCTAssertTrue(size.waitForExistence(timeout: 60), "The packet was not made, or its size is not shown")
-            report.append(String(format: "packet made in %.1fs, %@", Date().timeIntervalSince(madeAt), size.label))
-            endStep("packet ready")
-            // The system share sheet is not scripted: the file is ready, which is where the sender hands it on.
-            tap("sharing.done.button")
-            XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8), "Did not return to Now Playing")
-            XCTAssertTrue(playPause.waitForExistence(timeout: 5), "Playback control is missing")
-            if playPause.label == "Pause" { playPause.tap() }
-            waitUntil("Episode did not reach the paused state") { self.playPause.label == "Play" }
+            tap("playback.margins.button")
+            tap("margins.shareItem.item-pill")
+            XCTAssertTrue(element("build23.sender.experience").waitForExistence(timeout: 8), "The Share Margins sheet did not open")
+            let cleanUpQuestion = app.alerts["Clean selected Margins automatically?"]
+            if cleanUpQuestion.waitForExistence(timeout: 2) { cleanUpQuestion.buttons["Not now"].tap() } // first share only
+            tap("build23.sender.select.continue")
+            XCTAssertTrue(element("build23.sender.stage.review").waitForExistence(timeout: 8), "The review step did not open")
+            // The package details are built without opening the iOS share sheet, which a script can't dismiss.
+            tap("build23.sender.preview.build")
+            let size = element("build23.sender.preview.packetSize")
+            let builtAt = Date()
+            XCTAssertTrue(size.waitForExistence(timeout: 60), "The packet was not built, or its size is not shown")
+            report.append(String(format: "packet built in %.1fs, %@", Date().timeIntervalSince(builtAt), size.label))
+            endStep("packet ready (the system share sheet is not scripted)")
+            tap("build23.sender.cancel")
         }
 
         XCTContext.runActivity(named: "J12 step 4: A friend's packet arrives (fixture); Continue offers it first") { _ in
@@ -111,7 +113,7 @@ final class J12SharingLoopJourneyUITests: XCTestCase {
             XCTAssertTrue(friends.waitForExistence(timeout: 8), "The friend's Margin is not on the Margins tab")
             let count = element("playback.margins.count")
             XCTAssertTrue(count.waitForExistence(timeout: 5), "The Margins count is missing")
-            XCTAssertNotEqual(count.label, "Margins: 0", "The Margins tab says none")
+            XCTAssertTrue(count.label.hasPrefix("Margins:") && !count.label.hasSuffix(" 0"), "The Margins tab says none: \(count.label)")
             report.append("Margins tab: \(count.label)")
         }
     }
@@ -132,7 +134,7 @@ final class J12SharingLoopJourneyUITests: XCTestCase {
     private func beginStep() { tapsAtStepStart = taps }
 
     private func endStep(_ what: String) {
-        report.append(String(format: "%6.1fs  %d taps  %@", Date().timeIntervalSince(startedAt), taps - tapsAtStepStart, what))
+        report.append(String(format: "%6.1fs  %ld taps  %@", Date().timeIntervalSince(startedAt), taps - tapsAtStepStart, what))
     }
 
     // MARK: Helpers (the same as J9's)
@@ -170,7 +172,7 @@ final class J12SharingLoopJourneyUITests: XCTestCase {
     }
 
     private func tap(_ identifier: String) {
-        let control = app.buttons[identifier].firstMatch
+        let control = element(identifier)
         XCTAssertTrue(control.waitForExistence(timeout: 8), "Missing control: \(identifier)")
         for _ in 0..<4 where !control.isHittable { app.swipeUp() }
         XCTAssertTrue(control.isHittable, "Control can't be tapped: \(identifier)")
