@@ -757,7 +757,7 @@ struct Build23VerifiedRecipientPreviewPanel: View {
                     Build23StatusLabel(
                         icon: "doc.zipper",
                         title: "\(preview.fileURL.lastPathComponent) · \(ByteCountFormatter.string(fromByteCount: Int64(preview.fileByteCount), countStyle: .file))"
-                    )
+                    )                    .accessibilityIdentifier("build23.sender.preview.packetSize")
                 }
             }
 
