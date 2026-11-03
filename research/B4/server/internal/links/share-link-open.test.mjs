@@ -15,7 +15,7 @@ import {
   openPreview,
   safeSourceURL,
 } from './share-link-open.mjs';
-import { EXPIRED_MESSAGE, OFFLINE_MESSAGE, SERVER_MESSAGE, showSharedMargins } from './share-link-page.mjs';
+import { EXPIRED_MESSAGE, OFFLINE_MESSAGE, SERVER_MESSAGE, playingPageAddress, showSharedMargins } from './share-link-page.mjs';
 
 const vector = JSON.parse(
   readFileSync(new URL('../../../contracts/fixtures/share-link-sealing-vector.json', import.meta.url), 'utf8'),
@@ -257,5 +257,35 @@ test('the page says plainly when the link is missing its key, expired, damaged o
     assert.equal(await showSharedMargins(document, linkHash, respond), message, name);
     assert.equal(document.getElementById('status').textContent, message, name);
     assert.equal(document.querySelector('article'), null, name);
+  }
+});
+
+function shellWithWeb(web) {
+  const { document } = parseHTML(
+    `<!doctype html><html><body><section id="margins" data-link="${LINK_ID}"${web === undefined ? '' : ` data-web="${web}"`}><p id="status"></p></section></body></html>`,
+  );
+  return document;
+}
+
+test('a browser holding the key is sent to the web app’s page for the link, key in the # part only (#2168)', () => {
+  const web = 'https://app.spokenmargins.com';
+  assert.equal(playingPageAddress(shellWithWeb(web), linkHash, ''), `${web}/l/${LINK_ID}${linkHash}`);
+  // The same with a query the server ignores, and the localhost origin a developer runs.
+  assert.equal(playingPageAddress(shellWithWeb(web), linkHash, '?utm=x'), `${web}/l/${LINK_ID}${linkHash}`);
+  assert.equal(playingPageAddress(shellWithWeb('http://127.0.0.1:4173'), linkHash, ''), `http://127.0.0.1:4173/l/${LINK_ID}${linkHash}`);
+});
+
+test('the page stays where it is without a web app, without a usable key, or for the report form', () => {
+  const web = 'https://app.spokenmargins.com';
+  assert.equal(playingPageAddress(shellWithWeb(undefined), linkHash, ''), undefined, 'no web app named');
+  assert.equal(playingPageAddress(shellWithWeb(''), linkHash, ''), undefined, 'empty web app');
+  for (const missing of ['', '#', '#not a key', `#${vector.keyFragment.slice(0, -3)}`]) {
+    assert.equal(playingPageAddress(shellWithWeb(web), missing, ''), undefined, missing);
+  }
+  assert.equal(playingPageAddress(shellWithWeb(web), linkHash, '?report'), undefined, 'the report form');
+  assert.equal(playingPageAddress(shellWithWeb(web), linkHash, '?report=1'), undefined);
+  // An origin the server never writes (a path, a script, userinfo) is not followed.
+  for (const hostile of ['javascript:alert(1)', 'https://evil.test/x', 'https://u:p@evil.test', '//evil.test', 'https://app.example.com/path']) {
+    assert.equal(playingPageAddress(shellWithWeb(hostile), linkHash, ''), undefined, hostile);
   }
 });

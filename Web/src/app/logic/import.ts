@@ -34,6 +34,9 @@ export function sameMargin(a: Margin, b: Margin, episodeTitle?: string): boolean
   return a.episodeId === b.episodeId && Math.abs(a.atSeconds - b.atSeconds) < 0.5 && words(a) === words(b);
 }
 
+/** The author stored on a packet's Margins when the sender gave no name. */
+export const UNNAMED_SENDER = 'Your friend';
+
 export const SHARED_SHOW_PREFIX = 'shared:';
 
 /** The show that holds episodes known only from friends' files, one per sender. */
@@ -70,6 +73,7 @@ export function placeImport(
   episodes: readonly Episode[],
   now = new Date().toISOString(),
   existing: readonly Margin[] = [],
+  options: { unnamedAuthor?: string } = {},
 ): PlacedImport {
   const own = findEpisode(read, episodes);
   let episode: Episode;
@@ -86,7 +90,10 @@ export function placeImport(
       showId: shared.id,
     };
   }
-  const placed = read.margins.map((m) => ({ ...m, episodeId: episode.id }));
+  // Opened from a share link, a Margin is a friend's even when the sender gave no name: it plays by itself and gets a
+  // countdown, and the page calls the sender "your friend" (#2168). A restored backup keeps its own Margins unsigned.
+  const { unnamedAuthor } = options;
+  const placed = read.margins.map((m) => ({ ...m, episodeId: episode.id, ...(unnamedAuthor && !m.author?.trim() && { author: unnamedAuthor }) }));
   const margins = placed.filter((m) => !existing.some((e) => sameMargin(e, m, episode.title)));
   const landAt = placed.length ? Math.min(...placed.map((m) => m.atSeconds)) : undefined;
   return { episode, newEpisode: !own, ...(show && { show }), margins, landAt, skipped: read.textMarginCount, duplicates: placed.length - margins.length };

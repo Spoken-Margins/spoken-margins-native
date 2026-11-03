@@ -65,13 +65,20 @@ test('server answers become the share page’s plain messages', async () => {
   assert.equal(LINK_MESSAGES.expired, EXPIRED_MESSAGE);
   assert.equal(LINK_MESSAGES.server, SERVER_MESSAGE);
   const link = linkFor(vector.linkURL);
-  for (const [status, message] of [[404, LINK_MESSAGES.expired], [410, LINK_MESSAGES.expired], [500, LINK_MESSAGES.server], [403, LINK_MESSAGES.server]] as const) {
-    await assert.rejects(openSharedPacket(link, server(null, status).fetchImpl), { message });
+  for (const [status, message, reason] of [
+    [404, LINK_MESSAGES.expired, 'expired'],
+    [410, LINK_MESSAGES.expired, 'expired'],
+    [500, LINK_MESSAGES.server, 'server'],
+    [403, LINK_MESSAGES.server, 'server'],
+    // Links switched off answer 503 `disabled`: nothing will change in a minute, so it is not "try again".
+    [503, LINK_MESSAGES.off, 'off'],
+  ] as const) {
+    await assert.rejects(openSharedPacket(link, server(null, status).fetchImpl), { message, reason });
   }
   const offline = (async () => {
     throw new TypeError('Failed to fetch');
   }) as typeof fetch;
-  await assert.rejects(openSharedPacket(link, offline), { message: LINK_MESSAGES.offline });
+  await assert.rejects(openSharedPacket(link, offline), { message: LINK_MESSAGES.offline, reason: 'offline' });
 });
 
 test('which text is a share link, which is a damaged one, and which is neither', () => {

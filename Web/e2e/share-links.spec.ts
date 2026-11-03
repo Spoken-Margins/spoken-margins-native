@@ -60,17 +60,23 @@ async function pasteLink(page: Page, link: string) {
   await page.getByRole('button', { name: 'Open', exact: true }).click();
 }
 
-test('opening a link lands on the first Margin’s moment, with the episode added under its sender', async ({ page }, info) => {
+test('a link opens on its arrival page; Play starts the episode at the beginning, with the episode added under its sender', async ({ page }, info) => {
   const fetches = linkFetches(page);
   await page.goto(`${STUB}/l/vectorvoice01#${KEY}`);
-  await expect(page.getByText(`Opened 2 Margins from Web fixture on “${FIXTURE_EPISODE}”.`)).toBeVisible();
+  const arrival = page.getByTestId('arrival');
+  await expect(arrival.getByText('From Web fixture')).toBeVisible();
+  await expect(arrival.getByRole('heading', { name: FIXTURE_EPISODE })).toBeVisible();
+  await shot(page, info, '30-link-arrival');
+  // Nothing plays and nothing is stored until the friend taps Play.
+  await expect(page.locator('.now-playing')).toHaveCount(0);
+
+  await arrival.getByRole('button', { name: 'Play' }).click();
   const playing = page.getByRole('dialog', { name: FIXTURE_EPISODE });
   await expect(playing).toBeVisible();
-  // The first Margin sits at 0:30.
-  await expect.poll(() => audioTime(page), { timeout: 10_000 }).toBeGreaterThanOrEqual(29.5);
-  expect(await audioTime(page)).toBeLessThan(34);
-  await expect(playing.getByText('A written Margin at half a minute.')).toBeVisible();
-  await expect(playing.getByText('This is a web Margin, recorded for the packet test.')).toBeVisible();
+  // From the beginning, not from the first Margin (it sits at 0:30): the cue counts down to it.
+  await expect.poll(() => audioTime(page), { timeout: 10_000 }).toBeGreaterThan(0.3);
+  expect(await audioTime(page)).toBeLessThan(10);
+  await expect(playing.getByTestId('margin-cue')).toContainText('Web fixture’s first Margin in');
   await shot(page, info, '30-link-landed');
 
   // One request, for the packet only, and the key never in it. The address bar no longer holds the key.
@@ -92,10 +98,11 @@ test('a pasted link opens the same way, and other text is refused plainly', asyn
   await expect.poll(() => audioTime(page), { timeout: 10_000 }).toBeGreaterThanOrEqual(29.5);
 });
 
-test('damaged and expired links say so, and a link with no key asks the server for nothing', async ({ page }, info) => {
+test('a pasted link that is damaged or expired says so, and a link with no key asks the server for nothing', async ({ page }, info) => {
   const fetches = linkFetches(page);
+  await page.goto('./#margins');
   // The vector's own link opens under its key (byte-for-byte, as the unit tests show) but its packet is filler.
-  await page.goto(`${STUB}/l/AbCdEf123456#${KEY}`);
+  await pasteLink(page, `${STUB}/l/AbCdEf123456#${KEY}`);
   await expect(toast(page, DAMAGED)).toBeVisible();
   await shot(page, info, '31-link-damaged');
 
@@ -155,15 +162,17 @@ test('with links on, a Margin’s share menu makes a link that holds only sealed
   await tab(page, 'Following');
   await expect(page.getByRole('button', { name: /Open Shared (by|with)/ })).toHaveCount(0);
 
-  // A friend with an empty Library opens it and lands at the Margin's moment.
+  // A friend with an empty Library opens it and taps Play: the episode runs from the start and the Margin (written at
+  // about 0:03, a few seconds in) comes up by itself, with no name on the packet, so the page calls the sender "your friend".
   const friend = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, serviceWorkers: 'block' });
   const friendPage = await friend.newPage();
   await serveFixtures(friendPage);
   await friendPage.goto(link);
+  await friendPage.getByTestId('arrival').getByRole('button', { name: 'Play' }).click();
   const friendPlaying = friendPage.getByRole('dialog', { name: EPISODE_3 });
   await expect(friendPlaying).toBeVisible();
   await expect.poll(() => audioTime(friendPage), { timeout: 10_000 }).toBeGreaterThanOrEqual(writtenAt - 0.5);
-  expect(await audioTime(friendPage)).toBeLessThan(writtenAt + 4);
+  expect(await audioTime(friendPage)).toBeLessThan(writtenAt + 8);
   await expect(friendPlaying.getByText(words)).toBeVisible();
   await shot(friendPage, info, '33-friend-opened-link');
   await friend.close();

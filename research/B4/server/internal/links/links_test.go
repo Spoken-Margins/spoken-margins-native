@@ -83,7 +83,7 @@ func TestSealedPartsAreRecognisedByHeaderAndLength(t *testing.T) {
 func TestLinkLandingIsAShellWithNoPreview(t *testing.T) {
 	id := strings.Repeat("a", 32)
 	var page bytes.Buffer
-	if err := Render(&page, id, install); err != nil {
+	if err := Render(&page, id, install, ""); err != nil {
 		t.Fatal(err)
 	}
 	html := page.String()
@@ -100,8 +100,33 @@ func TestLinkLandingIsAShellWithNoPreview(t *testing.T) {
 		t.Fatal("audio on the page")
 	}
 	for _, bad := range [][2]string{{"../", install}, {strings.Repeat("A", 32), install}, {id, "https://evil.test/join/x"}} {
-		if err := Render(io.Discard, bad[0], bad[1]); err == nil {
+		if err := Render(io.Discard, bad[0], bad[1], ""); err == nil {
 			t.Errorf("rendered with %q %q", bad[0], bad[1])
+		}
+	}
+}
+
+// With a web app origin the shell names it, and the script hands a browser holding the key over (#2168). An origin that
+// isn't one the flag accepts never reaches the page.
+func TestLinkLandingNamesTheWebAppOnlyForAValidOrigin(t *testing.T) {
+	id := strings.Repeat("a", 32)
+	var page bytes.Buffer
+	if err := Render(&page, id, install, "https://app.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if want := `<section id="margins" data-link="` + id + `" data-web="https://app.example.com">`; !strings.Contains(page.String(), want) {
+		t.Errorf("missing %q in %s", want, page.String())
+	}
+	var plain bytes.Buffer
+	if err := Render(&plain, id, install, ""); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(plain.String(), "data-web") {
+		t.Error("data-web without a web app")
+	}
+	for _, bad := range []string{"https://app.example.com/", "https://app.example.com/path", "javascript:alert(1)", "http://evil.test", "HTTPS://APP.EXAMPLE.COM", `https://a"onload="x`} {
+		if err := Render(io.Discard, id, install, bad); err == nil {
+			t.Errorf("rendered with web app %q", bad)
 		}
 	}
 }
