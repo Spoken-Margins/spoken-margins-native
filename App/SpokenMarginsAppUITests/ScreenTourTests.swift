@@ -274,7 +274,7 @@ final class ScreenTourTests: XCTestCase {
     private func openItem(_ itemId: String) {
         if !element("item.screen").exists {
             tapRoot("Library")
-            let row = app.buttons["library.row.\(itemId)"]
+            let row = app.buttons["library.row.\(itemId)"].firstMatch
             XCTAssertTrue(row.waitForExistence(timeout: 8), "The episode is missing from Library")
             row.tap()
         }
@@ -290,7 +290,7 @@ final class ScreenTourTests: XCTestCase {
         }
     }
 
-    private var playPause: XCUIElement { app.buttons["playback.play.button"] }
+    private var playPause: XCUIElement { app.buttons["playback.play.button"].firstMatch }
 
     private func tapButton(_ identifier: String) {
         let control = app.buttons[identifier].firstMatch
