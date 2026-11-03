@@ -98,6 +98,20 @@ class AttachmentTests(unittest.TestCase):
             names = [a['exportedFileName'] for a in json.loads(Path(result['manifest']).read_text())[0]['attachments']]
             self.assertEqual(names, ['J9 step 2.png', 'J9 step 2-2.png', 'recording.mp4'])
 
+    def test_names_the_artifact_upload_refuses_become_dashes(self):
+        # Hosted run 41576228151: one failure snapshot named after its query lost the whole tour's evidence (#3237).
+        refused = '<>|*?"\r\n'
+        for human in ['Debug description for `"margins.shareItem.item-ui-podcast" Any`.txt',
+                      'Debug description for `Any (First Match)`.txt', 'step: a/b\\c <1>|*?.png', 'quote"only.png']:
+            name = attachments.readable_attachment_name({'exportedFileName': 'x.txt', 'suggestedHumanReadableName': human}, [])
+            self.assertFalse(set(name) & set(refused + ':/\\'), name)
+            self.assertTrue(name.endswith(('.txt', '.png')), name)
+        first = attachments.readable_attachment_name(
+            {'exportedFileName': 'x.txt', 'suggestedHumanReadableName': 'a"b.txt'}, [])
+        clash = attachments.readable_attachment_name(
+            {'exportedFileName': 'x.txt', 'suggestedHumanReadableName': 'a|b.txt'}, [first])
+        self.assertEqual((first, clash), ('a-b.txt', 'a-b-2.txt'))
+
     def test_a_bad_attachment_later_in_the_list_renames_nothing(self):
         uuid = '1A2B3C4D-0000-0000-0000-000000000001'
         groups = [{'testIdentifierURL': URL, 'attachments': [
