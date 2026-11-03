@@ -17,17 +17,19 @@ final class SharedLinkVoiceover {
     var fetchPage: FetchPage
     /// Each recently shared item's latest outcome, so a later share doesn't hide an earlier post's.
     private var log = SharedPostVoiceoverLog()
-    /// Items looked up (or being looked up) in this launch. A failed lookup leaves it, so reconnecting and
-    /// opening the item tries again.
-    private var settled = Set<String>()
+    /// Items looked up (or being looked up) in this launch. A failed lookup, or one that found the narration
+    /// still pending (#3297), leaves it, so opening or playing the item tries again.
+    private var ledger = VoiceoverLookupLedger()
+    /// Tests set the clock to step past the wait before a "not yet" retry.
+    var now: () -> Date = { Date() }
 
-    /// True once per item and launch (and again after a failed lookup), so opening an item can't repeat a lookup.
-    func mayLookUp(itemId: String) -> Bool { !settled.contains(itemId) }
+    /// True once per item and launch (and again after a failed or "not yet" lookup), so opening an item can't repeat a lookup.
+    func mayLookUp(itemId: String) -> Bool { ledger.mayLookUp(itemId: itemId, now: now()) }
 
     /// Marks the item as looked up before any lookup task starts, and says whether this caller may start one.
     /// A clip made during playback opens its item (#1437), which also asks for a lookup; claiming at once, not
     /// inside the task, keeps that to one page fetch (Claude audit on 34af58c).
-    func claim(itemId: String) -> Bool { settled.insert(itemId).inserted }
+    func claim(itemId: String) -> Bool { ledger.claim(itemId: itemId, now: now()) }
 
     init(fetchPage: @escaping FetchPage = SharedLinkVoiceover.fetchFromNetwork) {
         self.fetchPage = fetchPage
@@ -37,7 +39,8 @@ final class SharedLinkVoiceover {
     /// saves it for `itemId`. `fetched` holds the pages the link resolver read for this import. `report` gets
     /// the log's summary, one `<itemId>: <status>` line per recently shared item, after each change. The
     /// status is `saved`, `none:<reason>` (the page was read and has no recording to keep; `generated_voice_paywalled`
-    /// is a paid post's automatic narration), `not_substack`, `item removed` or `failed:<reason>`,
+    /// is a paid post's automatic narration; `generated_voice_pending` and `voiceover_processing` mean not ready yet,
+    /// so a later open or play looks again, #3297), `not_substack`, `item removed` or `failed:<reason>`,
     /// then the text map's progress after a save.
     func remember(
         sharedURL: URL,
@@ -50,7 +53,7 @@ final class SharedLinkVoiceover {
     ) async {
         let note: @MainActor (String) -> Void = { [weak self] status in
             guard let self else { return }
-            if status.hasPrefix("failed:") { settled.remove(itemId) }
+            ledger.record(status: status, itemId: itemId, now: now())
             log.record(status, for: itemId)
             report(log.summary)
         }

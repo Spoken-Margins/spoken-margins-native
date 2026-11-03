@@ -50,4 +50,42 @@ final class PlayQueueAppTests: XCTestCase {
         await Task.yield()
         XCTAssertEqual(model.snapshot.itemId, "item-pill")
     }
+
+    // The queue screen's edits (#1990).
+
+    func testReorderingTheScreenRowsMovesTheRightItemEvenWithADeletedOneQueued() {
+        let model = makeModel()
+        model.addSampleItem()
+        let welcome = Gate1AppModel.welcomeSampleItemId
+        PlayQueueController.update(model) { queue in
+            queue.append("deleted-item")
+            queue.append(welcome)
+            queue.append("item-pill")
+        }
+        // The screen shows [welcome, item-pill]; dragging row 1 to the top.
+        model.moveInQueue(fromOffsets: IndexSet(integer: 1), toOffset: 0)
+        XCTAssertEqual(PlayQueueController.current(model).itemIds, ["item-pill", welcome])
+        XCTAssertEqual(PlayQueueState.shared.itemIds, ["item-pill", welcome], "the screen follows the queue")
+    }
+
+    func testRemovingAndClearingTheQueueFromTheScreen() {
+        let model = makeModel()
+        model.queueAppend(itemId: "item-pill")
+        model.queueAppend(itemId: Gate1AppModel.welcomeSampleItemId)
+        model.removeFromQueue(itemId: "item-pill")
+        XCTAssertEqual(PlayQueueController.current(model).itemIds, [Gate1AppModel.welcomeSampleItemId])
+        model.clearPlayQueue()
+        XCTAssertTrue(PlayQueueController.current(model).isEmpty)
+        XCTAssertTrue(PlayQueueState.shared.itemIds.isEmpty)
+    }
+
+    func testPlayingAQueuedRowNowStartsItAndTakesItOutOfTheQueue() {
+        let model = makeModel()
+        model.addSampleItem()
+        model.queueAppend(itemId: "item-pill")
+        model.queueAppend(itemId: Gate1AppModel.welcomeSampleItemId)
+        model.playQueuedItemNow(itemId: Gate1AppModel.welcomeSampleItemId)
+        XCTAssertEqual(model.snapshot.itemId, Gate1AppModel.welcomeSampleItemId)
+        XCTAssertEqual(PlayQueueController.current(model).itemIds, ["item-pill"])
+    }
 }

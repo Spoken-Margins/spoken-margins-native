@@ -359,6 +359,84 @@ final class SharedLinkVoiceoverTests: XCTestCase {
         XCTAssertEqual(reason(page, at: URL(string: "https://captured.example/p/another-post")!), "other_post")
     }
 
+    /// #3297: every reason the lookup can give, sorted into "not yet" (look again on a later open) and final.
+    func testOnlyAPendingOrProcessingRecordingIsNotYet() throws {
+        let notYet = ["voiceover_pending", "voiceover_processing", "voiceover_queued", "voiceover_in_progress",
+                      "generated_voice_pending", "generated_voice_processing", "generated_voice_queued"]
+        for reason in notYet { XCTAssertTrue(PublisherNarrationEvidence.isNotYet(absence: reason), reason) }
+        let final = ["no_preloads", "no_post", "podcast_post", "not_a_newsletter_post", "no_recording", "no_recording_listed",
+                     "voiceover_flag_off", "voiceover_unreadable", "no_audio_url", "other_post", "generated_voice_paywalled",
+                     "generated_voice_unreadable", "voiceover_unknown", "voiceover_failed", "voiceover_Oddstatus", "", "pending"]
+        for reason in final { XCTAssertFalse(PublisherNarrationEvidence.isNotYet(absence: reason), reason) }
+
+        // The reasons come from a real page: a pending automatic narration is "not yet", a paid one is final.
+        let post = URL(string: "https://captured.example/p/voiceover")!
+        let page = try Self.page()
+        let pending = try Self.page(editingPost: { Self.editFirstAudioItem(&$0) { $0["type"] = "tts"; $0["status"] = "pending" } }, from: page)
+        XCTAssertTrue(PublisherNarrationEvidence.isNotYet(absence: PublisherNarrationEvidence.absence(postPage: pending, finalURL: post)))
+        let paid = try Self.fixture("substack-paid-post-page.html")
+        let paidPost = URL(string: "https://captured.example/p/paid-post")!
+        XCTAssertFalse(PublisherNarrationEvidence.isNotYet(absence: PublisherNarrationEvidence.absence(postPage: paid, finalURL: paidPost)))
+    }
+
+    /// #3297: the first page says the narration is pending and a later one says completed; the later open must
+    /// find the recording. Fails on the old rule, which kept every `none:` answer for the whole launch.
+    func testAPendingNarrationIsLookedUpAgainOnALaterOpen() async throws {
+        let post = URL(string: "https://captured.example/p/voiceover")!
+        let completed = try Self.page()
+        let pending = try Self.page(editingPost: { Self.editFirstAudioItem(&$0) { $0["type"] = "tts"; $0["status"] = "pending" } }, from: completed)
+        let start = Date(timeIntervalSince1970: 1_000_000)
+        var ledger = VoiceoverLookupLedger()
+
+        XCTAssertTrue(ledger.claim(itemId: "item", now: start))
+        XCTAssertFalse(ledger.claim(itemId: "item", now: start), "two callers share one fetch")
+        let first = await SharedPostVoiceoverLookup.find(
+            sharedURL: post, articleURL: post.absoluteString, itemId: "item", fetched: nil, fetchPage: { _ in (pending, post) }
+        )
+        guard case .noVoiceover(let reason) = first else { return XCTFail("expected no voiceover yet, got \(first)") }
+        ledger.record(status: "none:\(reason)", itemId: "item", now: start)
+
+        XCTAssertFalse(ledger.mayLookUp(itemId: "item", now: start.addingTimeInterval(10)), "no re-fetch on every open")
+        XCTAssertTrue(ledger.mayLookUp(itemId: "item", now: start.addingTimeInterval(VoiceoverLookupLedger.retryInterval)))
+        let later = start.addingTimeInterval(120)
+        XCTAssertTrue(ledger.claim(itemId: "item", now: later))
+        let second = await SharedPostVoiceoverLookup.find(
+            sharedURL: post, articleURL: post.absoluteString, itemId: "item", fetched: nil, fetchPage: { _ in (completed, post) }
+        )
+        guard case .found(let audio) = second else { return XCTFail("expected the recording, got \(second)") }
+        XCTAssertEqual(audio.audioURL, "https://recordings.example/voiceover.mp3")
+        ledger.record(status: "saved", itemId: "item", now: later)
+        XCTAssertFalse(ledger.mayLookUp(itemId: "item", now: later.addingTimeInterval(3_600)), "a saved recording is not looked up again")
+    }
+
+    /// #3297: a post with no narration, or a paid one, still looks up once per launch; a failed fetch retries at
+    /// once; a narration that stays pending stops being fetched after a few tries.
+    func testFinalAnswersStayForTheLaunchAndFailuresRetryAtOnce() {
+        let start = Date(timeIntervalSince1970: 1_000_000)
+        let later = start.addingTimeInterval(3_600)
+        for status in ["none:no_recording", "none:generated_voice_paywalled", "none:other_post", "not_substack", "item removed", "saved"] {
+            var ledger = VoiceoverLookupLedger()
+            XCTAssertTrue(ledger.claim(itemId: "item", now: start))
+            ledger.record(status: status, itemId: "item", now: start)
+            XCTAssertFalse(ledger.mayLookUp(itemId: "item", now: later), status)
+        }
+        var failed = VoiceoverLookupLedger()
+        XCTAssertTrue(failed.claim(itemId: "item", now: start))
+        failed.record(status: "failed:offline", itemId: "item", now: start)
+        XCTAssertTrue(failed.mayLookUp(itemId: "item", now: start))
+
+        var stuck = VoiceoverLookupLedger()
+        var clock = start
+        var fetches = 0
+        for _ in 0..<(VoiceoverLookupLedger.maximumNotYetTries + 3) {
+            clock = clock.addingTimeInterval(VoiceoverLookupLedger.retryInterval)
+            guard stuck.claim(itemId: "item", now: clock) else { continue }
+            fetches += 1
+            stuck.record(status: "none:generated_voice_pending", itemId: "item", now: clock)
+        }
+        XCTAssertEqual(fetches, VoiceoverLookupLedger.maximumNotYetTries)
+    }
+
     private static func fixture(_ name: String) throws -> String {
         String(decoding: try TestInputs.data(.contracts, "fixtures/feeds/\(name)"), as: UTF8.self)
     }
