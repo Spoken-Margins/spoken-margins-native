@@ -816,6 +816,7 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         XCTAssertNil(model.marginMoment)
 
         _ = try fixture.store.markImportedCommentaryInterjectionHeard(id: fixture.record.id, at: Date())
+        model.refreshSelectedItem() // the item is open now, so Continue reads the model's copy, not the store
         offered = nil
         model.continueListening(itemId: "real-source") { offered = $0 }
         XCTAssertNil(offered, "nothing is new, so Continue just continues")
