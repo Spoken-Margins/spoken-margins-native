@@ -233,6 +233,11 @@ final class Build23SenderSharingExperienceTests: XCTestCase {
     /// The Margins tab and the Export screen still open on the choice of Margins.
     func testPlaybackShareOpensOnTheReviewAndOthersOpenOnTheChoice() {
         let (model, coordinator) = makeModelAndCoordinator(marginCount: 2)
+        coordinator.send(.begin)
+        XCTAssertEqual(coordinator.snapshot.stage, .select, "Opened without the playback entry, the sheet starts on the choice")
+        // What `openMarginItemExport(entry:)` leaves behind: drafts prepared, the sheet up, the entry set after.
+        model.sharingState.draftsPreparedForExport = true
+        model.isSharingInterjectionsPresented = true
         model.sharingState.entry = .reviewDefaults
         coordinator.send(.begin)
         XCTAssertEqual(coordinator.snapshot.stage, .review)
@@ -240,11 +245,11 @@ final class Build23SenderSharingExperienceTests: XCTestCase {
         XCTAssertNotNil(coordinator.snapshot.selectedMarginID)
         XCTAssertEqual(model.sharingState.entry, .chooseMargins, "The entry applies once")
 
-        coordinator.send(.begin)
-        XCTAssertEqual(coordinator.snapshot.stage, .select)
-
         coordinator.send(.returnToSelect)
         XCTAssertEqual(coordinator.snapshot.stage, .select, "Choosing Margins stays one tap away")
+
+        coordinator.send(.begin)
+        XCTAssertEqual(coordinator.snapshot.stage, .select, "The next opening starts on the choice again")
     }
 
     func testPlaybackShareStartsOnTheChoiceWhenNothingIsSelected() {
