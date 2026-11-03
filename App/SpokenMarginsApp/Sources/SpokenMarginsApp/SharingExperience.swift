@@ -55,6 +55,9 @@ struct InterjectionSharingState {
     /// Set by the export screen, which prepares drafts from the session picked there. The
     /// sheet's `begin` keeps them once instead of rebuilding from the open item's session.
     var draftsPreparedForExport = false
+    /// Where the sheet starts (#1507). The playback screen's Share sets `.reviewDefaults`, so the sheet opens on
+    /// the review with Share pinned; `begin` reads it once and resets it.
+    var entry: ShareSheetEntry = .chooseMargins
 }
 
 struct SpokenMarginsPackageImportReview: Identifiable {

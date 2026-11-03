@@ -229,6 +229,35 @@ final class Build23SenderSharingExperienceTests: XCTestCase {
         XCTAssertEqual(coordinator.snapshot.margins.count, 2)
     }
 
+    /// #1507: Share on the playback screen opens the sheet on its review, where Share is pinned, so it is two taps.
+    /// The Margins tab and the Export screen still open on the choice of Margins.
+    func testPlaybackShareOpensOnTheReviewAndOthersOpenOnTheChoice() {
+        let (model, coordinator) = makeModelAndCoordinator(marginCount: 2)
+        model.sharingState.entry = .reviewDefaults
+        coordinator.send(.begin)
+        XCTAssertEqual(coordinator.snapshot.stage, .review)
+        XCTAssertEqual(coordinator.snapshot.margins.filter(\.isIncluded).count, 2)
+        XCTAssertNotNil(coordinator.snapshot.selectedMarginID)
+        XCTAssertEqual(model.sharingState.entry, .chooseMargins, "The entry applies once")
+
+        coordinator.send(.begin)
+        XCTAssertEqual(coordinator.snapshot.stage, .select)
+
+        coordinator.send(.returnToSelect)
+        XCTAssertEqual(coordinator.snapshot.stage, .select, "Choosing Margins stays one tap away")
+    }
+
+    func testPlaybackShareStartsOnTheChoiceWhenNothingIsSelected() {
+        let (model, coordinator) = makeModelAndCoordinator(marginCount: 2)
+        coordinator.send(.begin)
+        for draft in model.sharingState.drafts { model.setShareDraftIncluded(draft.id, included: false) }
+        model.sharingState.entry = .reviewDefaults
+        model.sharingState.draftsPreparedForExport = true
+        model.isSharingInterjectionsPresented = true
+        coordinator.send(.begin)
+        XCTAssertEqual(coordinator.snapshot.stage, .select)
+    }
+
     private func makeCoordinator(marginCount: Int = 1, marginsWithoutTranscript: Set<Int> = []) -> Build23SharingCoordinator {
         makeModelAndCoordinator(marginCount: marginCount, marginsWithoutTranscript: marginsWithoutTranscript).coordinator
     }

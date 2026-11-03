@@ -465,6 +465,12 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
             }
             selectedMarginID = model.sharingState.drafts.first(where: \.isIncluded)?.id
             model.prepareAutomaticallyCleanedShareDraftsIfEnabled()
+            // The playback screen's Share opens on the review, where Share is pinned (#1507).
+            let entry = model.sharingState.entry
+            model.sharingState.entry = .chooseMargins
+            if entry.startsOnReview(includedCount: model.sharingState.drafts.filter(\.isIncluded).count) {
+                send(.advanceToReview)
+            }
         case .setFilter(let filter):
             model.sharingState.draftFilter = filter
         case .setSenderDisplayLabel(let label):

@@ -11,7 +11,7 @@ What the listener's most frequent actions cost in taps (#2396). The data is [tas
 
 ## Where it costs the most
 
-1. **Share a Margin from the playback screen: 6.** More, Export, Share Margins, Review, Share, then a destination. From the Margins tab it is 4. After finishing an item, `playback.finished.share.button` skips the first step.
+1. **Share a Margin from the playback screen: 3.** Share on the playback screen, Share on the review, then a destination (#1507). It was 6: More, Export, Share Margins, Review, Share, a destination. From the Margins tab it is 4.
 2. **Mark complete from the playback screen: 2 through the Library, 4 through the Item screen's options menu.** The Library swipe is 1. #2393 is about this.
 3. **A written Margin from the mini player: 3.** The mini player has a microphone but no pencil.
 4. **Follow a show: 3 to 4.** By name from Library plus is the cheapest. Following has no per-show rows or Follow sheet yet, so the four-tabs check "tap into three shows in a row" does not apply until it does (#1865).
