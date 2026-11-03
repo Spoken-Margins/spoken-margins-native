@@ -9,7 +9,8 @@ final class ServerSendConsentTests: XCTestCase {
     private func freshDefaults() -> UserDefaults {
         let name = "ServerSendConsentTests-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: name)!
-        addTeardownBlock { defaults.removePersistentDomain(forName: name) }
+        // Only the name crosses into the teardown closure: UserDefaults itself would be a data-race error in Swift 6.
+        addTeardownBlock { UserDefaults(suiteName: name)?.removePersistentDomain(forName: name) }
         return defaults
     }
 
