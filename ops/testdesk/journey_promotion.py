@@ -99,7 +99,9 @@ def apply(listing: dict, moves: dict) -> dict:
     result = {**listing, 'gating': list(listing.get('gating', [])), 'probation': list(listing.get('probation', []))}
     for source, target, key in (('probation', 'gating', 'promote'), ('gating', 'probation', 'demote')):
         moving = set(moves[key])
-        result[target] += [e for e in result[source] if e['test'].removesuffix('()') in moving]
+        # A batch orders probation runs only (#3342), so a script promoted to gating sheds it.
+        result[target] += [{k: v for k, v in e.items() if k != 'batch'} if target == 'gating' else e
+                           for e in result[source] if e['test'].removesuffix('()') in moving]
         result[source] = [e for e in result[source] if e['test'].removesuffix('()') not in moving]
     return result
 

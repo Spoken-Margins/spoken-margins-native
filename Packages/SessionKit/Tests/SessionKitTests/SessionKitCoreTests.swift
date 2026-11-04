@@ -163,8 +163,8 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(client.diagnosticIntent, "stopped")
     }
 
-    /// #1291 APO-14: the emoji-article soak (`EmojiArticlePlaybackUITests`, retired SpeechCanary
-    /// plan) accepted a run that returned Home at 90 percent, so a voice queue missing the
+    /// #1291 APO-14: the emoji-article soak (`EmojiArticlePlaybackUITests`, deleted in #3342
+    /// with the SpeechCanary plan) accepted a run that returned Home at 90 percent, so a voice queue missing the
     /// article's tail could pass. This holds the same claim where it runs: every spoken word of a
     /// long article with emoji and links reaches the voice, its last sentence is in the final
     /// utterance, and playback completes only when that utterance finishes.

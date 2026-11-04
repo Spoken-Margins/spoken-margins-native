@@ -435,7 +435,6 @@ schemes:
         - path: TestPlans/UISeams.xctestplan
           defaultPlan: true
         - path: TestPlans/Smoke.xctestplan
-        - path: TestPlans/SpeechCanary.xctestplan
         - path: TestPlans/ScreenTour.xctestplan
   SpokenMarginsReleaseTests:
     build:

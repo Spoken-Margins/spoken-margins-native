@@ -113,6 +113,15 @@ class CommandTests(unittest.TestCase):
             self.assertEqual(jp.main(['--state', str(state), '--listing', str(listing), '--apply']), 0)
             self.assertEqual([e['test'] for e in json.loads(listing.read_text())['gating']], [J3, J1])
 
+    def test_a_promoted_script_sheds_its_probation_batch(self):
+        listing = {'version': 1, 'gating': [], 'probation': [{'test': J1, 'journey': 'J1', 'batch': 2},
+                                                              {'test': J3, 'journey': 'J3', 'batch': 2}]}
+        moved = jp.apply(listing, {'promote': [J1], 'demote': []})
+        self.assertEqual(moved['gating'], [{'test': J1, 'journey': 'J1'}])
+        self.assertEqual(moved['probation'], [{'test': J3, 'journey': 'J3', 'batch': 2}])
+        back = jp.apply(moved, {'promote': [], 'demote': [J1]})
+        self.assertEqual(back['probation'][-1], {'test': J1, 'journey': 'J1'})  # batch 1 again
+
     def test_the_real_listing_has_the_shape_the_command_edits(self):
         listing = json.loads(jp.LISTING.read_text())
         self.assertEqual(jp.apply(listing, {'promote': [], 'demote': []}), listing)
