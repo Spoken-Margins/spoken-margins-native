@@ -475,8 +475,14 @@ final class EpisodeMapPreparer {
     /// automatic queueing's saves and the job deletes, so the request's save can't land after the run's first save
     /// and put the older stage back, or bring back a deleted job (#2509).
     private func saveJob(_ job: EpisodeMapPreparationJob, store: SQLiteSessionStore?) async throws {
-        guard let store else { return }
-        try await StoreReader(store).readInOrder(AutomaticEpisodeMapJobs.orderKey) { try $0.saveEpisodeMapPreparationJob(job) }
+        guard let task = enqueueSaveJob(job, store: store) else { return }
+        try await task.value
+    }
+
+    /// Takes the save's place in line now and returns the task that runs it (#3331).
+    private func enqueueSaveJob(_ job: EpisodeMapPreparationJob, store: SQLiteSessionStore?) -> Task<Void, Error>? {
+        guard let store else { return nil }
+        return StoreReader(store).enqueueInOrder(AutomaticEpisodeMapJobs.orderKey) { try $0.saveEpisodeMapPreparationJob(job) }
     }
 
     /// The start of a request: the job row is written behind the tap, ahead of the run's own first save. A save that
@@ -484,9 +490,12 @@ final class EpisodeMapPreparer {
     /// run that has started saves the job again and reports its own failure.
     private func saveJobBehindTheTap(_ job: EpisodeMapPreparationJob, store: SQLiteSessionStore) {
         let itemId = job.itemId
+        // The place in line is taken here, in the order the calls were made; a `Task` that took it would race a delete
+        // asked right after (#3331).
+        let saved = enqueueSaveJob(job, store: store)
         Task { [weak self] in
             do {
-                try await self?.saveJob(job, store: store)
+                try await saved?.value
             } catch {
                 guard let self, let host = self.host, self.task == nil, self.pendingRequestItemId == itemId else { return }
                 self.status = "Failed"

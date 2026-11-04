@@ -387,9 +387,8 @@ final class EpisodeMapPreparerTests: XCTestCase {
 
         model.prepareEpisodeMap(itemId: "p2509-deleted")
         model.deleteEpisodeMapPreparationJobsInBackground(itemId: "p2509-deleted")
-        // Both calls start an unstructured Task that takes its place on the queue when it first runs, so let them run
-        // before this test takes its own place; the ticket then waits behind both writes, which share the queue.
-        try await Task.sleep(for: .milliseconds(100))
+        // Both calls took their places in line before they returned (#3331), so the ticket below waits behind both
+        // writes, which share the queue. No clock: nothing here depends on when a Task first gets to run.
         try await StoreReader(store).readInOrder(AutomaticEpisodeMapJobs.orderKey) { _ in () }
 
         XCTAssertEqual(try store.loadEpisodeMapPreparationJobs(), [], "the delete ran after the request's save")
