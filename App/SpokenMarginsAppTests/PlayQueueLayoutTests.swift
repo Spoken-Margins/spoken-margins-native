@@ -101,21 +101,25 @@ final class PlayQueueLayoutTests: XCTestCase {
         list = try await settledList(in: mounted) { _ in true }
         let before = try offsetFromTop(of: topIndex, in: list)
         let rowsBefore = list.totalItems
+        let shapeBefore = Self.shape(of: list)
         attachScreenshot(of: mounted, name: "library-scrolled-before-queue")
 
         model.queueAppend(itemId: Self.itemIds(1)[0])
         list = try await settledList(in: mounted) { $0.totalItems == rowsBefore + 1 }
         attachScreenshot(of: mounted, name: "library-scrolled-after-queue")
         let afterAdding = try offsetFromTop(of: topIndex + 1, in: list)
+        let shapeAdded = Self.shape(of: list)
         XCTAssertEqual(afterAdding, before, accuracy: 6,
-                       "The row at the top moved \(afterAdding - before) pt when the queue entry appeared above it")
+                       "The row at the top moved \(afterAdding - before) pt when the queue entry appeared above it "
+                           + "(list before: \(shapeBefore); after: \(shapeAdded))")
 
         try await Task.sleep(for: .milliseconds(500))
         model.removeFromQueue(itemId: Self.itemIds(1)[0])
         list = try await settledList(in: mounted) { $0.totalItems == rowsBefore }
         let afterRemoving = try offsetFromTop(of: topIndex, in: list)
         XCTAssertEqual(afterRemoving, before, accuracy: 6,
-                       "The row at the top moved \(afterRemoving - before) pt when the queue entry went away")
+                       "The row at the top moved \(afterRemoving - before) pt when the queue entry went away "
+                           + "(list with the entry: \(shapeAdded); after: \(Self.shape(of: list)))")
     }
 
     /// The control: a plain list with a row that comes and goes above the rest, and nothing keeping the place. Its rows
@@ -248,6 +252,14 @@ final class PlayQueueLayoutTests: XCTestCase {
     private func offsetFromTop(of index: Int, in list: ListState) throws -> CGFloat {
         let frame = try XCTUnwrap(list.view.layoutAttributesForItem(at: list.paths[index])?.frame)
         return frame.minY - (list.view.contentOffset.y + list.view.adjustedContentInset.top)
+    }
+
+    /// The list's offset, content height, top inset and row count, for a failure message: an offset that moved by the
+    /// content's change means the place was kept and the measure is off; one that stayed means nothing kept it.
+    private static func shape(of list: ListState) -> String {
+        let view = list.view
+        return "offset \(view.contentOffset.y), content \(view.contentSize.height), inset \(view.adjustedContentInset.top), "
+            + "\(list.totalItems) rows"
     }
 
     private static func collectionView(in view: UIView) -> UICollectionView? {

@@ -39,14 +39,14 @@ struct ExperienceLibraryScreen: View {
     /// the network, the play queue's entry and its lines. A change here moves every item row (see `keepScrollPlace`).
     /// The queue's entry counts by what it shows, not by the queue's ids: deleting a queued item from the Library, or the
     /// Library loading late, changes the entry while the ids stay the same.
-    private var rowsAboveItems: [String] {
+    private var rowsAboveItems: RowsAboveItems {
         let rows = queuedRows
-        return [
-            clipboardLink.showsCard ? "clipboard" : "",
-            model.sourceLinksWaitingForNetwork > 0 ? "waiting" : "",
-            rows.isEmpty ? "" : PlayQueueRows.countLine(rows.count),
-            PlayQueueRows.nextLine(rows) ?? "",
-        ]
+        return RowsAboveItems(
+            clipboardCard: clipboardLink.showsCard,
+            waitingLine: model.sourceLinksWaitingForNetwork > 0,
+            queueCount: rows.isEmpty ? nil : PlayQueueRows.countLine(rows.count),
+            queueNext: PlayQueueRows.nextLine(rows)
+        )
     }
 
     /// One identity per item, the Continue row included, so completing the top row removes that row (#585).
@@ -95,7 +95,7 @@ struct ExperienceLibraryScreen: View {
                 scrollTracker.order = ids
                 restoreScroll(in: ids, using: proxy)
             }
-            .onChange(of: rowsAboveItems) { _, _ in keepScrollPlace() }
+            .onChange(of: rowsAboveItems) { old, new in keepScrollPlace(rowsAdded: new.rowCount - old.rowCount) }
             .background(placeKeeper.anchor)
             .onAppear { if restoredScroll { scrollTracker.thaw() } }
             .onDisappear { rememberScroll() }
@@ -527,16 +527,27 @@ struct ExperienceLibraryScreen: View {
 
     /// A row above the items came or went, or changed height. The list keeps its offset, so for a listener down the list
     /// every item would slide by that row's height: adding an item to the play queue from its menu pushed the rows a
-    /// row's height down (#1990). The keeper shifts the offset by what the content grew; at the top of the list the
-    /// listener sees the new row arrive instead.
-    private func keepScrollPlace() {
+    /// row's height down (#1990). The keeper keeps a row on screen where it was; at the top of the list the listener
+    /// sees the new row arrive instead.
+    private func keepScrollPlace(rowsAdded: Int) {
         guard restoredScroll else { return }
-        placeKeeper.holdPlace()
+        placeKeeper.holdPlace(rowsAddedAbove: rowsAdded)
     }
 
     private func displayName(_ rawValue: String) -> String {
         LibraryQueryEngine.displayName(rawValue)
     }
+}
+
+/// What the Library's rows above the items show. Each present field but `queueNext` is one row of the list; the Next
+/// line sits inside the queue's entry.
+private struct RowsAboveItems: Equatable {
+    var clipboardCard: Bool
+    var waitingLine: Bool
+    var queueCount: String?
+    var queueNext: String?
+
+    var rowCount: Int { [clipboardCard, waitingLine, queueCount != nil].filter { $0 }.count }
 }
 
 private struct ExperienceLibraryCompactRow: View {
