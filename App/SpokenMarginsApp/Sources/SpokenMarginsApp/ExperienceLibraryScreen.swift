@@ -14,6 +14,7 @@ struct ExperienceLibraryScreen: View {
     @Binding var scrollMemory: FollowingScrollMemory
     @State private var scrollTracker = ListScrollTracker()
     @State private var restoredScroll = false
+    @State private var placeKeeper = ListPlaceKeeper()
     @State private var isAudioPreparationQueuePresented = false
     @State private var isPlayQueuePresented = false
     @ObservedObject private var playQueue = PlayQueueState.shared
@@ -32,6 +33,14 @@ struct ExperienceLibraryScreen: View {
     /// The play queue's rows (#1990); empty while nothing is queued, which is when the Library shows no entry.
     private var queuedRows: [PlayQueueRow] {
         PlayQueueRows.rows(for: PlayQueue(itemIds: playQueue.itemIds), items: model.libraryItems)
+    }
+
+    /// The rows above the items that come and go while the list is open: a copied link's card, the links waiting for
+    /// the network, the play queue's entry and its lines. A change here moves every item row (see `keepScrollPlace`).
+    /// The queue's ids stand for its entry: one that names a deleted item changes nothing on screen, so nothing moves.
+    private var rowsAboveItems: [String] {
+        [clipboardLink.showsCard ? "clipboard" : "", model.sourceLinksWaitingForNetwork > 0 ? "waiting" : ""]
+            + playQueue.itemIds
     }
 
     /// One identity per item, the Continue row included, so completing the top row removes that row (#585).
@@ -80,6 +89,8 @@ struct ExperienceLibraryScreen: View {
                 scrollTracker.order = ids
                 restoreScroll(in: ids, using: proxy)
             }
+            .onChange(of: rowsAboveItems) { _, _ in keepScrollPlace() }
+            .background(placeKeeper.anchor)
             .onAppear { if restoredScroll { scrollTracker.thaw() } }
             .onDisappear { rememberScroll() }
             .background(AppColors.bone)
@@ -506,6 +517,15 @@ struct ExperienceLibraryScreen: View {
             try? await Task.sleep(for: .milliseconds(150))
             scrollTracker.thaw()
         }
+    }
+
+    /// A row above the items came or went, or changed height. The list keeps its offset, so for a listener down the list
+    /// every item would slide by that row's height: adding an item to the play queue from its menu pushed the rows a
+    /// row's height down (#1990). The keeper shifts the offset by what the content grew; at the top of the list the
+    /// listener sees the new row arrive instead.
+    private func keepScrollPlace() {
+        guard restoredScroll else { return }
+        placeKeeper.holdPlace()
     }
 
     private func displayName(_ rawValue: String) -> String {
