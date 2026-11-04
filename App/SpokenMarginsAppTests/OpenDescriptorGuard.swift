@@ -29,6 +29,7 @@ final class OpenDescriptorGuard: NSObject, XCTestObservation, @unchecked Sendabl
         super.init()
         Self.shared = self
         XCTestObservationCenter.shared.addTestObserver(self)
+        TermsAnsweredBeforeEachTest.install() // the bundle has one principal class, so it also starts the Terms observer (#3329)
     }
 
     /// Both streams: the test app's stdout is not always forwarded into xcode-tests.log, and the unified log is.

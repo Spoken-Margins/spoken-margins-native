@@ -322,13 +322,7 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
     func testAFileThatOpensDirectlyWaitsWhileAMarginIsBeingWritten() async throws {
         let h = try makeHarness()
         let packet = try h.writePacket(named: "alpha", text: Self.alphaText)
-        let model = Gate1AppModel(
-            audioPlaybackClient: NoopAudioPlaybackClient(),
-            databaseURLOverride: h.root.appendingPathComponent("model.sqlite")
-        )
-        model.resetAndSeed()
-        model.startItem(id: "item-pill")
-        await model.settleLibraryReload()
+        let model = await makePlayingModel(in: h, database: "model.sqlite")
         model.beginWrittenMargin()
         XCTAssertTrue(model.recordingNavigationIsLocked)
 
@@ -348,18 +342,32 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
         XCTAssertEqual(model.screen, .item)
     }
 
+    /// The third audit on PR #3298: the sheet can't be swiped away, so a review that needs the listener's choice (or whose
+    /// direct open failed after a Margin was started) stays out of sight while a Margin is being written, and comes up
+    /// when it is closed. The review itself is kept.
+    func testTheSheetWaitsWhileAMarginIsBeingWritten() async throws {
+        let h = try makeHarness()
+        let packet = try h.writePacket(named: "beta", text: Self.alphaText, recipientSupplied: true)
+        let model = await makePlayingModel(in: h, database: "model-sheet.sqlite")
+        model.beginWrittenMargin()
+        XCTAssertTrue(model.recordingNavigationIsLocked)
+
+        model.handleIncomingURL(packet.url)
+        await model.waitForPackageStaging()
+        let review = try XCTUnwrap(model.spokenMarginsPackageImportReview, "the file is kept")
+        XCTAssertFalse(review.opensDirectly, "the listener picks their own copy")
+        XCTAssertNil(model.packageImportSheetReview, "but the sheet stays off the Margin")
+
+        model.cancelWrittenMargin()
+        XCTAssertEqual(model.packageImportSheetReview?.id, review.id, "the Margin is closed: the sheet comes up")
+    }
+
     /// The second audit on PR #3298, through the real model: an import already running when the listener opens a written
     /// Margin leaves the active item and the screen alone, and the root view's ask after the draft closes opens it.
     func testAnImportRunningWhenAMarginIsOpenedDoesNotMoveTheModel() async throws {
         let h = try makeHarness()
         let packet = try h.writePacket(named: "alpha", text: Self.alphaText)
-        let model = Gate1AppModel(
-            audioPlaybackClient: NoopAudioPlaybackClient(),
-            databaseURLOverride: h.root.appendingPathComponent("model-under-margin.sqlite")
-        )
-        model.resetAndSeed()
-        model.startItem(id: "item-pill")
-        await model.settleLibraryReload()
+        let model = await makePlayingModel(in: h, database: "model-under-margin.sqlite")
         model.handleIncomingURL(packet.url)
         await model.waitForPackageStaging()
         XCTAssertNotNil(model.spokenMarginsPackageImportReview)
@@ -848,6 +856,22 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
         let harness = try ImportHarness()
         addTeardownBlock { [root = harness.root] in try? FileManager.default.removeItem(at: root) }
         return harness
+    }
+
+    /// A real model playing the seeded Pill item, as a listener who is about to start a Margin. The first-use voice
+    /// choice is answered first: until it is, `startItem` waits on the Terms sheet and no session starts. A class run
+    /// on its own in a fresh simulator has no earlier test to have answered it (the lane run on PR #3322).
+    private func makePlayingModel(in h: ImportHarness, database: String, file: StaticString = #filePath, line: UInt = #line) async -> Gate1AppModel {
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            databaseURLOverride: h.root.appendingPathComponent(database)
+        )
+        model.resetAndSeed()
+        model.declineCurrentTerms()
+        model.startItem(id: "item-pill")
+        await model.settleLibraryReload()
+        XCTAssertNotNil(model.snapshot.sessionId, "Pill is playing (Terms sheet up: \(model.isTermsOfUsePresented))", file: file, line: line)
+        return model
     }
 
     private func assertStaged(_ result: SpokenMarginsPackageImportCoordinator.StageResult, file: StaticString = #filePath, line: UInt = #line) {

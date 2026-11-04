@@ -527,6 +527,10 @@ final class Gate2CompactControlController {
             return
         }
         let handOffAt = liveActivityLifecycle.scheduleHandOff(appInBackground: true, now: now())
+        // Every paused publish says so, including one that finds the watch already running: a Skim availability
+        // flip right after the pause publishes the same paused card again, and `publishLiveActivity` has just
+        // written "paused_idle_deadline" over the status (#3321).
+        liveActivityLifecycleStatus = handOffAt == nil ? "watching_other_audio" : "hand_off_scheduled"
         guard watchTask == nil else { return }
         endWatchBackgroundTask = beginBackgroundTask("Spoken Margins Live Activity watch")
         let interval = LiveActivityLifecycle.otherAudioCheckInterval
@@ -540,7 +544,6 @@ final class Gate2CompactControlController {
             guard !Task.isCancelled else { return }
             await self?.handOffIfDue()
         }
-        liveActivityLifecycleStatus = handOffAt == nil ? "watching_other_audio" : "hand_off_scheduled"
     }
 
     private func cancelWatch() {
