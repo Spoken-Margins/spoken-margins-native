@@ -67,6 +67,8 @@ struct SpokenMarginsPackageImportReview: Identifiable {
     var replacesExistingMap = false
     /// Removes the file the packet was opened from (the Share inbox copy), once it is imported or cancelled (#2123).
     var releaseSource: (@MainActor () -> Void)?
+    /// Imported as soon as it shows, with no sheet (#3291): set when the file arrives and nothing waits on the listener.
+    var opensDirectly = false
 
     /// A file that carries a Listening Map for an article or PDF and no Margins (#1471).
     var isListeningMap: Bool { ListeningMapPacket.isMapPacket(contents.manifest) }

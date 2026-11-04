@@ -58,6 +58,10 @@ final class SpokenMarginsPackageImportCoordinator {
         var publishError: @MainActor (String?) -> Void
         /// Saves a shared Listening Map for a text item and tells a running session about it. Nil saves straight to the store.
         var attachListeningMap: (@MainActor (ListeningMap) throws -> Void)? = nil
+        /// True while a Margin is being recorded or written: the listener's position is held (`recordingNavigationIsLocked`).
+        var navigationIsLocked: @MainActor () -> Bool = { false }
+        /// Brings the Library rows up to date with an item an import added, without opening it.
+        var refreshImportedLibrary: @MainActor (_ store: SQLiteSessionStore) throws -> Void = { _ in }
         /// Names main-thread work for the hang probe. `stage` no longer has any (#2510).
         var labels = MainThreadOperationLabels()
     }
@@ -189,7 +193,8 @@ final class SpokenMarginsPackageImportCoordinator {
     /// too (#2510): both scale with the packet. The staging folder is registered in `stagingFolders` from its creation to the end of the call,
     /// so the launch sweep and a second `stage` that runs while this one waits leave it alone.
     func stage(
-        from sourceURL: URL, announcesRejection: Bool = true, releaseSource: (@MainActor () -> Void)? = nil
+        from sourceURL: URL, announcesRejection: Bool = true, shownOnAnEarlierLaunch: Bool = false,
+        releaseSource: (@MainActor () -> Void)? = nil
     ) async -> StageResult {
         var workingDirectory: URL?
         do {
@@ -210,6 +215,7 @@ final class SpokenMarginsPackageImportCoordinator {
             let duplicate = try await lookUpDuplicate(digest: digest, store: store)
             let duplicateCheck = duplicate.check
             if case .alreadyImported(let itemId) = duplicateCheck {
+                // The item's screen is the answer; nothing more is said (#3291).
                 environment.openItem(itemId)
                 releaseSource?()
                 if let item = duplicate.item, item.mediaType == "audiobook" {
@@ -219,13 +225,16 @@ final class SpokenMarginsPackageImportCoordinator {
                 if let localURL = environment.validatedLocalURL(itemId) {
                     environment.resolvePodcastCommentary(itemId, localURL)
                 }
-                environment.reportSuccess("These shared Margins are already in your library. Playback has not started.")
                 environment.recordDiagnostic("lastSpokenMarginsPackageImport", "duplicate:\(digest)")
                 await Self.removeFolder(root) // the duplicate's copy and extracted assets, off the main actor (#2510)
                 return .staged
             }
-            let staged = try await makeReview(packageURL: copiedPackage, extractionDirectory: root, contents: contents,
+            var staged = try await makeReview(packageURL: copiedPackage, extractionDirectory: root, contents: contents,
                                               store: store, releaseSource: releaseSource)
+            // Decided once, on arrival: a review re-matched after Add Source keeps the sheet the listener is in.
+            staged.opensDirectly = SharedPacketArrival.route(
+                isListeningMap: staged.isListeningMap, requiresRecipientItem: staged.requiresRecipientItem,
+                shownOnAnEarlierLaunch: shownOnAnEarlierLaunch) == .openItem
             if review == nil { importError = nil }
             if case .waiting = queue.offer(staged) {
                 environment.recordDiagnostic("lastSpokenMarginsPackageImport", "queued:\(digest)")
@@ -400,6 +409,10 @@ final class SpokenMarginsPackageImportCoordinator {
             }
             let itemText = item?.text
             let contents = review.contents
+            // Whether a friend's Margins were already on the item, for "2 new Margins from Cole" (#3291).
+            let itemHadFriendMargins = try await reader.read { store in
+                try itemId.map { try store.loadImportedCommentaryLayers(itemId: $0).contains { $0.deletedAt == nil } } ?? false
+            }
             let (disposition, repairedLayerId) = try await reader.read { store -> (ImportedCommentaryImportDisposition, String?) in
                 let localItem = item.map {
                     SharedPacketItemMatcher.localIdentity(for: $0, ownedAudiobookDigest: ownedAudiobookDigest)
@@ -427,15 +440,18 @@ final class SpokenMarginsPackageImportCoordinator {
             if let repairedLayerId, let itemId {
                 environment.recordDiagnostic("lastSpokenMarginsPackageRepair", "reassociated:\(repairedLayerId):\(itemId)")
             }
+            var newMarginCount = 0
             switch disposition {
             case .duplicate(let existingLayerId):
                 environment.recordDiagnostic("lastSpokenMarginsPackageImport", "duplicate_layer:\(existingLayerId)")
             case .imported(let layerId, let interjectionIds):
+                newMarginCount = interjectionIds.count
                 environment.recordDiagnostic("lastSpokenMarginsPackageImport", "imported:\(layerId):\(interjectionIds.count)")
                 environment.recordPacketImport(itemId, review.contents.manifest.packageId, interjectionIds.count)
             }
+            var openingWaits = false
             if let itemId {
-                try environment.showImportedItem(itemId, store)
+                openingWaits = try presentImportedItem(itemId, store: store)
                 if let item,
                    item.media?.sourceType == .remoteStream,
                    let rawURL = item.media?.url,
@@ -451,12 +467,67 @@ final class SpokenMarginsPackageImportCoordinator {
             queue.finish(review.id)
             isImporting = false
             review.releaseSource?()
-            environment.reportConfirmation("Imported shared Margins. Playback has not started.")
+            if openingWaits {
+                environment.reportConfirmation(SharedPacketArrival.waitingToOpenMessage(senderName: review.contents.manifest.senderDisplayLabel))
+            } else if !review.opensDirectly {
+                environment.reportConfirmation("Imported shared Margins. Playback has not started.")
+            } else if let announcement = SharedPacketArrival.announcement(
+                newMarginCount: newMarginCount, senderName: review.contents.manifest.senderDisplayLabel,
+                itemHadFriendMargins: itemHadFriendMargins
+            ) {
+                environment.reportConfirmation(announcement)
+            }
         } catch {
             isImporting = false
             if queue.isShowing(review.id) { importError = SharedMarginsImportMessage.userFacing(error) }
+            // Opening it directly failed: the sheet comes up with the error, for a retry or Cancel. The packet is kept.
+            if review.opensDirectly, queue.isShowing(review.id) {
+                var shown = review
+                shown.opensDirectly = false
+                queue.replaceShowing(with: shown) // the same review, so this publishes nothing by itself
+                environment.publishReview(shown)
+            }
             environment.recordDiagnostic("lastSpokenMarginsPackageImport", "failed:\(error.localizedDescription)")
             environment.reportFailure(error, "Shared Margins import failed")
+        }
+    }
+
+    // MARK: Opening the imported item
+
+    /// The item an import finished while a Margin was being recorded or written. It opens once that Margin is saved or
+    /// cancelled (`openDeferredItemIfReady`).
+    private(set) var deferredItemId: String?
+
+    /// The one place an import turns into navigation (the audits on PR #3298). A Margin being recorded or written holds
+    /// the listener's position, and an import can finish at any moment, after a fetch that took seconds, so no import
+    /// moves the active item, the item detail or the screen while the lock is on. The item is still in the Library,
+    /// and it opens when the lock lifts. Returns whether the opening waits.
+    @discardableResult
+    private func presentImportedItem(_ itemId: String, store: SQLiteSessionStore) throws -> Bool {
+        guard environment.navigationIsLocked() else {
+            deferredItemId = nil
+            try environment.showImportedItem(itemId, store)
+            return false
+        }
+        // The import is saved; a Library refresh that fails must not bring an error sheet up over the Margin.
+        // The item opens, and loads its rows, when the lock lifts.
+        try? environment.refreshImportedLibrary(store)
+        deferredItemId = itemId
+        environment.recordDiagnostic("lastSpokenMarginsPackageOpen", "waiting_for_margin:\(itemId)")
+        return true
+    }
+
+    /// Opens the item an import finished under a Margin, once nothing is being recorded or written. The root view asks
+    /// whenever the lock changes.
+    func openDeferredItemIfReady() {
+        guard let itemId = deferredItemId, !environment.navigationIsLocked() else { return }
+        deferredItemId = nil
+        do {
+            let store = try environment.requireStore()
+            try environment.showImportedItem(itemId, store)
+            environment.recordDiagnostic("lastSpokenMarginsPackageOpen", "opened_after_margin:\(itemId)")
+        } catch {
+            environment.reportFailure(error, "Opening the item after the Margin was saved failed")
         }
     }
 
@@ -711,7 +782,7 @@ final class SpokenMarginsPackageImportCoordinator {
         review.releaseSource?()
         environment.reportConfirmation(outcome.message)
         do {
-            try environment.showImportedItem(itemId, store)
+            try presentImportedItem(itemId, store: store)
         } catch {
             environment.reportFailure(error, "Opening the item after adding a Listening Map failed")
         }

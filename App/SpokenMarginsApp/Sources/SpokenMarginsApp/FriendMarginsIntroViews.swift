@@ -31,6 +31,20 @@ struct FriendMarginsSummary: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(AppColors.panel, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .accessibilityIdentifier("item.friendIntro.explanation")
+            // What the old Import sheet said honestly, one tap away (#3291).
+            DisclosureGroup(SharedPacketArrival.aboutTitle) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(SharedPacketArrival.aboutIntegrity)
+                    Text(SharingRightsPresentation.rightsNotice)
+                }
+                .font(.footnote)
+                .foregroundStyle(AppColors.text)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 6)
+            }
+            .font(.subheadline)
+            .tint(AppColors.text)
+            .accessibilityIdentifier("item.friendIntro.aboutFile")
         }
     }
 }

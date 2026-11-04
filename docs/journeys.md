@@ -80,13 +80,13 @@ The owner's one-phone version, with prepared packets and an episode that shares 
 1. The sender shares an item that has several podcast Margins.
    - Pass: the packet is created without an error. A Margin with incomplete positioning evidence is flagged, not silently dropped.
 2. The recipient opens the packet. They have not added the podcast beforehand.
-   - Pass: the episode appears in their Library automatically, and the shared Margins are listed with a placement status (placed, or needs confirming).
+   - Pass: the episode's screen opens with no Import sheet, saying who sent how many Margins; the episode is in their Library, and the shared Margins are listed with a placement status (placed, or needs confirming). A file that fails its check opens nothing and says "This file couldn't be opened." (#3291)
 3. The recipient plays a placed Margin.
    - Pass: a short two-note chime, then the sender's voice plays, labeled with the sender's name, and the recipient's episode is at the Margin's moment. The owner checks by ear that the podcast audio matches what the Margin is about.
 4. The recipient plays an unplaced Margin.
    - Pass: the same chime, then the voice, and the app does not pretend to know the position. This holds when the Margin is tapped in the Timeline too (#932). A muted layer has no chime.
 5. Import the same packet again.
-   - Pass: no duplicate Margins and no duplicate episode.
+   - Pass: the episode's screen opens and nothing more is said: no duplicate Margins and no duplicate episode.
 
 ## J6 — Import a Listening Edition from Shortcuts
 

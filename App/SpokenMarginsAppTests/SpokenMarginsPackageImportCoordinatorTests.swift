@@ -57,7 +57,7 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
 
         XCTAssertEqual(h.openedItems, h.shownItems, "the existing item opens")
         XCTAssertEqual(h.diagnostics["lastSpokenMarginsPackageImport"], "duplicate:\(packet.digest)")
-        XCTAssertEqual(h.successes.last, "These shared Margins are already in your library. Playback has not started.")
+        XCTAssertTrue(h.successes.isEmpty, "the item's screen is the answer; nothing more is said (#3291)")
         XCTAssertNil(h.coordinator.review, "a duplicate is never shown for review")
         XCTAssertEqual(h.incomingFolderNames(), [firstFolder.lastPathComponent], "only the first import's folder is left")
         XCTAssertTrue(h.events.isEmpty)
@@ -257,7 +257,8 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
         XCTAssertEqual(h.shownItems, [itemId])
         XCTAssertEqual(h.packetImports, [PacketImport(itemId: itemId, packetId: "package-alpha", marginCount: 1)])
         XCTAssertTrue(h.diagnostics["lastSpokenMarginsPackageImport"]?.hasPrefix("imported:") == true)
-        XCTAssertEqual(h.confirmations, ["Imported shared Margins. Playback has not started."])
+        XCTAssertTrue(began.opensDirectly)
+        XCTAssertEqual(h.confirmations, [], "a first arrival: the item's screen says who sent how many (#3291)")
         XCTAssertNil(h.coordinator.review)
         XCTAssertFalse(h.coordinator.isImporting)
         XCTAssertEqual(h.events, ["review:nil", "importing:false"], "review clears, then the busy flag")
@@ -279,6 +280,8 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
 
         XCTAssertNotNil(try h.store.loadImportedCommentaryLayer(packageDigest: packet.digest), "the layer was saved before the failure")
         XCTAssertEqual(h.coordinator.review?.id, review.id, "the sheet stays open for a retry")
+        XCTAssertEqual(h.coordinator.review?.opensDirectly, false, "a file that failed to open directly brings its sheet up (#3291)")
+        XCTAssertTrue(h.events.contains("review:\(review.id)"), "and the views are told")
         XCTAssertFalse(h.coordinator.isImporting)
         XCTAssertNotNil(h.coordinator.importError)
         XCTAssertTrue(h.diagnostics["lastSpokenMarginsPackageImport"]?.hasPrefix("failed:") == true)
@@ -293,6 +296,156 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
         XCTAssertNil(h.coordinator.review)
         XCTAssertNil(h.coordinator.importError, "a retry clears the earlier error")
         XCTAssertEqual(h.shownItems.count, 1)
+        XCTAssertEqual(h.confirmations.last, "Imported shared Margins. Playback has not started.", "the sheet's own Import says so")
+    }
+
+    /// #3291: a friend's file opens straight onto its item unless the listener has a choice to make, decided once on
+    /// arrival. A packet re-matched after Add Source keeps the sheet the listener is already in.
+    func testOnlyAFileWithNothingToDecideOpensDirectly() async throws {
+        let h = try makeHarness()
+        let embedded = try h.writePacket(named: "alpha", text: Self.alphaText)
+        assertStaged(await h.coordinator.stage(from: embedded.url))
+        XCTAssertEqual(h.coordinator.review?.opensDirectly, true, "embedded text: nothing to decide")
+        h.coordinator.cancel()
+
+        let supplied = try h.writePacket(named: "beta", text: Self.alphaText, recipientSupplied: true)
+        assertStaged(await h.coordinator.stage(from: supplied.url))
+        XCTAssertEqual(h.coordinator.review?.opensDirectly, false, "the listener picks their own copy")
+        let before = try XCTUnwrap(h.coordinator.review)
+        await h.coordinator.refreshAfterAddingSource()
+        XCTAssertNotEqual(h.coordinator.review?.id, before.id)
+        XCTAssertEqual(h.coordinator.review?.opensDirectly, false, "re-matched in the sheet: it stays there")
+    }
+
+    /// The audit on PR #3298: a friend's file that arrives while the listener writes a Margin must not import and
+    /// switch items under the draft. It waits, and opens once the draft is closed.
+    func testAFileThatOpensDirectlyWaitsWhileAMarginIsBeingWritten() async throws {
+        let h = try makeHarness()
+        let packet = try h.writePacket(named: "alpha", text: Self.alphaText)
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            databaseURLOverride: h.root.appendingPathComponent("model.sqlite")
+        )
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        await model.settleLibraryReload()
+        model.beginWrittenMargin()
+        XCTAssertTrue(model.recordingNavigationIsLocked)
+
+        model.handleIncomingURL(packet.url)
+        await model.waitForPackageStaging()
+        let review = try XCTUnwrap(model.spokenMarginsPackageImportReview)
+        XCTAssertTrue(review.opensDirectly)
+        XCTAssertNil(model.openSharedPacketDirectlyIfReady(), "the draft holds the listener where they are")
+        XCTAssertEqual(model.activeItemId, "item-pill")
+        XCTAssertEqual(model.spokenMarginsPackageImportReview?.id, review.id, "the file waits")
+
+        model.cancelWrittenMargin()
+        let opening = try XCTUnwrap(model.openSharedPacketDirectlyIfReady(), "the draft is closed: the file opens")
+        await opening.value
+        XCTAssertNil(model.spokenMarginsPackageImportReview)
+        XCTAssertEqual(model.activeItemId, "item-shared-\(packet.digest.prefix(20))")
+        XCTAssertEqual(model.screen, .item)
+    }
+
+    /// The second audit on PR #3298, through the real model: an import already running when the listener opens a written
+    /// Margin leaves the active item and the screen alone, and the root view's ask after the draft closes opens it.
+    func testAnImportRunningWhenAMarginIsOpenedDoesNotMoveTheModel() async throws {
+        let h = try makeHarness()
+        let packet = try h.writePacket(named: "alpha", text: Self.alphaText)
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            databaseURLOverride: h.root.appendingPathComponent("model-under-margin.sqlite")
+        )
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        await model.settleLibraryReload()
+        model.handleIncomingURL(packet.url)
+        await model.waitForPackageStaging()
+        XCTAssertNotNil(model.spokenMarginsPackageImportReview)
+        let began = try XCTUnwrap(model.packageImport.beginConfirmation(), "the import has started")
+        model.beginWrittenMargin() // the listener opens a Margin while it runs
+        XCTAssertTrue(model.recordingNavigationIsLocked)
+        let screenBefore = model.screen
+
+        await model.packageImport.confirm(began)
+
+        XCTAssertNil(model.spokenMarginsPackageImportReview, "the import finished")
+        XCTAssertEqual(model.activeItemId, "item-pill", "the listener stays on their own item")
+        XCTAssertEqual(model.screen, screenBefore)
+        XCTAssertEqual(model.packageImport.deferredItemId, "item-shared-\(packet.digest.prefix(20))")
+        XCTAssertTrue(model.libraryItems.contains { $0.id == "item-shared-\(packet.digest.prefix(20))" }, "but the item is in the Library")
+
+        model.cancelWrittenMargin()
+        model.openDeferredImportedItemIfReady()
+        XCTAssertEqual(model.activeItemId, "item-shared-\(packet.digest.prefix(20))")
+        XCTAssertEqual(model.screen, .item)
+    }
+
+    /// The second audit on PR #3298: the lock was checked when the import started, but the listener can start a Margin
+    /// while a podcast or article is still being fetched. The opening checks again, where it happens: the item is
+    /// kept and shown in the Library, the screen stays, and the item opens once the Margin is closed.
+    func testAMarginStartedDuringTheImportHoldsTheOpeningUntilItIsClosed() async throws {
+        let h = try makeHarness()
+        let packet = try h.writePacket(named: "alpha", text: Self.alphaText)
+        assertStaged(await h.coordinator.stage(from: packet.url))
+        h.onPacketImport = { h.navigationLocked = true } // a Margin begins while the file is being imported
+
+        await h.confirmCurrentReview()
+
+        let itemId = "item-shared-\(packet.digest.prefix(20))"
+        XCTAssertNotNil(try h.store.loadImportedCommentaryLayer(packageDigest: packet.digest), "the import itself finishes")
+        XCTAssertEqual(h.shownItems, [], "nothing moves under the Margin")
+        XCTAssertEqual(h.refreshedLibraries, 1, "the item is in the Library")
+        XCTAssertEqual(h.coordinator.deferredItemId, itemId)
+        XCTAssertEqual(h.confirmations, [SharedPacketArrival.waitingToOpenMessage(senderName: "Cole")])
+        XCTAssertNil(h.coordinator.review)
+        XCTAssertFalse(h.coordinator.isImporting)
+
+        h.coordinator.openDeferredItemIfReady()
+        XCTAssertEqual(h.shownItems, [], "still being written")
+
+        h.navigationLocked = false
+        h.coordinator.openDeferredItemIfReady()
+        XCTAssertEqual(h.shownItems, [itemId], "the Margin is closed: the item opens")
+        XCTAssertNil(h.coordinator.deferredItemId)
+        h.coordinator.openDeferredItemIfReady()
+        XCTAssertEqual(h.shownItems, [itemId], "and only once")
+    }
+
+    /// The same gate holds for a Listening Map and for the sheet's own Import: every import ends in one place.
+    func testAListeningMapAddedUnderAMarginOpensItsItemAfterwards() async throws {
+        let h = try makeHarness()
+        let item = try h.seedArticle(id: "mine", reference: "https://example.com/harbour")
+        assertStaged(await h.coordinator.stage(from: try h.writeMapPacket(named: "map-a").url))
+        h.navigationLocked = true
+
+        await h.confirmCurrentReview()
+
+        XCTAssertEqual(h.shownItems, [])
+        XCTAssertEqual(h.coordinator.deferredItemId, item.id)
+        XCTAssertEqual(try h.store.loadListeningMap(itemId: item.id)?.chapters.count, 5, "the map is added")
+
+        h.navigationLocked = false
+        h.coordinator.openDeferredItemIfReady()
+        XCTAssertEqual(h.shownItems, [item.id])
+    }
+
+    /// A later import replaces the one that waits: the listener lands on the file they opened last.
+    func testALaterImportReplacesTheItemThatWaits() async throws {
+        let h = try makeHarness()
+        let a = try h.writePacket(named: "alpha", text: Self.alphaText)
+        let b = try h.writePacket(named: "beta", text: Self.betaText)
+        h.navigationLocked = true
+        assertStaged(await h.coordinator.stage(from: a.url))
+        await h.confirmCurrentReview()
+        assertStaged(await h.coordinator.stage(from: b.url))
+        await h.confirmCurrentReview()
+
+        XCTAssertEqual(h.coordinator.deferredItemId, "item-shared-\(b.digest.prefix(20))")
+        h.navigationLocked = false
+        h.coordinator.openDeferredItemIfReady()
+        XCTAssertEqual(h.shownItems, ["item-shared-\(b.digest.prefix(20))"])
     }
 
     /// #2122: a packet opened while another imports waits its turn. A's success brings B up for review instead of
@@ -740,6 +893,10 @@ private final class ImportHarness {
     var acquireArticleHook: ((SharedItemIdentity) throws -> String)?
     var attachedMaps: [ListeningMap] = []
     var attachFailure: Error?
+    /// What `recordingNavigationIsLocked` would say. `onPacketImport` runs after the layer is saved and before the item opens.
+    var navigationLocked = false
+    var onPacketImport: (() -> Void)?
+    var refreshedLibraries = 0
 
     var incomingDirectory: URL {
         supportDirectory.appending(path: "SpokenMargins/IncomingPackages", directoryHint: .isDirectory)
@@ -876,6 +1033,7 @@ private final class ImportHarness {
             },
             recordPacketImport: { [unowned self] itemId, packetId, marginCount in
                 self.packetImports.append(PacketImport(itemId: itemId, packetId: packetId, marginCount: marginCount))
+                self.onPacketImport?()
             },
             localAudiobookDigest: { _ in nil },
             ownedAudiobookURL: { _ in nil },
@@ -905,7 +1063,9 @@ private final class ImportHarness {
                 if let failure = self.attachFailure { throw failure }
                 self.attachedMaps.append(map)
                 try self.store.saveListeningMap(map)
-            }
+            },
+            navigationIsLocked: { [unowned self] in self.navigationLocked },
+            refreshImportedLibrary: { [unowned self] _ in self.refreshedLibraries += 1 }
         )
     }
 }

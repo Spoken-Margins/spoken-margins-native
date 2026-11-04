@@ -106,6 +106,7 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         let review = try XCTUnwrap(model.spokenMarginsPackageImportReview)
         XCTAssertEqual(try store.pendingPayloadIDs().count, 1, "the shared copy waits until Import or Cancel (#2123)")
         XCTAssertTrue(model.diagnostics.values.contains("opened"))
+        XCTAssertTrue(review.opensDirectly, "a new file with nothing to decide opens directly (#3291)")
 
         // Coming back to the foreground while the review shows stages nothing again.
         try await model.consumePendingSpokenMarginsPackageHandoffs(from: store)
@@ -115,6 +116,7 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         let relaunched = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         try await relaunched.consumePendingSpokenMarginsPackageHandoffs(from: store)
         let reopened = try XCTUnwrap(relaunched.spokenMarginsPackageImportReview, "the packet survived the relaunch")
+        XCTAssertFalse(reopened.opensDirectly, "shown on an earlier launch: it waits in the sheet, nothing is fetched unasked")
         try await relaunched.consumePendingSpokenMarginsPackageHandoffs(from: store)
         XCTAssertEqual(relaunched.spokenMarginsPackageImportReview?.id, reopened.id, "reopened once, not on a loop")
         XCTAssertEqual(try store.pendingPayloadIDs().count, 1)

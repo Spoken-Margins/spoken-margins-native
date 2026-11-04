@@ -44,8 +44,8 @@ final class PackageArchiveListenerMessageTests: XCTestCase {
 
     func testTheFourMessages() {
         XCTAssertEqual(ArchiveError.unsupportedRequiredCapability("x").listenerMessage,
-                       "These Margins need a newer Spoken Margins. Update the app, then open them again.")
-        XCTAssertEqual(ArchiveError.invalidDigest.listenerMessage, "This file looks damaged. Ask your friend to send it again.")
+                       "Your friend made this with a newer Spoken Margins. Update the app to hear it.")
+        XCTAssertEqual(ArchiveError.invalidDigest.listenerMessage, "This file couldn't be opened. It may have been damaged on the way. Ask your friend to send it again.")
         XCTAssertEqual(ArchiveError.packageTooLarge.listenerMessage,
                        "This file is bigger than Spoken Margins can open. Ask your friend to send fewer Margins at a time.")
     }
