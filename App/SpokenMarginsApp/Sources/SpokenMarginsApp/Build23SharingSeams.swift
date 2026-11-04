@@ -194,6 +194,9 @@ struct Build23ImportedLayerSnapshot: Identifiable, Equatable {
     let revealMode: ImportedCommentaryRevealMode
     let listeningMapProposalCount: Int
     let margins: [Build23ImportedMarginSnapshot]
+    /// The share page of the link these Margins came from, where its "Report this link" form is (#2846).
+    /// Nil for Margins from a file, which have no page.
+    var reportURL: URL? = nil
 }
 
 /// Canonical sender actions. Ultra UI work should call these actions rather
@@ -449,7 +452,8 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
                     isMuted: layer.isMuted,
                     revealMode: layer.revealMode ?? .guided,
                     listeningMapProposalCount: layer.listeningMapProposals?.count ?? 0,
-                    margins: margins
+                    margins: margins,
+                    reportURL: layer.shareLinkId.flatMap(ShareLinkReport.pageURL(forLinkId:))
                 )
             }
     }

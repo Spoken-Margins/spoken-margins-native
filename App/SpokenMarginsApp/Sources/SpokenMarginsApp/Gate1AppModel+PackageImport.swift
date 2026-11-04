@@ -87,9 +87,10 @@ extension Gate1AppModel {
         case rejectedNeedsNewerApp
     }
 
+    /// `shareLinkId` is the link the file was downloaded from, kept so the listener can report it (#2846).
     @discardableResult
-    func stageSpokenMarginsPackageImport(from sourceURL: URL) async -> Bool {
-        await stageSpokenMarginsPackage(from: sourceURL, announcesRejection: true) == .opened
+    func stageSpokenMarginsPackageImport(from sourceURL: URL, shareLinkId: String? = nil) async -> Bool {
+        await stageSpokenMarginsPackage(from: sourceURL, announcesRejection: true, shareLinkId: shareLinkId) == .opened
     }
 
     /// Opens a packet from a place that cannot wait for the staging (a URL the system handed over). The staging
@@ -106,10 +107,11 @@ extension Gate1AppModel {
 
     func stageSpokenMarginsPackage(
         from sourceURL: URL, announcesRejection: Bool, shownOnAnEarlierLaunch: Bool = false,
-        releaseSource: (@MainActor () -> Void)? = nil
+        shareLinkId: String? = nil, releaseSource: (@MainActor () -> Void)? = nil
     ) async -> SpokenMarginsPackageStageOutcome {
         switch await packageImport.stage(from: sourceURL, announcesRejection: announcesRejection,
-                                         shownOnAnEarlierLaunch: shownOnAnEarlierLaunch, releaseSource: releaseSource) {
+                                         shownOnAnEarlierLaunch: shownOnAnEarlierLaunch, shareLinkId: shareLinkId,
+                                         releaseSource: releaseSource) {
         case .rejected(let needsNewerApp):
             return needsNewerApp ? .rejectedNeedsNewerApp : .rejected
         case .staged:
@@ -140,7 +142,7 @@ extension Gate1AppModel {
             link,
             stage: { [weak self] file in
                 guard let self else { return }
-                let opened = await self.stageSpokenMarginsPackageImport(from: file)
+                let opened = await self.stageSpokenMarginsPackageImport(from: file, shareLinkId: link.id)
                 self.diagnostics["lastShareLink"] = opened ? "opened" : "rejected"
             },
             fail: { [weak self] message, retryable in

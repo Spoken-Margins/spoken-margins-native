@@ -20,7 +20,7 @@ final class ImportedLayerRevealModeTests: XCTestCase {
         try? FileManager.default.removeItem(at: root)
     }
 
-    private func importedLayer(suggesting mode: ImportedCommentaryRevealMode?) throws -> ImportedCommentaryLayer {
+    private func importedLayer(suggesting mode: ImportedCommentaryRevealMode?, shareLinkId: String? = nil) throws -> ImportedCommentaryLayer {
         let name = "reveal-\(mode?.rawValue ?? "none")"
         let item = SharedItemIdentity(itemType: .text, canonicalURL: "https://example.com/article", title: "A Useful Article")
         let revision = InterjectionShareRevision(
@@ -43,7 +43,7 @@ final class ImportedLayerRevealModeTests: XCTestCase {
         XCTAssertEqual(verified.manifest.suggestedRevealMode, mode, "the packet says what the sender chose")
         let repository = InMemorySessionRepository()
         _ = try SpokenMarginsPackageImporter.importPackage(
-            verified, itemId: "recipient-item", importedAt: created, repository: repository,
+            verified, itemId: "recipient-item", importedAt: created, shareLinkId: shareLinkId, repository: repository,
             makeLocalID: { kind, packageID in "recipient-\(kind)-\(packageID)" }
         )
         return try XCTUnwrap(try repository.loadImportedCommentaryLayers(itemId: "recipient-item").first)
@@ -64,5 +64,14 @@ final class ImportedLayerRevealModeTests: XCTestCase {
             XCTAssertEqual(layer.suggestedRevealMode, mode, "\(mode)")
             XCTAssertEqual(layer.revealMode, .guided, "a \(mode) suggestion still arrives as guided")
         }
+    }
+
+    /// The link a packet was opened from stays with its layer so the listener can report it (#2846). A packet from
+    /// a file has none, and a value that is not a link id is dropped rather than saved.
+    func testALayerKeepsTheShareLinkItWasOpenedFromAndOnlyARealOne() throws {
+        let id = "0123456789abcdef0123456789abcdef"
+        XCTAssertEqual(try importedLayer(suggesting: nil, shareLinkId: id).shareLinkId, id)
+        XCTAssertNil(try importedLayer(suggesting: nil).shareLinkId, "a file handed over directly has no link")
+        XCTAssertNil(try importedLayer(suggesting: nil, shareLinkId: "../not-a-link").shareLinkId)
     }
 }
