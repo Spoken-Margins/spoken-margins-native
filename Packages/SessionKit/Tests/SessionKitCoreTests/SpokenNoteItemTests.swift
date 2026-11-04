@@ -110,3 +110,19 @@ final class SpokenNoteItemTests: XCTestCase {
             .text)
     }
 }
+
+/// The Lock Screen card for a note says "Spoken note", not the internal `note://` reference.
+final class SpokenNoteMediaSubtitleTests: XCTestCase {
+    func testANoteGetsAPlainSubtitleNotItsReference() {
+        let item = SpokenNoteItem.makeItem(note: SpokenNote(id: "n1"), createdAt: Date())
+        XCTAssertEqual(SpokenNoteItem.mediaSubtitle(for: item), "Spoken note")
+        XCTAssertFalse((SpokenNoteItem.mediaSubtitle(for: item) ?? "").contains("note://"))
+    }
+
+    func testOtherItemsKeepTheirOwnSubtitle() {
+        let text = Item(id: "i", title: "T", mediaType: "text", text: "x", externalReference: "manual-import", status: "ready", externalReferenceType: "manual")
+        XCTAssertNil(SpokenNoteItem.mediaSubtitle(for: text))
+        let tour = Item(id: "g", title: "T", mediaType: "guided_tour", text: "x", externalReference: "bundled://guided-onboarding.v1", status: "ready", externalReferenceType: "guided_onboarding")
+        XCTAssertNil(SpokenNoteItem.mediaSubtitle(for: tour))
+    }
+}

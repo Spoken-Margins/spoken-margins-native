@@ -214,7 +214,7 @@ private struct VoiceAgreementSheet: View {
         NavigationStack {
             List {
                 Section {
-                    Text("\(row.entry.displayName) comes with use restrictions from its publisher. To download it, agree to use it within them.")
+                    Text("\(row.entry.displayName) comes with use restrictions from its publisher. Tapping Agree means you will use it within the restrictions below. Nothing downloads until you do.")
                 }
                 ForEach(row.licensesNeedingAgreement, id: \.id) { license in
                     Section(license.name) {
@@ -225,12 +225,22 @@ private struct VoiceAgreementSheet: View {
             }
             .navigationTitle("Before you download")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Not now", action: cancel) }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Agree and download", action: agree)
-                        .accessibilityIdentifier("settings.voices.agree")
+            // The choice sits where the reading ends and the thumb reaches, as on the Terms screen (#3318, #2853).
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                VStack(spacing: 12) {
+                    Button(action: agree) {
+                        Text("Agree and download").frame(maxWidth: .infinity, minHeight: 44)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("settings.voices.agree")
+                    Button(action: cancel) {
+                        Text("Not now").frame(maxWidth: .infinity, minHeight: 44)
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("settings.voices.agree.cancel")
                 }
+                .padding()
+                .background(.bar)
             }
         }
     }
