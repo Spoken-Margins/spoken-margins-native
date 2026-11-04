@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Margin } from '../../shared/model.ts';
 import { ARRIVAL_WORDS, cueFor } from './arrival.ts';
-import { nextFailure, playRejectionMeansFailed, type FailureEvent } from './episode-failure.ts';
+import { clipRejection, failureNeedsToast, nextFailure, playRejectionMeansFailed, type FailureEvent } from './episode-failure.ts';
 
 /** Runs events through the state and returns how many problems were announced and where it ended. */
 function run(events: FailureEvent[], start = false): { announced: number; failed: boolean } {
@@ -113,4 +113,16 @@ test('a packet with no audio address keeps its own words', () => {
 test('an unnamed sender reads as “your friend” in the sentence and the button', () => {
   const cue = cueFor([margin('a', 30, 'Your friend')], 0, undefined, failedState);
   assert.equal(cue?.kind === 'unplayable' && cue.button, 'Hear your friend’s Margins');
+});
+
+test('the failure gets a toast only when no card is on screen to say it', () => {
+  assert.equal(failureNeedsToast(0), true);
+  assert.equal(failureNeedsToast(1), false);
+});
+
+test('a clip the browser refuses without a tap waits for one; other rejections skip it', () => {
+  assert.equal(clipRejection('NotAllowedError'), 'wait-for-tap');
+  assert.equal(clipRejection('NotSupportedError'), 'skip');
+  assert.equal(clipRejection('AbortError'), 'skip');
+  assert.equal(clipRejection(undefined), 'skip');
 });

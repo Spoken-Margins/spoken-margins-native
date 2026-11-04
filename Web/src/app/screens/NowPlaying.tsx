@@ -106,9 +106,12 @@ function ArrivedMargin({ margins }: { margins: readonly Margin[] }) {
 function MarginCue({ margins }: { margins: readonly Margin[] }) {
   const player = usePlayer();
   const sender = friendMargins(margins)[0]?.author;
-  if (player.arrived) return null;
   const cue = cueFor(margins, player.time, sender, { failed: player.failed, heardWithoutEpisode: player.withoutEpisode === 'done' });
-  if (!cue) return null;
+  // While this card says the episode can't play, the player shows no toast of its own for it (#3356).
+  const sayingFailure = !player.arrived && (cue?.kind === 'unplayable' || cue?.kind === 'unplayable-done');
+  const { registerFailureCard } = player;
+  useEffect(() => (sayingFailure ? registerFailureCard() : undefined), [sayingFailure, registerFailureCard]);
+  if (player.arrived || !cue) return null;
   if (cue.kind === 'unplayable' || cue.kind === 'unplayable-done') {
     // The episode can't play here (#3356): one sentence, and for the first, one button. No countdown, no Skip.
     return (

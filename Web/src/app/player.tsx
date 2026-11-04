@@ -5,7 +5,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { Episode, Margin } from '../shared/model.ts';
 import { useData } from './data.tsx';
 import { friendMargins } from './logic/arrival.ts';
-import { EPISODE_FAILED, nextFailure, type FailureEvent } from './logic/episode-failure.ts';
+import { clipRejection, EPISODE_FAILED, failureNeedsToast, nextFailure, type FailureEvent } from './logic/episode-failure.ts';
 import { CrossingClock } from './logic/margin-autoplay.ts';
 import { plainError } from './logic/messages.ts';
 import { NotSavedError } from './logic/storage.ts';
@@ -54,6 +54,8 @@ export interface PlayerApi {
   /** Plays the friend's Margins on their own, in order, while the episode can't play. `done`: all heard. */
   withoutEpisode: 'idle' | 'playing' | 'done';
   playWithoutEpisode(): void;
+  /** The cue card calls this while it is on screen saying the episode failed; a failure then needs no toast. Returns the undo. */
+  registerFailureCard(): () => void;
 }
 
 const PlayerContext = createContext<PlayerApi | null>(null);
@@ -74,11 +76,16 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   // Whether the episode failed to load, as a ref (events must see it at once) and as state (the screen shows it).
   const failedRef = useRef(false);
   const [failed, setFailed] = useState(false);
+  // Set when an event turned a working episode into a failed one; the effect below shows the toast unless the card does.
+  const announceRef = useRef(false);
+  const failureCards = useRef(0);
   const [withoutEpisode, setWithoutEpisode] = useState<'idle' | 'playing' | 'done'>('idle');
   // Which run of the Margins-without-the-episode is current; a new one, or leaving, ends the old one.
   const runId = useRef(0);
   // Where playback last was, for spotting a Margin's moment being crossed.
   const crossing = useRef(new CrossingClock());
+  // What to do after a blocked clip is played from the tap (the rest of a run of Margins without the episode).
+  const blockedDone = useRef<(() => void) | undefined>(undefined);
   const clip = useRef<{ element: HTMLAudioElement; url: string } | null>(null);
   const clipQueue = useRef<Margin[]>([]);
   // The voice reading a friend's written Margin aloud, while it does.
@@ -126,7 +133,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   }, [stopReading]);
 
   /** Plays a voice Margin's clip with the episode paused, then resumes the episode (or the next queued clip). */
-  const playClip = useCallback((margin: Margin) => {
+  const playClip = useCallback((margin: Margin, onDone?: () => void) => {
     const audio = audioRef.current;
     if (!audio || !margin.voice) return;
     audio.pause();
@@ -140,17 +147,20 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       clip.current = null;
       URL.revokeObjectURL(url);
       const next = clipQueue.current.shift();
-      if (next) playClip(next);
+      if (next) playClip(next, onDone);
+      else if (onDone) onDone();
       else void audio.play().catch(() => undefined);
     };
     element.onended = finish;
     element.onerror = finish;
     element.play().catch((error: unknown) => {
       if (clip.current?.element !== element) return;
-      if (error instanceof DOMException && error.name === 'NotAllowedError') {
-        // The browser won't start the clip without a tap: the episode stays paused at the Margin, with a Play.
+      if (clipRejection(error instanceof DOMException ? error.name : undefined) === 'wait-for-tap') {
+        // The browser won't start the clip without a tap: the episode stays paused at the Margin, with a Play. A run
+        // of Margins without the episode carries on with the rest from that tap.
         clip.current = null;
         URL.revokeObjectURL(url);
+        blockedDone.current = onDone;
         setArrived({ margin, blocked: true });
         return;
       }
@@ -198,11 +208,31 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       if (step.announce) {
         setLoading(false);
         setPlaying(false);
-        toast(EPISODE_FAILED, 'problem');
+        announceRef.current = true;
       }
     },
-    [toast],
+    [],
   );
+
+  // The problem is shown after the screen has drawn the failure: the cue card is then registered if it is on screen,
+  // and says it in its own sentence; with no card (no friend Margins, or only the mini player) the toast is the
+  // sentence, so a failure is never silent. Children's effects run first, so the card is counted by now.
+  useEffect(() => {
+    if (!failed) {
+      announceRef.current = false;
+      return;
+    }
+    if (!announceRef.current) return;
+    announceRef.current = false;
+    if (failureNeedsToast(failureCards.current)) toast(EPISODE_FAILED, 'problem');
+  }, [failed, toast]);
+
+  const registerFailureCard = useCallback(() => {
+    failureCards.current++;
+    return () => {
+      failureCards.current--;
+    };
+  }, []);
 
   /** A `play()` that was refused or failed: a failed source is the one failure; a refused autoplay is just a wait. */
   const onPlayRejected = useCallback(
@@ -245,21 +275,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         return;
       }
       const next = () => step(index + 1);
-      setArrived({ margin, blocked: false });
       if (margin.voice) {
-        const url = URL.createObjectURL(margin.voice.blob);
-        const element = new Audio(url);
-        clip.current = { element, url };
-        const finish = () => {
-          if (clip.current?.element !== element) return;
-          clip.current = null;
-          URL.revokeObjectURL(url);
-          next();
-        };
-        element.onended = finish;
-        element.onerror = finish;
-        element.play().catch(finish);
+        // The same clip path as a Margin that comes up in the episode: a refused clip waits for a tap, then carries on.
+        playClip(margin, next);
       } else {
+        setArrived({ margin, blocked: false });
         const heard = readWrittenMargin(margin.author, margin.text ?? '', {
           onStart: () => undefined,
           onEnd: () => {
@@ -274,11 +294,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       }
     };
     step(0);
-  }, [stopClip]);
+  }, [stopClip, playClip]);
 
   const playArrived = useCallback(() => {
     const margin = arrived?.margin;
-    if (margin) playClip(margin);
+    const done = blockedDone.current;
+    blockedDone.current = undefined;
+    if (margin) playClip(margin, done);
   }, [arrived, playClip]);
 
   const open = useCallback(
@@ -422,8 +444,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   }, [episode, playing, duration, rate, time]);
 
   const api = useMemo<PlayerApi>(
-    () => ({ episode, playing, loading, time, duration, rate, open, toggle, skip, seek, setRate, now, arrived, playArrived, failed, withoutEpisode, playWithoutEpisode }),
-    [episode, playing, loading, time, duration, rate, open, toggle, skip, seek, setRate, now, arrived, playArrived, failed, withoutEpisode, playWithoutEpisode],
+    () => ({ episode, playing, loading, time, duration, rate, open, toggle, skip, seek, setRate, now, arrived, playArrived, failed, withoutEpisode, playWithoutEpisode, registerFailureCard }),
+    [episode, playing, loading, time, duration, rate, open, toggle, skip, seek, setRate, now, arrived, playArrived, failed, withoutEpisode, playWithoutEpisode, registerFailureCard],
   );
 
   return (

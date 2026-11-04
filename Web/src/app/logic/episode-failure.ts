@@ -44,3 +44,17 @@ export function nextFailure(failed: boolean, event: FailureEvent): FailureStep {
 
 /** The one problem shown for a failed episode, for any item in the player. */
 export const EPISODE_FAILED = 'This episode’s audio couldn’t be loaded.';
+
+/** Whether a failure needs its own toast: not when the cue card is on screen saying it in one sentence. */
+export function failureNeedsToast(cardsShowing: number): boolean {
+  return cardsShowing <= 0;
+}
+
+/**
+ * What a rejected clip `play()` means for a Margin heard on its own. `NotAllowedError`: the browser wants a tap (a
+ * clip started later than the listener's own tap can be refused, as on iPhone Safari), so the run waits on that
+ * Margin. Anything else skips it.
+ */
+export function clipRejection(name: string | undefined): 'wait-for-tap' | 'skip' {
+  return name === 'NotAllowedError' ? 'wait-for-tap' : 'skip';
+}
