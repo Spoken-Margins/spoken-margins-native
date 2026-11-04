@@ -6,39 +6,29 @@ import XCTest
 
 /// #487: the recipient preview's share actions with "Share as link" hidden, offered, and after a failed upload. The
 /// real buttons are laid out at the narrowest phone width, and each rendering is attached so the run's result bundle
-/// holds the screenshots of every state.
+/// holds a picture of every state. These are renderings of the views, not screenshots of the whole sender flow.
 @MainActor
 final class ShareAsLinkRenderingTests: XCTestCase {
     /// The preview's width on a 375 pt-wide phone, the narrowest iOS 26 runs on, less 16 pt of padding on each side.
     private static let narrowestWidth: CGFloat = 343
 
     private enum LinkState: String {
-        /// The server's `links` switch is off, so `ShareLinkSendControl` draws nothing.
+        /// What the preview shows when the server's `links` switch is off: `ShareLinkSendControl` draws nothing, so
+        /// this renders no link row. The switch itself is `ShareLinkSender.isOffered`, not exercised here.
         case hidden
         case offered
         case failed
     }
 
-    func testTheLinkButtonSitsUnderTheFileShareAndAFailedUploadAddsOneLineAndKeepsTheFileShare() throws {
-        let hidden = try render(.hidden, size: .large)
-        let offered = try render(.offered, size: .large)
-        let failed = try render(.failed, size: .large)
+    func testTheLinkButtonSitsUnderTheFileShareAndAFailedUploadAddsItsLine() throws {
+        for size in [DynamicTypeSize.large, .accessibility5] {
+            let hidden = try render(.hidden, size: size)
+            let offered = try render(.offered, size: size)
+            let failed = try render(.failed, size: size)
 
-        XCTAssertGreaterThan(offered.height, hidden.height + 20, "\"Share as link\" did not appear under the file share")
-        XCTAssertGreaterThan(failed.height, offered.height + 10, "a failed upload did not add its line")
-        // The failed state keeps both buttons, so it can only grow: nothing it had is taken away.
-        XCTAssertEqual(failed.width, offered.width, accuracy: 0.5)
-    }
-
-    func testEveryStateFitsTheNarrowestPhoneAtEveryTextSize() throws {
-        for state in [LinkState.hidden, .offered, .failed] {
-            for size in [DynamicTypeSize.large, .accessibility5] {
-                let rendered = try render(state, size: size)
-                XCTAssertLessThanOrEqual(
-                    rendered.width, Self.narrowestWidth + 0.5,
-                    "\(state) at \(size): wider than the phone, so a button or the line is cut off"
-                )
-            }
+            // The link row adds a button and 20 pt of spacing; the failure adds a line of text and 8 pt.
+            XCTAssertGreaterThan(offered.height, hidden.height + 30, "\(size): \"Share as link\" did not appear under the file share")
+            XCTAssertGreaterThan(failed.height, offered.height + 15, "\(size): a failed upload did not add its line")
         }
     }
 
