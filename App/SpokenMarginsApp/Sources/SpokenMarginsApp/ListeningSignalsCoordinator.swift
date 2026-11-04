@@ -89,6 +89,10 @@ final class ListeningSignalsCoordinator {
         if let itemId = finishes.finishedItem(from: previous, to: current) { finish(itemId: itemId) }
     }
 
+    /// Which feed entry each imported Library item came from; Following reads it to tell which of a show's episodes
+    /// the listener has finished.
+    var importedEntries: ListeningSignalImportedEntries { collector.importedEntries }
+
     func dismiss(entryId: String) {
         collector.dismiss(entryId: entryId, repository: repository())
     }

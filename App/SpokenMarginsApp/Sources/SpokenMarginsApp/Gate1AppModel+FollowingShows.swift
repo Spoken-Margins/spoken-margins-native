@@ -7,6 +7,8 @@ struct FollowingShowsState {
     var entries: [FeedEntry] = []
     /// When each show was last opened; "N new" on Following counts from it.
     var looked = FollowingLookedMarkers()
+    /// Which imported episodes are in the Library and whether each is finished; a row previews the next one worth hearing.
+    var libraryEpisodes: [String: FollowingLibraryEpisode] = [:]
     /// Following's rows, built off the main thread whenever the entries, shows or looked times change.
     var listCache = FollowingShowList()
     /// Counts reloads of `entries`, so a Show screen knows when to rebuild its episodes.
@@ -18,6 +20,7 @@ struct FollowingShowsState {
 extension Gate1AppModel {
     var followingShowEntries: [FeedEntry] { get { followingShows.entries } set { followingShows.entries = newValue } }
     var followingLooked: FollowingLookedMarkers { get { followingShows.looked } set { followingShows.looked = newValue } }
+    var followingLibraryEpisodes: [String: FollowingLibraryEpisode] { get { followingShows.libraryEpisodes } set { followingShows.libraryEpisodes = newValue } }
     var followingShowListCache: FollowingShowList { get { followingShows.listCache } set { followingShows.listCache = newValue } }
     var followingShowRevision: Int { get { followingShows.revision } set { followingShows.revision = newValue } }
     var followingLookedLoaded: Bool { get { followingShows.lookedLoaded } set { followingShows.lookedLoaded = newValue } }
@@ -57,13 +60,22 @@ extension Gate1AppModel {
         guard let store else { return }
         let needsMarkers = !followingLookedLoaded
         let url = Self.followingLookedURL
+        let importedEntries = listeningSignals.importedEntries
         let result = await Task.detached(priority: .userInitiated) {
             let entries = (try? store.loadFeedEntries(subscriptionId: nil)) ?? []
             let saved = needsMarkers ? url.flatMap { FollowingLookedMarkers.loadIfPresent(from: $0) } : nil
             let followed = needsMarkers ? try? store.loadFeedSubscriptions().map(\.id) : nil
-            return (entries, saved, followed)
+            // Only a show with an imported episode needs the Library read: which of them the listener has finished.
+            var library: [String: FollowingLibraryEpisode] = [:]
+            if entries.contains(where: { $0.state == .imported }),
+               let items = try? store.listItemSummaries(), let sessions = try? store.loadSessions() {
+                library = FollowingLibraryEpisodes.resolve(
+                    entries: entries, items: items, sessions: sessions, importedEntryIds: importedEntries.entryIds())
+            }
+            return (entries, saved, followed, library)
         }.value
         followingShowEntries = result.0
+        followingLibraryEpisodes = result.3
         followingShowRevision += 1
         if needsMarkers, !followingLookedLoaded, let followed = result.2 {
             followingLookedLoaded = true
@@ -80,8 +92,9 @@ extension Gate1AppModel {
     /// Builds the rows from the current inputs off the main thread; `body` only reads the result.
     func rebuildFollowingShowList() async {
         let subscriptions = feedSubscriptions, entries = followingShowEntries, looked = followingLooked.lookedAt
+        let library = followingLibraryEpisodes
         let list = await Task.detached(priority: .userInitiated) {
-            FollowingShowRows.build(subscriptions: subscriptions, entries: entries, lookedAt: looked)
+            FollowingShowRows.build(subscriptions: subscriptions, entries: entries, lookedAt: looked, libraryEpisodes: library)
         }.value
         followingShowListCache = list
     }
@@ -107,8 +120,13 @@ extension Gate1AppModel {
         Task { await FollowingLookedWriter.shared.save(markers, to: url, version: version) }
     }
 
-    /// ▶ on a row: plays the show's newest unplayed episode. It enters the Library as it starts and not before.
+    /// ▶ on a row: plays the episode the row shows. One already in the Library (started, not finished) resumes there;
+    /// any other enters the Library as it starts and not before.
     func playNewestEpisode(of row: FollowingShowRow) {
+        if let itemID = row.playItemID {
+            startItem(id: itemID)
+            return
+        }
         guard let id = row.playEntryID, let entry = followingShowEntries.first(where: { $0.id == id }) else { return }
         importFollowedSourceEntry(entry, playWhenFinished: true)
     }

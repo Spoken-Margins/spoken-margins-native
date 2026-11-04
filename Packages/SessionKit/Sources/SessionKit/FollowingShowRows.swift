@@ -15,10 +15,16 @@ public struct FollowingShowRow: Equatable, Identifiable, Sendable {
     public var newestEpisodeDate: Date?
     /// "Oct 16", nil when the newest episode has no date.
     public var dateLabel: String?
-    /// The entry the row's play button plays: the show's newest episode not yet played or dismissed.
+    /// The entry the row's play button plays: always the episode the row previews (`newestEntryID`), so ▶ plays
+    /// what the listener sees. Nil when the show has nothing left to hear (every episode played or dismissed).
     public var playEntryID: String?
-    /// The episode the row previews (`newestEpisodeTitle`): the show's newest one, played or not. The swipe's Add (#2929) saves
-    /// this one, so it is exactly what the listener sees on the row and finds at the top of the show.
+    /// When the previewed episode is already in the Library, its item: ▶ resumes it there instead of importing it again.
+    public var playItemID: String?
+    /// The episode the row previews (`newestEpisodeTitle`): the show's newest one still worth hearing, meaning one
+    /// not yet played, or one in the Library that the listener has started but not finished. A finished episode gives
+    /// way to the next unread one, and the row sorts by that episode's date. Only when every episode is finished does it
+    /// show the newest of them. The swipe's Add (#2929) saves this one, so it is exactly what the listener sees on the
+    /// row and finds in the show.
     public var newestEntryID: String?
     /// The previewed episode is in the Library already, so there is nothing for the swipe to add.
     public var isNewestInLibrary: Bool = false
@@ -62,10 +68,14 @@ public enum FollowingShowRows {
     ///   - entries: every stored entry; entries of shows that are no longer followed are ignored.
     ///   - lookedAt: when the listener last opened each show, by subscription id. A show never opened
     ///     counts every waiting episode after the follow baseline as new.
+    ///   - libraryEpisodes: the Library item behind each imported entry and whether it is finished
+    ///     (`FollowingLibraryEpisodes.resolve`). An imported entry with no item here counts as finished: nothing is
+    ///     known to resume, so the row moves on to the next unread episode.
     public static func build(
         subscriptions: [FeedSubscription],
         entries: [FeedEntry],
         lookedAt: [String: Date] = [:],
+        libraryEpisodes: [String: FollowingLibraryEpisode] = [:],
         now: Date = Date(),
         calendar: Calendar = .current,
         locale: Locale = .current
@@ -74,7 +84,10 @@ public enum FollowingShowRows {
         var built: [(row: FollowingShowRow, sortDate: Date, createdAt: Date)] = []
         for subscription in subscriptions {
             let shown = (bySubscription[subscription.id] ?? []).filter { $0.state != .dismissed }
-            let newest = shown.min(by: newestFirst)
+            // The episode worth hearing next: unplayed, or in the Library and not finished. If none is left, the newest of
+            // what is there, which only names the show's last word and offers no ▶.
+            let hearable = shown.filter { isHearable($0, libraryEpisodes: libraryEpisodes) }
+            let newest = hearable.min(by: newestFirst) ?? shown.min(by: newestFirst)
             let newestDate = newest.flatMap(date(of:))
             let isQuiet = subscription.state == .muted
             let count = isQuiet ? 0 : newCount(of: subscription, in: shown, lookedAt: lookedAt[subscription.id])
@@ -90,7 +103,7 @@ public enum FollowingShowRows {
             let label = [
                 title,
                 count > 0 ? "\(count) new" : nil,
-                newestTitle.map { "Newest: \($0)" },
+                newestTitle.map { "\(hearable.isEmpty ? "Newest" : "Up next"): \($0)" },
                 newest?.state == .imported ? "In your Library" : nil,
                 spokenDate.map { "Published \($0)" },
                 isQuiet ? "Quiet" : nil,
@@ -98,7 +111,8 @@ public enum FollowingShowRows {
             let row = FollowingShowRow(
                 id: subscription.id, title: title, newCount: count,
                 newestEpisodeTitle: newestTitle, newestEpisodeDate: newestDate, dateLabel: dateLabel,
-                playEntryID: shown.filter(isUnplayed).min(by: newestFirst)?.id,
+                playEntryID: hearable.isEmpty ? nil : newest?.id,
+                playItemID: hearable.isEmpty || newest?.state != .imported ? nil : newest.flatMap { libraryEpisodes[$0.id]?.itemID },
                 newestEntryID: newest?.id, isNewestInLibrary: newest?.state == .imported,
                 isQuiet: isQuiet, accessibilityLabel: label
             )
@@ -149,6 +163,12 @@ public enum FollowingShowRows {
     }
 
     static func isUnplayed(_ entry: FeedEntry) -> Bool { entry.state == .unseen || entry.state == .seen }
+
+    /// Still worth previewing and playing: not played yet, or in the Library with an item the listener hasn't finished.
+    static func isHearable(_ entry: FeedEntry, libraryEpisodes: [String: FollowingLibraryEpisode]) -> Bool {
+        if isUnplayed(entry) { return true }
+        return entry.state == .imported && libraryEpisodes[entry.id].map { !$0.isFinished } ?? false
+    }
 
     static func date(of entry: FeedEntry) -> Date? { entry.publishedAt ?? entry.firstSeenAt }
 
