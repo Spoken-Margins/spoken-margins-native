@@ -207,6 +207,7 @@ extension Gate1AppModel {
             let exportedSelections = selections
             // The export is recorded in one background transaction (#2509).
             try? await StoreReader(store).read { try SpokenMarginsPackageExportRecord.recordExport(manifest: writtenManifest, selections: exportedSelections, repository: $0) } // replies link back through the recorded identity; the share still succeeds without it (#473)
+            refreshMarginRowsInBackground(forItem: item.id) // the rows now carry the packet identity, so a reply that comes back finds its parent (#3353)
             listeningSignals.export(itemId: item.id, packetId: packageID, marginCount: drafts.count, packetURL: destination)
             UserDefaults.standard.set(senderDisplayLabel, forKey: "sharingSenderDisplayLabel")
             sharedSpokenMarginsPackageURL = destination

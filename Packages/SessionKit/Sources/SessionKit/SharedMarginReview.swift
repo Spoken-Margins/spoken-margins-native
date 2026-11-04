@@ -75,6 +75,27 @@ public enum SharedMarginReview {
         return entries(layers: layers, records: records, ownMargins: ownMargins)
     }
 
+    /// The listener's own Margins on an item, for the review's "Reply to your Margin" (#3353). The open item holds
+    /// only one session's Margins (its newest, or the one playing), but a Margin shared from an earlier session is
+    /// the parent of a friend's reply all the same; the Margins list holds every session's. Both are read, so a
+    /// Margin made just now and one shared long ago are found. A Margin in both lists is one Margin, and keeps every
+    /// packet identity either list knows it by (a list read before a share doesn't have the new identity yet).
+    public static func ownMargins(itemId: String, openItem: [Interjection], rows: [Interjection]) -> [Interjection] {
+        var merged: [Interjection] = []
+        var index: [String: Int] = [:]
+        for margin in rows + openItem where margin.itemId == itemId {
+            if let at = index[margin.id] {
+                for identity in margin.sharedAs ?? [] where !(merged[at].sharedAs ?? []).contains(identity) {
+                    merged[at].sharedAs = (merged[at].sharedAs ?? []) + [identity]
+                }
+            } else {
+                index[margin.id] = merged.count
+                merged.append(margin)
+            }
+        }
+        return merged
+    }
+
     /// The Margins Continue should ask about: the ones the listener is already past (#3059). A Margin still ahead of
     /// their place plays in place as the episode reaches it, so the big button just plays; only a Margin behind the
     /// place would be skipped, and the review is the way to hear it. With no place given, all of them count.
