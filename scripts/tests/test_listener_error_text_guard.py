@@ -19,6 +19,7 @@ ROOTS = [
     APP / 'SpokenMarginsBrowserTextExtension' / 'Sources',
     APP / 'SpokenMarginsWatchApp' / 'Sources',
     APP / 'SpokenMarginsWatch' / 'Sources',
+    APP / 'SharedSources',
 ]
 
 # Targets that do not link SessionKit, so ListenerErrorText is not there for them. They show the raw text today; #3324
@@ -40,6 +41,7 @@ ALLOWED = {
     ('SharedMarginsImportMessage.swift', 'let description = ((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)'): 'checked by ListenerErrorText.looksLikeCodeOrDump on the next line; its own generic sentence replaces a dump',
     ('SharedMarginsImportMessage.swift', 'guard let decoding = error as? DecodingError else { return error.localizedDescription }'): 'the import failure\'s Diagnostics detail',
     ('SharedMarginsImportMessage.swift', 'return "decoding:\\(error.localizedDescription)"'): 'the same Diagnostics detail',
+    ('Gate1AppModel+SourceWindowContext.swift', 'failure = error.localizedDescription'): 'read only by the sourceWindowTranscription diagnostic; the listener sees a fixed sentence',
     ('ReadLaterModel.swift', 'let message = (error as? EditionError)?.localizedDescription'): 'our own EditionError text, read by the connection tracker',
     ('Gate2CompactControlController.swift', 'failure = error.localizedDescription'): 'audio-session failure, read by noteAudioSessionActivation into Diagnostics',
     ('Gate1AppModel.swift', 'lastFailure = "\\(link.type):\\(error.localizedDescription)"'): 'a link-check log line',

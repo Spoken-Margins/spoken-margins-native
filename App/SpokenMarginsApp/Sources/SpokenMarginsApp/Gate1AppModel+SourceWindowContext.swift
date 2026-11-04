@@ -109,7 +109,7 @@ extension Gate1AppModel {
                     )
                     parts.append((file.startMediaTimeMs, analysis.timeline))
                 } catch {
-                    failure = ListenerErrorText.message(for: error)
+                    failure = error.localizedDescription
                 }
                 // The scratch folder holds a whole exported window; clear it off the main actor (#2510).
                 _ = try? await Self.offMain {
