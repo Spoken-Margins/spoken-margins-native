@@ -86,14 +86,6 @@ public enum SkimPressOutcome: String, Equatable, Sendable {
     case completedBridge = "completed_bridge"
     /// A press while a summary was still being prepared; it is ignored.
     case alreadyPreparing = "already_preparing"
-    /// The press went straight to a chapter's start (#460).
-    case wentToChapter = "went_to_chapter"
-    /// The press started a Margin's lead-in (#460).
-    case startedMarginLeadIn = "started_margin_lead_in"
-    /// A second press during a Margin's lead-in played the Margin at once (#460).
-    case playedMarginNow = "played_margin_now"
-    /// A forward press during a Margin's voice ended the voice (#460).
-    case skippedMarginVoice = "skipped_margin_voice"
 
     /// The fields of the `skim.press` Diagnostics event.
     public func diagnosticFields(direction: SkimDirection, reason: String? = nil) -> [String: String] {
