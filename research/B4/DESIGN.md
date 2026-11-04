@@ -228,7 +228,7 @@ Plain statement, to check against the code before each new server feature ships.
 3. Post a dated notice on the Support page and the privacy page saying what was exposed (from the list above) and what was done. The app shows a short banner pointing to it on next launch (not built yet; a follow-up if a feature needs it).
 4. Anyone who sent a copyright notice or a report in the past 90 days wrote to the designated agent's mailbox, not to the server; if that mailbox were involved, its senders are the one group we could email directly.
 
-**Check on change:** a feature that makes the server hold anything linkable to a person (an email address, an account, an IP, content in the clear) must update this section in the same PR, and it needs the owner's call first (AGENTS.md "Default on only when it costs the listener nothing").
+**Check on change:** a feature that makes the server hold anything linkable to a person (an email address, an account, an IP, content in the clear) must update this section in the same PR, and it needs the owner's call first (the owner overlay's product rule "Default on only when it costs the listener nothing"; [docs/decisions.md](../../docs/decisions.md), 2026-10-05).
 
 
 ## 15. Proof that the server checks App Attest itself (#2842 items 3 and 4)

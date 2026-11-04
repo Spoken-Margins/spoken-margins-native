@@ -49,6 +49,6 @@ Packets, share links, shared Margins landing in the right place, friends, storie
 
 ## Groundwork
 
-Not a product area: the pipeline, the test lane, test honesty, the model split and anything else that makes the four areas cheaper and safer to change. Streams A1–A3. Its standard is the Solid Ground target in `AGENTS.md`: later builds arrive faster, and the Test Desk catches bugs before they reach the owner's phone.
+Not a product area: the pipeline, the test lane, test honesty, the model split and anything else that makes the four areas cheaper and safer to change. Streams A1–A3. Its standard is the Solid Ground target in the owner overlay's Current focus: later builds arrive faster, and the Test Desk catches bugs before they reach the owner's phone.
 
 Issues that serve no area and no groundwork, such as G2 growth research and D6 settings, are left without an area.

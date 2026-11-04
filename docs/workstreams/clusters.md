@@ -45,7 +45,7 @@ Yesterday these failed late, at the rollup, and forced refactors. Run them befor
 
 - The body lists `Closes #N` once for each issue finished, one per line. Sub-PRs merge into the cluster branch, not `main`, so their `Closes` lines never fire. Only the rollup's do.
 - The chief of staff checks after the merge that every issue closed, and closes any that didn't with `sm-gh close-issue`.
-- A rollup that fails an audit: at the second finding in one area, change the design or post an **Accepted audit finding** (AGENTS.md, "Fix the cause of an audit finding").
+- A rollup that fails an audit: at the second finding in one area, change the design or post an **Accepted audit finding** (owner overlay, "Fix the cause of an audit finding").
 
 ## CI watching
 
@@ -61,7 +61,7 @@ The chief of staff checks that `main` is green: hosted integration, the Linux Se
 
 ## Context budget
 
-Cluster leads and the chief of staff are automatic sessions: 250k tokens to wrap up, 300k to stop (AGENTS.md, "How to work"). The aim is to end every session under 300k. The director is owner-started (400k/500k), but it stays well under them by delegating.
+Cluster leads and the chief of staff are automatic sessions: 250k tokens to wrap up, 300k to stop (owner overlay, "How to work"). The aim is to end every session under 300k. The director is owner-started (400k/500k), but it stays well under them by delegating.
 
 - Delegate every read of a big file, every diff review, every log, and every fix to a background agent. Ask for a summary of under 300 words, and full detail written to a file the lead reads only if needed.
 - Never paste issue bodies, diffs, CI logs or audit text into the lead's own context when an agent can summarize them.
@@ -74,5 +74,5 @@ Cluster leads and the chief of staff are automatic sessions: 250k tokens to wrap
 When every rollup is merged or handed back:
 
 1. Each lead sets its status comment to its final state and stops.
-2. The chief of staff removes the run's merged worktrees and local branches (the housekeeping in AGENTS.md's 2026-10-14 calls), and checks that every finished issue is closed.
+2. The chief of staff removes the run's merged worktrees and local branches (the housekeeping in the owner overlay's 2026-10-14 calls), and checks that every finished issue is closed.
 3. The run's lead session posts a short retrospective on the tracking issue (what merged, what was handed back, token use per session, what to change), then closes it.
