@@ -360,7 +360,7 @@ extension WatchLink: WCSessionDelegate {
     /// goes back to "saved" and is sent again.
     nonisolated func session(_ session: WCSession, didFinish fileTransfer: WCSessionFileTransfer, error: Error?) {
         guard let error, let id = fileTransfer.file.metadata?[WatchMarginTransfer.Key.id] as? String else { return }
-        let words = error.localizedDescription
+        let words = ListenerErrorText.message(for: error)
         Task { @MainActor in self.transferFailed(id: id, error: words) }
     }
 }

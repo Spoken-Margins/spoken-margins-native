@@ -326,7 +326,7 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
     }
 
     private func completeWithError(_ error: Error) {
-        showError(error.localizedDescription)
+        showError(ListenerErrorText.message(for: error))
     }
 
     private func configureStatusUI() {

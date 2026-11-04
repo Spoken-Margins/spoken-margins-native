@@ -51,7 +51,7 @@ final class WatchMarginRecorder: ObservableObject {
             currentId = id
             state = .recording(since: Date())
         } catch {
-            state = .failed("Couldn't start recording: \(error.localizedDescription)")
+            state = .failed(ListenerErrorText.line(prefix: "Couldn't start recording:", error: error))
         }
     }
 
