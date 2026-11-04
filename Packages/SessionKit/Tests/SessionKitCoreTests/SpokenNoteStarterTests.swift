@@ -63,7 +63,7 @@ final class SpokenNoteStarterTests: XCTestCase {
 
     /// An item's reference comes back from the database or a packet, so it can't name a path outside the notes folder.
     func testUnsafeNoteIdsNameNoFolder() {
-        for id in ["", ".", "..", "../x", "a/b", "/abs", "a\\b", "a\0b"] {
+        for id in ["", ".", "..", "../x", "a/b", "/abs", "a\\b", "a\0b", "N1", "caf\u{E9}", String(repeating: "a", count: 101)] {
             XCTAssertNil(SpokenNoteStarter.store(noteId: id, in: support), "\(id.debugDescription) must not be a folder")
         }
         let escaping = Item(id: "i", title: "T", mediaType: "spoken_note", text: "", externalReference: "note://../../x", status: "ready")
@@ -76,5 +76,20 @@ final class SpokenNoteStarterTests: XCTestCase {
         let started = try SpokenNoteStarter.start(in: support, now: Date(), makeId: { offered.removeFirst() })
         XCTAssertEqual(started.note.id, "ok")
         XCTAssertFalse(FileManager.default.fileExists(atPath: support.appendingPathComponent("evil").path))
+    }
+
+    /// A folder that is already there, with or without a `note.json` in it, is never reused.
+    func testAFolderWithoutANoteFileIsSkippedToo() throws {
+        let stale = support.appendingPathComponent("SpokenNotes/stale", isDirectory: true)
+        try FileManager.default.createDirectory(at: stale, withIntermediateDirectories: true)
+        var offered = ["stale", "fresh"]
+        let started = try SpokenNoteStarter.start(in: support, now: Date(), makeId: { offered.removeFirst() })
+        XCTAssertEqual(started.note.id, "fresh")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: stale.appendingPathComponent("note.json").path))
+    }
+
+    func testIdsAnOlderBuildOrAUUIDWouldMakeAreSafe() {
+        XCTAssertNotNil(SpokenNoteStarter.store(noteId: UUID().uuidString.lowercased(), in: support))
+        XCTAssertNotNil(SpokenNoteStarter.store(noteId: "note_1-a", in: support))
     }
 }

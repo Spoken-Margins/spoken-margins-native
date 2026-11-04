@@ -7416,6 +7416,28 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(evictions.map(\.itemId), ["old"])
     }
 
+    /// #3108: a spoken note's Lock Screen card says "Spoken note" and carries no source URL, never `note://<id>`.
+    func testSpokenNoteMediaContextHasAPlainSubtitleAndNoSourceURL() throws {
+        let profile = RuntimeCapabilityProfile(id: "note", displayName: "Note", capabilities: ["sync": ["canonical_persistence"]])
+        let note = SpokenNote(id: "n1")
+        let item = SpokenNoteItem.makeItem(note: note, createdAt: Date(timeIntervalSince1970: 0))
+        let plain = Item(id: "plain", title: "Plain", mediaType: "text", text: "Some words to hear.", externalReference: "manual-import", status: "ready", externalReferenceType: "manual")
+        let repository = InMemorySessionRepository(items: [item.id: item, plain.id: plain])
+        let audio = RecordingAudioClient()
+        let engine = SessionEngine(profile: profile, repository: repository, audio: audio)
+
+        _ = try engine.startSession(itemId: plain.id)
+        let plainContext = try XCTUnwrap(audio.mediaContexts.compactMap { $0 }.last)
+        XCTAssertEqual(plainContext.subtitle, "manual manual-import", "other items keep their own subtitle")
+        XCTAssertEqual(plainContext.sourceURL, "manual-import")
+
+        _ = try engine.startSession(itemId: item.id)
+        let noteContext = try XCTUnwrap(audio.mediaContexts.compactMap { $0 }.last)
+        XCTAssertEqual(noteContext.itemId, item.id)
+        XCTAssertEqual(noteContext.subtitle, "Spoken note")
+        XCTAssertNil(noteContext.sourceURL)
+    }
+
     func testLocalPodcastTransportSwitchPreservesCanonicalTargetTimeAndRate() throws {
         let profile = RuntimeCapabilityProfile(
             id: "podcast",
