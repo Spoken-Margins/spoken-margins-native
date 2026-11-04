@@ -2,6 +2,8 @@
 
 A cluster run splits one milestone into a few clusters. Each cluster has one lead session, one branch, and a fixed list of issues. The leads do little themselves. Background agents do the reading, coding and fixing, and send back short summaries. This page holds the rules. Live state is on the run's tracking issue (the first run was #2673 on 2026-10-25, the second #2715 on 2026-10-26).
 
+**The owner starts a run by typing `/director` in a new top-level session** ([director skill](../../.claude/skills/director/SKILL.md)). That session is the director: the run's lead session in this page. Every session it starts is a managed one. Only the owner can start a director.
+
 Everything in [AGENTS.md](../../AGENTS.md) still applies. Where this page is stricter, this page wins for a cluster run.
 
 ## Who writes what
@@ -53,11 +55,13 @@ Yesterday these failed late, at the rollup, and forced refactors. Run them befor
 
 ## Before the run starts
 
+The director opens the tracking issue before it starts any session, so every brief can name it. On 2026-11-04 a run went without one until wind-down, and every session's state was scattered across its own issues.
+
 The chief of staff checks that `main` is green: hosted integration, the Linux SessionKit check, and the lane's host tests on `main`'s tip. If `main` is red, no cluster starts work. The chief of staff gets it fixed first (on 2026-10-25, a red Linux check made every sub-PR show red for hours).
 
 ## Context budget
 
-Cluster leads and the chief of staff are automatic sessions: 250k tokens to wrap up, 300k to stop (AGENTS.md, "How to work"). The aim is to end every session under 300k.
+Cluster leads and the chief of staff are automatic sessions: 250k tokens to wrap up, 300k to stop (AGENTS.md, "How to work"). The aim is to end every session under 300k. The director is owner-started (400k/500k), but it stays well under them by delegating.
 
 - Delegate every read of a big file, every diff review, every log, and every fix to a background agent. Ask for a summary of under 300 words, and full detail written to a file the lead reads only if needed.
 - Never paste issue bodies, diffs, CI logs or audit text into the lead's own context when an agent can summarize them.
