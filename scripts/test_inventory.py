@@ -106,6 +106,32 @@ def scripted_journeys(root=ROOT):
             for status in ('gating', 'probation')}
 
 
+# The plans the integration run on `main` runs besides the scripted journeys: ops/testdesk/sm_integration_run.py
+# runs `--plan app` (AppBehavior: app tests only), `--plan journeys` (scripted-journeys.json) and `--plan tour`
+# (ScreenTour). The retired plans (UISeams, Smoke, Release) are run by no job, so they don't count here (#3342).
+INTEGRATION_UI_PLANS = ('ScreenTour',)
+
+
+def unrun_ui_tests(root=ROOT):
+    """UI test methods that no job runs: not in scripted-journeys.json and not in a plan the integration run runs.
+
+    A test no job runs neither blocks nor catches anything (the 2026-10-21 rule). The way out is to list it under
+    `probation` in TestPlans/scripted-journeys.json, or to delete it. A malformed listing is reported by
+    scripted_journey_errors, so it adds nothing here.
+    """
+    prefix = 'SpokenMarginsAppUITests/'
+    run = set()
+    for plan in INTEGRATION_UI_PLANS:
+        run |= {test.removeprefix(prefix) for test in plan_tests(root, plan)}
+    if not scripted_journey_errors(root):
+        listing = scripted_journeys(root)
+        selectors = [entry.removeprefix(prefix) for status in listing.values() for entry in status]
+    else:
+        selectors = []
+    return sorted(test for test in target_tests(root, 'SpokenMarginsAppUITests')
+                  if test not in run and not any(matches(test, selector) for selector in selectors))
+
+
 def validate(root=ROOT):
     errors = []
     inventory = json.loads((root / 'validation/test-inventory.json').read_text())
@@ -148,9 +174,12 @@ def validate(root=ROOT):
         all_ui = {f'SpokenMarginsAppUITests/{t}' for t in target_tests(root, 'SpokenMarginsAppUITests')}
         if release != all_app | all_ui:
             errors.append('Release must include all active app and UI tests')
-        for plan in ('UISeams', 'SpeechCanary', 'Smoke', 'ScreenTour'):
+        for plan in ('UISeams', 'Smoke', 'ScreenTour'):
             if not plan_tests(root, plan) <= all_ui:
                 errors.append(f'{plan}: non-UI test selected')
+        if unrun := unrun_ui_tests(root):
+            errors.append(f'{len(unrun)} UI tests run in no job (list each under "probation" in '
+                          'TestPlans/scripted-journeys.json, or delete it): ' + ', '.join(unrun))
     except (ValueError, KeyError) as error:
         errors.append(str(error))
     errors += scripted_journey_errors(root)

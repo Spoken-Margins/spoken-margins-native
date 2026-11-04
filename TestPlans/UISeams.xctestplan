@@ -26,14 +26,12 @@
         "Gate1FlowUITests/testAmbiguousPodcastImportImmediatelyReplacesAddSourceWithEpisodePicker()",
         "Gate1FlowUITests/testBuild23RecipientMissingSourceReturnsWithoutAutoplayAndShowsProvenance()",
         "Gate1FlowUITests/testBuild23LayoutRegressionsRemainOperableAtAccessibilityType()",
-        "Gate1FlowUITests/testExportPreviewRemainsReachableAfterStartingAnotherSession()",
         "Gate1FlowUITests/testSeededGate1FlowHasPlaybackMiniPlayerExportAndSettings()",
         "Gate1FlowUITests/testPlaybackPrimaryActionsRemainVisibleWithLongTitleAndAccessibilityText()",
         "Gate1FlowUITests/testWrittenMarginSaveSearchStarAndDiscardPreserveTheSource()",
         "Gate1FlowUITests/testLongTimelineResponseKeepsActionAboveEditorAndStartsPlayback()",
         "Gate1FlowUITests/testListeningEditionPreviewShowsSuppliedScenesBeforeImport()",
-        "Gate1FlowUITests/testBatchExportOffersPersistentJumpToDestination()",
-        "Gate1FlowUITests/testMarginsItemShareOpensShareSheetAndChapterJumpUpdatesTimeline()"
+        "Gate1FlowUITests/testBatchExportOffersPersistentJumpToDestination()"
       ],
       "parallelizable": false
     }

@@ -2492,11 +2492,12 @@ class VerificationTests(unittest.TestCase):
                     'AudioAdapters': [selecting(app, 'SpeechTests/testB')],
                     'Release': [selecting(app), selecting(uis)],
                     'UISeams': [selecting(uis, 'TourUITests/testTour')],
-                    'SpeechCanary': [selecting(uis, 'TourUITests/testShare')],
                     'Smoke': [selecting(uis, 'TourUITests/testTour')],
                     'ScreenTour': [selecting(uis, 'TourUITests/testTour')]}
         (root / 'TestPlans').mkdir()
-        (root / 'TestPlans/scripted-journeys.json').write_text(json.dumps({'version': 1, 'gating': [], 'probation': []}))
+        # testShare is in no plan the integration run runs, so the scripted journeys list it (#3342).
+        (root / 'TestPlans/scripted-journeys.json').write_text(json.dumps({'version': 1, 'gating': [], 'probation': [
+            {'test': 'SpokenMarginsAppUITests/TourUITests/testShare', 'journey': 'Share'}]}))
         for name, targets in {**defaults, **plans}.items():
             (root / f'TestPlans/{name}.xctestplan').write_text(json.dumps({'testTargets': [
                 dict(target={'name': target}, **selection) for target, selection in targets]}))
@@ -2529,12 +2530,49 @@ class VerificationTests(unittest.TestCase):
                 self.assertEqual(inventory.validate(Path(temporary)), [release])
 
     def test_inventory_rejects_a_ui_plan_that_selects_an_app_test(self):
-        for plan in ('UISeams', 'SpeechCanary', 'Smoke', 'ScreenTour'):
+        for plan in ('UISeams', 'Smoke', 'ScreenTour'):
             with self.subTest(plan), tempfile.TemporaryDirectory() as temporary:
                 self.plan_root(Path(temporary), **{plan: [
                     ('SpokenMarginsAppUITests', {'selectedTests': ['TourUITests/testTour']}),
                     ('SpokenMarginsAppTests', {'selectedTests': ['SpeechTests/testA']})]})
                 self.assertEqual(inventory.validate(Path(temporary)), [f'{plan}: non-UI test selected'])
+
+    def test_inventory_rejects_a_ui_test_that_no_job_runs(self):
+        # #3342: 37 UI test methods ran in no job. The integration run runs the scripted journeys and ScreenTour;
+        # the retired plans (UISeams, Smoke, Release) run nowhere, so selecting a test there is not enough.
+        ui = 'SpokenMarginsAppUITests'
+        orphan = 'TourUITests/testShare'
+        message = (f'1 UI tests run in no job (list each under "probation" in TestPlans/scripted-journeys.json, '
+                   f'or delete it): {orphan}')
+        for label, plans, listing in (
+                ('listed nowhere', {}, []),
+                ('only in a retired plan', {'UISeams': [(ui, {'selectedTests': ['TourUITests/testTour', orphan]})],
+                                            'Smoke': [(ui, {'selectedTests': [orphan]})]}, [])):
+            with self.subTest(label), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                self.plan_root(root, **plans)
+                (root / 'TestPlans/scripted-journeys.json').write_text(
+                    json.dumps({'version': 1, 'gating': [], 'probation': listing}))
+                self.assertEqual(inventory.validate(root), [message])
+        for label, listing in (('its method', f'{ui}/{orphan}'), ('its class', f'{ui}/TourUITests')):
+            with self.subTest(label), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                self.plan_root(root)
+                (root / 'TestPlans/scripted-journeys.json').write_text(json.dumps({
+                    'version': 1, 'gating': [], 'probation': [{'test': listing, 'journey': 'Share'}]}))
+                self.assertEqual(inventory.validate(root), [])
+                self.assertEqual(inventory.unrun_ui_tests(root), [])
+
+    def test_inventory_counts_the_screen_tour_as_a_job_that_runs_its_tests(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.plan_root(root)
+            (root / 'TestPlans/scripted-journeys.json').write_text(
+                json.dumps({'version': 1, 'gating': [], 'probation': []}))
+            self.assertEqual(inventory.unrun_ui_tests(root), ['TourUITests/testShare'])  # testTour is in ScreenTour
+
+    def test_every_ui_test_in_the_repository_runs_in_a_job(self):
+        self.assertEqual(inventory.unrun_ui_tests(), [])
 
     def test_built_preprocessor_check_rejects_missing_entrypoint(self):
         with tempfile.TemporaryDirectory() as temporary:

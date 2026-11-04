@@ -42,10 +42,10 @@ PLANS = {
     'adapters': ('SpokenMarginsAppBehavior', 'AudioAdapters', 300),
     'smoke': ('SpokenMarginsUISeams', 'Smoke', 180),
     'ui': ('SpokenMarginsUISeams', 'UISeams', 900),
-    'speech-canary': ('SpokenMarginsUISeams', 'SpeechCanary', 1000),
     'release': ('SpokenMarginsReleaseTests', 'Release', 3600),
-    # The scripted journeys in TestPlans/scripted-journeys.json, from the Release plan (it holds every UI test).
-    'journeys': ('SpokenMarginsReleaseTests', 'Release', 1800),
+    # The scripted journeys in TestPlans/scripted-journeys.json, from the Release plan (it holds every UI test). One hour,
+    # not 30 minutes: every UI test method is listed or deleted (#3342), so the list holds about 50 scripts.
+    'journeys': ('SpokenMarginsReleaseTests', 'Release', 3600),
     # The tour includes the sharing-loop tests (#3237), about 2-3 minutes each, run twice on a failure; a stopped run exports no screenshots.
     'tour': ('SpokenMarginsUISeams', 'ScreenTour', 1800),
 }
