@@ -7,9 +7,9 @@ enum Build23RecipientPrimaryAction: Equatable {
 }
 
 enum Build23RecipientPresentation {
-    static let integrityTitle = "Integrity checked"
-    static let integrityDetail = "This package passed its integrity check, but the sender label is not cryptographically verified."
-    static let importNotice = "Importing never starts playback. Imported Margins remain a separate layer that you control."
+    /// A file that passes its checks says nothing; the honest note sits under "About this file" (#3247).
+    static let aboutTitle = FriendArrivalWords.aboutTitle
+    static let aboutNote = FriendArrivalWords.aboutNote
 
     static func canConfirmImport(_ snapshot: Build23RecipientImportSnapshot) -> Bool {
         !snapshot.requiresRecipientSource && snapshot.canImport && !snapshot.isImporting
@@ -23,19 +23,8 @@ enum Build23RecipientPresentation {
         return .importPackage(enabled: canConfirmImport(snapshot))
     }
 
-    static func transportLabel(_ transport: Build23RecipientTransport) -> String {
-        switch transport {
-        case .reference:
-            return "Source reference"
-        case .embeddedText:
-            return "Embedded text"
-        case .recipientSupplied:
-            return "Recipient-supplied source"
-        }
-    }
-
     static func heading(for snapshot: Build23RecipientImportSnapshot) -> String {
-        snapshot.isListeningMap ? "Shared Listening Map" : "Shared Margins"
+        snapshot.isListeningMap ? "Shared Listening Map" : FriendArrivalWords.fromLine(senderLabel: snapshot.senderLabel)
     }
 
     /// The confirm button. A map asks before it replaces another: the button says so.
@@ -48,8 +37,10 @@ enum Build23RecipientPresentation {
         snapshot.isListeningMap ? "Adding…" : "Importing…"
     }
 
-    static func notice(for snapshot: Build23RecipientImportSnapshot) -> String {
-        guard snapshot.isListeningMap else { return importNotice }
+    /// What choosing the button does. Nil for a friend's Margins, where "never starts playback" and its relatives are
+    /// gone (#3247); a map still says it, because it changes the item's chapters.
+    static func notice(for snapshot: Build23RecipientImportSnapshot) -> String? {
+        guard snapshot.isListeningMap else { return nil }
         let base = "Adding a map never starts playback. It sets this item's chapters and keeps each chapter's summary. Your own Margins stay as they are."
         return snapshot.replacesExistingMap ? "This item already has a shared map. Adding this one replaces it. " + base : base
     }
@@ -57,11 +48,7 @@ enum Build23RecipientPresentation {
     static func confirmHint(for snapshot: Build23RecipientImportSnapshot) -> String {
         snapshot.isListeningMap
             ? "Sets the item's chapters from this map without starting playback"
-            : "Imports the Margins as a separate layer without starting playback"
-    }
-
-    static func itemContentsLabel(includesEmbeddedItem: Bool) -> String {
-        includesEmbeddedItem ? "Item included in package" : "Item not included in package"
+            : "Opens the Margins on the episode without starting playback"
     }
 }
 
@@ -81,7 +68,7 @@ struct Build23RecipientSharingExperience: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                Text(coordinator.recipientSnapshot.map { Build23RecipientPresentation.heading(for: $0) } ?? "Shared Margins")
+                Text(coordinator.recipientSnapshot.map { Build23RecipientPresentation.heading(for: $0) } ?? "From a friend")
                     .font(.title2.weight(.bold))
                     .screenTitle()
                     .foregroundStyle(AppColors.text)
@@ -114,30 +101,32 @@ struct Build23RecipientSharingExperience: View {
     private func preview(_ snapshot: Build23RecipientImportSnapshot) -> some View {
         ExperienceSurface(tint: AppColors.softGreen) {
             VStack(alignment: .leading, spacing: 16) {
-                Label(Build23RecipientPresentation.integrityTitle, systemImage: "checkmark.shield")
-                    .font(.headline)
-                    .foregroundStyle(AppColors.evergreen)
-                    .accessibilityLabel("Package integrity checked")
-
                 VStack(alignment: .leading, spacing: 6) {
                     Text(snapshot.itemTitle)
                         .font(.title3.weight(.semibold))
                         .foregroundStyle(AppColors.text)
 
-                    Label("Shared by \(snapshot.senderLabel)", systemImage: "person.crop.circle")
+                    Label(FriendArrivalWords.fromLine(senderLabel: snapshot.senderLabel), systemImage: "person.crop.circle")
                         .font(.subheadline.weight(.medium))
                         .foregroundStyle(AppColors.text)
-                        .accessibilityLabel("Sender label \(snapshot.senderLabel). Sender identity is not cryptographically verified.")
+                        .accessibilityIdentifier("build23.recipient.sender")
                 }
 
                 packageFacts(snapshot)
 
-                Text(Build23RecipientPresentation.integrityDetail)
+                DisclosureGroup(Build23RecipientPresentation.aboutTitle) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(Build23RecipientPresentation.aboutNote)
+                        Text(SharingRightsPresentation.rightsNotice)
+                    }
                     .font(.caption)
                     .foregroundStyle(AppColors.secondaryText)
-                Text(SharingRightsPresentation.rightsNotice)
-                    .font(.caption)
-                    .foregroundStyle(AppColors.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 6)
+                }
+                .font(.subheadline)
+                .tint(AppColors.text)
+                .accessibilityIdentifier("build23.recipient.aboutFile")
                 Text("Deleting this import removes your local copy only. Other recipients may retain their copies.")
                     .font(.footnote)
                     .foregroundStyle(AppColors.secondaryText)
@@ -148,12 +137,14 @@ struct Build23RecipientSharingExperience: View {
             missingSourceNotice(snapshot)
         }
 
-        ExperienceSurface {
-            Label(Build23RecipientPresentation.notice(for: snapshot), systemImage: "play.slash")
-                .font(.subheadline)
-                .foregroundStyle(AppColors.secondaryText)
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityLabel(Text(Build23RecipientPresentation.notice(for: snapshot)))
+        if let notice = Build23RecipientPresentation.notice(for: snapshot) {
+            ExperienceSurface {
+                Label(notice, systemImage: "play.slash")
+                    .font(.subheadline)
+                    .foregroundStyle(AppColors.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityLabel(Text(notice))
+            }
         }
 
         if let errorMessage = snapshot.errorMessage {
@@ -174,21 +165,8 @@ struct Build23RecipientSharingExperience: View {
                     systemImage: "quote.bubble"
                 )
             }
-            packageFact(
-                title: "Source transport",
-                value: Build23RecipientPresentation.transportLabel(snapshot.transport),
-                systemImage: "arrow.left.arrow.right"
-            )
-            packageFact(
-                title: "Item contents",
-                value: Build23RecipientPresentation.itemContentsLabel(
-                    includesEmbeddedItem: snapshot.includesEmbeddedItem
-                ),
-                systemImage: snapshot.includesEmbeddedItem ? "doc.text.fill" : "doc.text"
-            )
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Verified package contents")
     }
 
     private func packageFact(title: String, value: String, systemImage: String) -> some View {
