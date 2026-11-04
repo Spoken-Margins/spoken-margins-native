@@ -7,10 +7,13 @@ import XCTest
 /// Writes a packet, then imports it with the last shipped build's reader (#317). A new build's packets
 /// must import there, and that reader rejects manifest keys it doesn't know. Tests that export a packet
 /// call this instead of SpokenMarginsPackageArchive.write; the test below keeps it that way.
+/// `voicesMustPlay` is for a packet whose voice files are real audio: Builds 29, 32 and 34 must then play each one,
+/// not only import it (scripts/build29-db-reader/voice-playback.swift, #3218).
 @discardableResult
 func exportPacket(
     _ prepared: PreparedSpokenMarginsPackage,
     to url: URL,
+    voicesMustPlay: Bool = false,
     shippedBuildReader: (URL) throws -> [String] = { try ShippedPacketReader.importPacket(at: $0) }
 ) throws -> SpokenMarginsPackageManifest {
     let manifest = try SpokenMarginsPackageArchive.write(prepared, to: url)
@@ -22,20 +25,26 @@ func exportPacket(
     if let mismatch = shippedMarginsMismatch(sent: sent, shippedBuildRead: shippedReadIDs) {
         throw mismatch
     }
-    try keepForLaterShippedBuilds(url, sent: sent)
+    try keepForLaterShippedBuilds(url, sent: sent, voicesMustPlay: voicesMustPlay)
     return manifest
 }
 
 /// Builds 32 and 34 have no frozen copy here. When `SM_SHIPPED_PACKETS_DIR` is set, scripts/check-build29-database.sh
 /// collects every packet Build 29 read, with the Margin ids it carries, and opens them with each shipped build's
 /// own reader built from its tag (#1900). Without the variable this does nothing.
-func keepForLaterShippedBuilds(_ url: URL, sent: [String]?, environment: [String: String] = ProcessInfo.processInfo.environment) throws {
+func keepForLaterShippedBuilds(
+    _ url: URL,
+    sent: [String]?,
+    voicesMustPlay: Bool = false,
+    environment: [String: String] = ProcessInfo.processInfo.environment
+) throws {
     guard let folder = environment["SM_SHIPPED_PACKETS_DIR"], !folder.isEmpty else { return }
     let name = "\(UUID().uuidString)-\(url.lastPathComponent)"
     let destination = URL(fileURLWithPath: folder).appendingPathComponent(name)
     try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
     try FileManager.default.copyItem(at: url, to: destination)
-    let expected: [String: Any] = ["margins": sent.map { $0.sorted() } ?? NSNull()]
+    var expected: [String: Any] = ["margins": sent.map { $0.sorted() } ?? NSNull()]
+    if voicesMustPlay { expected["voicesMustPlay"] = true }
     try JSONSerialization.data(withJSONObject: expected).write(to: destination.appendingPathExtension("expected.json"))
 }
 
@@ -111,15 +120,18 @@ final class ShippedReaderRoundTripTests: XCTestCase {
 
         try keepForLaterShippedBuilds(packet, sent: ["margin-002", "margin-001"], environment: ["SM_SHIPPED_PACKETS_DIR": kept.path])
         try keepForLaterShippedBuilds(packet, sent: nil, environment: ["SM_SHIPPED_PACKETS_DIR": kept.path])
+        try keepForLaterShippedBuilds(packet, sent: ["margin-003"], voicesMustPlay: true, environment: ["SM_SHIPPED_PACKETS_DIR": kept.path])
         let packets = try FileManager.default.contentsOfDirectory(at: kept, includingPropertiesForKeys: nil)
             .filter { $0.pathExtension == "spokenmargins" }
-        XCTAssertEqual(packets.count, 2, "two exports of the same name are both kept")
+        XCTAssertEqual(packets.count, 3, "three exports of the same name are all kept")
         var expected: [String] = []
         for copy in packets {
             XCTAssertEqual(try Data(contentsOf: copy), Data("packet bytes".utf8))
             let sidecar = try JSONSerialization.jsonObject(with: Data(contentsOf: copy.appendingPathExtension("expected.json"))) as? [String: Any]
-            expected.append((sidecar?["margins"] as? [String])?.joined(separator: ",") ?? "null")
+            let margins = (sidecar?["margins"] as? [String])?.joined(separator: ",") ?? "null"
+            expected.append(sidecar?["voicesMustPlay"] as? Bool == true ? "\(margins) must play" : margins)
         }
-        XCTAssertEqual(expected.sorted(), ["margin-001,margin-002", "null"])
+        // Only a packet marked so asks the shipped builds to play its voices (#3218).
+        XCTAssertEqual(expected.sorted(), ["margin-001,margin-002", "margin-003 must play", "null"])
     }
 }

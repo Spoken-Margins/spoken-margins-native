@@ -19,7 +19,7 @@
 # 2. Each shipped build's SessionKit, SessionKitPersistence and SessionKitSharing sources, taken
 #    from its testflight/0.1-build-N tag, are built into two small readers
 #    (scripts/build29-db-reader): one opens the database and one imports every packet, the way
-#    that build does.
+#    that build does. A packet kept with real audio (voicesMustPlay) must also play there (#3218).
 # Needs Xcode's Swift toolchain. Touches nothing outside a temporary folder.
 set -eu
 repo=$(cd "$(dirname "$0")/.." && pwd)
@@ -81,6 +81,7 @@ check_build() {
         Packages/SessionKit/Sources/SessionKitSharing | tar -x -C "$dir"
     cp "$repo/scripts/build29-db-reader/main.swift" "$dir/reader/main.swift"
     cp "$repo/scripts/build29-db-reader/packet-reader.swift" "$dir/packet-reader/main.swift"
+    cp "$repo/scripts/build29-db-reader/voice-playback.swift" "$dir/packet-reader/voice-playback.swift"
     # Item.linkedEpisode (#755) first shipped in a build after 29; only a reader built from such a tag checks it.
     settings=""
     if grep -q "linkedEpisode" "$dir/Packages/SessionKit/Sources/SessionKit/Models.swift"; then
