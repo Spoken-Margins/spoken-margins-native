@@ -134,6 +134,13 @@ func TestTheNoticeIsShownOnceAndSaysNothingButThatALinkCameDown(t *testing.T) {
 	if st.View.Notice != reportrules.SenderNotice {
 		t.Fatalf("notice: %+v", st)
 	}
+	// Asking does not use the notice up: an answer that never arrives must not lose it.
+	if again, _ := s.Check(h, t0); again.View.Notice != reportrules.SenderNotice {
+		t.Fatal("Check alone must not clear the notice")
+	}
+	if err := s.ClearNotice(h); err != nil {
+		t.Fatal(err)
+	}
 	if again, _ := s.Check(h, t0); again.View.Notice != "" {
 		t.Fatal("the notice is shown once")
 	}
@@ -196,7 +203,7 @@ func TestTheSenderFilesHoldNoInstallKeyCategoryOrLinkKey(t *testing.T) {
 			return nil
 		}
 		data, _ := os.ReadFile(p)
-		for _, banned := range []string{string(keyID), "abuse_material", "harassment", "category", "reason"} {
+		for _, banned := range []string{string(keyID), linkID(1), linkID(2), "abuse_material", "harassment", "category", "reason"} {
 			if strings.Contains(string(data), banned) {
 				t.Errorf("%s holds %q", p, banned)
 			}
@@ -213,14 +220,15 @@ func TestSweepDropsExpiredTiesAndCleanSendersAndKeepsAnyoneOnTheLadder(t *testin
 	cfg := reportrules.DefaultConfig()
 	clean, struck := s.Handle([]byte("clean")), s.Handle([]byte("struck"))
 	s.Report(cfg, bound(t, s, clean, 1, t0.Add(30*24*time.Hour)), t0)
-	s.Check(clean, t0) // the notice has been shown
+	s.ClearNotice(clean) // the notice has been shown
 	s.Report(cfg, bound(t, s, struck, 2, t0.Add(30*24*time.Hour)), t0)
 	s.Report(cfg, bound(t, s, struck, 3, t0.Add(30*24*time.Hour)), t0)
+	bound(t, s, clean, 4, t0.Add(30*24*time.Hour)) // a link nobody reported
 
-	// Day 31: the links are gone, so the ties go. The clean sender's one reported link is still
-	// inside the 90-day window, so their file stays.
+	// Day 31: the unreported link has expired, so its tie goes. The clean sender's one reported link
+	// is still inside the 90-day window, so their file stays.
 	n, err := s.Sweep(cfg, t0.Add(31*24*time.Hour))
-	if err != nil || n != 3 {
+	if err != nil || n != 1 {
 		t.Fatalf("day 31: deleted %d, %v", n, err)
 	}
 	if binds, _ := os.ReadDir(filepath.Join(dir, "bindings")); len(binds) != 0 {
@@ -269,5 +277,45 @@ func TestIdsThatCouldLeaveTheFolderAreRefused(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(filepath.Dir(dir), "key")); err == nil {
 		t.Fatal("something was written outside the folder")
+	}
+}
+
+func TestAReportEndsTheTieAndTheSenderFileNamesNoLinkId(t *testing.T) {
+	s, dir := open(t)
+	cfg := reportrules.DefaultConfig()
+	h := s.Handle([]byte("sender"))
+	id := bound(t, s, h, 9, t0.Add(30*24*time.Hour))
+	if out, err := s.Report(cfg, id, t0); err != nil || !out.Bound {
+		t.Fatalf("%+v %v", out, err)
+	}
+	if binds, _ := os.ReadDir(filepath.Join(dir, "bindings")); len(binds) != 0 {
+		t.Fatal("the link is down for good, so its tie must go with the report")
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "senders", h+".json"))
+	if err != nil || strings.Contains(string(data), id) {
+		t.Fatalf("the sender's file must hold a keyed hash of the link id, not the id: %s %v", data, err)
+	}
+	// A repeat report of the same link is unattributed now and still counts once.
+	if out, _ := s.Report(cfg, id, t0.Add(time.Minute)); out.Bound || out.Struck {
+		t.Fatalf("repeat: %+v", out)
+	}
+}
+
+func TestSweepDeletesTempFilesACrashLeftBehind(t *testing.T) {
+	s, dir := open(t)
+	old := filepath.Join(dir, "senders", ".tmp-crashed")
+	fresh := filepath.Join(dir, "senders", ".tmp-writing")
+	os.WriteFile(old, []byte("x"), 0o600)
+	os.WriteFile(fresh, []byte("x"), 0o600)
+	os.Chtimes(old, t0.Add(-2*time.Hour), t0.Add(-2*time.Hour))
+	os.Chtimes(fresh, t0.Add(-time.Minute), t0.Add(-time.Minute))
+	if _, err := s.Sweep(reportrules.DefaultConfig(), t0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(old); err == nil {
+		t.Fatal("an old temp file must go")
+	}
+	if _, err := os.Stat(fresh); err != nil {
+		t.Fatal("a write in progress must be left alone")
 	}
 }

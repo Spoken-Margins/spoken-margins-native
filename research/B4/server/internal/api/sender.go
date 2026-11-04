@@ -131,5 +131,12 @@ func (s *Server) linkSender(w http.ResponseWriter, r *http.Request, _ []byte) {
 		}
 		out["permit"], out["permitExpiresAt"] = token, exp.UTC()
 	}
+	// Only now, with the answer built, is the notice marked shown.
+	if st.View.Notice != "" {
+		if err := s.Senders.ClearNotice(handle); err != nil {
+			fail(w, http.StatusInternalServerError, "internal")
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, out)
 }

@@ -319,7 +319,7 @@ func TestTheLedgerHoldsNoInstallKeyCategoryOrLinkKey(t *testing.T) {
 	r.report(t, a, "harassment")
 	r.report(t, b, "abuse_material")
 	keyID := r.c.Device.KeyID
-	banned := []string{string(keyID), hex.EncodeToString(keyID), base64.StdEncoding.EncodeToString(keyID), "harassment", "abuse_material", reportKey}
+	banned := []string{string(keyID), hex.EncodeToString(keyID), base64.StdEncoding.EncodeToString(keyID), a, b, "harassment", "abuse_material", reportKey}
 	for path, data := range everythingUnder(t, filepath.Join(r.stateDir, "senders")) {
 		if filepath.Base(path) == "key" {
 			continue
@@ -330,8 +330,9 @@ func TestTheLedgerHoldsNoInstallKeyCategoryOrLinkKey(t *testing.T) {
 			}
 		}
 	}
-	if fileCount(filepath.Join(r.stateDir, "senders", "bindings")) != 2 || fileCount(filepath.Join(r.stateDir, "senders", "senders")) != 1 {
-		t.Fatal("expected two ties and one sender")
+	// Both links are down for good, so no tie to either is left; the sender's file stays for the ladder.
+	if fileCount(filepath.Join(r.stateDir, "senders", "bindings")) != 0 || fileCount(filepath.Join(r.stateDir, "senders", "senders")) != 1 {
+		t.Fatal("expected no ties and one sender")
 	}
 }
 

@@ -27,6 +27,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -93,6 +94,16 @@ func (s *Store) Handle(keyID []byte) string {
 	return hex.EncodeToString(m.Sum(nil))
 }
 
+// linkRef is how a link is named inside a sender's file: a keyed hash, so the file does not list the
+// ids of links that no longer exist.
+func (s *Store) linkRef(linkID string) string {
+	m := hmac.New(sha256.New, s.key)
+	m.Write([]byte("link"))
+	m.Write([]byte{0})
+	m.Write([]byte(linkID))
+	return hex.EncodeToString(m.Sum(nil))
+}
+
 // Standing is what the sender's next check learns. View is built from state that holds no category.
 type Standing struct {
 	View reportrules.SenderView
@@ -145,17 +156,20 @@ func (s *Store) Report(cfg reportrules.Config, linkID string, now time.Time) (Ou
 	if err != nil {
 		return Outcome{}, err
 	}
-	st, res := cfg.RecordReportedLink(rec.state(), linkID, now)
+	st, res := cfg.RecordReportedLink(rec.state(), s.linkRef(linkID), now)
 	rec.set(st)
 	rec.NoticePending = true
 	if err := s.save(b.Sender, rec); err != nil {
 		return Outcome{}, err
 	}
+	// The link is down for good, so its tie to the sender goes now, not at its expiry.
+	os.Remove(filepath.Join(s.dir, bindingsDir, linkID+".json"))
 	return Outcome{Bound: true, Counted: res.Counted, Struck: res.Struck, Step: st.Step}, nil
 }
 
-// Check is the sender's next check: it returns their standing and clears the takedown notice, so the
-// notice is shown once. A sender with no file is clean.
+// Check is the sender's next check: their standing, with the takedown notice if one is waiting. It
+// changes nothing; the caller calls ClearNotice once the answer is built, so a failure before then
+// does not lose the notice. A sender with no file is clean.
 func (s *Store) Check(handle string, now time.Time) (Standing, error) {
 	if !hexOf(handle, handleLen) {
 		return Standing{}, ErrBadID
@@ -167,14 +181,25 @@ func (s *Store) Check(handle string, now time.Time) (Standing, error) {
 		return Standing{}, err
 	}
 	st := rec.state()
-	out := Standing{View: reportrules.ViewFor(st, rec.NoticePending, now), SharingAllowed: st.SharingAllowed(now)}
-	if rec.NoticePending {
-		rec.NoticePending = false
-		if err := s.save(handle, rec); err != nil {
-			return Standing{}, err
-		}
+	return Standing{View: reportrules.ViewFor(st, rec.NoticePending, now), SharingAllowed: st.SharingAllowed(now)}, nil
+}
+
+// ClearNotice marks the takedown notice as shown.
+func (s *Store) ClearNotice(handle string) error {
+	if !hexOf(handle, handleLen) {
+		return ErrBadID
 	}
-	return out, nil
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rec, err := s.load(handle)
+	if err != nil {
+		return err
+	}
+	if !rec.NoticePending {
+		return nil
+	}
+	rec.NoticePending = false
+	return s.save(handle, rec)
 }
 
 // Allowed reports whether the sender may make a link now, without touching the notice.
@@ -215,6 +240,15 @@ func (s *Store) Sweep(cfg reportrules.Config, now time.Time) (int, error) {
 	files, err := os.ReadDir(filepath.Join(s.dir, sendersDir))
 	if err != nil {
 		return deleted, err
+	}
+	// A write that a crash cut short leaves a temp file; an hour is longer than any write takes.
+	for _, sub := range []string{sendersDir, bindingsDir} {
+		tmps, _ := os.ReadDir(filepath.Join(s.dir, sub))
+		for _, e := range tmps {
+			if info, err := e.Info(); err == nil && strings.HasPrefix(e.Name(), ".tmp-") && now.Sub(info.ModTime()) > time.Hour {
+				os.Remove(filepath.Join(s.dir, sub, e.Name()))
+			}
+		}
 	}
 	for _, e := range files {
 		handle := e.Name()
