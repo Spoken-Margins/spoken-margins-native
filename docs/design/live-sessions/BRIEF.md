@@ -31,7 +31,7 @@ Where it started: a friend asked to take Margins during Teams meetings, on his *
 - **On the Watch, the microphone follows the device you recorded from.** "if someone decides to record from the watch, the microphone should be on the watch. And if they're not on a call, then the watch could try to grab the headphones." The fact that the Watch's mic is independent of the phone is an advantage: "we're using that to our advantage right now, which is awesome."
 - **Hands-free is the dream.** "start a session on the watch and it was just recording, transcribing everything, and then when you raised your watch to your mouth like Dick Tracy, it would start a margin... worst case scenario, it doesn't lose your recording... any third-party thing like a lecture." The order agreed so far: tap to record, then continuous recording with double-tap marks, then raise-to-mouth as an experiment.
 - **Dynamic Island snapshot Margins** (#1508, comment on #2481): long-pressing the island expands it, and the expanded view offers Record and Stop buttons, so the listener can add a Margin without leaving YouTube, Audible or Zoom. A long press can't be our own gesture, and during a call there's no phone microphone.
-- Standing calls in `AGENTS.md` that apply here:
+- Standing calls in the owner overlay (`OWNER.md`) and `docs/decisions.md` that apply here:
   - Default on only when it costs the listener nothing.
   - Keep no user data that could identify someone unless the feature needs it.
   - A headphone double-press adds a Margin.

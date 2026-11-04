@@ -3,7 +3,6 @@ import datetime as dt
 import sys
 import tempfile
 import unittest
-from unittest import mock
 from pathlib import Path
 from unittest import mock
 
