@@ -1455,7 +1455,7 @@ public final class SessionEngine {
             stampRequestIfStarting(target: session.currentTargetId)
             return try jumpToMediaChapter(chapterId: chapterId, session: session)
         }
-        guard var session = currentSession, let chapter = currentMap?.chapters.first(where: { $0.id == chapterId }) else {
+        guard var session = currentSession, let chapter = textChapterTarget(chapterId: chapterId, session: session) else {
             throw SessionKitError.invalidCommandForState("jumpToChapter")
         }
         stampRequestIfStarting(target: session.itemId)
@@ -1463,7 +1463,7 @@ public final class SessionEngine {
         session.currentTargetId = session.itemId
         session.phase = .itemPlayback
         session.position.charOffset = chapter.startChar
-        session.position.chapterId = chapter.id
+        session.position.chapterId = chapter.mapChapterId
         session.completionPercent = chapter.percent
         currentSession = session
         try persistSession(session)
@@ -1471,6 +1471,26 @@ public final class SessionEngine {
         try playCurrentTarget(session, seeking: true)
         publishPlaybackStart(for: session, phase: session.phase)
         return snapshot
+    }
+
+    /// Where a chapter tap lands in a text session. The Timeline lists the item's map chapters (a character
+    /// position) and also its rendered-audio chapters (a time). A text session that speaks live knows only
+    /// the map, so a time chapter used to match nothing and failed (#3362). It is placed by its transcript
+    /// segment's first character instead. The map is read again when the engine holds none for this item.
+    private func textChapterTarget(chapterId requested: String, session: Session) -> (startChar: Int, percent: Int, mapChapterId: String?)? {
+        if currentMap?.itemId != session.itemId {
+            currentMap = try? repository.loadListeningMap(itemId: session.itemId)
+        }
+        if let chapter = currentMap?.chapters.first(where: { $0.id == requested }) {
+            return (chapter.startChar, chapter.percent, chapter.id)
+        }
+        guard let timeline = sourceTranscriptTimeline(itemId: session.itemId),
+              let chapter = timeline.chapters.first(where: { $0.id == requested }) else { return nil }
+        let segment = timeline.segments.first(where: { $0.id == chapter.transcriptSegmentId })
+            ?? timeline.segments.last(where: { $0.startMs <= chapter.startMs })
+        guard let startChar = segment?.startChar else { return nil }
+        let length = (currentItem?.id == session.itemId ? currentItem : try? repository.loadItem(id: session.itemId))?.text?.count ?? 0
+        return (startChar, percent(offset: startChar, length: length), chapterId(for: startChar))
     }
 
     @discardableResult
