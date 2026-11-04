@@ -50,6 +50,36 @@ and `expiresAt` (UTC deadline). Upload attempts are limited to 30 per client
 address per hour in memory. The sealing vector both sides test against is
 `contracts/fixtures/share-link-sealing-vector.json`.
 
+### Sender side of the strike ladder (#2239)
+
+A reported link counts against the install that made it, so the ladder in
+`internal/reportrules` (two reported links in 90 days is a strike; pauses of a
+week, a month, then permanent) has someone to pause. The flow:
+
+1. The app asks `POST /api/v1/links/sender`, an attested request with no body. The
+   answer is `sharingAllowed`, `sharingEnded`, `sharingPausedUntil` when a pause is
+   running, `notice` once after a takedown (always "A link you shared was taken down
+   after a report", never a category), and, when sharing is allowed, a one-use
+   `permit` good for ten minutes (held in memory).
+2. The upload carries it as `X-SM-Link-Permit`. The upload stays unattested, so the
+   attested request says nothing about what is shared. A bad, spent or stale permit
+   is 403 `bad_permit`; a sender struck since the check is 403 `sharing_paused`.
+3. The server ties the new link to `HMAC-SHA-256(server key, install key id)` in
+   `state/senders/bindings` until the link expires. The key is made once in
+   `state/senders/key` (mode 0600) and has to persist: a pause must outlive a
+   restart. A report of that link (`reportLink`, after the takedown) records it in
+   the sender's file in `state/senders/senders`: link ids and times, the ladder step
+   and a "tell them" flag. No category, reporter, content or install key id is kept.
+4. A link made without a permit is not attributed and counts against nobody. That is
+   today's behaviour and the default, so the app that exists keeps working. Start
+   `serve -links-require-permit` once the app sends permits; then an upload with none
+   is 403 `permit_required`.
+
+What this does not do: DeviceCheck bits and the server-signed "sharing paused until"
+token are the app's and Apple's side; a reinstall makes a new install key and so a
+new sender here. The daily sweep deletes ties past link expiry, drops reported links
+past 90 days, and deletes a clean sender's file; a sender on the ladder keeps theirs.
+
 `GET /l/<id>` serves a page shell with the install link and the report form,
 and no Margin, title or excerpt. Its module (`/l/share-link-page.mjs`, with
 `/l/share-link-open.mjs`, both embedded in the binary) fetches the sealed bytes

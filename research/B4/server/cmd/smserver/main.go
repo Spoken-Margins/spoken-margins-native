@@ -41,6 +41,7 @@ import (
 	"spokenmargins.dev/bridge/internal/relay"
 	"spokenmargins.dev/bridge/internal/reportrules"
 	"spokenmargins.dev/bridge/internal/reports"
+	"spokenmargins.dev/bridge/internal/senders"
 	"spokenmargins.dev/bridge/internal/store"
 	"spokenmargins.dev/bridge/internal/tokens"
 	"spokenmargins.dev/bridge/internal/weborigin"
@@ -129,6 +130,7 @@ func serve(args []string) error {
 	installURL := fs.String("links-install-url", "", "App Store listing or TestFlight invitation (required for links)")
 	relayOrigins := fs.String("relay-origins", "", "comma-separated web app origins that may use the feed relay (required for relay)")
 	linkOrigins := fs.String("link-origins", "", "comma-separated web app origins that may read sealed link packets and previews (CORS); empty sends no CORS headers")
+	requirePermit := fs.Bool("links-require-permit", false, "refuse a link upload that carries no sender permit (#2239); leave off until the app sends permits")
 	linkWebURL := fs.String("links-web-url", "", "origin of the web app whose page plays a share link (https://app.example.com); empty keeps the share page text only")
 	var mf mapsFlags
 	mf.register(fs)
@@ -166,6 +168,16 @@ func serve(args []string) error {
 		log.Print("reports: unavailable, links off")
 		reportStore = nil
 		linkStore = nil
+	}
+	// The strike ladder's sender ledger (#2239). Without it links still work, unattributed, unless
+	// permits are required: then a link nobody can be held to is not served.
+	senderStore, err := senders.Open(filepath.Join(*stateDir, "senders"))
+	if err != nil {
+		log.Print("senders: unavailable")
+		senderStore = nil
+		if *requirePermit {
+			linkStore = nil
+		}
 	}
 	rootPEM := appattest.AppleRootPEM()
 	if *rootPath != "" {
@@ -221,6 +233,8 @@ func serve(args []string) error {
 		Tokens:            issuer,
 		Links:             linkStore,
 		Reports:           reportStore,
+		Senders:           senderStore,
+		RequireLinkPermit: *requirePermit,
 		LinkInstallURL:    *installURL,
 		LinkWebURL:        *linkWebURL,
 		Relay:             feedRelay,
@@ -277,6 +291,13 @@ func serve(args []string) error {
 					log.Print("reports: daily sweep failed")
 				} else if n > 0 {
 					log.Printf("reports: deleted %d records past 90 days", n)
+				}
+			}
+			if senderStore != nil {
+				if n, err := senderStore.Sweep(reportrules.DefaultConfig(), time.Now()); err != nil {
+					log.Print("senders: daily sweep failed")
+				} else if n > 0 {
+					log.Printf("senders: deleted %d expired ties and settled senders", n)
 				}
 			}
 			if n, err := st.Purge(time.Now(), *idleDays); err != nil {

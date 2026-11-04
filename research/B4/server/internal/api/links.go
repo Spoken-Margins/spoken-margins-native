@@ -48,6 +48,23 @@ func (s *Server) uploadLink(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusTooManyRequests, "rate_limited")
 		return
 	}
+	// A permit (sender.go) ties the new link to its sender for the strike ladder (#2239). A bad one is
+	// refused before the packet is read; it is spent only once the packet has passed its checks.
+	permit := r.Header.Get(HeaderLinkPermit)
+	if permit != "" || s.RequireLinkPermit {
+		if s.Senders == nil {
+			fail(w, http.StatusServiceUnavailable, "disabled")
+			return
+		}
+		if permit == "" {
+			fail(w, http.StatusForbidden, "permit_required")
+			return
+		}
+		if _, ok := s.permits.peek(permit, s.Now()); !ok {
+			fail(w, http.StatusForbidden, "bad_permit")
+			return
+		}
+	}
 	// One buffered packet at a time leaves room under the service's 128 MB
 	// limit for map uploads, runtime overhead and growing read buffers.
 	select {
@@ -114,10 +131,37 @@ func (s *Server) uploadLink(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, "bad_packet")
 		return
 	}
-	id, expires, err := s.Links.Put(packet, preview, s.Now())
+	now := s.Now()
+	handle := ""
+	if permit != "" {
+		var ok bool
+		if handle, ok = s.permits.take(permit, now); !ok {
+			fail(w, http.StatusForbidden, "bad_permit")
+			return
+		}
+		// A strike can land between the check and the upload.
+		if allowed, err := s.Senders.Allowed(handle, now); err != nil {
+			fail(w, http.StatusInternalServerError, "internal")
+			return
+		} else if !allowed {
+			fail(w, http.StatusForbidden, "sharing_paused")
+			return
+		}
+	}
+	id, expires, err := s.Links.Put(packet, preview, now)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "internal")
 		return
+	}
+	if handle != "" {
+		// A link made with a permit is always attributed: if the tie cannot be kept, the link does not
+		// stand, and the app asks again.
+		if err := s.Senders.Bind(id, handle, expires); err != nil {
+			log.Print("senders: link could not be tied to its sender, link removed")
+			s.Links.Takedown(id)
+			fail(w, http.StatusInternalServerError, "internal")
+			return
+		}
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"id": id, "path": "/l/" + id, "expiresAt": expires})
 }
@@ -385,7 +429,13 @@ func (s *Server) reportLink(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.countLinkReport(linkReportKey{hour: now.UTC().Format("2006-01-02T15"), id: id, reason: string(d.Category)})
-	// The link is already down. A record that fails to save must not turn that into an error page.
+	// The link is already down. Counting it against its sender (a link made without a permit has none)
+	// or saving the record must not turn that into an error page.
+	if s.Senders != nil && d.CountsForSender {
+		if _, err := s.Senders.Report(cfg, id, now); err != nil {
+			log.Print("senders: report not counted")
+		}
+	}
 	filed := s.Reports.Add(reports.Record{Ref: ref, LinkID: id, Category: d.Category, At: now, Reason: reason}) == nil
 	if !filed {
 		log.Print("reports: record not saved")
