@@ -416,9 +416,19 @@ extension Gate1AppModel {
     }
 
     func performFollowedSourceRefresh(force: Bool) async {
-        guard !isRefreshingFollowedSources else { return }
+        // A request made during a running pass is not dropped: the pass goes round once more, as strong as the
+        // strongest request (#2136).
+        guard followedSourceRefreshGate.request(forced: force) else { return }
         isRefreshingFollowedSources = true
         defer { isRefreshingFollowedSources = false }
+        var nextForce: Bool? = force
+        while let roundForce = nextForce {
+            await runFollowedSourceRefreshRound(force: roundForce)
+            nextForce = followedSourceRefreshGate.finishPass()
+        }
+    }
+
+    private func runFollowedSourceRefreshRound(force: Bool) async {
         do {
             let store = try requireStore()
             let coordinator = requireFollowedSourceCoordinator(store: store)

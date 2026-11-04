@@ -26,9 +26,14 @@ function excerpt(doc, label, text) {
   return quote;
 }
 
+// Shown when the preview has no public source page. The app sends the link and the `.spokenmargins` file in one
+// message for such an item (owner, 2026-10-20), so a friend who opened only the link is told where the item is.
+export const FILE_NOTE = 'The item these Margins are on came as a file in the same message. Open that file in Spoken Margins to hear them in place.';
+
 /** Draws the checked preview into `section`, after its status line. */
 export function renderPreview(doc, section, preview) {
   const href = safeSourceURL(preview.source.url);
+  if (!href) section.append(element(doc, 'p', FILE_NOTE));
   for (const margin of preview.margins) {
     const article = element(doc, 'article');
     article.append(element(doc, 'h2', 'Margin'), element(doc, 'p', margin.text));

@@ -1,3 +1,5 @@
+import SessionKit
+import SessionKitSharing
 import SwiftUI
 import UserNotifications
 #if canImport(UIKit)
@@ -144,6 +146,11 @@ struct SpokenMarginsApp: App {
 
     private func open(_ url: URL) {
         if LiveSessionLinkRouter.shared.handle(url) { return }
+        // A friend's file comes before the first-run drawer (#3291).
+        if ShareLinkURL.isOnShareHost(url)
+            || (url.isFileURL && url.pathExtension.lowercased() == SpokenMarginsPackageArchive.fileExtension) {
+            catalogDrawer.friendFileArrived()
+        }
         model.handleIncomingURL(url)
     }
 

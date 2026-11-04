@@ -76,10 +76,29 @@ protocol SkimBridgeHost: AnyObject {
     func skimSucceeded(_ message: String)
     func skimConfirmed(_ message: String)
     func skimFailed(_ error: Error, context: String)
+
+    /// Chapters and Margins as Skim stops (#460): where a press from `position` goes, given where the scene summary
+    /// would land (nil when it has no plan). The rule is `SkimStopRouting`; the host reads its chapters and Margins.
+    func skimStopChoice(direction: SkimDirection, at position: Int, summaryDestination: Int?) -> SkimStopRouting.Choice
+    /// What a press does about a Margin moment that is already running (a second press plays the Margin now).
+    func skimMomentPress(direction: SkimDirection) -> SkimStopRouting.MomentPress
+    /// Carries out a moment press: plays the Margin now, ends its voice, or ends the moment.
+    func skimRunMomentPress(_ press: SkimStopRouting.MomentPress)
+    /// Goes to the stop: seeks to a chapter, or starts a Margin's lead-in through the Margin moment.
+    func skimGo(to target: SkimStops.Target)
 }
 
 extension SkimBridgeHost {
     var skimUsesTextPositions: Bool { false }
+
+    // A host with no chapters or Margins keeps Skim as it was: the summary or nothing.
+    func skimStopChoice(direction: SkimDirection, at position: Int, summaryDestination: Int?) -> SkimStopRouting.Choice {
+        summaryDestination == nil ? .unavailable : .summary
+    }
+
+    func skimMomentPress(direction: SkimDirection) -> SkimStopRouting.MomentPress { .navigate }
+    func skimRunMomentPress(_ press: SkimStopRouting.MomentPress) {}
+    func skimGo(to target: SkimStops.Target) {}
 }
 
 /// Skim forward and back, and the summary bridge audio that plays between: its player, its poll task,
@@ -178,10 +197,20 @@ final class SkimBridgeController {
         let effectiveTime = bridge?.destinationMediaTimeMs ?? host.skimCurrentMediaTimeMs
         let forward = effectiveTime.map { resolve(direction: .forward, at: $0) }
         let backward = effectiveTime.map { resolve(direction: .backward, at: $0) }
-        let forwardTime = bridge?.destinationMediaTimeMs ?? forward?.destinationMediaTimeMs
-        let backwardTime = bridge?.destinationMediaTimeMs ?? backward?.destinationMediaTimeMs
+        // The next chapter or Margin counts as somewhere to go, with or without a Listening Map (#460).
+        let forwardChoice = effectiveTime.map {
+            host.skimStopChoice(direction: .forward, at: $0, summaryDestination: forward?.destinationMediaTimeMs)
+        }
+        let backwardChoice = effectiveTime.map {
+            host.skimStopChoice(direction: .backward, at: $0, summaryDestination: backward?.destinationMediaTimeMs)
+        }
+        let forwardTime = bridge?.destinationMediaTimeMs
+            ?? forwardChoice?.destination(summaryDestination: forward?.destinationMediaTimeMs)
+        let backwardTime = bridge?.destinationMediaTimeMs
+            ?? backwardChoice?.destination(summaryDestination: backward?.destinationMediaTimeMs)
         let hasMap = host.skimSource.flatMap { loadedResources(for: $0) }?.hasMap ?? false
-        let forwardReason = forward == nil ? .noSource : forward?.unavailableReason
+        var forwardReason: SkimUnavailableReason? = forward == nil ? .noSource : forward?.unavailableReason
+        if forwardTime != nil { forwardReason = nil } // a stop to go to: Next chapter isn't standing in for Skim
         let destinationsChanged = forwardDestinationMs != forwardTime || backwardDestinationMs != backwardTime
             || itemHasMap != hasMap || forwardUnavailableReason != forwardReason
         if destinationsChanged {
@@ -360,8 +389,26 @@ final class SkimBridgeController {
             complete()
             return
         }
+        // A Margin moment already running answers the press first: a second press plays the Margin now (#460).
+        let momentPress = host.skimMomentPress(direction: direction)
+        if momentPress != .navigate {
+            host.skimRunMomentPress(momentPress)
+            switch momentPress {
+            case .playMarginNow: record(.playedMarginNow, direction); return
+            case .skipVoice: record(.skippedMarginVoice, direction); return
+            case .endMomentThenNavigate, .navigate: break
+            }
+        }
         let effectiveTime = host.skimCurrentMediaTimeMs ?? 0
-        switch resolve(direction: direction, at: effectiveTime) {
+        let resolution = resolve(direction: direction, at: effectiveTime)
+        if case .stop(let target) = host.skimStopChoice(
+            direction: direction, at: effectiveTime, summaryDestination: resolution.destinationMediaTimeMs
+        ) {
+            record(target.stop.kind == .margin ? .startedMarginLeadIn : .wentToChapter, direction, detail: target.stop.id)
+            host.skimGo(to: target)
+            return
+        }
+        switch resolution {
         case .ready(let plan):
             play(plan)
         case .needsSummaryAudio(let request):
