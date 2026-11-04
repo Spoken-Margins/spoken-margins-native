@@ -91,6 +91,43 @@ final class PlayQueueTests: XCTestCase {
         XCTAssertTrue(PlayQueueStore(fileURL: file).load().isEmpty)
     }
 
+    // MARK: three in a row (#1990 verification)
+
+    /// Plays a queue the way the app does: each finish is a snapshot edge, the edge pops the next available item from the
+    /// queue file, and the queue file is written back after each hop. The file is reopened between hops, so this also
+    /// covers the app being closed and reopened mid-run.
+    func testThreeQueuedItemsPlayInOrderAcrossReopeningTheFileAndSkipADeletedOne() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("playqueue-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let fileURL = directory.appendingPathComponent("play-queue.json")
+        let library: Set<String> = ["a", "b", "d"] // "c" was queued, then deleted from the Library
+        try PlayQueueStore(fileURL: fileURL).save(PlayQueue(itemIds: ["b", "c", "d"]))
+
+        var played = ["a"]
+        var session = 1
+        var advances = 0
+        while advances < 10 {
+            let current = played.last!
+            let playing = snapshot(session: "s\(session)", item: current, phase: .itemPlayback)
+            let finished = snapshot(session: "s\(session)", item: current, phase: .finished)
+            XCTAssertTrue(PlayQueueAdvance.shouldAdvance(from: playing, to: finished))
+            // The same finish arriving again (a position tick) must not start a second item.
+            XCTAssertFalse(PlayQueueAdvance.shouldAdvance(from: finished, to: finished))
+
+            let store = PlayQueueStore(fileURL: fileURL) // a fresh store each hop: the app may have been reopened
+            var queue = store.load()
+            guard let next = queue.popNext(isAvailable: { library.contains($0) }) else { break }
+            try store.save(queue)
+            played.append(next)
+            session += 1
+            advances += 1
+        }
+
+        XCTAssertEqual(played, ["a", "b", "d"], "three items play in the order they were queued; the deleted one is skipped")
+        XCTAssertTrue(PlayQueueStore(fileURL: fileURL).load().isEmpty, "the run leaves an empty queue and no file")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fileURL.path))
+    }
+
     // MARK: Queue screen rows (#1990)
 
     private func item(_ id: String, title: String? = nil, author: String? = nil, source: String? = nil) -> LibraryItemRow {
