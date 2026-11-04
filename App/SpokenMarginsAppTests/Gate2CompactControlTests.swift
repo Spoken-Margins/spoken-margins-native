@@ -985,6 +985,7 @@ final class Gate2CompactControlTests: XCTestCase {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), gate2CompactControls: controller)
         model.resetAndSeed()
         model.startItem(id: "item-pill")
+        XCTAssertEqual(model.snapshot.status, .playing, "the harness starts from a playing item (#3321)")
         return (model, controller, liveActivity, clock, app, center)
     }
 
