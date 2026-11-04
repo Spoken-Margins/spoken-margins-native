@@ -111,6 +111,16 @@ test('which text is a share link, which is a damaged one, and which is neither',
   for (const [text, kind, base] of kinds) assert.equal(parseShareLink(text, base).kind, kind, text);
 });
 
+test('a cut-off link names its link for the report form, and never carries a key (#3355)', () => {
+  const id = '0123456789abcdef0123456789abcdef';
+  for (const hash of ['', '#', `#${KEY.slice(0, 20)}`, `#${KEY}!`]) {
+    const parsed = parseShareLink(`https://example.com/l/${id}${hash}`);
+    assert.deepEqual(parsed, { kind: 'damaged', reportable: { origin: 'https://example.com', id } }, hash);
+  }
+  assert.equal(parseShareLink(`/l/${id}#${KEY.slice(0, 20)}`, 'http://localhost:4173/').kind, 'damaged');
+  assert.equal(JSON.stringify(parseShareLink(`https://example.com/l/${id}#${KEY.slice(0, 20)}`)).includes(KEY.slice(0, 12)), false);
+});
+
 test('a link made here opens back to the same packet, and the importer reads its Margins', async () => {
   const packet = new Uint8Array(readFileSync(new URL('Contracts/fixtures/web-packets/web-voice.spokenmargins', repo)));
   const sealed = await sealPacket(packet, { schema: 'spokenmargins.link-preview.v1', source: { title: 'Episode 1' }, margins: [{ text: 'Hi' }] });
