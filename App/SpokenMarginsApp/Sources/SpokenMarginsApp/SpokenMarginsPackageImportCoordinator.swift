@@ -194,6 +194,7 @@ final class SpokenMarginsPackageImportCoordinator {
     /// so the launch sweep and a second `stage` that runs while this one waits leave it alone.
     func stage(
         from sourceURL: URL, announcesRejection: Bool = true, shownOnAnEarlierLaunch: Bool = false,
+        shareLinkId: String? = nil,
         releaseSource: (@MainActor () -> Void)? = nil
     ) async -> StageResult {
         var workingDirectory: URL?
@@ -230,7 +231,7 @@ final class SpokenMarginsPackageImportCoordinator {
                 return .staged
             }
             var staged = try await makeReview(packageURL: copiedPackage, extractionDirectory: root, contents: contents,
-                                              store: store, releaseSource: releaseSource)
+                                              store: store, releaseSource: releaseSource, shareLinkId: shareLinkId)
             // Decided once, on arrival: a review re-matched after Add Source keeps the sheet the listener is in.
             staged.opensDirectly = SharedPacketArrival.route(
                 isListeningMap: staged.isListeningMap, requiresRecipientItem: staged.requiresRecipientItem,
@@ -337,7 +338,8 @@ final class SpokenMarginsPackageImportCoordinator {
             let store = try environment.requireStore()
             let refreshed = try await makeReview(
                 packageURL: review.packageURL, extractionDirectory: review.extractionDirectory,
-                contents: review.contents, store: store, releaseSource: review.releaseSource
+                contents: review.contents, store: store, releaseSource: review.releaseSource,
+                shareLinkId: review.shareLinkId
             )
             guard queue.isShowing(review.id), !isImporting else { return }
             queue.replaceShowing(with: refreshed)
@@ -434,6 +436,7 @@ final class SpokenMarginsPackageImportCoordinator {
                     itemId: itemId,
                     localItem: localItem,
                     itemText: itemText,
+                    shareLinkId: review.shareLinkId,
                     repository: store
                 ), nil)
             }
@@ -636,7 +639,7 @@ final class SpokenMarginsPackageImportCoordinator {
 
     private func makeReview(
         packageURL: URL, extractionDirectory: URL, contents: VerifiedSpokenMarginsPackage, store: SQLiteSessionStore,
-        releaseSource: (@MainActor () -> Void)?
+        releaseSource: (@MainActor () -> Void)?, shareLinkId: String? = nil
     ) async throws -> SpokenMarginsPackageImportReview {
         let found = try await lookUpSourceMatch(for: contents, store: store)
         var review = SpokenMarginsPackageImportReview(
@@ -644,6 +647,7 @@ final class SpokenMarginsPackageImportCoordinator {
             contents: contents, matchingItemId: found.itemId
         )
         review.releaseSource = releaseSource
+        review.shareLinkId = shareLinkId
         review.replacesExistingMap = found.replacesExistingMap
         return review
     }

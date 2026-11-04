@@ -107,6 +107,7 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         XCTAssertEqual(try store.pendingPayloadIDs().count, 1, "the shared copy waits until Import or Cancel (#2123)")
         XCTAssertTrue(model.diagnostics.values.contains("opened"))
         XCTAssertTrue(review.opensDirectly, "a new file with nothing to decide opens directly (#3291)")
+        XCTAssertNil(review.shareLinkId, "a file handed over directly has no link to report (#2846)")
 
         // Coming back to the foreground while the review shows stages nothing again.
         try await model.consumePendingSpokenMarginsPackageHandoffs(from: store)
@@ -176,6 +177,8 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         XCTAssertEqual(requested.urls.map(\.absoluteString), ["https://spokenmargins.proximitytoprogress.com/l/\(Self.shareLinkID)/packet"])
         XCTAssertEqual(model.diagnostics["lastShareLink"], "opened")
         XCTAssertFalse(model.diagnostics.values.contains { $0.contains(key.fragment) }, "the key must never reach diagnostics")
+        // The link's id travels with the review so the imported Margins can be reported later (#2846); its key never does.
+        XCTAssertEqual(model.spokenMarginsPackageImportReview?.shareLinkId, Self.shareLinkID)
         model.cancelSpokenMarginsPackageImport()
     }
 

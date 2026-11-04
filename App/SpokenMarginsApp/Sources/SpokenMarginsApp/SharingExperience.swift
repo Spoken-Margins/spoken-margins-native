@@ -69,6 +69,9 @@ struct SpokenMarginsPackageImportReview: Identifiable {
     var releaseSource: (@MainActor () -> Void)?
     /// Imported as soon as it shows, with no sheet (#3291): set when the file arrives and nothing waits on the listener.
     var opensDirectly = false
+    /// The id of the share link this packet was opened from, kept with the imported layer so the listener can
+    /// report that link later (#2846). Nil for a file handed over directly.
+    var shareLinkId: String?
 
     /// A file that carries a Listening Map for an article or PDF and no Margins (#1471).
     var isListeningMap: Bool { ListeningMapPacket.isMapPacket(contents.manifest) }
