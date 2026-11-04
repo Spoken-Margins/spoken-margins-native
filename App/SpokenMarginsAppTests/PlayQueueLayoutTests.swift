@@ -103,6 +103,7 @@ final class PlayQueueLayoutTests: XCTestCase {
         let rowsBefore = list.totalItems
         let shapeBefore = Self.shape(of: list)
         attachScreenshot(of: mounted, name: "library-scrolled-before-queue")
+        ListPlaceKeeper.trace = []
 
         model.queueAppend(itemId: Self.itemIds(1)[0])
         list = try await settledList(in: mounted) { $0.totalItems == rowsBefore + 1 }
@@ -111,15 +112,17 @@ final class PlayQueueLayoutTests: XCTestCase {
         let shapeAdded = Self.shape(of: list)
         XCTAssertEqual(afterAdding, before, accuracy: 6,
                        "The row at the top moved \(afterAdding - before) pt when the queue entry appeared above it "
-                           + "(list before: \(shapeBefore); after: \(shapeAdded))")
+                           + "(list before: \(shapeBefore); after: \(shapeAdded)); keeper: \(Self.keeperTrace())")
 
         try await Task.sleep(for: .milliseconds(500))
+        ListPlaceKeeper.trace = []
         model.removeFromQueue(itemId: Self.itemIds(1)[0])
         list = try await settledList(in: mounted) { $0.totalItems == rowsBefore }
         let afterRemoving = try offsetFromTop(of: topIndex, in: list)
         XCTAssertEqual(afterRemoving, before, accuracy: 6,
                        "The row at the top moved \(afterRemoving - before) pt when the queue entry went away "
-                           + "(list with the entry: \(shapeAdded); after: \(Self.shape(of: list)))")
+                           + "(list with the entry: \(shapeAdded); after: \(Self.shape(of: list))); "
+                           + "keeper: \(Self.keeperTrace())")
     }
 
     /// The control: a plain list with a row that comes and goes above the rest, and nothing keeping the place. Its rows
@@ -260,6 +263,11 @@ final class PlayQueueLayoutTests: XCTestCase {
         let view = list.view
         return "offset \(view.contentOffset.y), content \(view.contentSize.height), inset \(view.adjustedContentInset.top), "
             + "\(list.totalItems) rows"
+    }
+
+    /// What the Library's place keeper decided since the trace was cleared: why it held nothing, or where it moved to.
+    private static func keeperTrace() -> String {
+        ListPlaceKeeper.trace.isEmpty ? "nothing" : ListPlaceKeeper.trace.suffix(12).joined(separator: " | ")
     }
 
     private static func collectionView(in view: UIView) -> UICollectionView? {

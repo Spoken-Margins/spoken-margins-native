@@ -9,7 +9,8 @@ import UIKit
 /// It keeps one row on screen where it was: a row fully in view, found by its place in the list and moved along by
 /// the rows added above it. A single shift by what the content grew was not enough: the list grows in steps (a new
 /// row first takes an estimated height, rows coming into view below are measured) and can set its own offset at the
-/// end of an update, so the place is re-applied on every change for a short while.
+/// end of an update, so the place is re-applied on every change for a short while, and on every frame: the second T3
+/// showed the list taking a new row with the offset left where it was and no change the keeper heard of after it.
 ///
 /// Put `anchor` in the list's background, and call `holdPlace(rowsAddedAbove:)` from the change that adds or removes
 /// the rows.
@@ -50,6 +51,12 @@ final class ListPlaceKeeper {
     private var holdGeneration = 0
     private var reapplyScheduled = false
     private var isShifting = false
+    private var frameLink: CADisplayLink?
+
+    #if DEBUG
+    /// What the keepers decided lately, newest last, for a layout test's failure message.
+    static var trace: [String] = []
+    #endif
 
     var anchor: some View { ListPlaceAnchor(keeper: self) }
 
@@ -59,30 +66,67 @@ final class ListPlaceKeeper {
     func holdPlace(rowsAddedAbove rowsAdded: Int) {
         if list == nil, let anchorView { attach(near: anchorView) }
         let current = held.flatMap { $0.until > Date() ? $0 : nil }
-        guard let list, let place = current?.place ?? placeBefore(rowsAdded: rowsAdded, in: list) else { return }
-        guard place.offset + list.adjustedContentInset.top > 1 else { return }
+        guard let list else { return note("hold \(rowsAdded): no list") }
+        guard let place = current?.place ?? placeBefore(rowsAdded: rowsAdded, in: list) else {
+            return note("hold \(rowsAdded): no place on screen")
+        }
+        guard place.offset + list.adjustedContentInset.top > 1 else {
+            return note("hold \(rowsAdded): at the top (offset \(place.offset))")
+        }
         holdGeneration += 1
         let generation = holdGeneration
         let before = current?.rowsAdded ?? 0
         held = Hold(place: place, rowsAdded: before + rowsAdded, rowsAddedBefore: before,
                     until: Date().addingTimeInterval(Self.holdDuration), generation: generation)
+        note("hold \(rowsAdded): row \(place.row) of \(place.rowCount) at \(place.rowTop), offset \(place.offset); "
+            + "list has \(Self.rowCount(of: list)) rows")
         keepHeldPlace(in: list)
+        startFrameLink()
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.holdDuration) { [weak self] in
             guard let self, held?.generation == generation else { return }
-            held = nil
-            scheduleSettle()
+            endHold()
         }
     }
 
-    /// The settled place, unless it was read just after the list took this very change: then the one before it.
+    /// Where the list is before this change. When rows come or go and the list still has the rows it had when it last
+    /// settled, it is read now, so a settled place gone stale (the list moved with nothing heard) can't be held. Once
+    /// the list has taken the change, or when only a row's height changed and the count can't tell, the settled place,
+    /// or the one before it if it was read just after the list took this very change.
     private func placeBefore(rowsAdded: Int, in list: UICollectionView) -> Place? {
-        guard let settled else { return nil }
-        if rowsAdded != 0, let previousSettled, settled.rowCount == Self.rowCount(of: list),
+        let rowCount = Self.rowCount(of: list)
+        if rowsAdded != 0, let settled, let previousSettled, settled.rowCount == rowCount,
            previousSettled.rowCount == settled.rowCount - rowsAdded,
            let changed = rowCountSettledAt, Date().timeIntervalSince(changed) < 0.25 {
             return previousSettled
         }
+        if rowsAdded != 0, settled == nil || settled?.rowCount == rowCount, let now = Self.place(of: list) { return now }
         return settled
+    }
+
+    private func endHold() {
+        held = nil
+        frameLink?.invalidate()
+        frameLink = nil
+        scheduleSettle()
+    }
+
+    /// Re-applies the place on every frame while it is held, after the list's own layout of the frame before.
+    private func startFrameLink() {
+        guard frameLink == nil else { return }
+        let link = CADisplayLink(target: FrameTarget { [weak self] in
+            guard let self, let list else { return false }
+            if !list.hasUncommittedUpdates { applyHeldPlace(in: list) }
+            return true
+        }, selector: #selector(FrameTarget.tick(_:)))
+        link.add(to: .main, forMode: .common)
+        frameLink = link
+    }
+
+    private func note(_ line: @autoclosure () -> String) {
+        #if DEBUG
+        Self.trace.append(line())
+        if Self.trace.count > 40 { Self.trace.removeFirst(Self.trace.count - 40) }
+        #endif
     }
 
     fileprivate func attach(near anchor: UIView) {
@@ -149,8 +193,7 @@ final class ListPlaceKeeper {
         guard let held else { return false }
         // A finger on the list owns the place.
         guard held.until > Date(), !list.isTracking, !list.isDragging, !list.isDecelerating else {
-            self.held = nil
-            scheduleSettle()
+            endHold()
             return false
         }
         shift(list, to: held)
@@ -162,7 +205,9 @@ final class ListPlaceKeeper {
         let rowCount = Self.rowCount(of: list)
         let offset: CGFloat
         if rowCount == place.rowCount + held.rowsAdded {
-            guard let kept = Self.offset(keeping: place.row + held.rowsAdded, at: place.rowTop, in: list) else { return }
+            guard let kept = Self.offset(keeping: place.row + held.rowsAdded, at: place.rowTop, in: list) else {
+                return note("no frame for row \(place.row + held.rowsAdded) of \(rowCount)")
+            }
             offset = kept
         } else if rowCount == place.rowCount + held.rowsAddedBefore {
             return // the list hasn't taken the latest change yet
@@ -174,6 +219,7 @@ final class ListPlaceKeeper {
         let bottom = max(top, list.contentSize.height - list.bounds.height + list.adjustedContentInset.bottom)
         let target = min(max(offset, top), bottom)
         guard abs(target - list.contentOffset.y) > 0.5 else { return }
+        note("shift \(list.contentOffset.y) to \(target) (\(rowCount) rows, content \(list.contentSize.height))")
         isShifting = true
         list.setContentOffset(CGPoint(x: list.contentOffset.x, y: target), animated: false)
         isShifting = false
@@ -237,6 +283,21 @@ final class ListPlaceKeeper {
             if let list = firstList(in: child) { return list }
         }
         return nil
+    }
+}
+
+/// The display link's target: the link holds it strongly, and it holds the keeper only through its closure's weak
+/// reference, so the keeper can go while a link runs; the link stops when the keeper or its list has gone.
+@MainActor
+private final class FrameTarget: NSObject {
+    let onFrame: () -> Bool
+
+    init(onFrame: @escaping () -> Bool) {
+        self.onFrame = onFrame
+    }
+
+    @objc func tick(_ link: CADisplayLink) {
+        if !onFrame() { link.invalidate() }
     }
 }
 
