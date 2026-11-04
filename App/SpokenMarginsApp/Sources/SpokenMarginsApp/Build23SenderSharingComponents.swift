@@ -478,7 +478,7 @@ struct Build23MarginEditor: View {
                 DisclosureGroup("Placement details", isExpanded: $showsPositionContext) {
                     VStack(alignment: .leading, spacing: 10) {
                         Text("These excerpts help place the Margin for the recipient. Most people do not need to edit them.")
-                            .font(.caption)
+                            .font(.footnote)
                             .foregroundStyle(AppColors.secondaryText)
                         TextField(
                             "Words before this Margin",
