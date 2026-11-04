@@ -22,26 +22,27 @@ struct ReactionsSelection: Equatable {
     }
 
     /// The people whose Margins can be picked: each enabled layer that has Margins, then the listener.
-    static func choices(for item: ItemDetailState) -> [Choice] {
+    /// `ownMargins` are the listener's Margins on the item from every session; the open item holds one session's (#3353).
+    static func choices(for item: ItemDetailState, ownMargins: [Interjection]? = nil) -> [Choice] {
         var choices = item.importedCommentaryLayers
             .filter { $0.itemId == item.id && $0.isEnabled && $0.deletedAt == nil }
             .compactMap { layer -> Choice? in
                 let count = item.importedCommentaryInterjections[layer.id, default: []].count
                 return count == 0 ? nil : Choice(id: layer.id, label: MarginLayerSynthesis.label(layer.displayLabel), marginCount: count)
             }
-        let own = item.interjections.filter { $0.itemId == item.id && $0.status == "active" }.count
+        let own = (ownMargins ?? item.interjections).filter { $0.itemId == item.id && $0.status == "active" }.count
         if own > 0 { choices.append(Choice(id: ownId, label: "Your Margins", marginCount: own)) }
         return choices
     }
 
     /// What the list and the model both read, so the two can never disagree about a layer.
-    func input(for item: ItemDetailState) -> MarginLayerSynthesis.Input {
+    func input(for item: ItemDetailState, ownMargins: [Interjection]? = nil) -> MarginLayerSynthesis.Input {
         MarginLayerSynthesis.input(
             itemId: item.id,
             layers: item.importedCommentaryLayers,
             interjections: item.importedCommentaryInterjections.values.flatMap { $0 },
             chosenLayerIds: Set(item.importedCommentaryLayers.map(\.id)).subtracting(unchecked),
-            ownMargins: item.interjections,
+            ownMargins: ownMargins ?? item.interjections,
             includeOwnMargins: isChosen(Self.ownId)
         )
     }
@@ -169,7 +170,7 @@ struct ExperienceReactionsScreen: View {
     @StateObject private var reactions = ReactionsViewModel()
     @State private var pendingPlay: PlayTarget?
 
-    private var input: MarginLayerSynthesis.Input { reactions.selection.input(for: model.selectedItem) }
+    private var input: MarginLayerSynthesis.Input { reactions.selection.input(for: model.selectedItem, ownMargins: model.ownMargins(itemId: model.selectedItem.id)) }
 
     var body: some View {
         NavigationStack {
@@ -213,7 +214,7 @@ struct ExperienceReactionsScreen: View {
             sectionHeading("Whose Margins", detail: "Uncheck someone to leave their Margins out of the list and the summary")
             ExperienceSurface {
                 VStack(spacing: 0) {
-                    ForEach(Array(ReactionsSelection.choices(for: model.selectedItem).enumerated()), id: \.element.id) { index, choice in
+                    ForEach(Array(ReactionsSelection.choices(for: model.selectedItem, ownMargins: model.ownMargins(itemId: model.selectedItem.id)).enumerated()), id: \.element.id) { index, choice in
                         if index > 0 { Divider() }
                         Toggle(isOn: Binding(
                             get: { reactions.selection.isChosen(choice.id) },

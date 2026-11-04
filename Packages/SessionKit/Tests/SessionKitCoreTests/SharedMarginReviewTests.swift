@@ -1,6 +1,7 @@
 import Foundation
 import XCTest
 @testable import SessionKit
+import SessionKitPersistence
 
 /// "Review new Margins" (#474): which shared Margins are offered, and in what order.
 final class SharedMarginReviewTests: XCTestCase {
@@ -22,14 +23,14 @@ final class SharedMarginReviewTests: XCTestCase {
     private func margin(
         _ id: String, in layerId: String = "ana", at ms: Int? = 60_000,
         evidence: AnchorResolutionEvidenceClass = .acousticVerified, voice: Bool = true,
-        heard: Bool = false, createdAt: Date? = nil
+        heard: Bool = false, createdAt: Date? = nil, replyLinks: [MarginReplyLink]? = nil
     ) -> ImportedCommentaryInterjection {
         ImportedCommentaryInterjection(
             id: id, layerId: layerId, packageScopedId: id, createdAt: createdAt ?? early,
             anchorEvidence: PortableAnchorEvidence(anchorType: .media), approvedTranscript: "Words",
             audioPath: voice ? "ImportedCommentary/\(id).m4a" : nil, audioDurationMs: 4_000,
             resolution: ImportedAnchorResolution(evidenceClass: evidence, localMediaTimeMs: ms, confidence: 1),
-            firstHeardAt: heard ? later : nil
+            firstHeardAt: heard ? later : nil, replyLinks: replyLinks
         )
     }
 
@@ -158,6 +159,67 @@ final class SharedMarginReviewTests: XCTestCase {
 
         _ = try repository.markImportedCommentaryInterjectionHeard(id: "m1", at: later)
         XCTAssertEqual(ids(try SharedMarginReview.entries(itemId: "item", in: repository)), ["m2"])
+    }
+
+    private func ownMargin(
+        _ id: String, session: String = "s", item: String = "item", sharedAs: [MarginPacketIdentity]? = nil
+    ) -> Interjection {
+        Interjection(
+            id: id, itemId: item, sessionId: session, targetType: .item, targetId: item, createdAt: early, roughPercent: 0,
+            anchor: Anchor(anchorType: .media, startChar: 0, endChar: 0, anchorBefore: "", anchorAfter: "", mediaTimeMs: 754_000),
+            audioPath: "\(id).m4a", audioStatus: "ready", transcriptionStatus: "complete", transcript: "Words", cleanedTranscript: nil,
+            displayText: "Words", status: "active", sharedAs: sharedAs
+        )
+    }
+
+    /// #3353: a friend's reply says which of the listener's Margins it answers, even when the listener shared that
+    /// Margin in an earlier listening session than the one the item screen holds.
+    func testAReplyToAMarginSharedInAnEarlierSessionFindsItsParent() throws {
+        let path = FileManager.default.temporaryDirectory.appendingPathComponent("SharedMarginReviewTests-\(UUID().uuidString).sqlite").path
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let store = try SQLiteSessionStore(path: path)
+        try store.saveItem(Item(id: "item", title: "Episode", mediaType: "text", text: "One.", externalReference: nil, status: "Ready"))
+        for (id, seconds) in [("session-shared", 1.0), ("session-later", 50.0)] {
+            try store.saveSession(Session(
+                id: id, itemId: "item", createdAt: Date(timeIntervalSince1970: seconds), updatedAt: Date(timeIntervalSince1970: seconds),
+                status: "in_progress", phase: .itemPlayback, currentTargetType: .itemTextTTS, currentTargetId: "item",
+                position: Position(), completionPercent: 0, playbackRate: 1
+            ))
+        }
+        let sent = MarginPacketIdentity(packageDigest: "digest-mine", packageScopedId: "margin-0001")
+        try store.saveInterjection(ownMargin("mine", session: "session-shared", sharedAs: [sent]))
+
+        // The friend's reply, imported with the link to that Margin.
+        let link = MarginReplyLink.replying(to: sent, parentConversationId: nil)
+        _ = try store.importCommentaryLayer(layer("ana"), interjections: [margin("reply", at: 755_000, replyLinks: [link])])
+
+        let detail = try ItemDetailLoader.load(
+            id: "item", store: store, snapshotItemId: nil, snapshotSessionId: nil, placementPasses: SharedMarginPlacementPasses())
+        XCTAssertTrue(detail.interjections.isEmpty, "the open item holds only the newest session's Margins")
+        let rows = try MarginRowsReading.item("item", store: store).privateRows.map(\.interjection)
+        XCTAssertEqual(rows.map(\.id), ["mine"])
+
+        func caption(ownMargins: [Interjection]) -> String? {
+            SharedMarginReview.entries(
+                layers: detail.importedCommentaryLayers, records: detail.importedCommentaryInterjections, ownMargins: ownMargins
+            ).first?.replyContext?.caption
+        }
+        XCTAssertEqual(caption(ownMargins: detail.interjections), "Reply to a Margin you don't have yet", "what the item screen alone gave")
+        let own = SharedMarginReview.ownMargins(itemId: "item", openItem: detail.interjections, rows: rows)
+        XCTAssertEqual(caption(ownMargins: own), "Reply to your Margin at 12:34")
+    }
+
+    func testOwnMarginsOfAnItemAreMergedByIdWithEveryPacketIdentity() {
+        let first = MarginPacketIdentity(packageDigest: "d1", packageScopedId: "m-1")
+        let second = MarginPacketIdentity(packageDigest: "d2", packageScopedId: "m-1")
+        let merged = SharedMarginReview.ownMargins(
+            itemId: "item",
+            openItem: [ownMargin("m-1", sharedAs: [first]), ownMargin("new"), ownMargin("elsewhere", item: "other")],
+            rows: [ownMargin("m-1", sharedAs: [second]), ownMargin("old"), ownMargin("also-elsewhere", item: "other")]
+        )
+        XCTAssertEqual(merged.map(\.id), ["m-1", "new", "old"])
+        XCTAssertEqual(Set(merged[0].sharedAs ?? []), [first, second], "a list read before the share doesn't hide the identity")
+        XCTAssertTrue(SharedMarginReview.ownMargins(itemId: "item", openItem: [], rows: []).isEmpty)
     }
 
     func testTheOfferNamesHowManyAndWhose() throws {

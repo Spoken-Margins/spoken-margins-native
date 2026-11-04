@@ -343,7 +343,7 @@ struct ExperienceItemDetailScreen: View {
             itemId: item.id,
             layers: item.importedCommentaryLayers,
             interjections: item.importedCommentaryInterjections,
-            ownMargins: item.interjections
+            ownMargins: model.ownMargins(itemId: item.id)
         ) {
             Button {
                 showsReactions = true

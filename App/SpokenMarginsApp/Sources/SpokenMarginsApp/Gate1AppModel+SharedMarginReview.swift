@@ -26,7 +26,7 @@ extension Gate1AppModel {
         if selectedItem.id == itemId {
             entries = SharedMarginReview.entries(
                 layers: selectedItem.importedCommentaryLayers, records: selectedItem.importedCommentaryInterjections,
-                ownMargins: selectedItem.interjections
+                ownMargins: ownMargins(itemId: itemId)
             )
         } else if let store {
             // The listener's own Margins let a friend's reply say which of them it answers (#3221). They come from the
@@ -38,10 +38,15 @@ extension Gate1AppModel {
         return entries.filter { $0.interjection.audioPath.flatMap(resolvedApplicationSupportAssetURL(for:)) != nil }
     }
 
-    /// The listener's own Margins on `itemId`, read from what the app already holds: the open item's, else the rows
-    /// the Margins screen published.
-    private func ownMargins(itemId: String) -> [Interjection] {
-        selectedItem.id == itemId ? selectedItem.interjections : marginRows.map(\.interjection).filter { $0.itemId == itemId }
+    /// The listener's own Margins on `itemId`, read from what the app already holds: the open item's and the rows the
+    /// Margins screen published. The open item holds one session's Margins, so alone it misses a Margin shared from
+    /// another session, and a friend's reply to it reads "a Margin you don't have yet" (#3353).
+    func ownMargins(itemId: String) -> [Interjection] {
+        SharedMarginReview.ownMargins(
+            itemId: itemId,
+            openItem: selectedItem.id == itemId ? selectedItem.interjections : [],
+            rows: marginRows.lazy.filter { $0.interjection.itemId == itemId }.map(\.interjection)
+        )
     }
 
     /// Continue for an item. Starts it, and a friend's Margins play in place as it reaches them (owner's call on
