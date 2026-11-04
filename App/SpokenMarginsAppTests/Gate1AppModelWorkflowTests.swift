@@ -1381,10 +1381,12 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(jobs.sorted(by: Gate1AppModel.audioPreparationJobPrecedes).map(\.id), ["selected", "new", "old"])
     }
 
-    /// #3335: each picker change took its place in the save line only after its own Task had hopped off the main actor,
-    /// so two quick changes could save in either order and the older budget won. A change now takes its place before
-    /// `offlineStorageBudgetChanged()` returns. Many back-to-back pairs, because the swap was a race, not a certainty.
-    func testTwoQuickStorageBudgetChangesLeaveTheSecondOneSaved() async throws {
+    /// #3335: a picker change takes its place in the budget's save line before `offlineStorageBudgetChanged()` returns.
+    /// The old code started a Task per pick, read the value inside it and took its place only after a hop, so a request
+    /// queued right after the call went first and two quick picks could save in either order. The line is held shut
+    /// here, each pick is followed at once by a probe that reads the budget, and the probe must see that pick's value:
+    /// it can only do so when the save was ahead of it in line. With the old code the probes run before any save.
+    func testABudgetPickTakesItsPlaceInTheSaveLineBeforeTheCallReturns() async throws {
         let defaults = UserDefaults.standard
         let priorLimit = defaults.object(forKey: "offlineStorageLimitGB") as? Int
         let priorCache = defaults.object(forKey: "podcastCacheLimitGB") as? Int
@@ -1395,23 +1397,33 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         let root = FileManager.default.temporaryDirectory.appending(path: "budget-order-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
-        let databaseURL = root.appending(path: "library.sqlite")
-        let store = try SQLiteSessionStore(path: databaseURL.path)
-        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: databaseURL)
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: root.appending(path: "library.sqlite"))
+        // The line is per store, so the probes and the gate go through the model's own store.
+        let reader = StoreReader(try model.requireStore())
+        let key = OfflineStorageBudget.saveOrderKey
+        let gate = DispatchSemaphore(value: 0)
+        addTeardownBlock { gate.signal() } // a failed assertion must not leave the line shut
+        let blocker = reader.enqueueInOrder(key) { _ in gate.wait() }
 
-        for round in 0..<60 {
-            let first = [1, 2, 5, 10][round % 4]
-            let second = first == 1 ? 20 : 1
-            model.offlineStorageLimitGB = first
-            let firstChange = model.offlineStorageBudgetChanged()
-            model.offlineStorageLimitGB = second
-            let secondChange = model.offlineStorageBudgetChanged()
-            await firstChange.value
-            await secondChange.value
-            XCTAssertEqual(try store.loadOfflineStorageBudget().limitBytes,
-                           Int64(second) * OfflineStorageBudget.bytesPerGigabyte,
-                           "round \(round): the budget saved last must be the one picked last (\(first) GB, then \(second) GB)")
-        }
+        model.offlineStorageLimitGB = 10
+        let firstChange = model.offlineStorageBudgetChanged()
+        let afterFirst = reader.enqueueInOrder(key) { try $0.loadOfflineStorageBudget() }
+        model.offlineStorageLimitGB = 20
+        let secondChange = model.offlineStorageBudgetChanged()
+        let afterSecond = reader.enqueueInOrder(key) { try $0.loadOfflineStorageBudget() }
+
+        gate.signal()
+        try await blocker.value
+        let seenAfterFirst = try await afterFirst.value
+        let seenAfterSecond = try await afterSecond.value
+        XCTAssertEqual(seenAfterFirst.limitBytes, 10 * OfflineStorageBudget.bytesPerGigabyte,
+                       "the first pick's save must be ahead of anything queued after the call")
+        XCTAssertEqual(seenAfterSecond.limitBytes, 20 * OfflineStorageBudget.bytesPerGigabyte,
+                       "and the second pick's save behind the first, so the later pick is the one that stays")
+        await firstChange.value
+        await secondChange.value
+        let saved = try await reader.readInOrder(key) { try $0.loadOfflineStorageBudget() }
+        XCTAssertEqual(saved.limitBytes, 20 * OfflineStorageBudget.bytesPerGigabyte)
     }
 
     func testNewestOpeningBufferComesFirstAndExplicitPriorityOverridesIt() {

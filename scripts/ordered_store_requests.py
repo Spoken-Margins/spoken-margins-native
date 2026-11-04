@@ -37,35 +37,70 @@ TASK_OPEN = re.compile(r'(?:\bTask(?:\.detached)?(?:\s*<[^<>{}]*>)?|\.(?:task|ad
 MARKER = re.compile(r'//\s*ordered-ok:\s*(\S.*)')
 
 
+RAW_OPEN = re.compile(r'#+"')
+
+
+def starts_string(text: str, i: int) -> bool:
+    return text[i] == '"' or bool(RAW_OPEN.match(text, i))
+
+
+def string_end(text: str, i: int) -> int:
+    """Offset just past the string literal that starts at `i`: a plain, multi-line or `#`-delimited string.
+
+    An interpolation (backslash, then an open parenthesis) is skipped to its matching close parenthesis with nested
+    strings handled, so a quote inside it does not end the literal early."""
+    n = len(text)
+    hashes = 0
+    while text[i + hashes] == '#':
+        hashes += 1
+    quote = '"' * 3 if text.startswith('"' * 3, i + hashes) else '"'
+    closing = quote + '#' * hashes
+    escape = '\\' + '#' * hashes
+    j = i + hashes + len(quote)
+    while j < n:
+        if text.startswith(escape + '(', j):
+            j += len(escape) + 1
+            depth = 1
+            while j < n and depth:
+                if starts_string(text, j):
+                    j = string_end(text, j)
+                    continue
+                depth += (text[j] == '(') - (text[j] == ')')
+                j += 1
+        elif text.startswith(escape, j):
+            j += len(escape) + 1
+        elif text.startswith(closing, j):
+            return j + len(closing)
+        else:
+            j += 1
+    return n
+
+
 def blank_comments_and_strings(text: str) -> str:
     """The text with comments and string literals replaced by spaces, keeping every newline and offset."""
     out = list(text)
     i, n = 0, len(text)
+
+    def blank(a: int, b: int) -> None:
+        for k in range(a, b):
+            if text[k] != '\n':
+                out[k] = ' '
+
     while i < n:
         two = text[i:i + 2]
         if two == '//':
             j = text.find('\n', i)
             j = n if j < 0 else j
-            for k in range(i, j):
-                out[k] = ' '
+            blank(i, j)
             i = j
         elif two == '/*':
             j = text.find('*/', i + 2)
             j = n if j < 0 else j + 2
-            for k in range(i, j):
-                if text[k] != '\n':
-                    out[k] = ' '
+            blank(i, j)
             i = j
-        elif text[i] == '"':
-            triple = text.startswith('"""', i)
-            end = '"""' if triple else '"'
-            j = i + len(end)
-            while j < n and not text.startswith(end, j):
-                j += 2 if text[j] == '\\' else 1
-            j = min(n, j + len(end))
-            for k in range(i, j):
-                if text[k] != '\n':
-                    out[k] = ' '
+        elif starts_string(text, i):
+            j = string_end(text, i)
+            blank(i, j)
             i = j
         else:
             i += 1

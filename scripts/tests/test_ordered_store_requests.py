@@ -95,6 +95,27 @@ class OrderedStoreRequestsTests(unittest.TestCase):
         ''')
         self.assertEqual(rows, [])
 
+    def test_a_quote_inside_an_interpolation_or_a_raw_string_does_not_end_the_string_early(self):
+        # The suspected hole from the audit of #3338: the string used to end at the first quote inside `\\(...)`, so the
+        # brace after it was counted and the Task that follows looked like it was never closed.
+        rows = scan_source('''
+            func f() {
+                let a = "\\(dict["k"]) }"
+                let b = #"say "hi" }"#
+                _ = try? await StoreReader(s).readInOrder(k) { _ in 1 }
+            }
+        ''')
+        self.assertEqual(rows, [])
+        rows = scan_source('''
+            func f() {
+                Task {
+                    let a = "\\(dict["k"]) {"
+                    _ = try? await StoreReader(s).readInOrder(k) { _ in 1 }
+                }
+            }
+        ''')
+        self.assertEqual(len(rows), 1)
+
     def test_the_app_has_no_unmarked_call_inside_a_task(self):
         unmarked = [f"{row['file']}:{row['line']}" for row in guard.scan() if not row['reason']]
         self.assertEqual(unmarked, [], 'take the place with enqueueInOrder before the Task, or mark it `// ordered-ok: why`')
