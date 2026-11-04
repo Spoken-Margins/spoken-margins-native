@@ -251,7 +251,7 @@ def report(now: dt.datetime, hours: float, dial: dict, q: dict, holds: list[dict
     suspect = [h for h in holds if h['backing'] == 'suspect']
     unbacked = [h for h in holds if h['backing'] == 'unbacked']
     owned = len(holds) - len(suspect) - len(unbacked)
-    line = (f'2. Holds in AGENTS.md and docs/decisions.md: {plural(len(holds), "line")} make work wait; '
+    line = (f'2. Holds in AGENTS.md, the owner overlay and docs/decisions.md: {plural(len(holds), "line")} make work wait; '
             f'{owned} quote the owner asking for it, with a date.')
     if suspect or unbacked:
         out.append(line + f' Check {len(suspect)} with no dated owner call and {len(unbacked)} '

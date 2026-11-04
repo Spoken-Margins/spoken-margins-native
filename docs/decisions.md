@@ -1,11 +1,11 @@
 # Decisions record
 
-The owner's decisions, in his words, by date. Each block below is copied from the agent guide as it was written there: the same dates, the same quotes, the same order, nothing reworded. [AGENTS.md](../AGENTS.md) keeps the rules that change what an agent does; this file keeps the decisions behind them and the incidents that led to them.
+The owner's decisions, in his words, by date. Each block below is copied from the agent guide as it was written there: the same dates, the same quotes, the same order, nothing reworded. The owner overlay (`OWNER.md`, private) keeps the rules that change what an agent does, and [AGENTS.md](../AGENTS.md) is the public contributor guide; this file keeps the decisions behind them and the incidents that led to them.
 
 How it is used:
 
 - **Search this file and the issue before asking the owner anything; his answers stick.** If an entry covers the question, act on it. "Don't ask again" on a block means what it says.
-- **A new answer goes here the same day**, under its date, quoting him, in a PR that touches no app code. A tap on a decision card is his answer: quote the card's question and his pick. If the answer changes an agent's behaviour, the one-sentence rule goes in `AGENTS.md` too, with the date.
+- **A new answer goes here the same day**, under its date, quoting him, in a PR that touches no app code. A tap on a decision card is his answer: quote the card's question and his pick. If the answer changes an agent's behaviour, the one-sentence rule goes in the owner overlay too, with the date.
 - **A later entry wins over an earlier one** where they conflict, and an entry that replaces another says so in its own text.
 - **"From the guide"** under a date holds the sentences and incident stories that stood next to a rule in `AGENTS.md` until 2026-10-30, moved here unchanged when the guide was cut to the rules themselves (#3033). Cross-references like "below" and "above" in these entries read as they did in the guide, that is, by date.
 

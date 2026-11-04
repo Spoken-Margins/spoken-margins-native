@@ -12,7 +12,7 @@ Status never lives in these files. It lives in GitHub: one tracking issue per st
 
 ## Reading a brief's "Done when"
 
-A milestone's "Done when" is met through PRs, and a PR is done when it's armed: `automerge` on, plus a `/lane T3` request when the diff needs one (`AGENTS.md`, [lane-request skill](../../.claude/skills/lane-request/SKILL.md)). This rule covers every brief, so the briefs themselves don't repeat it.
+A milestone's "Done when" is met through PRs, and a PR is done when it's armed: `automerge` on, plus a `/lane T3` request when the diff needs one (owner overlay `OWNER.md`, [lane-request skill](../../.claude/skills/lane-request/SKILL.md)). This rule covers every brief, so the briefs themselves don't repeat it.
 
 - **Items the agent can show** (a test that fails without the change, a measured number, a fixture, a tap count, a screenshot) are shown in the PR description before arming.
 - **Lane items** ("T2 green", "T3 green", "Lane T3 is green") are met by arming the PR. The runner merges only on PASS, so the thread doesn't wait for the report.
@@ -173,7 +173,7 @@ The reach pass (#141, #145–#149, #151) moves into B1, D3, D4 and D5.
   - Cost, measured on 2026-10-15: the first applying run on the live board made 142 changes (184 writes, all read back) in 398 calls and 263 s; the next run changed nothing, with 0 writes, 69 calls and 44 s. The worker's log keeps each run's changes, unknowns, calls, writes and seconds. Repeated writes on a run with no new evidence, or the calls climbing, mean the derivation is flipping or scanning twice. Authentication needs repository read and project write permissions (the Mac's `gh` token has the `project` scope).
 - Streams merge `main` into their branch at least daily, and before any lane request, so reports test what will actually integrate.
 - Merge order when PRs conflict: gate streams (A2 first), then the older PR.
-- A TestFlight candidate is a commit on `main` that passed T5. Releasing still follows "Releasing a build" in `AGENTS.md`, by the owner's decision.
+- A TestFlight candidate is a commit on `main` that passed T5. Releasing still follows "Releasing a build" in the owner overlay (the public `AGENTS.md` holds the generic version), by the owner's decision.
 
 ## Owner setup (one-time, about 30 minutes at the Mac)
 
