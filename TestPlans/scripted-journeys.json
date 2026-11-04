@@ -61,115 +61,143 @@
     },
     {
       "test": "SpokenMarginsAppUITests/Gate1FlowUITests/testAddSourcePresentsEveryTypedIntakeRoute",
-      "journey": "Add Source: every typed intake route is offered (#3217)"
+      "journey": "Add Source: every typed intake route is offered (#3217)",
+      "batch": 2
     },
     {
       "test": "SpokenMarginsAppUITests/Gate1FlowUITests/testAmbiguousPodcastImportImmediatelyReplacesAddSourceWithEpisodePicker",
-      "journey": "Add a podcast link: an ambiguous link goes straight to the episode picker"
+      "journey": "Add a podcast link: an ambiguous link goes straight to the episode picker",
+      "batch": 2
     },
     {
       "test": "SpokenMarginsAppUITests/Gate1FlowUITests/testBatchExportOffersPersistentJumpToDestination",
-      "journey": "Export Sessions from the Margins tab: Jump to destination, no remembered folder (#1528, #1939)"
+      "journey": "Export Sessions from the Margins tab: Jump to destination, no remembered folder (#1528, #1939)",
+      "batch": 2
     },
     {
       "test": "SpokenMarginsAppUITests/Gate1FlowUITests/testBatchExportPickersBecomeMenusAtAccessibilitySizes",
-      "journey": "Export Sessions at AX5: the pickers become menus that stay on screen (#1939)"
+      "journey": "Export Sessions at AX5: the pickers become menus that stay on screen (#1939)",
+      "batch": 2
     },
     {
       "test": "SpokenMarginsAppUITests/Gate1FlowUITests/testBuild23LayoutRegressionsRemainOperableAtAccessibilityType",
-      "journey": "Layout at accessibility type: Create, imported layers, export and share controls stay operable (#2760, #2922, #3097)"
+      "journey": "Layout at accessibility type: Create, imported layers, export and share controls stay operable (#2760, #2922, #3097)",
+      "batch": 2
     },
     {
       "test": "SpokenMarginsAppUITests/Gate1FlowUITests/testBuild23RecipientMissingSourceReturnsWithoutAutoplayAndShowsProvenance",
-      "journey": "Receiving: a packet whose source is missing returns to the Library without autoplay and shows its provenance"
+      "journey": "Receiving: a packet whose source is missing returns to the Library without autoplay and shows its provenance",
+      "batch": 2
     },
     {
       "test": "SpokenMarginsAppUITests/Gate1FlowUITests/testBuild23SenderStagesInvalidateStalePreviewAndUseSystemShare",
-      "journey": "Sending: editing a selection invalidates the preview, and Share opens the system share sheet"
+      "journey": "Sending: editing a selection invalidates the preview, and Share opens the system share sheet",
+      "batch": 2
     },
     {
       "test": "SpokenMarginsAppUITests/Gate1FlowUITests/testDeveloperListeningMapJSONCanBeAppliedFromSettings",
-      "journey": "Listening Map: a map pasted in Developer tools applies and its chapters jump"
+      "journey": "Listening Map: a map pasted in Developer tools applies and its chapters jump",
+      "batch": 2
     },
     {
       "test": "SpokenMarginsAppUITests/Gate1FlowUITests/testFailedLocalSummaryShowsPersistentRetryAndRetryCompletes",
-      "journey": "Timeline summary: a failed local summary keeps a Retry that completes (#430)"
+      "journey": "Timeline summary: a failed local summary keeps a Retry that completes (#430)",
+      "batch": 2
     },
     {
       "test": "SpokenMarginsAppUITests/Gate1FlowUITests/testFeedbackBannerPutsItsButtonsOnTheirOwnRowAtAccessibilitySizes",
-      "journey": "Library at AX5: the completion banner puts Undo on its own row (#1935)"
+      "journey": "Library at AX5: the completion banner puts Undo on its own row (#1935)",
+      "batch": 2
     },
     {
       "test": "SpokenMarginsAppUITests/Gate1FlowUITests/testItemScreenShowsListeningActionBeforeAtMostOneMapGenerator",
-      "journey": "Item screen: the listening action comes first, then at most one map generator (#149)"
+      "journey": "Item screen: the listening action comes first, then at most one map generator (#149)",
+      "batch": 2
     },
     {
       "test": "SpokenMarginsAppUITests/Gate1FlowUITests/testLibraryCompactRowStaysDense",
-      "journey": "Library: a compact row stays dense and its controls aligned (also the Smoke plan)"
+      "journey": "Library: a compact row stays dense and its controls aligned (also the Smoke plan)",
+      "batch": 2
     },
     {
       "test": "SpokenMarginsAppUITests/Gate1FlowUITests/testLibraryRowTitleGetsFullWidthAtAccessibilitySizes",
-      "journey": "Library at AX5: the row title gets the full width and Play sits below it (#2056)"
+      "journey": "Library at AX5: the row title gets the full width and Play sits below it (#2056)",
+      "batch": 2
     },
     {
       "test": "SpokenMarginsAppUITests/Gate1FlowUITests/testLibraryUnfinishedCompletionUndoAndSearchDiscovery",
-      "journey": "Library: marking an item finished can be undone, and Search finds finished items (#1149, #123)"
+      "journey": "Library: marking an item finished can be undone, and Search finds finished items (#1149, #123)",
+      "batch": 2
     },
     {
       "test": "SpokenMarginsAppUITests/Gate1FlowUITests/testListeningEditionImportErrorShowsBesideTheImportButton",
-      "journey": "Listening Edition import: an error shows beside the Import button (#2063)"
+      "journey": "Listening Edition import: an error shows beside the Import button (#2063)",
+      "batch": 2
     },
     {
       "test": "SpokenMarginsAppUITests/Gate1FlowUITests/testListeningEditionPreviewShowsSuppliedScenesBeforeImport",
-      "journey": "Listening Edition import: the preview shows the supplied scenes before Import (#1472, #2063)"
+      "journey": "Listening Edition import: the preview shows the supplied scenes before Import (#1472, #2063)",
+      "batch": 2
     },
     {
       "test": "SpokenMarginsAppUITests/Gate1FlowUITests/testLongTimelineResponseKeepsActionAboveEditorAndStartsPlayback",
-      "journey": "Timeline: a long response keeps its action above the editor and starts playback"
+      "journey": "Timeline: a long response keeps its action above the editor and starts playback",
+      "batch": 2
     },
     {
       "test": "SpokenMarginsAppUITests/Gate1FlowUITests/testMarginsHeadingAndScopeRowStackAtAccessibilitySizes",
-      "journey": "Margins tab at AX5: the item heading keeps its width, with Share on a row below (#1935, #1938)"
+      "journey": "Margins tab at AX5: the item heading keeps its width, with Share on a row below (#1935, #1938)",
+      "batch": 2
     },
     {
       "test": "SpokenMarginsAppUITests/Gate1FlowUITests/testOfflineStorageExplainsProtectionBeforeSafeClear",
-      "journey": "Offline storage: protected and clearable audio are explained before Clear"
+      "journey": "Offline storage: protected and clearable audio are explained before Clear",
+      "batch": 2
     },
     {
       "test": "SpokenMarginsAppUITests/Gate1FlowUITests/testPermanentDeleteDoesNotRestoreRecentlyDeletedItem",
-      "journey": "Library: permanently deleting an item does not bring back a recently deleted one (#3206)"
+      "journey": "Library: permanently deleting an item does not bring back a recently deleted one (#3206)",
+      "batch": 2
     },
     {
       "test": "SpokenMarginsAppUITests/Gate1FlowUITests/testPlaybackPrimaryActionsRemainVisibleWithLongTitleAndAccessibilityText",
-      "journey": "Now at AX5: Play, skip and sleep timer stay visible under a long title (#2056)"
+      "journey": "Now at AX5: Play, skip and sleep timer stay visible under a long title (#2056)",
+      "batch": 2
     },
     {
       "test": "SpokenMarginsAppUITests/Gate1FlowUITests/testPlaybackPullsIntoTimelineAndReflectionControlsClearTheMiniPlayerAndKeyboard",
-      "journey": "Timeline reflection: the editor and its Done button clear the mini-player and the keyboard"
+      "journey": "Timeline reflection: the editor and its Done button clear the mini-player and the keyboard",
+      "batch": 2
     },
     {
       "test": "SpokenMarginsAppUITests/Gate1FlowUITests/testPlaybackScrubberAcceptsPhysicalDrag",
-      "journey": "Now: the scrubber follows a real finger drag while playing and paused, and edge-back works"
+      "journey": "Now: the scrubber follows a real finger drag while playing and paused, and edge-back works",
+      "batch": 2
     },
     {
       "test": "SpokenMarginsAppUITests/Gate1FlowUITests/testPrivateExperienceRootsPreserveNowPlayingAndStateConsentBoundaries",
-      "journey": "Following: the roots keep Now Playing, and following a source asks consent first (#141, #3205)"
+      "journey": "Following: the roots keep Now Playing, and following a source asks consent first (#141, #3205)",
+      "batch": 2
     },
     {
       "test": "SpokenMarginsAppUITests/Gate1FlowUITests/testRecordingExclusivelyOwnsTheAccessibleExperience",
-      "journey": "Recording: the recording sheet is the only accessible content while it is open (#148, #1942)"
+      "journey": "Recording: the recording sheet is the only accessible content while it is open (#148, #1942)",
+      "batch": 2
     },
     {
       "test": "SpokenMarginsAppUITests/Gate1FlowUITests/testSeededGate1FlowHasPlaybackMiniPlayerExportAndSettings",
-      "journey": "Seeded flow: playback, timeline, export, mini-player clear of the Library, Settings privacy copy (#1938)"
+      "journey": "Seeded flow: playback, timeline, export, mini-player clear of the Library, Settings privacy copy (#1938)",
+      "batch": 2
     },
     {
       "test": "SpokenMarginsAppUITests/Gate1FlowUITests/testShareDiagnosticsRowTakesATapBesideTheWords",
-      "journey": "Settings: Share Diagnostics takes a tap beside its words and opens the share sheet (#1436)"
+      "journey": "Settings: Share Diagnostics takes a tap beside its words and opens the share sheet (#1436)",
+      "batch": 2
     },
     {
       "test": "SpokenMarginsAppUITests/Gate1FlowUITests/testWrittenMarginSaveSearchStarAndDiscardPreserveTheSource",
-      "journey": "Written Margin: save, search, star and discard leave the source untouched (#1184)"
+      "journey": "Written Margin: save, search, star and discard leave the source untouched (#1184)",
+      "batch": 2
     }
   ]
 }

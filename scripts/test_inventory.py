@@ -68,6 +68,8 @@ def scripted_journey_errors(root):
 
     Only `gating` scripts can turn the integration run red; `probation` scripts run and are reported.
     Each entry names an existing SpokenMarginsAppUITests class or method and the journey it covers.
+    A probation entry may carry `"batch": N` (default 1): the journeys plan runs probation one step per batch, lowest
+    first, so a time cap cuts the newest batch and never the older scripts (#3342). A new addition takes a new batch.
     """
     try:
         listing = json.loads((root / 'TestPlans/scripted-journeys.json').read_text())
@@ -88,6 +90,11 @@ def scripted_journey_errors(root):
                 continue
             if not str(entry.get('journey', '')).strip():
                 errors.append(f'scripted-journeys.json: {status} entry {test!r} names no journey')
+            batch = entry.get('batch')
+            if 'batch' in entry and (status != 'probation' or isinstance(batch, bool) or not isinstance(batch, int)
+                                     or batch < 1):
+                errors.append(f'scripted-journeys.json: {test!r} has a "batch" that is not a whole number from 1 '
+                              f'on a probation entry: {batch!r}')
             # A class in one list and one of its methods in another would leave its status ambiguous.
             for other, other_status in seen:
                 if matches(name, other) or matches(other, name):
@@ -95,6 +102,12 @@ def scripted_journey_errors(root):
                                   f'({other_status})')
             seen.append((name, status))
     return errors
+
+
+def probation_batches(root=ROOT):
+    """{test ID: batch} for the probation entries that name a batch; the rest are batch 1."""
+    listing = json.loads((root / 'TestPlans/scripted-journeys.json').read_text())
+    return {entry['test'].removesuffix('()'): entry['batch'] for entry in listing['probation'] if 'batch' in entry}
 
 
 def scripted_journeys(root=ROOT):

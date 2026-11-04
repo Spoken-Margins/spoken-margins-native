@@ -1471,6 +1471,84 @@ class VerificationTests(unittest.TestCase):
         only = verification.test_groups(sorted(probation), probation, set(probation))
         self.assertEqual([(e, p) for _, e, p in only], [(probation, probation)])
 
+    def test_a_newer_probation_batch_runs_after_the_older_scripts(self):
+        # #3342, second audit finding: in one probation run the 28 new Gate1FlowUITests methods (alphabetically
+        # first) came before the J* journeys already on probation, so a time cap reported those journeys missing.
+        gate = 'SpokenMarginsAppUITests/Gate1FlowUITests/'
+        journey = 'SpokenMarginsAppUITests/J1UITests/'
+        gating = {gate + 'testZLast'}
+        old = {journey + 'testOne', journey + 'testTwo', gate + 'testLiveSession'}
+        new = {gate + 'testAlpha', gate + 'testBeta'}
+        batch_of = {test: 2 for test in new}
+        selectors = sorted(gating | old | new)
+        groups = verification.test_groups(selectors, gating | old | new, old | new, batch_of)
+        self.assertEqual([tests for _, tests, _ in groups], [gating, old, new])
+        self.assertEqual([probation for _, _, probation in groups], [set(), old, new])
+        # A class selector spanning a gating and a probation test stays in the gating run; one spanning two
+        # batches stays in the lower one. No test is in two runs.
+        mixed = verification.test_groups([gate.rstrip('/')], gating | new | {gate + 'testLiveSession'},
+                                         new | {gate + 'testLiveSession'}, batch_of)
+        self.assertEqual(len(mixed), 1)
+        spanning = verification.test_groups([gate.rstrip('/')], new | {gate + 'testLiveSession'},
+                                            new | {gate + 'testLiveSession'}, batch_of)
+        self.assertEqual([tests for _, tests, _ in spanning], [new | {gate + 'testLiveSession'}])
+        everything = [t for _, tests, _ in groups for t in tests]
+        self.assertEqual(sorted(everything), sorted(set(everything)))
+        # Without batches, every probation test is in batch 1, as before.
+        self.assertEqual(len(verification.test_groups(selectors, gating | old | new, old | new)), 2)
+
+    def test_a_later_probation_batch_is_cut_before_an_earlier_one(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / 'repo'
+            for target, source in (('SpokenMarginsAppTests', 'final class SpeechTests: XCTestCase { func testSpeak() {} }'),
+                                   ('SpokenMarginsAppUITests', 'final class TourUITests: XCTestCase { func testTour() {} }\n'
+                                    'final class JOneUITests: XCTestCase { func testJ() {} }\n'
+                                    'final class NewUITests: XCTestCase { func testNew() {} }')):
+                (root / 'App' / target).mkdir(parents=True)
+                (root / 'App' / target / 'Tests.swift').write_text(source)
+            (root / 'App/SpokenMarginsAppTests/Gate4WatchPackageRenderTests.swift').write_text(
+                'final class Gate4WatchPackageRenderTests: XCTestCase { func testRender() {} }')
+            (root / 'TestPlans').mkdir()
+            (root / 'TestPlans/Release.xctestplan').write_text(json.dumps({'testTargets': [
+                {'target': {'name': 'SpokenMarginsAppTests'}}, {'target': {'name': 'SpokenMarginsAppUITests'}}]}))
+            (root / '.build/verification/SpokenMarginsReleaseTests').mkdir(parents=True)
+            device = {'udid': 'synthetic-device', 'state': 'Booted', 'runtime': 'iOS-26', 'name': 'Other'}
+            capture = lambda args: '{"devices": {}}' if args[:3] == ['xcrun', 'simctl', 'list'] else 'stub'
+            ui = 'SpokenMarginsAppUITests/'
+            only = [ui + 'TourUITests', ui + 'JOneUITests', ui + 'NewUITests']
+            for label, seconds, expected_steps in (
+                    ('time for all', {'xcode-tests': 1000, 'xcode-tests-probation': 1000},
+                     ['xcode-tests', 'xcode-tests-probation', 'xcode-tests-probation-2']),
+                    ('the older batch uses it up', {'xcode-tests': 1000, 'xcode-tests-probation': 2600},
+                     ['xcode-tests', 'xcode-tests-probation'])):
+                with self.subTest(label):
+                    run = verification.Run(Path(temporary) / label.replace(' ', '-'), 'journeys')
+                    run.manifest['input_sha256'] = 'inputs'
+                    ran = {}
+
+                    def command(name, args, timeout=180, expected=None, **kwargs):
+                        ran[name] = (timeout, expected, [a for a in args if a.startswith('-only-testing:')])
+                        run.manifest['steps'].append({'name': name, 'seconds': seconds.get(name, 5)})
+                        return ''
+
+                    with patch.object(verification, 'ROOT', root), \
+                            patch.object(verification, 'input_identity', return_value='inputs'), \
+                            patch.object(verification, 'capture', side_effect=capture), \
+                            patch.object(verification, 'dedicated_simulator', return_value=(device, None)), \
+                            patch.object(verification, 'refuse_unsafe'), \
+                            patch.object(verification.lane_sim, 'unsafe_devices', return_value={}), \
+                            patch.object(verification.subprocess, 'run'), \
+                            patch.dict(os.environ, {'SM_PLAN_TIMEOUT_SECONDS': '3600'}), \
+                            patch.object(run, 'command', side_effect=command):
+                        run.xcode('journeys', None, rebuild=True, only=only, probation=only[1:],
+                                  probation_batches={ui + 'NewUITests': 2})
+                    self.assertEqual([n for n in ran if n.startswith('xcode-tests')], expected_steps)
+                    self.assertEqual(ran['xcode-tests-probation'][2], [f'-only-testing:{ui}JOneUITests'])
+                    self.assertEqual(ran['xcode-tests-probation'][0], 3600 - 1000)
+                    if 'xcode-tests-probation-2' in ran:
+                        self.assertEqual(ran['xcode-tests-probation-2'][2], [f'-only-testing:{ui}NewUITests'])
+                        self.assertEqual(ran['xcode-tests-probation-2'][0], 3600 - 2000)
+
     def test_the_probation_step_gets_the_plan_time_the_gating_step_left(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary) / 'repo'
@@ -2732,6 +2810,16 @@ class VerificationTests(unittest.TestCase):
             write(gating=[{'test': 'SpokenMarginsAppUITests/ScreenTourUITests', 'journey': 'tour'}],
                   probation=[{'test': 'SpokenMarginsAppUITests/ScreenTourUITests/testShare()', 'journey': 'J5'}])
             self.assertIn('also listed', inventory.scripted_journey_errors(root)[0])
+            # A probation entry may name a batch (a whole number from 1); nothing else may carry one (#3342).
+            tour = 'SpokenMarginsAppUITests/ScreenTourUITests/'
+            write(probation=[{'test': tour + 'testShare', 'journey': 'J5', 'batch': 2}])
+            self.assertEqual(inventory.scripted_journey_errors(root), [])
+            self.assertEqual(inventory.probation_batches(root), {tour + 'testShare': 2})
+            for bad in (0, -1, 1.5, '2', True, None):
+                write(probation=[{'test': tour + 'testShare', 'journey': 'J5', 'batch': bad}])
+                self.assertIn('batch', ' '.join(inventory.scripted_journey_errors(root)), bad)
+            write(gating=[{'test': tour + 'testTour', 'journey': 'tour', 'batch': 2}])
+            self.assertIn('batch', ' '.join(inventory.scripted_journey_errors(root)))
             for malformed in ([], {'version': 1, 'gating': None, 'probation': []},
                               {'version': 1, 'gating': [{'test': 7, 'journey': 'J1'}, 'x'], 'probation': []}):
                 listing.write_text(json.dumps(malformed))

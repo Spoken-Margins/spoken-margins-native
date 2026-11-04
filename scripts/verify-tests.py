@@ -235,21 +235,36 @@ def full_selector(selector, planned):
 PROBATION_MINIMUM_SECONDS = 60  # less than this left of the plan's budget and the probation step does not start
 
 
-def test_groups(selectors, expected, on_probation):
-    """The xcodebuild test runs of one plan: [(selectors, expected tests, tests on probation)].
+def test_groups(selectors, expected, on_probation, batch_of=None):
+    """The xcodebuild test runs of one plan: [(selectors, expected tests, tests on probation)], in the order to run.
 
-    Without probation, one run. With it, the gating tests run first and the probation tests last, each in a run of
-    its own (#3342): XCTest runs in alphabetical order, so in one run 27 probation methods came before the only
-    gating method of Gate1FlowUITests, and a plan budget spent on probation reported a gating script as missing.
-    A selector that covers a gating test stays in the gating run, so no test runs twice."""
+    Without probation, one run. With it, the gating tests run first, then the probation tests one run per batch,
+    lowest batch first (#3342). Two orders matter, and the cap on a run's time cuts the end of this list, so the
+    most valuable tests go first and a later addition can only cut its own tail:
+    1. XCTest runs in alphabetical order, so in one run 27 probation methods came before the only gating method of
+       Gate1FlowUITests, and a plan budget spent on probation reported a gating script as missing.
+    2. The same alphabetical order put those 27 new methods before the J* journeys on probation, so the new tests
+       could use up the budget and report the journeys that already ran as missing. The 28 new tests are batch 2.
+    A selector that covers a gating test stays in the gating run, and one that covers tests of several batches stays
+    in the lowest, so no test runs twice. `batch_of` maps a probation test to its batch (default 1)."""
     if not on_probation:
         return [(selectors, expected, on_probation)]
-    later = [s for s in selectors if all(test in on_probation for test in expected if selected(test, s))]
-    first = [s for s in selectors if s not in later]
-    first_expected = {test for test in expected if any(selected(test, s) for s in first)}
-    later_expected = {test for test in expected if any(selected(test, s) for s in later)} - first_expected
-    return [(group, tests, on_probation & tests)
-            for group, tests in ((first, first_expected), (later, later_expected)) if group]
+    batch_of = batch_of or {}
+
+    def rank(selector):
+        covered = [test for test in expected if selected(test, selector)]
+        if any(test not in on_probation for test in covered):
+            return 0
+        return min((batch_of.get(test, 1) for test in covered), default=1)
+
+    groups, taken = [], set()
+    for level in sorted({rank(s) for s in selectors}):
+        group = [s for s in selectors if rank(s) == level]
+        tests = {test for test in expected if any(selected(test, s) for s in group)} - taken
+        taken |= tests
+        if tests:
+            groups.append((group, tests, on_probation & tests))
+    return groups
 
 
 def name_screenshots(exported, screens):
@@ -2205,7 +2220,7 @@ class Run:
         self.save()
 
     def xcode(self, plan, device, rebuild, ios=None, only=(), probation=None, simulator_slot_fd=None,
-              require_build=False):
+              require_build=False, probation_batches=None):
         if input_identity() != self.manifest['input_sha256']:
             raise RuntimeError('Inputs changed before Xcode verification')
         scheme, name, timeout = PLANS[plan]
@@ -2311,18 +2326,21 @@ class Run:
             # An AudioLoopback test asks the Mac to record what it plays (#1790). A server starts only when the
             # request names one; in a whole-plan run (Release, a full AudioAdapters) it skips, and that's expected.
             asked = selectors if scheme == 'SpokenMarginsAppBehavior' else ()
-            groups = test_groups(selectors, expected, on_probation)
+            batch_of = {test: min(batch for entry, batch in (probation_batches or {}).items() if selected(test, entry))
+                        for test in expected
+                        if any(selected(test, entry) for entry in (probation_batches or {}))}
+            groups = test_groups(selectors, expected, on_probation, batch_of)
             with lane_audio_window.serve(self.output, asked) as audio:
                 try:
                     failure = None
                     for index, (group_selectors, group_expected, group_probation) in enumerate(groups):
-                        name = 'xcode-tests' if index == 0 else 'xcode-tests-probation'
+                        name = 'xcode-tests' if index == 0 else (
+                            'xcode-tests-probation' if index == 1 else f'xcode-tests-probation-{index}')
                         budget = timeout
-                        if index:  # one clock for the plan: probation gets what the gating step left
+                        if index:  # one clock for the plan: each later step gets what the earlier steps left
                             budget -= sum(step.get('seconds', 0) for step in self.manifest['steps']
-                                          if step.get('name') == 'xcode-tests')
-                            if budget < PROBATION_MINIMUM_SECONDS or (
-                                    failure is not None and self.manifest['steps'][-1].get('interrupted')):
+                                          if str(step.get('name')).startswith('xcode-tests'))
+                            if budget < PROBATION_MINIMUM_SECONDS or (self.manifest['steps'] or [{}])[-1].get('interrupted'):
                                 print(f'{name}: skipped, {max(round(budget), 0)}s of the {timeout}s plan budget left',
                                       flush=True)
                                 break
@@ -2332,13 +2350,12 @@ class Run:
                                          '-collect-test-diagnostics', 'never',
                                          '-retry-tests-on-failure', '-test-iterations', '2',
                                          '-test-timeouts-enabled', 'YES', '-resultBundlePath',
-                                         str(result_bundle if index == 0 else self.output / 'tests-probation.xcresult')],
+                                         str(result_bundle if index == 0 else self.output / f'tests-probation-{index}.xcresult')],
                                          timeout=budget, expected=group_expected, tests=True, probation=group_probation,
                                          startup=startup, allowed_skips=lane_audio_window.unasked(group_expected, asked))
                         except RuntimeError as error:
-                            if index > 0 or len(groups) == 1:
-                                raise
-                            failure = error  # probation still reports after a gating failure; the run fails after it
+                            # Later steps still report after an earlier one fails; the run fails after the last.
+                            failure = failure or error
                     if failure is not None:
                         raise failure
                 finally:  # a failed or skipped test raises here, and its verdict is what the report needs most
@@ -2432,7 +2449,7 @@ def main():
         parser.error('--build-only takes no --device, --require-build or --only-testing')
     if errors := validate():
         parser.error('; '.join(errors))
-    from test_inventory import scripted_journeys  # only the journeys plan reads the list
+    from test_inventory import probation_batches, scripted_journeys  # only the journeys plan reads the list
     journeys = scripted_journeys() if args.plan == 'journeys' else None
     if journeys and args.only_testing:
         parser.error('--plan journeys runs TestPlans/scripted-journeys.json; it takes no --only-testing')
@@ -2466,6 +2483,7 @@ def main():
                     run.manifest['scripted_journeys'] = journeys
                     run.xcode(args.plan, args.device, args.rebuild, args.ios,
                               journeys['gating'] + journeys['probation'], probation=journeys['probation'],
+                              probation_batches=probation_batches(),
                               simulator_slot_fd=args.simulator_slot_fd,
                               **({'require_build': True} if args.require_build else {}))
                 else:
