@@ -137,25 +137,74 @@ extension Gate1AppModel {
         refreshExportPreview(reportStatus: false)
     }
 
+    /// Opens an item for code that reads the result on the next line (a share, an import, Play now). A listener's tap
+    /// uses `openItemFromTap`, which reads off the main thread.
     func openItem(id: String) {
         let diagnosticStart = ProcessInfo.processInfo.systemUptime
         recordDeveloperDiagnostic("item.open.begin", ["item": DeveloperDiagnosticRecording.token(id)])
-        defer { recordDeveloperDiagnostic("item.open.end", ["durationMs": String(Int((ProcessInfo.processInfo.systemUptime - diagnosticStart) * 1000))]) }
+        defer { recordItemOpenEnd(since: diagnosticStart) }
         guard !rejectNavigationOrSessionMutationWhileRecording("open_item") else { return }
         followedPlayIntent.cancel() // the listener moved on: a pending Play now must not take over (#2124)
+        _ = backgroundRefresh.beginOpen() // a tap's open still reading must not land over this one
         do {
             let store = try requireStore()
-            activeItemId = id
-            selectedItem = try loadItemDetail(id: id, store: store)
-            prepareImportedLocalAudioBridges(itemId: id)
-            scheduleTextAudioPrewarmIfNeeded(itemId: id); PublisherAudioTextMapper.resume(itemId: id, store: store, transcriber: sourceTranscriptionClient) { [weak self] in self?.diagnostics["publisherAudioTextMap"] = "\(id): \($0)" }; fetchCommunityMapIfNeeded(itemId: id); retryVoiceoverLookupIfNeeded(itemId: id)
-            listeningMapJSON = ""
-            screen = .item
-            discoverFollowOfferIfEligible(itemId: id, store: store)
-            offerFollowSuggestionIfEligible(itemId: id, store: store)
-            reportSuccess("Opened \(selectedItem.title).")
+            showOpenedItem(id: id, detail: try loadItemDetail(id: id, store: store), store: store)
         } catch {
             reportFailure(error, context: "Open item failed")
         }
+    }
+
+    /// A listener's tap on an item (#2505). The item is read off the main thread, and the screen the tap came from
+    /// stays until it is ready, so opening a large item no longer freezes the tap. A newer open, leaving that screen,
+    /// or a recording starting meanwhile drops it.
+    func openItemFromTap(id: String) {
+        let diagnosticStart = ProcessInfo.processInfo.systemUptime
+        recordDeveloperDiagnostic("item.open.begin", ["item": DeveloperDiagnosticRecording.token(id)])
+        guard !rejectNavigationOrSessionMutationWhileRecording("open_item") else { return }
+        followedPlayIntent.cancel() // the listener moved on: a pending Play now must not take over (#2124)
+        let store: SQLiteSessionStore
+        do {
+            store = try requireStore()
+        } catch {
+            reportFailure(error, context: "Open item failed")
+            return
+        }
+        let generation = backgroundRefresh.beginOpen()
+        let from = screen
+        backgroundRefresh.holdOpen(Task { [weak self] in
+            guard let self else { return }
+            defer { self.recordItemOpenEnd(since: diagnosticStart) }
+            do {
+                let detail = try await self.loadItemDetailOffMain(id: id, store: store)
+                guard self.stillWantsOpen(generation, from: from) else { return }
+                self.hangTelemetry.labels.scoped("openItemFromTap") { self.showOpenedItem(id: id, detail: detail, store: store) }
+            } catch {
+                guard self.stillWantsOpen(generation, from: from) else { return }
+                self.reportFailure(error, context: "Open item failed")
+            }
+        })
+    }
+
+    /// Waits for the open a tap started. Production code never waits; tests do.
+    func settleItemOpen() async { await backgroundRefresh.settledOpen() }
+
+    private func stillWantsOpen(_ generation: Int, from: Gate1Screen) -> Bool {
+        !Task.isCancelled && backgroundRefresh.isCurrentOpen(generation) && screen == from && !recordingNavigationIsLocked
+    }
+
+    private func showOpenedItem(id: String, detail: ItemDetailState, store: SQLiteSessionStore) {
+        activeItemId = id
+        selectedItem = detail
+        prepareImportedLocalAudioBridges(itemId: id)
+        scheduleTextAudioPrewarmIfNeeded(itemId: id); PublisherAudioTextMapper.resume(itemId: id, store: store, transcriber: sourceTranscriptionClient) { [weak self] in self?.diagnostics["publisherAudioTextMap"] = "\(id): \($0)" }; fetchCommunityMapIfNeeded(itemId: id); retryVoiceoverLookupIfNeeded(itemId: id)
+        listeningMapJSON = ""
+        screen = .item
+        discoverFollowOfferIfEligible(itemId: id, store: store)
+        offerFollowSuggestionIfEligible(itemId: id, store: store)
+        reportSuccess("Opened \(selectedItem.title).")
+    }
+
+    private func recordItemOpenEnd(since start: TimeInterval) {
+        recordDeveloperDiagnostic("item.open.end", ["durationMs": String(Int((ProcessInfo.processInfo.systemUptime - start) * 1000))])
     }
 }
