@@ -364,12 +364,12 @@ final class PublisherAudioDetectorTests: XCTestCase {
         let audio = try XCTUnwrap(item.audioURL)
         let episode = FeedEntry(id: "episode", subscriptionId: "s", canonicalURL: item.url, audioURL: audio, title: item.title)
         XCTAssertEqual(FollowedEntryAudio.stored(in: episode), .found(audio))
-        XCTAssertEqual(FollowedEntryImportRoute.route(for: episode, subscriptionKind: .podcastFeed, audio: .found(audio)), .episode(audioURL: audio))
+        XCTAssertEqual(FollowedEntryImportRoute.route(for: episode, subscriptionKind: .podcastFeed, audio: .found(audio)), .episode(audioURL: audio, declaredAudio: true))
 
         var older = episode
         older.audioURL = nil // saved before entries kept their enclosure
         XCTAssertEqual(FollowedEntryAudio.stored(in: older), .unknown)
-        XCTAssertEqual(FollowedEntryImportRoute.route(for: older, subscriptionKind: .podcastFeed, audio: .found(audio)), .episode(audioURL: audio),
+        XCTAssertEqual(FollowedEntryImportRoute.route(for: older, subscriptionKind: .podcastFeed, audio: .found(audio)), .episode(audioURL: audio, declaredAudio: true),
                        "the feed still lists its enclosure")
         XCTAssertEqual(FollowedEntryImportRoute.route(for: older, subscriptionKind: .podcastFeed, audio: .unknown), .episode(audioURL: item.url),
                        "gone from the feed: the podcast path tries its page, as before")
