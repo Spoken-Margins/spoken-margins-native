@@ -89,4 +89,24 @@ final class SpokenNoteItemTests: XCTestCase {
         XCTAssertTrue(keys.isSubset(of: shipped), "unexpected keys: \(keys.subtracting(shipped))")
         XCTAssertEqual(try JSONDecoder().decode(Item.self, from: data), item)
     }
+
+    func testANoteIsNeverNarratedInASyntheticVoice() {
+        let withText = SpokenNoteItem.makeItem(note: note(sentences: ["Hello."]), createdAt: Date())
+        let withoutText = SpokenNoteItem.makeItem(note: note(), createdAt: Date())
+        for item in [withText, withoutText] {
+            XCTAssertTrue(LibraryAudioPreparationAdmission.playsItsOwnAudio(item), "the recording is its audio")
+            XCTAssertFalse(LibraryAudioPreparationAdmission.admitsAutomatically(item, sessions: []), "no While Charging narration")
+            XCTAssertFalse(LibraryRowBuilder.shouldPrewarmTextAudio(for: item), "no opening-buffer narration")
+            XCTAssertTrue(PreparedNarrationFallback.isAudioFirst(item), "Play never falls back to reading the transcript")
+        }
+        var text = withText
+        text.mediaType = "text"
+        XCTAssertFalse(LibraryAudioPreparationAdmission.playsItsOwnAudio(text), "an ordinary text item is still narrated")
+    }
+
+    func testTheLibraryFilesANoteUnderTextLikeTheGuidedTour() {
+        XCTAssertEqual(
+            LibraryRowWording.contentType(mediaType: "spoken_note", sourceReference: "note://n1", sourceReferenceType: "spoken_note"),
+            .text)
+    }
 }

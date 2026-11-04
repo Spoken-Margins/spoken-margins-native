@@ -237,6 +237,7 @@ struct SMExperienceTypeCover: View {
 
     private var systemImage: String {
         let normalized = mediaType.lowercased()
+        if SpokenNoteItem.isSpokenNote(mediaType: mediaType) { return "mic.fill" }
         if normalized.contains("podcast") || normalized.contains("audio") { return "waveform" }
         if normalized.contains("epub") || normalized.contains("book") { return "book.closed.fill" }
         if normalized.contains("pdf") { return "doc.richtext.fill" }
