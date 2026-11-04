@@ -257,9 +257,14 @@ final class SharedMarginAudioCompressionTests: XCTestCase {
         XCTAssertEqual(try seconds(of: sent), 20, accuracy: 0.25)
 
         // The shipped build's reader (`exportPacket`) and this build's both accept the packet, and the listener's
-        // copy decodes from the extracted file.
+        // copy decodes from the extracted file. Builds 29, 32 and 34 must also play it (voicesMustPlay).
         let packetURL = root.appendingPathComponent("hq.spokenmargins")
-        try exportPacket(after, to: packetURL)
+        try exportPacket(after, to: packetURL, voicesMustPlay: true)
+        // The packet as a whole shrinks, not only its voice file: the audio is almost all of a voice packet.
+        let fullPacketURL = root.appendingPathComponent("full.spokenmargins")
+        try exportPacket(before, to: fullPacketURL, voicesMustPlay: true)
+        XCTAssertLessThan(Double(size(packetURL)), Double(size(fullPacketURL)) * 0.6, "the packet is well under today's")
+        XCTAssertGreaterThan(Double(size(original)) / Double(size(fullPacketURL)), 0.9, "today's packet is mostly its audio")
         let verified = try SpokenMarginsPackageArchive.read(from: packetURL, extractingAssetsTo: root.appendingPathComponent("assets"))
         let extracted = try XCTUnwrap(verified.extractedAssetURLs.values.first)
         XCTAssertEqual(try seconds(of: extracted), 20, accuracy: 0.25)
