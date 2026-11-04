@@ -1,6 +1,7 @@
 import Foundation
 @testable import SessionKit
 import SessionKitSharing
+import ShippedPacketReader
 import XCTest
 import ZIPFoundation
 
@@ -144,6 +145,54 @@ final class PrivateFeedLinkTests: XCTestCase {
             }
             XCTAssertTrue(preview.source.url == nil || preview.source.url == feed.publicEpisodeURL, "\(feed.name): \(preview.source.url ?? "")")
             XCTAssertNil(preview.source.url.flatMap { URLComponents(string: $0)?.query }, feed.name)
+        }
+    }
+
+    /// #487: a link carries the file share itself. Each private-feed packet goes up through `ShareLinkClient`, comes
+    /// back down through `ShareLinkPacketDownloader` as the friend's phone fetches it, and must be the file byte for
+    /// byte, name no private address in either part, and still import into Build 29's frozen reader.
+    func testAPrivateFeedPacketSentAsALinkIsTheFileShareAndStillImportsIntoBuild29() async throws {
+        for feed in privateFeeds {
+            let root = try temporaryDirectory()
+            defer { try? FileManager.default.removeItem(at: root) }
+            let packageURL = root.appendingPathComponent("private.spokenmargins")
+            _ = try exportPacket(try prepare(feed), to: packageURL)
+            let fileShare = try Data(contentsOf: packageURL)
+            let preview = try ShareLinkPacketPreview.preview(ofPackageAt: packageURL, scratch: root.appendingPathComponent("assets"))
+
+            let server = UploadServer()
+            let client = ShareLinkClient(
+                server: { URL(string: "https://\(ProductServer.productionHost)\($0)")! },
+                consent: { true },
+                post: { _, contentType, body in try server.receive(contentType: contentType, body: body) }
+            )
+            let result = await client.makeLink(packet: fileShare, preview: preview, linksState: .on)
+            guard case .link(let url, _) = result else { return XCTFail("\(feed.name): expected a link, got \(result)") }
+            let link = try XCTUnwrap(ShareLinkURL(url: url), "\(feed.name): \(url) is not a link the app opens")
+            let stored = try XCTUnwrap(server.stored, feed.name)
+
+            let downloader = ShareLinkPacketDownloader { url, _ in
+                url.path == "/l/\(link.id)/packet" ? (200, stored.packet) : (404, Data())
+            }
+            let downloaded = try await downloader.download(link, into: root.appendingPathComponent("download"))
+            XCTAssertEqual(try Data(contentsOf: downloaded), fileShare, "\(feed.name): the link's packet is not the file share")
+
+            let opened = try ShareLinkSealing.open(.init(preview: stored.preview, packet: stored.packet), key: link.key)
+            let previewText = String(decoding: opened.preview, as: UTF8.self)
+            for leak in [feed.secret, feed.feedURL, feed.enclosureURL] {
+                XCTAssertFalse(previewText.contains(leak), "\(feed.name): the link's preview names \(leak)")
+            }
+            let archive = try Archive(url: downloaded, accessMode: .read)
+            for entry in archive {
+                var data = Data()
+                _ = try archive.extract(entry) { data.append($0) }
+                XCTAssertFalse(
+                    String(decoding: data, as: UTF8.self).contains(feed.secret),
+                    "\(feed.name): the link's packet leaks the subscriber secret in \(entry.path)"
+                )
+            }
+
+            XCTAssertEqual(try ShippedPacketReader.importPacket(at: downloaded), ["margin-001"], feed.name)
         }
     }
 
@@ -347,6 +396,39 @@ final class PrivateFeedLinkTests: XCTestCase {
     }
 
     private var fixedDate: Date { Date(timeIntervalSince1970: 1_777_000_000) }
+
+    /// Stands in for `POST /api/v1/links`: keeps the two sealed parts of the multipart body, as the server stores them.
+    private final class UploadServer: @unchecked Sendable {
+        private let lock = NSLock()
+        private var parts: (preview: Data, packet: Data)?
+        var stored: (preview: Data, packet: Data)? { lock.withLock { parts } }
+
+        func receive(contentType: String, body: Data) throws -> (status: Int, body: Data) {
+            guard let boundary = contentType.components(separatedBy: "boundary=").last else { return (400, Data()) }
+            let delimiter = Data("--\(boundary)".utf8)
+            var starts: [Range<Data.Index>] = []
+            var cursor = body.startIndex
+            while let found = body.range(of: delimiter, in: cursor..<body.endIndex) {
+                starts.append(found)
+                cursor = found.upperBound
+            }
+            var named: [String: Data] = [:]
+            for (index, start) in starts.dropLast().enumerated() {
+                let section = body[start.upperBound..<starts[index + 1].lowerBound]
+                guard let headerEnd = section.range(of: Data("\r\n\r\n".utf8)) else { return (400, Data()) }
+                let header = String(decoding: section[section.startIndex..<headerEnd.lowerBound], as: UTF8.self)
+                guard let name = header.components(separatedBy: "name=\"").dropFirst().first?.components(separatedBy: "\"").first else {
+                    return (400, Data())
+                }
+                // The part's data runs to the CRLF before the next delimiter.
+                named[name] = Data(section[headerEnd.upperBound...].dropLast(2))
+            }
+            guard let preview = named["preview"], let packet = named["packet"] else { return (400, Data()) }
+            lock.withLock { parts = (preview, packet) }
+            let id = "0123456789abcdef0123456789abcdef"
+            return (201, Data(#"{"id":"\#(id)","path":"/l/\#(id)","expiresAt":"2026-12-03T00:00:00Z"}"#.utf8))
+        }
+    }
 
     private func temporaryDirectory() throws -> URL {
         let url = FileManager.default.temporaryDirectory

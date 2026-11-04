@@ -129,39 +129,8 @@ struct ShareLinkSendControl: View {
         // config is never asked for and the button never appears.
         VStack(alignment: .leading, spacing: 0) {
             if isOffered, let packageURL {
-                VStack(alignment: .leading, spacing: 8) {
-                    Button {
-                        sender.makeLink(packageURL: packageURL)
-                    } label: {
-                        if sender.state == .making {
-                            HStack(spacing: 8) {
-                                ProgressView()
-                                Text("Making link…")
-                            }
-                        } else {
-                            Label("Share as link", systemImage: "link")
-                        }
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(sender.state == .making)
-                    .accessibilityHint("Uploads the verified package, sealed so only the link can open it, and opens the share sheet with the link")
-                    .accessibilityIdentifier("build23.sender.share.link")
-
-                    if let note = sender.companionNote {
-                        Text(note)
-                            .font(.subheadline)
-                            .foregroundStyle(AppColors.secondaryText)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .accessibilityIdentifier("build23.sender.share.link.companion")
-                    }
-
-                    if case .useFile(let message) = sender.state {
-                        Text(message)
-                            .font(.subheadline)
-                            .foregroundStyle(AppColors.secondaryText)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .accessibilityIdentifier("build23.sender.share.link.fallback")
-                    }
+                ShareLinkSendRow(state: sender.state, companionNote: sender.companionNote) {
+                    sender.makeLink(packageURL: packageURL)
                 }
             }
         }
@@ -186,6 +155,48 @@ struct ShareLinkSendControl: View {
             if case .ready(let url, let file) = sender.state {
                 ShareLinkActivityView(link: url, companionFile: file)
                     .presentationDetents([.medium, .large])
+            }
+        }
+    }
+}
+
+/// The button and its lines, drawn from the sender's state alone, so a test can render each state (#487).
+struct ShareLinkSendRow: View {
+    let state: ShareLinkSender.State
+    let companionNote: String?
+    let makeLink: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button(action: makeLink) {
+                if state == .making {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                        Text("Making link…")
+                    }
+                } else {
+                    Label("Share as link", systemImage: "link")
+                }
+            }
+            .buttonStyle(.bordered)
+            .disabled(state == .making)
+            .accessibilityHint("Uploads the verified package, sealed so only the link can open it, and opens the share sheet with the link")
+            .accessibilityIdentifier("build23.sender.share.link")
+
+            if let companionNote {
+                Text(companionNote)
+                    .font(.subheadline)
+                    .foregroundStyle(AppColors.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("build23.sender.share.link.companion")
+            }
+
+            if case .useFile(let message) = state {
+                Text(message)
+                    .font(.subheadline)
+                    .foregroundStyle(AppColors.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("build23.sender.share.link.fallback")
             }
         }
     }
