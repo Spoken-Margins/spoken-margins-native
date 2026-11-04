@@ -464,13 +464,13 @@ extension Gate1AppModel {
                 // Posts with the publisher's own audio (#545) and text-only posts (#641) import as articles.
                 let route = try await self.followedSourceCoordinator?.importRoute(for: entry, subscriptionKind: subscription.source.kind)
                     ?? FollowedEntryImportRoute.route(for: entry, subscriptionKind: subscription.source.kind, audio: .stored(in: entry))
-                if case .episode(let importURL) = route {
+                if case .episode(let importURL, let declaredAudio) = route {
                     let importedItemId = try await self.importSourceLinkInBackground(SourceLinkHandoff(
                         id: "quick-add-\(entry.id)",
                         inputURL: importURL,
                         sourceSurface: "followed_source",
                         startSession: false
-                    ), feedEntry: entry, subscription: subscription)
+                    ), feedEntry: entry, subscription: subscription, declaredAudio: declaredAudio)
                     let stillWanted = intent.map { self.followedPlayIntent.finish($0) } ?? false
                     imported = importedItemId != nil
                     self.recordFollowedPublisherAudio(lookup?.outcome, itemId: importedItemId, saved: false)
