@@ -417,7 +417,7 @@ struct InterjectionSharingView: View {
                         .font(.caption)
                         .foregroundStyle(AppColors.secondaryText)
                     Text("The recipient will reconstruct the item from this reference. The full item is not included.")
-                        .font(.caption)
+                        .font(.footnote)
                         .foregroundStyle(AppColors.secondaryText)
                 } else if model.sharingState.canEmbedLinklessItem {
                     Toggle(
@@ -427,11 +427,11 @@ struct InterjectionSharingView: View {
                     .disabled(model.sharingState.isAppAuthoredItem)
                     if model.sharingState.isAppAuthoredItem {
                         Text("This Spoken Margins sample is app-authored, so its full listened-to text will be included.")
-                            .font(.caption)
+                            .font(.footnote)
                             .foregroundStyle(AppColors.secondaryText)
                     } else if model.sharingState.confirmsPrivateSharingRights {
                         Text("The full listened-to text will be included so the recipient can add and listen to the item.")
-                            .font(.caption)
+                            .font(.footnote)
                             .foregroundStyle(AppColors.secondaryText)
                     } else {
                         Label(
@@ -443,7 +443,7 @@ struct InterjectionSharingView: View {
                     }
                 } else {
                     Text("The item itself cannot be included. Make sure the recipient already has the same item.")
-                        .font(.caption)
+                        .font(.footnote)
                         .foregroundStyle(.orange)
                 }
             }
