@@ -8,7 +8,9 @@ import SessionKit
 public enum FollowedEntryImportRoute: Equatable, Sendable {
     /// Import this address through the podcast path: the entry's audio, or its page when no
     /// audio is known.
-    case episode(audioURL: String)
+    /// `declaredAudio` is true when `audioURL` is the feed's own audio enclosure, so the resolver takes it
+    /// as audio whatever its address looks like (#3345); false when it is the entry's page.
+    case episode(audioURL: String, declaredAudio: Bool = false)
     /// Import the entry's text, keeping any publisher recording beside it (#545).
     case article
 
@@ -16,7 +18,7 @@ public enum FollowedEntryImportRoute: Equatable, Sendable {
         guard needsAudioLookup(for: entry, subscriptionKind: subscriptionKind) else { return .article }
         switch audio {
         case .found(let audioURL) where !audioURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty:
-            return .episode(audioURL: audioURL)
+            return .episode(audioURL: audioURL, declaredAudio: true)
         case .noneInFeed:
             return .article
         case .found, .unknown:

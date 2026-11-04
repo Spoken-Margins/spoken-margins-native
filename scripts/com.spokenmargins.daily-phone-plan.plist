@@ -3,7 +3,9 @@
 <!-- Five-minute lightweight tick. Script gates 08:00/17:00 America/Chicago, including DST.
      Deployment and project-chat relay setup: docs/workstreams/daily-phone-plan.md.
      Runs from the ops checkout, which scripts/ops_checkout.py keeps on main (#2372), so a session's branch
-     switch in the development checkout cannot change what the job runs. -->
+     switch in the development checkout cannot change what the job runs.
+     No token goes in this file (2026-11-04): the script reads the Claude token (Keychain service claude-code-oauth)
+     and the relay token (sm-daily-relay-token) from the login Keychain. Only SM_DAILY_RELAY_URL is added here. -->
 <plist version="1.0">
 <dict>
   <key>Label</key><string>com.spokenmargins.daily-phone-plan</string>

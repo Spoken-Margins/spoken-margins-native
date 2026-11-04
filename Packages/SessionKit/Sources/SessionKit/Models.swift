@@ -286,12 +286,28 @@ public struct LinkResolutionRequest: Codable, Equatable, Sendable {
     public var inputURL: String
     public var sourceSurface: String
     public var createdAt: Date
+    /// The publisher's feed already labelled `inputURL` as an audio enclosure (`type="audio/…"`), so it is
+    /// audio whatever its address looks like. A redirector such as `ccdn.php?filename=/eps/x.mp3` has no
+    /// audio extension but plays (#3345).
+    public var declaredAudio: Bool
 
-    public init(id: String, inputURL: String, sourceSurface: String, createdAt: Date) {
+    public init(id: String, inputURL: String, sourceSurface: String, createdAt: Date, declaredAudio: Bool = false) {
         self.id = id
         self.inputURL = inputURL
         self.sourceSurface = sourceSurface
         self.createdAt = createdAt
+        self.declaredAudio = declaredAudio
+    }
+
+    private enum CodingKeys: String, CodingKey { case id, inputURL, sourceSurface, createdAt, declaredAudio }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        inputURL = try container.decode(String.self, forKey: .inputURL)
+        sourceSurface = try container.decode(String.self, forKey: .sourceSurface)
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        declaredAudio = try container.decodeIfPresent(Bool.self, forKey: .declaredAudio) ?? false
     }
 }
 

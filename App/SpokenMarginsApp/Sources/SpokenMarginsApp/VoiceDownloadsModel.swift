@@ -126,7 +126,7 @@ final class VoiceDownloadsModel: ObservableObject {
             do {
                 try await coordinator.agree(to: row.licensesNeedingAgreement)
             } catch {
-                activity[row.id] = .failed("Couldn't save your agreement: \(error.localizedDescription)")
+                activity[row.id] = .failed(ListenerErrorText.line(prefix: "Couldn't save your agreement:", error: error))
                 return
             }
             await reload()
@@ -157,7 +157,7 @@ final class VoiceDownloadsModel: ObservableObject {
             } catch is CancellationError {
                 await self?.finish(voiceId, failure: nil)
             } catch {
-                await self?.finish(voiceId, failure: (error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
+                await self?.finish(voiceId, failure: ListenerErrorText.message(for: error))
             }
         }
     }
@@ -176,7 +176,7 @@ final class VoiceDownloadsModel: ObservableObject {
                 try await coordinator.remove(voiceId: voiceId)
                 activity[voiceId] = .idle
             } catch {
-                activity[voiceId] = .failed((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
+                activity[voiceId] = .failed(ListenerErrorText.message(for: error))
             }
             await reload()
             onInstalledVoicesChanged?()

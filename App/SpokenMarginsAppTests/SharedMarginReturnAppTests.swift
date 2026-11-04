@@ -202,9 +202,7 @@ final class SharedMarginReturnAppTests: XCTestCase {
         _ = try fixture.addOwnMargin(id: "own-earlier", atMediaTimeMs: 0, voiceSeconds: 1)
         // The fixture's shared Margin sits at 1 s and would pause the source for its own offer when playback crosses
         // it after the resume. Start past it, so the only Margin ahead is the later one.
-        model.seekMedia(toMediaTimeMs: 1_500)
-        try await fixture.waitUntil("the source is past the shared Margin") { (model.snapshot.currentMediaTimeMs ?? 0) >= 1_400 }
-        XCTAssertEqual(model.snapshot.status, .playing)
+        try await fixture.seekPastTheSharedMargin()
 
         model.toggleInterjectionAudioPlayback(heard)
         XCTAssertEqual(model.snapshot.status, .paused, "playing your Margin from its detail pauses the source")
@@ -231,8 +229,7 @@ final class SharedMarginReturnAppTests: XCTestCase {
         let model = fixture.model
         let heard = try fixture.addOwnMargin(id: "own-heard", atMediaTimeMs: 4_400, voiceSeconds: 1)
         let neighbour = try fixture.addOwnMargin(id: "own-neighbour", atMediaTimeMs: 4_500, voiceSeconds: 1)
-        model.seekMedia(toMediaTimeMs: 1_500)
-        try await fixture.waitUntil("the source is past the shared Margin") { (model.snapshot.currentMediaTimeMs ?? 0) >= 1_400 }
+        try await fixture.seekPastTheSharedMargin()
 
         model.toggleInterjectionAudioPlayback(heard)
         try await fixture.waitUntil("the Margin ends", timeout: 10) { !model.isPlayingInterjectionAudio(heard) }
@@ -397,6 +394,9 @@ private struct ReturnFixture {
         if sourcePlaying {
             for _ in 0..<150 where (sourcePlayer.currentMediaTimeMs() ?? 0) < 200 { try await Task.sleep(for: .milliseconds(20)) }
             XCTAssertGreaterThan(sourcePlayer.currentMediaTimeMs() ?? 0, 100, "the source is playing before the test starts")
+            // The player's clock running is not the model's `.playing`: the model confirms the start on a later tick (#3332).
+            for _ in 0..<150 where model.snapshot.status != .playing { try await Task.sleep(for: .milliseconds(20)) }
+            XCTAssertEqual(model.snapshot.status, .playing, "the model reports the source playing before the test starts")
         }
         let layer = ImportedCommentaryLayer(id: "received", itemId: itemID, packageDigest: "digest", packageId: "package",
             itemIdentity: SharedItemIdentity(itemType: .other, title: "Source"),
@@ -427,6 +427,17 @@ private struct ReturnFixture {
         )
         try SQLiteSessionStore(path: root.appending(path: "library.sqlite").path).saveInterjection(own)
         return own
+    }
+
+    /// Seeks the playing source to 1.5 s, past the shared Margin at 1 s, and waits until it is playing there. The seek
+    /// reports its target time at once while the player is still `.starting` (#3332: asserting `.playing` on the time
+    /// alone failed on hosted runners), so the status is part of the wait, not an assertion made after it.
+    func seekPastTheSharedMargin() async throws {
+        model.seekMedia(toMediaTimeMs: 1_500)
+        try await waitUntil("the source is playing past the shared Margin") {
+            model.snapshot.status == .playing && (model.snapshot.currentMediaTimeMs ?? 0) >= 1_400
+        }
+        XCTAssertEqual(model.snapshot.status, .playing)
     }
 
     func waitUntil(_ what: String, timeout: TimeInterval = 5, _ condition: () -> Bool) async throws {

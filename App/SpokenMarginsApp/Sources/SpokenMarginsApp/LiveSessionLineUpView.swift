@@ -58,7 +58,7 @@ struct LiveSessionLineUpView: View {
         .fileImporter(isPresented: $showsImporter, allowedContentTypes: allowedTypes) { result in
             switch result {
             case .success(let url): picked(url)
-            case .failure(let error): errorMessage = error.localizedDescription
+            case .failure(let error): errorMessage = ListenerErrorText.message(for: error)
             }
         }
     }
@@ -161,7 +161,7 @@ struct LiveSessionLineUpView: View {
                     transcript = parsed
                     transcriptName = url.lastPathComponent
                 } catch {
-                    errorMessage = error.localizedDescription
+                    errorMessage = ListenerErrorText.message(for: error)
                 }
             }
         }
@@ -192,7 +192,7 @@ struct LiveSessionLineUpView: View {
                     onSaved()
                 }
             } catch {
-                errorMessage = "Couldn't save: \(error.localizedDescription)"
+                errorMessage = ListenerErrorText.line(prefix: "Couldn't save:", error: error)
             }
             isSaving = false
         }

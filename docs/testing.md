@@ -8,7 +8,7 @@ Tests verify implementation claims. Only the product owner establishes `human_va
 2. app compile and app-hosted unit tests (`--plan app`)
 3. journey checks in `docs/journeys.md`, driven by an agent with the iOS simulator tool and then by the owner on a device
 
-The scripted UI route plans below (`ui`, `speech-canary`, `release`, `smoke`) are retired from routine use and kept only as a reference. They were slow, crashed simulators, and passed while real journeys failed. This file remains the reference for the runner's options.
+The scripted UI route plans below (`ui`, `release`, `smoke`) are retired from routine use and kept only as a reference. They were slow, crashed simulators, and passed while real journeys failed. This file remains the reference for the runner's options.
 
 ## Commands
 
@@ -28,21 +28,15 @@ Bootstrap once after checkout, then use the named runner:
 
 `--plan smoke` runs one Library route, checking readiness, operability and a screenshot against the app built from the current inputs. It is a launch check, not an app or release gate.
 
-For speech-input or speech-adapter changes, also run:
+The `speech-canary` plan, a 12-minute real-speech soak of the exact emoji article, was deleted with its one UI test (#3342): no job could run it. The same article is covered by host tests (`testLongEmojiArticleQueuesEveryWordAndCompletesOnlyAfterItsLastSentence` in SessionKit and `testExactEmojiArticleImportPreservesSourceWhileSystemSpeechProjectionRemovesUnsafeContent` in the app tests). The held-out podcast corpus remains an explicit `scripts/run-podcast-anchor-benchmark.sh` invocation when alignment changes; its normal-package skip is recorded and allowed by name.
 
-```sh
-.venv/bin/python scripts/verify-tests.py --plan speech-canary
-```
-
-This deliberately longer plan preserves the exact emoji article with real playback and pause/resume. Keep it out of the ordinary editing loop. The held-out podcast corpus remains an explicit `scripts/run-podcast-anchor-benchmark.sh` invocation when alignment changes; its normal-package skip is recorded and allowed by name.
-
-Before a release handoff, `--plan release` runs the fast checks plus every active app and UI test, including the speech canary. Run the UI plan on both phone and iPad destinations for layout changes. Choose destinations explicitly with `--device UDID`; inspect them with `xcrun simctl list devices available`. The minimum supported runtime is iOS 26. Use `--ios 26` or `--ios 27` to require a major OS version; combining `--ios` with `--device` checks both constraints. A requested unavailable or unsupported destination fails rather than falling back. Without `--device`, the runner identifies phones by device type (including renamed devices), prefers a booted supported phone, then the newest installed supported runtime. Explicit iPad UDIDs remain supported. Lack of a required device is inconclusive, not a pass.
+Before a release handoff, `--plan release` runs the fast checks plus every active app and UI test. Run the UI plan on both phone and iPad destinations for layout changes. Choose destinations explicitly with `--device UDID`; inspect them with `xcrun simctl list devices available`. The minimum supported runtime is iOS 26. Use `--ios 26` or `--ios 27` to require a major OS version; combining `--ios` with `--device` checks both constraints. A requested unavailable or unsupported destination fails rather than falling back. Without `--device`, the runner identifies phones by device type (including renamed devices), prefers a booted supported phone, then the newest installed supported runtime. Explicit iPad UDIDs remain supported. Lack of a required device is inconclusive, not a pass.
 
 Generic device builds and exact archive/export checks remain required when integration or distribution changes. Physical-device checks still own audible balance, Bluetooth/Lock Screen behavior, actual background scheduling and thermal behavior. Safari PDF sharing retains its explicit manual-path proof requirement from the release lane; helper or bundle checks do not waive it.
 
 ## Supported OS matrix
 
-Use Xcode 27 and its iOS 27 SDK to build the iOS/iPadOS 26+ app and all extensions. Exercise app, adapter, and scoped UI plans on both iOS 26 and 27 before a platform-support handoff. Run destinations serially and shut down the previous simulator before booting the next to bound RAM. Keep iPad coverage for layout changes and speech-canary coverage for speech changes. A runtime being installed does not require it to be booted. iOS 18 is outside the supported matrix; old evidence remains historical. Simulator runtime/data deletion is a separate maintenance operation.
+Use Xcode 27 and its iOS 27 SDK to build the iOS/iPadOS 26+ app and all extensions. Exercise app, adapter, and scoped UI plans on both iOS 26 and 27 before a platform-support handoff. Run destinations serially and shut down the previous simulator before booting the next to bound RAM. Keep iPad coverage for layout changes. A runtime being installed does not require it to be booted. iOS 18 is outside the supported matrix; old evidence remains historical. Simulator runtime/data deletion is a separate maintenance operation.
 
 ```sh
 .venv/bin/python scripts/verify-tests.py --plan app --ios 26

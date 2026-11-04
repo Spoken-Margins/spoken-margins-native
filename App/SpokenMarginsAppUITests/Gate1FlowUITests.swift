@@ -15,56 +15,6 @@ final class Gate1FlowUITests: XCTestCase {
         app.launch()
     }
 
-    func testMarginsItemShareOpensShareSheetAndChapterJumpUpdatesTimeline() throws {
-        app.buttons["queue.start.item-pill"].tap()
-        XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
-        pausePlaybackIfNeeded()
-        let next = element("playback.nextChapter.button")
-        XCTAssertTrue(next.waitForExistence(timeout: 4))
-        next.tap()
-        pausePlaybackIfNeeded()
-        openTimelineExperience()
-        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Current chapter.")).firstMatch.waitForExistence(timeout: 5))
-        captureScreen(named: "qol-current-chapter")
-        returnToNowPlayingFromTimelineIfNeeded()
-        element("playback.write.button").tap()
-        let editor = app.textViews["writtenMargin.text"]
-        XCTAssertTrue(editor.waitForExistence(timeout: 4))
-        editor.tap()
-        editor.typeText("A final thought to share with this item.")
-        element("writtenMargin.save.button").tap()
-        XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 5))
-        element("playback.margins.button").tap()
-        let share = element("margins.shareItem.item-pill")
-        XCTAssertTrue(share.waitForExistence(timeout: 5))
-        captureScreen(named: "qol-item-share-action")
-        share.tap()
-        // #147: straight to the Share Margins sheet, with Review pinned at the bottom.
-        XCTAssertTrue(element("build23.sender.experience").waitForExistence(timeout: 5))
-        let cleanUpQuestion = app.alerts["Clean selected Margins automatically?"]
-        if cleanUpQuestion.waitForExistence(timeout: 2) { cleanUpQuestion.buttons["Not now"].tap() } // first share only
-        let review = element("build23.sender.select.continue")
-        XCTAssertTrue(review.waitForExistence(timeout: 5))
-        XCTAssertTrue(review.isHittable)
-        captureScreen(named: "qol-item-share-sheet")
-        review.tap()
-        XCTAssertTrue(element("build23.sender.stage.review").waitForExistence(timeout: 5))
-        let shareAction = element("build23.sender.review.share")
-        XCTAssertTrue(shareAction.waitForExistence(timeout: 5))
-        XCTAssertTrue(shareAction.isHittable)
-        captureScreen(named: "qol-item-share-review")
-        // Third tap: Share is pinned at the bottom of Review and builds, verifies and presents the iOS share sheet.
-        shareAction.tap()
-        let nativeShareSurface = element("ActivityListView")
-        XCTAssertTrue(
-            nativeShareSurface.waitForExistence(timeout: 8),
-            "Share, Review, Share did not reach the iOS share sheet from the Margins tab."
-        )
-        captureScreen(named: "qol-item-share-ios-sheet")
-        dismissTopSystemSheet()
-        XCTAssertTrue(waitForDisappearance(nativeShareSurface, timeout: 5))
-    }
-
     func testListeningEditionPreviewShowsSuppliedScenesBeforeImport() throws {
         openLibrarySettings()
         scrollToButton(containingLabel: "Import Listening Edition").tap()
@@ -319,39 +269,6 @@ final class Gate1FlowUITests: XCTestCase {
         captureScreen(named: "library-compact-row")
     }
 
-    func testExperienceOverhaulVisualEvidence() throws {
-        XCTAssertTrue(element("library.screen").waitForExistence(timeout: 8))
-        captureScreen(named: "01-library")
-
-        let seededStart = app.buttons["queue.start.item-pill"]
-        XCTAssertTrue(seededStart.waitForExistence(timeout: 4), app.debugDescription)
-        seededStart.tap()
-        XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
-        captureScreen(named: "02-now-playing")
-
-        openTimelineExperience()
-        captureScreen(named: "03-timeline")
-        returnToNowPlayingFromTimelineIfNeeded()
-        app.buttons["playback.home.button"].tap()
-        XCTAssertTrue(element("library.screen").waitForExistence(timeout: 4))
-        app.buttons["home.addSource.button"].tap()
-        XCTAssertTrue(element("addSource.sheet").waitForExistence(timeout: 4))
-        captureScreen(named: "04-add-source")
-        app.buttons["Close"].tap()
-
-        app.terminate()
-        app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_RECORDING"] = "1"
-        app.launch()
-        XCTAssertTrue(element("library.screen").waitForExistence(timeout: 8))
-        app.buttons["queue.start.item-pill"].tap()
-        XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
-        scrollToElement("playback.interject.button").tap()
-        XCTAssertTrue(element("recording.screen").waitForExistence(timeout: 4))
-        captureScreen(named: "05-recording")
-        element("recording.cancel.button").tap()
-        app.alerts.buttons["Discard recording"].tap()
-    }
-
     func testDeveloperListeningMapJSONCanBeAppliedFromSettings() throws {
         XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8))
 
@@ -398,79 +315,6 @@ final class Gate1FlowUITests: XCTestCase {
         captureScreen(named: "item-listen-pinned-scrolled")
         XCTAssertLessThanOrEqual(app.buttons.matching(identifier: "item.generateMap.button").count, 1)
         XCTAssertEqual(app.buttons.matching(identifier: "chapters.generateMap.button").count, 0)
-    }
-
-    func testGeneratedTurnTimelineRowsAreLabeledAndTappable() throws {
-        XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8))
-        let seededStart = app.buttons["queue.start.item-pill"]
-        XCTAssertTrue(seededStart.waitForExistence(timeout: 4), app.debugDescription)
-        seededStart.tap()
-        XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
-
-        openTimelineExperience()
-
-        XCTAssertTrue(scrollToButton(containingLabel: "My response").exists)
-        XCTAssertTrue(scrollToButton(containingLabel: "Assistant response").exists)
-        XCTAssertFalse(app.staticTexts["Play full generated response"].exists)
-
-        let aiResponse = scrollToButton(containingLabel: "Assistant response")
-        aiResponse.tap()
-        XCTAssertTrue(element("playback.title").waitForExistence(timeout: 4))
-
-        openTimelineExperience()
-        let aiChapter = scrollToButton(containingLabel: "Timeline Navigation")
-        aiChapter.tap()
-        XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 4))
-        XCTAssertFalse(element("timeline.screen").exists)
-    }
-
-    func testExportPreviewRemainsReachableAfterStartingAnotherSession() throws {
-        XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8))
-        let seededStart = app.buttons["queue.start.item-pill"]
-        XCTAssertTrue(seededStart.waitForExistence(timeout: 4), app.debugDescription)
-        seededStart.tap()
-        XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
-        openPlaybackExport()
-        XCTAssertTrue(element("export.screen").waitForExistence(timeout: 4))
-        configureFullSessionExport()
-        let firstExport = element("export.preview").label
-        XCTAssertFalse(firstExport.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-
-        app.buttons["export.home.button"].tap()
-        XCTAssertTrue(element("home.screen").waitForExistence(timeout: 4))
-        let seededItem = app.buttons["library.row.item-pill"]
-        XCTAssertTrue(seededItem.waitForExistence(timeout: 4))
-        seededItem.tap()
-        XCTAssertTrue(element("item.screen").waitForExistence(timeout: 4))
-        let startNew = scrollToElement("item.startNew.button")
-        startNew.tap()
-        let confirmStartNew = app.sheets.buttons["Start New Session"].firstMatch
-        XCTAssertTrue(confirmStartNew.waitForExistence(timeout: 4))
-        confirmStartNew.tap()
-        XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
-        openPlaybackExport()
-        XCTAssertTrue(element("export.screen").waitForExistence(timeout: 4))
-        configureFullSessionExport()
-        let secondExport = element("export.preview").label
-
-        XCTAssertFalse(secondExport.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-        XCTAssertTrue(firstExport.contains("bytes"))
-        XCTAssertTrue(secondExport.contains("bytes"), "The new session has an accessible export size summary; content isolation is asserted against exported data in SessionKit tests.")
-    }
-
-    func testNowPlayingDoesNotExposeCompactTestHarnessControls() throws {
-        XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8))
-        let seededStart = app.buttons["queue.start.item-pill"]
-        XCTAssertTrue(seededStart.waitForExistence(timeout: 4))
-        seededStart.tap()
-
-        XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
-        XCTAssertFalse(app.staticTexts["Compact Controls"].exists)
-        XCTAssertFalse(element("gate2.compact.chapter").exists)
-        XCTAssertFalse(element("gate2.compact.playPause.button").exists)
-        app.buttons["playback.forward.button"].tap()
-        app.buttons["playback.back.button"].tap()
-        XCTAssertTrue(element("playback.play.button").exists)
     }
 
     func testPlaybackPullsIntoTimelineAndReflectionControlsClearTheMiniPlayerAndKeyboard() throws {
@@ -523,86 +367,6 @@ final class Gate1FlowUITests: XCTestCase {
         app.buttons["timeline.nowPlaying.button"].tap()
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 4))
         XCTAssertTrue(waitForDisappearance(app.keyboards.firstMatch, timeout: 4))
-    }
-
-    func testNativeTextPublishesVisibleSimulatorSystemPlaybackState() throws {
-        let title = "Now Playing Simulator Probe"
-        app.terminate()
-        app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_SOURCE_TITLE"] = title
-        app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_SOURCE_TEXT"] = String(
-            repeating: "This native text playback probe must remain long enough to inspect the system media controls. ",
-            count: 200
-        )
-        app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_SOURCE_URL"] = "https://example.com/now-playing-probe"
-        app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_SUPERTONIC"] = "1"
-        app.launch()
-
-        XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8))
-        let start = app.buttons["queue.start.item-ui-text-regression"]
-        XCTAssertTrue(start.waitForExistence(timeout: 5))
-        start.tap()
-        XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
-        let playPause = app.buttons["playback.play.button"]
-        XCTAssertTrue(playPause.waitForExistence(timeout: 8))
-        let nativePlaybackConfirmed = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "label == %@ AND enabled == true", "Pause"),
-            object: playPause
-        )
-        XCTAssertEqual(
-            XCTWaiter().wait(for: [nativePlaybackConfirmed], timeout: 60),
-            .completed,
-            "Native text playback never advanced from starting to playing."
-        )
-        XCUIDevice.shared.press(.home)
-        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-        XCTAssertTrue(springboard.wait(for: .runningForeground, timeout: 5))
-        let topCenter = springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.50, dy: 0.01))
-        let notificationCenter = springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.50, dy: 0.72))
-        topCenter.press(forDuration: 0.1, thenDragTo: notificationCenter)
-
-        // On current simulator runtimes the lock-screen playback card is hosted
-        // by MediaRemoteUI rather than SpringBoard. Query both because the host
-        // process changed across supported iOS versions.
-        let mediaRemoteUI = XCUIApplication(bundleIdentifier: "com.apple.MediaRemoteUI")
-        _ = mediaRemoteUI.wait(for: .runningForeground, timeout: 5)
-        let playbackTitlePredicate = NSPredicate(format: "label CONTAINS[c] %@", title)
-        let systemPlaybackTitleExists = springboard.descendants(matching: .any)
-            .matching(playbackTitlePredicate).firstMatch.waitForExistence(timeout: 8)
-            || mediaRemoteUI.descendants(matching: .any)
-                .matching(playbackTitlePredicate).firstMatch.waitForExistence(timeout: 8)
-        XCTAssertTrue(
-            systemPlaybackTitleExists,
-            "Native text playback did not become visible on the Simulator system playback surface.\nSPRINGBOARD:\n\(springboard.debugDescription)\nMEDIA REMOTE UI:\n\(mediaRemoteUI.debugDescription)"
-        )
-        let pauseButtonPredicate = NSPredicate(format: "label CONTAINS[c] %@", "pause")
-        let playingStatePredicate = NSPredicate(format: "label ==[c] %@", "playing")
-        let systemPlayingStateExists = springboard.staticTexts
-            .matching(playingStatePredicate).firstMatch.exists
-            || mediaRemoteUI.staticTexts
-                .matching(playingStatePredicate).firstMatch.exists
-        var systemPauseControlExists = springboard.buttons.matching(pauseButtonPredicate).firstMatch.exists
-            || mediaRemoteUI.buttons.matching(pauseButtonPredicate).firstMatch.exists
-        if !systemPauseControlExists {
-            // iOS 18 simulators can render only the compact notification card on
-            // the cover sheet. Probe Control Center before concluding that the
-            // native transport command is unavailable.
-            XCUIDevice.shared.press(.home)
-            let controlCenterTopRight = springboard.coordinate(
-                withNormalizedOffset: CGVector(dx: 0.98, dy: 0.01)
-            )
-            let controlCenterBody = springboard.coordinate(
-                withNormalizedOffset: CGVector(dx: 0.72, dy: 0.62)
-            )
-            controlCenterTopRight.press(forDuration: 0.1, thenDragTo: controlCenterBody)
-            systemPauseControlExists = springboard.buttons
-                .matching(pauseButtonPredicate).firstMatch.waitForExistence(timeout: 5)
-                || mediaRemoteUI.buttons
-                    .matching(pauseButtonPredicate).firstMatch.waitForExistence(timeout: 5)
-        }
-        XCTAssertTrue(
-            systemPauseControlExists || systemPlayingStateExists,
-            "The Simulator system playback surface exposed neither a pause control nor a truthful playing state for active native text playback.\nSPRINGBOARD:\n\(springboard.debugDescription)\nMEDIA REMOTE UI:\n\(mediaRemoteUI.debugDescription)"
-        )
     }
 
     func testFailedLocalSummaryShowsPersistentRetryAndRetryCompletes() throws {
@@ -754,20 +518,6 @@ final class Gate1FlowUITests: XCTestCase {
             96,
             "The mini-player remained displaced by a stale keyboard safe-area (bottom gap: \(bottomGap))."
         )
-    }
-
-    func testShareDiagnosticsOpensTheShareSheet() throws {
-        XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8))
-        openLibrarySettings()
-        let share = scrollToElement("settings.shareDiagnostics.button")
-
-        share.tap()
-
-        // The exported file's payload is verified by testDiagnosticsExportFileCarriesSafePayload.
-        let shareSheet = element("ActivityListView")
-        XCTAssertTrue(shareSheet.waitForExistence(timeout: 8), "Share Diagnostics did not open the system share sheet.")
-        dismissTopSystemSheet()
-        XCTAssertTrue(waitForDisappearance(shareSheet, timeout: 5))
     }
 
     /// #1436: only the words of the row were tappable. A tap beside them, at the row's right edge,
@@ -1060,26 +810,6 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertGreaterThanOrEqual(play.frame.minY, open.frame.maxY - 1, "The play button sits below the title")
         XCTAssertGreaterThanOrEqual(play.frame.height, 44)
         captureScreen(named: "library-row-accessibility-size")
-    }
-
-    func testRootsRemainUsableWithLargeTypeDarkContrastAndReducedMotion() throws {
-        app.terminate()
-        app.launchArguments += [
-            "-AppleInterfaceStyle", "Dark",
-            "-UIPreferredContentSizeCategoryName", UIContentSizeCategory.accessibilityExtraExtraExtraLarge.rawValue,
-            "-UIAccessibilityDarkerSystemColorsEnabled", "YES",
-            "-UIAccessibilityReduceMotionEnabled", "YES"
-        ]
-        app.launch()
-
-        XCTAssertTrue(element("library.screen").waitForExistence(timeout: 8))
-        captureScreen(named: "second-edition-library-dark-accessibility")
-        tapRoot("Following")
-        XCTAssertTrue(element("sources.screen").waitForExistence(timeout: 4))
-        captureScreen(named: "second-edition-following-dark-accessibility")
-        tapRoot("Margins")
-        XCTAssertTrue(element("margins.screen").waitForExistence(timeout: 4))
-        captureScreen(named: "second-edition-margins-dark-accessibility")
     }
 
     func testOfflineStorageExplainsProtectionBeforeSafeClear() throws {
@@ -1650,20 +1380,6 @@ final class Gate1FlowUITests: XCTestCase {
             object: element
         )
         return XCTWaiter().wait(for: [expectation], timeout: timeout) == .completed
-    }
-
-    private func configureFullSessionExport() {
-        let fullSession = app.buttons["Full Session"]
-        XCTAssertTrue(fullSession.waitForExistence(timeout: 4))
-        if !fullSession.isSelected {
-            fullSession.tap()
-        }
-
-        let includeTurns = scrollToElement("export.includeTurns.toggle")
-        if includeTurns.value as? String == "0" {
-            includeTurns.tap()
-        }
-        XCTAssertEqual(includeTurns.value as? String, "1")
     }
 
     private static let manualListeningMapJSON = """

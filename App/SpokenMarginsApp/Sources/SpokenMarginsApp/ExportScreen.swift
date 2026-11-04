@@ -82,7 +82,7 @@ struct ExportScreen: View {
                                 .disabled(!model.exportSourceTextAvailable)
                             if !model.exportSourceTextAvailable {
                                 Text("Native audio exports include only bounded listening context, not full source text.")
-                                    .font(.caption)
+                                    .font(.footnote)
                                     .foregroundStyle(AppColors.secondaryText)
                             }
                             Toggle("Reference", isOn: $model.exportIncludesReference)

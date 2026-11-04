@@ -55,19 +55,33 @@ public struct StoreReader: Sendable {
     /// read-modify-write that two quick taps could otherwise run at once, each reading the rows before the other's
     /// save (the audio-preparation queue's Move and Prioritize). A request still runs when its caller is cancelled:
     /// an edit the listener asked for is not dropped, and the next request in line waits for it.
+    ///
+    /// An `async` call takes its place in line only after it has hopped off the caller's actor, so two calls made from
+    /// two unstructured `Task`s on the main actor can take their places in either order (#3331). A caller that must
+    /// keep the order of two calls made in one synchronous stretch uses `enqueueInOrder` for each, which takes its place
+    /// before it returns, and awaits the task it gets back.
     public func readInOrder<Value: Sendable>(
         _ key: String,
         priority: TaskPriority = .utility,
         _ body: @escaping @Sendable (SQLiteSessionStore) throws -> Value
     ) async throws -> Value {
+        try await enqueueInOrder(key, priority: priority, body).value
+    }
+
+    /// `readInOrder` split in two: this takes the request's place in line now, in the caller's own order, and returns
+    /// the task that runs it. Awaiting the task's `value` gives `readInOrder`'s result; dropping it still runs the request.
+    public func enqueueInOrder<Value: Sendable>(
+        _ key: String,
+        priority: TaskPriority = .utility,
+        _ body: @escaping @Sendable (SQLiteSessionStore) throws -> Value
+    ) -> Task<Value, Error> {
         let store = store
-        let task: Task<Value, Error> = OrderedRequests.shared.append(store: ObjectIdentifier(store), key: key) { previous in
+        return OrderedRequests.shared.append(store: ObjectIdentifier(store), key: key) { previous in
             Task.detached(priority: priority) {
                 await previous?.value
                 return try body(store)
             }
         }
-        return try await task.value
     }
 }
 

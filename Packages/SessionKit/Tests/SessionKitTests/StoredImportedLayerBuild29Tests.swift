@@ -124,4 +124,14 @@ final class StoredImportedLayerBuild29Tests: XCTestCase {
         layer.deletedAt = created
         try assertBuild29DecodesTheStoredLayer(layer, "a muted, disabled, deleted layer")
     }
+
+    /// The share link a packet was opened from is saved on the layer so the listener can report it (#2846).
+    func testBuild29DecodesTheLayerThatRemembersItsShareLink() throws {
+        var layer = try importLayer(suggesting: .guided)
+        layer.shareLinkId = "0123456789abcdef0123456789abcdef"
+        try assertBuild29DecodesTheStoredLayer(layer, "a layer imported from a share link")
+        let payload = String(decoding: try storedPayload(kind: "imported_commentary_layer", id: layer.id), as: UTF8.self)
+        XCTAssertTrue(payload.contains("shareLinkId"), "the field Build 29 has never seen is in the stored row")
+        XCTAssertEqual(try store.loadImportedCommentaryLayer(id: layer.id)?.shareLinkId, layer.shareLinkId)
+    }
 }

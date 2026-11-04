@@ -53,6 +53,7 @@ class Router:
 
     def __init__(self):
         self.rules, self.reads, self.writes = [], [], []
+        self.gql = {}
 
     def on(self, pattern, value):
         self.rules.insert(0, (re.compile(pattern), value))
@@ -68,6 +69,15 @@ class Router:
         raise sm_status.GitHubError(f'no rule for {path}')
 
     get = pages = _answer
+
+    def graphql(self, query, variables=None):
+        """GraphQL reads: the open-issue scan (`issues`) or a PR lookup by number (`lookup`), from self.gql."""
+        kind = 'issues' if 'issues(states' in query else 'lookup'
+        self.reads.append(f'graphql:{kind}')
+        value = self.gql.get(kind)
+        if isinstance(value, Exception):
+            raise value
+        return value(query, variables) if callable(value) else value
 
     def post(self, path, body):
         self.writes.append(('POST', path, body))
@@ -92,8 +102,24 @@ def pr(number, issue_number=None, armed=True, red=False, t4=None, mac=None):
             't4_waiting': t4, 'mac': mac}
 
 
+def gql_issue(number, title=None, labels=(), comments=(), reopened=None):
+    """One open issue as the sweep's GraphQL scan returns it."""
+    return {'number': number, 'title': title or f'Issue {number}', 'labels': {'nodes': [{'name': n} for n in labels]},
+            'timelineItems': {'nodes': [{'createdAt': reopened}] if reopened else []}, 'comments': {'nodes': list(comments)}}
+
+
+def gql_comment(body, when, association='MEMBER', login='uncomposed'):
+    return {'createdAt': when, 'body': body, 'authorAssociation': association,
+            'author': {'__typename': 'User', 'login': login}}
+
+
+def gql_pull(number, merged_at, base='main', title=None, body='', head=''):
+    return {'number': number, 'mergedAt': merged_at, 'baseRefName': base, 'title': title or f'PR {number}',
+            'body': body, 'headRefName': head}
+
+
 def world(comments=(), ready=(), in_progress=(), events=None, refs=None, tick=TICK_BODY, tick_at=None, dial=DIAL_BODY,
-          status_comment=None, comments_error=None, untriaged=()):
+          status_comment=None, comments_error=None, untriaged=(), open_issues=(), lookup=None):
     """A router for one sweep: the Dial issue, the Mac tick, repo comments, the two label lists, claim evidence."""
     router = Router()
     router.on(r'^issues/589$', {'body': dial})
@@ -103,6 +129,11 @@ def world(comments=(), ready=(), in_progress=(), events=None, refs=None, tick=TI
     router.on(r'^issues/comments\?since', comments_error or list(comments))
     router.on(r'^events', [])
     router.on(r'^pulls\?state=open', [])
+    router.on(r'^pulls\?state=closed', [])
+    router.gql['issues'] = {'repository': {'issues': {'pageInfo': {'hasNextPage': False, 'endCursor': None},
+                                                      'nodes': list(open_issues)}}}
+    router.gql['lookup'] = lambda query, variables: {'repository': {
+        f'n{n}': (lookup or {}).get(int(n)) for n in re.findall(r'n(\d+): issueOrPullRequest', query)}}
     router.on(r'^git/ref/heads/next', {'object': {'sha': 'a' * 40}})
     router.on(r'^issues\?state=open&milestone=none', list(untriaged))
     router.on(r'^issues\?state=open&labels=ready', list(ready))
@@ -656,7 +687,9 @@ class MergedFixStillReady(unittest.TestCase):
     def test_the_closed_pr_read_is_one_batched_call_not_one_per_issue(self):
         router, rows = self.build(pulls=[merged_pull(800, 'Closes #70', self.MERGED)])
         sweep.collect(router, NOW, snapshot(rows))
-        self.assertEqual(len([r for r in router.reads if r.startswith('pulls?state=closed')]), 1)
+        closed = [r for r in router.reads if r.startswith('pulls?state=closed')]
+        self.assertEqual(len([r for r in closed if '&base=main&' in r]), 1)   # rule 8 and rules 9-10 share it
+        self.assertEqual(len(closed), 2)                                      # plus one page of the frozen `next`
 
 
 class Output(unittest.TestCase):
@@ -793,3 +826,216 @@ class Strangers(unittest.TestCase):
         forged = {'body': '<!-- dial-gate-status -->\n- Now: Fire 9 threads.', 'user': {'login': 'mallory'},
                   'author_association': 'NONE'}
         self.assertIsNone(facts_of(world(status_comment=forged))['dial_now'])
+
+
+# ---- Drift between GitHub and the code (rules 9 to 11, #3350). Each class starts from its real 2026-11-04 case. ----
+
+def drift_actions(router, now, rows=()):
+    actions, _ = sweep.decide(sweep.collect(router, now, snapshot(rows)))
+    return [a for a in actions if a['rule'] in ('merged-still-open', 'revert-unnoted', 'revert-unchecked',
+                                                'hold-lifted', 'drift-unreadable')]
+
+
+def pull_on(base, number, title, body, merged_at, head=''):
+    return {'number': number, 'title': title, 'body': body, 'merged_at': merged_at, 'head': {'ref': head},
+            'base': {'ref': base}}
+
+
+class MergedStillOpen(unittest.TestCase):
+    """Rule 9. #3315 (`Closes #3218`) merged into main at 2026-11-04T02:02:41Z, GitHub left #3218 open and
+    `in-progress`, and rule 8 looks only at `ready` issues; the daily triage closed it by hand at 02:38:33Z."""
+    NOW = dt.datetime(2026, 11, 4, 2, 30, tzinfo=dt.timezone.utc)
+    PR_3315 = pull_on('main', 3315, 'Shipped builds must play a shared HE-AAC Margin, not only import it (#3218)',
+                      'Closes #3218\n\n## What this does', '2026-11-04T02:02:41Z', 'ws/3218-smaller-share-packets')
+
+    def router(self, pulls, issues, next_pulls=()):
+        router = world(open_issues=issues)
+        router.on(r'^pulls\?state=closed&base=main', list(pulls))
+        router.on(r'^pulls\?state=closed&base=next', list(next_pulls))
+        return router
+
+    def test_the_3218_case_is_reported(self):
+        issue = gql_issue(3218, 'Smaller share packets', ('in-progress', 'priority', 'where:mac'))
+        found = drift_actions(self.router([self.PR_3315], [issue]), self.NOW)
+        self.assertEqual([(a['rule'], a['issues'], a['prs']) for a in found],
+                         [('merged-still-open', [3218], [3315])])
+        self.assertIn('merged into `main` on 2026-11-04', found[0]['detail'])
+
+    def test_a_closing_pr_merged_into_next_counts_too(self):
+        # #2207 (`Closes #138`) merged into next on 2026-10-20; a PR into a non-default branch never closes its issue
+        pull = pull_on('next', 2207, 'PDF citations', 'Closes #138', '2026-10-20T04:00:00Z')
+        found = drift_actions(self.router([], [gql_issue(138)], [pull]), self.NOW)
+        self.assertEqual([(a['issues'], a['prs']) for a in found], [([138], [2207])])
+        self.assertIn('`next`', found[0]['detail'])
+
+    def test_reopened_after_the_merge_part_of_or_reverted_are_not_drift(self):
+        reopened = gql_issue(3218, reopened='2026-11-04T02:20:00Z')
+        self.assertEqual(drift_actions(self.router([self.PR_3315], [reopened]), self.NOW), [])
+        part = dict(self.PR_3315, body='Part of #3218')
+        self.assertEqual(drift_actions(self.router([part], [gql_issue(3218)]), self.NOW), [])
+        revert = pull_on('main', 3316, 'Revert #3315: lane FAIL', 'Reverts #3315', '2026-11-04T02:10:00Z')
+        router = self.router([self.PR_3315, revert], [gql_issue(3218)])
+        router.on(r'^issues/3218/comments', [note(3218, 'Reverted by #3316; the fix is off main.', '2026-11-04T02:12:00Z')])
+        self.assertEqual(drift_actions(router, self.NOW), [])
+
+    def test_an_issue_reopened_before_the_merge_is_still_drift(self):
+        issue = gql_issue(3218, reopened='2026-11-01T00:00:00Z')
+        self.assertEqual(len(drift_actions(self.router([self.PR_3315], [issue]), self.NOW)), 1)
+
+    def test_a_ready_issue_rule_8_reports_is_not_reported_twice(self):
+        router = self.router([self.PR_3315], [gql_issue(3218, labels=('ready',))])
+        router.on(r'^issues\?state=open&labels=ready', [issue(3218, ('ready',))])
+        actions, _ = sweep.decide(sweep.collect(router, self.NOW, snapshot()))
+        self.assertEqual([a['rule'] for a in actions if 3218 in a['issues'] and a['rule'] != 'free-slots'], ['fix-merged'])
+
+
+class RevertUnnoted(unittest.TestCase):
+    """Rule 10. #3310 (`Part of #460`, branch ws/460-skim-stops) merged 2026-11-03T22:26:23Z, #3320 reverted it at
+    2026-11-04T03:25:38Z and #3323 re-landed it at 04:07:07Z; #460 said nothing of either until 17:18Z."""
+    NOW = dt.datetime(2026, 11, 4, 12, 0, tzinfo=dt.timezone.utc)
+    PR_3310 = pull_on('main', 3310, 'Skim goes to the next chapter or Margin; a second press plays the Margin (#460)',
+                      'Part of #460', '2026-11-03T22:26:23Z', 'ws/460-skim-stops')
+    PR_3320 = pull_on('main', 3320, 'Revert #3310: Tested as this exact commit and merged by the lane runner. '
+                      '(integration-e1a99ad FAIL)', 'Reverts #3310 because the integration run on next at `e1a99ad` '
+                      'failed.', '2026-11-04T03:25:38Z', 'revert/pr3310')
+    PR_3323 = pull_on('main', 3323, 'Re-land #3310: Skim goes to the next chapter or Margin (#460)',
+                      'Closes #3321. Part of #460.', '2026-11-04T04:07:07Z', 'ws/3321-reland-skim-next-margin')
+
+    def router(self, pulls, comments_since=()):
+        router = world()
+        router.on(r'^pulls\?state=closed&base=main', list(pulls))
+        router.on(r'^issues/460/comments\?since=', list(comments_since))
+        return router
+
+    def test_the_460_case_is_reported(self):
+        router = self.router([self.PR_3323, self.PR_3320, self.PR_3310])
+        found = drift_actions(router, self.NOW)
+        self.assertEqual([(a['rule'], a['issues'], a['prs']) for a in found], [('revert-unnoted', [460], [3320, 3310])])
+        self.assertIn('issues/460/comments?since=2026-11-04T03:25:38Z', router.reads)
+
+    def test_a_note_naming_the_revert_clears_it_and_a_strangers_does_not(self):
+        noted = note(460, '**Record correction.** #3310 was reverted by #3320 and re-landed by #3323.',
+                     '2026-11-04T17:18:01Z')
+        self.assertEqual(drift_actions(self.router([self.PR_3320, self.PR_3310], [noted]), self.NOW), [])
+        stranger = dict(noted, author_association='NONE', user={'login': 'someone'})
+        self.assertEqual(len(drift_actions(self.router([self.PR_3320, self.PR_3310], [stranger]), self.NOW)), 1)
+
+    def test_a_revert_older_than_14_days_is_left_alone(self):
+        later = dt.datetime(2026, 11, 19, 12, 0, tzinfo=dt.timezone.utc)
+        self.assertEqual(drift_actions(self.router([self.PR_3320, self.PR_3310]), later), [])
+
+    def test_a_reverted_pr_outside_the_list_is_looked_up_in_one_graphql_read(self):
+        router = self.router([self.PR_3320])
+        router.gql['lookup'] = lambda q, v: {'repository': {'n3310': gql_pull(
+            3310, '2026-11-03T22:26:23Z', title=self.PR_3310['title'], body='Part of #460', head='ws/460-skim-stops')}}
+        self.assertEqual([a['issues'] for a in drift_actions(router, self.NOW)], [[460]])
+        self.assertEqual(router.reads.count('graphql:lookup'), 1)
+
+    def test_the_comment_reads_are_capped_and_the_rest_is_named_unchecked(self):
+        pulls = []
+        for n in range(sweep.DRIFT_READ_CAP + 2):
+            pulls.append(pull_on('main', 1000 + n, f'Fix (#{2000 + n})', f'Part of #{2000 + n}', '2026-11-03T20:00:00Z'))
+            pulls.append(pull_on('main', 3000 + n, f'Revert #{1000 + n}', f'Reverts #{1000 + n}', '2026-11-04T03:00:00Z'))
+        router = self.router(pulls)
+        router.on(r'^issues/\d+/comments\?since=', [])
+        found = drift_actions(router, self.NOW)
+        self.assertEqual(len([r for r in router.reads if '/comments?since=2026-11-04T03' in r]), sweep.DRIFT_READ_CAP)
+        self.assertEqual([a['rule'] for a in found].count('revert-unnoted'), sweep.DRIFT_READ_CAP)
+        self.assertEqual([a['rule'] for a in found].count('revert-unchecked'), 1)
+
+
+class HoldLifted(unittest.TestCase):
+    """Rule 11. #1612's newest note (2026-10-18) held it on PR #1154, which merged into `next` on
+    2026-10-20T04:27:34Z (merge a6a838a) with no closing ref; the issue sat open until 2026-11-04T17:17Z."""
+    NOW = dt.datetime(2026, 11, 4, 12, 0, tzinfo=dt.timezone.utc)
+    NOTE_1015 = gql_comment('Blocked behind PR #1154, which the owner is holding until Solid Ground ships; taking '
+                            'this off ready so dispatch stops suggesting it.', '2026-10-15T12:26:30Z')
+    NOTE_1018 = gql_comment("**Housekeeping (owner's 2026-10-14 standing call)**\n\nRemoved `blocked`. It was only the "
+                            "owner's hold on PR #1154, which carries this issue's fix, until Solid Ground ships.",
+                            '2026-10-18T04:35:51Z')
+    PR_1154 = gql_pull(1154, '2026-10-20T04:27:34Z', base='next')
+
+    def router(self, comments, lookup=None):
+        return world(open_issues=[gql_issue(1612, 'Review new Margins loses the place', ('bug', 'priority'), comments)],
+                     lookup=lookup if lookup is not None else {1154: self.PR_1154})
+
+    def test_the_1612_case_is_reported(self):
+        router = self.router([self.NOTE_1015, self.NOTE_1018])
+        found = drift_actions(router, self.NOW)
+        self.assertEqual([(a['rule'], a['issues'], a['prs']) for a in found], [('hold-lifted', [1612], [1154])])
+        self.assertIn('merged into `next` on 2026-10-20', found[0]['detail'])
+
+    def test_a_pr_merged_before_the_note_is_no_hold(self):
+        after = gql_comment('PR #1154 merged; holding this open until the owner hears it on the phone.',
+                            '2026-10-21T00:00:00Z')
+        self.assertEqual(drift_actions(self.router([self.NOTE_1018, after]), self.NOW), [])
+
+    def test_a_pr_named_beside_a_wait_on_someone_else_is_no_hold(self):
+        # #2842's real stop note: the wait is on the owner, not on #3306
+        stop_note = gql_comment('Thread "Fix consent and privacy wording" stopping: #3306 armed (`automerge`, Part of '
+                                "#2842) · waiting on the owner's three wording answers above", '2026-11-03T18:37:46Z')
+        router = self.router([stop_note], lookup={3306: gql_pull(3306, '2026-11-03T20:00:00Z')})
+        self.assertEqual(drift_actions(router, self.NOW), [])
+
+    def test_an_unmerged_or_issue_number_is_no_hold(self):
+        self.assertEqual(drift_actions(self.router([self.NOTE_1018], lookup={1154: gql_pull(1154, None)}), self.NOW), [])
+        self.assertEqual(drift_actions(self.router([self.NOTE_1018], lookup={}), self.NOW), [])
+
+    def test_only_the_newest_trusted_note_counts(self):
+        stranger = gql_comment('still broken for me', '2026-10-25T00:00:00Z', association='NONE', login='someone')
+        self.assertEqual(len(drift_actions(self.router([self.NOTE_1018, stranger]), self.NOW)), 1)
+        newer = gql_comment('Waiting on the owner\'s phone check.', '2026-10-25T00:00:00Z')
+        self.assertEqual(drift_actions(self.router([self.NOTE_1018, newer]), self.NOW), [])
+
+    def test_a_wait_on_the_frozen_next_is_reported(self):
+        waits = gql_comment('This issue stays open until the fix reaches `next`.', '2026-10-15T23:00:26Z')
+        found = drift_actions(self.router([waits], lookup={}), self.NOW)
+        self.assertEqual([(a['issues'], a['prs']) for a in found], [([1612], [])])
+        self.assertIn('waits on `next`', found[0]['detail'])
+        plain = gql_comment('Next step: the Next Margin button waits for the owner.', '2026-10-15T23:00:26Z')
+        self.assertEqual(drift_actions(self.router([plain], lookup={}), self.NOW), [])
+
+
+class DriftReadBudget(unittest.TestCase):
+    NOW = dt.datetime(2026, 11, 4, 12, 0, tzinfo=dt.timezone.utc)
+
+    def test_a_failed_scan_is_reported_unreadable_never_clean(self):
+        router = world()
+        router.gql['issues'] = sm_status.GitHubError('GraphQL: rate limited')
+        found = drift_actions(router, self.NOW)
+        self.assertEqual([a['rule'] for a in found], ['drift-unreadable'])
+        self.assertIn('rate limited', found[0]['detail'])
+
+    def test_the_scan_pages_through_open_issues_without_per_issue_reads(self):
+        pages = iter([
+            {'repository': {'issues': {'pageInfo': {'hasNextPage': True, 'endCursor': 'c1'},
+                                       'nodes': [gql_issue(n) for n in range(1, 101)]}}},
+            {'repository': {'issues': {'pageInfo': {'hasNextPage': False, 'endCursor': None},
+                                       'nodes': [gql_issue(n) for n in range(101, 171)]}}}])
+        router = world()
+        router.gql['issues'] = lambda q, v: next(pages)
+        drift_actions(router, self.NOW)
+        self.assertEqual(router.reads.count('graphql:issues'), 2)
+        self.assertEqual([r for r in router.reads if re.match(r'issues/(?!589/|337/)\d+/comments', r)], [])
+
+    def test_more_open_issues_than_the_page_cap_is_unreadable(self):
+        router = world()
+        router.gql['issues'] = {'repository': {'issues': {'pageInfo': {'hasNextPage': True, 'endCursor': 'c'},
+                                                          'nodes': []}}}
+        self.assertEqual([a['rule'] for a in drift_actions(router, self.NOW)], ['drift-unreadable'])
+        self.assertEqual(router.reads.count('graphql:issues'), sweep.OPEN_ISSUE_PAGES)
+
+    def test_graphql_errors_answered_with_http_200_are_raised(self):
+        class Answers(sm_status.GitHub):
+            def __init__(self, answer):
+                super().__init__('example/repo', token='t')
+                self.answer = answer
+
+            def request(self, method, path, body=None):
+                self.sent = (method, path, body)
+                return self.answer, {}
+        api = Answers({'errors': [{'message': 'Something went wrong'}], 'data': None})
+        with self.assertRaises(sm_status.GitHubError):
+            api.graphql('query { viewer { login } }')
+        self.assertEqual(api.sent[:2], ('POST', 'https://api.github.com/graphql'))
+        self.assertEqual(Answers({'data': {'ok': 1}}).graphql('query { x }'), {'ok': 1})

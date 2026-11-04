@@ -1000,11 +1000,11 @@ struct PlaybackScreen: View {
                 }
 
                 Text("Make Spoken Margins easier to hear by lowering other apps while listening. Their volume returns when you pause or turn this off.")
-                    .font(.caption2)
+                    .font(.footnote)
                     .foregroundStyle(AppColors.watchSecondary)
 
                 Text("Other audio can continue. Control Spoken Margins here; Lock Screen and headphone controls may control the other app.")
-                    .font(.caption2)
+                    .font(.footnote)
                     .foregroundStyle(AppColors.watchSecondary)
             }
             .padding(14)

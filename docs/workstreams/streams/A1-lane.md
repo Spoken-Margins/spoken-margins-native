@@ -11,7 +11,7 @@
 ## Starting points
 
 - `scripts/verify-tests.py` already runs named plans with bounded processes, an execution manifest, crash-flood detection and a dedicated `SpokenMargins Test Runner` simulator. Build on it; don't replace it.
-- Plans today: `fast` (host), `app`, `adapters`, plus the retired `smoke`, `ui`, `speech-canary`, `release`. See `docs/testing.md`.
+- Plans today: `fast` (host), `app`, `adapters`, plus the retired `smoke`, `ui`, `release`. See `docs/testing.md`.
 - Journeys are in `docs/journeys.md`, including simulator-driving pitfalls learned the hard way.
 - The Test Desk drives the simulator with the desktop app's iOS simulator tool, which works with Xcode 27 (2026-10-16), and runs each journey in a helper agent (journey skill).
 - SessionKit's core, Feeds, Persistence and EPUB targets import only Foundation, CryptoKit and SQLite. They could plausibly build on Linux with a CryptoKit shim, which would let cloud streams run T1 themselves.

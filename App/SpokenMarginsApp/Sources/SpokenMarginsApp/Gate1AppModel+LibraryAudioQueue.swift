@@ -301,6 +301,7 @@ extension Gate1AppModel {
         let staleJobIds = presentation.staleJobIds
         if !staleJobIds.isEmpty {
             Task.detached(priority: .utility) {
+                // ordered-ok: the delete re-checks that each job is still stale when it runs, so it commutes with the edits around it
                 _ = try? await StoreReader(store).readInOrder(AudioPreparationQueueEdits.orderKey) {
                     try $0.deleteStaleAudioPreparationJobs(among: staleJobIds)
                 }
@@ -324,24 +325,45 @@ extension Gate1AppModel {
         reportConfirmation(notice.message)
     }
 
-    func moveAudioPreparationJobEarlier(id: String) async {
-        await moveAudioPreparationJob(id: id, offset: -1)
+    /// The queue edits below each take their place in the queue's line before they return (#3335): `readInOrder` is
+    /// `async`, so a `Task { await … }` per tap hopped off the main actor first and two quick taps could take their
+    /// places in either order. Each edit returns the task that finishes it (the result, the refresh and the message);
+    /// a caller that has to see the finished edit awaits `.value`, the Settings buttons drop it.
+    @discardableResult
+    func moveAudioPreparationJobEarlier(id: String) -> Task<Void, Never> {
+        moveAudioPreparationJob(id: id, offset: -1)
     }
 
-    func moveAudioPreparationJobLater(id: String) async {
-        await moveAudioPreparationJob(id: id, offset: 1)
+    @discardableResult
+    func moveAudioPreparationJobLater(id: String) -> Task<Void, Never> {
+        moveAudioPreparationJob(id: id, offset: 1)
     }
 
-    func skipAudioPreparationJob(id: String) async {
+    /// Puts one edit in line now, under the queue's key, and hands back the task that runs it.
+    private func enqueueAudioPreparationEdit<Value: Sendable>(
+        _ body: @escaping @Sendable (SQLiteSessionStore) throws -> Value
+    ) throws -> Task<Value, Error> {
+        StoreReader(try requireStore()).enqueueInOrder(AudioPreparationQueueEdits.orderKey, body)
+    }
+
+    @discardableResult
+    func skipAudioPreparationJob(id: String) -> Task<Void, Never> {
+        // Opened if need be: jobs saved by an earlier launch are in the file before this model opens it.
+        // The jobs go first, in one transaction; the item is suppressed once we know which it is. A job the
+        // automatic pass adds in that moment for the same item stays queued, and Skip removes it again.
+        let request: Task<AudioPreparationQueueEdits.Skipped?, Error>
         do {
-            // Opened if need be: jobs saved by an earlier launch are in the file before this model opens it.
-            let store = try requireStore()
-            // The jobs go first, in one transaction; the item is suppressed once we know which it is. A job the
-            // automatic pass adds in that moment for the same item stays queued, and Skip removes it again.
-            let skipped = try await StoreReader(store).readInOrder(AudioPreparationQueueEdits.orderKey) {
-                try AudioPreparationQueueEdits.skipItem(ofJob: id, in: $0)
-            }
-            guard let skipped else { return }
+            request = try enqueueAudioPreparationEdit { try AudioPreparationQueueEdits.skipItem(ofJob: id, in: $0) }
+        } catch {
+            reportFailure(error, context: "Removing the item from audio preparation failed")
+            return Task {}
+        }
+        return Task { await finishSkippingAudioPreparationJob(request) }
+    }
+
+    private func finishSkippingAudioPreparationJob(_ request: Task<AudioPreparationQueueEdits.Skipped?, Error>) async {
+        do {
+            guard let skipped = try await request.value else { return }
             suppressAudioPreparation(itemId: skipped.itemId)
             cancelStartupAudioPreparation(itemIds: [skipped.itemId])
             failedStartupAudioPreparationItemIds.remove(skipped.itemId)
@@ -354,13 +376,25 @@ extension Gate1AppModel {
         }
     }
 
-    func clearAudioPreparationQueue() async {
+    @discardableResult
+    func clearAudioPreparationQueue() -> Task<Void, Never> {
+        let request: Task<AudioPreparationQueueEdits.Cleared, Error>
         do {
             let store = try requireStore()
             libraryAudioLoop.stopAndInvalidate()
-            let cleared = try await StoreReader(store).readInOrder(AudioPreparationQueueEdits.orderKey) {
+            request = StoreReader(store).enqueueInOrder(AudioPreparationQueueEdits.orderKey) {
                 try AudioPreparationQueueEdits.clear(in: $0)
             }
+        } catch {
+            reportFailure(error, context: "Clearing the audio preparation queue failed")
+            return Task {}
+        }
+        return Task { await finishClearingAudioPreparationQueue(request) }
+    }
+
+    private func finishClearingAudioPreparationQueue(_ request: Task<AudioPreparationQueueEdits.Cleared, Error>) async {
+        do {
+            let cleared = try await request.value
             let itemIds = cleared.itemIds
             suppressAudioPreparation(itemIds: itemIds)
             cancelStartupAudioPreparation(itemIds: itemIds)
@@ -394,13 +428,21 @@ extension Gate1AppModel {
         )
     }
 
-    func prioritizeAudioPreparationJob(id: String) async {
+    @discardableResult
+    func prioritizeAudioPreparationJob(id: String) -> Task<Void, Never> {
+        let request: Task<Bool, Error>
         do {
-            let store = try requireStore()
-            let pinned = try await StoreReader(store).readInOrder(AudioPreparationQueueEdits.orderKey) {
-                try AudioPreparationQueueEdits.prioritize(id: id, in: $0)
-            }
-            guard pinned else { return }
+            request = try enqueueAudioPreparationEdit { try AudioPreparationQueueEdits.prioritize(id: id, in: $0) }
+        } catch {
+            reportFailure(error, context: "Unable to prepare this item next")
+            return Task {}
+        }
+        return Task { await finishPrioritizingAudioPreparationJob(request) }
+    }
+
+    private func finishPrioritizingAudioPreparationJob(_ request: Task<Bool, Error>) async {
+        do {
+            guard try await request.value else { return }
             libraryAudioLoop.renderPolicy.noteListenerEngaged()
             await refreshAudioPreparationPresentation()
             startForegroundAudioPreparationIfNeeded()
@@ -409,15 +451,24 @@ extension Gate1AppModel {
         }
     }
 
-    private func moveAudioPreparationJob(id: String, offset: Int) async {
-        guard offset == -1 || offset == 1 else { return }
+    private func moveAudioPreparationJob(id: String, offset: Int) -> Task<Void, Never> {
+        guard offset == -1 || offset == 1 else { return Task {} }
         let activeItemId = activePlaybackItemId
+        let request: Task<Bool, Error>
         do {
-            let store = try requireStore()
-            let moved = try await StoreReader(store).readInOrder(AudioPreparationQueueEdits.orderKey) {
+            request = try enqueueAudioPreparationEdit {
                 try AudioPreparationQueueEdits.move(id: id, by: offset, activeItemId: activeItemId, in: $0)
             }
-            guard moved else { return }
+        } catch {
+            reportFailure(error, context: "Updating the audio preparation queue failed")
+            return Task {}
+        }
+        return Task { await finishMovingAudioPreparationJob(request) }
+    }
+
+    private func finishMovingAudioPreparationJob(_ request: Task<Bool, Error>) async {
+        do {
+            guard try await request.value else { return }
             await refreshAudioPreparationPresentation()
             reportConfirmation("Updated the audio preparation order.")
         } catch {

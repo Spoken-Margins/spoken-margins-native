@@ -380,7 +380,7 @@ struct InterjectionDetailView: View {
                         .accessibilityIdentifier("interjection.detail.savePrivateSharingNote")
                     }
                     Text("This note helps you choose what to send. It stays private and is never included in a shared package.")
-                        .font(.caption)
+                        .font(.footnote)
                         .foregroundStyle(AppColors.secondaryText)
                 }
                 Section("Where in the source") {

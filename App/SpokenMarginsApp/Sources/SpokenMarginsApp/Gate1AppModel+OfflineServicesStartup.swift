@@ -5,15 +5,51 @@ import SessionKitPersistence
 /// The startup work each store configuration runs: save the storage budget, adopt and trim offline files, then
 /// refresh Following and the guided tour. Moved out of the central model for #2195.
 extension Gate1AppModel {
+    /// Saves the picked budget off the main actor. The save takes its place in line before this returns, so two quick
+    /// changes save in the order they were made and the later one wins (#3335); an `async` call per change took its place
+    /// only after a hop, and the two could swap. The task it returns finishes the change (the save, then trimming to
+    /// the new budget); the pickers drop it, a test awaits it.
+    @discardableResult
+    func offlineStorageBudgetChanged() -> Task<Void, Never> {
+        guard OfflineStorageBudget.allowedGigabytes.contains(offlineStorageLimitGB) else {
+            offlineStorageLimitGB = 5
+            return Task {}
+        }
+        UserDefaults.standard.set(offlineStorageLimitGB, forKey: "offlineStorageLimitGB")
+        podcastCacheLimitGB = offlineStorageLimitGB
+        let save: Task<Void, Error>
+        do {
+            let store = try requireStore()
+            let budget = OfflineStorageBudget(limitBytes: Int64(offlineStorageLimitGB) * OfflineStorageBudget.bytesPerGigabyte)
+            // Off the main actor, in line behind an earlier change's save (#2509).
+            save = StoreReader(store).enqueueInOrder(OfflineStorageBudget.saveOrderKey) { try $0.saveOfflineStorageBudget(budget) }
+        } catch {
+            reportFailure(error, context: "Offline storage budget update failed")
+            return Task {}
+        }
+        return Task { [weak self] in
+            do {
+                try await save.value
+                _ = try await self?.offlineStorageLedger?.enforceBudget()
+                self?.tryRefreshOfflineStorageUsage()
+            } catch {
+                self?.reportFailure(error, context: "Offline storage budget update failed")
+            }
+        }
+    }
+
     /// Holds the model weakly and stops when the model goes away. It used to hold the model strongly, so a dropped
     /// model lived on until the tour download ended, and its SQLite calls then ran on the main thread during
     /// whatever came next. Against another connection to the same file each one could wait out the store's 1 s
     /// busy timeout (#2195).
     func startOfflineServices(store: SQLiteSessionStore, ledger: OfflineStorageLedger) {
+        // The startup save takes its place in line now, ahead of any change the listener makes after this returns, so a
+        // picker change can't be overwritten by the launch value (#3335).
+        let budget = OfflineStorageBudget(limitBytes: Int64(offlineStorageLimitGB) * OfflineStorageBudget.bytesPerGigabyte)
+        let budgetSave = StoreReader(store).enqueueInOrder(OfflineStorageBudget.saveOrderKey) { try $0.saveOfflineStorageBudget(budget) }
         offlineServicesStartupTasks.append(Task { [weak self] in
-            guard let limitGB = self?.offlineStorageLimitGB, !Task.isCancelled else { return }
-            let budget = OfflineStorageBudget(limitBytes: Int64(limitGB) * OfflineStorageBudget.bytesPerGigabyte)
-            try? await StoreReader(store).readInOrder(OfflineStorageBudget.saveOrderKey) { try $0.saveOfflineStorageBudget(budget) }
+            guard !Task.isCancelled else { return }
+            _ = try? await budgetSave.value
             try? await ledger.adoptExistingAssets()
             guard !Task.isCancelled else { return }
             let residualOverage = try? await ledger.enforceBudget()

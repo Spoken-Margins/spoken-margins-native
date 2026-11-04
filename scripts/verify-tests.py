@@ -42,10 +42,10 @@ PLANS = {
     'adapters': ('SpokenMarginsAppBehavior', 'AudioAdapters', 300),
     'smoke': ('SpokenMarginsUISeams', 'Smoke', 180),
     'ui': ('SpokenMarginsUISeams', 'UISeams', 900),
-    'speech-canary': ('SpokenMarginsUISeams', 'SpeechCanary', 1000),
     'release': ('SpokenMarginsReleaseTests', 'Release', 3600),
-    # The scripted journeys in TestPlans/scripted-journeys.json, from the Release plan (it holds every UI test).
-    'journeys': ('SpokenMarginsReleaseTests', 'Release', 1800),
+    # The scripted journeys in TestPlans/scripted-journeys.json, from the Release plan (it holds every UI test). One hour,
+    # not 30 minutes: every UI test method is listed or deleted (#3342), so the list holds about 50 scripts.
+    'journeys': ('SpokenMarginsReleaseTests', 'Release', 3600),
     # The tour includes the sharing-loop tests (#3237), about 2-3 minutes each, run twice on a failure; a stopped run exports no screenshots.
     'tour': ('SpokenMarginsUISeams', 'ScreenTour', 1800),
 }
@@ -230,6 +230,41 @@ def full_selector(selector, planned):
     if selector.startswith((f'{APP_TEST_TARGET}/', f'{UI_TEST_TARGET}/')) or selector.split('/', 1)[0] in targets:
         return selector
     return f'{targets[0] if len(targets) == 1 else APP_TEST_TARGET}/{selector}'
+
+
+PROBATION_MINIMUM_SECONDS = 60  # less than this left of the plan's budget and the probation step does not start
+
+
+def test_groups(selectors, expected, on_probation, batch_of=None):
+    """The xcodebuild test runs of one plan: [(selectors, expected tests, tests on probation)], in the order to run.
+
+    Without probation, one run. With it, the gating tests run first, then the probation tests one run per batch,
+    lowest batch first (#3342). Two orders matter, and the cap on a run's time cuts the end of this list, so the
+    most valuable tests go first and a later addition can only cut its own tail:
+    1. XCTest runs in alphabetical order, so in one run 27 probation methods came before the only gating method of
+       Gate1FlowUITests, and a plan budget spent on probation reported a gating script as missing.
+    2. The same alphabetical order put those 27 new methods before the J* journeys on probation, so the new tests
+       could use up the budget and report the journeys that already ran as missing. The 28 new tests are batch 2.
+    A selector that covers a gating test stays in the gating run, and one that covers tests of several batches stays
+    in the lowest, so no test runs twice. `batch_of` maps a probation test to its batch (default 1)."""
+    if not on_probation:
+        return [(selectors, expected, on_probation)]
+    batch_of = batch_of or {}
+
+    def rank(selector):
+        covered = [test for test in expected if selected(test, selector)]
+        if any(test not in on_probation for test in covered):
+            return 0
+        return min((batch_of.get(test, 1) for test in covered), default=1)
+
+    groups, taken = [], set()
+    for level in sorted({rank(s) for s in selectors}):
+        group = [s for s in selectors if rank(s) == level]
+        tests = {test for test in expected if any(selected(test, s) for s in group)} - taken
+        taken |= tests
+        if tests:
+            groups.append((group, tests, on_probation & tests))
+    return groups
 
 
 def name_screenshots(exported, screens):
@@ -696,7 +731,7 @@ RUNNER_TEST_READERS = ('test_filled_button_contrast', 'test_filled_button_labels
                        'test_lane_runner.T3Tests', 'test_lane_sim.LaneSimTests', 'test_sharing_kit',
                        'test_sessionkit_pass', 'test_mini_player_keep_out', 'test_package_resolved',
                        'test_building_md', 'test_third_party_notices', 'test_main_thread_reads',
-                       'test_repeat_trigger_scan',
+                       'test_repeat_trigger_scan', 'test_ordered_store_requests',
                        'test_starter_catalog',
                        # The accessibility source scans read App/ Swift files (#2041).
                        'test_screen_change_cue', 'test_selected_trait', 'test_screen_title_heading',
@@ -740,7 +775,7 @@ def on_hosted_runner(environ=None):
     return environ.get('RUNNER_ENVIRONMENT') == 'github-hosted'
 
 
-PORTABLE_STEPS = ('runner-tests', 'ops', 'contracts', 'public-tree', 'surfaces', 'inventory', 'main-thread-reads', 'repeat-trigger-scan', 'browser', 'share-link', 'web', 'research')
+PORTABLE_STEPS = ('runner-tests', 'ops', 'contracts', 'public-tree', 'surfaces', 'inventory', 'main-thread-reads', 'repeat-trigger-scan', 'ordered-store-requests', 'browser', 'share-link', 'web', 'research')
 PORTABLE_LEFT_OUT = {
     'package-build': 'needs the Swift toolchain on macOS; hosted-sessionkit-linux.yml builds the Foundation-only modules on Linux',
     'package-core': 'needs the Swift toolchain on macOS (SessionKitCoreTests also run in hosted-sessionkit-linux.yml)',
@@ -1960,6 +1995,8 @@ class Run:
         self.command('main-thread-reads', [sys.executable, 'scripts/main_thread_reads.py'], timeout=120)
         # A once-per-trigger check that stays true after it fires (#2626) fails here, not on the phone (#2633).
         self.command('repeat-trigger-scan', [sys.executable, 'scripts/repeat_trigger_scan.py'])
+        # A store request started from its own Task takes its place in line after a hop, so two can swap (#3335).
+        self.command('ordered-store-requests', [sys.executable, 'scripts/ordered_store_requests.py'])
         if not (ROOT / 'node_modules').exists():
             raise RuntimeError('node_modules is missing in this worktree; run scripts/setup-worktree.sh')
         # A lockfile that moved since node_modules was installed can fail the bundle check with "is stale". The
@@ -2185,7 +2222,7 @@ class Run:
         self.save()
 
     def xcode(self, plan, device, rebuild, ios=None, only=(), probation=None, simulator_slot_fd=None,
-              require_build=False):
+              require_build=False, probation_batches=None):
         if input_identity() != self.manifest['input_sha256']:
             raise RuntimeError('Inputs changed before Xcode verification')
         scheme, name, timeout = PLANS[plan]
@@ -2291,15 +2328,38 @@ class Run:
             # An AudioLoopback test asks the Mac to record what it plays (#1790). A server starts only when the
             # request names one; in a whole-plan run (Release, a full AudioAdapters) it skips, and that's expected.
             asked = selectors if scheme == 'SpokenMarginsAppBehavior' else ()
+            batch_of = {test: min(batch for entry, batch in (probation_batches or {}).items() if selected(test, entry))
+                        for test in expected
+                        if any(selected(test, entry) for entry in (probation_batches or {}))}
+            groups = test_groups(selectors, expected, on_probation, batch_of)
             with lane_audio_window.serve(self.output, asked) as audio:
                 try:
-                    self.command('xcode-tests', base + [f'-only-testing:{s}' for s in selectors] + [
-                                 'test-without-building', '-parallel-testing-enabled', 'NO',
-                                 '-collect-test-diagnostics', 'never',
-                                 '-retry-tests-on-failure', '-test-iterations', '2',
-                                 '-test-timeouts-enabled', 'YES', '-resultBundlePath', str(result_bundle)],
-                                 timeout=timeout, expected=expected, tests=True, probation=on_probation, startup=startup,
-                                 allowed_skips=lane_audio_window.unasked(expected, asked))
+                    failure = None
+                    for index, (group_selectors, group_expected, group_probation) in enumerate(groups):
+                        name = 'xcode-tests' if index == 0 else (
+                            'xcode-tests-probation' if index == 1 else f'xcode-tests-probation-{index}')
+                        budget = timeout
+                        if index:  # one clock for the plan: each later step gets what the earlier steps left
+                            budget -= sum(step.get('seconds', 0) for step in self.manifest['steps']
+                                          if str(step.get('name')).startswith('xcode-tests'))
+                            if budget < PROBATION_MINIMUM_SECONDS or (self.manifest['steps'] or [{}])[-1].get('interrupted'):
+                                print(f'{name}: skipped, {max(round(budget), 0)}s of the {timeout}s plan budget left',
+                                      flush=True)
+                                break
+                        try:
+                            self.command(name, base + [f'-only-testing:{s}' for s in group_selectors] + [
+                                         'test-without-building', '-parallel-testing-enabled', 'NO',
+                                         '-collect-test-diagnostics', 'never',
+                                         '-retry-tests-on-failure', '-test-iterations', '2',
+                                         '-test-timeouts-enabled', 'YES', '-resultBundlePath',
+                                         str(result_bundle if index == 0 else self.output / f'tests-probation-{index}.xcresult')],
+                                         timeout=budget, expected=group_expected, tests=True, probation=group_probation,
+                                         startup=startup, allowed_skips=lane_audio_window.unasked(group_expected, asked))
+                        except RuntimeError as error:
+                            # Later steps still report after an earlier one fails; the run fails after the last.
+                            failure = failure or error
+                    if failure is not None:
+                        raise failure
                 finally:  # a failed or skipped test raises here, and its verdict is what the report needs most
                     if audio:
                         step = self.manifest['steps'][-1]
@@ -2391,7 +2451,7 @@ def main():
         parser.error('--build-only takes no --device, --require-build or --only-testing')
     if errors := validate():
         parser.error('; '.join(errors))
-    from test_inventory import scripted_journeys  # only the journeys plan reads the list
+    from test_inventory import probation_batches, scripted_journeys  # only the journeys plan reads the list
     journeys = scripted_journeys() if args.plan == 'journeys' else None
     if journeys and args.only_testing:
         parser.error('--plan journeys runs TestPlans/scripted-journeys.json; it takes no --only-testing')
@@ -2425,6 +2485,7 @@ def main():
                     run.manifest['scripted_journeys'] = journeys
                     run.xcode(args.plan, args.device, args.rebuild, args.ios,
                               journeys['gating'] + journeys['probation'], probation=journeys['probation'],
+                              probation_batches=probation_batches(),
                               simulator_slot_fd=args.simulator_slot_fd,
                               **({'require_build': True} if args.require_build else {}))
                 else:

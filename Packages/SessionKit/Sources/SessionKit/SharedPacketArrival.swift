@@ -23,6 +23,14 @@ public enum SharedPacketArrival {
         isListeningMap || requiresRecipientItem || shownOnAnEarlierLaunch ? .review : .openItem
     }
 
+    /// Whether the sheet is up for a review. It is for a file with a choice to make, or one whose direct open failed
+    /// (`opensDirectly` off), and never while a Margin is being recorded or written: the sheet can't be swiped away,
+    /// so it would cover the capture, and the listener could only reach Save by answering it first (the audit on
+    /// PR #3298). The review waits, and the sheet comes up when that Margin is saved or cancelled.
+    public static func showsSheet(opensDirectly: Bool, navigationLocked: Bool) -> Bool {
+        !opensDirectly && !navigationLocked
+    }
+
     /// Shown while the file's item is placed (a podcast episode may need fetching first).
     public static func openingMessage(senderName: String?) -> String {
         "Opening \(possessive(senderName)) Margins…"

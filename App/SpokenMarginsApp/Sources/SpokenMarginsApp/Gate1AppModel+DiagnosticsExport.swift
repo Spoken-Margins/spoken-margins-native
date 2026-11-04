@@ -26,7 +26,7 @@ extension Gate1AppModel {
         case .success(let file):
             return file
         case .failure(let error):
-            reportFailure("Diagnostics export failed: \(error.localizedDescription)")
+            reportFailure(error, context: "Diagnostics export failed")
             return nil
         }
     }

@@ -87,9 +87,10 @@ extension Gate1AppModel {
         case rejectedNeedsNewerApp
     }
 
+    /// `shareLinkId` is the link the file was downloaded from, kept so the listener can report it (#2846).
     @discardableResult
-    func stageSpokenMarginsPackageImport(from sourceURL: URL) async -> Bool {
-        await stageSpokenMarginsPackage(from: sourceURL, announcesRejection: true) == .opened
+    func stageSpokenMarginsPackageImport(from sourceURL: URL, shareLinkId: String? = nil) async -> Bool {
+        await stageSpokenMarginsPackage(from: sourceURL, announcesRejection: true, shareLinkId: shareLinkId) == .opened
     }
 
     /// Opens a packet from a place that cannot wait for the staging (a URL the system handed over). The staging
@@ -106,10 +107,11 @@ extension Gate1AppModel {
 
     func stageSpokenMarginsPackage(
         from sourceURL: URL, announcesRejection: Bool, shownOnAnEarlierLaunch: Bool = false,
-        releaseSource: (@MainActor () -> Void)? = nil
+        shareLinkId: String? = nil, releaseSource: (@MainActor () -> Void)? = nil
     ) async -> SpokenMarginsPackageStageOutcome {
         switch await packageImport.stage(from: sourceURL, announcesRejection: announcesRejection,
-                                         shownOnAnEarlierLaunch: shownOnAnEarlierLaunch, releaseSource: releaseSource) {
+                                         shownOnAnEarlierLaunch: shownOnAnEarlierLaunch, shareLinkId: shareLinkId,
+                                         releaseSource: releaseSource) {
         case .rejected(let needsNewerApp):
             return needsNewerApp ? .rejectedNeedsNewerApp : .rejected
         case .staged:
@@ -140,7 +142,7 @@ extension Gate1AppModel {
             link,
             stage: { [weak self] file in
                 guard let self else { return }
-                let opened = await self.stageSpokenMarginsPackageImport(from: file)
+                let opened = await self.stageSpokenMarginsPackageImport(from: file, shareLinkId: link.id)
                 self.diagnostics["lastShareLink"] = opened ? "opened" : "rejected"
             },
             fail: { [weak self] message, retryable in
@@ -206,6 +208,16 @@ extension Gate1AppModel {
             await self.packageImport.confirm(began)
             if showsProgress, self.sourceImportProgressMessage == opening { self.sourceImportProgressMessage = nil }
         }
+    }
+
+    /// The review the sheet shows: one the listener has a choice on, or whose direct open failed, once no Margin is
+    /// being recorded or written. An error can arrive after the listener has started a Margin (the audit on PR #3298);
+    /// the sheet can't be swiped away, so it waits for the Margin to be saved or cancelled.
+    var packageImportSheetReview: SpokenMarginsPackageImportReview? {
+        guard let review = spokenMarginsPackageImportReview,
+              SharedPacketArrival.showsSheet(opensDirectly: review.opensDirectly, navigationLocked: recordingNavigationIsLocked)
+        else { return nil }
+        return review
     }
 
     /// Opens the item a file finished importing under a Margin that was being recorded or written, once that Margin is closed.

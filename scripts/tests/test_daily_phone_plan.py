@@ -289,6 +289,40 @@ class DeliveryTests(unittest.TestCase):
             with self.assertRaises(daily.RelayNotConfigured):
                 REAL_RELAY('hello')
 
+    def relay_env(self, **extra):
+        env = {k: v for k, v in os.environ.items() if not k.startswith(('SM_DAILY_RELAY', 'SM_LANE_OPEN'))}
+        return patch.dict(os.environ, {**env, 'SM_DAILY_RELAY_URL': 'https://relay.invalid/fire', **extra}, clear=True)
+
+    def test_relay_reads_its_token_from_the_keychain_not_the_plist(self):
+        """2026-11-04: the token moved to the login Keychain (sm-daily-relay-token); the plist holds only the URL."""
+        sent = []
+
+        class Response:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def read(self): return b'{}'
+
+        def urlopen(request, timeout):
+            sent.append(request.get_header('Authorization'))
+            return Response()
+
+        keychain = Mock(return_value='from-keychain')
+        with self.relay_env(), patch.object(daily, 'keychain_secret', keychain), \
+                patch('urllib.request.urlopen', urlopen):
+            REAL_RELAY('hello')
+        keychain.assert_called_once_with('sm-daily-relay-token')
+        self.assertEqual(sent, ['Bearer from-keychain'])
+        sent.clear()
+        with self.relay_env(SM_DAILY_RELAY_TOKEN='by-hand'), patch.object(daily, 'keychain_secret', keychain), \
+                patch('urllib.request.urlopen', urlopen):
+            REAL_RELAY('hello')
+        self.assertEqual(sent, ['Bearer by-hand'])  # a run by hand may still set it
+
+    def test_relay_without_a_keychain_token_is_not_configured(self):
+        with self.relay_env(), patch.object(daily, 'keychain_secret', Mock(return_value='')):
+            with self.assertRaisesRegex(daily.RelayNotConfigured, 'sm-daily-relay-token'):
+                REAL_RELAY('hello')
+
     def test_pinned_binary_is_not_pruned_when_rolling_tip_advances(self):
         for day in range(15, 19):
             (self.root / f'202610{day}-080000-aaaaaaa').mkdir()

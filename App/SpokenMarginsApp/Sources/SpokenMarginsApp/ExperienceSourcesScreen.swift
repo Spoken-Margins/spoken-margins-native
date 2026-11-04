@@ -165,7 +165,11 @@ struct ExperienceSourcesScreen: View {
             .task(id: ShowRowsKey(
                 subscriptions: model.feedSubscriptions.map { "\($0.id):\($0.state.rawValue)" },
                 unplayedCount: model.followedSourceEntries.count,
-                isRefreshing: model.isRefreshingFollowedSources
+                isRefreshing: model.isRefreshingFollowedSources,
+                // Finishing an episode moves its show's row to the next unread one, so a change in what the Library
+                // holds or has finished re-reads the rows.
+                libraryCount: model.libraryItems.count,
+                finishedCount: model.libraryItems.filter(\.isCompleted).count
             )) {
                 await model.reloadFollowingShowEntries()
             }
@@ -281,6 +285,8 @@ struct ExperienceSourcesScreen: View {
         var subscriptions: [String]
         var unplayedCount: Int
         var isRefreshing: Bool
+        var libraryCount: Int
+        var finishedCount: Int
     }
 
     private struct ArtworkKey: Equatable {
@@ -374,7 +380,7 @@ private struct FollowingShowRowView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(isPlayStarting)
-                .accessibilityLabel("Play newest episode of \(row.title)")
+                .accessibilityLabel("Play \(row.newestEpisodeTitle ?? "next episode") from \(row.title)")
                 .accessibilityIdentifier("sources.show.\(row.id).play")
             }
             Button(action: open) {

@@ -257,6 +257,35 @@ struct Build23TransportConsequenceCard: View {
     }
 }
 
+/// The recipient preview's share actions: back to the selection, "Share verified package", and under them what else
+/// the build offers to send ("Share as link", #487). One view, so a test can render the real buttons in each state.
+struct Build23VerifiedShareActions<LinkRow: View>: View {
+    let isFileShareEnabled: Bool
+    let onEdit: () -> Void
+    let onShareFile: () -> Void
+    @ViewBuilder let linkRow: () -> LinkRow
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            AdaptiveStack(spacing: 12) {
+                Button("Edit selection", systemImage: "arrow.left", action: onEdit)
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("build23.sender.preview.edit")
+
+                Spacer()
+
+                Button("Share verified package", systemImage: "square.and.arrow.up", action: onShareFile)
+                    .filledActionButton()
+                    .disabled(!isFileShareEnabled)
+                    .accessibilityHint("Opens the system share sheet with the verified package file")
+                    .accessibilityIdentifier("build23.sender.share.present")
+            }
+
+            linkRow()
+        }
+    }
+}
+
 struct Build23MarginSelectionRow: View {
     let margin: Build23SharingMarginSnapshot
     let isEnabled: Bool
@@ -478,7 +507,7 @@ struct Build23MarginEditor: View {
                 DisclosureGroup("Placement details", isExpanded: $showsPositionContext) {
                     VStack(alignment: .leading, spacing: 10) {
                         Text("These excerpts help place the Margin for the recipient. Most people do not need to edit them.")
-                            .font(.caption)
+                            .font(.footnote)
                             .foregroundStyle(AppColors.secondaryText)
                         TextField(
                             "Words before this Margin",

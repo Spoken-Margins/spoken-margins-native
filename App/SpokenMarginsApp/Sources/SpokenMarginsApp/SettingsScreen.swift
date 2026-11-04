@@ -347,7 +347,7 @@ struct SettingsScreen: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Help make listening maps")
                             Text("Send transcripts of public episodes to the Spoken Margins server, which turns them into maps and then deletes them.")
-                                .font(.caption)
+                                .font(.footnote)
                                 .foregroundStyle(.secondary)
                         }
                     }
@@ -391,7 +391,7 @@ struct SettingsScreen: View {
                         }
                     }
                     Text("App state and recent playback events, as a file for a bug report. It includes the titles and links of items in your Library. It stays on this device unless you share it.")
-                        .font(.caption)
+                        .font(.footnote)
                         .foregroundStyle(AppColors.secondaryText)
                     Button {
                         isExportingListeningSignals = true
@@ -417,7 +417,7 @@ struct SettingsScreen: View {
                         }
                     }
                     Text("A private log of listening time, Margins, shares and finishes for followed sources: titles, times and counts, never Margin text or audio. It stays on this device unless you export it.")
-                        .font(.caption)
+                        .font(.footnote)
                         .foregroundStyle(AppColors.secondaryText)
                     #endif
                 }

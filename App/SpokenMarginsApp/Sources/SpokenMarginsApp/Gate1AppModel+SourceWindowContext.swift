@@ -315,7 +315,7 @@ extension Gate1AppModel {
                     self.refreshMarginRow(sessionId: interjection.sessionId, interjectionId: interjectionId)
                 }
                 if reportsResult {
-                    self.reportWarning("Source context could not be recovered: \(error.localizedDescription)")
+                    self.reportWarning(ListenerErrorText.line(prefix: "Source context could not be recovered:", error: error))
                 }
                 // Source-window context is redundant, best-effort evidence.
                 // The Margin and its timestamp are already durable, and the

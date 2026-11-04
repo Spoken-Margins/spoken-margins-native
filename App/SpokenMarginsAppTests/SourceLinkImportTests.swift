@@ -363,7 +363,7 @@ final class SourceLinkImportTests: XCTestCase {
         episode.audioURL = nil
         try repository.saveFeedEntry(episode)
         let episodeRoute = try await coordinator.importRoute(for: episode, subscriptionKind: subscription.source.kind)
-        XCTAssertEqual(episodeRoute, .episode(audioURL: "https://cdn.voiceovers.example/episode.mp3"))
+        XCTAssertEqual(episodeRoute, .episode(audioURL: "https://cdn.voiceovers.example/episode.mp3", declaredAudio: true))
 
         // One no longer in the feed may still be an episode: the podcast path tries its page, as before.
         let gone = FeedEntry(id: "gone", subscriptionId: subscription.id, canonicalURL: "https://voiceovers.example/p/gone", title: "Gone")

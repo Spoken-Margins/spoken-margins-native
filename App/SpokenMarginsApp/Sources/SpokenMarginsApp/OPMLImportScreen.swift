@@ -139,7 +139,7 @@ final class OPMLImportModel: ObservableObject {
         case .malformed:
             return "This OPML file is damaged or cut off, so nothing was imported. Try exporting it again."
         case nil:
-            return "The file couldn't be read. \(error.localizedDescription)"
+            return ListenerErrorText.line(prefix: "The file couldn't be read.", error: error)
         }
     }
 }
