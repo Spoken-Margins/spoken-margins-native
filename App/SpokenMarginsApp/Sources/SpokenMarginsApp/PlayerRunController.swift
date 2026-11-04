@@ -6,8 +6,9 @@ import SessionKitPersistence
 /// Spoken Margins was playing an item, lands on that item at the time it was taken (#2542; `docs/design/live-sessions/
 /// DESIGN.md` section 2 point 12). The model reports each snapshot here (`note`), `PlayerRunRecorder` turns them into
 /// runs of steady playback, and `WatchMarginReceiver` hands the runs to `LiveSessionFiling` and each placement back to
-/// `fileOntoPlayerItem`. A placement that can't be written (an item with no session, a Mark with no recording, a failed write) returns
-/// false, and the receiver files it as a quick session as before, so a Margin is never lost.
+/// `fileOntoPlayerItem`. A Lock Screen Mark becomes a written Margin there (#3203), and a Watch Margin taken while an
+/// article played its publisher's recording lands on the article's words. A placement that can't be written (an item with
+/// no session, a failed write) returns false, and the receiver files it as a quick session as before, so a Margin is never lost.
 ///
 /// All of it runs on the main actor, deliberately: the write moves the item's saved place for a few milliseconds and puts it
 /// back (`PlayerItemMargin`), and the engine names a spoken Margin from the count of the session's Margins. The model's own
@@ -41,10 +42,17 @@ enum PlayerRunController {
         guard let model, let store = model.store else { return false }
         let saved: Interjection
         do {
-            saved = try PlayerItemMargin.placeSpoken(
-                audioPath: placement.audioPath, atMediaTimeMs: placement.positionMs, markedAt: placement.markedAt,
-                itemId: placement.itemId, repository: store
-            )
+            if let audioPath = placement.audioPath {
+                saved = try PlayerItemMargin.placeSpoken(
+                    audioPath: audioPath, atMediaTimeMs: placement.positionMs, markedAt: placement.markedAt,
+                    itemId: placement.itemId, repository: store
+                )
+            } else {
+                // A Lock Screen Mark: a written Margin with words that say what it is (#3203).
+                saved = try PlayerItemMargin.placeMark(
+                    atMediaTimeMs: placement.positionMs, markedAt: placement.markedAt, itemId: placement.itemId, repository: store
+                )
+            }
         } catch {
             model.diagnostics["playerItemMargin"] = "filed as quick: \(String(describing: error))"
             return false
