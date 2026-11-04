@@ -208,6 +208,16 @@ extension Gate1AppModel {
         }
     }
 
+    /// The review the sheet shows: one the listener has a choice on, or whose direct open failed, once no Margin is
+    /// being recorded or written. An error can arrive after the listener has started a Margin (the audit on PR #3298);
+    /// the sheet can't be swiped away, so it waits for the Margin to be saved or cancelled.
+    var packageImportSheetReview: SpokenMarginsPackageImportReview? {
+        guard let review = spokenMarginsPackageImportReview,
+              SharedPacketArrival.showsSheet(opensDirectly: review.opensDirectly, navigationLocked: recordingNavigationIsLocked)
+        else { return nil }
+        return review
+    }
+
     /// Opens the item a file finished importing under a Margin that was being recorded or written, once that Margin is closed.
     func openDeferredImportedItemIfReady() {
         packageImport.openDeferredItemIfReady()
