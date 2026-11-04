@@ -65,11 +65,11 @@ week, a month, then permanent) has someone to pause. The flow:
    attested request says nothing about what is shared. A bad, spent or stale permit
    is 403 `bad_permit`; a sender struck since the check is 403 `sharing_paused`.
 3. The server ties the new link to `HMAC-SHA-256(server key, install key id)` in
-   `state/senders/bindings` until the link expires. The key is made once in
+   `state/senders/bindings` until the link expires or is reported. The key is made once in
    `state/senders/key` (mode 0600) and has to persist: a pause must outlive a
    restart. A report of that link (`reportLink`, after the takedown) records it in
-   the sender's file in `state/senders/senders`: link ids and times, the ladder step
-   and a "tell them" flag. No category, reporter, content or install key id is kept.
+   the sender's file in `state/senders/senders` and deletes the tie: keyed hashes of link
+   ids with times, the ladder step and a "tell them" flag. No category, reporter, content or install key id is kept.
 4. A link made without a permit is not attributed and counts against nobody. That is
    today's behaviour and the default, so the app that exists keeps working. Start
    `serve -links-require-permit` once the app sends permits; then an upload with none
