@@ -509,7 +509,9 @@ final class SpokenMarginsPackageImportCoordinator {
             try environment.showImportedItem(itemId, store)
             return false
         }
-        try environment.refreshImportedLibrary(store)
+        // The import is saved; a Library refresh that fails must not bring an error sheet up over the Margin.
+        // The item opens, and loads its rows, when the lock lifts.
+        try? environment.refreshImportedLibrary(store)
         deferredItemId = itemId
         environment.recordDiagnostic("lastSpokenMarginsPackageOpen", "waiting_for_margin:\(itemId)")
         return true
