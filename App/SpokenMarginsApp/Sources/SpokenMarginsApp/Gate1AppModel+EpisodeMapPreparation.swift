@@ -225,10 +225,10 @@ extension Gate1AppModel {
     /// Deletes the item's episode-map jobs on a background task, in line with the automatic queueing's saves (#2509).
     func deleteEpisodeMapPreparationJobsInBackground(itemId: String) {
         guard let store else { return }
-        Task {
-            _ = try? await StoreReader(store).readInOrder(AutomaticEpisodeMapJobs.orderKey) {
-                EpisodeMapJobCleanup.deleteJobs(itemId: itemId, store: $0)
-            }
+        // Takes its place in line now, before this returns, so a request's save made just before it is ahead of it and
+        // the delete can't land first and leave the job behind (#3331).
+        _ = StoreReader(store).enqueueInOrder(AutomaticEpisodeMapJobs.orderKey) {
+            EpisodeMapJobCleanup.deleteJobs(itemId: itemId, store: $0)
         }
     }
 

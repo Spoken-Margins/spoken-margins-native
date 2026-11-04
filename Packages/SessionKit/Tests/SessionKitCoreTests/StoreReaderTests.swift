@@ -99,6 +99,37 @@ final class StoreReaderTests: XCTestCase {
         let other = try await reader.readLatest("margins") { _ in 3 }
         XCTAssertEqual(other, 3, "another key is independent")
     }
+
+    /// #3331: `enqueueInOrder` takes its place in line before it returns, so requests made one after the other in one
+    /// synchronous stretch run in that order, however busy the machine is. (Two unstructured `Task`s that each called
+    /// `readInOrder` could take their places in either order.)
+    func testRequestsEnqueuedInOneStretchRunInTheOrderTheyWereMade() async throws {
+        let reader = StoreReader(try makeStore())
+        for round in 0..<200 {
+            let order = Order()
+            let key = "enqueue-\(round)"
+            let first = reader.enqueueInOrder(key) { _ in order.append("first") }
+            let second = reader.enqueueInOrder(key) { _ in order.append("second") }
+            let third = reader.enqueueInOrder(key) { _ in order.append("third") }
+            _ = try await (second.value, third.value, first.value)
+            XCTAssertEqual(order.values, ["first", "second", "third"], "round \(round)")
+        }
+    }
+
+    func testAnEnqueuedRequestThatIsNeverAwaitedStillRuns() async throws {
+        let reader = StoreReader(try makeStore())
+        let order = Order()
+        _ = reader.enqueueInOrder("dropped") { _ in order.append("dropped") }
+        try await reader.readInOrder("dropped") { _ in order.append("after") }
+        XCTAssertEqual(order.values, ["dropped", "after"])
+    }
+}
+
+private final class Order: @unchecked Sendable {
+    private let lock = NSLock()
+    private var items: [String] = []
+    var values: [String] { lock.lock(); defer { lock.unlock() }; return items }
+    func append(_ item: String) { lock.lock(); items.append(item); lock.unlock() }
 }
 
 private final class Ran: @unchecked Sendable {
