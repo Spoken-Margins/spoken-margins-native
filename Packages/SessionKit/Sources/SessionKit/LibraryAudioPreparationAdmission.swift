@@ -11,6 +11,8 @@ public enum LibraryAudioPreparationAdmission {
     /// transcript, show notes) is there to read along with, not to be narrated.
     public static func playsItsOwnAudio(_ item: some LibraryItemFields) -> Bool {
         if item.mediaType == TargetType.browserOwnedMedia.rawValue { return true }
+        // A spoken note's text is the transcript of the listener's own recording, never to be read back in a synthetic voice.
+        if SpokenNoteItem.isSpokenNote(mediaType: item.mediaType) { return true }
         switch item.media?.sourceType {
         case .nativeMediaFile, .remoteStream, .browserOwnedMedia: return true
         case .none, .generatedTTSRealtime, .generatedTTSPrerendered: return false

@@ -236,7 +236,7 @@ public enum PreparedNarrationFallback {
 
     /// Items whose audio is the source itself, so reading their text isn't a substitute.
     private static let audioFirstMediaTypes: Set<String> = [
-        TargetType.transcriptBackedMedia.rawValue, TargetType.browserOwnedMedia.rawValue, "audiobook", "guided_tour"
+        TargetType.transcriptBackedMedia.rawValue, TargetType.browserOwnedMedia.rawValue, "audiobook", "guided_tour", SpokenNoteItem.mediaType
     ]
 
     private static func identifier(of media: ItemMedia?) -> String {

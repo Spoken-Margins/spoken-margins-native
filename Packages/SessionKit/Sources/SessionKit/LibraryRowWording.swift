@@ -33,6 +33,7 @@ public enum LibraryRowWording {
         usesNewReader: Bool
     ) -> String {
         if mediaType.lowercased() == "guided_tour" { return "Guided tour" }
+        if SpokenNoteItem.isSpokenNote(mediaType: mediaType) { return "Spoken note" }
         switch contentType(mediaType: mediaType, sourceReference: sourceReference, sourceReferenceType: sourceReferenceType) {
         case .pdf:
             // The app reads a PDF through the new reader only when it's stored as "pdf".
