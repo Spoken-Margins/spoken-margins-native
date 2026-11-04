@@ -58,6 +58,10 @@ final class SpokenMarginsPackageImportCoordinator {
         var publishError: @MainActor (String?) -> Void
         /// Saves a shared Listening Map for a text item and tells a running session about it. Nil saves straight to the store.
         var attachListeningMap: (@MainActor (ListeningMap) throws -> Void)? = nil
+        /// True while a Margin is being recorded or written: the listener's position is held (`recordingNavigationIsLocked`).
+        var navigationIsLocked: @MainActor () -> Bool = { false }
+        /// Brings the Library rows up to date with an item an import added, without opening it.
+        var refreshImportedLibrary: @MainActor (_ store: SQLiteSessionStore) throws -> Void = { _ in }
         /// Names main-thread work for the hang probe. `stage` no longer has any (#2510).
         var labels = MainThreadOperationLabels()
     }
@@ -445,8 +449,9 @@ final class SpokenMarginsPackageImportCoordinator {
                 environment.recordDiagnostic("lastSpokenMarginsPackageImport", "imported:\(layerId):\(interjectionIds.count)")
                 environment.recordPacketImport(itemId, review.contents.manifest.packageId, interjectionIds.count)
             }
+            var openingWaits = false
             if let itemId {
-                try environment.showImportedItem(itemId, store)
+                openingWaits = try presentImportedItem(itemId, store: store)
                 if let item,
                    item.media?.sourceType == .remoteStream,
                    let rawURL = item.media?.url,
@@ -462,7 +467,9 @@ final class SpokenMarginsPackageImportCoordinator {
             queue.finish(review.id)
             isImporting = false
             review.releaseSource?()
-            if !review.opensDirectly {
+            if openingWaits {
+                environment.reportConfirmation(SharedPacketArrival.waitingToOpenMessage(senderName: review.contents.manifest.senderDisplayLabel))
+            } else if !review.opensDirectly {
                 environment.reportConfirmation("Imported shared Margins. Playback has not started.")
             } else if let announcement = SharedPacketArrival.announcement(
                 newMarginCount: newMarginCount, senderName: review.contents.manifest.senderDisplayLabel,
@@ -482,6 +489,43 @@ final class SpokenMarginsPackageImportCoordinator {
             }
             environment.recordDiagnostic("lastSpokenMarginsPackageImport", "failed:\(error.localizedDescription)")
             environment.reportFailure(error, "Shared Margins import failed")
+        }
+    }
+
+    // MARK: Opening the imported item
+
+    /// The item an import finished while a Margin was being recorded or written. It opens once that Margin is saved or
+    /// cancelled (`openDeferredItemIfReady`).
+    private(set) var deferredItemId: String?
+
+    /// The one place an import turns into navigation (the audits on PR #3298). A Margin being recorded or written holds
+    /// the listener's position, and an import can finish at any moment, after a fetch that took seconds, so no import
+    /// moves the active item, the item detail or the screen while the lock is on. The item is still in the Library,
+    /// and it opens when the lock lifts. Returns whether the opening waits.
+    @discardableResult
+    private func presentImportedItem(_ itemId: String, store: SQLiteSessionStore) throws -> Bool {
+        guard environment.navigationIsLocked() else {
+            deferredItemId = nil
+            try environment.showImportedItem(itemId, store)
+            return false
+        }
+        try environment.refreshImportedLibrary(store)
+        deferredItemId = itemId
+        environment.recordDiagnostic("lastSpokenMarginsPackageOpen", "waiting_for_margin:\(itemId)")
+        return true
+    }
+
+    /// Opens the item an import finished under a Margin, once nothing is being recorded or written. The root view asks
+    /// whenever the lock changes.
+    func openDeferredItemIfReady() {
+        guard let itemId = deferredItemId, !environment.navigationIsLocked() else { return }
+        deferredItemId = nil
+        do {
+            let store = try environment.requireStore()
+            try environment.showImportedItem(itemId, store)
+            environment.recordDiagnostic("lastSpokenMarginsPackageOpen", "opened_after_margin:\(itemId)")
+        } catch {
+            environment.reportFailure(error, "Opening the item after the Margin was saved failed")
         }
     }
 
@@ -736,7 +780,7 @@ final class SpokenMarginsPackageImportCoordinator {
         review.releaseSource?()
         environment.reportConfirmation(outcome.message)
         do {
-            try environment.showImportedItem(itemId, store)
+            try presentImportedItem(itemId, store: store)
         } catch {
             environment.reportFailure(error, "Opening the item after adding a Listening Map failed")
         }

@@ -28,6 +28,13 @@ public enum SharedPacketArrival {
         "Opening \(possessive(senderName)) Margins…"
     }
 
+    /// Said when the file is in the Library but a Margin is being recorded or written, which holds the listener where
+    /// they are; the item opens once that Margin is saved or cancelled.
+    public static func waitingToOpenMessage(senderName: String?) -> String {
+        let owner = name(senderName).map { "\($0)'s" } ?? "Your friend's"
+        return "\(owner) Margins are in your Library. They open when you finish this Margin."
+    }
+
     /// Said once the item's screen is open. Nil on a first arrival, where the item screen already says who sent how
     /// many, and when the file held nothing new; "2 new Margins from Cole" when it added to Margins already there.
     public static func announcement(newMarginCount: Int, senderName: String?, itemHadFriendMargins: Bool) -> String? {

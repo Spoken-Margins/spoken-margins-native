@@ -190,7 +190,8 @@ extension Gate1AppModel {
     /// with no sheet (#3291). The root view calls it when such a review comes up. It starts on the next turn because
     /// the coordinator brings a waiting packet up while the one before it is still finishing its import.
     /// A Margin being recorded or written holds its listening position, so the file waits and the root view asks again
-    /// once it is saved or cancelled (the audit on PR #3298).
+    /// once it is saved or cancelled. That is only the first of two waits: the coordinator also holds the item's
+    /// opening if a Margin starts while the file is being imported (the audits on PR #3298).
     @discardableResult
     func openSharedPacketDirectlyIfReady() -> Task<Void, Never>? {
         guard let review = spokenMarginsPackageImportReview, review.opensDirectly, !recordingNavigationIsLocked else {
@@ -205,6 +206,11 @@ extension Gate1AppModel {
             await self.packageImport.confirm(began)
             if showsProgress, self.sourceImportProgressMessage == opening { self.sourceImportProgressMessage = nil }
         }
+    }
+
+    /// Opens the item a file finished importing under a Margin that was being recorded or written, once that Margin is closed.
+    func openDeferredImportedItemIfReady() {
+        packageImport.openDeferredItemIfReady()
     }
 
     /// Prepares the summary audio Skim plays for each scene of a mapped item; every open runs it. The map and the saved
@@ -390,6 +396,11 @@ extension SpokenMarginsPackageImportCoordinator.Environment {
             publishIsImporting: { [weak model] in model?.isImportingSpokenMarginsPackage = $0 },
             publishError: { [weak model] in model?.spokenMarginsPackageImportError = $0 },
             attachListeningMap: { [weak model] map in try model?.attachSharedTextListeningMap(map) },
+            navigationIsLocked: { [weak model] in model?.recordingNavigationIsLocked ?? false },
+            refreshImportedLibrary: { [weak model] store in
+                guard let model else { return }
+                model.libraryItems = try model.loadLibraryRows(store: store)
+            },
             labels: model.hangTelemetry.labels
         )
     }

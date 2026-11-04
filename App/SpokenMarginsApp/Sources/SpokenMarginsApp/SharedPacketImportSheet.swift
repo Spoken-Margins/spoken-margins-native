@@ -25,6 +25,9 @@ struct SharedPacketImportSheet<Sheet: View>: ViewModifier {
             .onChange(of: model.spokenMarginsPackageImportReview?.id, initial: true) {
                 model.openSharedPacketDirectlyIfReady()
             }
-            .onChange(of: model.recordingNavigationIsLocked) { model.openSharedPacketDirectlyIfReady() }
+            .onChange(of: model.recordingNavigationIsLocked) {
+                model.openSharedPacketDirectlyIfReady()
+                model.openDeferredImportedItemIfReady()
+            }
     }
 }

@@ -49,4 +49,11 @@ final class SharedPacketArrivalTests: XCTestCase {
         XCTAssertEqual(SharedPacketArrival.openingMessage(senderName: " "), "Opening your friend's Margins…")
         XCTAssertEqual(SharedPacketArrival.openingMessage(senderName: nil), "Opening your friend's Margins…")
     }
+
+    func testTheWaitingLineSaysTheMarginsAreSavedAndWhenTheyOpen() {
+        XCTAssertEqual(SharedPacketArrival.waitingToOpenMessage(senderName: "Cole"),
+                       "Cole's Margins are in your Library. They open when you finish this Margin.")
+        XCTAssertEqual(SharedPacketArrival.waitingToOpenMessage(senderName: nil),
+                       "Your friend's Margins are in your Library. They open when you finish this Margin.")
+    }
 }
