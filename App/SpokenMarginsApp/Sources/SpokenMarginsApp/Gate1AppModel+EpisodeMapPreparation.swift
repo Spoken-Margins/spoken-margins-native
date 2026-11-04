@@ -238,6 +238,7 @@ extension Gate1AppModel {
     func purgeExpiredEpisodeMapPreparationJobs(store: SQLiteSessionStore, now: Date = Date()) {
         Task { [weak self] in
             // Read, then confirm just before the files go, so a job asked for again meanwhile keeps its folder.
+            // ordered-ok: the three reads and the delete of one clean-up flow are awaited in sequence inside this one Task
             let found = (try? await StoreReader(store).readInOrder(AutomaticEpisodeMapJobs.orderKey) {
                 EpisodeMapJobCleanup.expiredJobs(now: now, store: $0)
             }) ?? []
@@ -246,6 +247,7 @@ extension Gate1AppModel {
             // `prepare` keeps a live job's old `requestedAt`, so the row can't show a re-request. The items being
             // prepared, or waiting on a download or transcript, are read here on the main actor and kept.
             let busy = self.busyEpisodeMapItemIds
+            // ordered-ok: awaited in sequence after the first read of the same clean-up flow
             let expired = (try? await StoreReader(store).readInOrder(AutomaticEpisodeMapJobs.orderKey) {
                 EpisodeMapJobCleanup.stillExpired(found, now: now, excluding: busy, store: $0)
             }) ?? []
@@ -259,6 +261,7 @@ extension Gate1AppModel {
                 let target = job.hasMap ? directory?.appending(path: "Transient", directoryHint: .isDirectory) : directory
                 Self.removeEpisodeTranscriptionFilesInBackground(itemId: job.itemId, directories: [target].compactMap { $0 })
             }
+            // ordered-ok: awaited in sequence after the second read of the same clean-up flow
             _ = try? await StoreReader(store).readInOrder(AutomaticEpisodeMapJobs.orderKey) {
                 EpisodeMapJobCleanup.deleteExpired(doomed, now: now, excluding: busyNow, store: $0)
             }
@@ -298,6 +301,7 @@ extension Gate1AppModel {
             let downloaded = candidates.filter { self.podcastDownloadCoordinator?.validatedLocalURL(for: $0) != nil }
             // The listener may have turned the setting off while the reads ran.
             if !downloaded.isEmpty, self.automaticEpisodeMapPreparationPolicy == .whileCharging {
+                // ordered-ok: enqueue re-checks each item inside the line (a live job or a finished map is skipped), so two of these in either order save the same jobs
                 _ = try? await StoreReader(store).readInOrder(AutomaticEpisodeMapJobs.orderKey) {
                     AutomaticEpisodeMapJobs.enqueue(itemIds: downloaded, policy: .whileCharging, store: $0)
                 }

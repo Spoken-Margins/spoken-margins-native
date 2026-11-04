@@ -1373,12 +1373,45 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         try store.saveAudioPreparationJob(old)
         try store.saveAudioPreparationJob(selected)
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: databaseURL)
-        await model.prioritizeAudioPreparationJob(id: selected.id)
+        await model.prioritizeAudioPreparationJob(id: selected.id).value
         let new = AudioPreparationJob(id: "new", itemId: "new", manifestId: "new", policy: .demandWindow, requestedAt: Date(timeIntervalSince1970: 2), maximumChunkCount: 2)
         try store.saveAudioPreparationJob(new)
         let jobs = try store.loadAudioPreparationJobs()
         XCTAssertNil(jobs.first(where: { $0.id == old.id })?.userPriority)
         XCTAssertEqual(jobs.sorted(by: Gate1AppModel.audioPreparationJobPrecedes).map(\.id), ["selected", "new", "old"])
+    }
+
+    /// #3335: each picker change took its place in the save line only after its own Task had hopped off the main actor,
+    /// so two quick changes could save in either order and the older budget won. A change now takes its place before
+    /// `offlineStorageBudgetChanged()` returns. Many back-to-back pairs, because the swap was a race, not a certainty.
+    func testTwoQuickStorageBudgetChangesLeaveTheSecondOneSaved() async throws {
+        let defaults = UserDefaults.standard
+        let priorLimit = defaults.object(forKey: "offlineStorageLimitGB") as? Int
+        let priorCache = defaults.object(forKey: "podcastCacheLimitGB") as? Int
+        addTeardownBlock {
+            if let priorLimit { UserDefaults.standard.set(priorLimit, forKey: "offlineStorageLimitGB") } else { UserDefaults.standard.removeObject(forKey: "offlineStorageLimitGB") }
+            if let priorCache { UserDefaults.standard.set(priorCache, forKey: "podcastCacheLimitGB") } else { UserDefaults.standard.removeObject(forKey: "podcastCacheLimitGB") }
+        }
+        let root = FileManager.default.temporaryDirectory.appending(path: "budget-order-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let databaseURL = root.appending(path: "library.sqlite")
+        let store = try SQLiteSessionStore(path: databaseURL.path)
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: databaseURL)
+
+        for round in 0..<60 {
+            let first = [1, 2, 5, 10][round % 4]
+            let second = first == 1 ? 20 : 1
+            model.offlineStorageLimitGB = first
+            let firstChange = model.offlineStorageBudgetChanged()
+            model.offlineStorageLimitGB = second
+            let secondChange = model.offlineStorageBudgetChanged()
+            await firstChange.value
+            await secondChange.value
+            XCTAssertEqual(try store.loadOfflineStorageBudget().limitBytes,
+                           Int64(second) * OfflineStorageBudget.bytesPerGigabyte,
+                           "round \(round): the budget saved last must be the one picked last (\(first) GB, then \(second) GB)")
+        }
     }
 
     func testNewestOpeningBufferComesFirstAndExplicitPriorityOverridesIt() {
@@ -3048,7 +3081,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         let itemCount = model.libraryItems.count
         XCTAssertEqual(model.audioPreparationQueue.count, 200)
 
-        await model.clearAudioPreparationQueue()
+        await model.clearAudioPreparationQueue().value
 
         XCTAssertTrue(try store.loadAudioPreparationJobs().isEmpty)
         XCTAssertEqual(model.libraryItems.count, itemCount)

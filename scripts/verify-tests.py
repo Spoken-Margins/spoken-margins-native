@@ -696,7 +696,7 @@ RUNNER_TEST_READERS = ('test_filled_button_contrast', 'test_filled_button_labels
                        'test_lane_runner.T3Tests', 'test_lane_sim.LaneSimTests', 'test_sharing_kit',
                        'test_sessionkit_pass', 'test_mini_player_keep_out', 'test_package_resolved',
                        'test_building_md', 'test_third_party_notices', 'test_main_thread_reads',
-                       'test_repeat_trigger_scan',
+                       'test_repeat_trigger_scan', 'test_ordered_store_requests',
                        'test_starter_catalog',
                        # The accessibility source scans read App/ Swift files (#2041).
                        'test_screen_change_cue', 'test_selected_trait', 'test_screen_title_heading',
@@ -1960,6 +1960,8 @@ class Run:
         self.command('main-thread-reads', [sys.executable, 'scripts/main_thread_reads.py'], timeout=120)
         # A once-per-trigger check that stays true after it fires (#2626) fails here, not on the phone (#2633).
         self.command('repeat-trigger-scan', [sys.executable, 'scripts/repeat_trigger_scan.py'])
+        # A store request started from its own Task takes its place in line after a hop, so two can swap (#3335).
+        self.command('ordered-store-requests', [sys.executable, 'scripts/ordered_store_requests.py'])
         if not (ROOT / 'node_modules').exists():
             raise RuntimeError('node_modules is missing in this worktree; run scripts/setup-worktree.sh')
         # A lockfile that moved since node_modules was installed can fail the bundle check with "is stale". The

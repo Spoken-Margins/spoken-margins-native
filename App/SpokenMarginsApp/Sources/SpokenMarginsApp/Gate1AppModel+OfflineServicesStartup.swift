@@ -10,10 +10,13 @@ extension Gate1AppModel {
     /// whatever came next. Against another connection to the same file each one could wait out the store's 1 s
     /// busy timeout (#2195).
     func startOfflineServices(store: SQLiteSessionStore, ledger: OfflineStorageLedger) {
+        // The startup save takes its place in line now, ahead of any change the listener makes after this returns, so a
+        // picker change can't be overwritten by the launch value (#3335).
+        let budget = OfflineStorageBudget(limitBytes: Int64(offlineStorageLimitGB) * OfflineStorageBudget.bytesPerGigabyte)
+        let budgetSave = StoreReader(store).enqueueInOrder(OfflineStorageBudget.saveOrderKey) { try $0.saveOfflineStorageBudget(budget) }
         offlineServicesStartupTasks.append(Task { [weak self] in
-            guard let limitGB = self?.offlineStorageLimitGB, !Task.isCancelled else { return }
-            let budget = OfflineStorageBudget(limitBytes: Int64(limitGB) * OfflineStorageBudget.bytesPerGigabyte)
-            try? await StoreReader(store).readInOrder(OfflineStorageBudget.saveOrderKey) { try $0.saveOfflineStorageBudget(budget) }
+            guard !Task.isCancelled else { return }
+            _ = try? await budgetSave.value
             try? await ledger.adoptExistingAssets()
             guard !Task.isCancelled else { return }
             let residualOverage = try? await ledger.enforceBudget()
