@@ -387,7 +387,7 @@ def runner_evidence(sha: str) -> tuple[str | None, str]:
     neither the PR's files nor build inputs. That report explicitly names the resulting re-merge;
     it is sufficient here too. The Test Desk checks interactions on the trunk's merged tip.
 
-    The runner names the trunk it pushed to ("next" until 2026-10-20, then "main"); the 13515da plan
+    The runner names the trunk it pushed to: next until 2026-10-20, then main. The 13515da plan
     (2026-11-04) said "no lane host-test evidence" for a re-merge the runner had reported, because only
     "next" was read. Without evidence, the reason says what was looked for, so the plan can say why.
     """
@@ -402,7 +402,8 @@ def runner_evidence(sha: str) -> tuple[str | None, str]:
               if (c.get('body') or '').startswith('**Merge check (triage desk)')]
     if not checks:
         return None, f'PR #{found.group(1)} has no lane merge check, so it was merged by hand or by another job'
-    trunks = '|'.join(re.escape(name) for name in dict.fromkeys(('next', 'main', BRANCH)))
+    # The names the runner has written in its reports, not a branch this script uses: next until 2026-10-20, then main.
+    trunks = rf'next|main|{re.escape(BRANCH)}'
     for body in '\n'.join(checks).split('**Merge check (triage desk)')[1:]:
         if f'Pushing `{sha[:7]}`' in body and ': PASS' in body.split('\n', 1)[0]:
             ran = re.search(r'- Ran: (.+?)\.?\n', body)

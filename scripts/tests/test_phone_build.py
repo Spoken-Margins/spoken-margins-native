@@ -3039,7 +3039,7 @@ class Plan13515daTests(unittest.TestCase):
         return {'number': 460, 'title': 'Skim', 'url': 'https://example/issue/460', 'state': 'OPEN',
                 'body': '**Owner check:** By ear on the phone: on a podcast with Margins, Skim to a Margin, press '
                         'Skim again during the lead-in, and check the episode carries on afterwards.\n',
-                'labels': {'nodes': [{'name': n} for n in ('priority', 'area: sharing',
+                'labels': {'nodes': [{'name': n} for n in ('priority', 'stream:D5',
                                                             'status: needs-human-validation')]},
                 'milestone': {'title': 'Co-op Experience', 'state': 'OPEN'}, 'comments': {'nodes': []}}
 
