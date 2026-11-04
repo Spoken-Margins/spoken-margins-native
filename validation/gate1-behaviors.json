@@ -750,14 +750,13 @@
         "SessionKitCoreTests.testAICompletionParsesSummaryResponseAndChapters",
         "SessionKitCoreTests.testMalformedAIChaptersPreserveResponseText",
         "SessionKitCoreTests.testJumpToAssistantTurnChapterUsesSummaryPrefaceOffset",
-        "SessionKitCoreTests.testPlaySourceFromBeginningWorksWithoutListeningMap",
-        "Gate1FlowUITests.testGeneratedTurnTimelineRowsAreLabeledAndTappable"
+        "SessionKitCoreTests.testPlaySourceFromBeginningWorksWithoutListeningMap"
       ],
       "negativeEvidence": [
         "No real-device evidence proves long AI response navigation during audible playback."
       ],
       "falsificationFindings": [
-        "Core behavior, malformed chapter degradation, and simulator UI navigation are covered; device audio evidence remains."
+        "Core behavior and malformed chapter degradation are covered; device audio evidence remains."
       ],
       "status": "partial"
     },

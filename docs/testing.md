@@ -36,7 +36,7 @@ Generic device builds and exact archive/export checks remain required when integ
 
 ## Supported OS matrix
 
-Use Xcode 27 and its iOS 27 SDK to build the iOS/iPadOS 26+ app and all extensions. Exercise app, adapter, and scoped UI plans on both iOS 26 and 27 before a platform-support handoff. Run destinations serially and shut down the previous simulator before booting the next to bound RAM. Keep iPad coverage for layout changes and speech-canary coverage for speech changes. A runtime being installed does not require it to be booted. iOS 18 is outside the supported matrix; old evidence remains historical. Simulator runtime/data deletion is a separate maintenance operation.
+Use Xcode 27 and its iOS 27 SDK to build the iOS/iPadOS 26+ app and all extensions. Exercise app, adapter, and scoped UI plans on both iOS 26 and 27 before a platform-support handoff. Run destinations serially and shut down the previous simulator before booting the next to bound RAM. Keep iPad coverage for layout changes. A runtime being installed does not require it to be booted. iOS 18 is outside the supported matrix; old evidence remains historical. Simulator runtime/data deletion is a separate maintenance operation.
 
 ```sh
 .venv/bin/python scripts/verify-tests.py --plan app --ios 26

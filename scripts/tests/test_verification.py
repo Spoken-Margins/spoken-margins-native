@@ -2571,6 +2571,14 @@ class VerificationTests(unittest.TestCase):
                 json.dumps({'version': 1, 'gating': [], 'probation': []}))
             self.assertEqual(inventory.unrun_ui_tests(root), ['TourUITests/testShare'])  # testTour is in ScreenTour
 
+    def test_a_malformed_journey_listing_adds_no_unrun_ui_test_noise(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.plan_root(root)
+            (root / 'TestPlans/scripted-journeys.json').write_text('{')
+            self.assertEqual(inventory.unrun_ui_tests(root), [])
+            self.assertEqual(len(inventory.validate(root)), 1)  # only the listing's own error
+
     def test_every_ui_test_in_the_repository_runs_in_a_job(self):
         self.assertEqual(inventory.unrun_ui_tests(), [])
 

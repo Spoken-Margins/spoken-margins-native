@@ -123,11 +123,10 @@ def unrun_ui_tests(root=ROOT):
     run = set()
     for plan in INTEGRATION_UI_PLANS:
         run |= {test.removeprefix(prefix) for test in plan_tests(root, plan)}
-    if not scripted_journey_errors(root):
-        listing = scripted_journeys(root)
-        selectors = [entry.removeprefix(prefix) for status in listing.values() for entry in status]
-    else:
-        selectors = []
+    if scripted_journey_errors(root):
+        return []  # the listing's own errors are reported; don't bury them under every UI test
+    listing = scripted_journeys(root)
+    selectors = [entry.removeprefix(prefix) for status in listing.values() for entry in status]
     return sorted(test for test in target_tests(root, 'SpokenMarginsAppUITests')
                   if test not in run and not any(matches(test, selector) for selector in selectors))
 
