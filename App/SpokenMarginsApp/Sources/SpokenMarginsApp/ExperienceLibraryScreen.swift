@@ -37,10 +37,16 @@ struct ExperienceLibraryScreen: View {
 
     /// The rows above the items that come and go while the list is open: a copied link's card, the links waiting for
     /// the network, the play queue's entry and its lines. A change here moves every item row (see `keepScrollPlace`).
-    /// The queue's ids stand for its entry: one that names a deleted item changes nothing on screen, so nothing moves.
+    /// The queue's entry counts by what it shows, not by the queue's ids: deleting a queued item from the Library, or the
+    /// Library loading late, changes the entry while the ids stay the same.
     private var rowsAboveItems: [String] {
-        [clipboardLink.showsCard ? "clipboard" : "", model.sourceLinksWaitingForNetwork > 0 ? "waiting" : ""]
-            + playQueue.itemIds
+        let rows = queuedRows
+        return [
+            clipboardLink.showsCard ? "clipboard" : "",
+            model.sourceLinksWaitingForNetwork > 0 ? "waiting" : "",
+            rows.isEmpty ? "" : PlayQueueRows.countLine(rows.count),
+            PlayQueueRows.nextLine(rows) ?? "",
+        ]
     }
 
     /// One identity per item, the Continue row included, so completing the top row removes that row (#585).
