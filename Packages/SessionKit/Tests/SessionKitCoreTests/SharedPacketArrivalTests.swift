@@ -44,6 +44,22 @@ final class SharedPacketArrivalTests: XCTestCase {
         }
     }
 
+    /// The audit on PR #3298: a failed direct open under a Margin must not bring the sheet over the capture.
+    func testTheSheetWaitsForAMarginThatIsBeingRecordedOrWritten() {
+        let table: [(opensDirectly: Bool, locked: Bool, shows: Bool)] = [
+            (false, false, true),  // a listener's choice, or a failed direct open: the sheet
+            (false, true, false),  // the same, under a Margin: it waits
+            (true, false, false),  // opens directly: no sheet
+            (true, true, false),
+        ]
+        for row in table {
+            XCTAssertEqual(
+                SharedPacketArrival.showsSheet(opensDirectly: row.opensDirectly, navigationLocked: row.locked), row.shows,
+                "opensDirectly \(row.opensDirectly), locked \(row.locked)"
+            )
+        }
+    }
+
     func testTheOpeningLineNamesTheSenderWhenThereIsOne() {
         XCTAssertEqual(SharedPacketArrival.openingMessage(senderName: "Cole"), "Opening Cole's Margins…")
         XCTAssertEqual(SharedPacketArrival.openingMessage(senderName: " "), "Opening your friend's Margins…")

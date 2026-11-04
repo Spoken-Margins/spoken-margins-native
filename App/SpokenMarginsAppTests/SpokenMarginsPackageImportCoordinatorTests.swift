@@ -348,6 +348,32 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
         XCTAssertEqual(model.screen, .item)
     }
 
+    /// The third audit on PR #3298: the sheet can't be swiped away, so a review that needs the listener's choice (or whose
+    /// direct open failed after a Margin was started) stays out of sight while a Margin is being written, and comes up
+    /// when it is closed. The review itself is kept.
+    func testTheSheetWaitsWhileAMarginIsBeingWritten() async throws {
+        let h = try makeHarness()
+        let packet = try h.writePacket(named: "beta", text: Self.alphaText, recipientSupplied: true)
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            databaseURLOverride: h.root.appendingPathComponent("model-sheet.sqlite")
+        )
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        await model.settleLibraryReload()
+        model.beginWrittenMargin()
+        XCTAssertTrue(model.recordingNavigationIsLocked)
+
+        model.handleIncomingURL(packet.url)
+        await model.waitForPackageStaging()
+        let review = try XCTUnwrap(model.spokenMarginsPackageImportReview, "the file is kept")
+        XCTAssertFalse(review.opensDirectly, "the listener picks their own copy")
+        XCTAssertNil(model.packageImportSheetReview, "but the sheet stays off the Margin")
+
+        model.cancelWrittenMargin()
+        XCTAssertEqual(model.packageImportSheetReview?.id, review.id, "the Margin is closed: the sheet comes up")
+    }
+
     /// The second audit on PR #3298, through the real model: an import already running when the listener opens a written
     /// Margin leaves the active item and the screen alone, and the root view's ask after the draft closes opens it.
     func testAnImportRunningWhenAMarginIsOpenedDoesNotMoveTheModel() async throws {
