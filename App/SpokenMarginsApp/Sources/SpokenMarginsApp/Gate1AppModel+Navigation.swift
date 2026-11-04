@@ -24,6 +24,9 @@ extension Gate1AppModel {
 
     func openHome() {
         guard !rejectNavigationOrSessionMutationWhileRecording("open_home") else { return }
+        // Every route to a tab comes through here, and a tab change leaves `screen` at .home, so the screen check in
+        // `stillWantsOpen` can't see it: a tap's item still reading must not land on the tab the listener chose (#2505).
+        backgroundRefresh.dropOpen()
         screen = .home
         // Reflect the known source position without loading every saved item.
         if let index = libraryItems.firstIndex(where: { $0.id == snapshot.itemId }), snapshot.sessionId != nil {
@@ -184,6 +187,10 @@ extension Gate1AppModel {
             }
         })
     }
+
+    /// The listener moved within the tab bar (another tab, a pushed screen, a sheet) while a tap's item was read. The
+    /// tab bar's place is the view's own state, so the view reports it; the late item is dropped (#2505).
+    func listenerMovedOnFromTap() { backgroundRefresh.dropOpen() }
 
     /// Waits for the open a tap started. Production code never waits; tests do.
     func settleItemOpen() async { await backgroundRefresh.settledOpen() }

@@ -86,6 +86,9 @@ final class BackgroundRefreshGate {
         return openGeneration
     }
 
+    /// Drops a tap's open that is still reading: the listener went somewhere else meanwhile.
+    func dropOpen() { _ = beginOpen() }
+
     func holdOpen(_ task: Task<Void, Never>) { openTask = task }
     func isCurrentOpen(_ generation: Int) -> Bool { openGeneration == generation }
 

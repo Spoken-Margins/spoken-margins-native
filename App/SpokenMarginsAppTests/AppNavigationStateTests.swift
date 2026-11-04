@@ -122,4 +122,26 @@ final class AppNavigationStateTests: XCTestCase {
 
         XCTAssertNil(navigation.taskRoute)
     }
+
+    /// The place drops a tapped item still being read (#2505): scrolling keeps the tap, moving anywhere drops it.
+    func testThePlaceIgnoresScrollingAndChangesWithEveryMove() {
+        var navigation = AppNavigationState()
+        let start = navigation.place
+        navigation.libraryScroll = FollowingScrollMemory(topEntryId: "c", order: ["a", "b", "c"])
+        navigation.followingScroll = FollowingScrollMemory(topEntryId: "x", order: ["x"])
+        XCTAssertEqual(navigation.place, start, "scrolling a list is not leaving it")
+
+        var moved = navigation
+        moved.select(.settings, recordingIsLocked: false)
+        XCTAssertNotEqual(moved.place, start, "another tab")
+        moved = navigation
+        moved.push(.item("c"), recordingIsLocked: false)
+        XCTAssertNotEqual(moved.place, start, "a pushed screen")
+        moved = navigation
+        moved.present(.nowPlaying, recordingIsLocked: false)
+        XCTAssertNotEqual(moved.place, start, "a task")
+        moved = navigation
+        moved.addSourceRoute = .linkOrPodcast
+        XCTAssertNotEqual(moved.place, start, "the add sheet")
+    }
 }

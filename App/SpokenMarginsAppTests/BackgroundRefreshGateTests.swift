@@ -706,6 +706,17 @@ final class BackgroundRefreshGateTests: XCTestCase {
         XCTAssertNotEqual(model.activeItemId, firstId)
     }
 
+    /// A tab chosen on the tab bar never reaches `screen` or `openHome`; the tab bar reports the move instead.
+    func testMovingOnFromTheTabBarBeforeTheItemIsReadDropsTheOpen() async throws {
+        let (model, firstId, _) = twoItemModel()
+        model.openHome()
+        model.openItemFromTap(id: firstId)
+        model.listenerMovedOnFromTap()
+        await model.settleItemOpen()
+        XCTAssertEqual(model.screen, .home, "a late open must not cover the tab the listener chose")
+        XCTAssertNotEqual(model.activeItemId, firstId)
+    }
+
     func testAnOpenFromCodeOvertakesATapStillReading() async throws {
         let (model, firstId, secondId) = twoItemModel()
         model.openHome()
