@@ -1,0 +1,73 @@
+import Foundation
+
+/// The words a friend reads on the screens that show a file's Margins after it arrived (#3247, step 5 of the rebuild).
+///
+/// The owner reviewed these lines on the step 5 words page: Cole's name leads ("From Cole", "your friend" when no name
+/// is known), "Margin" is the one word for what Cole left, and "layer", "package", "source", "integrity" and
+/// "cryptographically" never reach a friend. What passes silently stays silent; what is honest ("the name isn't
+/// proven") moves under "About this file". The words live here so the host can test them and the views only draw them.
+public enum FriendArrivalWords {
+    /// "From Cole", or "From a friend" when the file names nobody (the item screen's sender line says the same).
+    public static func fromLine(senderLabel: String?) -> String {
+        "From \(SharedPacketArrival.name(senderLabel) ?? "a friend")"
+    }
+
+    /// One title for a list of friends' Margins: "From Cole" when one friend sent them, "From friends" otherwise.
+    public static func sectionTitle(senderLabels: [String]) -> String {
+        let named = Set(senderLabels.compactMap { SharedPacketArrival.name($0) })
+        let unnamed = senderLabels.contains { SharedPacketArrival.name($0) == nil }
+        if named.count == 1, !unnamed, let name = named.first { return "From \(name)" }
+        return senderLabels.count > 1 ? "From friends" : "From a friend"
+    }
+
+    /// Possessive for control names: "Cole's Margins", "Your friend's Margins".
+    public static func possessiveMargins(senderLabel: String?) -> String {
+        "\(SharedPacketArrival.name(senderLabel).map { "\($0)'s" } ?? "Your friend's") Margins"
+    }
+
+    /// The honest note, shown only under "About this file": the file is unchanged, the name isn't proven.
+    public static let aboutTitle = SharedPacketArrival.aboutTitle
+    public static let aboutNote = SharedPacketArrival.aboutIntegrity
+
+    /// How a friend's Margins reach the listener. The two named states are the reviewed words for the auto-play
+    /// switch ("Play Margins from friends as you reach them", "Off: a tone marks each one"). `fresh` has no reviewed
+    /// words: the episode never offers its Margins, so it reads "Only when you ask" (a stand-in until the owner picks).
+    public static func playModeLabel(_ mode: ImportedCommentaryRevealMode) -> String {
+        switch mode {
+        case .guided: "Play as you reach them"
+        case .companion: "A tone marks each one"
+        case .fresh: "Only when you ask"
+        }
+    }
+
+    /// The name of the control that picks the play mode.
+    public static let playModeTitle = "When Margins play"
+
+    /// A plain sentence about where Margins were placed, only when something is not as it should be; nil when all is
+    /// well, so a passing check says nothing.
+    public static func placementProblem(_ status: ImportedSourceResolutionStatus) -> String? {
+        switch status {
+        case .resolved: nil
+        case .pending: "Matching positions in your episode"
+        case .contextOnly: "Context only"
+        case .ambiguous: "Ambiguous"
+        case .wrongSource: "Wrong source"
+        case .unavailable: "Unavailable"
+        }
+    }
+
+    /// What VoiceOver says for one friend's layer, in the friend's words and without a passing integrity check.
+    public static func layerAccessibilityLabel(
+        senderLabel: String, isEnabled: Bool, isMuted: Bool, mode: ImportedCommentaryRevealMode,
+        placementProblem: String?
+    ) -> String {
+        var parts = [
+            fromLine(senderLabel: senderLabel),
+            isEnabled ? "\(possessiveMargins(senderLabel: senderLabel)) are on" : "\(possessiveMargins(senderLabel: senderLabel)) are off",
+            isMuted ? "Muted" : "Not muted",
+            "\(playModeTitle): \(playModeLabel(mode))"
+        ]
+        if let placementProblem { parts.append(placementProblem) }
+        return parts.joined(separator: ". ")
+    }
+}
