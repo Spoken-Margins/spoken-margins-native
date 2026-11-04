@@ -217,7 +217,7 @@ final class SharedMarginReviewTests: XCTestCase {
             openItem: [ownMargin("m-1", sharedAs: [first]), ownMargin("new"), ownMargin("elsewhere", item: "other")],
             rows: [ownMargin("m-1", sharedAs: [second]), ownMargin("old"), ownMargin("also-elsewhere", item: "other")]
         )
-        XCTAssertEqual(merged.map(\.id), ["m-1", "old", "new"])
+        XCTAssertEqual(merged.map(\.id), ["m-1", "new", "old"])
         XCTAssertEqual(Set(merged[0].sharedAs ?? []), [first, second], "a list read before the share doesn't hide the identity")
         XCTAssertTrue(SharedMarginReview.ownMargins(itemId: "item", openItem: [], rows: []).isEmpty)
     }

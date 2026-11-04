@@ -45,7 +45,7 @@ extension Gate1AppModel {
         SharedMarginReview.ownMargins(
             itemId: itemId,
             openItem: selectedItem.id == itemId ? selectedItem.interjections : [],
-            rows: marginRows.map(\.interjection)
+            rows: marginRows.lazy.filter { $0.interjection.itemId == itemId }.map(\.interjection)
         )
     }
 
