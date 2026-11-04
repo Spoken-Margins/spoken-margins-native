@@ -563,30 +563,18 @@ struct Build23SenderSharingExperience: View {
 
             case .ready:
                 if let verifiedPreview = snapshot.verifiedPreview {
-                    AdaptiveStack(spacing: 12) {
-                        Button("Edit selection", systemImage: "arrow.left") {
-                            coordinator.send(.returnToSelect)
+                    Build23VerifiedShareActions(
+                        isFileShareEnabled: snapshot.canShareVerifiedFile && coordinator.verifiedShareFileURL != nil,
+                        onEdit: { coordinator.send(.returnToSelect) },
+                        onShareFile: presentVerifiedSystemShare
+                    ) {
+                        #if SM_SHARE_LINK_CREATION
+                        // Only in a build made to make links (#487); the file share above is unchanged.
+                        if snapshot.canShareVerifiedFile {
+                            ShareLinkSendControl(packageURL: coordinator.verifiedShareFileURL)
                         }
-                        .buttonStyle(.bordered)
-                        .accessibilityIdentifier("build23.sender.preview.edit")
-
-                        Spacer()
-
-                        Button("Share verified package", systemImage: "square.and.arrow.up") {
-                            presentVerifiedSystemShare()
-                        }
-                        .filledActionButton()
-                        .disabled(!snapshot.canShareVerifiedFile || coordinator.verifiedShareFileURL == nil)
-                        .accessibilityHint("Opens the system share sheet with the verified package file")
-                        .accessibilityIdentifier("build23.sender.share.present")
+                        #endif
                     }
-
-                    #if SM_SHARE_LINK_CREATION
-                    // Only in a build made to make links (#487); the file share above is unchanged.
-                    if snapshot.canShareVerifiedFile {
-                        ShareLinkSendControl(packageURL: coordinator.verifiedShareFileURL)
-                    }
-                    #endif
 
                     Build23VerifiedRecipientPreviewPanel(preview: verifiedPreview)
                 } else {
