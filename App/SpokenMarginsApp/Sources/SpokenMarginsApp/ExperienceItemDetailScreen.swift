@@ -217,7 +217,7 @@ struct ExperienceItemDetailScreen: View {
                     model.reportConfirmation("Linked to \u{201C}\(title)\u{201D}. Margins a friend shares by link for it will land on this file.")
                 }
             } catch {
-                model.reportFailure(error.localizedDescription, itemId: itemId)
+                model.reportFailure(error, itemId: itemId)
             }
         }
     }
@@ -233,7 +233,7 @@ struct ExperienceItemDetailScreen: View {
                 await refreshEpisodeLinkStatus()
                 model.reportConfirmation("Episode unlinked. The file and its Margins are unchanged.")
             } catch {
-                model.reportFailure(error.localizedDescription, itemId: itemId)
+                model.reportFailure(error, itemId: itemId)
             }
         }
     }

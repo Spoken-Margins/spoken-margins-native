@@ -142,7 +142,7 @@ final class ReactionsViewModel: ObservableObject {
                 self?.summary = summary
             } catch is CancellationError {
             } catch {
-                self?.errorMessage = error.localizedDescription
+                self?.errorMessage = ListenerErrorText.message(for: error)
             }
             self?.isSummarizing = false
         }

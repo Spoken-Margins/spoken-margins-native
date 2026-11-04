@@ -654,7 +654,7 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
                 self.model.isSharedSpokenMarginsPackagePresented = false
             } catch {
                 guard self.previewGeneration == generation else { return }
-                self.previewState = .failed(error.localizedDescription)
+                self.previewState = .failed(ListenerErrorText.message(for: error))
                 self.stage = .review
             }
         }

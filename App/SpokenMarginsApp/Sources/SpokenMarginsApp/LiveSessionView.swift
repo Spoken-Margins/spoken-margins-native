@@ -544,7 +544,7 @@ struct LiveSessionView: View {
                             dismiss()
                         }
                     } catch {
-                        controller.errorMessage = "Couldn't save: \(error.localizedDescription)"
+                        controller.errorMessage = ListenerErrorText.line(prefix: "Couldn't save:", error: error)
                     }
                     isSaving = false
                 }

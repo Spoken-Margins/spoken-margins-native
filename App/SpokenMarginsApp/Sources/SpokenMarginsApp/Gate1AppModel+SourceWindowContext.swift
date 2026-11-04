@@ -109,7 +109,7 @@ extension Gate1AppModel {
                     )
                     parts.append((file.startMediaTimeMs, analysis.timeline))
                 } catch {
-                    failure = error.localizedDescription
+                    failure = ListenerErrorText.message(for: error)
                 }
                 // The scratch folder holds a whole exported window; clear it off the main actor (#2510).
                 _ = try? await Self.offMain {
@@ -315,7 +315,7 @@ extension Gate1AppModel {
                     self.refreshMarginRow(sessionId: interjection.sessionId, interjectionId: interjectionId)
                 }
                 if reportsResult {
-                    self.reportWarning("Source context could not be recovered: \(error.localizedDescription)")
+                    self.reportWarning(ListenerErrorText.line(prefix: "Source context could not be recovered:", error: error))
                 }
                 // Source-window context is redundant, best-effort evidence.
                 // The Margin and its timestamp are already durable, and the
