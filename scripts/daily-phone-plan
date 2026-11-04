@@ -174,6 +174,18 @@ def propose(items, catalog, folder):
 
 
 KEYCHAIN_SERVICE = 'claude-code-oauth'  # the audit job's token (ops/codex/sm_codex_audit.py)
+# The project-chat relay's token, in the login Keychain since 2026-11-04, never in the LaunchAgent plist.
+RELAY_KEYCHAIN_SERVICE = 'sm-daily-relay-token'
+
+
+def keychain_secret(service):
+    """The login Keychain's password for `service`, or '' when there is none or it can't be read."""
+    try:
+        found = subprocess.run(['/usr/bin/security', 'find-generic-password', '-s', service, '-w'],
+                               text=True, capture_output=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return ''
+    return found.stdout.strip() if found.returncode == 0 else ''
 
 
 def writer_env():
@@ -182,10 +194,9 @@ def writer_env():
     env = dict(os.environ)
     env.pop('ANTHROPIC_API_KEY', None)
     if not env.get('CLAUDE_CODE_OAUTH_TOKEN'):
-        found = subprocess.run(['/usr/bin/security', 'find-generic-password', '-s', KEYCHAIN_SERVICE, '-w'],
-                               text=True, capture_output=True, timeout=30)
-        if found.returncode == 0 and found.stdout.strip():
-            env['CLAUDE_CODE_OAUTH_TOKEN'] = found.stdout.strip()
+        token = keychain_secret(KEYCHAIN_SERVICE)
+        if token:
+            env['CLAUDE_CODE_OAUTH_TOKEN'] = token
     return env
 
 
@@ -243,10 +254,15 @@ class RelayNotConfigured(RuntimeError):
 def relay(message):
     # Same authenticated project-chat relay contract as ops/lane/sm_lane_open.py.
     import urllib.request
+    # The token comes from the login Keychain, so the LaunchAgent plist never holds it (2026-11-04); an
+    # environment token, as a run by hand may set, still wins.
     url = os.environ.get('SM_DAILY_RELAY_URL') or os.environ.get('SM_LANE_OPEN_URL')
-    token = os.environ.get('SM_DAILY_RELAY_TOKEN') or os.environ.get('SM_LANE_OPEN_TOKEN')
-    if not url or not token:
+    if not url:
         raise RelayNotConfigured('project-chat relay is not configured')
+    token = (os.environ.get('SM_DAILY_RELAY_TOKEN') or os.environ.get('SM_LANE_OPEN_TOKEN')
+             or keychain_secret(RELAY_KEYCHAIN_SERVICE))
+    if not token:
+        raise RelayNotConfigured(f'project-chat relay has no token (Keychain service {RELAY_KEYCHAIN_SERVICE})')
     req = urllib.request.Request(url, data=json.dumps({'text': message}).encode(), method='POST', headers={
         'Authorization': f'Bearer {token}', 'Content-Type': 'application/json',
         'anthropic-beta': 'experimental-cc-routine-2026-04-01', 'anthropic-version': '2023-06-01'})
