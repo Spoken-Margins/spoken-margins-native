@@ -5488,7 +5488,7 @@ public final class SessionEngine {
                 ?? (item.media?.sourceType == .nativeMediaFile ? item.media?.url : nil))
         }
         let timeline = sourceTranscriptTimeline(for: session)
-        let subtitle = [item.externalReferenceType, item.externalReference]
+        let subtitle = SpokenNoteItem.mediaSubtitle(for: item) ?? [item.externalReferenceType, item.externalReference]
             .compactMap { value -> String? in
                 guard let value, !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
                 return value
@@ -5500,7 +5500,7 @@ public final class SessionEngine {
             targetId: session.currentTargetId,
             title: item.title,
             subtitle: subtitle.isEmpty ? nil : subtitle,
-            sourceURL: item.media?.url ?? item.externalReference,
+            sourceURL: SpokenNoteItem.isSpokenNote(mediaType: item.mediaType) ? nil : item.media?.url ?? item.externalReference,
             // Native media IDs name library assets; they need not be playable URLs.
             playbackURL: pinnedMediaTransport?.playbackURL,
             artworkURL: nil,
