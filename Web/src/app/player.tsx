@@ -4,6 +4,8 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { Episode, Margin } from '../shared/model.ts';
 import { useData } from './data.tsx';
+import { friendMargins } from './logic/arrival.ts';
+import { EPISODE_FAILED, nextFailure, type FailureEvent } from './logic/episode-failure.ts';
 import { CrossingClock } from './logic/margin-autoplay.ts';
 import { plainError } from './logic/messages.ts';
 import { NotSavedError } from './logic/storage.ts';
@@ -47,6 +49,11 @@ export interface PlayerApi {
   arrived: Arrived | undefined;
   /** Plays the arrived Margin's clip from a tap (when the browser blocked it), then the episode carries on. */
   playArrived(): void;
+  /** The episode failed to load (#3356): its address answered nothing playable, or the connection broke. One state. */
+  failed: boolean;
+  /** Plays the friend's Margins on their own, in order, while the episode can't play. `done`: all heard. */
+  withoutEpisode: 'idle' | 'playing' | 'done';
+  playWithoutEpisode(): void;
 }
 
 const PlayerContext = createContext<PlayerApi | null>(null);
@@ -64,6 +71,12 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const lastSave = useRef(0);
   const pendingSeek = useRef<number | undefined>(undefined);
   const [arrived, setArrived] = useState<Arrived>();
+  // Whether the episode failed to load, as a ref (events must see it at once) and as state (the screen shows it).
+  const failedRef = useRef(false);
+  const [failed, setFailed] = useState(false);
+  const [withoutEpisode, setWithoutEpisode] = useState<'idle' | 'playing' | 'done'>('idle');
+  // Which run of the Margins-without-the-episode is current; a new one, or leaving, ends the old one.
+  const runId = useRef(0);
   // Where playback last was, for spotting a Margin's moment being crossed.
   const crossing = useRef(new CrossingClock());
   const clip = useRef<{ element: HTMLAudioElement; url: string } | null>(null);
@@ -100,6 +113,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const stopClip = useCallback(() => {
+    runId.current++;
+    setWithoutEpisode((w) => (w === 'playing' ? 'idle' : w));
     stopReading();
     clipQueue.current = [];
     const current = clip.current;
@@ -173,6 +188,94 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     [playClip],
   );
 
+  /** Feeds the one failure state an event; shows the problem only when this event is the one that made it fail. */
+  const apply = useCallback(
+    (event: FailureEvent) => {
+      const step = nextFailure(failedRef.current, event);
+      failedRef.current = step.failed;
+      setFailed(step.failed);
+      if (!step.failed) setWithoutEpisode((w) => (w === 'playing' ? w : 'idle'));
+      if (step.announce) {
+        setLoading(false);
+        setPlaying(false);
+        toast(EPISODE_FAILED, 'problem');
+      }
+    },
+    [toast],
+  );
+
+  /** A `play()` that was refused or failed: a failed source is the one failure; a refused autoplay is just a wait. */
+  const onPlayRejected = useCallback(
+    (error: unknown) => {
+      const name = error instanceof DOMException ? error.name : undefined;
+      // Autoplay refused (a Margin file opened with no tap to play): it waits at its moment, paused, for Play.
+      if (name === 'NotAllowedError') setLoading(false);
+      apply({ kind: 'play-rejected', name });
+    },
+    [apply],
+  );
+
+  /** Asks the element to load the failed episode again, where it was, and play. */
+  const retry = useCallback(
+    (audio: HTMLAudioElement) => {
+      apply({ kind: 'retry' });
+      const at = Number.isFinite(audio.currentTime) && audio.currentTime > 0 ? audio.currentTime : undefined;
+      pendingSeek.current = at;
+      setLoading(true);
+      audio.load();
+      void audio.play().catch(onPlayRejected);
+    },
+    [apply, onPlayRejected],
+  );
+
+  /** The friend's Margins, one after the other, with no episode: a voice Margin from its blob, a written one read aloud. */
+  const playWithoutEpisode = useCallback(() => {
+    const list = friendMargins(dataRef.current.margins.filter((m) => m.episodeId === loadedId.current));
+    if (list.length === 0) return;
+    stopClip();
+    const run = ++runId.current;
+    setWithoutEpisode('playing');
+    clearTimeout(shownTimer.current);
+    const step = (index: number): void => {
+      if (run !== runId.current) return;
+      const margin = list[index];
+      if (!margin) {
+        setArrived(undefined);
+        setWithoutEpisode('done');
+        return;
+      }
+      const next = () => step(index + 1);
+      setArrived({ margin, blocked: false });
+      if (margin.voice) {
+        const url = URL.createObjectURL(margin.voice.blob);
+        const element = new Audio(url);
+        clip.current = { element, url };
+        const finish = () => {
+          if (clip.current?.element !== element) return;
+          clip.current = null;
+          URL.revokeObjectURL(url);
+          next();
+        };
+        element.onended = finish;
+        element.onerror = finish;
+        element.play().catch(finish);
+      } else {
+        const heard = readWrittenMargin(margin.author, margin.text ?? '', {
+          onStart: () => undefined,
+          onEnd: () => {
+            if (run !== runId.current) return;
+            if (reading.current === heard) reading.current = undefined;
+            next();
+          },
+        });
+        reading.current = heard;
+        // A browser with no voice leaves the words up for the usual time, then moves on.
+        if (!heard) shownTimer.current = setTimeout(() => run === runId.current && next(), WRITTEN_SHOWN_MS);
+      }
+    };
+    step(0);
+  }, [stopClip]);
+
   const playArrived = useCallback(() => {
     const margin = arrived?.margin;
     if (margin) playClip(margin);
@@ -184,6 +287,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       let target = options.episode?.id === id ? options.episode : dataRef.current.episodes.find((e) => e.id === id);
       if (!audio || !target) return;
       if (id === loadedId.current && audio.src) {
+        if (failedRef.current) {
+          retry(audio);
+          return;
+        }
         if (options.at !== undefined) audio.currentTime = options.at;
         await audio.play().catch(() => undefined);
         return;
@@ -219,23 +326,16 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       pendingSeek.current = options.at ?? (finished ? 0 : resume);
       crossing.current.reset();
       loadedId.current = id;
+      apply({ kind: 'source-changed' });
       setEpisodeId(id);
       setMediaDuration(undefined);
       setTime(pendingSeek.current ?? 0);
       audio.src = target.audioUrl;
       audio.playbackRate = dataRef.current.settings.playbackRate;
       setLoading(true);
-      await audio.play().catch((error: unknown) => {
-        if (error instanceof DOMException && error.name === 'AbortError') return;
-        // Autoplay refused (a Margin file opened with no tap to play): it waits at its moment, paused, for Play.
-        if (error instanceof DOMException && error.name === 'NotAllowedError') {
-          setLoading(false);
-          return;
-        }
-        toast('This episode’s audio couldn’t be played.', 'problem');
-      });
+      await audio.play().catch(onPlayRejected);
     },
-    [relay, save, toast, stopClip],
+    [relay, save, toast, stopClip, apply, retry, onPlayRejected],
   );
 
   const toggle = useCallback(() => {
@@ -243,10 +343,15 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     if (!audio || !audio.src) return;
     // A tap on Play while a Margin's clip is playing (or was blocked) goes to the episode: the clip is dropped.
     stopClip();
-    setArrived((a) => (a?.blocked ? undefined : a));
+    setArrived((a) => (a?.blocked || failedRef.current ? undefined : a));
+    // A tap on Play after the episode failed is a retry.
+    if (failedRef.current) {
+      retry(audio);
+      return;
+    }
     if (audio.paused) void audio.play().catch(() => undefined);
     else audio.pause();
-  }, [stopClip]);
+  }, [stopClip, retry]);
 
   const seek = useCallback((seconds: number) => {
     const audio = audioRef.current;
@@ -317,8 +422,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   }, [episode, playing, duration, rate, time]);
 
   const api = useMemo<PlayerApi>(
-    () => ({ episode, playing, loading, time, duration, rate, open, toggle, skip, seek, setRate, now, arrived, playArrived }),
-    [episode, playing, loading, time, duration, rate, open, toggle, skip, seek, setRate, now, arrived, playArrived],
+    () => ({ episode, playing, loading, time, duration, rate, open, toggle, skip, seek, setRate, now, arrived, playArrived, failed, withoutEpisode, playWithoutEpisode }),
+    [episode, playing, loading, time, duration, rate, open, toggle, skip, seek, setRate, now, arrived, playArrived, failed, withoutEpisode, playWithoutEpisode],
   );
 
   return (
@@ -346,6 +451,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           comeUp.current.clear();
         }}
         onPlaying={(event) => {
+          apply({ kind: 'playing' });
           crossing.current.playing(event.currentTarget.currentTime);
           setPlaying(true);
           setLoading(false);
@@ -363,7 +469,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         }}
         onError={() => {
           setLoading(false);
-          if (episodeId) toast('This episode’s audio couldn’t be loaded.', 'problem');
+          if (loadedId.current) apply({ kind: 'media-error' });
         }}
         onTimeUpdate={(event) => {
           const audio = event.currentTarget;
