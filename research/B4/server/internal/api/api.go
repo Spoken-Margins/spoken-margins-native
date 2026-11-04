@@ -17,6 +17,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -42,6 +43,7 @@ import (
 	"spokenmargins.dev/bridge/internal/relay"
 	"spokenmargins.dev/bridge/internal/reportrules"
 	"spokenmargins.dev/bridge/internal/reports"
+	"spokenmargins.dev/bridge/internal/senders"
 	"spokenmargins.dev/bridge/internal/store"
 	"spokenmargins.dev/bridge/internal/tokens"
 )
@@ -117,6 +119,12 @@ type Server struct {
 	Reports     *reports.Store
 	ReportRules reportrules.Config
 
+	// Senders ties a link made with a permit to its sender for the strike ladder (#2239, sender.go).
+	// Nil, no link is ever attributed and a permit is not offered. RequireLinkPermit refuses an upload
+	// without one: leave it off until the app sends permits, so the app that exists keeps working.
+	Senders           *senders.Store
+	RequireLinkPermit bool
+
 	// Relay fetches feeds and pages for the web app (#2985). Nil, or no
 	// origins, answers 503 like the switch being off.
 	Relay *relay.Relay
@@ -152,6 +160,7 @@ type Server struct {
 	logMu            sync.Mutex
 	tokenQuota       dayQuota
 	holdQuota        dayQuota
+	permits          permitBook
 	requestCounts    map[logKey]int
 	abuseCounts      map[abuseKey]int
 }
@@ -218,6 +227,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /l/share-link-open.mjs", s.getLinkScript)
 	mux.HandleFunc("GET /l/share-link-page.mjs", s.getLinkScript)
 	mux.HandleFunc("POST "+PathLinks, s.uploadLink)
+	mux.HandleFunc("POST "+PathLinkSender, s.attested(s.linkSender))
 	mux.HandleFunc("GET /l/{id}", s.getLink)
 	mux.HandleFunc("GET /l/{id}/packet", s.linkCORS(s.getLinkPacket))
 	mux.HandleFunc("POST /l/{id}/report", s.reportLink)
@@ -612,9 +622,12 @@ func (s *Server) attested(h func(http.ResponseWriter, *http.Request, []byte)) ht
 			fail(w, http.StatusTooManyRequests, "rate_limited")
 			return
 		}
-		h(w, r, body)
+		h(w, r.WithContext(context.WithValue(r.Context(), attestedKeyID{}, keyID)), body)
 	}
 }
+
+// attestedKeyID carries the verified install key id from attested to the handler it wraps.
+type attestedKeyID struct{}
 
 // ping is an attested no-op: it lets the app (and the test client) confirm
 // its key is registered and the channel works. It carries no content.
