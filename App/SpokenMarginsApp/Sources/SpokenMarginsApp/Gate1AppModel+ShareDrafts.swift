@@ -190,7 +190,7 @@ extension Gate1AppModel {
                 do {
                     return (try analyzer(sourceURL, aligned), nil as String?)
                 } catch {
-                    return ([], error.localizedDescription)
+                    return ([], ListenerErrorText.message(for: error))
                 }
             }.value
             guard !Task.isCancelled,
@@ -257,7 +257,7 @@ extension Gate1AppModel {
         do {
             result = (try await renderer(sourceURL, destination, decisions), nil)
         } catch {
-            result = (nil, error.localizedDescription)
+            result = (nil, ListenerErrorText.message(for: error))
         }
         guard !Task.isCancelled,
               bulkSharePreparationGeneration == bulkGeneration,
@@ -435,7 +435,7 @@ extension Gate1AppModel {
             do {
                 result = (try analyzer(sourceURL, aligned), nil)
             } catch {
-                result = ([], error.localizedDescription)
+                result = ([], ListenerErrorText.message(for: error))
             }
             await MainActor.run {
                 guard let self,

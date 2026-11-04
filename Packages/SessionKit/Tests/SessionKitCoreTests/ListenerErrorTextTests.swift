@@ -76,4 +76,33 @@ final class ListenerErrorTextTests: XCTestCase {
             XCTAssertEqual(ListenerErrorText.message(for: error), plain, "\(error)")
         }
     }
+
+    /// #3317: behind a friendly prefix, a Foundation dump still becomes the generic next step, and the prefix stays so the
+    /// line still says what failed. These are the prefixes the app builds from an error.
+    func testEveryPrefixKeepsItsWordsAndDropsTheFoundationDump() {
+        let dump = NSError(domain: NSCocoaErrorDomain, code: 513, userInfo: [
+            NSLocalizedDescriptionKey: "The operation couldn\u{2019}t be completed. (NSCocoaErrorDomain error 513.)"
+        ])
+        let prefixes = [
+            "Delivery needs attention:", "Couldn't use that folder:", "Folder selection failed:",
+            "Couldn't save your Margin Output settings:", "Sending needs attention:",
+            "Sending is off, but the history of what was sent could not be reset:",
+            "Couldn't save the spoken Margin:", "Couldn't save the live session:", "Couldn't save:",
+            "Couldn't save your agreement:", "Audio preparation paused:", "Source context could not be recovered:",
+            "The file couldn't be read.",
+            "Sending can't start yet: the history of what was sent to the last account could not be reset."
+        ]
+        for prefix in prefixes {
+            let line = ListenerErrorText.line(prefix: prefix, error: dump)
+            XCTAssertEqual(line, "\(prefix) \(ListenerErrorText.fallback)")
+            XCTAssertFalse(line.contains("Error Domain"), line)
+            XCTAssertFalse(line.contains("error 513"), line)
+        }
+    }
+
+    func testAPlainReasonFollowsItsPrefix() {
+        XCTAssertEqual(
+            ListenerErrorText.line(prefix: "Couldn't use that folder:", error: PlainError()),
+            "Couldn't use that folder: This PDF is only pictures of pages, so there is no text to read aloud.")
+    }
 }

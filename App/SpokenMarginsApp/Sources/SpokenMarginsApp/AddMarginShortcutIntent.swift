@@ -59,7 +59,7 @@ enum AddMarginShortcutAction {
         } catch let failure as StoredSessionMargin.Failure {
             throw AddMarginShortcutError(failure)
         } catch {
-            throw AddMarginShortcutError.notSaved(error.localizedDescription)
+            throw AddMarginShortcutError.notSaved(ListenerErrorText.message(for: error))
         }
     }
 

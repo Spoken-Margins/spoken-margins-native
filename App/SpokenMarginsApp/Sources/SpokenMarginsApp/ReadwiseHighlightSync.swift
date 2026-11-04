@@ -64,7 +64,7 @@ final class ReadwiseHighlightSync: ObservableObject {
             do { try Self.ledger().startNewDestination(); UserDefaults.standard.set(false, forKey: Self.resetOwedKey); links = [:] }
             catch {
                 enabled = false; UserDefaults.standard.set(false, forKey: "readwiseHighlightsEnabled")
-                status = "Sending can't start yet: the history of what was sent to the last account could not be reset (\(error.localizedDescription))."
+                status = ListenerErrorText.line(prefix: "Sending can't start yet: the history of what was sent to the last account could not be reset.", error: error)
                 statusIsFailure = true
                 return
             }
@@ -91,7 +91,7 @@ final class ReadwiseHighlightSync: ObservableObject {
         } catch {
             // Retried when sending is next turned on; the section is hidden until then.
             UserDefaults.standard.set(true, forKey: Self.resetOwedKey)
-            status = "Sending is off, but the history of what was sent could not be reset: \(error.localizedDescription)"
+            status = ListenerErrorText.line(prefix: "Sending is off, but the history of what was sent could not be reset:", error: error)
             statusIsFailure = true
         }
     }
@@ -145,7 +145,7 @@ final class ReadwiseHighlightSync: ObservableObject {
             status = ReadwiseHighlightError.tokenRejected.errorDescription ?? ""
             statusIsFailure = true
         } catch {
-            status = "Sending needs attention: \(error.localizedDescription)"
+            status = ListenerErrorText.line(prefix: "Sending needs attention:", error: error)
             statusIsFailure = true
         }
     }

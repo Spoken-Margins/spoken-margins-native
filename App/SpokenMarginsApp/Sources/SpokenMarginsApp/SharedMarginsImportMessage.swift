@@ -45,10 +45,10 @@ enum SharedMarginsImportMessage {
         }
         if case SessionKitError.invalidCommandForState = error { return genericMessage }
         if case SessionKitError.invalidCommandForCapability = error { return genericMessage }
-        let description = error.localizedDescription
-        // Codes like "rss_episode_ambiguous" are for diagnostics, not people.
-        let looksLikeCode = !description.contains(" ") && (description.contains("_") || description.contains(":"))
-        return looksLikeCode ? genericMessage : description
+        let description = ((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        // Codes like "rss_episode_ambiguous" and Foundation dumps are for diagnostics, not people (#1965, #3317).
+        return ListenerErrorText.looksLikeCodeOrDump(description) ? genericMessage : description
     }
 
     static let unreadablePackageMessage = "These Margins were made by a newer or test version of Spoken Margins, and this version can't read them."
