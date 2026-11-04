@@ -1011,6 +1011,31 @@ final class Gate2CompactControlTests: XCTestCase {
         XCTAssertGreaterThan(liveActivity.publishCallCount, publishes, "resuming asks for a card again")
     }
 
+    /// #3321: anything that publishes the paused card again while the hand-off is pending (a Skim availability flip
+    /// from chapters or Margins, a lifecycle refresh) must leave the status at "hand_off_scheduled", with one
+    /// background task, not write "paused_idle_deadline" over it. #3310 made that flip happen right after the pause
+    /// on every item with a chapter or a Margin, and failed the integration run.
+    func testRepublishingThePausedCardKeepsTheHandOffScheduled() async {
+        let (model, controller, liveActivity, clock, app, _) = makeLockedPauseHarness()
+        let grace = LiveActivityLifecycle.lockedPauseGrace
+        app.isInBackground = true
+        let pausedAt = clock.now
+        model.dispatchGate2CompactCommand(.pause)
+        XCTAssertEqual(controller.diagnostics()["gate2LiveActivityLifecycle"], "hand_off_scheduled")
+
+        clock.now = pausedAt.addingTimeInterval(2)
+        model.refreshLockScreenSurfacesForLifecycle() // publishes the paused card again, forced
+        XCTAssertEqual(controller.diagnostics()["gate2LiveActivityLifecycle"], "hand_off_scheduled",
+                       "a second paused publish doesn't hide the pending hand-off")
+        XCTAssertEqual(app.beganBackgroundTasks, 1, "and doesn't start a second background task")
+
+        clock.now = pausedAt.addingTimeInterval(grace)
+        await controller.handOffIfDue()
+        XCTAssertEqual(liveActivity.handOffDates, [pausedAt.addingTimeInterval(LiveActivityLifecycle.pausedIdleLimit)])
+        XCTAssertEqual(controller.diagnostics()["gate2LiveActivityLifecycle"], "handed_off_to_system")
+        XCTAssertEqual(app.endedBackgroundTasks, app.beganBackgroundTasks)
+    }
+
     func testQuickLockedPauseAndResumeKeepsTheCard() async {
         let (model, controller, liveActivity, clock, app, _) = makeLockedPauseHarness()
         app.isInBackground = true
