@@ -89,7 +89,8 @@ final class ListenerErrorTextTests: XCTestCase {
             "Sending is off, but the history of what was sent could not be reset:",
             "Couldn't save the spoken Margin:", "Couldn't save the live session:", "Couldn't save:",
             "Couldn't save your agreement:", "Audio preparation paused:", "Source context could not be recovered:",
-            "The file couldn't be read."
+            "The file couldn't be read.",
+            "Sending can't start yet: the history of what was sent to the last account could not be reset."
         ]
         for prefix in prefixes {
             let line = ListenerErrorText.line(prefix: prefix, error: dump)

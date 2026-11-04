@@ -89,5 +89,19 @@ class ListenerErrorTextGuardTests(unittest.TestCase):
         self.assertIsNotNone(LOG_REASON.search('diagnostics["x"] = "failed: \\(error.localizedDescription)"'))
 
 
+    def test_every_prefix_the_app_builds_has_a_row_in_the_host_test(self):
+        """The audit on PR #3325: a prefix added to a `ListenerErrorText.line` call needs its row in
+        ListenerErrorTextTests, which feeds each one a Foundation dump."""
+        call = re.compile(r'ListenerErrorText\.line\(prefix: "((?:[^"\\]|\\.)*)"')
+        used = {
+            match.group(1).replace("\\'", "'")
+            for path in (APP / 'SpokenMarginsApp' / 'Sources').rglob('*.swift')
+            for match in call.finditer(path.read_text())
+        }
+        tested = (ROOT / 'Packages' / 'SessionKit' / 'Tests' / 'SessionKitCoreTests' / 'ListenerErrorTextTests.swift').read_text()
+        self.assertGreater(len(used), 10)
+        self.assertEqual(sorted(prefix for prefix in used if f'"{prefix}"' not in tested), [])
+
+
 if __name__ == '__main__':
     unittest.main()
