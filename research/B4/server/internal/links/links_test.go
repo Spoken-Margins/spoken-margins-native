@@ -90,7 +90,8 @@ func TestLinkLandingIsAShellWithNoPreview(t *testing.T) {
 	for _, want := range []string{
 		`<script type="module" src="/l/share-link-page.mjs"></script>`,
 		`<section id="margins" data-link="` + id + `"><p id="status" role="status"></p>`,
-		`<noscript>`, `action="/l/` + id + `/report"`, "Report this link", `name="category"`, `name="link"`, install,
+		`<noscript>`, `<details id="report"><summary>Report this link</summary><form method="post" action="/l/` + id + `/report"`,
+		"Report this link", `name="category"`, `name="link"`, `</form></details>`, install,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("missing %q", want)
