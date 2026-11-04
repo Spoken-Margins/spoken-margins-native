@@ -39,8 +39,12 @@ final class TermsAnsweredBeforeEachTest: NSObject, XCTestObservation, @unchecked
         defaults.set(true, forKey: "supertonicTTSMigrationV1")
         defaults.set(AppTTSVoiceSelection.system.rawValue, forKey: "ttsVoiceSelection")
         defaults.set("systemImmediate", forKey: "ttsMode")
-        defaults.removeObject(forKey: Gate1AppModel.supertonicVoicePendingTermsKey)
+        defaults.removeObject(forKey: pendingVoiceKey)
     }
+
+    /// `Gate1AppModel.supertonicVoicePendingTermsKey`, spelled out because the model is main-actor isolated and
+    /// an observer's callbacks are not.
+    static let pendingVoiceKey = "supertonicVoicePendingTermsV1"
 }
 
 /// The observer's own checks, and the end-to-end one: a class that does nothing about the Terms can start playback.
@@ -56,14 +60,14 @@ final class TermsAnsweredBeforeEachTestTests: XCTestCase {
         let defaults = try makeDefaults()
         defaults.set(AppTTSVoiceSelection.james.rawValue, forKey: "ttsVoiceSelection")
         defaults.set("supertonic", forKey: "ttsMode")
-        defaults.set(AppTTSVoiceSelection.james.rawValue, forKey: Gate1AppModel.supertonicVoicePendingTermsKey)
+        defaults.set(AppTTSVoiceSelection.james.rawValue, forKey: TermsAnsweredBeforeEachTest.pendingVoiceKey)
 
         TermsAnsweredBeforeEachTest.answerTheTerms(in: defaults)
 
         XCTAssertEqual(defaults.string(forKey: "ttsVoiceSelection"), AppTTSVoiceSelection.system.rawValue)
         XCTAssertEqual(defaults.string(forKey: "ttsMode"), "systemImmediate")
         XCTAssertTrue(defaults.bool(forKey: "supertonicTTSMigrationV1"))
-        XCTAssertNil(defaults.object(forKey: Gate1AppModel.supertonicVoicePendingTermsKey))
+        XCTAssertNil(defaults.object(forKey: TermsAnsweredBeforeEachTest.pendingVoiceKey))
         XCTAssertFalse(SpokenMarginsTerms.hasAcceptedCurrentVersion(in: defaults), "answering is not accepting")
     }
 
@@ -77,6 +81,10 @@ final class TermsAnsweredBeforeEachTestTests: XCTestCase {
 
         XCTAssertEqual(defaults.string(forKey: "ttsVoiceSelection"), AppTTSVoiceSelection.james.rawValue)
         XCTAssertEqual(defaults.string(forKey: "ttsMode"), "supertonic")
+    }
+
+    func testTheObserverClearsTheKeyTheModelReads() {
+        XCTAssertEqual(TermsAnsweredBeforeEachTest.pendingVoiceKey, Gate1AppModel.supertonicVoicePendingTermsKey)
     }
 
     func testTheObserverIsInstalledByTheBundle() throws {
