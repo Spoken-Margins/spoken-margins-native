@@ -232,6 +232,26 @@ def full_selector(selector, planned):
     return f'{targets[0] if len(targets) == 1 else APP_TEST_TARGET}/{selector}'
 
 
+PROBATION_MINIMUM_SECONDS = 60  # less than this left of the plan's budget and the probation step does not start
+
+
+def test_groups(selectors, expected, on_probation):
+    """The xcodebuild test runs of one plan: [(selectors, expected tests, tests on probation)].
+
+    Without probation, one run. With it, the gating tests run first and the probation tests last, each in a run of
+    its own (#3342): XCTest runs in alphabetical order, so in one run 27 probation methods came before the only
+    gating method of Gate1FlowUITests, and a plan budget spent on probation reported a gating script as missing.
+    A selector that covers a gating test stays in the gating run, so no test runs twice."""
+    if not on_probation:
+        return [(selectors, expected, on_probation)]
+    later = [s for s in selectors if all(test in on_probation for test in expected if selected(test, s))]
+    first = [s for s in selectors if s not in later]
+    first_expected = {test for test in expected if any(selected(test, s) for s in first)}
+    later_expected = {test for test in expected if any(selected(test, s) for s in later)} - first_expected
+    return [(group, tests, on_probation & tests)
+            for group, tests in ((first, first_expected), (later, later_expected)) if group]
+
+
 def name_screenshots(exported, screens):
     """Copy xcresulttool's exported attachments into `screens`, each named after its XCTAttachment.
 
@@ -2291,15 +2311,36 @@ class Run:
             # An AudioLoopback test asks the Mac to record what it plays (#1790). A server starts only when the
             # request names one; in a whole-plan run (Release, a full AudioAdapters) it skips, and that's expected.
             asked = selectors if scheme == 'SpokenMarginsAppBehavior' else ()
+            groups = test_groups(selectors, expected, on_probation)
             with lane_audio_window.serve(self.output, asked) as audio:
                 try:
-                    self.command('xcode-tests', base + [f'-only-testing:{s}' for s in selectors] + [
-                                 'test-without-building', '-parallel-testing-enabled', 'NO',
-                                 '-collect-test-diagnostics', 'never',
-                                 '-retry-tests-on-failure', '-test-iterations', '2',
-                                 '-test-timeouts-enabled', 'YES', '-resultBundlePath', str(result_bundle)],
-                                 timeout=timeout, expected=expected, tests=True, probation=on_probation, startup=startup,
-                                 allowed_skips=lane_audio_window.unasked(expected, asked))
+                    failure = None
+                    for index, (group_selectors, group_expected, group_probation) in enumerate(groups):
+                        name = 'xcode-tests' if index == 0 else 'xcode-tests-probation'
+                        budget = timeout
+                        if index:  # one clock for the plan: probation gets what the gating step left
+                            budget -= sum(step.get('seconds', 0) for step in self.manifest['steps']
+                                          if step.get('name') == 'xcode-tests')
+                            if budget < PROBATION_MINIMUM_SECONDS or (
+                                    failure is not None and self.manifest['steps'][-1].get('interrupted')):
+                                print(f'{name}: skipped, {max(round(budget), 0)}s of the {timeout}s plan budget left',
+                                      flush=True)
+                                break
+                        try:
+                            self.command(name, base + [f'-only-testing:{s}' for s in group_selectors] + [
+                                         'test-without-building', '-parallel-testing-enabled', 'NO',
+                                         '-collect-test-diagnostics', 'never',
+                                         '-retry-tests-on-failure', '-test-iterations', '2',
+                                         '-test-timeouts-enabled', 'YES', '-resultBundlePath',
+                                         str(result_bundle if index == 0 else self.output / 'tests-probation.xcresult')],
+                                         timeout=budget, expected=group_expected, tests=True, probation=group_probation,
+                                         startup=startup, allowed_skips=lane_audio_window.unasked(group_expected, asked))
+                        except RuntimeError as error:
+                            if index > 0 or len(groups) == 1:
+                                raise
+                            failure = error  # probation still reports after a gating failure; the run fails after it
+                    if failure is not None:
+                        raise failure
                 finally:  # a failed or skipped test raises here, and its verdict is what the report needs most
                     if audio:
                         step = self.manifest['steps'][-1]

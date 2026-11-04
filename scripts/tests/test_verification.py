@@ -1453,6 +1453,77 @@ class VerificationTests(unittest.TestCase):
             run.command('xcode-tests-clean', [sys.executable, '-c', passed], expected={tour, share}, tests=True)
             self.assertEqual(run.manifest['steps'][-1]['errors'], [])
 
+    def test_probation_scripts_run_after_every_gating_script(self):
+        # #3342: the hosted run's one-hour cap ended the plan inside the probation methods that sort before the one
+        # gating method of Gate1FlowUITests, so it was reported "missing" and the integration run went red.
+        gate = 'SpokenMarginsAppUITests/Gate1FlowUITests/'
+        gating = {gate + 'testZLast', 'SpokenMarginsAppUITests/J12UITests/testLoop'}
+        probation = {gate + 'testAlpha', gate + 'testBeta'}
+        selectors = sorted(gating | probation)
+        groups = verification.test_groups(selectors, gating | probation, set(probation))
+        self.assertEqual(groups, [(sorted(gating), gating, set()), (sorted(probation), probation, probation)])
+        # Nothing runs twice, even when one selector covers a gating and a probation test.
+        mixed = verification.test_groups([gate.rstrip('/')], gating | probation, set(probation))
+        self.assertEqual(len(mixed), 1)
+        # No probation, or only probation: one run, as before.
+        self.assertEqual(len(verification.test_groups(selectors, gating, None)), 1)
+        self.assertEqual(len(verification.test_groups(selectors, gating, set())), 1)
+        only = verification.test_groups(sorted(probation), probation, set(probation))
+        self.assertEqual([(e, p) for _, e, p in only], [(probation, probation)])
+
+    def test_the_probation_step_gets_the_plan_time_the_gating_step_left(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / 'repo'
+            for target, source in (('SpokenMarginsAppTests', 'final class SpeechTests: XCTestCase { func testSpeak() {} }'),
+                                   ('SpokenMarginsAppUITests', 'final class TourUITests: XCTestCase { func testTour() {} }\n'
+                                    'final class ShareUITests: XCTestCase { func testShare() {} }')):
+                (root / 'App' / target).mkdir(parents=True)
+                (root / 'App' / target / 'Tests.swift').write_text(source)
+            (root / 'App/SpokenMarginsAppTests/Gate4WatchPackageRenderTests.swift').write_text(
+                'final class Gate4WatchPackageRenderTests: XCTestCase { func testRender() {} }')
+            (root / 'TestPlans').mkdir()
+            (root / 'TestPlans/Release.xctestplan').write_text(json.dumps({'testTargets': [
+                {'target': {'name': 'SpokenMarginsAppTests'}}, {'target': {'name': 'SpokenMarginsAppUITests'}}]}))
+            (root / '.build/verification/SpokenMarginsReleaseTests').mkdir(parents=True)
+            device = {'udid': 'synthetic-device', 'state': 'Booted', 'runtime': 'iOS-26', 'name': 'Other'}
+            capture = lambda args: '{"devices": {}}' if args[:3] == ['xcrun', 'simctl', 'list'] else 'stub'
+            only = ['SpokenMarginsAppUITests/TourUITests/testTour', 'SpokenMarginsAppUITests/ShareUITests/testShare']
+            probation = ['SpokenMarginsAppUITests/ShareUITests/testShare']
+            gating_failed = RuntimeError('Failed: tour')
+            for label, used, gating_error, timed_out, expect_probation in (
+                    ('time left', 1000, None, False, 2600), ('almost none left', 3590, None, False, None),
+                    ('gating failed', 1000, gating_failed, False, 2600), ('gating timed out', 1000, gating_failed, True, None)):
+                with self.subTest(label):
+                    run = verification.Run(Path(temporary) / label.replace(' ', '-'), 'journeys')
+                    run.manifest['input_sha256'] = 'inputs'
+                    timeouts = {}
+
+                    def command(name, args, timeout=180, **kwargs):
+                        timeouts[name] = timeout
+                        run.manifest['steps'].append({'name': name, 'seconds': used if name == 'xcode-tests' else 5,
+                                                      'interrupted': timed_out and name == 'xcode-tests'})
+                        if name == 'xcode-tests' and gating_error:
+                            raise gating_error
+                        return ''
+
+                    with patch.object(verification, 'ROOT', root), \
+                            patch.object(verification, 'input_identity', return_value='inputs'), \
+                            patch.object(verification, 'capture', side_effect=capture), \
+                            patch.object(verification, 'dedicated_simulator', return_value=(device, None)), \
+                            patch.object(verification, 'refuse_unsafe'), \
+                            patch.object(verification.lane_sim, 'unsafe_devices', return_value={}), \
+                            patch.object(verification.subprocess, 'run'), \
+                            patch.dict(os.environ, {'SM_PLAN_TIMEOUT_SECONDS': '3600'}), \
+                            patch.object(run, 'command', side_effect=command):
+                        if gating_error:
+                            with self.assertRaises(RuntimeError) as raised:  # the gating failure is the run's
+                                run.xcode('journeys', None, rebuild=True, only=only, probation=probation)
+                            self.assertIs(raised.exception, gating_failed)
+                        else:
+                            run.xcode('journeys', None, rebuild=True, only=only, probation=probation)
+                    self.assertEqual(timeouts['xcode-tests'], 3600)
+                    self.assertEqual(timeouts.get('xcode-tests-probation'), expect_probation)
+
     def test_journeys_plan_passes_ui_test_selectors_and_names_the_probation_ones(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary) / 'repo'
@@ -1489,14 +1560,20 @@ class VerificationTests(unittest.TestCase):
                 run.xcode('journeys', None, rebuild=True, only=['SpokenMarginsAppUITests/TourUITests/testTour',
                                                                 'SpokenMarginsAppUITests/ShareUITests'],
                           probation=['SpokenMarginsAppUITests/ShareUITests'])
+            tour = 'SpokenMarginsAppUITests/TourUITests/testTour'
+            share = {'SpokenMarginsAppUITests/ShareUITests/testShare', 'SpokenMarginsAppUITests/ShareUITests/testOpen'}
+            # Gating runs first in a step of its own; the probation scripts run last in another (#3342).
+            self.assertEqual([n for n in commands if n.startswith('xcode-tests')], ['xcode-tests', 'xcode-tests-probation'])
             args, expected, probation = commands['xcode-tests']
             self.assertIn('SpokenMarginsReleaseTests', args)
-            self.assertEqual([a for a in args if a.startswith('-only-testing:')],
-                             ['-only-testing:SpokenMarginsAppUITests/TourUITests/testTour',
-                              '-only-testing:SpokenMarginsAppUITests/ShareUITests'])
-            share = {'SpokenMarginsAppUITests/ShareUITests/testShare', 'SpokenMarginsAppUITests/ShareUITests/testOpen'}
-            self.assertEqual(expected, share | {'SpokenMarginsAppUITests/TourUITests/testTour'})
-            self.assertEqual(probation, share)
+            self.assertEqual([a for a in args if a.startswith('-only-testing:')], [f'-only-testing:{tour}'])
+            self.assertEqual((expected, probation), ({tour}, set()))
+            later_args, expected, probation = commands['xcode-tests-probation']
+            self.assertEqual([a for a in later_args if a.startswith('-only-testing:')],
+                             ['-only-testing:SpokenMarginsAppUITests/ShareUITests'])
+            self.assertEqual((expected, probation), (share, share))
+            bundle = lambda command: command[command.index('-resultBundlePath') + 1]
+            self.assertNotEqual(bundle(args), bundle(later_args))  # xcodebuild refuses an existing result bundle
 
     def test_journeys_plan_with_nothing_listed_boots_nothing(self):
         out = io.StringIO()
