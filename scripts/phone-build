@@ -43,8 +43,11 @@ What it does:
   check elsewhere (the PR body) stands in. Three or more PRs changing the playback screen's view files are
   one item at the top of the ten minutes ("The playback screen changed"), each PR listed under its own title;
   PRs that share an issue keep their own titles in every list.
-  After those, "Still waiting on your check" lists issues (open, or closed in the last 60 days: a merged fix closes its issue and the label stays) labelled `status: needs-human-validation` whose
-  fix is in this build but wasn't in the changes above, for as long as nobody has checked them (#927). A check
+  After those, "Still waiting on your check" lists issues (open, or closed in the last 60 days and since 2026-10-22,
+  when a merged fix began closing its issue with the label left on) labelled `status: needs-human-validation` whose
+  fix is in this build but wasn't in the changes above, for as long as nobody has checked them (#927). His recorded
+  result in a comment ("**Owner's phone check: PASS**", "**Phone check, owner, build ...:** DONE") takes a fix off,
+  unless a newer "Owner check:" comment asks again. `priority` fixes lead whatever their milestone. A check
   is read from the issue body or the PR as "Owner check", "Phone check" or a "## Steps" heading, and the newest
   one in the issue's comments wins, including the hourly dispatch's "This needs the owner's headphones: ...";
   a comment saying "Owner check: none" or "leave this off the owner's plans" keeps the issue out. They share the
@@ -152,12 +155,14 @@ LISTENER_PATHS = ('App/', 'Packages/SessionKit/Sources/')
 NOT_LISTENER_PATHS = ('App/SpokenMarginsAppTests/', 'App/SpokenMarginsAppUITests/', 'App/TestFixtures/')
 NOT_LISTENER_TITLE = re.compile(r'to its own file|^(tests?|docs|lane|runner|verify-tests)\b|^test ', re.I)
 FIRST_ON_PHONE = {'found-on-phone', 'regression'}
-# The milestone being shipped, and the ones whose work waits for it (AGENTS.md Current focus, owner 2026-10-08
-# and 2026-10-14): co-op work starts after Solid Ground ships, and Later and the beta wait. The fdda29c plan
-# put a Later diagnostics fix and two Co-op Experience checks in the ten minutes. A change whose issues all
-# sit in a held milestone is listed with what it waits for. Update both when the focus changes.
-CURRENT_MILESTONE = 'Solid Ground'
-HELD_MILESTONES = frozenset({'Co-op Experience', 'Later', 'Public beta'})
+# The milestone being shipped, and the ones whose work waits for it (AGENTS.md Current focus). The fdda29c plan
+# put a Later diagnostics fix and two Co-op Experience checks in the ten minutes, so held milestones wait. Since
+# 2026-11-02 the order is `priority` first (the sharing loop, filed in Co-op Experience), then Showcase, and
+# Co-op Experience "is never held": the 13515da plan (2026-11-04) still led with Solid Ground and held #460, a
+# priority sharing fix, as "waits for Co-op Experience". A test reads AGENTS.md's "Order of work" line and fails
+# when these drift from it again (#3216).
+CURRENT_MILESTONE = 'Showcase'
+HELD_MILESTONES = frozenset({'Later', 'Public beta'})
 NOT_LISTENER_LABELS = {'stream:A1'}  # the test lane: its SessionKit edits are compile guards, not behaviour
 # Acceptance belongs to the change, not necessarily its issue. The owner confirmed #1482's Build 30
 # restoration on 2026-10-14 (#1475, 15:55Z); #1475 stays open for the different #1551 redesign check.
@@ -237,6 +242,10 @@ LANE_PROCEDURE = re.compile(
     r'|\bcheck ?out\s+' + HEX +
     r'|\b(?:run|re-?run|running|boot|install|test|build)\b[^.\n]{0,60}\b(?:at|on|against|from|with|commit|sha|build)\s+' + HEX,
     re.I)
+# A crash log he sends from the iPhone's own Settings > Privacy & Security > Analytics is his to send: #2964's
+# Watch check named it and the 13515da plan (2026-11-04) dropped the check as a lane procedure.
+PHONE_ANALYTICS = re.compile(r'\bSettings\s*>\s*Privacy\b', re.I)
+PHONE_CRASH_LOGS = re.compile(r'\bcrash logs?\b', re.I)
 # Reading a diagnostics field is the agent's job, not his (#1476: #586); so is judging an export or a log, unless
 # the check at least says what the result should be (#1439: "read the AI Handoff export of the next test plan").
 # Either order, or a field named in backticks (fdda29c's plan: "export diagnostics, and look for
@@ -365,33 +374,46 @@ def trusted_comment_lines(raw: str | None) -> list[dict]:
 
 
 def runner_tested(sha: str) -> str | None:
-    """Evidence that the lane's host-test gate covers this commit, or None.
+    """Evidence that the lane's host-test gate covers this commit, or None (runner_evidence says why not)."""
+    return runner_evidence(sha)[0]
+
+
+def runner_evidence(sha: str) -> tuple[str | None, str]:
+    """(evidence that the lane's host-test gate covers this commit or None, why there is none).
 
     The runner merges a PR as "Merge pull request #N: ..." and first posts a "Merge check (triage
     desk)" comment on it that says "Pushing `<sha7>` to next" (scripts/lane-runner.py merge_check).
-    It can also safely re-merge an already-tested PR when next hasn't moved or its changes touch
+    It can also safely re-merge an already-tested PR when the trunk hasn't moved or its changes touch
     neither the PR's files nor build inputs. That report explicitly names the resulting re-merge;
-    it is sufficient here too. The Test Desk checks interactions on next's merged tip.
+    it is sufficient here too. The Test Desk checks interactions on the trunk's merged tip.
+
+    The runner names the trunk it pushed to ("next" until 2026-10-20, then "main"); the 13515da plan
+    (2026-11-04) said "no lane host-test evidence" for a re-merge the runner had reported, because only
+    "next" was read. Without evidence, the reason says what was looked for, so the plan can say why.
     """
     subject = git('log', '-1', '--format=%s', sha)
     found = re.match(r'Merge pull request #(\d+): ', subject)
     if not found:
-        return None
+        return None, f'`{sha[:7]}` is not a lane merge of a pull request (its subject: "{subject[:80]}")'
     raw = gh('api', f'repos/{REPO}/issues/{found.group(1)}/comments', '--paginate', '--jq', COMMENT_JSON)
+    if raw is None:
+        return None, f'GitHub could not be reached to read PR #{found.group(1)}\'s merge check'
     checks = [c.get('body') or '' for c in trusted_comment_lines(raw)
               if (c.get('body') or '').startswith('**Merge check (triage desk)')]
     if not checks:
-        return None
+        return None, f'PR #{found.group(1)} has no lane merge check, so it was merged by hand or by another job'
+    trunks = '|'.join(re.escape(name) for name in dict.fromkeys(('next', 'main', BRANCH)))
     for body in '\n'.join(checks).split('**Merge check (triage desk)')[1:]:
         if f'Pushing `{sha[:7]}`' in body and ': PASS' in body.split('\n', 1)[0]:
             ran = re.search(r'- Ran: (.+?)\.?\n', body)
             return f'the lane runner tested this merge commit before pushing it (PR #{found.group(1)}' + \
-                (f'; ran {ran.group(1)})' if ran else ')')
-        if (': PASS, re-merged onto the newest next without re-testing.' in body.split('\n', 1)[0]
-                and f'- So the re-merge `{sha[:7]}` goes to next not re-tested.' in body):
+                (f'; ran {ran.group(1)})' if ran else ')'), ''
+        if (re.search(rf': PASS, re-merged onto the newest (?:{trunks}) without re-testing\.', body.split('\n', 1)[0])
+                and re.search(rf'- So the re-merge `{sha[:7]}` goes to (?:{trunks}) not re-tested\.', body)):
             return (f'the lane runner tested PR #{found.group(1)} and safely re-merged it without '
-                    'repeating host tests; the Test Desk tests next\'s merged tip end to end')
-    return None
+                    f'repeating host tests; the Test Desk tests {BRANCH}\'s merged tip end to end'), ''
+    return None, (f'PR #{found.group(1)}\'s lane merge checks name no PASS for `{sha[:7]}` itself '
+                  '(the trunk moved after the tested merge)')
 
 
 def coalesce_reason(sha: str) -> str | None:
@@ -522,7 +544,7 @@ def reverted_prs(sha: str) -> set[int]:
 
 COMMENTS = 'comments(last:30){nodes{body authorAssociation author{login __typename}}}'  # a check written in a comment (#927)
 PR_FIELDS = '''number title url mergedAt body labels(first:20){nodes{name}} files(first:100){nodes{path}}
-closingIssuesReferences(first:5){nodes{number title url state body labels(first:20){nodes{name}} milestone{title state} %s}}''' % COMMENTS
+closingIssuesReferences(first:5){nodes{number title url state closedAt body labels(first:20){nodes{name}} milestone{title state} %s}}''' % COMMENTS
 ISSUE_FIELDS = 'number title url state body labels(first:20){nodes{name}} milestone{title state} ' + COMMENTS  # state: passed_on_phone (#1100)
 
 
@@ -623,7 +645,7 @@ def fetch_waiting() -> list[dict] | None:
             if not isinstance(page, dict):
                 return None
             issues += [issue for issue in page.get('nodes') or [] if issue and issue.get('number')
-                       and (states == 'OPEN' or (issue.get('closedAt') or '') >= since)]
+                       and (states == 'OPEN' or (issue.get('closedAt') or '') >= max(since, CLOSES_ON_MERGE_SINCE))]
             info = page.get('pageInfo') or {}
             if not info.get('hasNextPage') or not info.get('endCursor'):
                 break
@@ -641,6 +663,8 @@ def build_prs(sha: str) -> set[int]:
 
 def held_for(issues: list[dict]) -> str | None:
     """The milestone a change waits for when it has issues and every one sits in a held milestone, else None."""
+    if any(PRIORITY in labels(issue) for issue in issues):
+        return None  # "A priority is an order of work, never a hold" (AGENTS.md, 2026-11-02)
     titles = [(issue.get('milestone') or {}).get('title') for issue in issues]
     return titles[0] if titles and all(title in HELD_MILESTONES for title in titles) else None
 
@@ -653,6 +677,8 @@ def lead_tier(issue: dict, in_current: bool) -> int:
     names = labels(issue)
     if VALIDATE_BY_USE in names:
         return 2 if in_current else 4
+    if PRIORITY in names:
+        return 0  # `priority` issues come first whatever their milestone (AGENTS.md Order of work, 2026-11-02)
     if in_current:
         return 0 if PRIORITY in names else 1 if FIRST_ON_PHONE & names else 2
     return 3 if FIRST_ON_PHONE & names else 4
@@ -692,6 +718,8 @@ def waiting_fixes(issues: list[dict], built: set[int], shown: set[int], named_in
     current = min((n for n in map(build_number, issues) if n is not None), default=None)
     fixes = []
     for issue in issues:
+        if closed_as_done(issue) or owner_result(issue) == 'pass':
+            continue  # he passed it, or it closed when closing meant done (13515da: #277, #2833)
         comments = [comment.get('body') or '' for comment in trusted_nodes(issue)]
         named = {int(a or b) for body in comments for a, b in FIXED_IN.findall(body)}
         sources = [(node or {}).get('source') or {} for node in (issue.get('timelineItems') or {}).get('nodes') or []]
@@ -912,7 +940,7 @@ def unusable_check(check: str) -> str | None:
     """
     if POINTER_ONLY.match(check):
         return 'it points to steps written elsewhere ("the step above"); write the steps in the check itself'
-    if LANE_PROCEDURE.search(check):
+    if LANE_PROCEDURE.search(PHONE_CRASH_LOGS.sub('', check) if PHONE_ANALYTICS.search(check) else check):
         return 'it names a script, simulator, commit to run at or log file, which the lane and the Test Desk run'
     if DIAGNOSTICS_READING.search(check):
         return 'it asks him to read a diagnostics field, which an agent does'
@@ -1006,6 +1034,40 @@ def found_on_phone(entry: list[dict]) -> bool:
 
 
 STILL_UNCHECKED = {'found-on-phone', 'needs-human-validation', MERGED_ON_NEXT}
+# Before 2026-10-22 an issue was closed when the owner passed it or it was settled; only since then does a merged
+# fix close its issue with the validation label left on (owner, 2026-10-22). The 13515da plan (2026-11-04) listed
+# #277-#279, #311 and #312, closed on 2026-09-30, as fixes still waiting on his phone.
+CLOSES_ON_MERGE_SINCE = '2026-10-22'
+# His recorded result, as threads write it from his Hold exports and spoken answers: "**Owner's phone check:
+# PASS** on build 32", "**Owner's phone check on `437fbc9`: acceptable.**", "**Owner pass on build `fdda29c`**",
+# "**Phone check, owner, build 0.1 (35) 9c88103, 2026-10-30:** DONE" (#2833, which the 13515da plan still
+# listed). Only a comment's first line counts, and a failure word there makes it a failure.
+OWNER_RESULT = re.compile(r"^\W*(?:the )?(?:owner(?:['\u2019]s)? (?:phone check|pass)\b|(?:owner )?phone check,? (?:by )?(?:the )?owner\b)",
+                          re.I)
+# The verdict is a capitalised PASS or DONE, "acceptable", or "Owner pass": an instruction such as "Owner's phone
+# check: play it and see it passes" is not his result.
+OWNER_PASSED = re.compile(r'\b(?:PASS(?:ED)?|DONE)\b|(?i:\bacceptable\b|\bowner pass(?:ed)?\b)')
+OWNER_FAILED = re.compile(r"\b(?:fail(?:ed|s|ure)?|did ?n[o'\u2019]t pass|not (?:pass(?:ed)?|done|acceptable)|regression)\b",
+                          re.I)
+
+
+def owner_result(issue: dict) -> str | None:
+    """'pass' or 'fail' from the newest of the owner's recorded results and checks in an issue's comments, or None.
+
+    A check written after his result (a re-land, a new fix) asks again, so the newest wins: a pass older than the
+    newest "Owner check:" comment doesn't count."""
+    for comment in reversed(trusted_nodes(issue)):
+        first = next((line for line in (comment.get('body') or '').splitlines() if line.strip()), '')
+        if OWNER_RESULT.search(first):
+            return 'fail' if OWNER_FAILED.search(first) else 'pass' if OWNER_PASSED.search(first) else None
+        if check_field(comment.get('body') or ''):
+            return None
+    return None
+
+
+def closed_as_done(issue: dict) -> bool:
+    """Closed before merged fixes began closing issues with the label left on: then closing meant done."""
+    return issue.get('state') == 'CLOSED' and bool(issue.get('closedAt')) and issue['closedAt'] < CLOSES_ON_MERGE_SINCE
 
 
 def passed_on_phone(entry: list[dict]) -> bool:
@@ -1018,8 +1080,8 @@ def passed_on_phone(entry: list[dict]) -> bool:
     No timestamps: a follow-up PR can merge after its issue closed (#223 closed 10-04, PR #677 merged 10-05) and
     the owner records the pass as a comment, so closedAt never moves past the merge."""
     issues = [issue for pr in entry for issue in pr['issues']]
-    return bool(issues) and all(issue.get('state') == 'CLOSED' and not STILL_UNCHECKED & labels(issue)
-                                for issue in issues)
+    return bool(issues) and all((issue.get('state') == 'CLOSED' and not STILL_UNCHECKED & labels(issue))
+                                or closed_as_done(issue) or owner_result(issue) == 'pass' for issue in issues)
 
 
 def labels(item: dict) -> set[str]:
@@ -1253,7 +1315,7 @@ def write_plan(folder: Path, sha: str, checks: str, commit_in_app: bool = True) 
     where = (f'Settings > Version ends with `{sha[:7]}`' if commit_in_app else
              'Settings > Version shows only the build number: this commit predates the key that names the commit')
     lines = [f'# Phone build `{sha[:7]}`: what to try', '',
-             f'Built {datetime.datetime.now().strftime("%Y-%m-%d %H:%M")} from next at `{sha[:7]}`. {where}.', '',
+             f'Built {datetime.datetime.now().strftime("%Y-%m-%d %H:%M")} from {BRANCH} at `{sha[:7]}`. {where}.', '',
              f'Changes since {base_why}.', '',
              f'Checks before this build: {checks}.', '']
     reports = report_comments()
@@ -1929,10 +1991,10 @@ def fetch_hosted(hosted: dict) -> int:
             with open(log, 'a') as handle:
                 handle.write('\n--- the hosted build log ---\n')
                 handle.write((work / 'download' / 'build.log').read_text(errors='replace'))
-        evidence = runner_tested(sha)
+        evidence, why = runner_evidence(sha)
         checks = (f'{evidence}; built and signed on a GitHub-hosted Mac ({hosted.get("run_url")})' if evidence else
                   f'built and signed on a GitHub-hosted Mac ({hosted.get("run_url")}); no lane host-test evidence '
-                  'was found for this commit')
+                  f'was found for this commit: {why}')
         deliver(app, info, sha, stamp, log, int(hosted_info.get('build_seconds') or 0), checks,
                 built_at=local_time(hosted.get('built_at')) or local_time(hosted_info.get('built_at')),
                 extra={'built_on': 'github-hosted', 'run_url': hosted.get('run_url')},

@@ -1241,7 +1241,9 @@ class PhoneBuildMergeEvidenceTests(unittest.TestCase):
                     '_Posted by the lane runner (scripts/lane-runner.py)._')
         for body, accepts in ((recorded, True), (recorded.replace('PASS,', 'FAIL,'), False),
                               (recorded.replace(sha[:7], 'deadbee'), False),
-                              (recorded.replace('goes to next', 'goes to main'), False)):
+                              # The runner names the trunk it pushed to; since 2026-10-20 that is main (13515da).
+                              (recorded.replace('next', 'main'), True),
+                              (recorded.replace('goes to next', 'goes to elsewhere'), False)):
             with self.subTest(body=body):
                 module.gh = unittest.mock.Mock(return_value=json.dumps(
                     {'body': body, 'author_association': 'NONE', 'user': {'login': 'github-actions[bot]'}}))
@@ -2096,7 +2098,10 @@ class PlanGroupingTests(unittest.TestCase):
 
     def test_held_milestones_wait_outside_the_ten_minutes(self):
         # fdda29c: a Later diagnostics fix led the plan and two Co-op Experience checks filled it, though co-op
-        # work starts only after Solid Ground ships (docs/decisions.md, owner 2026-10-08).
+        # work starts only after Solid Ground ships (docs/decisions.md, owner 2026-10-08). The milestones are that
+        # day's; CurrentFocusTests checks the real constants against AGENTS.md.
+        self.module.CURRENT_MILESTONE = 'Solid Ground'
+        self.module.HELD_MILESTONES = frozenset({'Co-op Experience', 'Later', 'Public beta'})
         later = self.issue(1682, 'Play an article until the phone is warm.', phone=True)
         later['milestone'] = {'title': 'Later', 'state': 'OPEN'}
         current = self.issue(1700, 'Open the Library and read the rows.')
@@ -2855,7 +2860,9 @@ class SolidGroundLeadTests(unittest.TestCase):
 
     def test_current_milestone_priority_then_found_on_phone_lead_the_waiting_fixes(self):
         # The ca6bbd9 plan, 2026-10-16: #1073 (no milestone priority) took "Still waiting" while #1708 and #1337
-        # (Solid Ground, on the phone, waiting on him) weren't on it at all.
+        # (Solid Ground, on the phone, waiting on him) weren't on it at all. That day's milestones; since 2026-11-02
+        # a `priority` fix leads whatever its milestone, so #1682 (Later, priority) leads too.
+        self.module.CURRENT_MILESTONE = 'Solid Ground'
         waiting = [
             self.fix(1073, milestone=None, created='2026-10-08', prs=[1303],
                      check='with one article playing, run a shortcut that adds a Margin to a different article.'),
@@ -2875,13 +2882,11 @@ class SolidGroundLeadTests(unittest.TestCase):
                           waiting=waiting, built_prs={1303, 1703, 1709, 1601, 1683, 1684, 1691})
         still = plan.split('## Still waiting on your check')[1].split('\n## ')[0]
         numbered = re.findall(r'(?m)^\d+\. \*\*(.+?)\*\*', still)
-        self.assertEqual(numbered, ['Waiting 1708', 'Waiting 1337', 'Waiting 1600', 'Waiting 1073'], plan)
-        self.assertIn('1. **Waiting 1708** (found on your phone)\n   - Check: ' + self.CHECK_1708, still)
-        self.assertIn('2. **Waiting 1337** (found on your phone)\n   - Check: background narration through a real '
+        self.assertEqual(numbered, ['Waiting 1682', 'Waiting 1708', 'Waiting 1337', 'Waiting 1600', 'Waiting 1073'], plan)
+        self.assertIn('2. **Waiting 1708** (found on your phone)\n   - Check: ' + self.CHECK_1708, still)
+        self.assertIn('3. **Waiting 1337** (found on your phone)\n   - Check: background narration through a real '
                       'Supertonic fallback', still)
-        also = plan.split('## Also waiting on your check (not in the ten minutes)')[1].split('\n## ')[0]
-        self.assertIn('- Waiting 1682 (found on your phone) ([#1682](https://example/issue/1682), '
-                      '[#1683](https://example/pr/1683)): waits for Later', also)
+        self.assertNotIn('waits for Later', plan)  # a priority is an order of work, never a hold
         for gone in ('Waiting 1679', 'Waiting 1690'):                    # validate-by-use and "Owner check: none"
             self.assertNotIn(gone, plan)
         for quiet in ('#1679', '#1690'):
@@ -3013,6 +3018,130 @@ class SigningConfigOfPinnedCheckoutTests(unittest.TestCase):
         self.assertIn('Config/Local.xcconfig is missing', told.call_args[0][1])
         self.assertTrue((phone / '.cache' / 'src').is_dir())
         self.assertIn('failed', (phone / 'last-attempt.json').read_text())
+
+
+class Plan13515daTests(unittest.TestCase):
+    """The 11-04 plan for build 13515da (read from ~/SpokenMargins-phone/latest/test-plan.md and GitHub on
+    2026-11-04). It said "No change new in this build has a phone check" although #460's priority fix (PR #3310)
+    had one; it held that fix as "waits for Co-op Experience"; it listed #277-#279, #311 and #312, closed on
+    2026-09-30, and #2833, which the owner passed on 2026-10-30, as still waiting; it said "no lane host-test
+    evidence was found" for a re-merge the runner had reported onto main, without saying why; and it dropped
+    #2964's Watch check because it names the crash log in iPhone Settings. Each test here failed on that code."""
+
+    pr = staticmethod(PlanGroupingTests.pr)
+    waiting = staticmethod(PlanGroupingTests.waiting)
+    write = PlanGroupingTests.write
+
+    def setUp(self):
+        self.module = load_phone_build()  # the real CURRENT_MILESTONE and HELD_MILESTONES
+
+    def issue_460(self):
+        return {'number': 460, 'title': 'Skim', 'url': 'https://example/issue/460', 'state': 'OPEN',
+                'body': '**Owner check:** By ear on the phone: on a podcast with Margins, Skim to a Margin, press '
+                        'Skim again during the lead-in, and check the episode carries on afterwards.\n',
+                'labels': {'nodes': [{'name': n} for n in ('priority', 'area: sharing',
+                                                            'status: needs-human-validation')]},
+                'milestone': {'title': 'Co-op Experience', 'state': 'OPEN'}, 'comments': {'nodes': []}}
+
+    def test_a_priority_fix_new_in_the_build_is_in_the_ten_minutes_whatever_its_milestone(self):
+        plan = self.write({3310: self.pr(3310, 'Skim goes to the next chapter or Margin', [self.issue_460()])})
+        ten_minutes = plan.split('## Try these')[1].split('\n## ')[0]
+        self.assertIn('1. **Skim goes to the next chapter or Margin**', ten_minutes)
+        self.assertNotIn('No change new in this build has a phone check', plan)
+        self.assertNotIn('waits for Co-op Experience', plan)
+
+    def test_closed_before_closing_on_merge_began_is_not_waiting(self):
+        old = self.waiting(277, 'Re-prepare an article and reopen it.', milestone=None, prs=[284])
+        old.update(state='CLOSED', closedAt='2026-09-30T18:58:53Z')
+        recent = self.waiting(3085, 'Double-press with the phone locked and hear the cue.', milestone='Showcase',
+                              phone=True, prs=[3087])
+        recent.update(state='CLOSED', closedAt='2026-11-01T01:37:12Z')
+        plan = self.write({}, waiting=[old, recent], built_prs={284, 3087})
+        self.assertNotIn('Waiting 277', plan)
+        self.assertIn('Waiting 3085', plan)
+        self.assertTrue(self.module.passed_on_phone([self.pr(284, 'Old fix', [old])]))
+
+    def test_fetch_waiting_drops_issues_closed_before_2026_10_22(self):
+        module = self.module
+        answers = {'OPEN': [], 'CLOSED': [
+            {'number': 277, 'createdAt': '2026-09-29T00:00:00Z', 'closedAt': '2026-09-30T18:58:53Z'},
+            {'number': 2833, 'createdAt': '2026-10-28T00:00:00Z', 'closedAt': '2026-10-29T01:35:41Z'}]}
+        module.gh = lambda *args: json.dumps({'data': {'repository': {'issues': {
+            'pageInfo': {'hasNextPage': False}, 'nodes': answers['CLOSED' if 'states: CLOSED' in ' '.join(args) else 'OPEN']}}}})
+        with unittest.mock.patch.object(module, 'CLOSED_WINDOW_DAYS', 400):
+            self.assertEqual([issue['number'] for issue in module.fetch_waiting()], [2833])
+
+    def test_a_recorded_owner_pass_takes_the_fix_off_the_plan(self):
+        # #2833's comment of 2026-10-30, and the other ways threads record his result.
+        passes = ['**Phone check, owner, build 0.1 (35) 9c88103, 2026-10-30:** DONE: tapping the Live Activity '
+                  'opens the live session and Write a Margin works.',
+                  "**Owner's phone check: PASS** on build 32 commit `437fbc9` (2026-10-13).",
+                  "**Owner's phone check on `437fbc9` (2026-10-13): acceptable.**",
+                  '**Owner pass on build `fdda29c`** (2026-10-16): "seems like importing an OPML worked well."']
+        not_passes = ['Owner phone check, 2026-10-14 evening, candidate **0.1 (32)**: **headphone-button completion '
+                      'did not pass**.',
+                      "**Owner's phone check:** play it and see it passes.",
+                      '**Owner check:** tap the Live Activity.']
+        for body in passes + not_passes:
+            with self.subTest(body=body[:50]):
+                fix = self.waiting(2833, 'Tap the Live Activity body.', milestone='Showcase', phone=True,
+                                   prs=[2860], comments=[body])
+                plan = self.write({}, waiting=[fix], built_prs={2860})
+                self.assertEqual('Waiting 2833' in plan, body in not_passes, plan)
+        # A check written after his pass (a re-land) asks again.
+        fix = self.waiting(2833, None, milestone='Showcase', phone=True, prs=[2860],
+                           comments=[passes[0], '**Owner check:** after the re-land, tap the Live Activity again.'])
+        self.assertIn('Waiting 2833', self.write({}, waiting=[fix], built_prs={2860}))
+
+    def test_a_crash_log_from_iphone_settings_is_his_to_send(self):
+        check = ('record a Margin on the Watch, tap "N waiting", then relaunch the Watch app. If it still crashes, '
+                 'reopen this issue with the Watch crash log from iPhone > Settings > Privacy & Security > Analytics & '
+                 'Improvements > Analytics Data. No crash log has been captured yet, so the root cause is unconfirmed.')
+        self.assertIsNone(self.module.unusable_check(check))
+        self.assertIsNotNone(self.module.unusable_check('Attach the crash log the simulator wrote.'))
+
+    def test_the_runner_s_re_merge_onto_main_is_host_test_evidence(self):
+        module = self.module
+        sha = '13515dacee9963714bcd7c16e6ca1d702e2ff1ea'
+        module.git = unittest.mock.Mock(return_value="Merge pull request #3298: A friend's file opens straight onto its item")
+        body = ('**Merge check (triage desk) on `f9b627f`: PASS, re-merged onto the newest main without re-testing.**\n'
+                '- Tested this PR merged with main at `e1a99ad`. Ran: host tests (GitHub-hosted): passed.\n'
+                '- So the re-merge `13515da` goes to main not re-tested. The Test Desk tests main\'s merged tip end to end.\n')
+        bot = lambda text: json.dumps({'body': text, 'author_association': 'NONE', 'user': {'login': 'github-actions[bot]'}})
+        module.gh = lambda *args: bot(body)
+        evidence, why = module.runner_evidence(sha)
+        self.assertIn('PR #3298', evidence)
+        module.gh = lambda *args: bot('**Claude audit on `f9b627f`**')
+        evidence, why = module.runner_evidence(sha)
+        self.assertIsNone(evidence)
+        self.assertIn('PR #3298 has no lane merge check', why)
+        module.git = unittest.mock.Mock(return_value='Bump the build number')
+        self.assertIn('is not a lane merge', module.runner_evidence(sha)[1])
+
+    def test_the_header_names_the_trunk_it_was_built_from(self):
+        plan = self.write({})
+        self.assertIn(f'from {self.module.BRANCH} at `aaaaaaa`', plan)
+        with unittest.mock.patch.object(self.module, 'BRANCH', 'main'):
+            self.assertIn('from main at `aaaaaaa`', self.write({}))
+
+
+class CurrentFocusTests(unittest.TestCase):
+    """The plan's milestones come from AGENTS.md's "Order of work" line; they drifted for two weeks after the
+    focus moved off Solid Ground (the 13515da plan, 2026-11-04). This fails the next time they disagree."""
+
+    def test_the_milestone_constants_match_agents_md(self):
+        module = load_phone_build()
+        agents = (SCRIPTS.parent / 'AGENTS.md').read_text()
+        line = next(line for line in agents.splitlines() if line.startswith('- **Order of work:**'))
+        named = re.findall(r'`([^`]+)`', line)
+        self.assertIn(module.CURRENT_MILESTONE, named, line)
+        self.assertEqual(named.index(module.CURRENT_MILESTONE), min(
+            named.index(m) for m in named if m != 'priority'), 'the current milestone is the first one named')
+        never_held = re.findall(r'`([^`]+)`,? which is never held', line)
+        for milestone in never_held:
+            self.assertNotIn(milestone, module.HELD_MILESTONES, line)
+        for milestone in module.HELD_MILESTONES:
+            self.assertNotIn(milestone, named, f'{milestone} is in the order of work, so it is not held')
 
 
 if __name__ == '__main__':
