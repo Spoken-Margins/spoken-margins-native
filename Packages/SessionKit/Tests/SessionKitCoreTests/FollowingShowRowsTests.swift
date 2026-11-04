@@ -29,8 +29,21 @@ final class FollowingShowRowsTests: XCTestCase {
         )
     }
 
-    private func build(_ subscriptions: [FeedSubscription], _ entries: [FeedEntry], looked: [String: Date] = [:]) -> FollowingShowList {
-        FollowingShowRows.build(subscriptions: subscriptions, entries: entries, lookedAt: looked, now: now, calendar: calendar, locale: Locale(identifier: "en_US"))
+    private func build(
+        _ subscriptions: [FeedSubscription], _ entries: [FeedEntry], looked: [String: Date] = [:],
+        library: [String: FollowingLibraryEpisode] = [:]
+    ) -> FollowingShowList {
+        FollowingShowRows.build(
+            subscriptions: subscriptions, entries: entries, lookedAt: looked, libraryEpisodes: library,
+            now: now, calendar: calendar, locale: Locale(identifier: "en_US"))
+    }
+
+    private func inProgress(_ entryID: String) -> [String: FollowingLibraryEpisode] {
+        [entryID: FollowingLibraryEpisode(itemID: "item-\(entryID)", isFinished: false)]
+    }
+
+    private func finished(_ entryID: String) -> [String: FollowingLibraryEpisode] {
+        [entryID: FollowingLibraryEpisode(itemID: "item-\(entryID)", isFinished: true)]
     }
 
     // MARK: Ordering
@@ -62,18 +75,20 @@ final class FollowingShowRowsTests: XCTestCase {
 
     // MARK: Swipe Add (#2929)
 
-    func testSwipeAddTargetsThePreviewedEpisodeNotThePlayButtonsOne() {
-        // The newest episode is in the Library: the row previews it, ▶ plays the next unplayed one, and Add has nothing to add.
+    func testSwipeAddAndPlayTargetTheSameStartedEpisodeInTheLibrary() {
+        // The newest episode is in the Library and half heard: the row previews it, ▶ resumes it, and Add has nothing to add.
         let list = build(
             [show("a")],
-            [entry("a3", in: "a", day: 6, state: .imported), entry("a2", in: "a", day: 4), entry("a1", in: "a", day: 2)]
+            [entry("a3", in: "a", day: 6, state: .imported), entry("a2", in: "a", day: 4), entry("a1", in: "a", day: 2)],
+            library: inProgress("a3")
         )
         let row = list.rows[0]
         XCTAssertEqual(row.newestEpisodeTitle, "Episode a3")
         XCTAssertEqual(row.newestEntryID, "a3")
         XCTAssertTrue(row.isNewestInLibrary)
         XCTAssertNil(row.addEntryID)
-        XCTAssertEqual(row.playEntryID, "a2")
+        XCTAssertEqual(row.playEntryID, "a3")
+        XCTAssertEqual(row.playItemID, "item-a3", "▶ resumes the Library item rather than importing it again")
         XCTAssertTrue(row.accessibilityLabel.contains("In your Library."))
     }
 
@@ -150,7 +165,7 @@ final class FollowingShowRowsTests: XCTestCase {
 
     // MARK: Play
 
-    func testPlayTargetIsTheNewestUnplayedEpisode() {
+    func testPlayTargetIsTheNewestUnplayedEpisodeAndTheRowPreviewsTheSameOne() {
         let list = build(
             [show("a")],
             [
@@ -158,10 +173,93 @@ final class FollowingShowRowsTests: XCTestCase {
                 entry("newest-gone", in: "a", day: 8, state: .dismissed),
                 entry("target", in: "a", day: 6, state: .seen),
                 entry("older", in: "a", day: 3),
-            ]
+            ],
+            library: finished("newest-played")
         )
         XCTAssertEqual(list.rows[0].playEntryID, "target")
-        XCTAssertEqual(list.rows[0].newestEpisodeTitle, "Episode newest-played", "the row names the newest episode even when it was played")
+        XCTAssertEqual(list.rows[0].newestEntryID, "target")
+        XCTAssertEqual(list.rows[0].newestEpisodeTitle, "Episode target", "a finished episode is not the preview")
+        XCTAssertNil(list.rows[0].playItemID, "the target is not in the Library yet, so ▶ imports it")
+    }
+
+    // MARK: Finished episodes give way to the next unread one
+
+    func testAFinishedNewestEpisodeFallsBackToTheNextUnreadAndTheShowSortsByThatEpisode() {
+        // The reported case: show A's newest episode was heard, so A must sit where its next unread episode (day 3) puts it,
+        // below B (day 5), not stay on top at day 9.
+        let list = build(
+            [show("a"), show("b")],
+            [entry("a-done", in: "a", day: 9, state: .imported), entry("a-next", in: "a", day: 3), entry("b1", in: "b", day: 5)],
+            library: finished("a-done")
+        )
+        XCTAssertEqual(list.rows.map(\.id), ["b", "a"])
+        let a = list.rows[1]
+        XCTAssertEqual(a.newestEntryID, "a-next")
+        XCTAssertEqual(a.playEntryID, "a-next", "▶ plays what the row shows")
+        XCTAssertEqual(a.dateLabel, "Nov 17")
+        XCTAssertFalse(a.isNewestInLibrary)
+        XCTAssertFalse(a.accessibilityLabel.contains("In your Library"))
+    }
+
+    func testAnEpisodeInProgressStaysTheRowsPreviewAndKeepsTheShowOnTop() {
+        let list = build(
+            [show("a"), show("b")],
+            [entry("a-live", in: "a", day: 9, state: .imported), entry("a-old", in: "a", day: 3), entry("b1", in: "b", day: 5)],
+            library: inProgress("a-live")
+        )
+        XCTAssertEqual(list.rows.map(\.id), ["a", "b"])
+        XCTAssertEqual(list.rows[0].playEntryID, "a-live")
+    }
+
+    func testTheRowPreviewsTheMostRecentUnreadEpisodeWhenSeveralNewerOnesAreFinished() {
+        let list = build(
+            [show("a")],
+            [
+                entry("f3", in: "a", day: 9, state: .imported), entry("f2", in: "a", day: 8, state: .imported),
+                entry("u2", in: "a", day: 6), entry("u1", in: "a", day: 2),
+            ],
+            library: finished("f3").merging(finished("f2")) { first, _ in first }
+        )
+        XCTAssertEqual(list.rows[0].newestEntryID, "u2")
+        XCTAssertEqual(list.rows[0].playEntryID, "u2")
+    }
+
+    func testAnInProgressEpisodeBeatsANewerUnreadOneOnlyByDate() {
+        // Both count as worth hearing; the newer is previewed, and ▶ plays it too.
+        let list = build(
+            [show("a")],
+            [entry("unread", in: "a", day: 9), entry("live", in: "a", day: 4, state: .imported)],
+            library: inProgress("live")
+        )
+        XCTAssertEqual(list.rows[0].newestEntryID, "unread")
+        XCTAssertEqual(list.rows[0].playEntryID, "unread")
+    }
+
+    func testWhenEveryEpisodeIsFinishedTheRowNamesTheNewestOneAndOffersNoPlay() {
+        let list = build(
+            [show("a")],
+            [entry("old", in: "a", day: 3, state: .imported), entry("last", in: "a", day: 7, state: .imported)],
+            library: finished("old").merging(finished("last")) { first, _ in first }
+        )
+        XCTAssertEqual(list.rows[0].newestEntryID, "last")
+        XCTAssertNil(list.rows[0].playEntryID)
+        XCTAssertNil(list.rows[0].playItemID)
+        XCTAssertTrue(list.rows[0].accessibilityLabel.contains("Newest: Episode last."))
+    }
+
+    func testAnImportedEpisodeWithNoLibraryItemIsTreatedAsDoneSoTheRowNeverPreviewsWhatItCannotPlay() {
+        let list = build([show("a")], [entry("gone", in: "a", day: 9, state: .imported), entry("next", in: "a", day: 4)])
+        XCTAssertEqual(list.rows[0].newestEntryID, "next")
+        XCTAssertEqual(list.rows[0].playEntryID, "next")
+    }
+
+    func testFinishedEpisodesDoNotChangeTheNewCount() {
+        let list = build(
+            [show("a")],
+            [entry("done", in: "a", day: 9, state: .imported), entry("n1", in: "a", day: 4), entry("n2", in: "a", day: 3)],
+            library: finished("done")
+        )
+        XCTAssertEqual(list.rows[0].newCount, 2)
     }
 
     func testNothingToPlayWhenEveryEpisodeIsPlayed() {
@@ -214,7 +312,7 @@ final class FollowingShowRowsTests: XCTestCase {
         XCTAssertEqual(row.dateLabel, "Nov 17")
         XCTAssertTrue(row.accessibilityLabel.hasPrefix("The Daily."))
         XCTAssertTrue(row.accessibilityLabel.contains("1 new."))
-        XCTAssertTrue(row.accessibilityLabel.contains("Newest: Salt."))
+        XCTAssertTrue(row.accessibilityLabel.contains("Up next: Salt."))
     }
 
     func testAShowWithoutATitleIsNamedByItsHost() {
