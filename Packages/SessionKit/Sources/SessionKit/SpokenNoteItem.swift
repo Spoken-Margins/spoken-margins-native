@@ -38,6 +38,12 @@ public enum SpokenNoteItem {
         return noteId(fromReference: item.externalReference)
     }
 
+    /// The Lock Screen and Now Playing subtitle for a note: plain words, never the `note://` reference. Nil for any
+    /// other item, which keeps its own subtitle.
+    public static func mediaSubtitle(for item: Item) -> String? {
+        isSpokenNote(mediaType: item.mediaType) ? defaultTitle : nil
+    }
+
     /// The Library item for a note. Its text is the note's transcript so far (empty until a take is transcribed), and
     /// it holds nothing else of the note, so rebuilding it from the store loses nothing.
     public static func makeItem(note: SpokenNote, title: String? = nil, createdAt: Date) -> Item {

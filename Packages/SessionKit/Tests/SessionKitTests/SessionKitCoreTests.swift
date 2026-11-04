@@ -7416,6 +7416,38 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(evictions.map(\.itemId), ["old"])
     }
 
+    /// #3108: a spoken note's Lock Screen card says "Spoken note" and carries no `note://<id>` source URL, while an
+    /// ordinary media item keeps its own subtitle and source URL. (The engine sets a media context only for an item
+    /// that plays media, which a note does once it has a take's audio.)
+    func testSpokenNoteMediaContextHasAPlainSubtitleAndNoSourceURL() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "note", displayName: "Note",
+            capabilities: ["sync": ["canonical_persistence"], "playback": ["native_media"]]
+        )
+        let remote = "https://example.com/take.mp3"
+        let media = ItemMedia(sourceType: .remoteStream, url: remote, durationMs: 5_000)
+        let plain = Item(id: "plain", title: "Plain", mediaType: "audio", text: nil, externalReference: remote, status: "ready", media: media)
+        var note = SpokenNoteItem.makeItem(note: SpokenNote(id: "n1"), createdAt: Date(timeIntervalSince1970: 0))
+        note.media = media
+        let repository = InMemorySessionRepository(items: [plain.id: plain, note.id: note])
+        let plainAudio = RecordingAudioClient()
+        let plainEngine = SessionEngine(profile: profile, repository: repository, audio: plainAudio)
+        let noteAudio = RecordingAudioClient()
+        let noteEngine = SessionEngine(profile: profile, repository: repository, audio: noteAudio)
+
+        _ = try plainEngine.startSession(itemId: plain.id)
+        let plainContext = try XCTUnwrap(plainAudio.mediaContexts.compactMap { $0 }.last)
+        XCTAssertEqual(plainContext.itemId, plain.id)
+        XCTAssertEqual(plainContext.subtitle, remote, "other items keep their own subtitle")
+        XCTAssertEqual(plainContext.sourceURL, remote)
+
+        _ = try noteEngine.startSession(itemId: note.id)
+        let noteContext = try XCTUnwrap(noteAudio.mediaContexts.compactMap { $0 }.last)
+        XCTAssertEqual(noteContext.itemId, note.id)
+        XCTAssertEqual(noteContext.subtitle, "Spoken note")
+        XCTAssertNil(noteContext.sourceURL)
+    }
+
     func testLocalPodcastTransportSwitchPreservesCanonicalTargetTimeAndRate() throws {
         let profile = RuntimeCapabilityProfile(
             id: "podcast",
