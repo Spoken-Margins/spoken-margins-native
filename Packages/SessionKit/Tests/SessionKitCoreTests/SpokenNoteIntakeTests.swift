@@ -58,7 +58,7 @@ final class SpokenNoteIntakeTests: XCTestCase {
 
     func testAudioFileNamesThatLeaveTheFolderOrNameTheNoteFileAreRefused() throws {
         try Data([1]).write(to: support.appendingPathComponent("outside.m4a"))
-        for name in ["", ".", "..", "../outside.m4a", "a/b.m4a", "a\\b.m4a", "note.json", "NOTE.JSON", "note.unreadable.json", "a\nb.m4a"] {
+        for name in ["", ".", "..", "../outside.m4a", "a/b.m4a", "a\\b.m4a", "note.json", "NOTE.JSON", "note.unreadable.json", "a\nb.m4a", "note.jſon", "née.m4a"] {
             XCTAssertThrowsError(try SpokenNoteIntake.addRecordedTake(audioFileName: name, durationMs: 1, to: started.store, now: Date()), name) {
                 XCTAssertEqual($0 as? SpokenNoteIntake.IntakeError, .unsafeAudioFileName, name)
             }
@@ -67,6 +67,41 @@ final class SpokenNoteIntakeTests: XCTestCase {
         for name in ["take 1.m4a", "Take.M4A", "notes.m4a", "note.m4a"] {
             XCTAssertTrue(SpokenNoteIntake.isPlainFileName(name), name)
         }
+    }
+
+    func testAudioThatIsAFolderOrALinkIsNotATake() throws {
+        let folder = started.store.folderURL
+        try FileManager.default.createDirectory(at: folder.appendingPathComponent("dir.m4a"), withIntermediateDirectories: false)
+        let target = support.appendingPathComponent("elsewhere.m4a")
+        try Data([1]).write(to: target)
+        try FileManager.default.createSymbolicLink(at: folder.appendingPathComponent("link.m4a"), withDestinationURL: target)
+        for name in ["dir.m4a", "link.m4a"] {
+            XCTAssertThrowsError(try SpokenNoteIntake.addRecordedTake(audioFileName: name, durationMs: 1, to: started.store, now: Date()), name) {
+                XCTAssertEqual($0 as? SpokenNoteIntake.IntakeError, .audioFileMissing, name)
+            }
+        }
+    }
+
+    /// A note file that is there but can't be read must not become an empty note that the next save writes over.
+    /// (Here `note.json` is a folder, which cannot be read as a file; a locked phone fails the same way.)
+    func testANoteThatCannotBeReadIsNeverSavedOver() throws {
+        try writeAudio("a.m4a")
+        try SpokenNoteIntake.addRecordedTake(audioFileName: "a.m4a", durationMs: 1, to: started.store, now: Date(), takeId: "t1")
+        let file = started.store.fileURL
+        let saved = support.appendingPathComponent("saved.json")
+        try FileManager.default.moveItem(at: file, to: saved)
+        try FileManager.default.createDirectory(at: file, withIntermediateDirectories: false)
+        XCTAssertThrowsError(try SpokenNoteIntake.addRecordedTake(audioFileName: "a.m4a", durationMs: 1, to: started.store, now: Date(), takeId: "t2")) {
+            XCTAssertEqual($0 as? SpokenNoteIntake.IntakeError, .noteUnreadable)
+        }
+        XCTAssertThrowsError(try SpokenNoteIntake.applyTranscript(words: words(["Hi."]), forTake: "t1", in: started.store)) {
+            XCTAssertEqual($0 as? SpokenNoteIntake.IntakeError, .noteUnreadable)
+        }
+        var isDirectory: ObjCBool = false
+        XCTAssertTrue(FileManager.default.fileExists(atPath: file.path, isDirectory: &isDirectory) && isDirectory.boolValue, "nothing was written over it")
+        try FileManager.default.removeItem(at: file)
+        try FileManager.default.moveItem(at: saved, to: file)
+        XCTAssertEqual(started.store.load().takes.map(\.id), ["t1"], "the earlier dictation is intact once it can be read again")
     }
 
     func testTheTranscriptArrivesLaterAndIsNeverReplaced() throws {
