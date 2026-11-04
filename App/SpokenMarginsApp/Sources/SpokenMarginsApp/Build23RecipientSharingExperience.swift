@@ -139,7 +139,7 @@ struct Build23RecipientSharingExperience: View {
                     .font(.caption)
                     .foregroundStyle(AppColors.secondaryText)
                 Text("Deleting this import removes your local copy only. Other recipients may retain their copies.")
-                    .font(.caption)
+                    .font(.footnote)
                     .foregroundStyle(AppColors.secondaryText)
             }
         }
