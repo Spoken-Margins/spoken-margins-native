@@ -13,12 +13,12 @@ struct ExperienceAudioPreparationQueueScreen: View {
                 model.automaticAudioPreparationPolicy = policy
                 model.automaticAudioPreparationPolicyChanged()
             },
-            prioritize: { id in Task { await model.prioritizeAudioPreparationJob(id: id) } },
-            moveEarlier: { id in Task { await model.moveAudioPreparationJobEarlier(id: id) } },
-            moveLater: { id in Task { await model.moveAudioPreparationJobLater(id: id) } },
+            prioritize: { id in model.prioritizeAudioPreparationJob(id: id) },
+            moveEarlier: { id in model.moveAudioPreparationJobEarlier(id: id) },
+            moveLater: { id in model.moveAudioPreparationJobLater(id: id) },
             renderNow: model.prioritizeOfflinePreparation,
-            skip: { id in Task { await model.skipAudioPreparationJob(id: id) } },
-            clear: { Task { await model.clearAudioPreparationQueue() } },
+            skip: { id in model.skipAudioPreparationJob(id: id) },
+            clear: { model.clearAudioPreparationQueue() },
             refresh: { Task { await model.refreshAudioPreparationPresentation() } },
             openItem: model.openItem
         )

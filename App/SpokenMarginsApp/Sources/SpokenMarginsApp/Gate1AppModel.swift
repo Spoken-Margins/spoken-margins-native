@@ -1015,28 +1015,6 @@ final class Gate1AppModel: ObservableObject {
         refreshQuickAddFeed(force: false)
     }
 
-    func offlineStorageBudgetChanged() {
-        guard OfflineStorageBudget.allowedGigabytes.contains(offlineStorageLimitGB) else {
-            offlineStorageLimitGB = 5
-            return
-        }
-        UserDefaults.standard.set(offlineStorageLimitGB, forKey: "offlineStorageLimitGB")
-        podcastCacheLimitGB = offlineStorageLimitGB
-        Task { [weak self] in
-            guard let self else { return }
-            do {
-                let store = try self.requireStore()
-                let budget = OfflineStorageBudget(limitBytes: Int64(self.offlineStorageLimitGB) * OfflineStorageBudget.bytesPerGigabyte)
-                // Off the main actor, in line with an earlier change's save (#2509).
-                try await StoreReader(store).readInOrder(OfflineStorageBudget.saveOrderKey) { try $0.saveOfflineStorageBudget(budget) }
-                _ = try await self.offlineStorageLedger?.enforceBudget()
-                self.tryRefreshOfflineStorageUsage()
-            } catch {
-                self.reportFailure(error, context: "Offline storage budget update failed")
-            }
-        }
-    }
-
     func clearReproducibleOfflineAudio() {
         guard let ledger = offlineStorageLedger else { return }
         Task { [weak self, renderedSpeechDiskCache = self.renderedSpeechDiskCache] in

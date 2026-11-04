@@ -110,6 +110,7 @@ extension Gate1AppModel {
             // background task holds the app awake until the write lands.
             let endBackgroundTask = Gate2AppState.beginBackgroundTask("Spoken Margins preparation expiry note")
             Task { @MainActor [weak self] in
+                // ordered-ok: a one-off expiry note written as iOS ends background time; no other edit is started from the same moment that must stay ahead of it
                 let marked = try? await StoreReader(store).readInOrder(AudioPreparationQueueEdits.orderKey, priority: .userInitiated) {
                     try AudioPreparationQueueEdits.markInterrupted(requests: requests, in: $0)
                 }
