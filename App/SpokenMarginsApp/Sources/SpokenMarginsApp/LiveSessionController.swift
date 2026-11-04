@@ -97,7 +97,7 @@ final class LiveSessionController: ObservableObject {
         do {
             try LiveSessionEnd.end(&ending, when: when, tappedAt: Date(), endPositionMs: endPositionMs, endWhere: endWhere, endPlace: endPlace)
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = ListenerErrorText.message(for: error)
             return false
         }
         WatchMarginReceiver.shared.fileWaitingMarks()
@@ -145,7 +145,7 @@ final class LiveSessionController: ObservableObject {
         do {
             try LiveSessionEdit.setSourceClock(positionMs: positionMs, at: Date(), on: &edited)
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = ListenerErrorText.message(for: error)
             return false
         }
         session = edited
@@ -262,7 +262,7 @@ final class LiveSessionController: ObservableObject {
                 try await phoneRecorder.start()
             } catch {
                 self?.isRecordingSpoken = false
-                self?.errorMessage = error.localizedDescription
+                self?.errorMessage = ListenerErrorText.message(for: error)
             }
         }
     }
@@ -277,7 +277,7 @@ final class LiveSessionController: ObservableObject {
                 guard let recording = try await phoneRecorder.stop() else { return }
                 self?.fileSpokenMargin(recording)
             } catch {
-                self?.errorMessage = "Couldn't save the spoken Margin: \(error.localizedDescription)"
+                self?.errorMessage = ListenerErrorText.line(prefix: "Couldn't save the spoken Margin:", error: error)
             }
         }
     }
@@ -398,7 +398,7 @@ final class LiveSessionController: ObservableObject {
             do {
                 try await files.save(session, generation: generation)
             } catch {
-                self?.errorMessage = "Couldn't save the live session: \(error.localizedDescription)"
+                self?.errorMessage = ListenerErrorText.line(prefix: "Couldn't save the live session:", error: error)
             }
         }
     }

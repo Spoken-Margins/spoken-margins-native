@@ -88,7 +88,7 @@ public struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
             return unsupported(request: request, reason: "invalid_url")
         }
 
-        if isDirectAudioURL(url) {
+        if request.declaredAudio || isDirectAudioURL(url) {
             let candidate = LinkResolutionCandidate(
                 sourceLink: SourceLink(url: url.absoluteString, provider: "direct_audio", title: title(from: url), role: "audio_file"),
                 title: title(from: url),
@@ -160,7 +160,7 @@ public struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
             return unsupported(request: request, reason: "invalid_url")
         }
 
-        if isDirectAudioURL(url) {
+        if request.declaredAudio || isDirectAudioURL(url) {
             let candidate = LinkResolutionCandidate(
                 sourceLink: SourceLink(url: url.absoluteString, provider: "direct_audio", title: title(from: url), role: "audio_file"),
                 title: title(from: url),
@@ -1261,8 +1261,19 @@ public struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
         )
     }
 
+    private static let audioExtensions: Set<String> = ["mp3", "m4a", "aac", "wav", "aiff", "flac", "ogg", "opus"]
+
+    /// An address that names an audio file: in its path (`/ep.mp3`) or, for a redirector, in a query value
+    /// (`ccdn.php?filename=/eps/ep.mp3`, #3345). An address that is neither stays a page or feed, unless the
+    /// publisher's feed declared it audio (`LinkResolutionRequest.declaredAudio`).
     private func isDirectAudioURL(_ url: URL) -> Bool {
-        ["mp3", "m4a", "aac", "wav", "aiff", "flac", "ogg", "opus"].contains(url.pathExtension.lowercased())
+        if Self.audioExtensions.contains(url.pathExtension.lowercased()) { return true }
+        guard let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems else { return false }
+        return items.contains { item in
+            guard let value = item.value else { return false }
+            let path = value.split(separator: "?", maxSplits: 1).first.map(String.init) ?? value
+            return Self.audioExtensions.contains((path as NSString).pathExtension.lowercased())
+        }
     }
 
     private func isHTTPURL(_ url: URL) -> Bool {

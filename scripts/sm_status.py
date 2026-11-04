@@ -174,6 +174,13 @@ class GitHub:
             return found
         raise GitHubError(f'GET {path}: more than {limit} pages')
 
+    def graphql(self, query: str, variables: dict | None = None) -> dict:
+        """One GraphQL read: its `data`. GraphQL answers errors with HTTP 200, so they are raised here."""
+        answer = self.request('POST', f'{API}/graphql', {'query': query, 'variables': variables or {}})[0] or {}
+        if answer.get('errors') or not isinstance(answer.get('data'), dict):
+            raise GitHubError(f'GraphQL: {json.dumps(answer.get("errors"))[:200]}')
+        return answer['data']
+
     def post(self, path: str, body: dict):
         return self.request('POST', path, body)[0]
 

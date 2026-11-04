@@ -48,7 +48,7 @@ extension Gate1AppModel {
     }
 
     @discardableResult
-    func importSourceLinkInBackground(_ handoff: SourceLinkHandoff, feedEntry: FeedEntry? = nil, subscription: FeedSubscription? = nil) async throws -> String? {
+    func importSourceLinkInBackground(_ handoff: SourceLinkHandoff, feedEntry: FeedEntry? = nil, subscription: FeedSubscription? = nil, declaredAudio: Bool = false) async throws -> String? {
         let trimmed = handoff.inputURL.trimmingCharacters(in: .whitespacesAndNewlines)
         if handoff.sourceSurface == "share_sheet_pdf_file",
            let fileURL = URL(string: trimmed),
@@ -74,7 +74,8 @@ extension Gate1AppModel {
             id: handoff.id,
             inputURL: url.absoluteString,
             sourceSurface: handoff.sourceSurface,
-            createdAt: Date()
+            createdAt: Date(),
+            declaredAudio: declaredAudio
         )
         let fetched = FetchedPageMemo() // the voiceover lookup reads the post page from here (#810)
         let resolution = try await LinkArticleFallback.resolve(

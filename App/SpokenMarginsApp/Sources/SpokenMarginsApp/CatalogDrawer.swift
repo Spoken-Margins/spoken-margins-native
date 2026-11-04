@@ -314,7 +314,7 @@ final class CatalogDrawerModel: ObservableObject {
                 self.followStates[show.id] = .followed
             } catch {
                 self.settlePick(key: show.id, sourceId: nil)
-                self.followStates[show.id] = .failed(error.localizedDescription)
+                self.followStates[show.id] = .failed(ListenerErrorText.message(for: error))
             }
         })
     }
@@ -364,7 +364,7 @@ final class CatalogDrawerModel: ObservableObject {
                 self.followStates[entry.id] = .followed
             } catch {
                 self.settlePick(key: entry.id, sourceId: nil)
-                self.followStates[entry.id] = .failed(error.localizedDescription)
+                self.followStates[entry.id] = .failed(ListenerErrorText.message(for: error))
             }
         })
     }

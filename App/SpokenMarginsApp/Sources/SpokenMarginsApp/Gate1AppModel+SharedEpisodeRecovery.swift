@@ -37,7 +37,7 @@ extension Gate1AppModel {
             sourceSurface: "shared_margin_feed_recovery",
             startSession: false
         )
-        guard let itemId = try await importSourceLinkInBackground(handoff, feedEntry: entry, subscription: nil) else {
+        guard let itemId = try await importSourceLinkInBackground(handoff, feedEntry: entry, subscription: nil, declaredAudio: entry.audioURL != nil) else {
             throw SessionKitError.persistenceFailed("shared_episode_not_playable")
         }
         let store = try requireStore()

@@ -269,7 +269,7 @@ final class MarginOutputCoordinator: ObservableObject {
         } catch is NeedsFolderAccess {
             // Already marked; the other destinations carry on.
         } catch {
-            setStatus(.failure("Delivery needs attention: \(error.localizedDescription)"), for: destination.id)
+            setStatus(.failure(ListenerErrorText.line(prefix: "Delivery needs attention:", error: error)), for: destination.id)
         }
     }
 
@@ -338,7 +338,7 @@ final class MarginOutputCoordinator: ObservableObject {
             statuses[destination.id] = MarginOutputStatus("Folder set to \(url.lastPathComponent). Send a test note, then start delivery.")
             return destination
         } catch {
-            notice = MarginOutputStatus.failure("Couldn't use that folder: \(error.localizedDescription)")
+            notice = MarginOutputStatus.failure(ListenerErrorText.line(prefix: "Couldn't use that folder:", error: error))
             return nil
         }
     }
@@ -356,12 +356,12 @@ final class MarginOutputCoordinator: ObservableObject {
             planners[id] = nil
             deliverSoon()
         } catch {
-            statuses[id] = MarginOutputStatus.failure("Couldn't use that folder: \(error.localizedDescription)")
+            statuses[id] = MarginOutputStatus.failure(ListenerErrorText.line(prefix: "Couldn't use that folder:", error: error))
         }
     }
 
     func reportFolderPickFailure(_ error: Error) {
-        notice = MarginOutputStatus.failure("Folder selection failed: \(error.localizedDescription)")
+        notice = MarginOutputStatus.failure(ListenerErrorText.line(prefix: "Folder selection failed:", error: error))
     }
 
     func rename(_ id: String, to name: String) {
@@ -454,7 +454,7 @@ final class MarginOutputCoordinator: ObservableObject {
             )
         } catch is NeedsFolderAccess {
         } catch {
-            setStatus(.failure(error.localizedDescription), for: id)
+            setStatus(.failure(ListenerErrorText.message(for: error)), for: id)
         }
     }
 
@@ -487,7 +487,7 @@ final class MarginOutputCoordinator: ObservableObject {
             notice = nil
             return true
         } catch {
-            notice = MarginOutputStatus.failure("Couldn't save your Margin Output settings: \(error.localizedDescription)")
+            notice = MarginOutputStatus.failure(ListenerErrorText.line(prefix: "Couldn't save your Margin Output settings:", error: error))
             return false
         }
     }

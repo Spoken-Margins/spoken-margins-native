@@ -422,6 +422,7 @@ public enum SpokenMarginsPackageImporter {
         localItem: SharedItemIdentity? = nil,
         itemText: String? = nil,
         importedAt: Date = Date(),
+        shareLinkId: String? = nil,
         repository: SessionRepository,
         makeLocalID: LocalIDProvider = defaultLocalID
     ) throws -> ImportedCommentaryImportDisposition {
@@ -520,7 +521,9 @@ public enum SpokenMarginsPackageImporter {
                         }
                     },
                 uniquingKeysWith: { first, _ in first }
-            )
+            ),
+            // Kept only when it really is a link id, so a bad value can't later point the Report action elsewhere.
+            shareLinkId: shareLinkId.flatMap(ShareLinkReport.validLinkId)
         )
         // A sender who shares again sends their earlier Margins too; the listener keeps one copy of each (#858).
         return try ImportedMarginResends.importLayer(layer, interjections: importedInterjections, repository: repository)

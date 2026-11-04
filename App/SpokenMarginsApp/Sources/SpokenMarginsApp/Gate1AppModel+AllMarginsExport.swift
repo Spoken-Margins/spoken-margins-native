@@ -30,7 +30,7 @@ extension Gate1AppModel {
             if url == nil { reportFailure("There's no written or transcribed Margin to export yet.") }
             return url
         case .failure(let error):
-            reportFailure("Export all Margins failed: \(error.localizedDescription)")
+            reportFailure(error, context: "Export all Margins failed")
             return nil
         }
     }

@@ -245,6 +245,16 @@ private struct Build23ImportedLayerList: View, Equatable {
                 ))
                 .accessibilityIdentifier("build23.imported.layer.\(layer.id).reveal-mode")
             }
+
+            // Opens the share page, where the report form is; no account is needed and the page needs no key (#2846).
+            if let reportURL = layer.reportURL {
+                Link(destination: reportURL) {
+                    Label("Report this link", systemImage: "flag")
+                        .font(.subheadline.weight(.semibold))
+                }
+                .accessibilityHint("Opens the share page in your browser, where you can report this link.")
+                .accessibilityIdentifier("build23.imported.layer.\(layer.id).report")
+            }
         }
     }
 

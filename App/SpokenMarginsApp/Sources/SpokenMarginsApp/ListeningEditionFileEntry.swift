@@ -14,7 +14,7 @@ extension ListeningEditionBatch.Entry {
             }
             return ListeningEditionBatch.Entry(id: id, name: name, data: try Data(contentsOf: url))
         } catch {
-            return ListeningEditionBatch.Entry(id: id, name: name, error: error.localizedDescription)
+            return ListeningEditionBatch.Entry(id: id, name: name, error: ListenerErrorText.message(for: error))
         }
     }
 }

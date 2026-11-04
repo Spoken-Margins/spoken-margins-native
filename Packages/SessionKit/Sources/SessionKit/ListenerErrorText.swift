@@ -12,6 +12,14 @@ public enum ListenerErrorText {
         return looksLikeCodeOrDump(description) ? fallback : description
     }
 
+    /// A failure line that opens with what failed, then the plain reason (or the generic next step): "Couldn't use that
+    /// folder: Something went wrong. Try again." Every place that builds a line from a prefix and an error uses this
+    /// one, so a Foundation message such as "The operation couldn't be completed. (NSCocoaErrorDomain error 513.)" never
+    /// reaches the screen behind a friendly prefix (#3317). The raw text belongs in Diagnostics.
+    public static func line(prefix: String, error: Error) -> String {
+        "\(prefix) \(message(for: error))"
+    }
+
     /// True for text no listener would write: empty, one unbroken token ("pdfHasNoExtractableText",
     /// "rss_episode_ambiguous"), a lowercase code prefix ("persistence_failed:…"), a case with its
     /// payload ("tooDeep(depth: 4)") or Foundation's "Error Domain=…" and "(Domain error 5.)" dumps.

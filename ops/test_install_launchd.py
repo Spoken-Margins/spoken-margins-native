@@ -67,6 +67,26 @@ class TemplateTests(unittest.TestCase):
                 self.assertEqual(data['EnvironmentVariables']['SM_PIN_CHECKOUT'], ops)
                 self.assertNotIn('Documents/GitHub', rendered[name].replace('(~/Documents/GitHub', ''))
 
+    def test_no_rendered_job_holds_a_token(self):
+        """Tokens live in the login Keychain; a reinstall must never write one into a LaunchAgent (2026-11-04).
+
+        The daily-phone-plan plist held SM_DAILY_RELAY_TOKEN in plain text until the lead moved it to the
+        Keychain (service sm-daily-relay-token); the old deploy step told whoever installed it to add it here."""
+        secret_name = re.compile(r'TOKEN|SECRET|PASSWORD|API_KEY|OAUTH', re.I)
+        for name, text in render_all().items():
+            with self.subTest(name):
+                self.assertNotIn('sk-ant', text)
+                data = plistlib.loads(text.encode())
+                self.assertEqual([k for k in data.get('EnvironmentVariables', {}) if secret_name.search(k)], [])
+                self.assertNotRegex(text, r'(?i)bearer\s+\w')
+
+    def test_the_daily_plan_deploy_steps_keep_the_relay_token_in_the_keychain(self):
+        guide = (ROOT / 'docs/workstreams/daily-phone-plan.md').read_text()
+        deploy = guide[guide.index('## Deploy on the Mac'):guide.index('## One owner reply')]
+        self.assertIn('-s sm-daily-relay-token', deploy)
+        self.assertIn('add `SM_DAILY_RELAY_URL` (and no token)', deploy)
+        self.assertNotRegex(deploy, r'add the relay variables|SM_DAILY_RELAY_TOKEN` (?:to|in) (?:the|its) ')
+
     def test_no_other_plist_in_the_repository_carries_the_owners_home(self):
         found = {str(p.relative_to(ROOT)) for folder in ('ops', 'scripts') for p in (ROOT / folder).rglob('*.plist')
                  if '/Users/colemiller' in p.read_text(errors='replace')}

@@ -11,7 +11,7 @@ act on what it prints, then reply:
   scripts/sm_sweep.py --json           the same facts for scripts
   scripts/sm_sweep.py --status-json F  use a saved `scripts/sm_status.py --json` output (F or - for stdin)
 
-It looks for eight things:
+It looks for eleven things:
   1. free Claude slots against the Dial (#589): its Threads box less the Claude threads active from their claim
      and stop notes (ops/dial/dial_gate.py's own reading), with the ready issues to start; Codex workers are
      counted against Codex's box and never against Claude's
@@ -26,6 +26,15 @@ It looks for eight things:
      last run, so 136 piled up unseen); the daily routine milestones and labels every one
   8. ready issues whose fix already merged (2026-10-22): a `Closes`, `Fixes` or `Resolves #N` PR is merged into the
      trunk, no open PR touches the issue and no claim is recent
+  Drift between GitHub and the code (#3350, report only; the 2026-11-04 audit found each by hand):
+  9. an open issue that a merged `Closes #N` PR into the trunk or `next` names, unless the issue was reopened after
+     that merge or the PR was reverted (#3218 stayed open after #3315 merged; GitHub did not close it, and rule 8
+     sees only `ready` issues)
+  10. a `Revert #P` merged in the last 14 days where an issue #P names has no trusted comment since that mentions the
+     revert (#3310 was reverted by #3320 and re-landed by #3323 with nothing on #460)
+  11. an open issue whose newest trusted comment holds it on a PR that has merged since, or waits on `next`, which
+     is frozen (#1612's newest note held it on #1154, merged into `next` on 2026-10-20)
+  Silent `in-progress` claims (#3247, #1507) are rule 3.
 
 --apply also closes those (rule 8), commenting once and removing only `ready` and `in-progress`. Every other label,
 including `found-on-phone`, `needs-human-validation`, `agent-verify`, `validate-by-use` and `priority`, stays on the
@@ -43,7 +52,9 @@ Anything it can't read is reported as unreadable and never turned into a release
 
 Exit codes: 0 the sweep ran (actions or none), 2 GitHub unreachable or unreadable (nothing partial is printed as
 "nothing to do"). Needs GH_TOKEN or GITHUB_TOKEN (or `gh auth token`); --apply needs write access to issues.
-About 40 to 80 GitHub calls a run, none of them model tokens.
+About 40 to 80 GitHub calls a run, none of them model tokens. Rules 9 to 11 add about 6: GraphQL pages of the open
+issues with their last three comments (100 a page), one page of PRs merged into `next`, one GraphQL lookup of the PRs
+a hold names, and at most DRIFT_READ_CAP issue-comment reads for reverts; what the cap leaves out is printed.
 """
 from __future__ import annotations
 
@@ -79,6 +90,18 @@ HOLD_LABELS = {'blocked', 'needs-owner', 'deferred', 'validate-by-use', 'agent-v
                'status: needs-human-validation'}   # a released claim isn't made `ready` with one of these
 DEAD = ('mac-tick-stale',)
 MERGED_PR_PAGES = 3                            # the newest 300 closed PRs into the trunk are as far back as a fix is looked for
+FROZEN_BASE = 'next'                           # frozen since 2026-10-20 (#1492); its merged PRs never closed an issue
+NEXT_PR_PAGES = 1                              # nothing new merges into it, so its newest 100 closed PRs are enough
+OPEN_ISSUE_PAGES = 5                           # GraphQL pages of 100 open issues (about 270 on 2026-11-04)
+REVERT_WINDOW = dt.timedelta(days=14)
+DRIFT_READ_CAP = 10                            # REST comment reads for rule 10; past it a revert is listed as unchecked
+LOOKUP_CAP = 100                               # PR numbers one GraphQL lookup may ask about
+REVERT = re.compile(r'\breverts?\s+(?:PR\s+)?(?:[\w.-]+/[\w.-]+)?#(\d+)', re.I)
+# A hold names its PR right after the hold word ("hold on PR #1154", "blocked behind #12", "until #12 merges"), so
+# "PR #3306 armed · waiting on the owner's answers" is not read as a hold on #3306.
+_HOLD = r'\b(?:hold|holds|held|holding|blocked|blocker|behind|until|waits?|waiting|depends|depending)'
+HOLD_ON_PR = re.compile(_HOLD + r'(?:\s+(?:on|for|by|behind))?\s+(?:the\s+)?(?:PR\s+)?#(\d+)', re.I)
+HOLD_ON_NEXT = re.compile(_HOLD + r'\b[^.\n]{0,60}?(?:`next`|\binto next\b|\bnext branch\b)', re.I)
 
 RED, LOOK = sm_status.RED, sm_status.LOOK
 
@@ -241,18 +264,22 @@ def release_merged_fix(api, row, now, window=STALE_AFTER):
         return f'error: {error}'
 
 
-def merged_fixes(api, ready, ctx):
+def closed_pulls(api, base, pages):
+    """The newest closed PRs into one base, each tagged with it; one batched read, not a search per issue."""
+    found = api.pages(f'pulls?state=closed&base={urllib.parse.quote(base)}&sort=updated&direction=desc',
+                      limit=pages, partial=True)
+    return [dict(pull, _base=base) for pull in found]
+
+
+def merged_fixes(pulls, ready, ctx):
     """Ready issues a merged trunk PR says it closes, with no open PR on them and no recent claim: [{..issue, pr, merged_at}].
 
-    One batched read of the newest closed PRs into the trunk, not a search per issue. Returns None when it can't be read.
+    `pulls` is the closed-PR read of the trunk; None when it couldn't be read, and then so is the answer.
     """
+    if pulls is None:
+        return None
     if not ready:
         return []
-    try:
-        pulls = api.pages(f'pulls?state=closed&base={urllib.parse.quote(trunk_branch())}&sort=updated&direction=desc',
-                          limit=MERGED_PR_PAGES, partial=True)
-    except sm_status.GitHubError:
-        return None
     fixed = {}
     for pull in pulls:
         if not pull.get('merged_at'):
@@ -271,6 +298,186 @@ def merged_fixes(api, ready, ctx):
             continue
         found.append(dict(row, **fix))
     return found
+
+
+# ---- Drift between GitHub and the code (rules 9 to 11, report only) --------------------------------------------
+
+OPEN_ISSUES = """query($owner: String!, $name: String!, $after: String) {
+  repository(owner: $owner, name: $name) {
+    issues(states: OPEN, first: 100, after: $after, orderBy: {field: CREATED_AT, direction: ASC}) {
+      pageInfo { hasNextPage endCursor }
+      nodes {
+        number title
+        labels(first: 30) { nodes { name } }
+        timelineItems(last: 1, itemTypes: [REOPENED_EVENT]) { nodes { ... on ReopenedEvent { createdAt } } }
+        comments(last: 3) { nodes { createdAt body authorAssociation author { __typename login } } }
+      }
+    }
+  }
+}"""
+
+
+def owner_name(api):
+    owner, _, name = api.repo.partition('/')
+    return {'owner': owner, 'name': name}
+
+
+def open_issues(api):
+    """Every open issue with its labels, its last reopening and its last three comments, in a few GraphQL pages."""
+    rows, after = [], None
+    for _ in range(OPEN_ISSUE_PAGES):
+        page = api.graphql(OPEN_ISSUES, dict(owner_name(api), after=after))['repository']['issues']
+        for node in page['nodes']:
+            reopened = [n.get('createdAt') for n in node['timelineItems']['nodes'] if n.get('createdAt')]
+            rows.append({'number': node['number'], 'title': node.get('title') or '',
+                         'labels': sorted(l['name'] for l in node['labels']['nodes']),
+                         'reopened_at': max(reopened) if reopened else None,
+                         'comments': sorted(node['comments']['nodes'], key=lambda c: c['createdAt'])})
+        if not page['pageInfo']['hasNextPage']:
+            return rows
+        after = page['pageInfo']['endCursor']
+    raise sm_status.GitHubError(f'more than {OPEN_ISSUE_PAGES * 100} open issues')
+
+
+def lookup_pulls(api, numbers):
+    """{number: {number, merged_at, _base, title, body, head}} for the PRs among `numbers`, in one GraphQL read.
+    Issue numbers come back as nothing. The first LOOKUP_CAP numbers are asked about."""
+    numbers = sorted(set(numbers))[:LOOKUP_CAP]
+    if not numbers:
+        return {}
+    fields = ' '.join(f'n{n}: issueOrPullRequest(number: {n}) {{ ... on PullRequest {{ number mergedAt baseRefName '
+                      f'headRefName title body }} }}' for n in numbers)
+    data = api.graphql(f'query($owner: String!, $name: String!) {{ repository(owner: $owner, name: $name) {{ {fields} }} }}',
+                       owner_name(api))['repository']
+    found = {}
+    for node in data.values():
+        if node and node.get('number'):
+            found[node['number']] = {'number': node['number'], 'merged_at': node.get('mergedAt'),
+                                     '_base': node.get('baseRefName'), 'title': node.get('title') or '',
+                                     'body': node.get('body') or '', 'head': {'ref': node.get('headRefName') or ''}}
+    return found
+
+
+def pull_text(pull):
+    return f'{pull.get("title") or ""}\n{pull.get("body") or ""}'
+
+
+def reverts_of(pulls):
+    """{reverted PR number: the newest merged PR that reverts it}."""
+    found = {}
+    for pull in pulls:
+        if not pull.get('merged_at'):
+            continue
+        for number in {int(n) for n in REVERT.findall(pull_text(pull))}:
+            if number not in found or pull['merged_at'] > found[number]['merged_at']:
+                found[number] = pull
+    return found
+
+
+def merged_but_open(pulls, issues, skip=()):
+    """Rule 9: open issues a merged closing PR names, newest fix first per issue. Skips an issue reopened after the
+    merge (a failed validation reopens with `regression`, 2026-10-22) and a PR that was reverted."""
+    reverted = set(reverts_of(pulls))
+    fixed = {}
+    for pull in pulls:
+        if not pull.get('merged_at') or pull['number'] in reverted:
+            continue
+        for number in {int(n) for n in sm_status.CLOSING.findall(pull_text(pull))}:
+            if number not in fixed or pull['merged_at'] > fixed[number]['merged_at']:
+                fixed[number] = {'pr': pull['number'], 'merged_at': pull['merged_at'], 'base': pull.get('_base')}
+    found = []
+    for row in issues:
+        fix = fixed.get(row['number'])
+        if not fix or row['number'] in skip:
+            continue
+        if row.get('reopened_at') and row['reopened_at'] > fix['merged_at']:
+            continue
+        found.append({'number': row['number'], 'title': row['title'], **fix})
+    return found
+
+
+def unnoted_reverts(api, pulls, now, budget):
+    """Rule 10: [{issue, pr, revert, merged_at}] for reverts merged in the window whose PR's issues say nothing of
+    them since, and [(revert, pr)] the read budget left unchecked. `budget` is a one-item list, spent in place."""
+    known = {pull['number']: pull for pull in pulls}
+    recent = {number: revert for number, revert in reverts_of(pulls).items()
+              if now - when(revert['merged_at']) <= REVERT_WINDOW}
+    missing = [number for number in recent if number not in known]
+    if missing:
+        known.update(lookup_pulls(api, missing))
+    found, unchecked = [], []
+    for number, revert in sorted(recent.items()):
+        original = known.get(number)
+        issues = [n for n in sm_status.linked_issues(original) if n not in (number, revert['number'])] if original else []
+        for issue_number in issues:
+            if budget[0] <= 0:
+                unchecked.append((revert['number'], number))
+                break
+            budget[0] -= 1
+            since = comment_trust.trusted_only(api.pages(f'issues/{issue_number}/comments?since={revert["merged_at"]}'))
+            if any(f'#{revert["number"]}' in (c.get('body') or '') or
+                   (re.search(r'\brevert', c.get('body') or '', re.I) and f'#{number}' in (c.get('body') or ''))
+                   for c in since):
+                continue
+            found.append({'issue': issue_number, 'pr': number, 'revert': revert['number'],
+                          'merged_at': revert['merged_at']})
+    return found, unchecked
+
+
+def stale_holds(api, issues, pulls):
+    """Rule 11: open issues whose newest trusted comment holds them on a PR merged after that comment, or on `next`."""
+    newest = {}
+    for row in issues:
+        trusted = comment_trust.trusted_only(row['comments'])
+        if trusted:
+            newest[row['number']] = trusted[-1]
+    known = {pull['number']: pull for pull in pulls if pull.get('merged_at')}
+    named = {int(n) for number, comment in newest.items() for n in HOLD_ON_PR.findall(comment.get('body') or '')
+             if int(n) != number}
+    missing = [n for n in named if n not in known]
+    if missing:
+        known.update({n: p for n, p in lookup_pulls(api, missing).items() if p.get('merged_at')})
+    found = []
+    for row in issues:
+        comment = newest.get(row['number'])
+        if not comment:
+            continue
+        said, body, hit = comment['createdAt'], comment.get('body') or '', None
+        for n in (int(x) for x in HOLD_ON_PR.findall(body)):
+            pull = known.get(n)
+            if n != row['number'] and pull and pull['merged_at'] > said:
+                hit = {'pr': n, 'merged_at': pull['merged_at'], 'base': pull.get('_base')}
+                break
+        if not hit and HOLD_ON_NEXT.search(body):
+            hit = {'pr': None, 'merged_at': None, 'base': FROZEN_BASE}
+        if hit:
+            found.append(dict(hit, number=row['number'], title=row['title'], said_at=said))
+    return found
+
+
+def drift(api, now, pulls, skip=()):
+    """Rules 9 to 11. Each part is None when its read failed, so a failure reads as unreadable, never as clean."""
+    out = {'merged_open': None, 'reverts': None, 'reverts_unchecked': [], 'holds': None, 'errors': []}
+    try:
+        issues = open_issues(api)
+    except (sm_status.GitHubError, KeyError, TypeError) as error:
+        issues = None
+        out['errors'].append(f'open issues: {error}')
+    if issues is not None and pulls is not None:
+        out['merged_open'] = merged_but_open(pulls, issues, skip)
+    if pulls is not None:
+        try:
+            out['reverts'], out['reverts_unchecked'] = unnoted_reverts(api, pulls, now, [DRIFT_READ_CAP])
+        except (sm_status.GitHubError, KeyError, TypeError) as error:
+            out['errors'].append(f'reverts: {error}')
+    if issues is not None:
+        try:
+            out['holds'] = stale_holds(api, issues, pulls or [])
+        except (sm_status.GitHubError, KeyError, TypeError) as error:
+            out['errors'].append(f'holds: {error}')
+    if pulls is None:
+        out['errors'].append('the merged-PR read failed')
+    return out
 
 
 def release(api, issue, why, now, window=STALE_AFTER):
@@ -351,7 +558,16 @@ def collect(api, now, snapshot=None):
                             for n in (row.get('issues') or ([row['issue']] if row.get('issue') else []))},
            'thread_for_issue': {n: t['title'] for t in active + codex_active for n in t['issues']}}
     ctx['now'] = now
-    merged = merged_fixes(api, ready, ctx)
+    trunk_pulls, pulls = None, None
+    try:
+        trunk_pulls = closed_pulls(api, trunk_branch(), MERGED_PR_PAGES)
+        pulls = list(trunk_pulls)
+        if trunk_branch() != FROZEN_BASE:
+            pulls += closed_pulls(api, FROZEN_BASE, NEXT_PR_PAGES)
+    except sm_status.GitHubError:
+        pass    # trunk_pulls stays as read; pulls stays None, so rules 9 and 10 report unreadable
+    merged = merged_fixes(trunk_pulls, ready, ctx)
+    drifted = drift(api, now, pulls, skip={row['number'] for row in merged or []})
     claims = []
     for issue in in_progress:
         evidence = gather_claim(api, issue['number'], now, ctx)
@@ -359,7 +575,7 @@ def collect(api, now, snapshot=None):
         claims.append(dict(issue, state=state, why=why, last_seen=last))
 
     return {'now': now, 'snapshot': snapshot, 'dial': dial, 'dial_now': dial_now(status_comments), 'usage': usage,
-            'tick': latest_tick(tick_comments), 'ready': ready, 'in_progress': claims, 'untriaged': untriaged, 'outside': outside, 'merged_fixes': merged,
+            'tick': latest_tick(tick_comments), 'ready': ready, 'in_progress': claims, 'untriaged': untriaged, 'outside': outside, 'merged_fixes': merged, 'drift': drifted,
             'claude_active': [t['title'] for t in active], 'codex_active': [t['title'] for t in codex_active],
             'desk_seen': desk_seen, 'comments_complete': comments_complete}
 
@@ -443,6 +659,28 @@ def decide(facts, window=STALE_AFTER):
     for fix in facts.get('merged_fixes') or []:
         act('fix-merged', LOOK, f'#{fix["number"]} {fix["title"][:60]}: fix merged in #{fix["pr"]} on '
             f'{fix["merged_at"][:10]} and the issue is still `ready`; close it, keeping its validation labels', issues=[fix['number']], fix=fix)
+
+    gone = facts.get('drift') or {}
+    for row in gone.get('merged_open') or []:
+        act('merged-still-open', LOOK, f'#{row["number"]} {row["title"][:60]}: #{row["pr"]} says it closes it and merged '
+            f'into `{row["base"]}` on {row["merged_at"][:10]}, but the issue is open; close it, keeping its validation '
+            'labels (2026-10-22 call), or say on it why it stays open', issues=[row['number']], prs=[row['pr']])
+    for row in gone.get('reverts') or []:
+        act('revert-unnoted', LOOK, f'#{row["revert"]} reverted #{row["pr"]} on {row["merged_at"][:10]} and #{row["issue"]} '
+            f'has no comment since that says so; note the revert (and any re-land) on #{row["issue"]}',
+            issues=[row['issue']], prs=[row['revert'], row['pr']])
+    if gone.get('reverts_unchecked'):
+        act('revert-unchecked', LOOK, 'the read cap left these reverts unchecked: ' +
+            ', '.join(f'#{r} of #{p}' for r, p in gone['reverts_unchecked']))
+    for row in gone.get('holds') or []:
+        why = (f'holds it on #{row["pr"]}, which merged into `{row["base"]}` on {row["merged_at"][:10]}' if row['pr']
+               else f'waits on `{FROZEN_BASE}`, which is frozen since 2026-10-20')
+        act('hold-lifted', LOOK, f'#{row["number"]} {row["title"][:60]}: its newest note ({row["said_at"][:10]}) {why}; '
+            'check the code and close it or say what it waits on now', issues=[row['number']],
+            prs=[row['pr']] if row['pr'] else [])
+    if gone.get('errors'):
+        act('drift-unreadable', LOOK, 'rules 9 to 11 could not read everything, so missing findings are not a clean '
+            'bill: ' + '; '.join(gone['errors']))
 
     for claim in claims:
         if claim['state'] == 'stale':

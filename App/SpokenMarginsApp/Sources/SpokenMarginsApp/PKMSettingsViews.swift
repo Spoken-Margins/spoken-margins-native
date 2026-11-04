@@ -268,7 +268,7 @@ struct ListeningEditionImportScreen: View {
                 Button("Preview") {
                     editingJSON = false
                     do { edition = try ListeningEdition.decode(Data(json.utf8)); message = "" }
-                    catch { message = error.localizedDescription; messageIsFailure = true }
+                    catch { message = ListenerErrorText.message(for: error); messageIsFailure = true }
                 }
             } footer: {
                 Text("Use Make Listening Map Prompt, your chosen model, then Assemble Listening Edition in Shortcuts. Import the result here or with Import Listening Edition. Choose several files to import them together; Preview is optional. No model request is made during import.")
@@ -337,7 +337,7 @@ struct ListeningEditionImportScreen: View {
                     }.value
                     picked.append(contentsOf: entries)
                 }
-            } catch { message = error.localizedDescription; messageIsFailure = true }
+            } catch { message = ListenerErrorText.message(for: error); messageIsFailure = true }
         }
     }
 
