@@ -48,6 +48,7 @@ final class TermsAnsweredBeforeEachTest: NSObject, XCTestObservation, @unchecked
 }
 
 /// The observer's own checks, and the end-to-end one: a class that does nothing about the Terms can start playback.
+@MainActor
 final class TermsAnsweredBeforeEachTestTests: XCTestCase {
     private func makeDefaults() throws -> UserDefaults {
         let name = "TermsAnsweredBeforeEachTestTests-\(UUID().uuidString)"
