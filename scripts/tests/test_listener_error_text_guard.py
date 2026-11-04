@@ -17,7 +17,16 @@ ROOTS = [
     APP / 'SpokenMarginsApp' / 'Sources',
     APP / 'SpokenMarginsShareExtension' / 'Sources',
     APP / 'SpokenMarginsBrowserTextExtension' / 'Sources',
+    APP / 'SpokenMarginsWatchApp' / 'Sources',
+    APP / 'SpokenMarginsWatch' / 'Sources',
 ]
+
+# Targets that do not link SessionKit, so ListenerErrorText is not there for them. They show the raw text today; #3324
+# moves them over and removes this list.
+ALLOWED_FILES = {
+    'SafariWebExtensionHandler.swift', 'SourceLinkShareViewController.swift',
+    'WatchLink.swift', 'WatchMarginRecorder.swift', 'WatchMicrophoneTest.swift', 'WatchOfflineModels.swift',
+}
 
 # A log reason: written to Diagnostics or handed to a program, in machine words.
 LOG_REASON = re.compile(
@@ -27,9 +36,10 @@ LOG_REASON = re.compile(
 # (file name, the line as written, stripped) -> why the raw text may stay.
 ALLOWED = {
     ('Gate1AppModel+LibrarySeeding.swift', 'libraryAccessError = "This build could not open your existing library. This attempt did not reset it. Do not use Reset Library or delete the app; install a compatible build and try again. Details: \\(error.localizedDescription)"'):
-        'the owner wants the details beside a library that will not open',
-    ('SharedMarginsImportMessage.swift', 'let description = error.localizedDescription'): 'this is the import message\'s own filter',
-    ('SharedMarginsImportMessage.swift', 'guard let decoding = error as? DecodingError else { return error.localizedDescription }'): 'the same filter',
+        'deliberate: the Details are what a bug report needs when the library will not open (the line says do not reset); the owner has not been asked to drop them',
+    ('SharedMarginsImportMessage.swift', 'let description = ((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)'): 'checked by ListenerErrorText.looksLikeCodeOrDump on the next line; its own generic sentence replaces a dump',
+    ('SharedMarginsImportMessage.swift', 'guard let decoding = error as? DecodingError else { return error.localizedDescription }'): 'the import failure\'s Diagnostics detail',
+    ('SharedMarginsImportMessage.swift', 'return "decoding:\\(error.localizedDescription)"'): 'the same Diagnostics detail',
     ('ReadLaterModel.swift', 'let message = (error as? EditionError)?.localizedDescription'): 'our own EditionError text, read by the connection tracker',
     ('Gate2CompactControlController.swift', 'failure = error.localizedDescription'): 'audio-session failure, read by noteAudioSessionActivation into Diagnostics',
     ('Gate1AppModel.swift', 'lastFailure = "\\(link.type):\\(error.localizedDescription)"'): 'a link-check log line',
@@ -38,12 +48,6 @@ ALLOWED = {
     ('PodcastDownloadCoordinator.swift', 'self.fail(updated, reason: error.localizedDescription)'): 'failureReason is read only by Diagnostics',
     ('PodcastDownloadCoordinator.swift', 'fail(recordsByItemId[attempt.itemId] ?? record, reason: error.localizedDescription)'): 'failureReason is read only by Diagnostics',
     ('PodcastDownloadCoordinator.swift', 'fail(record, reason: error.localizedDescription)'): 'failureReason is read only by Diagnostics',
-    ('SafariWebExtensionHandler.swift', 'return errorResponse("Unable to store browser text payload: \\(error.localizedDescription)")'):
-        'the Safari extension does not link SessionKit; moving ListenerErrorText there is a follow-up',
-    ('SafariWebExtensionHandler.swift', 'return errorResponse("Unable to send this PDF to Spoken Margins: \\(error.localizedDescription)")'):
-        'the Safari extension does not link SessionKit; moving ListenerErrorText there is a follow-up',
-    ('SourceLinkShareViewController.swift', 'showError(error.localizedDescription)'):
-        'the share extension does not link SessionKit; moving ListenerErrorText there is a follow-up',
 }
 
 
@@ -55,7 +59,7 @@ def unlisted_uses():
                 text = line.strip()
                 if 'localizedDescription' not in text or text.startswith('//'):
                     continue
-                if LOG_REASON.search(text) or (path.name, text) in ALLOWED:
+                if LOG_REASON.search(text) or (path.name, text) in ALLOWED or path.name in ALLOWED_FILES:
                     continue
                 found.append(f'{path.relative_to(ROOT)}:{number}: {text}')
     return found
