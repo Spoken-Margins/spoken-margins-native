@@ -398,7 +398,7 @@ struct InterjectionSharingView: View {
                     }
                 }
                 Text("Preparation runs one recording at a time to keep memory, heat, and battery use bounded—even for dozens of Margins.")
-                    .font(.caption2)
+                    .font(.footnote)
                     .foregroundStyle(AppColors.secondaryText)
             }
         }
@@ -475,7 +475,7 @@ struct InterjectionSharingView: View {
                         Text(note)
                             .font(.callout)
                         Text("Only you can see this note; it is not included in the package.")
-                            .font(.caption2)
+                            .font(.footnote)
                             .foregroundStyle(AppColors.secondaryText)
                     }
                 }
@@ -501,7 +501,7 @@ struct InterjectionSharingView: View {
                             .clipShape(RoundedRectangle(cornerRadius: 12))
                             .increasedContrastEdge(cornerRadius: 12)
                         Text("Expand to edit individual words and pauses.")
-                            .font(.caption2)
+                            .font(.footnote)
                             .foregroundStyle(AppColors.secondaryText)
                     } else {
                         MarginWordWrapLayout(horizontalSpacing: 4, verticalSpacing: 6) {
@@ -672,8 +672,11 @@ struct InterjectionSharingView: View {
                             get: { model.sharingState.drafts.first(where: { $0.id == draft.id })?.anchorAfter ?? "" },
                             set: { model.setShareDraftAnchorAfter(draft.id, value: $0) }
                         ), axis: .vertical)
-                        Text("The quote after the Margin is capped at \(ExcerptCapRule.afterMaximum) characters, and the quote before it at up to \(ExcerptCapRule.beforeMaximum), depending on the length of your comment. Full item text is sent only when the item disclosure above says it is included.")
-                            .font(.caption2)
+                        Text("Only a short quote around each Margin is sent. Full item text is sent only when the item disclosure above says it is included.")
+                            .font(.footnote)
+                            .foregroundStyle(AppColors.secondaryText)
+                        Text("The quote after the Margin is capped at \(ExcerptCapRule.afterMaximum) characters. The quote before it is capped at up to \(ExcerptCapRule.beforeMaximum), depending on the length of your comment.")
+                            .font(.footnote)
                             .foregroundStyle(AppColors.secondaryText)
                     }
                 }
