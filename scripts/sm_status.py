@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """A live snapshot of the open PRs into the trunk (`main`) for status replies (#1597). Stdlib, Python 3.9+. Read-only.
 
-Owner rule 2026-10-14 (AGENTS.md "Check before you report"): any status line, and any "armed", "merged" or
+Owner rule 2026-10-14 (owner overlay, "Check before you report"): any status line, and any "armed", "merged" or
 "nothing needs you", rests on a live read of the PR's head checks, latest lane report, audit and mergeable state.
 This is that read, in one call:
 

@@ -97,7 +97,7 @@ HANDOFF_WINDOW = dt.timedelta(hours=48)
 MAX_WORKERS = int(os.environ.get('SM_CLAUDE_WORKER_MAX', '1'))  # the Mac has two build slots and one simulator
 MARGIN = 3                 # points below the Dial's stop line where new work holds (as the Dial gate)
 TREND_SLACK = 10           # points ahead of the trend line allowed (as the Dial gate; owner 2026-10-19)
-MIN_FREE_GIB = 20          # the Mac finisher's pause line; AGENTS.md wants 10 GiB plus 4 per build
+MIN_FREE_GIB = 20          # the Mac finisher's pause line; the owner overlay wants 10 GiB plus 4 per build
 # Milestones are releases named by app version (owner, 2026-11-07; #3636): with no override, the lowest open
 # version ranks first, then the next ones, then every other milestone. The variable still forces an order.
 FOCUS_MILESTONES = tuple(name.strip() for name in
