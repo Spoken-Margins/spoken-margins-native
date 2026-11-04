@@ -1015,39 +1015,6 @@ final class Gate1AppModel: ObservableObject {
         refreshQuickAddFeed(force: false)
     }
 
-    /// Saves the picked budget off the main actor. The save takes its place in line before this returns, so two quick
-    /// changes save in the order they were made and the later one wins (#3335); an `async` call per change took its place
-    /// only after a hop, and the two could swap. The task it returns finishes the change (the save, then trimming to
-    /// the new budget); the pickers drop it, a test awaits it.
-    @discardableResult
-    func offlineStorageBudgetChanged() -> Task<Void, Never> {
-        guard OfflineStorageBudget.allowedGigabytes.contains(offlineStorageLimitGB) else {
-            offlineStorageLimitGB = 5
-            return Task {}
-        }
-        UserDefaults.standard.set(offlineStorageLimitGB, forKey: "offlineStorageLimitGB")
-        podcastCacheLimitGB = offlineStorageLimitGB
-        let save: Task<Void, Error>
-        do {
-            let store = try requireStore()
-            let budget = OfflineStorageBudget(limitBytes: Int64(offlineStorageLimitGB) * OfflineStorageBudget.bytesPerGigabyte)
-            // Off the main actor, in line behind an earlier change's save (#2509).
-            save = StoreReader(store).enqueueInOrder(OfflineStorageBudget.saveOrderKey) { try $0.saveOfflineStorageBudget(budget) }
-        } catch {
-            reportFailure(error, context: "Offline storage budget update failed")
-            return Task {}
-        }
-        return Task { [weak self] in
-            do {
-                try await save.value
-                _ = try await self?.offlineStorageLedger?.enforceBudget()
-                self?.tryRefreshOfflineStorageUsage()
-            } catch {
-                self?.reportFailure(error, context: "Offline storage budget update failed")
-            }
-        }
-    }
-
     func clearReproducibleOfflineAudio() {
         guard let ledger = offlineStorageLedger else { return }
         Task { [weak self, renderedSpeechDiskCache = self.renderedSpeechDiskCache] in
