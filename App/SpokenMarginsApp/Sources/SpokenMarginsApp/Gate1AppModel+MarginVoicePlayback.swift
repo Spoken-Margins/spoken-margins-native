@@ -127,7 +127,7 @@ extension Gate1AppModel {
         guard let audioURL = prompt.interjection.audioPath.flatMap(resolvedApplicationSupportAssetURL(for:)) ?? WrittenMarginReadings.readyFile(for: prompt) else {
             if prompt.interjection.isWritten { return WrittenMarginReadings.waitThenListen(prompt, model: self) } // not rendered yet
             dismissPendingImportedCommentary()
-            reportFailure("This shared Margin contains reviewed text but no playable voice recording.")
+            reportFailure("This Margin can't be read aloud on this iPhone.")
             return
         }
         importedCommentaryAutoPlayTask?.cancel()

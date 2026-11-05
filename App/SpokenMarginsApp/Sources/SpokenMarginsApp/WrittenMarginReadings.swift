@@ -22,7 +22,8 @@ enum WrittenMarginReadings {
     static func reading(for prompt: ImportedCommentaryPrompt) -> WrittenMarginReading? {
         guard prompt.interjection.isWritten else { return nil }
         return WrittenMarginReading(
-            intro: WrittenMarginReading.intro(senderName: prompt.layer.displayLabel), text: prompt.interjection.approvedTranscript)
+            intro: WrittenMarginReading.intro(senderName: prompt.layer.displayLabel), text: prompt.interjection.approvedTranscript,
+            itemId: prompt.layer.itemId ?? "")
     }
 
     /// The file for `prompt`'s reading once it is ready (answered from memory), else nil.
@@ -59,6 +60,7 @@ enum WrittenMarginReadings {
         let id: UUID
         let wasPending: Bool
         let task: Task<Void, Never>
+        let itemId: String?
     }
     private static var tapWaits: [String: Wait] = [:]
     private static var holds: [String: Task<Void, Never>] = [:]
@@ -96,13 +98,15 @@ enum WrittenMarginReadings {
             }
             model.hangTelemetry.labels.scoped("writtenMarginListen") { model.listenToImportedCommentary(prompt) }
         }
-        tapWaits[prompt.id] = Wait(id: id, wasPending: wasPending, task: task)
+        tapWaits[prompt.id] = Wait(id: id, wasPending: wasPending, task: task, itemId: prompt.layer.itemId)
     }
 
     // MARK: A review
 
-    /// What the listener is doing, as the hold sees it. Any change ends the hold: a second Continue, another item, a Margin
-    /// recorded, a card shown. Anything but time passing means they took over.
+    /// What the listener is doing, as the hold sees it. Any change ends the hold: another item or session, playback paused
+    /// or started, a Margin moment begun, a card shown or a Margin voice playing. Leaving the screen ends it too
+    /// (`leftItemScreen`). Anything but time passing means they took over. A recording being started is not in this list;
+    /// the review's own check (`rejectNavigationOrSessionMutationWhileRecording`) refuses it.
     private struct Where: Equatable {
         let selected: String
         let playingItem: String?
@@ -152,6 +156,16 @@ enum WrittenMarginReadings {
         private var value = false
         var isSet: Bool { lock.withLock { value } }
         func set() { lock.withLock { value = true } }
+    }
+
+    /// The listener left the item's screen (back to the Library, another tab): a tap's wait and a review's hold for that item
+    /// end, so nothing starts or pulls them back later. The model's own check (`selectedItem`) cannot see this.
+    static func leftItemScreen(_ itemId: String) {
+        for (key, wait) in tapWaits where wait.itemId == itemId {
+            wait.task.cancel()
+            tapWaits[key] = nil
+        }
+        holds["review::\(itemId)"]?.cancel()
     }
 
     /// Reviews being started after their hold, so the second call doesn't hold again.

@@ -1,5 +1,6 @@
 import Foundation
 import SessionKit
+import SessionKitAudio
 import SessionKitPersistence
 
 /// The files that go with an item when it is deleted for good.
@@ -39,6 +40,9 @@ extension Gate1AppModel {
     /// so a permanent delete does not wait on the unlink. The path is checked here, where the support directory
     /// is known; only the removal runs in the background.
     func removeDurableGeneratedAudio(for item: some LibraryItemFields) {
+        // A friend's written Margins were read aloud from files rendered for this item (#3365). Their words go with it. All
+        // the logic, and the off-main-thread removal, is the reader's; trash leaves them, so Undo still plays.
+        WrittenMarginReader.shared.removeReadings(forItem: item.id)
         guard item.media?.sourceType == .generatedTTSPrerendered,
               let identifier = item.media?.nativeMediaId ?? item.media?.url,
               let url = URL(string: identifier),

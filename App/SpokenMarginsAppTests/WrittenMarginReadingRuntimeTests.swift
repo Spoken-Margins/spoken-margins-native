@@ -34,4 +34,29 @@ final class WrittenMarginReadingRuntimeTests: XCTestCase {
         XCTAssertGreaterThan(leveledPlayer.currentTime, 1, "the reading advanced while it played")
         leveledPlayer.stop()
     }
+
+    /// The default English voice silently skips Japanese and Hindi, which left only "Cole wrote:" that was then marked heard.
+    /// The render must use the note's own voice, so its file is longer than the intro's alone.
+    func testANoteInAnotherScriptIsReadWholeNotJustTheIntro() async throws {
+        executionTimeAllowance = 180
+        try await SystemVoiceRuntime.requireAnsweringVoice()
+        let notes = [
+            ("ja-JP", "これは素晴らしい港です。最後にカモメの声が聞こえます。"),
+            ("hi-IN", "यह एक बहुत सुंदर बंदरगाह है और मुझे यह पसंद है।"),
+        ]
+        var checked = 0
+        var skipped: [String] = []
+        for (language, words) in notes {
+            guard AVSpeechSynthesisVoice(language: language) != nil else { skipped.append("no \(language) voice installed"); continue }
+            let directory = FileManager.default.temporaryDirectory.appending(path: "written-margin-script-\(UUID().uuidString)", directoryHint: .isDirectory)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let reader = WrittenMarginReader(directory: directory)
+            let intro = WrittenMarginReading.intro(senderName: "Cole")
+            let introOnly = try AVAudioPlayer(contentsOf: try await reader.rendered(WrittenMarginReading(intro: intro, text: "ok", itemId: "intro")))
+            let whole = try AVAudioPlayer(contentsOf: try await reader.rendered(WrittenMarginReading(intro: intro, text: words, itemId: "note")))
+            XCTAssertGreaterThan(whole.duration, introOnly.duration + 2, "\(language): the note itself was spoken, not only \"\(intro)\"")
+            checked += 1
+        }
+        if checked == 0 { throw XCTSkip("this Mac has no Japanese or Hindi voice installed: \(skipped.joined(separator: "; "))") }
+    }
 }
