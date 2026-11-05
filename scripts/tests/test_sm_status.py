@@ -402,6 +402,30 @@ class LabelsAndIssue(unittest.TestCase):
         self.assertEqual(status.linked_issue({'body': 'refs #14', 'head': {'ref': 'ws/15-slug'}}), 15)
         self.assertIsNone(status.linked_issue({'body': '', 'head': {'ref': 'claude/x'}}))
 
+    def test_the_line_says_closes_only_for_an_issue_the_pr_closes(self):
+        # (title, body, branch, text that must be in the issue column, text that must not be)
+        table = [
+            ('A change', 'Closes #1', 'x', 'closes #1', 'works on'),
+            ('A change', 'closes #1', 'x', 'closes #1', 'works on'),
+            ('A change', 'Fixes #1', 'x', 'closes #1', 'works on'),
+            ('A change', 'Resolves #1', 'x', 'closes #1', 'works on'),
+            ('A change', 'Part of #1', 'x', 'works on #1', 'closes'),
+            ('A change', 'part of #1', 'x', 'works on #1', 'closes'),
+            ('A change', 'Refs #1', 'x', 'works on #1', 'closes'),
+            ('A change', '', 'ws/1-slug', 'works on #1', 'closes'),
+            ('A change (#1)', '', 'x', 'works on #1', 'closes'),
+            ('A change', 'Closes #1\nPart of #2', 'x', 'closes #1', 'closes #2'),
+            ('A change', 'Closes #1\nPart of #2', 'x', 'works on #2', 'works on #1'),
+            ('A change', '', 'x', 'no linked issue', 'closes'),
+        ]
+        for title, body, branch, want, avoid in table:
+            with self.subTest(title=title, body=body, branch=branch):
+                pull = bundle(body=body)
+                pull['pull'].update(title=title, head={'sha': HEAD, 'ref': branch})
+                shown = status.line(status.analyse(pull))
+                self.assertIn(want, shown)
+                self.assertNotIn(avoid, shown)
+
     def test_armed_since_is_the_latest_add_still_in_force(self):
         add = lambda at: {'event': 'labeled', 'created_at': at, 'label': {'name': 'automerge'}}
         remove = lambda at: {'event': 'unlabeled', 'created_at': at, 'label': {'name': 'automerge'}}
