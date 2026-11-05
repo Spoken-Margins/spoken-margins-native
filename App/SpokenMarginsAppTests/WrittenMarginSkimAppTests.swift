@@ -202,4 +202,58 @@ final class WrittenMarginSkimAppTests: XCTestCase {
         XCTAssertFalse(skimOutcomes(model).contains("started_margin_lead_in"), "\(skimOutcomes(model))")
         XCTAssertNil(model.marginMoment)
     }
+
+    // MARK: The choice of whether a written Margin is read aloud (#3427)
+
+    // Skim follows the listener's choice: with reading off it is no stop, with reading on again it is one. Both are the
+    // listener's own switch on the Margin's details, through the model, so the row the screens show and the row Skim
+    // reads are the same one.
+    func testSkimPassesAWrittenMarginTheListenerTurnedReadingOffForAndStopsAtItOnceMoreWhenTurnedBackOn() async throws {
+        let fixture = try await ReturnFixture.make(sourcePlaying: true, writtenWords: uniqueWords())
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        try await fixture.seedReading(ready: true)
+        try await putSkimBeforeTheMargin(fixture)
+
+        model.setSharedMarginReadAloud(fixture.record, readAloud: false)
+        let muted = try XCTUnwrap(model.selectedItem.importedCommentaryInterjections[fixture.layer.id]?.first)
+        XCTAssertEqual(muted.listenerReadAloud, false)
+        XCTAssertFalse(SharedMarginAudio.canOffer(muted), "a Margin set not to be read aloud is not offered")
+        XCTAssertEqual(model.sharedMarginRows.first?.interjection.listenerReadAloud, false, "the rows the screens read agree")
+        model.skimForward()
+        XCTAssertFalse(skimOutcomes(model).contains("started_margin_lead_in"), "Skim passes it: \(skimOutcomes(model))")
+        XCTAssertNil(model.marginMoment)
+        model.pause()
+
+        model.setSharedMarginReadAloud(muted, readAloud: true)
+        model.seekMedia(toMediaTimeMs: 100)
+        try await fixture.waitUntil("the source is back before the Margin") { (model.snapshot.currentMediaTimeMs ?? Int.max) < 900 }
+        model.skimForward()
+        defer { model.endMarginMoment(); model.pause() }
+        XCTAssertEqual(skimOutcomes(model).last, "started_margin_lead_in", "reading on again makes it a stop")
+    }
+
+    // The sender asked that it not be read aloud: Skim passes it, and the Margin is still there to read.
+    func testSkimPassesAWrittenMarginTheSenderAskedNotToBeReadAloud() async throws {
+        let fixture = try await ReturnFixture.make(sourcePlaying: true, writtenWords: uniqueWords())
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        let record = fixture.record
+        let asked = ImportedCommentaryInterjection(
+            id: record.id, layerId: record.layerId, packageScopedId: record.packageScopedId, createdAt: record.createdAt,
+            anchorEvidence: record.anchorEvidence, approvedTranscript: record.approvedTranscript, audioPath: record.audioPath,
+            audioDurationMs: record.audioDurationMs, podcastAnchorEvidence: record.podcastAnchorEvidence,
+            resolution: record.resolution, firstHeardAt: record.firstHeardAt, replyLinks: record.replyLinks,
+            alsoSharedAs: record.alsoSharedAs, shareProvenance: record.shareProvenance, senderReadAloud: false)
+        try await putSkimBeforeTheMargin(fixture)
+        model.sharedMarginRows = [SharedMarginRow(interjection: asked, layer: fixture.layer, itemTitle: "Real source")]
+        model.selectedItem.importedCommentaryInterjections[fixture.layer.id] = [asked]
+
+        model.skimForward()
+        defer { model.endMarginMoment(); model.pause() }
+        XCTAssertFalse(skimOutcomes(model).contains("started_margin_lead_in"), "\(skimOutcomes(model))")
+        XCTAssertNil(model.marginMoment)
+        XCTAssertEqual(model.sharedMarginRows.first?.interjection.approvedTranscript, record.approvedTranscript,
+                       "the words are still on the Margins list")
+    }
 }

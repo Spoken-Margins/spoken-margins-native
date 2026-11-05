@@ -611,6 +611,18 @@ struct InterjectionSharingView: View {
                 }
                 .segmentedUnlessLargeText()
 
+                if model.sharingState.drafts.first(where: { $0.id == draft.id })?.representationChoice == .textOnly {
+                    // A text Margin is read aloud by the friend's phone unless you ask it not to; they can change it (#3427).
+                    Toggle(
+                        "Read aloud on their phone",
+                        isOn: Binding(
+                            get: { model.sharingState.drafts.first(where: { $0.id == draft.id })?.readAloud ?? true },
+                            set: { model.setShareDraftReadAloud(draft.id, readAloud: $0) }
+                        )
+                    )
+                    .accessibilityIdentifier("sharing.readAloud.\(draft.id)")
+                }
+
                 AdaptiveStack {
                     if let originalURL = model.originalAudioURL(forShareDraft: draft.id) {
                         ShareRevisionAudioPreviewButton(title: "Preview Original", url: originalURL)

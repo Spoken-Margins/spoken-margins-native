@@ -332,6 +332,13 @@ extension Gate1AppModel {
         sharingState.drafts[index].setRepresentation(choice, hasOriginalAudio: hasOriginalAudio)
     }
 
+    /// The sender asks the friend's phone to read a text Margin aloud, or not to (#3427). It means nothing for a
+    /// Margin that goes as a recording; the packet carries it only for a text one, and only when it is "no".
+    func setShareDraftReadAloud(_ id: String, readAloud: Bool) {
+        guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
+        sharingState.drafts[index].readAloud = readAloud
+    }
+
     func setShareDraftAnchorBefore(_ id: String, value: String) {
         guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
         sharingState.drafts[index].setAnchorBefore(value)

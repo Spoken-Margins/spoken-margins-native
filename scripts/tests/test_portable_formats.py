@@ -214,6 +214,36 @@ class BothDirectionsTests(unittest.TestCase):
         self.assertEqual(report.errors, [])
         self.assertEqual({w.code for w in report.warnings}, {'ignored-field'})
 
+    def test_the_senders_read_aloud_choice_is_a_known_optional_margin_key(self):
+        # #3427: written only when false; a reader that doesn't know it reads the Margin aloud, so it is no capability.
+        layer = self.layer()
+        layer['interjections'][0]['readAloud'] = False
+        self.set_layer(layer)
+        report = fmt.read_packet(self.packet())
+        self.assertEqual(report.errors, [])
+        self.assertEqual(report.warnings, [], 'the key is part of the format, not an ignored one')
+        self.assertNotIn('readAloud', fmt.SWIFT_TYPES['SharedInterjectionPackageRecord'],
+                         'SWIFT_TYPES is what the shipped readers need; the key is not one of those')
+        self.assertEqual(contracts.FIELDS_ADDED_AFTER_BUILD_29, {'SharedInterjectionPackageRecord': {'readAloud': 'Bool?'}})
+        schema = json.loads((contracts.PUBLIC_CONTRACTS / 'schemas' / 'shared-commentary-layer.schema.json').read_text())
+        self.assertEqual(schema['$defs']['interjection']['properties']['readAloud']['type'], 'boolean')
+        self.assertNotIn('readAloud', schema['$defs']['interjection']['required'])
+
+    def test_a_field_added_after_build_29_is_held_to_its_declared_type(self):
+        # Without the allowance the app's extra key is drift; with a different type it is drift too.
+        structs, _, _ = contracts.swift_declarations(contracts.SWIFT_SOURCES)
+        self.assertEqual(structs['SharedInterjectionPackageRecord']['readAloud'], 'Bool?')
+        original = contracts.FIELDS_ADDED_AFTER_BUILD_29
+        try:
+            contracts.FIELDS_ADDED_AFTER_BUILD_29 = {}
+            self.assertTrue(any('SharedInterjectionPackageRecord differs' in p and 'readAloud' in p
+                                for p in contracts.codable_problems(fmt)))
+            contracts.FIELDS_ADDED_AFTER_BUILD_29 = {'SharedInterjectionPackageRecord': {'readAloud': 'String?'}}
+            self.assertTrue(any('SharedInterjectionPackageRecord differs' in p for p in contracts.codable_problems(fmt)))
+        finally:
+            contracts.FIELDS_ADDED_AFTER_BUILD_29 = original
+        self.assertEqual(contracts.codable_problems(fmt), [])
+
     def test_reply_links_are_closed_like_the_manifest(self):
         layer = self.layer()
         scoped = layer['interjections'][0]['packageScopedId']

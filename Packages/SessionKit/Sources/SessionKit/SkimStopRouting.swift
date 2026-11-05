@@ -126,7 +126,9 @@ public enum SkimStopRouting {
         case .characters: chapters = textChapters.map(SkimStop.chapter)
         }
         let margins = ownMargins.compactMap { SkimStop.margin($0, unit: unit) }
-            + sharedMargins.compactMap { SkimStop.margin($0, unit: unit) }
+            // Skim stops where the phone will sound: a recording, or a written Margin that will be read aloud. A written
+            // Margin the sender or the listener turned reading off for is passed (2026-11-05, #3427).
+            + sharedMargins.filter(SharedMarginAudio.canOffer).compactMap { SkimStop.margin($0, unit: unit) }
         return SkimStops(chapters: chapters, margins: margins, unit: unit)
     }
 }

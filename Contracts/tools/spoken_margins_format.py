@@ -1126,7 +1126,8 @@ def _check_sketch(report, sketch, where):
             _refuse(report, 'invalid-manifest', f'phrase sketch window {index + 1} is invalid: {failed}', where)
 
 
-INTERJECTION_KEYS = frozenset({'packageScopedId', 'createdAt', 'anchor', 'defaultRepresentationId', 'representations'})
+INTERJECTION_KEYS = frozenset({'packageScopedId', 'createdAt', 'anchor', 'defaultRepresentationId', 'representations',
+                               'readAloud'})
 ANCHOR_KEYS = frozenset({'anchorType', 'startChar', 'endChar', 'exactText', 'prefix', 'suffix', 'mediaTimeMs',
                          'roughPercent', 'transcriptSegmentId', 'chapterTitle', 'machineEvidenceAssetIds'})
 REPRESENTATION_KEYS = frozenset({'id', 'kind', 'approvedTranscript', 'assetId', 'provenance'})

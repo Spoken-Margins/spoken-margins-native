@@ -619,6 +619,13 @@ public struct ImportedCommentaryInterjection: Codable, Equatable, Sendable, Iden
     /// matching words and a display label alone cannot prove they came from the same person.
     /// Local JSON only; Build 29 ignores this optional key.
     public let shareProvenance: String?
+    /// What the sender chose for a written Margin: false when they asked that it not be read aloud. Nil when the packet
+    /// said nothing (every packet from a build without the setting), which reads aloud (2026-11-05, #3427).
+    /// Optional in local JSON; Build 29 and 32 ignore the key.
+    public let senderReadAloud: Bool?
+    /// The listener's own choice, which beats the sender's. Local only: packets never carry it, and an older build
+    /// ignores the key when it reads the record (#3427).
+    public var listenerReadAloud: Bool?
 
     public init(
         id: String,
@@ -634,7 +641,9 @@ public struct ImportedCommentaryInterjection: Codable, Equatable, Sendable, Iden
         firstHeardAt: Date? = nil,
         replyLinks: [MarginReplyLink]? = nil,
         alsoSharedAs: [MarginPacketIdentity]? = nil,
-        shareProvenance: String? = nil
+        shareProvenance: String? = nil,
+        senderReadAloud: Bool? = nil,
+        listenerReadAloud: Bool? = nil
     ) {
         self.id = id
         self.layerId = layerId
@@ -650,6 +659,23 @@ public struct ImportedCommentaryInterjection: Codable, Equatable, Sendable, Iden
         self.replyLinks = replyLinks
         self.alsoSharedAs = alsoSharedAs
         self.shareProvenance = shareProvenance
+        self.senderReadAloud = senderReadAloud
+        self.listenerReadAloud = listenerReadAloud
+    }
+
+    /// Whether the phone's voice reads this Margin out loud: it is a written Margin, and the listener's choice, else the
+    /// sender's, else the default (read aloud) says so (owner, 2026-11-05, #3427). A Margin with a recording is not
+    /// read by the voice at all, whatever either of them chose.
+    public var readsAloud: Bool {
+        isWritten && (listenerReadAloud ?? senderReadAloud ?? true)
+    }
+
+    /// What the listener sees on the control for this Margin: the state it is in now, and whether it differs from
+    /// what the sender asked for (so the control can say whose choice it is).
+    public var readAloudChoice: Bool { listenerReadAloud ?? senderReadAloud ?? true }
+    public var listenerOverridesSender: Bool {
+        guard let listenerReadAloud else { return false }
+        return listenerReadAloud != (senderReadAloud ?? true)
     }
 }
 
@@ -722,19 +748,25 @@ public struct SharedInterjectionPackageRecord: Codable, Equatable, Sendable {
     public let anchor: PortableAnchorEvidence
     public let defaultRepresentationId: String
     public let representations: [SharedInterjectionRepresentation]
+    /// The sender's choice for a written Margin: false asks that the listener's phone not read it aloud. Written only
+    /// when false, so a packet that changes nothing is the packet an older build already makes. Optional and never
+    /// a required capability: a build without it ignores the key and reads the Margin aloud, as before (#3427).
+    public let readAloud: Bool?
 
     public init(
         packageScopedId: String,
         createdAt: Date,
         anchor: PortableAnchorEvidence,
         defaultRepresentationId: String,
-        representations: [SharedInterjectionRepresentation]
+        representations: [SharedInterjectionRepresentation],
+        readAloud: Bool? = nil
     ) {
         self.packageScopedId = packageScopedId
         self.createdAt = createdAt
         self.anchor = anchor
         self.defaultRepresentationId = defaultRepresentationId
         self.representations = representations
+        self.readAloud = readAloud
     }
 
     public var defaultRepresentation: SharedInterjectionRepresentation? {
