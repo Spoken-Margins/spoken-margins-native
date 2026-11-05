@@ -51,9 +51,10 @@ public struct LocalSummaryRequestOrigin: Equatable, Sendable {
         return (turn, job)
     }
 
-    func save(repository: any SessionRepository, rawText: String, text: String, summary: String?, chapters: [Chapter]) throws {
+    /// Returns the turn as saved, so the engine can tell the cursor writer.
+    func save(repository: any SessionRepository, rawText: String, text: String, summary: String?, chapters: [Chapter]) throws -> ConversationTurn {
         // The app's SQLite repository commits both records together. No late result can recreate an absent turn.
-        let write = {
+        let write = { () throws -> ConversationTurn in
             var (turn, job) = try records(in: repository)
             turn.status = "complete"
             turn.rawText = rawText
@@ -64,11 +65,12 @@ public struct LocalSummaryRequestOrigin: Equatable, Sendable {
             job.lastError = nil
             try repository.saveTurn(turn)
             try repository.updateAIJob(job)
+            return turn
         }
         if let transactional = repository as? any SessionRepositoryTransaction {
-            try transactional.withSessionTransaction(write)
+            return try transactional.withSessionTransaction(write)
         } else {
-            try write()
+            return try write()
         }
     }
 }
