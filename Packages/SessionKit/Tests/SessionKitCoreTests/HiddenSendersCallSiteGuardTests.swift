@@ -8,8 +8,7 @@ import SessionKitTestInputs
 final class HiddenSendersCallSiteGuardTests: XCTestCase {
     /// Calls that read the imported layers a screen shows, each of which must be passed the hidden senders.
     private static let needles = [
-        "ItemDetailLoader.load(", "MarginRowsReading.all(", "MarginRowsReading.item(",
-        "SharedMarginReview.entries(itemId:"
+        "ItemDetailLoader.load(", "MarginRowsReading.all(", "MarginRowsReading.item(", "SharedMarginReview.entries("
     ]
 
     func testEveryAppCallThatLoadsLayersForAScreenIsGivenTheHiddenSenders() throws {
@@ -25,11 +24,10 @@ final class HiddenSendersCallSiteGuardTests: XCTestCase {
                 var searchStart = text.startIndex
                 while let found = text.range(of: needle, range: searchStart..<text.endIndex) {
                     searchStart = found.upperBound
-                    // The call's own parentheses: from the one the needle ends with (or the one after `entries(`).
+                    // The call's own parentheses, starting at the one the needle ends with. The call may wrap lines.
                     var depth = 0
                     var end = found.upperBound
                     var index = text.index(before: found.upperBound)
-                    if !needle.hasSuffix("(") { index = text[found.upperBound...].firstIndex(of: "(") ?? found.upperBound }
                     scan: while index < text.endIndex {
                         switch text[index] {
                         case "(": depth += 1
@@ -38,8 +36,12 @@ final class HiddenSendersCallSiteGuardTests: XCTestCase {
                         }
                         index = text.index(after: index)
                     }
-                    checked += 1
                     let call = String(text[found.lowerBound..<end])
+                    // `entries(layers:records:)` works on layers the caller already holds (the open item's, already
+                    // filtered); only the overload that reads a repository by `itemId:` loads layers itself.
+                    if needle.hasPrefix("SharedMarginReview"),
+                       !call.dropFirst(needle.count).drop(while: { $0.isWhitespace }).hasPrefix("itemId:") { continue }
+                    checked += 1
                     if !call.contains("hiddenSenders:") {
                         let line = text[..<found.lowerBound].filter { $0 == "\n" }.count + 1
                         missing.append("\(file.lastPathComponent):\(line) \(needle)")
@@ -47,7 +49,7 @@ final class HiddenSendersCallSiteGuardTests: XCTestCase {
                 }
             }
         }
-        XCTAssertGreaterThanOrEqual(checked, 6, "the guard no longer finds the calls it guards; update its list")
+        XCTAssertGreaterThanOrEqual(checked, 7, "the guard no longer finds the calls it guards; update its list")
         XCTAssertEqual(missing, [], "these calls would show a hidden sender's Margins again")
     }
 }
