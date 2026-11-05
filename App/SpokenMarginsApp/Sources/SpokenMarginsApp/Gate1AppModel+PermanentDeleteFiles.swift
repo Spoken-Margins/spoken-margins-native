@@ -35,6 +35,17 @@ extension Gate1AppModel {
         }
     }
 
+    /// Runs `delete`, the call that removes the items' rows, and then removes the friend's imported packet folders
+    /// those rows named, off the main thread (#3406, owner 2026-11-05: "Yes, right away."). The rule and the order
+    /// are in `FriendPacketFolders`. If the delete throws, no file is touched.
+    func deletingFriendRecordings(ofItems itemIds: [String], store: SQLiteSessionStore, delete: () throws -> Void) throws {
+        guard let supportDirectory = try? applicationSupportDirectory() else { return try delete() }
+        try FriendPacketFolders.deleting(
+            itemIds: itemIds, store: store,
+            directory: supportDirectory.appending(path: "SpokenMargins/IncomingPackages", directoryHint: .isDirectory),
+            keeping: packageImport.foldersInUse, delete: delete)
+    }
+
     /// The prepared narration file goes off the main thread (#2510), like the recordings and the episode-map folder,
     /// so a permanent delete does not wait on the unlink. The path is checked here, where the support directory
     /// is known; only the removal runs in the background.
