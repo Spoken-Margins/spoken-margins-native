@@ -28,7 +28,7 @@ enum Build23ImportedLayerPresentation {
         case .recipientConfirmed:
             return "Recipient confirmed"
         case .ambiguous:
-            return "Ambiguous"
+            return "Could fit more than one place"
         case .absentFromRecipientEdition:
             return "Not found in this edition"
         case .unresolved:

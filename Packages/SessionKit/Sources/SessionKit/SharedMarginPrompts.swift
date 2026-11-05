@@ -12,7 +12,7 @@ public struct ImportedCommentaryPrompt: Identifiable {
         self.count = count
     }
 
-    public var senderLabel: String { layer.displayLabel?.nilIfEmpty ?? "Unsigned sender" }
+    public var senderLabel: String { SharedPacketArrival.snapshotSenderLabel(layer.displayLabel) }
 }
 
 public enum SharedMarginPrompts {

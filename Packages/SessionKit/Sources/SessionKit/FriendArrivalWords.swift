@@ -49,10 +49,10 @@ public enum FriendArrivalWords {
         switch status {
         case .resolved: nil
         case .pending: "Matching positions in your episode"
-        case .contextOnly: "Context only"
-        case .ambiguous: "Ambiguous"
-        case .wrongSource: "Wrong source"
-        case .unavailable: "Unavailable"
+        case .contextOnly: "These Margins can't be tied to exact places in your copy."
+        case .ambiguous: "Some of these Margins could fit more than one place in your copy."
+        case .wrongSource: "This may not be the same episode or article these Margins were made on."
+        case .unavailable: "These Margins can't be placed in your copy right now."
         }
     }
 
