@@ -81,7 +81,7 @@ final class J12SharingLoopJourneyUITests: XCTestCase {
             let size = element("build23.sender.preview.packetSize")
             let builtAt = Date()
             XCTAssertTrue(size.waitForExistence(timeout: 60), "The packet was not built, or its size is not shown")
-            report.append(String(format: "packet built in %.1fs, %@", Date().timeIntervalSince(builtAt), size.label))
+            note(String(format: "packet built in %.1fs, %@", Date().timeIntervalSince(builtAt), size.label))
             endStep("packet ready (the system share sheet is not scripted)")
             tap("build23.sender.cancel")
         }
@@ -118,7 +118,7 @@ final class J12SharingLoopJourneyUITests: XCTestCase {
             let count = element("playback.margins.count")
             XCTAssertTrue(count.waitForExistence(timeout: 5), "The Margins count is missing")
             XCTAssertTrue(count.label.hasPrefix("Margins:") && !count.label.hasSuffix(" 0"), "The Margins tab says none: \(count.label)")
-            report.append("Margins tab: \(count.label)")
+            note("Margins tab: \(count.label)")
         }
     }
 
@@ -138,7 +138,15 @@ final class J12SharingLoopJourneyUITests: XCTestCase {
     private func beginStep() { tapsAtStepStart = taps }
 
     private func endStep(_ what: String) {
-        report.append(String(format: "%6.1fs  %ld taps  %@", Date().timeIntervalSince(startedAt), taps - tapsAtStepStart, what))
+        note(String(format: "%6.1fs  %ld taps  %@", Date().timeIntervalSince(startedAt), taps - tapsAtStepStart, what))
+    }
+
+    // The attachment reached the hosted evidence only for the failed run (2e2dd48), not for the passing ones (2c6c009,
+    // 88b246b), so the numbers were lost. An activity name lands in the xcodebuild log of every run, which the hosted
+    // run keeps (#3222).
+    private func note(_ line: String) {
+        report.append(line)
+        XCTContext.runActivity(named: "J12 report: \(line)") { _ in }
     }
 
     // MARK: Helpers (the same as J9's)
