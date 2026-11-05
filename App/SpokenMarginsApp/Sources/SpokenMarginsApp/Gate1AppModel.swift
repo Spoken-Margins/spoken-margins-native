@@ -2514,15 +2514,6 @@ final class Gate1AppModel: ObservableObject {
         #endif
     }
 
-    func applicationSupportDirectory() throws -> URL {
-        try FileManager.default.url(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true
-        )
-    }
-
     func summaryScopeForCurrentTarget() -> SummaryScope {
         switch currentPlaybackTargetType {
         case TargetType.summaryTurnTTS.rawValue, TargetType.assistantTurnTTS.rawValue:
