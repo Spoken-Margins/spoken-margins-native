@@ -1598,16 +1598,22 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
             .sorted { ($0.deletedAt ?? .distantPast) > ($1.deletedAt ?? .distantPast) }
     }
 
+    /// Read and write under one hold of the connection lock (it is recursive), so a writer that reads a row and saves
+    /// it back, such as a spoken note's transcript (#3108), can't land between this read and this write.
     public func moveItemToTrash(id: String, at date: Date = Date()) throws {
-        var item = try loadItem(id: id)
-        item.deletedAt = date
-        try saveItem(item)
+        try withConnectionLock {
+            var item = try loadItem(id: id)
+            item.deletedAt = date
+            try saveItem(item)
+        }
     }
 
     public func restoreItem(id: String) throws {
-        var item = try loadItem(id: id)
-        item.deletedAt = nil
-        try saveItem(item)
+        try withConnectionLock {
+            var item = try loadItem(id: id)
+            item.deletedAt = nil
+            try saveItem(item)
+        }
     }
 
     private static func quarantinedJSON(_ path: String) -> String {
@@ -2456,3 +2462,6 @@ extension SQLiteSessionStore: CommunityMapUploadRepository {
         try query("SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY updated_at, id;", [Self.communityMapUploadKind])
     }
 }
+
+/// SQLite serializes its own connection, so a streamed reply's cursor can be saved off the main thread (#2509).
+extension SQLiteSessionStore: ConcurrentSessionRepository {}

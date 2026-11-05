@@ -223,13 +223,16 @@ final class ExperiencePresentationTests: XCTestCase {
     func testAddSourceGridHoldsEveryWayInOnceWithOneFilesTile() {
         XCTAssertEqual(
             AddSourcePresentation.tiles,
-            [.linkOrPodcast, .findPodcast, .pastedText, .importFromFiles, .quickFolder, .liveSession]
+            [.linkOrPodcast, .findPodcast, .pastedText, .importFromFiles, .quickFolder, .liveSession, .spokenNote]
         )
         XCTAssertEqual(Set(AddSourcePresentation.tiles.map(\.title)).count, AddSourcePresentation.tiles.count, "two tiles share a name")
         let filesTiles = AddSourcePresentation.tiles.filter { $0.route == .importFromFiles }
         XCTAssertEqual(filesTiles, [.importFromFiles])
         XCTAssertEqual(AddSourceTile.importFromFiles.title, "Import from Files")
-        XCTAssertEqual(AddSourcePresentation.tiles.count % 2, 0, "the two-column grid should end on a full row")
+        // Spoken Note (#3108) sits in a slim row under the grid, so the six grid tiles still end on a full row.
+        XCTAssertEqual(AddSourcePresentation.tiles.filter { $0 != .spokenNote }.count % 2, 0, "the two-column grid should end on a full row")
+        XCTAssertEqual(AddSourceTile.spokenNote.title, "Spoken Note")
+        XCTAssertNil(AddSourceTile.spokenNote.route, "the tile opens the recorder, not a page in the sheet")
     }
 
     func testFindPodcastTileIsLeftOutWhereTheCatalogCannotOpen() {

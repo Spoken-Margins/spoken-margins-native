@@ -43,6 +43,7 @@ extension Gate1AppModel {
     /// whatever came next. Against another connection to the same file each one could wait out the store's 1 s
     /// busy timeout (#2195).
     func startOfflineServices(store: SQLiteSessionStore, ledger: OfflineStorageLedger) {
+        recoverSpokenNotes(store: store) // a take cut off by a force-quit (#3108)
         // The startup save takes its place in line now, ahead of any change the listener makes after this returns, so a
         // picker change can't be overwritten by the launch value (#3335).
         let budget = OfflineStorageBudget(limitBytes: Int64(offlineStorageLimitGB) * OfflineStorageBudget.bytesPerGigabyte)

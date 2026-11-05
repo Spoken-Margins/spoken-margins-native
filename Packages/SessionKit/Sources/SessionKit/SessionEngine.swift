@@ -44,6 +44,8 @@ public final class SessionEngine {
     public private(set) var lastMediaSeekResolution: MediaSeekResolution?
 
     private let repository: SessionRepository
+    /// Saves a streamed reply's cursor off the main thread (#2509).
+    private let streamedTurnCursor: StreamedTurnCursorWriter
     /// Articles playing their publisher's recording right now, by item id (#547). The Library keeps
     /// the plain article; the engine plays a copy whose audio is the recording.
     private var publisherPlayback: [String: PublisherAudioPlayback] = [:]
@@ -156,6 +158,7 @@ public final class SessionEngine {
     ) {
         self.profile = profile
         self.repository = repository
+        self.streamedTurnCursor = StreamedTurnCursorWriter(repository: repository)
         self.audio = audio
         self.recorder = recorder
         self.transcriber = transcriber
@@ -545,6 +548,8 @@ public final class SessionEngine {
             // publishes confirmed start and position observations explicitly,
             // so reconciling against the turn-scoped target would promote or
             // demote the UI from an unrelated transport sample.
+            // A lifecycle sync (the app leaving the foreground) makes sure the cursor's queued write has landed.
+            if !coalescingWrites { streamedTurnCursor.flush() }
             publish(status: snapshot.status, phase: session.phase)
             return snapshot
         }
@@ -2394,7 +2399,7 @@ public final class SessionEngine {
             chapters: nil,
             sourceInterjectionIds: lastSummaryCandidates.map(\.id)
         )
-        try repository.saveTurn(turn)
+        try saveEngineTurn(turn)
         let job = aiJob(id: "job-interjection-summary-\(String(format: "%03d", summaryIndex))", kind: "interjection_summary", session: session, turnId: turn.id, status: status)
         try repository.saveAIJob(job)
         snapshot.pendingAiJobKind = job.kind
@@ -2483,6 +2488,7 @@ public final class SessionEngine {
             try audio.pause()
         }
         externallyStreamedTurnId = turnId
+        streamedTurnCursor.seed(turnId: turnId, turn: turn)
         if session.currentTargetId != turnId || session.currentTargetType != targetType {
             session.currentTargetType = targetType
             session.currentTargetId = turnId
@@ -2530,17 +2536,25 @@ public final class SessionEngine {
               session.currentTargetType == .summaryTurnTTS || session.currentTargetType == .assistantTurnTTS else {
             return snapshot
         }
-        let turn = try repository.loadTurns(sessionId: session.id).first(where: { $0.id == turnId })
-        let turnText = turn.map { generatedTurnNavigationText(for: $0) } ?? ""
-        session.position.charOffset = max(0, min(charOffset, turnText.count))
-        session.position.chapterId = turn?
-            .chapters?
-            .last(where: { $0.startChar <= session.position.charOffset })?
-            .id
-        currentSession = session
-        try persistSession(session)
-        publish(status: snapshot.status, phase: session.phase)
+        // This runs at every sentence and progress tick of a streamed reply, so it neither decodes the turns nor
+        // writes on the calling thread (#2509): the turn's shape comes from the writer's last read, and the newest
+        // place is saved on the writer's queue. Every other Session write, and the lifecycle sync, waits for it.
+        let place = streamedTurnCursor.shape(for: turnId)?.position(charOffset: charOffset) ?? (charOffset: max(0, charOffset), chapterId: nil)
+        session.position.charOffset = place.charOffset
+        session.position.chapterId = place.chapterId
+        let stamped = stampedForSave(session)
+        currentSession = stamped
+        streamedTurnCursor.submit(storedForm(of: stamped), turnId: turnId)
+        lastProgressWriteAt[stamped.id] = stamped.updatedAt
+        if unsavedProgressSessionId == stamped.id { unsavedProgressSessionId = nil }
+        publish(status: snapshot.status, phase: stamped.phase)
+        if let failure = streamedTurnCursor.takeFailure() { throw failure }
         return snapshot
+    }
+
+    /// Waits until a streamed reply's queued cursor write has landed (#2509). The lifecycle sync does this itself.
+    public func flushPendingSessionWrites() {
+        streamedTurnCursor.flush()
     }
 
     /// Reconciles the observed start of an externally fed speech chunk with the
@@ -2604,7 +2618,7 @@ public final class SessionEngine {
             chapters: nil,
             sourceInterjectionIds: []
         )
-        try repository.saveTurn(userTurn)
+        try saveEngineTurn(userTurn)
         let shouldCall = aiProvider.shouldStartProviderCall(profile: profile, kind: "assistant_response")
         let status = shouldCall ? "pending" : "deferred"
         let responseIndex = try repository.loadTurns(sessionId: session.id).filter { $0.turnType == "assistant_response" }.count + 1
@@ -2621,7 +2635,7 @@ public final class SessionEngine {
             chapters: nil,
             sourceInterjectionIds: []
         )
-        try repository.saveTurn(responseTurn)
+        try saveEngineTurn(responseTurn)
         let job = aiJob(id: "job-assistant-response-\(String(format: "%03d", responseIndex))", kind: "assistant_response", session: session, turnId: responseTurn.id, status: status, messages: [text])
         try repository.saveAIJob(job)
         snapshot.lastUserTurnType = userTurn.turnType
@@ -2655,7 +2669,7 @@ public final class SessionEngine {
             chapters: parsed.chapters,
             sourceInterjectionIds: []
         )
-        try repository.saveTurn(turn)
+        try saveEngineTurn(turn)
         session.phase = .conversation
         currentSession = session
         try persistSession(session)
@@ -2693,7 +2707,7 @@ public final class SessionEngine {
             let hasPartialContent = turn.rawText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
                 || turn.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
             turn.status = hasPartialContent ? "failed_partial" : "failed"
-            try repository.saveTurn(turn)
+            try saveEngineTurn(turn)
         }
         // The snapshot describes the active session; another session's failure leaves it alone.
         guard session.id == currentSession?.id else { return snapshot }
@@ -2721,7 +2735,7 @@ public final class SessionEngine {
             var turns = try repository.loadTurns(sessionId: session.id)
             if let idx = turns.firstIndex(where: { $0.id == turnId }) {
                 turns[idx].status = "streaming"
-                try repository.saveTurn(turns[idx])
+                try saveEngineTurn(turns[idx])
             }
         }
         snapshot.pendingAiJobKind = job.kind
@@ -2738,8 +2752,9 @@ public final class SessionEngine {
     @discardableResult
     public func completeLocalSummary(origin: LocalSummaryRequestOrigin, content: String) throws -> SessionSnapshot {
         let parsed = parseSectionedResponse(from: content)
-        try origin.save(repository: repository, rawText: content, text: parsed.response,
-                        summary: parsed.summary, chapters: parsed.chapters)
+        let saved = try origin.save(repository: repository, rawText: content, text: parsed.response,
+                                    summary: parsed.summary, chapters: parsed.chapters)
+        streamedTurnCursor.noteSaved(saved)
         guard origin.matchesPlayback(snapshot) else { return snapshot }
         snapshot.turnStatus = "complete"
         snapshot.pendingAiJobCount = try repository.loadAIJobs(sessionId: origin.sessionId).filter { $0.status != "complete" }.count
@@ -2778,7 +2793,7 @@ public final class SessionEngine {
         turn.summary = parsed.summary
         turn.text = text
         turn.rawText = combined
-        try repository.saveTurn(turn)
+        try saveEngineTurn(turn)
         snapshot.turnStatus = "streaming"
         snapshot.spokenUnits = Array(unitsToSpeak)
         return snapshot
@@ -2819,7 +2834,7 @@ public final class SessionEngine {
         snapshot.spokenUnits = Array(allSpeechUnits.dropFirst(alreadySpoken))
         spokenPrefixes[turnId] = allSpeechUnits.count
         streamingBuffers.removeValue(forKey: turnId)
-        try repository.saveTurn(turn)
+        try saveEngineTurn(turn)
         for var job in try repository.loadAIJobs(sessionId: session.id) where job.turnId == turnId {
             job.status = "complete"
             try repository.updateAIJob(job)
@@ -2848,7 +2863,7 @@ public final class SessionEngine {
             throw SessionKitError.invalidCommandForState("aiChaptersCompleted")
         }
         turn.chapters = chapters.sorted { $0.startChar < $1.startChar }
-        try repository.saveTurn(turn)
+        try saveEngineTurn(turn)
         return snapshot
     }
 
@@ -4351,6 +4366,23 @@ public final class SessionEngine {
         }
     }
 
+    /// Every turn the engine saves goes through here, so the cursor writer's copy of the turn being heard is never
+    /// older than the store's. A save that skipped the note left the published progress on a stale title (#2509).
+    private func saveEngineTurn(_ turn: ConversationTurn) throws {
+        try repository.saveTurn(turn)
+        streamedTurnCursor.noteSaved(turn)
+    }
+
+    /// The generated turn a snapshot describes. While the streaming queue speaks it, the cursor writer's copy, so a
+    /// sentence or tick of a streamed reply doesn't decode the session's turns on the main thread (#2509).
+    private func presentedTurn(for session: Session) -> ConversationTurn? {
+        if externallyStreamedTurnId == session.currentTargetId,
+           let turn = streamedTurnCursor.turn(for: session.currentTargetId) {
+            return turn
+        }
+        return try? repository.loadTurns(sessionId: session.id).first(where: { $0.id == session.currentTargetId })
+    }
+
     private func playbackProgress(for session: Session) -> PlaybackProgress {
         let sourcePercent = session.completionPercent
         let position = playbackPosition(for: session)
@@ -4370,7 +4402,7 @@ public final class SessionEngine {
             let title = isInPreface ? "Summary" : (currentMap?.chapters.first(where: { $0.id == session.position.chapterId })?.title ?? currentItem?.title)
             return PlaybackProgress(sourcePercent: sourcePercent, currentPercent: currentPercent, chapterTitle: title)
         case .summaryTurnTTS, .assistantTurnTTS:
-            guard let turn = try? repository.loadTurns(sessionId: session.id).first(where: { $0.id == session.currentTargetId }) else {
+            guard let turn = presentedTurn(for: session) else {
                 return PlaybackProgress(sourcePercent: sourcePercent, currentPercent: 0, chapterTitle: currentItem?.title)
             }
             let playable = playableText(for: turn)
@@ -4454,7 +4486,7 @@ public final class SessionEngine {
                 anchorConfidence: .textRange
             )
         case .summaryTurnTTS, .assistantTurnTTS:
-            let turn = try? repository.loadTurns(sessionId: session.id).first(where: { $0.id == session.currentTargetId })
+            let turn = presentedTurn(for: session)
             let text = turn.map { generatedTurnNavigationText(for: $0) } ?? ""
             let canonicalOffset = protectedPosition?.charOffset ?? session.position.charOffset
             let audioOffset = (positionIsPending ? nil : rawAudioTextOffset())
@@ -5782,20 +5814,11 @@ public final class SessionEngine {
     }
 
     private func playableText(for turn: ConversationTurn) -> String {
-        let summary = turn.summary?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let text = turn.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if !summary.isEmpty, !text.isEmpty {
-            return "\(summary)\n\n\(text)"
-        }
-        if !text.isEmpty { return text }
-        if !summary.isEmpty { return summary }
-        return turn.rawText ?? ""
+        StreamedTurnCursorWriter.Shape.playableText(for: turn)
     }
 
     private func generatedTurnNavigationText(for turn: ConversationTurn) -> String {
-        let text = turn.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if !text.isEmpty { return text }
-        return playableText(for: turn)
+        StreamedTurnCursorWriter.Shape.navigationText(for: turn)
     }
 
     private func itemPlaybackPreface() -> String {
@@ -6216,16 +6239,11 @@ public final class SessionEngine {
     }
 
     private func persistSession(_ session: Session, source: String = #function) throws {
+        // A streamed reply's cursor write still queued must land first, or it would land over this newer one.
+        streamedTurnCursor.flush()
         noteMediaPositionWrite(session, source: source)
-        var stamped = session
-        let timestamp = now()
-        if stamped.createdAt == nil {
-            stamped.createdAt = timestamp
-        }
-        stamped.updatedAt = timestamp
-        if stamped.status == "finished", stamped.completedAt == nil {
-            stamped.completedAt = timestamp
-        }
+        let stamped = stampedForSave(session)
+        let timestamp = stamped.updatedAt ?? now()
         try repository.saveSession(storedForm(of: stamped))
         lastSavedMediaTimeMs[stamped.id] = stamped.position.mediaTimeMs
         lastProgressWriteAt[stamped.id] = timestamp
@@ -6241,6 +6259,20 @@ public final class SessionEngine {
         if currentSession?.id == stamped.id {
             currentSession = stamped
         }
+    }
+
+    /// The session with the times a save sets: created once, updated now, completed when it finishes.
+    private func stampedForSave(_ session: Session) -> Session {
+        var stamped = session
+        let timestamp = now()
+        if stamped.createdAt == nil {
+            stamped.createdAt = timestamp
+        }
+        stamped.updatedAt = timestamp
+        if stamped.status == "finished", stamped.completedAt == nil {
+            stamped.completedAt = timestamp
+        }
+        return stamped
     }
 
     /// The session as the Library stores it. A session playing a publisher recording is stored as the
