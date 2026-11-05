@@ -472,8 +472,10 @@ public final class SystemTextAudioPreparationClient: NSObject, TextAudioPreparat
         }
         let accumulator = AudioFileAccumulator(outputURL: outputURL)
         let synthesizer = AVSpeechSynthesizer()
-        // Rendering to a file needs no audio output, and a synthesizer on the app's session can leave a playing episode
-        // silent while it reports "playing" (#288), as `SystemVoiceChunkRenderer` found.
+        // A precaution, not a proven fix (#3365): rendering to a file needs no audio output, so this write stays off the
+        // app's audio session while an episode may be playing, as `SystemVoiceChunkRenderer` does. #288 listed a session
+        // clash as one unproven cause of a silent episode; no phone check has shown it for this client. It reaches scene
+        // summaries too, so they get a phone check.
         #if os(iOS)
         synthesizer.usesApplicationAudioSession = false
         #endif

@@ -1,7 +1,9 @@
 import Foundation
+import NaturalLanguage
 import SessionKit
 
 #if canImport(AVFoundation)
+import AVFoundation
 
 /// Turns a written Margin's words into an audio file the Margin-moment conductor plays as it plays a recording (#3365):
 /// the same tone, the same pause of the episode, the same skip, interruption and heard-marking, with no second playback
@@ -31,7 +33,12 @@ public final class WrittenMarginReader: @unchecked Sendable {
     /// the episode paused, so this is shorter than the 30 s the chunk renderer allows (`SystemVoiceChunkRenderer`).
     public static func defaultTimeLimit(forCharacters count: Int) -> TimeInterval { 20 + TimeInterval(count / 500) }
 
-    public enum RenderError: Error, Equatable { case nothingToSay, timedOut }
+    /// `noVoice`: the phone has no voice for the note's language. `tooManyStuck`: earlier renders are still blocked inside
+    /// the speech service, so another is not started behind them (each one holds a thread until the service answers).
+    public enum RenderError: Error, Equatable { case nothingToSay, timedOut, noVoice, tooManyStuck }
+
+    /// How many abandoned renders may still be blocked before new ones fail at once.
+    public static let defaultMostStuckRenders = 2
 
     private final class Job: @unchecked Sendable {
         let reading: WrittenMarginReading
@@ -50,6 +57,10 @@ public final class WrittenMarginReader: @unchecked Sendable {
     private var pending: [Job] = []
     private var laneBusy = false
     private var lane = 0
+    private var stuck = 0
+    private let mostStuck: Int
+    private var lastChecked: [String: Date] = [:]
+    private let recheckAfter: TimeInterval
 
     /// `renderAudio` writes the speech for `spokenText` somewhere under `scratch` and returns that file. The default is
     /// the iPhone voice.
@@ -57,12 +68,17 @@ public final class WrittenMarginReader: @unchecked Sendable {
         directory: URL = WrittenMarginReader.defaultDirectory,
         voiceIdentifier: String? = nil,
         timeLimit: (@Sendable (_ spokenText: String) -> TimeInterval)? = nil,
+        mostStuckRenders: Int = WrittenMarginReader.defaultMostStuckRenders,
+        recheckAfter: TimeInterval = 5,
         renderAudio: (@Sendable (_ spokenText: String, _ scratch: URL) throws -> URL)? = nil
     ) {
         self.directory = directory
         self.voiceIdentifier = voiceIdentifier
+        self.mostStuck = mostStuckRenders
+        self.recheckAfter = recheckAfter
         self.timeLimit = timeLimit ?? { WrittenMarginReader.defaultTimeLimit(forCharacters: $0.count) }
         self.renderAudio = renderAudio ?? { text, scratch in
+            if voiceIdentifier == nil, !Self.canRead(text, voiceExists: { AVSpeechSynthesisVoice(language: $0) != nil }) { throw RenderError.noVoice }
             let client = SystemTextAudioPreparationClient(outputDirectory: scratch, voiceIdentifier: voiceIdentifier)
             guard let prepared = try client.prepareTextAudio(itemId: "written-margin", title: "Written Margin", text: text),
                   let url = prepared.media.url.flatMap({ URL(string: $0) }) else { throw RenderError.nothingToSay }
@@ -94,7 +110,39 @@ public final class WrittenMarginReader: @unchecked Sendable {
     /// until a render or a check (`start`, `rendered`) has found the file.
     public func isReady(_ reading: WrittenMarginReading) -> Bool {
         let path = fileURL(for: reading).path
-        return lock.withLock { ready.contains(path) }
+        let known = lock.withLock { ready.contains(path) }
+        if known { verifyLater(path) }
+        return known
+    }
+
+    /// Drops a reading from the ready set, so the next ask renders it again. For a reading that was ready and then was not
+    /// there when it came to play.
+    public func forget(_ reading: WrittenMarginReading) {
+        let path = fileURL(for: reading).path
+        lock.withLock { _ = ready.remove(path) }
+    }
+
+    /// The system may clear Caches while the app lives, so a "ready" answer is checked against the disk, off the calling
+    /// thread and at most every few seconds per file; a file that is gone stops counting as ready.
+    private func verifyLater(_ path: String) {
+        let now = Date()
+        let due = lock.withLock { () -> Bool in
+            if let last = lastChecked[path], now.timeIntervalSince(last) < recheckAfter { return false }
+            lastChecked[path] = now
+            return true
+        }
+        guard due else { return }
+        DispatchQueue.global(qos: .utility).async { [self] in
+            if !FileManager.default.fileExists(atPath: path) { lock.withLock { _ = ready.remove(path) } }
+        }
+    }
+
+    /// Whether the phone has a voice for the language the note is in. A note whose language can't be told is read.
+    static func canRead(_ text: String, voiceExists: (String) -> Bool) -> Bool {
+        let recognizer = NLLanguageRecognizer()
+        recognizer.processString(String(text.prefix(1_000)))
+        guard let language = recognizer.dominantLanguage, language != .undetermined else { return true }
+        return voiceExists(language.rawValue)
     }
 
     /// Names each reading's file and starts rendering the ones that are not on disk yet, off the calling thread. Returns
@@ -168,6 +216,12 @@ public final class WrittenMarginReader: @unchecked Sendable {
         lock.lock()
         guard !laneBusy, !pending.isEmpty else { lock.unlock(); return }
         let job = pending.removeFirst()
+        if stuck >= mostStuck {
+            lock.unlock()
+            finish(job, .failure(RenderError.tooManyStuck)) // no new thread behind renders the service hasn't given back
+            pump()
+            return
+        }
         laneBusy = true
         let myLane = lane
         lock.unlock()
@@ -176,7 +230,7 @@ public final class WrittenMarginReader: @unchecked Sendable {
         DispatchQueue.global(qos: .userInitiated).async { [self] in
             let result = Result<URL, Error> { try render(job.reading, to: job.target) }
             lock.lock()
-            if lane == myLane { laneBusy = false }
+            if lane == myLane { laneBusy = false } else { stuck -= 1 } // an abandoned render came back
             if case .success = result { ready.insert(job.target.path) }
             lock.unlock()
             finish(job, result)
@@ -184,10 +238,10 @@ public final class WrittenMarginReader: @unchecked Sendable {
         }
         DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + limit) { [self] in
             lock.lock()
-            let stuck = !job.finished
-            if stuck, lane == myLane { lane += 1; laneBusy = false } // give up on this lane; the next render starts fresh
+            let timedOut = !job.finished
+            if timedOut, lane == myLane { lane += 1; laneBusy = false; stuck += 1 } // give up on this lane; the next render starts fresh
             lock.unlock()
-            guard stuck else { return }
+            guard timedOut else { return }
             finish(job, .failure(RenderError.timedOut))
             pump()
         }

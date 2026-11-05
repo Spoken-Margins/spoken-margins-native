@@ -83,6 +83,25 @@ final class SharedMarginReviewTests: XCTestCase {
         XCTAssertEqual(entries.map(\.anchor.isReadAloud), [false, true])
     }
 
+    /// A note the voice can't read is not offered at all: a tone would promise a reading that then fails (#3365).
+    func testANoteTheVoiceCantReadIsNotAPlayableMargin() {
+        let layer = self.layer("ana")
+        func playable(_ words: String, voice: Bool = false) -> Bool {
+            SharedMarginPrompts.isPlayable(margin("m", voice: voice, words: words), in: layer)
+        }
+        XCTAssertTrue(playable("Lovely harbour"))
+        XCTAssertTrue(playable("anything", voice: true), "a recording is always something to play")
+        XCTAssertFalse(playable("🎧🔥"))
+        XCTAssertFalse(playable("नमस्ते दुनिया"))
+    }
+
+    func testTheReadingNamesNobodyForTheStandInLabels() {
+        for standIn in ["Imported collection", "Unsigned sender", " unsigned  SENDER "] {
+            XCTAssertEqual(WrittenMarginReading.intro(senderName: standIn), "Your friend wrote:", standIn)
+        }
+        XCTAssertEqual(WrittenMarginReading.intro(senderName: "Cole"), "Cole wrote:")
+    }
+
     /// The same table `isWritten` is judged by: it is what keeps "Cole wrote: Voice Margin at 12:34" from being said.
     func testWhichImportedMarginsAreWritten() {
         func isWritten(_ words: String, voice: Bool = false) -> Bool { margin("m", voice: voice, words: words).isWritten }
@@ -98,6 +117,13 @@ final class SharedMarginReviewTests: XCTestCase {
         XCTAssertFalse(isWritten("🎧🔥"), "nothing the voice can say: it would read 'Cole wrote:' and stop")
         XCTAssertFalse(isWritten("  🎧  \n 🔥 "))
         XCTAssertTrue(isWritten("🎧 great episode"), "emoji around words are dropped, the words are kept")
+        XCTAssertFalse(isWritten("https://example.com/episode"), "a link alone: nothing to say")
+        XCTAssertFalse(isWritten("नमस्ते दुनिया"), "Hindi comes out of the projection as a fragment: not read, not marked heard")
+        XCTAssertFalse(isWritten("สวัสดีครับ"), "Thai likewise")
+        XCTAssertTrue(isWritten("Naïve café, très bien"), "composed accents survive")
+        XCTAssertTrue(isWritten("Nai\u{308}ve cafe\u{301}"), "decomposed accents are tone marks, not letters")
+        XCTAssertTrue(isWritten("こんにちは、世界"), "Japanese")
+        XCTAssertTrue(isWritten(String(repeating: "x", count: 50_000)), "a huge note is judged by its start")
         XCTAssertFalse(isWritten("Voice Margin"), "the placeholder with every optional part left out (an article, no title, no date)")
         XCTAssertFalse(isWritten("Voice Margin at 12:34"))
         XCTAssertFalse(isWritten("Voice Margin at 1:02:03"))

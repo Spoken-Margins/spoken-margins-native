@@ -31,7 +31,45 @@ extension ImportedCommentaryInterjection {
         audioPath == nil
             && !approvedTranscript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && !SharedMarginPlaceholderWords.matches(approvedTranscript)
-            && !SpeechTextNormalizer.projectForSystemSpeech(approvedTranscript).text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && WrittenMarginSpeech.isReadable(approvedTranscript)
+    }
+}
+
+/// What the iPhone's voice can read of a note, decided once for the offer and the render alike (#3365). A note is read
+/// properly or it is not a written Margin: it is not offered, so a tone never promises a reading that then fails, and a
+/// fragment is never read and marked heard. Two kinds of note fail: words the speech projection empties (only emoji or
+/// a link), and scripts whose combining marks it drops (Hindi and Thai come out as a few letters). Whether the phone has
+/// a voice for the note's language is the renderer's check (`WrittenMarginReader`), which fails the reading with the
+/// ordinary "couldn't be read aloud" line and leaves the Margin new.
+public enum WrittenMarginSpeech {
+    /// How much of a note is looked at: the projection is linear, so a sender's 50,000-character note would cost the
+    /// main thread 200 ms every time a card is built. The start of a note says what kind of note it is.
+    static let examinedCharacters = 1_000
+    nonisolated(unsafe) private static let answers = NSCache<NSString, NSNumber>() // NSCache is thread-safe
+
+    public static func isReadable(_ words: String) -> Bool {
+        let sample = String(words.prefix(examinedCharacters))
+        let key = sample as NSString
+        if let known = answers.object(forKey: key) { return known.boolValue }
+        let answer = compute(sample)
+        answers.setObject(NSNumber(value: answer), forKey: key)
+        return answer
+    }
+
+    private static func compute(_ sample: String) -> Bool {
+        let spoken = SpeechTextNormalizer.projectForSystemSpeech(sample).text
+        guard !spoken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        let before = lettersCarriedByMarks(in: sample)
+        return before == 0 || lettersCarriedByMarks(in: spoken) * 2 >= before
+    }
+
+    /// Combining marks that are part of a letter's sound (a Devanagari vowel sign, a Thai vowel), as opposed to an emoji
+    /// variation selector or a tone accent.
+    private static func lettersCarriedByMarks(in text: String) -> Int {
+        text.unicodeScalars.reduce(0) { count, scalar in
+            let category = scalar.properties.generalCategory
+            return count + ((category == .nonspacingMark || category == .spacingMark) && scalar.properties.isAlphabetic ? 1 : 0)
+        }
     }
 }
 
@@ -50,7 +88,7 @@ public struct WrittenMarginReading: Sendable, Equatable {
     /// The same words as the web page's `writtenIntro` (`Web/src/app/logic/arrival.ts`): the sender's name as they wrote
     /// it, and "Your friend" for no name or for the name import stores when the sender gave none.
     public static func intro(senderName: String?) -> String {
-        let name = senderName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let name = SharedPacketArrival.senderName(senderName) ?? "" // the stand-ins for no name are no name (#3247)
         let isAnonymous = name.isEmpty || name.lowercased() == "your friend"
         return "\(isAnonymous ? "Your friend" : name) wrote:"
     }

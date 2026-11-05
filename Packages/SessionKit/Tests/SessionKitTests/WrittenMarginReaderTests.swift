@@ -145,6 +145,52 @@ final class WrittenMarginReaderTests: XCTestCase {
         XCTAssertLessThan(Date().timeIntervalSince(began), 5)
     }
 
+    /// Blocked writes each hold a thread (#1230): after a few, new readings fail at once instead of starting another.
+    func testAfterTwoRendersAreStuckTheNextFailsAtOnceUntilOneComesBack() async throws {
+        let release = DispatchSemaphore(value: 0)
+        let calls = Renders()
+        let reader = WrittenMarginReader(directory: directory, timeLimit: { _ in 0.2 }, mostStuckRenders: 2, renderAudio: { text, scratch in
+            if text.contains("stuck") { _ = try calls.render(text, scratch: scratch); release.wait() }
+            return try calls.render(text, scratch: scratch)
+        })
+        defer { release.signal(); release.signal(); release.signal() }
+        for word in ["stuck one", "stuck two"] {
+            do { _ = try await reader.rendered(WrittenMarginReading(intro: "Cole wrote:", text: word)); XCTFail("times out") } catch let e as WrittenMarginReader.RenderError { XCTAssertEqual(e, .timedOut) }
+        }
+        let began = Date()
+        do { _ = try await reader.rendered(WrittenMarginReading(intro: "Cole wrote:", text: "stuck three")); XCTFail("fails at once") } catch let e as WrittenMarginReader.RenderError {
+            XCTAssertEqual(e, .tooManyStuck)
+        }
+        XCTAssertLessThan(Date().timeIntervalSince(began), 0.15, "no wait, and no third thread")
+        XCTAssertEqual(calls.spoken.filter { $0.contains("stuck three") }.count, 0)
+        release.signal() // one abandoned write comes back
+        try await Task.sleep(for: .milliseconds(300))
+        let file = try await reader.rendered(WrittenMarginReading(intro: "Cole wrote:", text: "A fine one."))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: file.path), "renders start again once a stuck one returns")
+    }
+
+    /// Caches can be cleared while the app lives: a reading whose file is gone stops counting as ready, so the next ask renders it.
+    func testAReadingWhoseFileWasClearedStopsBeingReadyAndRendersAgain() async throws {
+        let renders = Renders()
+        let reader = WrittenMarginReader(directory: directory, recheckAfter: 0, renderAudio: { try renders.render($0, scratch: $1) })
+        let reading = WrittenMarginReading(intro: "Cole wrote:", text: "Cleared away.")
+        let file = try await reader.rendered(reading)
+        try FileManager.default.removeItem(at: file)
+        XCTAssertTrue(reader.isReady(reading), "the first look still answers from memory")
+        try await Task.sleep(for: .milliseconds(300)) // the check ran off the calling thread
+        XCTAssertFalse(reader.isReady(reading))
+        _ = try await reader.rendered(reading)
+        XCTAssertEqual(renders.spoken.count, 2)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
+        reader.forget(reading)
+        XCTAssertFalse(reader.isReady(reading), "forgetting drops it at once")
+    }
+
+    func testANoteInALanguageThePhoneHasNoVoiceForIsNotRead() {
+        XCTAssertTrue(WrittenMarginReader.canRead("Lovely harbour, hear the gulls near the end.", voiceExists: { $0.hasPrefix("en") }))
+        XCTAssertFalse(WrittenMarginReader.canRead("Das ist ein sehr schöner Hafen mit vielen Möwen.", voiceExists: { $0.hasPrefix("en") }))
+    }
+
     func testALongerNoteGetsALongerTimeLimit() {
         XCTAssertEqual(WrittenMarginReader.defaultTimeLimit(forCharacters: 100), 20)
         XCTAssertEqual(WrittenMarginReader.defaultTimeLimit(forCharacters: 50_000), 120)
