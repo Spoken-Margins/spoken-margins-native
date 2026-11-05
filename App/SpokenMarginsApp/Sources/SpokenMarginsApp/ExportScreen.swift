@@ -131,7 +131,7 @@ struct ExportScreen: View {
                             .buttonStyle(SecondaryButtonStyle())
                             .disabled(model.exportPreview.isEmpty)
                             .accessibilityIdentifier("export.copyPlainText.button")
-                        Button("Item", action: { model.openItem(id: model.selectedItem.id) })
+                        Button("Item", action: { model.openItemFromTap(id: model.selectedItem.id) })
                             .buttonStyle(SecondaryButtonStyle())
                             .accessibilityIdentifier("export.item.button")
                     }

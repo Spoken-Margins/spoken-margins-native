@@ -16,6 +16,8 @@ final class BackgroundRefreshGate {
     private var publishedLibraryGeneration = 0
     private var announcePending = false
     private var isPublishingItem = false
+    private var openGeneration = 0
+    private var openTask: Task<Void, Never>?
 
     /// Starts a reload and returns its number; the reload before it can no longer publish.
     func beginItem() -> Int {
@@ -74,6 +76,28 @@ final class BackgroundRefreshGate {
             let generation = itemGeneration
             await itemTask?.value
             if generation == itemGeneration { return }
+        }
+    }
+
+    /// Starts an open from a tap and returns its number (#2505); the open before it can no longer show its item.
+    func beginOpen() -> Int {
+        openGeneration &+= 1
+        openTask?.cancel()
+        return openGeneration
+    }
+
+    /// Drops a tap's open that is still reading: the listener went somewhere else meanwhile.
+    func dropOpen() { _ = beginOpen() }
+
+    func holdOpen(_ task: Task<Void, Never>) { openTask = task }
+    func isCurrentOpen(_ generation: Int) -> Bool { openGeneration == generation }
+
+    /// Returns once the newest open from a tap has shown its item or been dropped. For tests that tap, then read.
+    func settledOpen() async {
+        while true {
+            let generation = openGeneration
+            await openTask?.value
+            if generation == openGeneration { return }
         }
     }
 

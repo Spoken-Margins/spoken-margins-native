@@ -194,7 +194,7 @@ struct ExperienceMarginsScreen: View {
     @ViewBuilder
     private func groupOpenItemButton(_ group: MarginGroup) -> some View {
         // The heading opens the item, as the Library row does (#1256). The chevron says it goes somewhere.
-        Button { model.openItem(id: group.itemID) } label: {
+        Button { model.openItemFromTap(id: group.itemID) } label: {
             VStack(alignment: .leading, spacing: 3) {
                 Text("\(group.itemTitle) \(Text(Image(systemName: "chevron.right")).font(.caption.weight(.bold)).foregroundStyle(AppColors.secondaryText))")
                     .font(.subheadline.weight(.semibold))
