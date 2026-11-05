@@ -585,7 +585,7 @@ struct SharedMarginDetailView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { Button("Done") { dismiss() } }
             .onDisappear {
-                if shouldOpenItem, let itemID = row.layer.itemId { model.openItem(id: itemID) }
+                if shouldOpenItem, let itemID = row.layer.itemId { model.openItemFromTap(id: itemID) }
                 if let pendingReply { model.replyToSharedMargin(current, inWriting: pendingReply == .written) }
                 pendingReply = nil
             }

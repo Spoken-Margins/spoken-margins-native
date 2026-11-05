@@ -20,7 +20,7 @@ struct ExperienceAudioPreparationQueueScreen: View {
             skip: { id in model.skipAudioPreparationJob(id: id) },
             clear: { model.clearAudioPreparationQueue() },
             refresh: { Task { await model.refreshAudioPreparationPresentation() } },
-            openItem: model.openItem
+            openItem: { id in model.openItemFromTap(id: id) }
         )
         .equatable()
     }
