@@ -15,6 +15,19 @@ public struct SystemSpokenNoteTranscriber: SpokenNoteTranscribing {
     }
 }
 
+#if canImport(AVFoundation)
+import AVFoundation
+
+/// How long a take's audio file is, in milliseconds. 0 for a file that won't open yet (a recording cut off before its
+/// closing index): it is kept either way.
+public enum SpokenNoteAudioFile {
+    public static func durationMs(of url: URL) -> Int {
+        if case .milliseconds(let ms) = RecordedFileDuration.measure(url) { return ms }
+        return 0
+    }
+}
+#endif
+
 #if canImport(AVFoundation) && os(iOS)
 import AVFoundation
 

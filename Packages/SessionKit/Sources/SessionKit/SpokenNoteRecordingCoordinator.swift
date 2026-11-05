@@ -20,7 +20,23 @@ public protocol SpokenNoteTranscribing: Sendable {
 
 /// Where a note's Library item is written. The database is one; a test is another.
 public protocol SpokenNoteItemWriting: Sendable {
-    func write(_ item: Item) throws
+    /// Brings the stored row up to date with the note's text. Only the text is ever changed on a row that already
+    /// exists; see `SpokenNoteItemMerge`. `isFirstSave` is true until the row has been written once.
+    func write(_ item: Item, isFirstSave: Bool) throws
+}
+
+/// What a note's row should become when its transcript text changes (#3108). The coordinator keeps its own copy of
+/// the item from when the note started, so it must never save that whole copy over the stored row: the listener may
+/// have moved the row to the trash, renamed it or emptied the trash since. Only the text is brought up to date, and a
+/// row the listener deleted stays deleted.
+public enum SpokenNoteItemMerge {
+    /// The row to save, or nil when nothing should be written.
+    public static func rowToSave(stored: Item?, incoming: Item, isFirstSave: Bool) -> Item? {
+        guard var row = stored else { return isFirstSave ? incoming : nil }
+        guard row.deletedAt == nil, row.text != incoming.text else { return nil }
+        row.text = incoming.text
+        return row
+    }
 }
 
 /// What a screen shows about a note being dictated.
@@ -59,7 +75,7 @@ public actor SpokenNoteRecordingCoordinator {
     private var savedItem: Item?
     private let recorder: any SpokenNoteTakeRecording
     private let transcriber: any SpokenNoteTranscribing
-    private let saveItem: @Sendable (Item) throws -> Void
+    private let saveItem: @Sendable (Item, Bool) throws -> Void
     private let now: @Sendable () -> Date
     private let makeTakeId: @Sendable () -> String
     private var onChange: (@Sendable (SpokenNoteRecordingSnapshot) -> Void)?
@@ -83,7 +99,7 @@ public actor SpokenNoteRecordingCoordinator {
         itemIsSaved: Bool,
         recorder: any SpokenNoteTakeRecording,
         transcriber: any SpokenNoteTranscribing,
-        saveItem: @escaping @Sendable (Item) throws -> Void,
+        saveItem: @escaping @Sendable (Item, Bool) throws -> Void,
         now: @escaping @Sendable () -> Date = { Date() },
         makeTakeId: @escaping @Sendable () -> String = { UUID().uuidString.lowercased() }
     ) {
@@ -103,11 +119,13 @@ public actor SpokenNoteRecordingCoordinator {
         itemIsSaved: Bool,
         recorder: any SpokenNoteTakeRecording,
         transcriber: any SpokenNoteTranscribing,
-        itemWriter: any SpokenNoteItemWriting
+        itemWriter: any SpokenNoteItemWriting,
+        now: @escaping @Sendable () -> Date = { Date() },
+        makeTakeId: @escaping @Sendable () -> String = { UUID().uuidString.lowercased() }
     ) {
         self.init(
             store: store, item: item, itemIsSaved: itemIsSaved, recorder: recorder, transcriber: transcriber,
-            saveItem: { try itemWriter.write($0) }
+            saveItem: { try itemWriter.write($0, isFirstSave: $1) }, now: now, makeTakeId: makeTakeId
         )
     }
 
@@ -281,7 +299,7 @@ public actor SpokenNoteRecordingCoordinator {
         item = SpokenNoteIntake.updatedItem(item, for: note)
         guard !note.isEmpty, savedItem != item else { return }
         do {
-            try saveItem(item)
+            try saveItem(item, savedItem == nil)
             savedItem = item
         } catch {
             // The note is safe in its own file. The next change tries to save the row again (`savedItem` is unchanged).

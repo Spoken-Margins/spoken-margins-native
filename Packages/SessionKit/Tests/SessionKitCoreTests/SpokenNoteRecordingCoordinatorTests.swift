@@ -117,7 +117,7 @@ final class SpokenNoteRecordingCoordinatorTests: XCTestCase {
         let coordinator = SpokenNoteRecordingCoordinator(
             store: started.store, item: started.item, itemIsSaved: itemIsSaved,
             recorder: recorder, transcriber: transcriber,
-            saveItem: { try saved.save($0) },
+            saveItem: { item, _ in try saved.save(item) },
             now: { Date(timeIntervalSince1970: 100) },
             makeTakeId: { ids.make() }
         )
@@ -391,7 +391,7 @@ final class SpokenNoteRecordingCoordinatorTests: XCTestCase {
         let coordinator = SpokenNoteRecordingCoordinator(
             store: started.store, item: started.item, itemIsSaved: false,
             recorder: RecorderForFlush(), transcriber: transcriber,
-            saveItem: { try saved.save($0) }, now: { Date(timeIntervalSince1970: 5) }, makeTakeId: { "f1" }
+            saveItem: { item, _ in try saved.save(item) }, now: { Date(timeIntervalSince1970: 5) }, makeTakeId: { "f1" }
         )
         try await coordinator.startTake()
         try await coordinator.stopTake()

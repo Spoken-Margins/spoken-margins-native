@@ -39,6 +39,8 @@ final class SpokenNoteRecorderModel: ObservableObject {
     private var coordinator: SpokenNoteRecordingCoordinator?
     private var clock: Task<Void, Never>?
     private var takeStartedAt: Date?
+    /// The screen has been closed: nothing may start, and a take that was still starting is stopped at once.
+    private var isFinished = false
     /// Keeps the app running while a transcript is being made after a take ends (the phone may be locked by then).
     private var endBackgroundWork: (@MainActor () -> Void)?
 
@@ -51,7 +53,7 @@ final class SpokenNoteRecorderModel: ObservableObject {
     var isBusy: Bool { phase == .starting || phase == .stopping }
 
     func record() {
-        guard phase == .idle, let environment else { return }
+        guard phase == .idle, !isFinished, let environment else { return }
         phase = .starting
         message = nil
         Task { await begin(environment) }
@@ -70,26 +72,34 @@ final class SpokenNoteRecorderModel: ObservableObject {
     /// Stops a take that is running, then lets the Library show the note. A transcript still being made carries on
     /// after the screen is gone.
     func finish() async {
+        isFinished = true
         if phase == .recording { await stopTake() }
         guard let environment else { return }
         if let coordinator {
             await coordinator.flushItem()
-            let endWork = environment.beginBackgroundWork("Spoken note transcript")
-            let libraryChanged = environment.libraryChanged
-            Task {
-                await coordinator.waitForTranscripts()
-                libraryChanged()
-                endWork()
-            }
+            keepAliveUntilTranscribed(coordinator, environment)
         }
         environment.libraryChanged()
     }
 
     // MARK: Steps
 
+    /// A transcript still being made carries on after the screen is gone: this holds the coordinator, and a little
+    /// background time, until every transcript is back.
+    private func keepAliveUntilTranscribed(_ coordinator: SpokenNoteRecordingCoordinator, _ environment: SpokenNoteRecorderEnvironment) {
+        let endWork = environment.beginBackgroundWork("Spoken note transcript")
+        let libraryChanged = environment.libraryChanged
+        Task {
+            await coordinator.waitForTranscripts()
+            libraryChanged()
+            endWork()
+        }
+    }
+
     private func begin(_ environment: SpokenNoteRecorderEnvironment) async {
-        guard await environment.requestMicrophone() else {
+        guard await environment.requestMicrophone(), !isFinished else {
             phase = .idle
+            if isFinished { return }
             message = "Allow the microphone for Spoken Margins in Settings to record a spoken note."
             return
         }
@@ -107,6 +117,11 @@ final class SpokenNoteRecorderModel: ObservableObject {
             elapsed = 0
             phase = .recording
             startClock()
+            // The screen was closed while the microphone was opening: keep what it took and stop.
+            if isFinished {
+                await stopTake()
+                keepAliveUntilTranscribed(coordinator, environment)
+            }
         } catch {
             phase = .idle
             message = "Couldn't start recording. Another app or a call may be using the microphone."

@@ -1,5 +1,6 @@
 import Foundation
 import SessionKit
+import SessionKitAudio
 import SessionKitPersistence
 
 /// The spoken note recorder's call site on the model (#3108). The recording itself is
@@ -22,5 +23,23 @@ extension Gate1AppModel {
             },
             beginBackgroundWork: { Gate2AppState.beginBackgroundTask($0) }
         )
+    }
+
+    /// At launch: adds dictation that an ended app left outside its note (a force-quit during a take) to that note and
+    /// the Library, off the main thread. Quick when there is nothing to find: it lists one folder.
+    func recoverSpokenNotes(store: SQLiteSessionStore) {
+        guard let support = try? applicationSupportDirectory() else { return }
+        Task.detached(priority: .utility) { [weak self] in
+            let recovered = SpokenNoteRecovery.recover(
+                in: support, now: Date(),
+                measureDurationMs: { SpokenNoteAudioFile.durationMs(of: $0) },
+                itemWriter: store
+            )
+            guard !recovered.isEmpty else { return }
+            await MainActor.run { [weak self] in
+                guard let self, let store = self.store else { return }
+                try? self.refreshLibraryRows(store: store)
+            }
+        }
     }
 }
