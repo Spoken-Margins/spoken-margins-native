@@ -148,3 +148,75 @@ test('a link that can’t open says what happened and one thing to do, in the sa
   await shot(page, info, 'link-off');
   await context.close();
 });
+
+test('when the episode can’t load: one problem toast, one sentence, and a button that plays the sender’s Margins without it (#3356)', async ({ browser }, info) => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'block' });
+  const page = await context.newPage();
+  await serveFixtures(page);
+  // The enclosure answers 404, as a dead or geo-blocked episode address does.
+  await page.route('https://example.com/podcast/**', (route) => route.fulfill({ status: 404, body: 'Not found', headers: { 'content-type': 'text/html' } }));
+  await page.goto(LINK);
+  await page.getByTestId('arrival').getByRole('button', { name: 'Play' }).click();
+
+  const playing = page.getByRole('dialog', { name: EPISODE });
+  const cue = playing.getByTestId('margin-cue');
+  await expect(playing).toBeVisible();
+  // The card is the one sentence: no toast beside it, however the audio element's error and the rejected play() arrive.
+  await expect(cue).toContainText('This episode can’t play here');
+  await page.waitForTimeout(1500);
+  await expect(page.locator('.toast-problem')).toHaveCount(0);
+  await expect(page.getByText('couldn’t be loaded')).toHaveCount(0);
+  await expect(page.getByText('This episode can’t play here', { exact: false })).toHaveCount(1);
+  // The element really is failed, and the card says so in a sentence, with no countdown and no Skip.
+  expect(await page.getByTestId('audio').evaluate((a: HTMLAudioElement) => a.error !== null && a.currentTime === 0)).toBe(true);
+  await expect(cue).toContainText('This episode can’t play here, but you can still hear Web fixture’s Margins.');
+  await expect(cue.getByTestId('margin-cue-clock')).toHaveCount(0);
+  await expect(cue.getByRole('button', { name: /Skip/ })).toHaveCount(0);
+  await shot(page, info, 'episode-failed-offer');
+
+  // One tap plays the Margins in order, with the episode's clock still at 0.
+  await cue.getByRole('button', { name: 'Hear Web fixture’s Margins' }).click();
+  const arrived = playing.getByTestId('arrived-margin');
+  await expect(arrived).toContainText('Web fixture wrote this');
+  await expect(arrived).toContainText('1 of 2');
+  await expect(arrived).toContainText(WRITTEN);
+  await shot(page, info, 'episode-failed-margin-1');
+  await expect(arrived).toContainText('Web fixture is speaking', { timeout: 30_000 });
+  await expect(arrived).toContainText('2 of 2');
+  expect(await page.getByTestId('audio').evaluate((a: HTMLAudioElement) => a.currentTime)).toBe(0);
+  // When the last one ends, no countdown comes back.
+  await expect(cue).toContainText('That was Web fixture’s last Margin', { timeout: 30_000 });
+  await expect(cue.getByTestId('margin-cue-clock')).toHaveCount(0);
+  expect(await page.getByTestId('audio').evaluate((a: HTMLAudioElement) => a.currentTime)).toBe(0);
+  await expect(page.locator('.toast-problem')).toHaveCount(0);
+  await context.close();
+});
+
+test('when the episode can’t load and the browser refuses a clip that starts later, that Margin waits for a tap and the rest follow (#3356)', async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'block' });
+  // The first voice clip the page starts on its own is refused as iPhone Safari refuses one not started by a tap.
+  await context.addInitScript(() => {
+    const play = HTMLMediaElement.prototype.play;
+    let refused = false;
+    HTMLMediaElement.prototype.play = function (this: HTMLMediaElement) {
+      if (!refused && !this.hasAttribute('data-testid')) {
+        refused = true;
+        return Promise.reject(new DOMException('refused', 'NotAllowedError'));
+      }
+      return play.call(this);
+    };
+  });
+  const page = await context.newPage();
+  await serveFixtures(page);
+  await page.route('https://example.com/podcast/**', (route) => route.fulfill({ status: 404, body: 'Not found', headers: { 'content-type': 'text/html' } }));
+  await page.goto(LINK);
+  await page.getByTestId('arrival').getByRole('button', { name: 'Play' }).click();
+  const playing = page.getByRole('dialog', { name: EPISODE });
+  await playing.getByTestId('margin-cue').getByRole('button', { name: 'Hear Web fixture’s Margins' }).click();
+  const arrived = playing.getByTestId('arrived-margin');
+  // The voice Margin (2 of 2) is not skipped: it stays, with a Play, until the listener taps.
+  await expect(arrived).toContainText('2 of 2', { timeout: 30_000 });
+  await arrived.getByRole('button', { name: /Play Web fixture’s Margin/ }).click();
+  await expect(playing.getByTestId('margin-cue')).toContainText('That was Web fixture’s last Margin', { timeout: 30_000 });
+  await context.close();
+});

@@ -83,6 +83,10 @@ export const ARRIVAL_WORDS = Object.freeze({
   unreadable: 'This file couldn’t be opened. It may have been damaged on the way. Ask your friend to send it again.',
   article: (who: string) => `${leading(possessive(who))} Margins are on an article’s text, which the browser can’t play yet.`,
   noEpisodeAudio: (who: string) => `This episode has no audio the browser can play. ${leading(possessive(who))} Margins are saved in your Library.`,
+  // The episode has an address but it failed to load (#3356): say so once, and offer the Margins on their own.
+  episodeCantPlay: (who: string) => `This episode can’t play here, but you can still hear ${possessive(who)} Margins.`,
+  hearMargins: (who: string) => `Hear ${possessive(who)} Margins`,
+  episodeCantPlayDone: (who: string) => `That was ${possessive(who)} last Margin, and the episode can’t play here.`,
 });
 
 /** The Margins that come from a friend, in the order they come. Only these fire by themselves and get a countdown. */
@@ -120,7 +124,19 @@ export type MarginCue =
       /** The share left in the lead-in, 0 to 1, for the draining bar. */
       leadInLeft: number;
     }
-  | { kind: 'after-last'; who: string; /** The name at the start of a sentence. */ lead: string };
+  | { kind: 'after-last'; who: string; /** The name at the start of a sentence. */ lead: string }
+  /** The episode failed to load: no countdown, no Skip; one sentence and one button that plays the Margins without it. */
+  | { kind: 'unplayable'; who: string; sentence: string; button: string }
+  /** The Margins have been heard without the episode: what's left, simply. No countdown comes back. */
+  | { kind: 'unplayable-done'; who: string; sentence: string };
+
+/** What the player knows about the episode, for the card. */
+export interface EpisodeState {
+  /** The episode failed to load (the player's one failure state). */
+  failed: boolean;
+  /** The sender's Margins have all been heard without the episode. */
+  heardWithoutEpisode: boolean;
+}
 
 /** Margins closer than this to the playhead are "now", not upcoming: the one just crossed has fired already. */
 const PAST_SECONDS = 0.5;
@@ -131,9 +147,15 @@ const CROSS_MARGIN_SECONDS = 0.3;
  * The countdown card for the playhead at `time`: how far the next friend Margin is and the Skip that goes toward
  * it. After the last Margin it points at the player's own Margin buttons, which are how the friend answers.
  */
-export function cueFor(margins: readonly Margin[], time: number, sender: string | undefined): MarginCue | undefined {
+export function cueFor(margins: readonly Margin[], time: number, sender: string | undefined, episode?: EpisodeState): MarginCue | undefined {
   const friends = friendMargins(margins);
   if (friends.length === 0) return undefined;
+  if (episode?.failed) {
+    const who = senderName(friends[0].author?.trim() || sender);
+    return episode.heardWithoutEpisode
+      ? { kind: 'unplayable-done', who, sentence: ARRIVAL_WORDS.episodeCantPlayDone(who) }
+      : { kind: 'unplayable', who, sentence: ARRIVAL_WORDS.episodeCantPlay(who), button: ARRIVAL_WORDS.hearMargins(who) };
+  }
   const index = friends.findIndex((m) => m.atSeconds > time + PAST_SECONDS);
   if (index === -1) {
     const last = senderName(friends[friends.length - 1].author?.trim() || sender);
