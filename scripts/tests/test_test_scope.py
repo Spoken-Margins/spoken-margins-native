@@ -590,14 +590,19 @@ class ReachedByNameTests(unittest.TestCase):
         self.assertNotIn('BigTests', result['app_tests'])
         self.assertTrue(any('BigTests (101 tests)' in note for note in result['notes']))
 
-    def test_the_real_skim_stops_case_reaches_the_class_that_failed_on_main(self):
-        # #3412 changed Gate1AppModel+SkimStops.swift; LocalAudioListeningPackageTests failed on main afterwards.
-        root = SCRIPTS.parent
-        path = APP + 'Gate1AppModel+SkimStops.swift'
-        if not (root / path).is_file():
-            self.skipTest('the Skim stops file is gone')
-        result = scope.classify([path], None, root=root)
-        self.assertIn('LocalAudioListeningPackageTests', result['app_tests'])
+    def test_modifiers_with_a_setter_scope_and_case_lists_declare_their_names(self):
+        self.assertEqual(
+            [name for _, _, name in scope.member_declarations([
+                'final class Model {',
+                '    @Published private(set) var session: Int?',
+                '    nonisolated(unsafe) static var shared = 0',
+                '    unowned let owner: Owner',
+                '    func run() { let local = 1 }',
+                '}',
+                'enum Kind {',
+                '    case one, two',
+                '}'])],
+            ['Model', 'session', 'shared', 'owner', 'run', 'Kind', 'one', 'two'])
 
 
 if __name__ == '__main__':

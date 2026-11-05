@@ -185,8 +185,8 @@ COMMENT = re.compile(r'//.*')
 WORD = re.compile(r'[A-Za-z_]\w*')
 MEMBER_DECL = re.compile(
     r'^(\s*)(?:@\w+(?:\([^)]*\))?\s+)*((?:(?:private|fileprivate|internal|public|open|static|final|override|mutating|'
-    r'nonisolated|lazy|weak|indirect|convenience|required|class)\s+)*)(func|var|let|struct|enum|class|protocol|actor|'
-    r'typealias|case|extension)\s+`?(\w+)')
+    r'nonisolated|lazy|weak|unowned|indirect|convenience|required|class)(?:\(\w+\))?\s+)*)(func|var|let|struct|enum|'
+    r'class|protocol|actor|typealias|case|extension)\s+`?(\w+)((?:\s*,\s*`?\w+)*)')
 TYPE_KINDS = {'struct', 'enum', 'class', 'protocol', 'actor', 'extension'}
 
 
@@ -211,12 +211,13 @@ def member_declarations(lines):
         if not match:
             continue
         indent, kind, name = len(match.group(1)), match.group(3), match.group(4)
+        more = WORD.findall(match.group(5)) if kind == 'case' else []  # `case one, two` declares both
         while stack and stack[-1][0] >= indent:
             stack.pop()
         if not stack or stack[-1][1] in TYPE_KINDS:
             # An extension names the type it extends: that type is not a thing the change declares.
             if kind != 'extension':
-                found.append((index, indent, name))
+                found.extend((index, indent, each) for each in [name] + more)
         stack.append((indent, kind))
     return found
 
@@ -393,7 +394,7 @@ def classify(paths, diffs=None, root=ROOT):
     if extra:
         app_tests.extend(extra)
         notes.append('Reached by name (#3448): ' + ', '.join(extra)
-                     + ' use something this diff changes or something that calls it. The T3 runs them too.')
+                     + ' use something this diff changes or something that calls it. A T3 request runs them too.')
     if left_out:
         notes.append('Reached by name but over the ' + str(REACH_MAX_TESTS) + '-test budget (#3448), so not added: '
                      + ', '.join(f'{name} ({count} tests)' for name, count in left_out[:REACH_LISTED])
