@@ -18,6 +18,11 @@ public protocol SpokenNoteTranscribing: Sendable {
     func transcribe(fileAt url: URL) async throws -> [AlignedTranscriptSegment]
 }
 
+/// Where a note's Library item is written. The database is one; a test is another.
+public protocol SpokenNoteItemWriting: Sendable {
+    func write(_ item: Item) throws
+}
+
 /// What a screen shows about a note being dictated.
 public struct SpokenNoteRecordingSnapshot: Equatable, Sendable {
     public var note: SpokenNote
@@ -90,6 +95,20 @@ public actor SpokenNoteRecordingCoordinator {
         self.saveItem = saveItem
         self.now = now
         self.makeTakeId = makeTakeId
+    }
+
+    public init(
+        store: SpokenNoteStore,
+        item: Item,
+        itemIsSaved: Bool,
+        recorder: any SpokenNoteTakeRecording,
+        transcriber: any SpokenNoteTranscribing,
+        itemWriter: any SpokenNoteItemWriting
+    ) {
+        self.init(
+            store: store, item: item, itemIsSaved: itemIsSaved, recorder: recorder, transcriber: transcriber,
+            saveItem: { try itemWriter.write($0) }
+        )
     }
 
     public func setOnChange(_ handler: (@Sendable (SpokenNoteRecordingSnapshot) -> Void)?) {

@@ -8,7 +8,7 @@ import SwiftUI
 struct SpokenNoteRecorderEnvironment {
     var applicationSupport: URL
     /// Writes the note's Library item. Called off the main thread, in order, by the note's coordinator.
-    var saveItem: @Sendable (Item) throws -> Void
+    var itemWriter: any SpokenNoteItemWriting
     var requestMicrophone: @MainActor () async -> Bool
     /// Called just before the microphone opens: pauses whatever is playing so it isn't in the recording.
     var prepareToRecord: @MainActor () -> Void
@@ -122,7 +122,7 @@ final class SpokenNoteRecorderModel: ObservableObject {
             itemIsSaved: false,
             recorder: SystemSpokenNoteTakeRecorder(),
             transcriber: SystemSpokenNoteTranscriber(),
-            saveItem: environment.saveItem
+            itemWriter: environment.itemWriter
         )
         await coordinator.setOnChange { [weak self] report in
             Task { @MainActor in self?.apply(report) }

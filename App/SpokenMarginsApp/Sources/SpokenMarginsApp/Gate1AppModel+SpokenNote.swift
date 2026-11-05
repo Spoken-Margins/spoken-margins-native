@@ -9,7 +9,7 @@ extension Gate1AppModel {
         guard let store = try? requireStore(), let support = try? applicationSupportDirectory() else { return nil }
         return SpokenNoteRecorderEnvironment(
             applicationSupport: support,
-            saveItem: { try store.saveItem($0) },
+            itemWriter: store,
             requestMicrophone: { [weak self] in await self?.requestMicrophonePermission() ?? false },
             prepareToRecord: { [weak self] in
                 // Nothing playing means nothing to pause; `pause()` on an idle player would report a failure.

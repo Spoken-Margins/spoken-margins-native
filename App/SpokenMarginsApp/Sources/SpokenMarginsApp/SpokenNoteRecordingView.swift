@@ -29,6 +29,7 @@ struct SpokenNoteRecordingView: View {
             }
             .background(AppColors.background.ignoresSafeArea())
             .safeAreaInset(edge: .bottom, spacing: 0) { controls }
+            .miniPlayerKeepOut()
             .navigationTitle("Spoken Note")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -77,6 +78,7 @@ struct SpokenNoteRecordingView: View {
                 Text(takes.isEmpty ? "Say what's on your mind." : "Record another take to add to this note.")
                     .font(.title3.weight(.semibold))
                     .foregroundStyle(AppColors.text)
+                    .accessibilityAddTraits(.isHeader)
             }
         }
         .accessibilityElement(children: .combine)
