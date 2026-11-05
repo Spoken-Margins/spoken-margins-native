@@ -57,7 +57,7 @@ enum TextSceneSummaryOutcome: Equatable {
         case .noSummaryAccepted: "The on-device model's summaries didn't pass the check, so the chapters stay without summaries."
         case .keptOtherMap: "This item already has a Listening Map, so it was not replaced."
         case .cancelled: "Stopped writing scene summaries."
-        case .failed(let reason): "Couldn't write scene summaries: \(reason)"
+        case .failed(let reason): "Couldn't write scene summaries. \(reason)"
         }
     }
 
@@ -118,7 +118,7 @@ final class TextSceneMapPreparer {
             } catch is CancellationError {
                 outcome = .cancelled
             } catch {
-                outcome = .failed(error.localizedDescription)
+                outcome = .failed(ListenerErrorText.message(for: error))
             }
             guard let self else { return }
             self.task = nil
