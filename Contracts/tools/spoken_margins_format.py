@@ -49,6 +49,7 @@ EMBEDDED_TEXT_ITEM_VERSION = 'spoken-margins.embedded-text-item.v1'
 FINGERPRINT_SPINE_VERSION = 'spoken-margins.edition-fingerprint-spine.v1'
 PHRASE_SKETCH_VERSION = 'spoken-margins.transcript-phrase-sketch.v1'
 CONVERSATION_VERSION = 'spoken-margins.margin-conversation.v1'
+SENDER_IDENTITY_VERSION = 'spoken-margins.sender-identity.v1'
 
 # SpokenMarginsPackageArchive.supportedRequiredCapabilities
 SUPPORTED_REQUIRED_CAPABILITIES = frozenset({COMMENTARY_LAYER_VERSION, EMBEDDED_TEXT_ITEM_VERSION})
@@ -61,6 +62,7 @@ ARTIFACT_VERSIONS = {
     'transcript_phrase_sketch': PHRASE_SKETCH_VERSION,
     'embedded_text_item': EMBEDDED_TEXT_ITEM_VERSION,
     'conversation': CONVERSATION_VERSION,
+    'sender_identity': SENDER_IDENTITY_VERSION,
 }
 # A kind whose version doesn't match is refused even when it isn't required (the reader can't skip it).
 ALWAYS_REQUIRED_KINDS = frozenset({'commentary_layer', 'embedded_text_item'})
@@ -102,6 +104,8 @@ CLOSED_ARTIFACTS = {
         frozenset({'id', 'sourceStartMs', 'sourceEndMs', 'hashes'})),
     'conversation': ('conversation', frozenset({'id', 'schemaVersion', 'replies'}), 'replies', 'conversation reply',
                      frozenset({'packageScopedId', 'conversationId', 'parentPackageDigest', 'parentPackageScopedId'})),
+    # The sender's random id (#2846) has no list: only its own keys are closed.
+    'sender_identity': ('sender identity', frozenset({'id', 'schemaVersion', 'senderId'}), None, None, None),
 }
 
 ITEM_TYPES = frozenset({'text', 'podcast', 'pdf', 'epub', 'other'})
@@ -194,6 +198,7 @@ SWIFT_TYPES = {
         'id': 'String', 'sourceStartMs': 'Int', 'sourceEndMs': 'Int', 'hashes': '[String]'},
     'MarginConversationArtifact': {
         'id': 'String', 'schemaVersion': 'String', 'replies': '[Reply]'},
+    'SenderIdentityArtifact': {'id': 'String', 'schemaVersion': 'String', 'senderId': 'String'},
     'MarginConversationArtifact.Reply': {
         'packageScopedId': 'String', 'conversationId': 'String', 'parentPackageDigest': 'String',
         'parentPackageScopedId': 'String'},
@@ -223,6 +228,7 @@ KIND_SWIFT_TYPE = {
     'transcript_phrase_sketch': 'TranscriptPhraseSketchArtifact',
     'embedded_text_item': 'EmbeddedTextItemArtifact',
     'conversation': 'MarginConversationArtifact',
+    'sender_identity': 'SenderIdentityArtifact',
 }
 
 MAX_PACKAGE_BYTES = 100 * 1024 * 1024
@@ -890,10 +896,11 @@ def _decode_artifacts(report, manifest, entries):
         if kind in CLOSED_ARTIFACTS:
             context, keys, list_key, entry_context, entry_keys = CLOSED_ARTIFACTS[kind]
             _unknown_keys(report, value, keys, context)
-            if not isinstance(value.get(list_key), list) or not all(isinstance(e, dict) for e in value[list_key]):
-                _refuse(report, 'invalid-manifest', f'{context} {list_key} are absent', where)
-            for entry in value[list_key]:
-                _unknown_keys(report, entry, entry_keys, entry_context)
+            if list_key is not None:
+                if not isinstance(value.get(list_key), list) or not all(isinstance(e, dict) for e in value[list_key]):
+                    _refuse(report, 'invalid-manifest', f'{context} {list_key} are absent', where)
+                for entry in value[list_key]:
+                    _unknown_keys(report, entry, entry_keys, entry_context)
         problem = decode_problem(value, KIND_SWIFT_TYPE[kind])
         if problem:
             _refuse(report, 'invalid-manifest', f'{kind} does not decode: {problem}', where)
@@ -1004,6 +1011,8 @@ def _check_boundary(report, manifest, decoded):
         _check_sketch(report, sketch, descriptor['path'])
     if len(decoded['conversation']) > 1:
         _refuse(report, 'invalid-manifest', 'more than one conversation artifact')
+    if len(decoded['sender_identity']) > 1:
+        _refuse(report, 'invalid-manifest', 'more than one sender identity artifact')
     scoped = {_canon(m['packageScopedId']) for m in layers[0][1]['interjections']}
     for descriptor, conversation in decoded['conversation']:
         replies = conversation['replies']

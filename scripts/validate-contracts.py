@@ -297,6 +297,7 @@ PORTABLE_VERSIONS = {
     "SharedCommentaryLayerArtifact": "shared-commentary-layer.schema.json",
     "PortableListeningMapProposalArtifact": "portable-listening-map-proposal.schema.json",
     "MarginConversationArtifact": "margin-conversation.schema.json",
+    "SenderIdentityArtifact": None,
     "EmbeddedTextItemArtifact": None,
     "EditionFingerprintSpineArtifact": None,
     "TranscriptPhraseSketchArtifact": None,
@@ -307,6 +308,7 @@ ARTIFACT_TYPES = {
     "commentary_layer": "SharedCommentaryLayerArtifact",
     "listening_map_proposal": "PortableListeningMapProposalArtifact",
     "conversation": "MarginConversationArtifact",
+    "sender_identity": "SenderIdentityArtifact",
     "embedded_text_item": "EmbeddedTextItemArtifact",
     "edition_fingerprint_spine": "EditionFingerprintSpineArtifact",
     "transcript_phrase_sketch": "TranscriptPhraseSketchArtifact",
@@ -522,6 +524,8 @@ def portable_format_problems(reader=None) -> list[str]:
                                 f"reference reader {sorted(reader_keys)}, schema {sorted(schema_keys)}")
         for context, keys, _, entry_context, entry_keys in reader.CLOSED_ARTIFACTS.values():
             for name, expected in ((context, keys), (entry_context, entry_keys)):
+                if name is None:
+                    continue
                 if name in allowed and allowed[name] != set(expected):
                     problems.append(f"portable formats: {name} keys differ: {label} {sorted(allowed[name])}, "
                                     f"reference reader {sorted(expected)}")

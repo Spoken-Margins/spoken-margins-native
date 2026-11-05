@@ -94,6 +94,8 @@ public struct VerifiedSpokenMarginsPackage: Sendable {
     public let embeddedTextItems: [EmbeddedTextItemArtifact]
     /// Reply links (#472). Empty for a packet without replies.
     public let conversations: [MarginConversationArtifact]
+    /// The sender's random id (#2846). Empty for a packet from a build that doesn't write one.
+    public let senderIdentities: [SenderIdentityArtifact]
     public let extractedAssetURLs: [String: URL]
 
     init(
@@ -104,6 +106,7 @@ public struct VerifiedSpokenMarginsPackage: Sendable {
         transcriptPhraseSketches: [TranscriptPhraseSketchArtifact],
         embeddedTextItems: [EmbeddedTextItemArtifact],
         conversations: [MarginConversationArtifact] = [],
+        senderIdentities: [SenderIdentityArtifact] = [],
         extractedAssetURLs: [String: URL]
     ) {
         self.manifest = manifest
@@ -113,6 +116,7 @@ public struct VerifiedSpokenMarginsPackage: Sendable {
         self.transcriptPhraseSketches = transcriptPhraseSketches
         self.embeddedTextItems = embeddedTextItems
         self.conversations = conversations
+        self.senderIdentities = senderIdentities
         self.extractedAssetURLs = extractedAssetURLs
     }
 }
@@ -174,6 +178,7 @@ public enum SpokenMarginsPackageArchive {
             phraseSketches: decoded.phraseSketches,
             embeddedTextItems: decoded.embeddedTextItems,
             conversations: decoded.conversations,
+            senderIdentities: decoded.senderIdentities,
             requireDigest: false
         )
         let previewData = Data(previewMarkdown(
@@ -312,6 +317,7 @@ public enum SpokenMarginsPackageArchive {
             phraseSketches: decoded.phraseSketches,
             embeddedTextItems: decoded.embeddedTextItems,
             conversations: decoded.conversations,
+            senderIdentities: decoded.senderIdentities,
             requireDigest: true
         )
         guard let previewData = entryData["preview.md"] else {
@@ -364,6 +370,7 @@ public enum SpokenMarginsPackageArchive {
             transcriptPhraseSketches: decoded.phraseSketches,
             embeddedTextItems: decoded.embeddedTextItems,
             conversations: decoded.conversations,
+            senderIdentities: decoded.senderIdentities,
             extractedAssetURLs: extractedURLs
         )
     }
@@ -487,7 +494,8 @@ public enum SpokenMarginsPackageArchive {
         fingerprintSpines: [EditionFingerprintSpineArtifact],
         phraseSketches: [TranscriptPhraseSketchArtifact],
         embeddedTextItems: [EmbeddedTextItemArtifact],
-        conversations: [MarginConversationArtifact]
+        conversations: [MarginConversationArtifact],
+        senderIdentities: [SenderIdentityArtifact]
     ) {
         var commentary: [SharedCommentaryLayerArtifact] = []
         var proposals: [PortableListeningMapProposalArtifact] = []
@@ -495,6 +503,7 @@ public enum SpokenMarginsPackageArchive {
         var phraseSketches: [TranscriptPhraseSketchArtifact] = []
         var embeddedTextItems: [EmbeddedTextItemArtifact] = []
         var conversations: [MarginConversationArtifact] = []
+        var senderIdentities: [SenderIdentityArtifact] = []
         for descriptor in manifest.artifacts {
             guard let data = artifactData[descriptor.path] else {
                 throw SpokenMarginsPackageArchiveError.invalidManifest("artifact is absent: \(descriptor.path)")
@@ -561,13 +570,24 @@ public enum SpokenMarginsPackageArchive {
                     throw SpokenMarginsPackageArchiveError.invalidManifest("conversation descriptor does not match artifact")
                 }
                 conversations.append(value)
+            case SpokenMarginsArtifactKind.senderIdentity:
+                guard descriptor.schemaVersion == SenderIdentityArtifact.schemaVersion else {
+                    if descriptor.required { throw SpokenMarginsPackageArchiveError.unsupportedSchema(descriptor.schemaVersion) }
+                    continue
+                }
+                try validateSenderIdentityJSONShape(data)
+                let value = try decoder().decode(SenderIdentityArtifact.self, from: data)
+                guard value.id == descriptor.id, value.schemaVersion == descriptor.schemaVersion else {
+                    throw SpokenMarginsPackageArchiveError.invalidManifest("sender descriptor does not match artifact")
+                }
+                senderIdentities.append(value)
             default:
                 if descriptor.required {
                     throw SpokenMarginsPackageArchiveError.unsupportedRequiredCapability(descriptor.kind)
                 }
             }
         }
-        return (commentary, proposals, fingerprintSpines, phraseSketches, embeddedTextItems, conversations)
+        return (commentary, proposals, fingerprintSpines, phraseSketches, embeddedTextItems, conversations, senderIdentities)
     }
 
     private static func validateManifestBoundary(
@@ -578,6 +598,7 @@ public enum SpokenMarginsPackageArchive {
         phraseSketches: [TranscriptPhraseSketchArtifact],
         embeddedTextItems: [EmbeddedTextItemArtifact],
         conversations: [MarginConversationArtifact],
+        senderIdentities: [SenderIdentityArtifact],
         requireDigest: Bool
     ) throws {
         guard manifest.schemaVersion == schemaVersion else {
@@ -657,6 +678,9 @@ public enum SpokenMarginsPackageArchive {
 
         let assetsByID = Dictionary(uniqueKeysWithValues: manifest.assets.map { ($0.id, $0) })
         let layer = commentaryLayers[0]
+        guard senderIdentities.count <= 1 else {
+            throw SpokenMarginsPackageArchiveError.invalidManifest("more than one sender identity artifact")
+        }
         if ListeningMapPacket.isMapPacket(manifest) {
             try validateMapOnlyPacket(
                 manifest, layer: layer, proposals: proposals, fingerprintSpines: fingerprintSpines,
@@ -682,6 +706,7 @@ public enum SpokenMarginsPackageArchive {
             throw SpokenMarginsPackageArchiveError.invalidManifest("more than one conversation artifact")
         }
         for conversation in conversations { try validate(conversation, packageScopedIds: Set(scopedIDs)) }
+        // A sender id that isn't one is left out by the importer rather than refusing the Margins.
     }
 
     /// A map-only packet (#1471): one map for an article, PDF or EPUB, the empty layer older builds count before they
@@ -976,6 +1001,13 @@ public enum SpokenMarginsPackageArchive {
                 context: "conversation reply"
             )
         }
+    }
+
+    private static func validateSenderIdentityJSONShape(_ data: Data) throws {
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw SpokenMarginsPackageArchiveError.invalidManifest("sender identity root is not an object")
+        }
+        try rejectUnknownKeys(root, allowed: ["id", "schemaVersion", "senderId"], context: "sender identity")
     }
 
     private static func rejectUnknownKeys(_ object: [String: Any], allowed: Set<String>, context: String) throws {

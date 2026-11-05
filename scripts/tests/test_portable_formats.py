@@ -231,6 +231,24 @@ class BothDirectionsTests(unittest.TestCase):
                 artifacts = {**self.artifacts, 'artifacts/conversation.json': fmt.encode_manifest(body)}
                 self.assertEqual(verdict(fmt.write_packet(manifest, artifacts, self.assets)), expected)
 
+    def test_the_sender_id_is_an_optional_closed_artifact(self):
+        """The sender's random id (#2846) rides in an optional artifact, so the shipped readers skip it."""
+        sender = {'id': 'sender-identity', 'schemaVersion': fmt.SENDER_IDENTITY_VERSION,
+                  'senderId': '0123456789abcdef0123456789abcdef'}
+        for label, bodies, expected in (
+                ('one', [sender], 'valid'),
+                ('an extra key', [{**sender, 'name': 'Dana'}], 'unknown-field'),
+                ('two', [sender, {**sender, 'id': 'sender-identity-2'}], 'invalid-manifest')):
+            with self.subTest(label):
+                manifest = json.loads(json.dumps(self.manifest))
+                artifacts = dict(self.artifacts)
+                for index, body in enumerate(bodies):
+                    path = f'artifacts/sender-{index}.json'
+                    manifest['artifacts'].append({'id': body['id'], 'kind': 'sender_identity', 'required': False,
+                                                  'path': path, 'schemaVersion': fmt.SENDER_IDENTITY_VERSION})
+                    artifacts[path] = fmt.encode_manifest(body)
+                self.assertEqual(verdict(fmt.write_packet(manifest, artifacts, self.assets)), expected)
+
     def test_an_unknown_representation_kind_is_refused(self):
         layer = self.layer()
         layer['interjections'][0]['representations'][0]['kind'] = 'hologram_and_text'
