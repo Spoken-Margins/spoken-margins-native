@@ -199,6 +199,9 @@ final class WrittenMarginReaderTests: XCTestCase {
         XCTAssertEqual(voice("Great point. 你好世界。Listen again."), "v.zh")
         XCTAssertEqual(voice("Great episode, loved the harbour नमस्ते at the end of it"), "v.hi", "one Hindi word: a voice exists, so it is read")
         XCTAssertEqual(voice("هذا ميناء جميل جدا"), "v.ar", "a short Arabic note")
+        XCTAssertEqual(voice("هَذَا مِينَاءٌ جَمِيلٌ، وَأَنَا أُحِبُّهُ كَثِيرًا"), "v.ar", "Arabic with its marks still passes")
+        XCTAssertNil(voice("یہ ایک خوبصورت بندرگاہ ہے اور مجھے پسند ہے"), "Urdu: the Arabic voice skips ٹ ہ ک ی, so no voice covers it")
+        XCTAssertNil(voice("این یک بندر زیبا است و من آن را دوست دارم"), "Persian: ک ی پ گ are not read by the Arabic voice")
         XCTAssertEqual(voice("ha!"), "v.default", "short English")
         XCTAssertEqual(voice("yes"), "v.default")
         XCTAssertEqual(voice("hmm ok so"), "v.default", "a short Latin note in an unsure language: the default voice")
@@ -309,7 +312,7 @@ final class WrittenMarginReaderTests: XCTestCase {
         let fileA2 = try await reader.rendered(mineToo)
         let fileB = try await reader.rendered(theirs)
         XCTAssertNotEqual(fileA, fileB, "identical words on two items are two files: deleting one can never take the other's")
-        reader.removeReadings(forItem: "item-a")
+        reader.removeReadings(forItem: "item-a", leveled: nil)
         try await waitUntil("the item's files are gone") { !FileManager.default.fileExists(atPath: fileA.path) && !FileManager.default.fileExists(atPath: fileA2.path) }
         XCTAssertTrue(FileManager.default.fileExists(atPath: fileB.path), "another item's reading stays, identical words or not")
         XCTAssertFalse(reader.isReady(mine), "the ready set forgets it at once")
@@ -333,7 +336,7 @@ final class WrittenMarginReaderTests: XCTestCase {
         let note = WrittenMarginReading(intro: "Cole wrote:", text: "Lovely harbour.", itemId: "item-a")
         let result = Task { try? await reader.rendered(note) }
         XCTAssertEqual(started.wait(timeout: .now() + 5), .success)
-        reader.removeReadings(forItem: "item-a")
+        reader.removeReadings(forItem: "item-a", leveled: nil)
         release.signal()
         let url = await result.value
         XCTAssertNil(url, "the render gave up its file")
@@ -351,7 +354,7 @@ final class WrittenMarginReaderTests: XCTestCase {
             try Data("a friend's words".utf8).write(to: folder.appending(path: "speech.caf"))
         }
         try fileManager.setAttributes([.modificationDate: Date().addingTimeInterval(-3_600)], ofItemAtPath: old.path)
-        reader(Renders()).removeReadings(forItem: "item-a")
+        reader(Renders()).removeReadings(forItem: "item-a", leveled: nil)
         try await waitUntil("the old scratch folder is swept") { !fileManager.fileExists(atPath: old.path) }
         XCTAssertTrue(fileManager.fileExists(atPath: recent.path), "a render that may still be running keeps its folder")
     }

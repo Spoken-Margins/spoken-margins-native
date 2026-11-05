@@ -195,9 +195,7 @@ final class WrittenMarginTapAppTests: XCTestCase {
         XCTAssertTrue(model.jumpToImportedCommentary(interjectionID: fixture.record.id))
 
         model.listenToPendingImportedCommentary()
-        try await fixture.waitUntil("the failure is reported") { model.diagnostics["marginMoment.voiceUnavailable"] != nil || model.playingImportedCommentary == nil && model.pendingImportedCommentary == nil }
-        try await Task.sleep(for: .milliseconds(500))
-        XCTAssertNil(model.playingImportedCommentary)
+        try await fixture.waitUntil("the failure is reported") { model.importedCommentaryPhase.isFailed }
         XCTAssertEqual(model.selectedItem.importedCommentaryInterjections[fixture.layer.id]?.first?.isNewToListener, true, "not marked heard")
     }
 

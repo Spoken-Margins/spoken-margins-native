@@ -186,7 +186,7 @@ public final class WrittenMarginReader: @unchecked Sendable {
     /// `leveled` is the cache that makes playback copies of recordings (`LeveledMarginCache`): a reading is played through
     /// it like a recording, so its copy holds the same words and goes with the reading, found by the reading's content
     /// before the reading is deleted. Only copies of this item's readings are asked for; no recording is.
-    public func removeReadings(forItem itemId: String, leveled: LeveledMarginCache? = nil) {
+    public func removeReadings(forItem itemId: String, leveled: LeveledMarginCache?) {
         let prefix = Self.itemKey(itemId) + "-"
         func isItsFile(_ path: String) -> Bool { URL(fileURLWithPath: path).lastPathComponent.hasPrefix(prefix) }
         lock.withLock {
