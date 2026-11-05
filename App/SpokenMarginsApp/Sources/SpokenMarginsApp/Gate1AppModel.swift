@@ -2576,7 +2576,7 @@ final class Gate1AppModel: ObservableObject {
         let loadedProfile = try loadProfile(id: selectedProfileId)
         let profile = loadedProfile.limitedToOnDeviceAI(foundationModelAvailable: localFoundationModelAvailable)
         let provider: AIProviderClient = AppleFoundationAIProvider()
-        return SessionEngine(
+        let engine = SessionEngine(
             profile: profile,
             repository: store,
             audio: try makeAudioPlaybackClient(),
@@ -2585,6 +2585,8 @@ final class Gate1AppModel: ObservableObject {
             linkResolver: sourceLinkResolver ?? PublicPodcastLinkResolver(),
             textAudio: try makeTextAudioPreparationClient()
         )
+        engine.publicSourceMarker = PublicSourceChecks.marker // an export that carries the Listening Map checks its source first (#3449)
+        return engine
     }
 
     private func makeTextAudioPreparationClient() throws -> TextAudioPreparationClient? {

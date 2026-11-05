@@ -60,6 +60,13 @@ extension Gate1AppModel {
         var prepared: PreparedSpokenMarginsPackage?
         do {
             let store = try requireStore()
+            // The share tap: look at the source's public copy first, so a public source's map goes with the packet (#3449).
+            // A short wait; offline or slower means no mark for this share, and the next tap tries again.
+            await PublicSourceChecks.ensureMark(itemId: startedItemID, store: store, timeout: PublicSourceChecks.shareTimeout)
+            guard selectedItem.id == startedItemID else { // the listener moved to another item during the check
+                sharingState.isExporting = false
+                return nil
+            }
             // The item, its map, fingerprint spine, phrase sketch and stored transcript words are read together,
             // away from main (#2506); the transcript alone is several MB for a mapped podcast.
             let source = try await StoreReader(store).read(priority: .userInitiated) {
