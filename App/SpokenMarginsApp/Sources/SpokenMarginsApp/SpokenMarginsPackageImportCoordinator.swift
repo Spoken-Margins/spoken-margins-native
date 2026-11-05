@@ -294,6 +294,12 @@ final class SpokenMarginsPackageImportCoordinator {
         }
     }
 
+    /// The folders a review, a restore or a `stage` in flight owns. No sweep, launch or delete-time, removes these (#3406).
+    var foldersInUse: Set<String> {
+        let owned = Set(([queue.showing].compactMap { $0 } + queue.waiting).map { $0.extractionDirectory.lastPathComponent })
+        return owned.union(restoringFolders).union(stagingFolders)
+    }
+
     /// The running sweep, so a test (or a caller that must not stage until it ends) can wait for it.
     private(set) var sweepTask: Task<Void, Never>?
 
@@ -307,8 +313,7 @@ final class SpokenMarginsPackageImportCoordinator {
         environment.bootstrapLibrary()
         guard let store = try? environment.requireStore() else { return }
         didSweepOrphanedFolders = true
-        let owned = Set(([queue.showing].compactMap { $0 } + queue.waiting).map { $0.extractionDirectory.lastPathComponent })
-        let keeping = owned.union(restoringFolders).union(stagingFolders)
+        let keeping = foldersInUse
         let candidates = Set(listed)
         let outcome = try? await Gate1AppModel.offMain {
             IncomingPackageSweep.sweep(directory: incoming, keeping: keeping, only: candidates, store: store)
