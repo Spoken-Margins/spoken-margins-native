@@ -387,3 +387,5 @@ How it is used:
   3. "Share button on the playback dock: add it beside More? It opens the Share sheet on its review step." Yes (PR #3294, #1507).
   4. "Prompt-submit checklist hook: add a first-turn checklist reminder for directors?" Yes.
   5. "AGENTS.md: add one line linking the primary-source skill?" Yes.
+
+- **Leads merge sub-PRs with a checked `sm-gh cluster-merge <pr>`.** The permission check refused `gh pr merge` on cluster sub-PRs. Offered the options, he chose "A checked merge command in sm-gh that merges only into ws/cluster-* branches and refuses main", and said: "I thought this was included in my yes". Merging into `main` stays the runner's or the owner's (#3373).
