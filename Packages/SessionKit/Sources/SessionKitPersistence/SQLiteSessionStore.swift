@@ -2462,3 +2462,6 @@ extension SQLiteSessionStore: CommunityMapUploadRepository {
         try query("SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY updated_at, id;", [Self.communityMapUploadKind])
     }
 }
+
+/// SQLite serializes its own connection, so a streamed reply's cursor can be saved off the main thread (#2509).
+extension SQLiteSessionStore: ConcurrentSessionRepository {}
