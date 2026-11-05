@@ -40,6 +40,7 @@ Yesterday these failed late, at the rollup, and forced refactors. Run them befor
 - The hot-file ratchet and the main-thread-reads guard (both run in `--plan fast`; if one fails, fix the design, don't raise the ceiling).
 - For app changes, both builds from "Verification" in AGENTS.md.
 - If the change needs simulator tests, say so in the sub-PR, and ask for `/lane T3` once on the rollup with every needed test on its `tests:` line.
+- When a diff changes a shared predicate or its callers, that `tests:` line names every class that reaches any caller. The runner adds only what `scripts/test-scope.py` suggests, and that script doesn't follow callers. On 2026-11-05 #3412's line left out `LocalAudioListeningPackageTests`, so a Skim side effect reached `main` and showed only in the hosted integration run.
 
 ## Rollup PRs
 
