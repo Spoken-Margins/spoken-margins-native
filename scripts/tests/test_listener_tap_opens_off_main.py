@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[2]
 APP = ROOT / "App" / "SpokenMarginsApp" / "Sources" / "SpokenMarginsApp"
 
 # Views that still open an item on the main thread. Each is a listener's tap that the Following issue (#3413) did not
-# cover; the follow-up issue moves them. Removing a line here is how to show one is fixed.
+# cover; #3416 moves them. Removing a line here is how to show one is fixed.
 KNOWN_MAIN_THREAD_OPENS = {
     "ExperienceAudioPreparationQueueScreen.swift": "Recently prepared row: the screen is handed model.openItem",
     "ExperienceMarginsScreen.swift": "Shared Margin sheet: opens the item when the sheet disappears",
@@ -48,14 +48,16 @@ class ListenerTapOpensOffMainTests(unittest.TestCase):
 
     def test_a_friend_with_several_items_reads_nothing_at_the_tap(self):
         row = _body(_code(APP / "ExperienceSourcesScreen.swift"), r"private func friendRow\(")
-        other = row[row.index("} else {"):]
-        self.assertRegex(other, r"\}\s*else\s*\{\s*openFriend = friend\s*\}")
-        self.assertNotIn("model.", other)
+        # The tap closure only: the modifiers after it are not the tap.
+        closure = row[:row.index("\n        }\n")]
+        match = re.search(r"\belse\s*\{(.*)", closure, re.DOTALL)
+        self.assertIsNotNone(match, "friendRow lost its several-items branch")
+        self.assertEqual(re.sub(r"[\s}]+", " ", match.group(1)).strip(), "openFriend = friend")
 
     def test_each_item_on_the_friends_items_screen_opens_from_the_tap_path(self):
         text = _code(APP / "FollowingFriendRows.swift")
         screen = text[text.index("struct FollowingFriendItemsScreen"):]
-        self.assertIn("Button { model.openItemFromTap(id: item.id) }", screen)
+        self.assertRegex(screen, r"Button\s*\{\s*model\.openItemFromTap\(id: item\.id\)\s*\}\s*label:")
         self.assertNotRegex(screen, r"\bopenItem\(")
 
     def test_no_other_view_opens_an_item_on_the_main_thread(self):
@@ -63,7 +65,11 @@ class ListenerTapOpensOffMainTests(unittest.TestCase):
         for path in sorted(APP.glob("*.swift")):
             if path.name.startswith("Gate1AppModel"):
                 continue
-            if re.search(r"\bmodel\??\.openItem\b(?!FromTap)", _code(path)):
+            # Any receiver (`model`, `appModel`, `$0`, a key path); `environment.openItem` is the import
+            # coordinator's closure, which the model fills in and which is not a view tap.
+            # Strings go first (an accessibility id), and the dot needs a receiver (`== .openItem` is an enum case).
+            code = re.sub(r'"(?:[^"\\]|\\.)*"', '""', _code(path))
+            if re.search(r"(?<!environment)(?<=[\w?)])\.openItem\b", code):
                 found.add(path.name)
         self.assertEqual(
             found - set(KNOWN_MAIN_THREAD_OPENS), set(),
