@@ -50,7 +50,7 @@ final class WatchMicrophoneTest: ObservableObject {
                 hasRecording = true
                 status = "Recorded with: \(result.used)"
             } catch {
-                status = "Couldn't record: \(error.localizedDescription)"
+                status = ListenerErrorText.line(prefix: "Couldn't record:", error: error)
             }
             isBusy = false
         }
@@ -65,7 +65,7 @@ final class WatchMicrophoneTest: ObservableObject {
                 try await rig.play()
                 status = "Played back"
             } catch {
-                status = "Couldn't play: \(error.localizedDescription)"
+                status = ListenerErrorText.line(prefix: "Couldn't play:", error: error)
             }
             isBusy = false
         }

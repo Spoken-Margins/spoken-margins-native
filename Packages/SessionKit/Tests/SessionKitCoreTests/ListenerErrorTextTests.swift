@@ -90,7 +90,9 @@ final class ListenerErrorTextTests: XCTestCase {
             "Couldn't save the spoken Margin:", "Couldn't save the live session:", "Couldn't save:",
             "Couldn't save your agreement:", "Audio preparation paused:", "Source context could not be recovered:",
             "The file couldn't be read.",
-            "Sending can't start yet: the history of what was sent to the last account could not be reset."
+            "Sending can't start yet: the history of what was sent to the last account could not be reset.",
+            "Couldn't record:", "Couldn't play:", "Couldn't start recording:", "Activation failed:",
+            "Unable to store browser text payload:", "Unable to send this PDF to Spoken Margins:"
         ]
         for prefix in prefixes {
             let line = ListenerErrorText.line(prefix: prefix, error: dump)

@@ -35,6 +35,7 @@
 		684EA2C33191BCFF763905E3 /* catalog.json in Resources */ = {isa = PBXBuildFile; fileRef = 454A82B2CAACCCAED5C33E03 /* catalog.json */; };
 		6868081D16F070053E862F47 /* browserTextCapture.js in Resources */ = {isa = PBXBuildFile; fileRef = 98C26CB68BDFFFA8A1B7578B /* browserTextCapture.js */; };
 		68EFC63296D10802FDE30831 /* substack-shared-text-post.html in Resources */ = {isa = PBXBuildFile; fileRef = AA3E54540069285190E19D1B /* substack-shared-text-post.html */; };
+		6C2EE903F76657DD1D4F42FC /* ListenerErrorText.swift in Sources */ = {isa = PBXBuildFile; fileRef = 554AB90C8F67E25771B27AE9 /* ListenerErrorText.swift */; };
 		743C3A98AF0A4F6C6CEB0477 /* sharing-loop-sam-margin.spokenmargins in Resources */ = {isa = PBXBuildFile; fileRef = 12BCAD96EDD33184A779F29E /* sharing-loop-sam-margin.spokenmargins */; };
 		76005D25F3CFA0070E96DA24 /* ClipboardIntakeClassifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCF082C6D01456C6743B188A /* ClipboardIntakeClassifier.swift */; };
 		78065128412B4F94A3B7B6FD /* LiveSessionMarkInbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4862005D70FCAAD37CE521AA /* LiveSessionMarkInbox.swift */; };
@@ -74,9 +75,11 @@
 		E7CEE322949FF588F91ED916 /* SessionKitSpeechFrontEnd in Frameworks */ = {isa = PBXBuildFile; productRef = 958A66714D007E32A7B05F00 /* SessionKitSpeechFrontEnd */; };
 		EA3D13B4259566F793F4E0F9 /* manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = BF9501739D9C1D8AAED60132 /* manifest.json */; };
 		EA749D1E3C580CCE4713612F /* pdf-outline-collected-stories.pdf in Resources */ = {isa = PBXBuildFile; fileRef = FB45D701E0D00156BD56A177 /* pdf-outline-collected-stories.pdf */; };
+		EDDCF26F9D6C48C4A0082CFC /* ListenerErrorText.swift in Sources */ = {isa = PBXBuildFile; fileRef = 554AB90C8F67E25771B27AE9 /* ListenerErrorText.swift */; };
 		EEE29B9A790A870683EE19ED /* SpokenMarginsShareExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = BE41691E3B902A5C377AC70D /* SpokenMarginsShareExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		F719B3F555F883823A6AEED5 /* SessionKitPersistence in Frameworks */ = {isa = PBXBuildFile; productRef = 16898C6F40FB4FDCA4DE8C38 /* SessionKitPersistence */; };
 		FC312F1C0C4954CC4A846A2C /* LiveSessionMarkInbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4862005D70FCAAD37CE521AA /* LiveSessionMarkInbox.swift */; };
+		FEC26EFC1F60516C297C7F9C /* ListenerErrorText.swift in Sources */ = {isa = PBXBuildFile; fileRef = 554AB90C8F67E25771B27AE9 /* ListenerErrorText.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -168,6 +171,7 @@
 		4862005D70FCAAD37CE521AA /* LiveSessionMarkInbox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveSessionMarkInbox.swift; sourceTree = "<group>"; };
 		50026D96CAC3D753625277E0 /* substack-shared-text-feed.xml */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = "substack-shared-text-feed.xml"; sourceTree = "<group>"; };
 		534726939CEC57D001157DD9 /* icon-48.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "icon-48.png"; sourceTree = "<group>"; };
+		554AB90C8F67E25771B27AE9 /* ListenerErrorText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ListenerErrorText.swift; sourceTree = "<group>"; };
 		560C4E54442E123E42855A02 /* SpokenMarginsAppTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = SpokenMarginsAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		56AD3FBAE5A4EBD7B16F6BFC /* icon-128.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "icon-128.png"; sourceTree = "<group>"; };
 		57C1F61B420E53CF05698E57 /* icon-512.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "icon-512.png"; sourceTree = "<group>"; };
@@ -447,6 +451,7 @@
 			isa = PBXGroup;
 			children = (
 				DCF082C6D01456C6743B188A /* ClipboardIntakeClassifier.swift */,
+				554AB90C8F67E25771B27AE9 /* ListenerErrorText.swift */,
 				4862005D70FCAAD37CE521AA /* LiveSessionMarkInbox.swift */,
 				45170E0354730F22BB2E258A /* SharedTextIntake.swift */,
 				319720F5D1C48499C77B9EE3 /* WatchContract.swift */,
@@ -913,6 +918,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				6C2EE903F76657DD1D4F42FC /* ListenerErrorText.swift in Sources */,
 				50CB2702E8C858DA64B35EBB /* WatchContract.swift in Sources */,
 				5CB55322C5E78BE68FC70E90 /* WatchContractState.swift in Sources */,
 			);
@@ -930,6 +936,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				FEC26EFC1F60516C297C7F9C /* ListenerErrorText.swift in Sources */,
 				BF4CD875E4DFA95B3AB14636 /* SourceLinkHandoff.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -953,6 +960,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				76005D25F3CFA0070E96DA24 /* ClipboardIntakeClassifier.swift in Sources */,
+				EDDCF26F9D6C48C4A0082CFC /* ListenerErrorText.swift in Sources */,
 				A2D0366161FA302E7139746D /* SharedTextIntake.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
