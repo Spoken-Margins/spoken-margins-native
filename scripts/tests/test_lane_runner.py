@@ -3673,6 +3673,15 @@ def passing_manifest(test='T/A'):
                                               'tests': {test: {'status': 'passed'}}}]}
 
 
+def overloaded_manifest(load=293.6, tests=38):
+    """#3374: pr3348-r41915797884, an xcode-tests step that ran out of its budget at load average 293.6."""
+    return {'status': 'failed_or_incomplete', 'error': 'xcode-tests: Process exit 124',
+            'steps': [{'name': 'xcode-tests', 'exit_code': 124, 'interrupted': True, 'timeout_seconds': 300,
+                       'load_average_start': [120.0, 90.0, 60.0], 'load_average_end': [load, 200.0, 100.0],
+                       'tests': {f'T/A/test{n}': {'status': 'passed'} for n in range(tests)},
+                       'errors': ['Process exit 124', 'Could not reconcile xcresult individual tests: exit status 64']}]}
+
+
 class FreshCloneRerunTests(unittest.TestCase):
     """#2176: a plan that ends on its second startup stall runs once more on a fresh clone in the same job, as evidence
     on the stalls' cause (12 of 32 T3 runs stalled on 2026-10-19). Owner, 2026-10-23: two stalls keep INCONCLUSIVE
@@ -3764,6 +3773,77 @@ class FreshCloneRerunTests(unittest.TestCase):
         self.assertEqual(verdict, 'INCONCLUSIVE')
         self.assertEqual(outputs, ['verify-app', 'verify-app-fresh', 'verify-adapters'])
         self.assertEqual(devices, ['U1', 'U2', 'U2'])
+
+    def overload_run(self, manifests, **kw):
+        waits = []
+        with mock.patch.object(lane, 'overload_line', return_value=100), \
+                mock.patch.object(lane, 'wait_for_quiet_runner',
+                                  side_effect=lambda line: waits.append(line) or (30.0, 80.0)):
+            result = self.run_t3(manifests, **kw)
+        return result, waits
+
+    def test_a_test_run_that_hits_its_budget_on_an_overloaded_runner_is_rerun_once_by_the_lane(self):
+        # #3374: INCONCLUSIVE at load 293.6, with no request comment to run it again.
+        ((verdict, _, ran, details, _, _), released, devices, outputs, evidence), waits = self.overload_run(
+            [overloaded_manifest(), passing_manifest()])
+        self.assertEqual((verdict, devices, outputs), ('PASS', ['U1', 'U1'], ['verify-app', 'verify-app-retry']))
+        self.assertEqual(waits, [100])
+        self.assertIn('1 passed', ran)  # the rerun is the plan's result
+        note = next(line for line in details if 'first run of this plan ran out of its time budget' in line)
+        self.assertIn('runner overloaded', note)
+        self.assertIn('load average 293.6 is above the overload line of 100', note)
+        self.assertIn('waited 30s (load average then 80.0)', note)
+        saved = json.loads((evidence / lane.OVERLOAD_RERUNS).read_text())
+        self.assertEqual([(r['plan'], r['status'], r['overloaded_again']) for r in saved], [('app', 'verified', False)])
+
+    def test_a_rerun_that_is_overloaded_again_says_so_and_is_not_rerun_again(self):
+        ((verdict, _, _, details, _, _), _, devices, _, _), _ = self.overload_run(
+            [overloaded_manifest(), overloaded_manifest(250.0, 40)])
+        self.assertEqual((verdict, devices), ('INCONCLUSIVE', ['U1', 'U1']))
+        self.assertTrue(any('stays INCONCLUSIVE: the machine was too loaded' in line for line in details))
+        self.assertTrue(any(line.startswith('app: runner overloaded: the `xcode-tests` step stopped at its time budget '
+                                            'while the load average 250') for line in details))
+
+    def test_only_one_overload_rerun_per_job(self):
+        outputs = self.overload_run(
+            [overloaded_manifest(), overloaded_manifest(), overloaded_manifest()],
+            grouped={'app': ['T/A'], 'adapters': ['T/B']})[0][3]
+        self.assertEqual(outputs, ['verify-app', 'verify-app-retry', 'verify-adapters'])
+
+    def test_a_budget_hit_below_the_line_is_not_overload_and_is_not_rerun(self):
+        ((verdict, _, _, details, _, _), _, devices, _, _), waits = self.overload_run([overloaded_manifest(load=60.0)])
+        self.assertEqual((verdict, devices, waits), ('INCONCLUSIVE', ['U1'], []))
+        self.assertFalse(any('runner overloaded' in line for line in details))
+
+    def test_a_failing_test_on_an_overloaded_runner_is_the_prs_fail_and_is_not_rerun(self):
+        manifest = overloaded_manifest()
+        manifest['steps'][0]['tests']['T/A/test0'] = {'status': 'failed'}
+        ((verdict, *_), _, devices, _, _), waits = self.overload_run([manifest])
+        self.assertEqual((verdict, devices, waits), ('FAIL', ['U1'], []))
+
+    def test_a_crash_flood_on_an_overloaded_runner_is_not_rerun(self):
+        manifest = overloaded_manifest()
+        manifest['steps'][0]['simulator_crash_report'] = 'x.ips'
+        ((verdict, *_), _, devices, _, _), waits = self.overload_run([manifest])
+        self.assertEqual((verdict, devices, waits), ('INCONCLUSIVE', ['U1'], []))
+
+    def test_the_overload_line_is_per_cpu_and_the_wait_is_bounded(self):
+        self.assertEqual(lane.overload_line(10), 10 * lane.OVERLOAD_LOAD_PER_CPU)
+        readings, naps = iter([300.0, 200.0, 150.0]), []
+        waited, last = lane.wait_for_quiet_runner(100, max_wait=60, poll=30, load=lambda: next(readings),
+                                                  sleep=naps.append)
+        self.assertEqual((waited, last, naps), (60.0, 150.0, [30, 30]))  # gave up at the cap, still over the line
+        readings = iter([300.0, 90.0])
+        self.assertEqual(lane.wait_for_quiet_runner(100, max_wait=60, poll=30, load=lambda: next(readings),
+                                                    sleep=lambda _: None), (30.0, 90.0))
+
+    def test_an_unreadable_xcresult_is_named_in_the_report_and_the_log_count_can_pass(self):
+        manifest = passing_manifest()
+        manifest['steps'][0]['xcresult_unreadable'] = 'Could not reconcile xcresult individual tests: exit 64'
+        (verdict, _, _, details, _, _), _, devices, _, _ = self.run_t3([manifest])
+        self.assertEqual((verdict, devices), ('PASS', ['U1']))
+        line = next(line for line in details if 'the xcresult could not be read' in line)
+        self.assertIn('the pass count comes from the test log, where all 1 expected test(s) finished and passed', line)
 
     def test_a_failing_test_after_the_stalls_is_the_prs_fail_and_is_not_rerun(self):
         manifest = stalled_out_manifest()

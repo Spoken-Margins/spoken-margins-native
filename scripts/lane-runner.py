@@ -437,6 +437,53 @@ def manifest_failures(*outputs: Path) -> tuple[list[str], bool, list[str]]:
 STALL_ISSUE = 1802  # the evidence log for app startup stalls and simulator boot stalls (#705 is closed)
 BOOT_STALLS = 'boot-stalls.json'  # a T3 boot's stalls (boot_t3_device), for log_recovered_stalls
 FRESH_RERUNS = 'fresh-clone-reruns.json'  # plans rerun on a fresh clone after two startup stalls (#2176)
+OVERLOAD_RERUNS = 'overload-reruns.json'  # plans rerun once after their test run hit its budget on an overloaded runner (#3374)
+# The runner is overloaded when its 1-minute load average is above this many per CPU. On 2026-11-04 a T3 test run
+# hit its budget at load 293.6 (#3374); an ordinary build-and-test hour on the Mac is a few per CPU. Stated here so
+# the report can say which side of the line a run was on. Default taken on #3374 (reversible: change the number).
+OVERLOAD_LOAD_PER_CPU = 8
+OVERLOAD_WAIT = 600  # at most this long, in seconds, before the one rerun, for the load to come back under the line
+OVERLOAD_POLL = 30
+
+
+def overload_line(cpus: int | None = None) -> int:
+    """The 1-minute load average above which the runner counts as overloaded: OVERLOAD_LOAD_PER_CPU per CPU."""
+    return OVERLOAD_LOAD_PER_CPU * (cpus or os.cpu_count() or 1)
+
+
+def overload_text(load: float, line: int) -> str:
+    return f'load average {load:g} is above the overload line of {line} ({OVERLOAD_LOAD_PER_CPU} per CPU)'
+
+
+def runner_overloaded(manifest: dict, cpus: int | None = None) -> dict | None:
+    """Whether a verify-tests.py plan stopped on a step's time budget while the runner was overloaded (#3374).
+
+    The step's own load reading (taken as it stopped) must be above the line. A step cut short by a simulator crash
+    flood, or by anything but its budget, is not this. Returns the load and the line, or None."""
+    line = overload_line(cpus)
+    for step in manifest.get('steps', []):
+        if step.get('interrupted') and not step.get('simulator_crash_report') and step.get('timeout_seconds'):
+            readings = step.get('load_average_end') or step.get('load_average_start') or []
+            if readings and readings[0] is not None and readings[0] > line:
+                return {'step': step.get('name'), 'load_average': readings[0], 'line': line}
+    return None
+
+
+def wait_for_quiet_runner(line: int, max_wait: float = OVERLOAD_WAIT, poll: float = OVERLOAD_POLL,
+                          load=lambda: os.getloadavg()[0], sleep=time.sleep) -> tuple[float, float | None]:
+    """Wait, at most max_wait seconds, for the 1-minute load average to fall to the line. Returns the seconds
+    waited and the last reading (None where the system reports none). The rerun goes ahead either way: it is one
+    more try, not a gate."""
+    waited, reading = 0.0, None
+    while True:
+        try:
+            reading = load()
+        except OSError:
+            return waited, None
+        if reading <= line or waited >= max_wait:
+            return waited, reading
+        sleep(poll)
+        waited += poll
 
 
 def startup_stalled_out(manifest: dict) -> bool:
@@ -485,6 +532,20 @@ def boot_stall_note(evidence: Path, pr: int, head: str, report_url: str, verdict
 
 
 TWO_STALLS_RULE = 'verdict stays INCONCLUSIVE (two stalls, owner 2026-10-11/2026-10-23)'
+
+
+def overload_rerun_note(plan: str, rerun: dict) -> str:
+    """The report line for the rerun after an overloaded runner's budget ran out (#3374)."""
+    waited = rerun.get('waited_seconds', 0)
+    after = rerun.get('load_after')
+    line = (f'{plan}: runner overloaded: the first run of this plan ran out of its time budget while the '
+            f'{overload_text(rerun["load_average"], rerun["line"])}. The lane waited {duration(waited)} '
+            f'(load average then {after if after is not None else "unknown"}) and ran the plan once more on the same '
+            f'simulator, without a new request; the rerun\'s result is the plan\'s. First run: {rerun["first"]}/; '
+            f'rerun: {rerun["output"]}/.')
+    if rerun.get('overloaded_again'):
+        line += ' The rerun ran out of its budget too, so this stays INCONCLUSIVE: the machine was too loaded.'
+    return line
 
 
 def fresh_rerun_outcome(rerun: dict) -> str:
@@ -2629,8 +2690,10 @@ def summarize_manifest(manifest: dict) -> dict:
     A build that was interrupted (timeout or flood) is not a build failure: that's INCONCLUSIVE.
     """
     summary = {'passed': 0, 'failed': [], 'crashes': [], 'flood': False, 'interrupted': False, 'build_failed': False,
-               'out_of_time': None}
+               'out_of_time': None, 'overloaded': runner_overloaded(manifest), 'xcresult_unreadable': []}
     for step in manifest.get('steps', []):
+        if step.get('xcresult_unreadable'):
+            summary['xcresult_unreadable'].append(step['xcresult_unreadable'])
         if step.get('interrupted') and not step.get('simulator_crash_report') and step.get('timeout_seconds'):
             summary['out_of_time'] = (step.get('name'), step.get('timeout_seconds'))
         for test, record in (step.get('tests') or {}).items():
@@ -2704,6 +2767,10 @@ def run_plans(grouped: dict[str, list[str]], run_plan, evidence: Path,
                                f'again on a fresh clone ({rerun.get("fresh")}) in the same job as evidence (#2176): '
                                f'{fresh_rerun_outcome(rerun)}. Logged on #{STALL_ISSUE}. Stalled run: '
                                f'{rerun.get("first")}/; rerun: {rerun.get("output")}/')
+        overload_rerun = manifest.get('overload_rerun')
+        if overload_rerun:
+            output = Path(overload_rerun['output'])  # the rerun's evidence is the plan's
+            details.append(overload_rerun_note(plan, overload_rerun))
         summary = summarize_manifest(manifest)
         summaries.append(summary)
         statuses.append(manifest.get('status', 'missing'))
@@ -2729,6 +2796,15 @@ def run_plans(grouped: dict[str, list[str]], run_plan, evidence: Path,
             details.append(f'{plan}: the {what} ran out of its own {duration(limit)} budget (verify-tests.py `{step}`) '
                            f'after {summary["passed"]} passing test{"s" if summary["passed"] != 1 else ""}. '
                            'The simulator\'s boot has a separate budget and had finished before it started.')
+        if summary['overloaded']:
+            found = summary['overloaded']
+            details.append(f'{plan}: runner overloaded: the `{found["step"]}` step stopped at its time budget while the '
+                           f'{overload_text(found["load_average"], found["line"])}. The machine was too loaded for the '
+                           'tests to finish; this is not a failure of this PR.')
+        for error in summary['xcresult_unreadable']:
+            details.append(f'{plan}: the xcresult could not be read ({error}); the pass count comes from the test log, '
+                           f'where all {summary["passed"]} expected test(s) finished and passed (#3374). '
+                           f'evidence: {output}/manifest.json')
         if manifest.get('status') == 'verified' and not summary['passed']:
             details.append(f'{plan}: ran 0 of the requested tests ({", ".join(s.split("/", 1)[-1] for s in selectors)}); '
                            f'a requested test that does not run is a FAIL (#2596). evidence: {output}/manifest.json')
@@ -2865,7 +2941,15 @@ def _run_t3_grouped(grouped, request_id, evidence):
         verdict, where, ran, details, crashes, cc = _t3_on_fresh_device(grouped, request_id, evidence, runtime)
         return verdict, where, ran, build_details + details, crashes, cc
     except (lane_sim.BootError, OSError, subprocess.SubprocessError) as error:
-        return 'INCONCLUSIVE', 'no simulator', 'nothing', build_details + [f'Template or clone failed: {error}'], 'none', ''
+        note = f'Template or clone failed: {error}'
+        if isinstance(error, subprocess.TimeoutExpired):  # a simctl call that never answered (#3374: shutdown, 120 s)
+            try:
+                load, line = os.getloadavg()[0], overload_line()
+            except OSError:
+                load = line = 0
+            if load > line:
+                note += f'. Runner overloaded: the {overload_text(load, line)}; this is the machine, not this PR'
+        return 'INCONCLUSIVE', 'no simulator', 'nothing', build_details + [note], 'none', ''
     finally:
         release_handle(slot)
 
@@ -2906,7 +2990,7 @@ def _t3_on_claimed_device(grouped, request_id, evidence, runtime):
         with (evidence / 'simulator-clone.log').open('a') as log:
             return lane_sim.clone_temporary(RUNNER_SIMULATOR_PREFIX + request_id, runtime, out=log)
 
-    reruns = []
+    reruns, overload_reruns = [], []
     # Only a device with a SpringBoard watcher on it can be stopped by one. A clone marked unsafe for any other
     # reason (a fresh clone that never booted, say) is not a crash flood and pings nobody (audit on 484c63b).
     watched_devices = []
@@ -2921,6 +3005,23 @@ def _t3_on_claimed_device(grouped, request_id, evidence, runtime):
         job, so a Mac that stalls every launch costs one more plan, not a loop."""
         nonlocal udid
         manifest = run_plan(plan, selectors, output)
+        found = runner_overloaded(manifest)
+        if found and not overload_reruns and not lane_sim.unsafe_devices().get(udid):
+            shown = summarize_manifest(manifest)
+            if not shown['failed'] and not shown['flood'] and not shown['build_failed']:
+                # #3374: the test run hit its budget on an overloaded runner. The tests did not fail, the machine
+                # could not finish them, so the lane waits for it to calm down and runs the plan once more itself.
+                rerun = {'plan': plan, 'first': str(output), 'output': str(output.with_name(output.name + '-retry')),
+                         **found}
+                overload_reruns.append(rerun)
+                try:
+                    waited, after = wait_for_quiet_runner(found['line'])
+                    rerun.update(waited_seconds=waited, load_after=after)
+                    retry = run_plan(plan, selectors, Path(rerun['output']), log_name=f'verify-{plan}-retry.log')
+                    rerun.update(status=retry.get('status', 'missing'), overloaded_again=bool(runner_overloaded(retry)))
+                    return {**retry, 'overload_rerun': rerun}
+                finally:
+                    (evidence / OVERLOAD_RERUNS).write_text(json.dumps(overload_reruns, indent=2) + '\n')
         if reruns or not startup_stalled_out(manifest) or lane_sim.unsafe_devices().get(udid):
             # A clone the SpringBoard watcher stopped "stalls" at every launch after: switching devices then would
             # get around a simulator crash (AGENTS.md), so the stop decides the verdict below, as before #2176.
