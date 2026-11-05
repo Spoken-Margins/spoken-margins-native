@@ -106,9 +106,28 @@ function ArrivedMargin({ margins }: { margins: readonly Margin[] }) {
 function MarginCue({ margins }: { margins: readonly Margin[] }) {
   const player = usePlayer();
   const sender = friendMargins(margins)[0]?.author;
-  if (player.arrived) return null;
-  const cue = cueFor(margins, player.time, sender);
-  if (!cue) return null;
+  const cue = cueFor(margins, player.time, sender, { failed: player.failed, heardWithoutEpisode: player.withoutEpisode === 'done' });
+  // While this card says the episode can't play, the player shows no toast of its own for it (#3356).
+  const sayingFailure = !player.arrived && (cue?.kind === 'unplayable' || cue?.kind === 'unplayable-done');
+  const { registerFailureCard } = player;
+  useEffect(() => (sayingFailure ? registerFailureCard() : undefined), [sayingFailure, registerFailureCard]);
+  if (player.arrived || !cue) return null;
+  if (cue.kind === 'unplayable' || cue.kind === 'unplayable-done') {
+    // The episode can't play here (#3356): one sentence, and for the first, one button. No countdown, no Skip.
+    return (
+      <section className="margin-cue" aria-label={`${leading(possessive(cue.who))} Margins`} data-testid="margin-cue">
+        <p className="margin-cue-line">
+          <strong>{cue.sentence}</strong>
+        </p>
+        {cue.kind === 'unplayable' && (
+          <button type="button" className="button button-primary margin-cue-skip" onClick={player.playWithoutEpisode}>
+            <PlayIcon size={18} />
+            {cue.button}
+          </button>
+        )}
+      </section>
+    );
+  }
   if (cue.kind === 'after-last') {
     return (
       <section className="margin-cue" aria-label={`${cue.lead}’s Margins`} data-testid="margin-cue">
