@@ -124,10 +124,14 @@ extension Gate1AppModel {
         sharedMarginOffers.remove(id: prompt.id)
         #if canImport(AVFoundation)
         // A written Margin's reading is its audio once rendered (#3365): the rest of this runs as for a voice Margin.
-        guard let audioURL = prompt.interjection.audioPath.flatMap(resolvedApplicationSupportAssetURL(for:)) ?? WrittenMarginReadings.readyFile(for: prompt) else {
-            if prompt.interjection.isWritten { return WrittenMarginReadings.waitThenListen(prompt, model: self) } // not rendered yet
+        let audio = WrittenMarginReadings.audio(for: prompt.interjection, in: prompt.layer, voiceFile: resolvedApplicationSupportAssetURL(for:))
+        let audioURL: URL
+        switch audio {
+        case .voiceFile(let url), .readingReady(_, let url): audioURL = url
+        case .readingRendering: return WrittenMarginReadings.waitThenListen(prompt, model: self) // not rendered yet
+        case .cannotBeRead:
             dismissPendingImportedCommentary()
-            reportFailure("This Margin can't be read aloud on this iPhone.")
+            reportFailure(SharedMarginAudio.unavailableWords(for: prompt.interjection))
             return
         }
         importedCommentaryAutoPlayTask?.cancel()

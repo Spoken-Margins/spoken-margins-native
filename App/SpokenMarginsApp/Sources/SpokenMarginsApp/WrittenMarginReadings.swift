@@ -20,17 +20,17 @@ enum WrittenMarginReadings {
 
     /// The reading for a shared Margin, or nil when it has a recording to play instead.
     static func reading(for prompt: ImportedCommentaryPrompt) -> WrittenMarginReading? {
-        guard prompt.interjection.isWritten else { return nil }
-        return WrittenMarginReading(
-            intro: WrittenMarginReading.intro(senderName: prompt.layer.displayLabel), text: prompt.interjection.approvedTranscript,
-            itemId: prompt.layer.itemId ?? "")
+        WrittenMarginReading.of(prompt.interjection, in: prompt.layer)
     }
 
-    /// The file for `prompt`'s reading once it is ready (answered from memory), else nil.
-    static func readyFile(for prompt: ImportedCommentaryPrompt) -> URL? {
-        guard let reading = reading(for: prompt), reader.isReady(reading) else { return nil }
-        return reader.fileURL(for: reading)
+    /// What a friend's Margin sounds like on this iPhone: the one answer every way of playing one asks for (#3412).
+    /// A lookup in memory, so the main thread may ask. It starts no render: `startingRender` does, for what is played.
+    static func audio(for margin: ImportedCommentaryInterjection, in layer: ImportedCommentaryLayer, voiceFile: (String) -> URL?) -> SharedMarginAudio {
+        SharedMarginAudio.resolve(margin, in: layer, voiceFile: voiceFile, reader: reader)
     }
+
+    /// The file to hand a player for `audio`, after starting the render of a reading that isn't ready. Nil: nothing can play.
+    static func startingRender(_ audio: SharedMarginAudio) -> URL? { audio.startingRender(on: reader) }
 
     /// The files for the written Margins among `entries`, keyed by `marginId`, and the renders started for any that
     /// aren't on disk yet. Touches no disk on the calling thread: the paths come from the words, and the check and the
@@ -171,12 +171,16 @@ enum WrittenMarginReadings {
     /// Reviews being started after their hold, so the second call doesn't hold again.
     private static var releasedReviews = Set<String>()
 
-    /// The review is starting: any tap still waiting on a reading gives way (nothing plays from it), and the review's
-    /// readings are started or found.
-    static func startingReview(for entries: [SharedMarginReview.Entry]) -> [String: URL] {
+    /// The review is starting: any tap still waiting on a reading gives way (nothing plays from it). Returns each entry's
+    /// file, its recording or its reading, and starts the renders of readings that aren't ready.
+    static func startingReview(for entries: [SharedMarginReview.Entry], voiceFile: (String) -> URL?) -> [String: URL] {
         tapWaits.values.forEach { $0.task.cancel() }
         tapWaits.removeAll()
-        return start(for: entries)
+        var files: [String: URL] = [:]
+        for entry in entries {
+            files[entry.marginId] = startingRender(audio(for: entry.interjection, in: entry.layer, voiceFile: voiceFile))
+        }
+        return files
     }
 
     // MARK: A reading that isn't there when its turn comes
@@ -185,6 +189,16 @@ enum WrittenMarginReadings {
     /// on, and the Margin stays new. The words don't say "recording", which a written Margin never was.
     static func rewordUnavailable(on conductor: MarginMomentConductor?, entries: [SharedMarginReview.Entry], model: Gate1AppModel) {
         let written = Dictionary(entries.compactMap { entry in entry.writtenReading.map { (entry.marginId, $0) } }) { first, _ in first }
+        reword(on: conductor, readings: written, model: model)
+    }
+
+    /// The same for one Margin's moment, from the `audio` it was started with (a recording has nothing to reword).
+    static func rewordUnavailable(on conductor: MarginMomentConductor?, marginId: String, audio: SharedMarginAudio, model: Gate1AppModel) {
+        guard let reading = audio.reading else { return }
+        reword(on: conductor, readings: [marginId: reading], model: model)
+    }
+
+    private static func reword(on conductor: MarginMomentConductor?, readings written: [String: WrittenMarginReading], model: Gate1AppModel) {
         guard let conductor, !written.isEmpty else { return }
         let previous = conductor.onVoiceUnavailable
         conductor.onVoiceUnavailable = { [weak model] marginId, reason in

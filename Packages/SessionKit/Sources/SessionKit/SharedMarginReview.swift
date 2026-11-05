@@ -67,7 +67,7 @@ public enum SharedMarginReview {
             let layerRecords = records[layer.id] ?? []
             guard SharedMarginPrompts.isLayerPlaybackEligible(layer, records: layerRecords) else { return [] }
             return layerRecords.compactMap { record -> Entry? in
-                guard record.isNewToListener, record.audioPath != nil || record.isWritten,
+                guard record.isNewToListener, SharedMarginAudio.canOffer(record),
                       SharedMarginPrompts.isPlayable(record.resolution),
                       let mediaTimeMs = record.resolution.localMediaTimeMs, mediaTimeMs >= 0 else { return nil }
                 return Entry(

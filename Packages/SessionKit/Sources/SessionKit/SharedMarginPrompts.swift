@@ -43,7 +43,7 @@ public enum SharedMarginPrompts {
     /// play before the episode has downloaded hears each Margin at the sender's time instead of not at all (#3059).
     public static func isPlayable(_ interjection: ImportedCommentaryInterjection, in layer: ImportedCommentaryLayer) -> Bool {
         // Something to play: a recording, or a note the phone's voice can read (#3365). A note it can't is not offered.
-        (interjection.audioPath != nil || interjection.isWritten)
+        SharedMarginAudio.canOffer(interjection)
             && (isPlayable(interjection.resolution) || senderTimeAwaitingPlacement(interjection, in: layer) != nil)
     }
 

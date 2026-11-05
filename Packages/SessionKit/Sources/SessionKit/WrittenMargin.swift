@@ -108,12 +108,17 @@ public struct WrittenMarginReading: Sendable, Equatable {
     public static let preRenderCharacterLimit = 600
 
     public var isShortEnoughToRenderAhead: Bool { text.count <= Self.preRenderCharacterLimit }
+
+    /// The reading for a friend's Margin, or nil when it has a recording to play instead. The one place that builds it.
+    public static func of(_ margin: ImportedCommentaryInterjection, in layer: ImportedCommentaryLayer) -> WrittenMarginReading? {
+        guard margin.isWritten else { return nil }
+        return WrittenMarginReading(intro: intro(senderName: layer.displayLabel), text: margin.approvedTranscript, itemId: layer.itemId ?? "")
+    }
 }
 
 extension SharedMarginReview.Entry {
     /// The reading for this Margin, or nil when it has a recording to play instead.
     public var writtenReading: WrittenMarginReading? {
-        guard interjection.isWritten else { return nil }
-        return WrittenMarginReading(intro: WrittenMarginReading.intro(senderName: layer.displayLabel), text: interjection.approvedTranscript, itemId: layer.itemId ?? "")
+        WrittenMarginReading.of(interjection, in: layer)
     }
 }
