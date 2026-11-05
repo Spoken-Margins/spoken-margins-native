@@ -43,6 +43,9 @@ final class SpokenNotePlayerModel: ObservableObject {
     private var interruptionObserver: NSObjectProtocol?
     /// Rises with every tap and every stop, so a player that finishes starting after the listener moved on is dropped.
     private var generation = 0
+    /// A sentence has started, or is starting, the audio session, so it must be handed back when we stop. Without a
+    /// sentence there is nothing to hand back: a stop must not deactivate a session that the recorder now holds.
+    private var holdsSession = false
 
     /// Plays the sentence, or stops it when it is the one sounding. `prepare` pauses whatever else the app is playing.
     func toggle(_ ref: SpokenNote.SentenceRef, in note: SpokenNote, folder: URL, prepare: () -> Void) {
@@ -59,6 +62,7 @@ final class SpokenNotePlayerModel: ObservableObject {
         let url = folder.appendingPathComponent(span.audioFileName)
         prepare()
         let mine = generation
+        holdsSession = true
         playing = ref // shows at once; the audio follows
         starting = Task { [weak self] in
             do {
@@ -71,6 +75,18 @@ final class SpokenNotePlayerModel: ObservableObject {
     }
 
     func stop() {
+        if tearDown() { Task { await SpokenNoteSentenceAudio.shared.end() } }
+    }
+
+    /// Stops, and when a sentence had the audio session, waits until it has been handed back. The audio actor is
+    /// serial, so a sentence still starting finishes first. Recording starts only after this, so the hand-back can't
+    /// land on the recorder's session.
+    func stopAndWait() async {
+        if tearDown() { await SpokenNoteSentenceAudio.shared.end() }
+    }
+
+    /// Everything that is ours to stop on the main thread. Returns whether the audio session must be handed back.
+    private func tearDown() -> Bool {
         generation += 1
         starting?.cancel()
         starting = nil
@@ -83,7 +99,8 @@ final class SpokenNotePlayerModel: ObservableObject {
             NotificationCenter.default.removeObserver(interruptionObserver)
             self.interruptionObserver = nil
         }
-        Task { await SpokenNoteSentenceAudio.shared.end() }
+        defer { holdsSession = false }
+        return holdsSession
     }
 
     private func begin(_ player: AVAudioPlayer, span: SpokenNotePlayback, generation started: Int) {

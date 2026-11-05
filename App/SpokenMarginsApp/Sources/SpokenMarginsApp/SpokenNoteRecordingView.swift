@@ -169,8 +169,11 @@ struct SpokenNoteRecordingView: View {
             if recorder.phase == .recording {
                 recorder.stop()
             } else {
-                player.stop()
-                recorder.record()
+                // A sentence that is playing, or starting, hands the audio session back before recording takes it.
+                Task {
+                    await player.stopAndWait()
+                    recorder.record()
+                }
             }
         } label: {
             Label(
