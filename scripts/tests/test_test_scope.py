@@ -496,5 +496,109 @@ class LaneRunnerRoutingTests(unittest.TestCase):
         self.assertTrue(any('Codex or Claude audit' in note for note in result['notes']))
 
 
+class ReachedByNameTests(unittest.TestCase):
+    """#3448: an app test class that reaches a changed file through its callers is suggested, with no class named for
+    the file. The synthetic tree is #3412's shape: a model extension decides, a controller calls it, a second
+    extension exposes the controller's answer, and a test reads that answer."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary.name)
+        self.tests = 'App/SpokenMarginsAppTests/'
+
+    def tearDown(self):
+        self.temporary.cleanup()
+
+    def write(self, path, text):
+        (self.root / path).parent.mkdir(parents=True, exist_ok=True)
+        (self.root / path).write_text(text)
+
+    def tree(self, extra_tests=None):
+        self.write(APP + 'Gate1AppModel+Stops.swift', (
+            'extension Gate1AppModel {\n'
+            '    func stopChoice(at position: Int) -> Int {\n'
+            '        let eligible = position\n'
+            '        return eligible\n'
+            '    }\n'
+            '}\n'))
+        self.write(APP + 'StopBridgeController.swift', (
+            'final class StopBridgeController {\n'
+            '    var forwardStop: Int {\n'
+            '        host.stopChoice(at: 1)\n'
+            '    }\n'
+            '}\n'))
+        self.write(APP + 'Gate1AppModel+StopBridge.swift', (
+            'extension Gate1AppModel {\n'
+            '    var stopForwardTitle: String { "Skip to \\(stopBridge.forwardStop)" }\n'
+            '}\n'))
+        self.write(APP + 'Unrelated.swift', 'struct Unrelated {\n    func nothing() {}\n}\n')
+        self.write(self.tests + 'ListeningTests.swift', (
+            'import XCTest\nfinal class ListeningTests: XCTestCase {\n'
+            '    func testTitle() { XCTAssertEqual(model.stopForwardTitle, "Skip to 1") }\n}\n'))
+        self.write(self.tests + 'UnrelatedTests.swift', (
+            'import XCTest\nfinal class UnrelatedTests: XCTestCase {\n'
+            '    func testNothing() { Unrelated().nothing() }\n}\n'))
+        for path, text in (extra_tests or {}).items():
+            self.write(self.tests + path, text)
+
+    def classify(self, *paths):
+        return scope.classify(paths, None, root=self.root)
+
+    def test_a_test_that_reaches_the_change_through_its_callers_is_added(self):
+        self.tree()
+        result = self.classify(APP + 'Gate1AppModel+Stops.swift')
+        self.assertEqual(result['app_tests'], ['ListeningTests'])
+        self.assertTrue(any('ListeningTests' in note and '#3448' in note for note in result['notes']))
+
+    def test_a_class_named_for_the_file_stays_first_and_is_not_listed_twice(self):
+        self.tree({'Gate1AppModel+StopsTests.swift': (
+            'final class StopsTests: XCTestCase {\n    func testChoice() { model.stopChoice(at: 1) }\n}\n')})
+        result = self.classify(APP + 'Gate1AppModel+Stops.swift')
+        self.assertEqual(result['app_tests'], ['StopsTests', 'ListeningTests'])
+
+    def test_an_unrelated_change_adds_nothing(self):
+        self.tree()
+        result = self.classify(APP + 'Unrelated.swift')
+        self.assertEqual(result['app_tests'], ['UnrelatedTests'])
+
+    def test_a_local_name_and_a_comment_do_not_reach_a_test(self):
+        # `eligible` is a local inside stopChoice, and a comment mentioning stopChoice is not a call.
+        self.tree({'LocalNameTests.swift': (
+            'final class LocalNameTests: XCTestCase {\n'
+            '    // stopChoice is covered elsewhere\n'
+            '    func testLocal() { let eligible = true; XCTAssertTrue(eligible) }\n}\n')})
+        result = self.classify(APP + 'Gate1AppModel+Stops.swift')
+        self.assertNotIn('LocalNameTests', result['app_tests'])
+
+    def test_a_name_in_too_many_files_is_not_followed(self):
+        self.tree()
+        for number in range(scope.REACH_FANOUT + 1):
+            self.write(APP + f'Caller{number}.swift', f'struct Caller{number} {{\n    func run() {{ forwardStop }}\n}}\n')
+        self.write(self.tests + 'CommonTests.swift', (
+            'final class CommonTests: XCTestCase {\n    func testRun() { Caller0().run() }\n}\n'))
+        # forwardStop is now named by more files than REACH_FANOUT, so the chain stops there, and CommonTests (which
+        # only reaches it through a caller) is not suggested.
+        result = self.classify(APP + 'Gate1AppModel+Stops.swift')
+        self.assertNotIn('CommonTests', result['app_tests'])
+
+    def test_a_class_over_the_test_budget_is_named_but_not_added(self):
+        big = 'final class BigTests: XCTestCase {\n' + ''.join(
+            f'    func testCase{number}() {{ model.stopForwardTitle }}\n' for number in range(scope.REACH_MAX_TESTS + 1)) + '}\n'
+        self.tree({'BigTests.swift': big})
+        result = self.classify(APP + 'Gate1AppModel+Stops.swift')
+        self.assertIn('ListeningTests', result['app_tests'])
+        self.assertNotIn('BigTests', result['app_tests'])
+        self.assertTrue(any('BigTests (101 tests)' in note for note in result['notes']))
+
+    def test_the_real_skim_stops_case_reaches_the_class_that_failed_on_main(self):
+        # #3412 changed Gate1AppModel+SkimStops.swift; LocalAudioListeningPackageTests failed on main afterwards.
+        root = SCRIPTS.parent
+        path = APP + 'Gate1AppModel+SkimStops.swift'
+        if not (root / path).is_file():
+            self.skipTest('the Skim stops file is gone')
+        result = scope.classify([path], None, root=root)
+        self.assertIn('LocalAudioListeningPackageTests', result['app_tests'])
+
+
 if __name__ == '__main__':
     unittest.main()

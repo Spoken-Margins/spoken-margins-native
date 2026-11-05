@@ -167,6 +167,121 @@ def app_test_classes(root, path):
                         if t.stem.startswith(stem) and t.stem.endswith('Tests'))
 
 
+# #3448: the app test classes that reach a changed app source file, found by following names. The name match above
+# (FooTests for Foo.swift) misses a file whose behavior a test reaches through a caller: #3412 changed which Margins
+# count as Skim stops in Gate1AppModel+SkimStops.swift, no test is named for it, and three LocalAudioListeningPackageTests
+# failed on main afterwards. A hop is one step along the call sites: take the names a file declares, find the source
+# files that mention them, take the members that hold those mentions, and so on. A test class that mentions any name on
+# the way is suggested. It is a net, not a proof: it reads names, not types, and misses a call through a string or a key
+# path. A name mentioned in more than REACH_FANOUT files (a shared type, a common word) is too common to follow.
+REACH_HOPS = 3
+REACH_FANOUT = 9
+# The extra tests a diff may add (about 5 minutes with the boot; a class runs whole). The nearest hops go first; a class
+# that does not fit is named in the note with its test count, so the lead can add it by hand when the diff warrants it.
+REACH_MAX_TESTS = 100
+REACH_LISTED = 5  # how many left-out classes the note names
+TEST_METHOD = re.compile(r'^\s*(?:@\w+\s+)*func test\w*\(')
+COMMENT = re.compile(r'//.*')
+WORD = re.compile(r'[A-Za-z_]\w*')
+MEMBER_DECL = re.compile(
+    r'^(\s*)(?:@\w+(?:\([^)]*\))?\s+)*((?:(?:private|fileprivate|internal|public|open|static|final|override|mutating|'
+    r'nonisolated|lazy|weak|indirect|convenience|required|class)\s+)*)(func|var|let|struct|enum|class|protocol|actor|'
+    r'typealias|case|extension)\s+`?(\w+)')
+TYPE_KINDS = {'struct', 'enum', 'class', 'protocol', 'actor', 'extension'}
+
+
+def swift_sources(root, prefix):
+    """{path: lines without // comments} for every Swift file under <prefix>."""
+    found = {}
+    for path in sorted((root / prefix).glob('**/*.swift')):
+        try:
+            text = path.read_text(errors='replace')
+        except OSError:
+            continue
+        found[str(path.relative_to(root))] = [COMMENT.sub('', line) for line in text.splitlines()]
+    return found
+
+
+def member_declarations(lines):
+    """(line index, indent, name) of each declaration that is a member of a type or a top-level one. A local let or
+    func inside a function body is not one: no other file can name it."""
+    stack, found = [], []  # stack: (indent, kind) of the open declarations
+    for index, line in enumerate(lines):
+        match = MEMBER_DECL.match(line)
+        if not match:
+            continue
+        indent, kind, name = len(match.group(1)), match.group(3), match.group(4)
+        while stack and stack[-1][0] >= indent:
+            stack.pop()
+        if not stack or stack[-1][1] in TYPE_KINDS:
+            # An extension names the type it extends: that type is not a thing the change declares.
+            if kind != 'extension':
+                found.append((index, indent, name))
+        stack.append((indent, kind))
+    return found
+
+
+def test_counts(tests):
+    """{class name: number of test methods} for the XCTestCase classes in <tests> ({path: lines})."""
+    counts, current = {}, None
+    for lines in tests.values():
+        for line in lines:
+            declared = TEST_CLASS.match(line)
+            if declared:
+                current = declared.group(1)
+                counts[current] = 0
+            elif current and TEST_METHOD.match(line):
+                counts[current] += 1
+    return counts
+
+
+def reaching_classes(root, changed):
+    """App test classes that reach the changed app source files, nearest first, within REACH_MAX_TESTS.
+
+    Returns ([class names to run], [(class name, test count) that did not fit]). Empty when the test or source folder
+    is missing (a synthetic tree)."""
+    sources, tests = swift_sources(root, APP_SOURCES), swift_sources(root, APP_TESTS)
+    changed = [path for path in changed if path in sources]
+    if not changed or not tests:
+        return [], []
+    words = {path: set(WORD.findall('\n'.join(lines))) for path, lines in {**sources, **tests}.items()}
+    members = {path: member_declarations(lines) for path, lines in sources.items()}
+    frontier = {name for path in changed for _, _, name in members[path]}
+    seen, classes = set(frontier), []
+    for _ in range(REACH_HOPS):
+        frontier = {name for name in frontier if sum(name in w for w in words.values()) <= REACH_FANOUT}
+        if not frontier:
+            break
+        for path in sorted(tests):
+            if words[path] & frontier:
+                for name in TEST_CLASS.findall('\n'.join(tests[path])):
+                    if name not in classes:
+                        classes.append(name)
+        reached = set()
+        for path, lines in sources.items():
+            if not words[path] & frontier:
+                continue
+            holders = members[path]
+            for index, line in enumerate(lines):
+                if not frontier & set(WORD.findall(line)):
+                    continue
+                # The member that holds this line: the nearest declaration above it with a smaller indent.
+                indent = len(line) - len(line.lstrip())
+                held = [name for at, deep, name in holders if at == index or (at < index and deep < indent)]
+                if held:
+                    reached.add(held[-1])
+        frontier = reached - seen
+        seen |= reached
+    counts, picked, left_out, total = test_counts(tests), [], [], 0
+    for name in classes:
+        if total + counts.get(name, 0) <= REACH_MAX_TESTS:
+            picked.append(name)
+            total += counts.get(name, 0)
+        else:
+            left_out.append((name, counts.get(name, 0)))
+    return picked, left_out
+
+
 def build_scripts(root):
     try:
         text = (root / 'project.yml').read_text()
@@ -273,6 +388,17 @@ def classify(paths, diffs=None, root=ROOT):
         note = NOTES.get(finding.category)
         if note and note not in notes:
             notes.append(note)
+    reach, left_out = reaching_classes(root, [f.path for f in findings if f.path.endswith('.swift')])
+    extra = [name for name in reach if name not in app_tests]
+    if extra:
+        app_tests.extend(extra)
+        notes.append('Reached by name (#3448): ' + ', '.join(extra)
+                     + ' use something this diff changes or something that calls it. The T3 runs them too.')
+    if left_out:
+        notes.append('Reached by name but over the ' + str(REACH_MAX_TESTS) + '-test budget (#3448), so not added: '
+                     + ', '.join(f'{name} ({count} tests)' for name, count in left_out[:REACH_LISTED])
+                     + (f' and {len(left_out) - REACH_LISTED} more' if len(left_out) > REACH_LISTED else '')
+                     + '. Name one in the T3 `tests:` line when the diff touches what it checks.')
     if filters:
         swift = ('bash scripts/run-sessionkit-tests.sh' if len(filters) > SWIFT_TEST_LIMIT else
                  f"swift test --package-path Packages/SessionKit --filter '{'|'.join(filters)}'")
