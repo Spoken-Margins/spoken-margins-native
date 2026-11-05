@@ -31,7 +31,7 @@ final class SharedTextListeningMapImporterTests: XCTestCase {
     ]
     private var text: String { paragraphs.joined(separator: "\n\n") }
 
-    private func package(mapId: String = "map-harbour", summaries: Bool = true) throws -> VerifiedSpokenMarginsPackage {
+    private func package(mapId: String = "map-harbour", summaries: Bool = true, generator: String = "test") throws -> VerifiedSpokenMarginsPackage {
         let blocks = ListeningEdition.blocks(in: text)
         let scenes = blocks.enumerated().map { index, block in
             ListeningMapPacketBuilder.Scene(
@@ -40,7 +40,7 @@ final class SharedTextListeningMapImporterTests: XCTestCase {
             )
         }
         let proposal = try ListeningMapPacketBuilder.proposal(
-            id: mapId, generator: "test", languageCode: "en", createdAt: created, scenes: scenes, text: text
+            id: mapId, generator: generator, languageCode: "en", createdAt: created, scenes: scenes, text: text
         )
         let item = ListeningMapPacketBuilder.identity(itemType: .text, title: "The Harbour Town", canonicalURL: "https://example.com/harbour", text: text)
         let prepared = try ListeningMapPacketBuilder.prepare(
@@ -138,6 +138,20 @@ final class SharedTextListeningMapImporterTests: XCTestCase {
         let outcome = try SharedTextListeningMapImporter.importMap(contents, into: item, repository: store)
         XCTAssertEqual(outcome, .added(placed: 5, total: 5, replacedAnotherMap: false))
         XCTAssertEqual(try store.loadPortableListeningMapProposals(itemId: item.id).map(\.id), [proposal.id])
+    }
+
+    /// #3450: a map whose sender used this app's on-device generator is saved as the friend's, not as scenes this
+    /// device made, so the next import still warns before replacing it.
+    func testAFriendsSceneMapIsNotMistakenForScenesThisDeviceMade() throws {
+        let item = try seed(text: text)
+        _ = try SharedTextListeningMapImporter.importMap(
+            try package(mapId: "text-scene-map-theirs", generator: TextSceneAssembly.generator), into: item, repository: store)
+
+        let saved = try XCTUnwrap(store.loadPortableListeningMapProposals(itemId: item.id).first)
+        XCTAssertFalse(TextSceneAssembly.isModelProposal(saved))
+        XCTAssertEqual(saved.generator, TextSceneAssembly.sharedGenerator)
+        let other = try XCTUnwrap(ListeningMapPacket.proposal(in: try package(mapId: "map-other")))
+        XCTAssertEqual(try SharedTextListeningMapImporter.existing(for: other, itemId: item.id, repository: store), .differentMap)
     }
 
     func testAMapTheListenerMadeOrPastedInCountsAsAnotherMapSoItIsNotLostSilently() throws {

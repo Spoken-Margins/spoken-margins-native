@@ -85,7 +85,7 @@ public enum TextSceneSummaryPlanner {
         }
         guard letters >= minimumSummarizableCharacters else { return false }
         if text.contains(where: { ".!?…。！？".contains($0) }) { return true }
-        return text.split(separator: "\n").contains { $0.split(whereSeparator: { $0.isWhitespace }).count >= 12 }
+        return text.split(whereSeparator: \.isNewline).contains { $0.split(whereSeparator: { $0.isWhitespace }).count >= 12 }
     }
 
     // MARK: sections
@@ -176,9 +176,9 @@ public enum TextSceneSummaryPlanner {
         }
         for position in lowest...highest where position > 0 && position < characters.count {
             let before = characters[position - 1]
-            if before == "\n" && position >= 2 && characters[position - 2] == "\n" { consider(0, position) }
+            if before.isNewline && position >= 2 && characters[position - 2].isNewline { consider(0, position) }
             if isCJKSentenceEnd(before) || (before.isWhitespace && followsSentenceEnd(characters, position - 1)) { consider(1, position) }
-            if before == "\n" { consider(2, position) }
+            if before.isNewline { consider(2, position) }
             if before.isWhitespace { consider(3, position) }
         }
         return best.compactMap { $0 }.first ?? min(max(target, lowest), highest)
@@ -209,7 +209,7 @@ struct PageFurniture {
 
     init(characters: [Character]) {
         var counts: [String: Int] = [:]
-        for line in String(characters).split(separator: "\n", omittingEmptySubsequences: true) {
+        for line in String(characters).split(whereSeparator: \.isNewline) {
             guard let key = Self.key(String(line)) else { continue }
             counts[key, default: 0] += 1
         }
@@ -220,7 +220,7 @@ struct PageFurniture {
     func modelText(_ characters: [Character], _ start: Int, _ end: Int) -> String {
         guard start < end else { return "" }
         let slice = String(characters[start..<end])
-        return slice.split(separator: "\n", omittingEmptySubsequences: false)
+        return slice.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
             .filter { line in
                 guard let key = Self.key(String(line)) else { return true }
                 return !repeated.contains(key) && !Self.isPageNumber(String(line))

@@ -6,6 +6,9 @@ import Foundation
 public enum TextSceneAssembly {
     /// The proposal's `generator`, which a sender exports and a recipient reads.
     public static let generator = "on-device-text-scene-map.v1"
+    /// What a recipient saves a friend's scene starts under, so they are never mistaken for scenes this device's model
+    /// made (those can be replaced without a warning).
+    public static let sharedGenerator = "shared-text-scene-map.v1"
     /// How many characters of the scene's own words an anchor quotes, so a copy of the text can place it again.
     public static let quotedCharacters = 80
     public static let contextCharacters = 40

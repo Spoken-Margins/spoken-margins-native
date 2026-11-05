@@ -186,6 +186,21 @@ final class TextSceneSummaryPlannerTests: XCTestCase {
         XCTAssertTrue(TextSceneSummaryPlanner.plan(text: prose, chapters: [])[0].modelText.contains(long))
     }
 
+    func testWindowsLineEndingsGetTheSameBlankLineCutsAndHeaderRemovalAsUnixOnes() {
+        let unix = paragraphs(count: 40, sentencesEach: 4)
+        let windows = unix.replacingOccurrences(of: "\n", with: "\r\n")
+        let drafts = TextSceneSummaryPlanner.plan(text: windows, chapters: [])
+
+        assertCovers(drafts, text: windows)
+        let characters = Array(windows)
+        for draft in drafts.dropFirst() {
+            XCTAssertTrue(characters[draft.startChar - 1].isNewline && characters[draft.startChar - 2].isNewline, "blank-line cut: \(draft.id)")
+        }
+        let paged = (1...5).map { "Annual Review\r\n\(sentence($0))\r\n\($0)" }.joined(separator: "\r\n")
+        let planned = TextSceneSummaryPlanner.plan(text: paged, chapters: [])
+        XCTAssertFalse(planned[0].modelText.contains("Annual Review"), planned[0].modelText)
+    }
+
     // MARK: sections
 
     func testChaptersOutOfOrderOrDuplicatedOrPastTheEndStillMakeOrderedScenes() {

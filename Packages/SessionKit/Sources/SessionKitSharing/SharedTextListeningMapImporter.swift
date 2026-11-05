@@ -166,7 +166,8 @@ public enum SharedTextListeningMapImporter {
         }
         return PortableListeningMapProposalArtifact(
             id: proposal.id, languageCode: proposal.languageCode, createdAt: proposal.createdAt,
-            generator: proposal.generator, scenes: scenes
+            generator: TextSceneAssembly.isModelProposal(proposal) ? TextSceneAssembly.sharedGenerator : proposal.generator,
+            scenes: scenes
         )
     }
 

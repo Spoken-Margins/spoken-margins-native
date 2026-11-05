@@ -22,6 +22,8 @@ protocol TextSceneMapPreparerHost: AnyObject {
 enum TextSceneSummaryStart: Equatable {
     case started
     case alreadyRunning
+    /// Another item's summaries are being written; one run at a time.
+    case busyWithAnotherItem
     /// The on-device model can't be used, so the item keeps its rule-based chapters. Carries the model's own reason.
     case modelUnavailable(String)
 
@@ -30,6 +32,7 @@ enum TextSceneSummaryStart: Equatable {
         switch self {
         case .started: "Writing scene summaries on this device."
         case .alreadyRunning: "Scene summaries are still being written."
+        case .busyWithAnotherItem: "Scene summaries for another item are still being written, so this one has chapters only."
         case .modelUnavailable(let reason): "Scene summaries need the on-device model, so the chapters have no summaries. \(reason)."
         }
     }
@@ -94,7 +97,7 @@ final class TextSceneMapPreparer {
     @discardableResult
     func prepare(itemId requestedItemId: String) -> TextSceneSummaryStart {
         guard let host, let store = host.store else { return .modelUnavailable("Nothing is open") }
-        guard task == nil else { return .alreadyRunning }
+        guard task == nil else { return self.itemId == requestedItemId ? .alreadyRunning : .busyWithAnotherItem }
         let client = host.localFoundationModelClient
         let availability = client.availability()
         guard availability.isAvailable else { return .modelUnavailable(availability.description) }
