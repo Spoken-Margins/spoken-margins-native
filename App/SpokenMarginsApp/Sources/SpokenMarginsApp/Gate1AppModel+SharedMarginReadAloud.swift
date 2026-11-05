@@ -32,23 +32,28 @@ extension Gate1AppModel {
         if !readAloud, margin.isNewToListener { markSharedMarginHeard(chosen) }
         guard let store else { return }
         let (layerId, marginId) = (margin.layerId, margin.id)
-        Task { [weak self] in
+        let reader = StoreReader(store)
+        // Off the main thread, with nothing of the model captured but a weak reference to report a failure.
+        Task.detached(priority: .userInitiated) { [weak self] in
             do {
                 // Only the choice is written, onto the stored record, so a placement pass that landed since the screen's
                 // copy was read is not undone by this save.
-                try await StoreReader(store).read(priority: .userInitiated) { store in
+                try await reader.read(priority: .userInitiated) { store in
                     var stored = try store.loadImportedCommentaryInterjections(layerId: layerId).first { $0.id == marginId } ?? chosen
                     stored.listenerReadAloud = readAloud
                     try store.saveImportedCommentaryInterjection(stored)
                 }
             } catch {
-                guard let self else { return }
-                diagnostics["sharedMarginReadAloud:\(chosen.id)"] = "failed:\(error.localizedDescription)"
-                reportWarning("That choice couldn't be saved.")
-                refreshSelectedItemInBackground()
-                refreshMarginRowsInBackground()
+                await self?.sharedMarginReadAloudFailed(marginId, error)
             }
         }
+    }
+
+    private func sharedMarginReadAloudFailed(_ marginId: String, _ error: Error) {
+        diagnostics["sharedMarginReadAloud:\(marginId)"] = "failed:\(error.localizedDescription)"
+        reportWarning("That choice couldn't be saved.")
+        refreshSelectedItemInBackground()
+        refreshMarginRowsInBackground()
     }
 
     private func showSharedMarginReadAloud(_ chosen: ImportedCommentaryInterjection) {
