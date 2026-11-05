@@ -57,7 +57,7 @@ struct ExperienceSourcesScreen: View {
                 ForEach(friends) { friend in
                     FollowingFriendRowView(friend: friend) {
                         if friend.items.count == 1, let item = friend.items.first {
-                            model.openItem(id: item.id)
+                            model.openItemFromTap(id: item.id)
                         } else {
                             openFriend = friend
                         }

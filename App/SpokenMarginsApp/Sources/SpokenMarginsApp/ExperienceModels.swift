@@ -229,6 +229,19 @@ struct AppNavigationState: Equatable, Sendable {
     /// The same for the Library list, whose rows are also destroyed when an item opens (#2395).
     var libraryScroll = FollowingScrollMemory()
 
+    /// Where the listener is, without the scroll memory: scrolling the list while a tapped item is read keeps the
+    /// tap; a change of place drops it (#2505).
+    struct Place: Equatable {
+        let root: AppRoot
+        let paths: [AppRoot: [AppRoute]]
+        let taskRoute: AppRoute?
+        let addSourceRoute: AddSourceRoute?
+    }
+
+    var place: Place {
+        Place(root: selectedRoot, paths: paths, taskRoute: taskRoute, addSourceRoute: addSourceRoute)
+    }
+
     mutating func select(_ root: AppRoot, recordingIsLocked: Bool) {
         guard !recordingIsLocked else { return }
         selectedRoot = root
