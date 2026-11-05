@@ -111,6 +111,35 @@ final class SharedTextListeningMapImporterTests: XCTestCase {
         XCTAssertEqual(try store.loadListeningMap(itemId: item.id)?.chapters.count, 5, "the sender's chapters replace the heading-derived ones")
     }
 
+    /// #3450: the scenes this device's model made from the listener's text can be made again, so a friend's map
+    /// replaces them without the "Replace" warning and without leaving them beside it.
+    func testSceneSummariesTheDeviceMadeFromTheListenersTextAreNotAnotherMap() throws {
+        let item = try seed(text: text)
+        try store.saveListeningMap(ListeningMap(id: "map-\(item.id)-generated", itemId: item.id, overview: "", chapters: [
+            Chapter(id: "ch-generated-01", title: "Start", startChar: 0, endChar: text.count, percent: 0)
+        ]))
+        let draft = TextSceneDraft(
+            id: "ch-generated-01", order: 0, startChar: 0, endChar: text.count, fallbackTitle: "Start",
+            modelText: text, isSummarizable: true
+        )
+        let label = ListeningMapSummaryValidator.SceneLabel(
+            title: "Harbour", description: "How the town woke to a storm.", eligibility: .eligible, eligibilityReason: nil)
+        try store.savePortableListeningMapProposal(
+            TextSceneAssembly.proposal(
+                safeItemComponent: "article",
+                scenes: [TextSceneAssembly.scene(draft: draft, label: label, characters: Array(text))]
+            ),
+            itemId: item.id
+        )
+        let contents = try package()
+        let proposal = try XCTUnwrap(ListeningMapPacket.proposal(in: contents))
+
+        XCTAssertEqual(try SharedTextListeningMapImporter.existing(for: proposal, itemId: item.id, repository: store), .none)
+        let outcome = try SharedTextListeningMapImporter.importMap(contents, into: item, repository: store)
+        XCTAssertEqual(outcome, .added(placed: 5, total: 5, replacedAnotherMap: false))
+        XCTAssertEqual(try store.loadPortableListeningMapProposals(itemId: item.id).map(\.id), [proposal.id])
+    }
+
     func testAMapTheListenerMadeOrPastedInCountsAsAnotherMapSoItIsNotLostSilently() throws {
         let item = try seed(text: text)
         try store.saveListeningMap(ListeningMap(id: "map-\(item.id)-manual", itemId: item.id, overview: "Mine", chapters: [

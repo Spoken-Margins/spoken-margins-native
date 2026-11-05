@@ -31,7 +31,9 @@ public enum SharedMarginExport {
     public static func mapProposals(_ proposals: [PortableListeningMapProposalArtifact]) -> [PortableListeningMapProposalArtifact] {
         // The app exports reviewed Margins and textual map proposals, not the
         // local/imported Skim audio. Do not reference unselected voice assets.
-        proposals.map { proposal in
+        // A proposal this device's model wrote from the listener's own text travels as scene starts only, until the
+        // source is known to be public (#3449).
+        proposals.map(TextSceneAssembly.withoutModelWords).map { proposal in
             PortableListeningMapProposalArtifact(
                 id: proposal.id, schemaVersion: proposal.schemaVersion,
                 languageCode: proposal.languageCode, createdAt: proposal.createdAt,

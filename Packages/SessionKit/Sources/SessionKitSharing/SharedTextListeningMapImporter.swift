@@ -43,7 +43,9 @@ public enum SharedTextListeningMapImporter {
     ) throws -> Existing {
         let stored = try repository.loadPortableListeningMapProposals(itemId: itemId)
         if let same = stored.first(where: { $0.id == proposal.id }) { return .sameMap(chapterCount: same.scenes.count) }
-        if !stored.isEmpty { return .differentMap }
+        // The scenes this device's model made from the listener's own text can be made again, so replacing them costs
+        // nothing, like the headings the app found (#3450).
+        if stored.contains(where: { !TextSceneAssembly.isModelProposal($0) }) { return .differentMap }
         // A map the listener made or pasted in is saved only as a Listening Map, with no proposal beside it. Saving a
         // new map deletes it, so the sheet has to say "Replace" before that happens.
         if let map = try repository.loadListeningMap(itemId: itemId), !isAppDerived(map, itemId: itemId) { return .differentMap }

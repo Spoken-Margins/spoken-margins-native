@@ -160,6 +160,35 @@ final class SharedMarginExportTests: XCTestCase {
         }
     }
 
+    /// #3450 / #3449: scenes the device's model wrote from the listener's own text leave as scene starts only.
+    func testAProposalTheModelWroteFromTheListenersTextTravelsAsSceneStartsOnly() {
+        let text = "The caravans left the oasis before dawn and crossed the dunes in single file. Water was counted by the cup."
+        let draft = TextSceneDraft(
+            id: "ch-generated-01", order: 0, startChar: 0, endChar: text.count, fallbackTitle: "The caravans left",
+            modelText: text, isSummarizable: true
+        )
+        let label = ListeningMapSummaryValidator.SceneLabel(
+            title: "Crossing the desert", description: "How caravans carried goods over the dunes.",
+            eligibility: .eligible, eligibilityReason: "Editorial content.")
+        let model = TextSceneAssembly.proposal(
+            safeItemComponent: "article",
+            scenes: [TextSceneAssembly.scene(draft: draft, label: label, characters: Array(text))],
+            createdAt: date
+        )
+        let other = proposal(native: false)
+
+        let exported = SharedMarginExport.mapProposals([model, other], currentProposalID: model.id)
+        XCTAssertEqual(exported, [TextSceneAssembly.withoutModelWords(model)])
+        let scene = exported[0].scenes[0]
+        XCTAssertEqual(scene.startAnchor.startChar, 0)
+        XCTAssertNil(scene.title)
+        XCTAssertNil(scene.summaryText)
+        XCTAssertNil(scene.summaryProvenance)
+        XCTAssertNil(scene.startAnchor.chapterTitle)
+        // A proposal that is not the model's is exported as before.
+        XCTAssertEqual(SharedMarginExport.mapProposals([other]).map(\.id), [other.id])
+    }
+
     func testPacketsKeepGoldenBytesAndBuild29ImportsEveryMarginAndAnchor() throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "SharedMarginExportTests-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
