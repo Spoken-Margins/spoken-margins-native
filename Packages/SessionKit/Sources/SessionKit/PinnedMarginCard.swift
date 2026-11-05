@@ -19,6 +19,22 @@ public struct PinnedMarginCard: Equatable, Sendable {
             }
         }
 
+        /// "Cole wrote this" (the web page's words for a written Margin).
+        public var writer: String {
+            switch self {
+            case .yours: "You"
+            case .friend(let name): name ?? "A friend"
+            }
+        }
+
+        /// "Cole's words": whose words the iPhone's voice is reading.
+        public var words: String {
+            switch self {
+            case .yours: "your words"
+            case .friend(let name): name.map { "\($0)'s words" } ?? "your friend's words"
+            }
+        }
+
         /// "Cole is speaking" needs a name for the one who speaks.
         public var speaker: String {
             switch self {
@@ -31,6 +47,8 @@ public struct PinnedMarginCard: Equatable, Sendable {
     public enum Stage: Equatable, Sendable {
         /// The voice is sounding.
         case speaking
+        /// A friend's written Margin is being read aloud by the iPhone's voice, so the card never says the friend is speaking.
+        case reading
         /// The listener paused the voice.
         case voicePaused
         /// The voice was asked for and is not sounding yet.
@@ -99,6 +117,7 @@ public struct PinnedMarginCard: Equatable, Sendable {
     public var headline: String {
         switch stage {
         case .speaking: "\(subject.speaker) speaking"
+        case .reading: "\(subject.writer) wrote this"
         case .voicePaused: "\(subject.possessive) is paused"
         case .loading: "Loading \(subject.possessive)…"
         case .failed: "\(subject.possessive) could not play"
@@ -114,6 +133,7 @@ public struct PinnedMarginCard: Equatable, Sendable {
     public var detail: String {
         switch stage {
         case .speaking: voiceTime.map { "\($0) · The episode is paused." } ?? "The episode is paused while this plays."
+        case .reading: voiceTime.map { "\($0) · Your phone's voice is reading \(subject.words)." } ?? "Your phone's voice is reading \(subject.words)."
         case .voicePaused: voiceTime.map { "\($0) · The episode stays paused." } ?? "The episode stays paused until this is done."
         case .loading: "Hold on, this is getting ready."
         case .failed(let canMoveOn):
