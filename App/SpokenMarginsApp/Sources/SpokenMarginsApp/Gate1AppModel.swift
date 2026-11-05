@@ -2455,13 +2455,13 @@ final class Gate1AppModel: ObservableObject {
     /// `caller` names the function that asked, so a hang inside the engine reads `engine.run:finishInterjection` and
     /// not a bare `engine.run` shared by about 200 call sites (#2967).
     @discardableResult
-    func run(caller: StaticString = #function, _ operation: (SessionEngine) throws -> Void) -> Bool {
+    func run(caller: StaticString = #function, fileID: String = #fileID, line: Int = #line, _ operation: (SessionEngine) throws -> Void) -> Bool {
         if engine == nil {
             do {
                 let store = try requireStore()
                 installEngine(try makeEngine(store: store))
             } catch {
-                reportFailure(error, context: "Playback setup failed")
+                reportFailure(error, context: "Playback setup failed", fileID: fileID, line: line)
             }
         }
         guard let engine else { return false }
@@ -2469,7 +2469,7 @@ final class Gate1AppModel: ObservableObject {
             try hangTelemetry.labels.scoped(Self.engineRunLabel(caller: caller)) { try operation(engine) }
             return true
         } catch {
-            reportFailure(error)
+            reportFailure(error, fileID: fileID, line: line)
             return false
         }
     }

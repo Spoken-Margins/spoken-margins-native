@@ -183,6 +183,30 @@ class FileAndAudioWork(unittest.TestCase):
         self.assertEqual(sorted({r['class'] for r in rows}), ['av-sync', 'file-io'])
         self.assertEqual(len(rows), 6)
 
+    def test_hashing_an_in_memory_string_is_not_file_io_but_every_other_hash_still_is(self):
+        def hashes(body):
+            src = MODEL % ('    func f(_ id: String, _ url: URL) throws {\n        ' + body + '\n    }')
+            return sorted((r['class'], r['api']) for r in scan(Model=src))
+        # the short in-memory string form (#3373): no row
+        for clean in ('_ = SHA256.hash(data: Data(id.utf8))', '_ = SHA256.hash(data: Data(self.id.utf8))',
+                      '_ = SHA512.hash(data: Data(id.utf8))', '_ = Insecure.SHA1.hash(data: Data(id.utf8))',
+                      '_ = SHA256.hash(data: Data( id . utf8 ))'):
+            self.assertEqual(hashes(clean), [], clean)
+        # anything else is still a file-io row
+        for flagged in ('_ = SHA256.hash(data: Data(contentsOf: url))', '_ = SHA256.hash(data: Data())',
+                        '_ = SHA256.hash(data: Data(id.utf8 + id.utf8))', '_ = SHA256.hash(data: Data(id.utf16))',
+                        '_ = SHA256.hash(data: Data(id.utf8).prefix(3))', '_ = SHA256.hash(data: Data(f(id).utf8))',
+                        '_ = SHA256.hash(data: Data(id.utf8)); _ = SHA256.hash(data: Data(contentsOf: url))'):
+            self.assertIn(('file-io', 'SHA256'), hashes(flagged), flagged)
+        self.assertEqual(hashes('_ = SHA256.hash(data: Data(contentsOf: url))'),
+                         [('file-io', 'Data(contentsOf:)'), ('file-io', 'SHA256')])
+        # a hash of file contents through a variable: the read and the hash are both rows
+        self.assertEqual(hashes('let d = try Data(contentsOf: url); _ = SHA256.hash(data: d)'),
+                         [('file-io', 'Data(contentsOf:)'), ('file-io', 'SHA256')])
+        # a file read right before a short-string hash still gets its own row
+        self.assertEqual(hashes('let s = try String(contentsOf: url); _ = SHA256.hash(data: Data(s.utf8))'),
+                         [('file-io', 'String(contentsOf:)')])
+
     def test_the_same_calls_off_the_main_thread_are_clean(self):
         body = '    func f(_ url: URL) async { _ = try? Data(contentsOf: url) }\n    nonisolated func g(_ url: URL) async { _ = SHA256.hash(data: Data()) }'
         self.assertEqual([r['function'] for r in scan(Model=MODEL % body)], ['Model.f'])
@@ -501,6 +525,16 @@ class TheRatchet(unittest.TestCase):
         self.assertEqual(self.run_main('--strict')[0], 1)
         self.run_main('--update')
         self.assertEqual(json.loads(self.baseline.read_text())['entries'], [])
+
+    def test_a_stale_row_does_not_hide_a_new_row_in_a_strict_run(self):
+        self.run_main('--accept', 'existing')
+        self.write('    func reload() { Task.detached { _ = try? self.store?.loadItem(id: "a") } }\n'
+                   '    func more() { _ = try? store?.listItems() }')
+        code, out = self.run_main('--strict')
+        self.assertEqual(code, 1, out)
+        self.assertIn('fixed or gone', out)
+        self.assertIn('Model.more', out)
+        self.assertIn('store.listItems', out)
 
     def test_edits_that_only_move_the_line_do_not_trip_the_ratchet(self):
         self.run_main('--accept', 'existing')

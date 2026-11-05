@@ -3,6 +3,14 @@ import Foundation
 /// #1965: the one line a listener reads when something fails. An error that already carries a plain
 /// sentence keeps it. A code ("persistence_failed:…"), a Swift case name or an `NSError` dump is for
 /// diagnostics, so it becomes a generic line with a next step instead.
+/// #3362: a chapter tap the engine could not place, because no chapter of this session has that id.
+/// Its own sentence, so the banner says what happened instead of the generic line. Another chapter can work here,
+/// so a state that blocks every chapter (a Margin being recorded or written) must not throw this.
+public struct ChapterJumpUnavailable: Error, LocalizedError, Equatable {
+    public init() {}
+    public var errorDescription: String? { "Couldn't jump to that chapter. Try another one." }
+}
+
 public enum ListenerErrorText {
     public static let fallback = "Something went wrong. Try again."
 

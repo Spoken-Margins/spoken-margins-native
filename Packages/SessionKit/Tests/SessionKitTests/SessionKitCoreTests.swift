@@ -7745,7 +7745,7 @@ private final class DelayedPositionAudioClient: AudioPlaybackClient {
     }
 }
 
-private final class RecordingAudioClient: AudioPlaybackClient {
+final class RecordingAudioClient: AudioPlaybackClient {
     var playedTargets: [String] = []
     var playedOffsets: [Int] = []
     var preparedTexts: [String] = []
