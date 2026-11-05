@@ -35,41 +35,42 @@ extension ImportedCommentaryInterjection {
     }
 }
 
-/// What the iPhone's voice can read of a note, decided once for the offer and the render alike (#3365). A note is read
-/// properly or it is not a written Margin: it is not offered, so a tone never promises a reading that then fails, and a
-/// fragment is never read and marked heard. Two kinds of note fail: words the speech projection empties (only emoji or
-/// a link), and scripts whose combining marks it drops (Hindi and Thai come out as a few letters). Whether the phone has
-/// a voice for the note's language is the renderer's check (`WrittenMarginReader`), which fails the reading with the
-/// ordinary "couldn't be read aloud" line and leaves the Margin new.
+/// The words the voice reads for a note, decided once for the offer and the render alike (#3365). A friend's note is plain
+/// words, not an article, so it does not go through the article cleaning (`SpeechTextNormalizer.projectForSystemSpeech`),
+/// which drops the combining marks Hindi and Thai are written with and reads "Great point.Totally agree" as a web
+/// address. Only links and emoji are removed; every other script, mark and punctuation mark stays. A note is readable
+/// when words remain. Whether the phone has a voice for its language is `WrittenMarginReader`'s answer at render time.
 public enum WrittenMarginSpeech {
-    /// How much of a note is looked at: the projection is linear, so a sender's 50,000-character note would cost the
-    /// main thread 200 ms every time a card is built. The start of a note says what kind of note it is.
+    /// How much of a note is looked at when deciding whether it is readable, so the cost stays flat for a sender's
+    /// 50,000-character note that the main thread would otherwise scan every time a card is built.
     static let examinedCharacters = 1_000
     nonisolated(unsafe) private static let answers = NSCache<NSString, NSNumber>() // NSCache is thread-safe
+    private static let link = try? NSRegularExpression(pattern: #"(?i)\b(?:https?://|www\.)[^\s<>()]+"#)
+
+    /// The note with links and emoji removed and whitespace collapsed.
+    public static func speakable(_ words: String) -> String {
+        var text = words
+        if let link { text = link.stringByReplacingMatches(in: text, range: NSRange(text.startIndex..., in: text), withTemplate: " ") }
+        var kept = String.UnicodeScalarView()
+        for scalar in text.precomposedStringWithCanonicalMapping.unicodeScalars {
+            switch scalar.properties.generalCategory {
+            case .control, .format, .privateUse, .surrogate, .unassigned, .enclosingMark:
+                kept.append(" ")
+            default:
+                if scalar.properties.isEmoji, scalar.value > 0x7F, !scalar.properties.isAlphabetic { continue }
+                kept.append(scalar)
+            }
+        }
+        return String(kept).split(whereSeparator: \.isWhitespace).joined(separator: " ")
+    }
 
     public static func isReadable(_ words: String) -> Bool {
         let sample = String(words.prefix(examinedCharacters))
         let key = sample as NSString
         if let known = answers.object(forKey: key) { return known.boolValue }
-        let answer = compute(sample)
+        let answer = speakable(sample).contains { $0.isLetter || $0.isNumber }
         answers.setObject(NSNumber(value: answer), forKey: key)
         return answer
-    }
-
-    private static func compute(_ sample: String) -> Bool {
-        let spoken = SpeechTextNormalizer.projectForSystemSpeech(sample).text
-        guard !spoken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
-        let before = lettersCarriedByMarks(in: sample)
-        return before == 0 || lettersCarriedByMarks(in: spoken) * 2 >= before
-    }
-
-    /// Combining marks that are part of a letter's sound (a Devanagari vowel sign, a Thai vowel), as opposed to an emoji
-    /// variation selector or a tone accent.
-    private static func lettersCarriedByMarks(in text: String) -> Int {
-        text.unicodeScalars.reduce(0) { count, scalar in
-            let category = scalar.properties.generalCategory
-            return count + ((category == .nonspacingMark || category == .spacingMark) && scalar.properties.isAlphabetic ? 1 : 0)
-        }
     }
 }
 
@@ -80,9 +81,18 @@ public struct WrittenMarginReading: Sendable, Equatable {
     public let intro: String
     public let text: String
 
-    public init(intro: String, text: String) {
+    /// What the voice is given: the intro, then the note without its links and emoji. Worked out once, here.
+    public let spokenText: String
+
+    /// The item the note is on. It names the rendered file, so everything rendered for an item can be removed when the
+    /// item is deleted for good (a friend's words must not outlive the item they were on).
+    public let itemId: String
+
+    public init(intro: String, text: String, itemId: String = "") {
+        self.itemId = itemId
         self.intro = intro
         self.text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        spokenText = "\(intro) \(WrittenMarginSpeech.speakable(self.text))"
     }
 
     /// The same words as the web page's `writtenIntro` (`Web/src/app/logic/arrival.ts`): the sender's name as they wrote
@@ -92,8 +102,6 @@ public struct WrittenMarginReading: Sendable, Equatable {
         let isAnonymous = name.isEmpty || name.lowercased() == "your friend"
         return "\(isAnonymous ? "Your friend" : name) wrote:"
     }
-
-    public var spokenText: String { "\(intro) \(text)" }
 
     /// A note longer than this is rendered when the listener asks for it, not ahead of time when the item opens: about
     /// 40 seconds of speech, so the work and the storage are not spent on a Margin that may never be played.
@@ -106,6 +114,6 @@ extension SharedMarginReview.Entry {
     /// The reading for this Margin, or nil when it has a recording to play instead.
     public var writtenReading: WrittenMarginReading? {
         guard interjection.isWritten else { return nil }
-        return WrittenMarginReading(intro: WrittenMarginReading.intro(senderName: layer.displayLabel), text: interjection.approvedTranscript)
+        return WrittenMarginReading(intro: WrittenMarginReading.intro(senderName: layer.displayLabel), text: interjection.approvedTranscript, itemId: layer.itemId ?? "")
     }
 }

@@ -56,7 +56,8 @@ final class MarginReplyPacketTests: XCTestCase {
     }
 
     /// #3365: a friend's written Margin is read aloud by the iPhone voice, and the listener may answer it.
-    /// The answer travels as it always did: no new capability, so Builds 32 and 34 still import it.
+    /// What this proves: the manifest asks for no capability beyond the commentary layer, and the frozen Build 29 reader
+    /// imports the packet. What holds the format for Build 34 is `ShippedReplyPacketTests.swift:66-73`, not this test.
     func testAReplyToAFriendsWrittenMarginNeedsNoNewCapabilityAndImportsInBuild29() throws {
         let (alice, bob) = (try Listener(name: "A", root: root), try Listener(name: "B", root: root))
         let (aliceURL, _) = try alice.share([try alice.write("Root thought.", id: "a-1")], packageId: "package-a", scopedIds: ["a-1"], in: root)

@@ -4,6 +4,7 @@ import SessionKit
 
 #if canImport(AVFoundation)
 import AVFoundation
+import CryptoKit
 
 /// Turns a written Margin's words into an audio file the Margin-moment conductor plays as it plays a recording (#3365):
 /// the same tone, the same pause of the episode, the same skip, interruption and heard-marking, with no second playback
@@ -49,7 +50,9 @@ public final class WrittenMarginReader: @unchecked Sendable {
 
     private let directory: URL
     private let voiceIdentifier: String?
-    private let renderAudio: @Sendable (_ spokenText: String, _ scratch: URL) throws -> URL
+    private let renderAudio: @Sendable (_ spokenText: String, _ scratch: URL, _ voice: String?) throws -> URL
+    /// True for the iPhone voice: the voice is then chosen from the note's language. A test renderer is given none.
+    private let picksVoice: Bool
     private let timeLimit: @Sendable (_ spokenText: String) -> TimeInterval
     private let lock = NSLock()
     private var ready = Set<String>()
@@ -60,6 +63,9 @@ public final class WrittenMarginReader: @unchecked Sendable {
     private var stuck = 0
     private let mostStuck: Int
     private var lastChecked: [String: Date] = [:]
+    private var inFlight = Set<String>() // paths whose render thread is running, even one given up on
+    private var doomed = Set<String>() // paths removed while a render of them was running or waiting: they leave no file
+    private var sweptScratch = false
     private let recheckAfter: TimeInterval
 
     /// `renderAudio` writes the speech for `spokenText` somewhere under `scratch` and returns that file. The default is
@@ -77,33 +83,36 @@ public final class WrittenMarginReader: @unchecked Sendable {
         self.mostStuck = mostStuckRenders
         self.recheckAfter = recheckAfter
         self.timeLimit = timeLimit ?? { WrittenMarginReader.defaultTimeLimit(forCharacters: $0.count) }
-        self.renderAudio = renderAudio ?? { text, scratch in
-            if voiceIdentifier == nil, !Self.canRead(text, voiceExists: { AVSpeechSynthesisVoice(language: $0) != nil }) { throw RenderError.noVoice }
-            let client = SystemTextAudioPreparationClient(outputDirectory: scratch, voiceIdentifier: voiceIdentifier)
-            guard let prepared = try client.prepareTextAudio(itemId: "written-margin", title: "Written Margin", text: text),
-                  let url = prepared.media.url.flatMap({ URL(string: $0) }) else { throw RenderError.nothingToSay }
-            return url
+        self.picksVoice = renderAudio == nil
+        if let renderAudio {
+            self.renderAudio = { text, scratch, _ in try renderAudio(text, scratch) }
+        } else {
+            self.renderAudio = { text, scratch, voice in
+                // The words are already cleaned (`WrittenMarginSpeech`) and may be in any script, so the client must not run
+                // its article cleaning, which drops the marks Hindi and Thai are written with.
+                let client = SystemTextAudioPreparationClient(outputDirectory: scratch, voiceIdentifier: voice, speaksPlainWords: true)
+                guard let prepared = try client.prepareTextAudio(itemId: "written-margin", title: "Written Margin", text: text),
+                      let url = prepared.media.url.flatMap({ URL(string: $0) }) else { throw RenderError.nothingToSay }
+                return url
+            }
         }
     }
 
-    /// Where this reading's file is, or will be. Pure: no disk access.
+    /// Where this reading's file is, or will be. Pure: no disk access. The name starts with the item's key, so everything
+    /// rendered for an item can be found and removed without knowing its words.
     public func fileURL(for reading: WrittenMarginReading) -> URL {
-        let seed = ["written-margin-reading-v1", voiceIdentifier ?? "default", reading.spokenText].joined(separator: "\u{1f}")
-        return directory.appending(path: "\(Self.fingerprint(seed)).caf", directoryHint: .notDirectory)
+        let seed = ["written-margin-reading-v2", voiceIdentifier ?? "default", reading.spokenText].joined(separator: "\u{1f}")
+        return directory.appending(path: "\(Self.itemKey(reading.itemId))-\(Self.fingerprint(seed)).caf", directoryHint: .notDirectory)
     }
 
-    /// A stable 128-bit name from two FNV-1a runs with different starting values, plus the length. Plain arithmetic on
-    /// the words in memory: naming a file never reads the disk, so the main thread can ask for a path.
+    static func itemKey(_ itemId: String) -> String { String(fingerprint("written-margin-item\u{1f}\(itemId)").prefix(16)) }
+
+    /// A stable name from SHA-256 of the words in memory: naming a file never reads the disk, so the main thread can ask
+    /// for a path, and no one can craft a note that shares another note's file.
     static func fingerprint(_ seed: String) -> String {
-        var a: UInt64 = 0xcbf2_9ce4_8422_2325
-        var b: UInt64 = 0x84222325_cbf29ce4
-        var count: UInt64 = 0
-        for byte in seed.utf8 {
-            a = (a ^ UInt64(byte)) &* 0x0000_0100_0000_01b3
-            b = (b ^ UInt64(byte)) &* 0x0000_0100_0000_01b3 &+ count
-            count += 1
-        }
-        return String(format: "%016llx%016llx-%llx", a, b, count)
+        var hasher = SHA256() // the incremental form: this hashes a short string already in memory, never a file's bytes
+        hasher.update(data: Data(seed.utf8))
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
 
     /// Whether this reading's file is known to be on disk. Answered from memory, so it is safe on the main thread; false
@@ -137,12 +146,68 @@ public final class WrittenMarginReader: @unchecked Sendable {
         }
     }
 
-    /// Whether the phone has a voice for the language the note is in. A note whose language can't be told is read.
-    static func canRead(_ text: String, voiceExists: (String) -> Bool) -> Bool {
+    /// The voice to read this note with, or nil when the phone has none for its language: the one answer the render
+    /// uses, so a note is never read in a voice that cannot say it. Short Latin-script notes ("ha!", "yes") are too short
+    /// to tell the language of, and a Latin-script note in a language with no voice is read in the default voice, as a
+    /// reader says a foreign phrase; any other script with no voice has no reading, and fails with the ordinary line.
+    static func voice(forNote text: String, voiceFor: (String) -> String?, defaultVoice: () -> String?) -> String? {
+        let sample = WrittenMarginSpeech.speakable(String(text.prefix(1_000)))
+        let letters = sample.unicodeScalars.filter { $0.properties.isAlphabetic }
+        let isLatin = letters.allSatisfy { $0.value < 0x250 || (0x1E00...0x1EFF).contains($0.value) }
+        if isLatin, letters.count < 20 { return defaultVoice() }
         let recognizer = NLLanguageRecognizer()
-        recognizer.processString(String(text.prefix(1_000)))
-        guard let language = recognizer.dominantLanguage, language != .undetermined else { return true }
-        return voiceExists(language.rawValue)
+        recognizer.processString(sample)
+        guard let language = recognizer.dominantLanguage, language != .undetermined else { return defaultVoice() }
+        if let voice = voiceFor(language.rawValue) { return voice }
+        return isLatin ? defaultVoice() : nil
+    }
+
+    /// `voice(forNote:)` with the voices this iPhone has.
+    static func installedVoice(forNote text: String) -> String? {
+        voice(
+            forNote: text,
+            voiceFor: { code in
+                let wanted = ["zh-Hans": "zh-CN", "zh-Hant": "zh-TW"][code] ?? code
+                if let voice = AVSpeechSynthesisVoice(language: wanted) { return voice.identifier }
+                let base = wanted.split(separator: "-").first.map(String.init) ?? wanted
+                return AVSpeechSynthesisVoice.speechVoices().first { $0.language.hasPrefix(base) }?.identifier
+            },
+            defaultVoice: { AVSpeechSynthesisVoice(language: AVSpeechSynthesisVoice.currentLanguageCode())?.identifier }
+        )
+    }
+
+    /// Removes everything rendered for an item that is deleted for good, and the scratch folders of renders that died. The
+    /// words are the friend's: they must not outlive the item (#3365). Trash is not this: a trashed item keeps its
+    /// readings, so Undo still plays, and a reading that is gone only renders again. A render of the item that is still
+    /// running leaves no file behind. Nothing else is touched: not a Margin, not a recording.
+    public func removeReadings(forItem itemId: String) {
+        let prefix = Self.itemKey(itemId) + "-"
+        func isItsFile(_ path: String) -> Bool { URL(fileURLWithPath: path).lastPathComponent.hasPrefix(prefix) }
+        lock.withLock {
+            ready = ready.filter { !isItsFile($0) }
+            lastChecked = lastChecked.filter { !isItsFile($0.key) }
+            doomed.formUnion(Set(waiting.keys).union(inFlight).filter(isItsFile))
+        }
+        let directory = directory
+        DispatchQueue.global(qos: .utility).async { [self] in
+            let names = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
+            for name in names where name.hasPrefix(prefix) {
+                try? FileManager.default.removeItem(at: directory.appending(path: name, directoryHint: .notDirectory))
+            }
+            sweepScratch()
+        }
+    }
+
+    /// Scratch folders of renders that never finished (a stuck write never reaches its cleanup). One older than the
+    /// longest a render may take is nobody's.
+    private func sweepScratch() {
+        let fileManager = FileManager.default
+        let names = (try? fileManager.contentsOfDirectory(atPath: directory.path)) ?? []
+        for name in names where name.hasPrefix("scratch-") {
+            let url = directory.appending(path: name, directoryHint: .isDirectory)
+            let modified = (try? fileManager.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
+            if let modified, Date().timeIntervalSince(modified) > 600 { try? fileManager.removeItem(at: url) }
+        }
     }
 
     /// Names each reading's file and starts rendering the ones that are not on disk yet, off the calling thread. Returns
@@ -206,7 +271,10 @@ public final class WrittenMarginReader: @unchecked Sendable {
         }
         waiting[target.path] = [completion]
         pending.append(Job(reading: reading, target: target))
+        let sweep = !sweptScratch
+        sweptScratch = true
         lock.unlock()
+        if sweep { DispatchQueue.global(qos: .utility).async { [self] in sweepScratch() } }
         pump()
     }
 
@@ -217,12 +285,14 @@ public final class WrittenMarginReader: @unchecked Sendable {
         guard !laneBusy, !pending.isEmpty else { lock.unlock(); return }
         let job = pending.removeFirst()
         if stuck >= mostStuck {
+            doomed.remove(job.target.path)
             lock.unlock()
             finish(job, .failure(RenderError.tooManyStuck)) // no new thread behind renders the service hasn't given back
             pump()
             return
         }
         laneBusy = true
+        inFlight.insert(job.target.path)
         let myLane = lane
         lock.unlock()
 
@@ -231,7 +301,9 @@ public final class WrittenMarginReader: @unchecked Sendable {
             let result = Result<URL, Error> { try render(job.reading, to: job.target) }
             lock.lock()
             if lane == myLane { laneBusy = false } else { stuck -= 1 } // an abandoned render came back
-            if case .success = result { ready.insert(job.target.path) }
+            inFlight.remove(job.target.path)
+            let removed = doomed.remove(job.target.path) != nil
+            if case .success = result, !removed { ready.insert(job.target.path) }
             lock.unlock()
             finish(job, result)
             pump()
@@ -264,10 +336,14 @@ public final class WrittenMarginReader: @unchecked Sendable {
         let scratch = directory.appending(path: "scratch-\(UUID().uuidString)", directoryHint: .isDirectory)
         try fileManager.createDirectory(at: scratch, withIntermediateDirectories: true)
         defer { try? fileManager.removeItem(at: scratch) }
-        let rendered = try renderAudio(reading.spokenText, scratch)
+        let voice = picksVoice ? (voiceIdentifier ?? Self.installedVoice(forNote: reading.text)) : voiceIdentifier
+        if picksVoice, voice == nil { throw RenderError.noVoice }
+        let rendered = try renderAudio(reading.spokenText, scratch, voice)
         if fileManager.fileExists(atPath: target.path) { return target } // another render of these words got there first
+        // The item was deleted for good while this rendered: its words go no further than the scratch folder.
+        if lock.withLock({ doomed.contains(target.path) }) { throw RenderError.nothingToSay }
         try fileManager.moveItem(at: rendered, to: target)
-        lock.withLock { _ = ready.insert(target.path) }
+        lock.withLock { if !doomed.contains(target.path) { ready.insert(target.path) } }
         return target
     }
 }

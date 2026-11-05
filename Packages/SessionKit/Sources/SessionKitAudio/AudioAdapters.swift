@@ -337,6 +337,7 @@ public final class SystemTextAudioPreparationClient: NSObject, TextAudioPreparat
     private let speechRate: Float
     private let maxSegmentCharacters: Int
     private let allowsSynchronousRendering: Bool
+    private let speaksPlainWords: Bool
     private let fileManager: FileManager
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
@@ -347,8 +348,10 @@ public final class SystemTextAudioPreparationClient: NSObject, TextAudioPreparat
         speechRate: Float = AVSpeechUtteranceDefaultSpeechRate,
         maxSegmentCharacters: Int = 700,
         allowsSynchronousRendering: Bool = true,
+        speaksPlainWords: Bool = false,
         fileManager: FileManager = .default
     ) {
+        self.speaksPlainWords = speaksPlainWords
         self.outputDirectory = outputDirectory
         self.voiceIdentifier = voiceIdentifier?.isEmpty == true ? nil : voiceIdentifier
         self.speechRate = speechRate
@@ -386,9 +389,11 @@ public final class SystemTextAudioPreparationClient: NSObject, TextAudioPreparat
 
     private func prepareTextAudio(itemId: String, title: String, text: String, scope: TextAudioRenderScope) throws -> PreparedTextAudio? {
         #if canImport(AVFoundation)
-        let normalizedText = SpeechTextNormalizer.projectForSystemSpeech(text).text
+        // `speaksPlainWords`: the caller has already cleaned the words (a written Margin, `WrittenMarginSpeech`), in any
+        // script. The article cleaning would drop the combining marks Hindi and Thai are written with.
+        let normalizedText = speaksPlainWords ? text : SpeechTextNormalizer.projectForSystemSpeech(text).text
         guard !normalizedText.isEmpty else { return nil }
-        guard SpeechTextNormalizer.isSystemSpeechSafe(normalizedText) else {
+        guard speaksPlainWords || SpeechTextNormalizer.isSystemSpeechSafe(normalizedText) else {
             throw SessionKitError.persistenceFailed("system_speech_projection_unsafe")
         }
         let allSegments = Self.textSegments(in: normalizedText, maxSegmentCharacters: maxSegmentCharacters)
@@ -516,7 +521,7 @@ public final class SystemTextAudioPreparationClient: NSObject, TextAudioPreparat
         synthesizer: AVSpeechSynthesizer,
         accumulator: AudioFileAccumulator
     ) throws {
-        guard SpeechTextNormalizer.isSystemSpeechSafe(text) else {
+        guard speaksPlainWords || SpeechTextNormalizer.isSystemSpeechSafe(text) else {
             throw SessionKitError.persistenceFailed("system_speech_utterance_unsafe")
         }
         // A render waits on the synthesizer, so it never runs on the main thread. It used to spin a nested

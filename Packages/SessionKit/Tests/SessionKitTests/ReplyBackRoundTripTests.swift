@@ -119,7 +119,7 @@ final class ReplyBackRoundTripTests: XCTestCase {
         XCTAssertEqual(entries.map(\.interjection.packageScopedId), ["b-voice", "b-written"], "both are in the review, in place order")
         XCTAssertEqual(entries.map { $0.replyContext?.caption }, Array(repeating: "Reply to your Margin at 12:34", count: 2))
         XCTAssertEqual(entries.map(\.anchor.isReadAloud), [false, true])
-        XCTAssertEqual(entries[1].writtenReading, WrittenMarginReading(intro: "Ben wrote:", text: "Words from Ben."))
+        XCTAssertEqual(entries[1].writtenReading, WrittenMarginReading(intro: "Ben wrote:", text: "Words from Ben.", itemId: ana.itemId))
         XCTAssertNil(entries[0].writtenReading)
         XCTAssertTrue(SharedMarginReview.offerMessage(for: entries).hasPrefix("2 new Margins from Ben."))
 

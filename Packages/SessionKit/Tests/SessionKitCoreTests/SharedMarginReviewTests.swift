@@ -92,7 +92,7 @@ final class SharedMarginReviewTests: XCTestCase {
         XCTAssertTrue(playable("Lovely harbour"))
         XCTAssertTrue(playable("anything", voice: true), "a recording is always something to play")
         XCTAssertFalse(playable("🎧🔥"))
-        XCTAssertFalse(playable("नमस्ते दुनिया"))
+        XCTAssertTrue(playable("नमस्ते दुनिया"), "Hindi is words: whether the phone has a voice is the render's answer")
     }
 
     func testTheReadingNamesNobodyForTheStandInLabels() {
@@ -118,8 +118,9 @@ final class SharedMarginReviewTests: XCTestCase {
         XCTAssertFalse(isWritten("  🎧  \n 🔥 "))
         XCTAssertTrue(isWritten("🎧 great episode"), "emoji around words are dropped, the words are kept")
         XCTAssertFalse(isWritten("https://example.com/episode"), "a link alone: nothing to say")
-        XCTAssertFalse(isWritten("नमस्ते दुनिया"), "Hindi comes out of the projection as a fragment: not read, not marked heard")
-        XCTAssertFalse(isWritten("สวัสดีครับ"), "Thai likewise")
+        XCTAssertTrue(isWritten("नमस्ते दुनिया"), "Hindi is kept whole: the marks it is written with are not dropped")
+        XCTAssertTrue(isWritten("สวัสดีครับ"), "Thai likewise")
+        XCTAssertTrue(isWritten("Great point.Totally agree"), "no space after a full stop is not a web address")
         XCTAssertTrue(isWritten("Naïve café, très bien"), "composed accents survive")
         XCTAssertTrue(isWritten("Nai\u{308}ve cafe\u{301}"), "decomposed accents are tone marks, not letters")
         XCTAssertTrue(isWritten("こんにちは、世界"), "Japanese")
