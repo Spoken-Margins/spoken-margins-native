@@ -654,7 +654,7 @@ final class Gate1FlowUITests: XCTestCase {
         app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_SOURCE_TEXT"] = String(repeating: "Notice the small details along the way. ", count: 80)
         app.launchArguments += ["-UIPreferredContentSizeCategoryName", UIContentSizeCategory.accessibilityExtraExtraExtraLarge.rawValue]
         app.launch()
-        scrollToElement("queue.start.item-ui-text-regression").tap()
+        startSeededLibraryItem()
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
         pausePlaybackIfNeeded()
         scrollToElement("playback.write.button").tap()
@@ -696,7 +696,7 @@ final class Gate1FlowUITests: XCTestCase {
         app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_SOURCE_TITLE"] = "A walk with room to think"
         app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_SOURCE_TEXT"] = String(repeating: "Notice the small details along the way. ", count: 80)
         app.launch()
-        scrollToElement("queue.start.item-ui-text-regression").tap()
+        startSeededLibraryItem()
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
         pausePlaybackIfNeeded()
         element("playback.write.button").tap()
@@ -770,9 +770,7 @@ final class Gate1FlowUITests: XCTestCase {
         app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_SOURCE_TEXT"] = String(repeating: "A paragraph worth listening to. ", count: 80)
         app.launchArguments += ["-UIPreferredContentSizeCategoryName", UIContentSizeCategory.accessibilityExtraExtraExtraLarge.rawValue]
         app.launch()
-        let start = scrollToElement("queue.start.item-ui-text-regression")
-        XCTAssertTrue(start.isHittable)
-        start.tap()
+        startSeededLibraryItem()
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
         captureScreen(named: "second-edition-native-accessibility-size")
         XCTAssertFalse(element("playback.sleepTimer.button").exists, "Maximum native Dynamic Type did not activate the accessible control layout")
@@ -1332,6 +1330,26 @@ final class Gate1FlowUITests: XCTestCase {
         }
         guard let first = usableFrame(), let second = usableFrame(), first == second else { return false }
         return candidate.isHittable
+    }
+
+    /// Starts the seeded text item from the Library's everyday view (#3424).
+    ///
+    /// The launch arguments in `setUpWithError` pin the Library filters, yet one hosted run found this Library on the
+    /// "Completed" filter with "No matches", so the Start button was hidden behind a filter and a 60 s hunt for it
+    /// failed (frame {inf, inf}). How the filter got there is not proven. A test that is about the editor, the
+    /// keyboard or the playback screen should not depend on it, so the helper resets any active filter first and
+    /// writes the filter it found into the test log, which will show whether it keeps happening.
+    private func startSeededLibraryItem() {
+        let libraryScreen = element("library.screen")
+        XCTAssertTrue(libraryScreen.waitForExistence(timeout: 20), "The Library did not appear after launch")
+        let reset = element("library.filters.reset")
+        if reset.exists {
+            let found = element("library.filter.summary").label
+            XCTContext.runActivity(named: "Library opened on a filter (\(found)); resetting it (#3424)") { _ in
+                reset.tap()
+            }
+        }
+        scrollToElement("queue.start.item-ui-text-regression").tap()
     }
 
     private func scrollToElement(_ identifier: String) -> XCUIElement {
