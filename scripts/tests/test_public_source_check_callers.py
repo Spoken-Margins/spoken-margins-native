@@ -77,7 +77,7 @@ class PublicSourceCheckCallerTests(unittest.TestCase):
     def test_the_unit_test_and_ui_test_launch_never_reaches_the_network(self):
         text = (ROOT / APP / "PublicSourceChecks.swift").read_text()
         self.assertIn("isRunningUnitTests", text)
-        self.assertIn("--ui-testing", text)
+        self.assertIn("UITestingHooks.isActive", text)
 
 
 if __name__ == "__main__":

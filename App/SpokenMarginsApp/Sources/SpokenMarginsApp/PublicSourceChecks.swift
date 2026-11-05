@@ -18,7 +18,10 @@ enum PublicSourceChecks {
     @MainActor static var marker: PublicSourceMarker = makeLive()
 
     @MainActor static func makeLive() -> PublicSourceMarker {
-        let hermetic = Gate1AppModel.isRunningUnitTests || CommandLine.arguments.contains("--ui-testing")
+        var hermetic = Gate1AppModel.isRunningUnitTests
+        #if DEBUG
+        hermetic = hermetic || UITestingHooks.isActive
+        #endif
         let probe: PublicSourceVerifier.Probe = hermetic
             ? { _, _ in throw URLError(.notConnectedToInternet) }
             : PublicSourceTransport.probe
