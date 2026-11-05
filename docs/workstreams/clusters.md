@@ -60,6 +60,13 @@ The director opens the tracking issue before it starts any session, so every bri
 
 The chief of staff checks that `main` is green for the start: the Linux SessionKit check and the fast plan on `main`'s tip pass, and hosted integration's last completed run on `main` passed with nothing red, because that run takes up to 2h20 on a moving tip. The chief of staff raises any later red at once. If `main` is red, no cluster starts work. The chief of staff gets it fixed first (on 2026-10-25, a red Linux check made every sub-PR show red for hours).
 
+**Trial for the next run (owner, 2026-11-05).** Put a cluster that changes only web and Go code in a cloud session. Clusters that need app builds stay local.
+
+- A cloud session can't message the director, so it reports on its status comment, and the chief of staff watches its PRs.
+- Starting it takes the owner's click on a card, so start it while he is at the app.
+- That cluster's full check before the rollup is a dispatched hosted fast run on its branch, not a local plan.
+- Log each cluster's Mac load during the run. The retrospective says whether to keep this, then removes this paragraph.
+
 ## Context budget
 
 Cluster leads and the chief of staff are automatic sessions. The hook blocks at 300k (AGENTS.md, "How to work"), but since 2026-11-05 cluster leads do not stop at 250k: they let auto-compact run and keep their hand-off current (owner, 2026-11-05). The director is owner-started (400k/500k), but it stays well under them by delegating.
