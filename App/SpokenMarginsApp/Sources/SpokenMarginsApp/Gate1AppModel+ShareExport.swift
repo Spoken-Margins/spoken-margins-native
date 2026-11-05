@@ -148,7 +148,8 @@ extension Gate1AppModel {
 
             let mapProposals = SharedMarginExport.mapProposals(
                 source.mapProposals,
-                currentProposalID: source.currentMapProposalId
+                currentProposalID: source.currentMapProposalId,
+                for: item
             )
             let fingerprintSpines = source.fingerprintSpine.map { [$0] } ?? []
             let phraseSketches = source.phraseSketch.map { [$0] } ?? []
