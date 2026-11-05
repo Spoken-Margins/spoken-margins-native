@@ -439,9 +439,11 @@ BOOT_STALLS = 'boot-stalls.json'  # a T3 boot's stalls (boot_t3_device), for log
 FRESH_RERUNS = 'fresh-clone-reruns.json'  # plans rerun on a fresh clone after two startup stalls (#2176)
 OVERLOAD_RERUNS = 'overload-reruns.json'  # plans rerun once after their test run hit its budget on an overloaded runner (#3374)
 # The runner is overloaded when its 1-minute load average is above this many per CPU. On 2026-11-04 a T3 test run
-# hit its budget at load 293.6 (#3374); an ordinary build-and-test hour on the Mac is a few per CPU. Stated here so
-# the report can say which side of the line a run was on. Default taken on #3374 (reversible: change the number).
-OVERLOAD_LOAD_PER_CPU = 8
+# hit its budget at load 293.6 (#3374). The Mac's launches ran at load 100-200 on busy days and 14% above 200
+# (docs/workstreams/test-lane.md, #2176, 2026-10-19), so a line of 8 per CPU (80-96) would be crossed by ordinary
+# runs; 16 per CPU (160-192 on 10-12 CPUs) is crossed only by the heavy end. Stated here so the report can say which
+# side of the line a run was on. Default taken on #3374 (reversible: change the number).
+OVERLOAD_LOAD_PER_CPU = 16
 OVERLOAD_WAIT = 600  # at most this long, in seconds, before the one rerun, for the load to come back under the line
 OVERLOAD_POLL = 30
 
@@ -459,10 +461,12 @@ def runner_overloaded(manifest: dict, cpus: int | None = None) -> dict | None:
     """Whether a verify-tests.py plan stopped on a step's time budget while the runner was overloaded (#3374).
 
     The step's own load reading (taken as it stopped) must be above the line. A step cut short by a simulator crash
-    flood, or by anything but its budget, is not this. Returns the load and the line, or None."""
+    flood, by the runner's whole-run kill (`signalled`: run_bounded's SIGINT at T3_TIMEOUT) or by anything but its
+    own budget is not this. Returns the load and the line, or None."""
     line = overload_line(cpus)
     for step in manifest.get('steps', []):
-        if step.get('interrupted') and not step.get('simulator_crash_report') and step.get('timeout_seconds'):
+        if step.get('interrupted') and not step.get('signalled') and not step.get('simulator_crash_report') \
+                and step.get('timeout_seconds'):
             readings = step.get('load_average_end') or step.get('load_average_start') or []
             if readings and readings[0] is not None and readings[0] > line:
                 return {'step': step.get('name'), 'load_average': readings[0], 'line': line}
@@ -539,12 +543,14 @@ def overload_rerun_note(plan: str, rerun: dict) -> str:
     waited = rerun.get('waited_seconds', 0)
     after = rerun.get('load_after')
     line = (f'{plan}: runner overloaded: the first run of this plan ran out of its time budget while the '
-            f'{overload_text(rerun["load_average"], rerun["line"])}. The lane waited {duration(waited)} '
+            f'{overload_text(rerun["load_average"], rerun["line"])}. A test that hangs in the PR stops at its budget '
+            f'too, so the load is a fact, not a proven cause. The lane waited {duration(waited)} '
             f'(load average then {after if after is not None else "unknown"}) and ran the plan once more on the same '
             f'simulator, without a new request; the rerun\'s result is the plan\'s. First run: {rerun["first"]}/; '
             f'rerun: {rerun["output"]}/.')
     if rerun.get('overloaded_again'):
-        line += ' The rerun ran out of its budget too, so this stays INCONCLUSIVE: the machine was too loaded.'
+        line += (' The rerun ran out of its budget too, so this stays INCONCLUSIVE. Check the log for the test that '
+                 'was running when each run stopped: the same one both times points at the PR, not the machine.')
     return line
 
 
@@ -2799,8 +2805,8 @@ def run_plans(grouped: dict[str, list[str]], run_plan, evidence: Path,
         if summary['overloaded']:
             found = summary['overloaded']
             details.append(f'{plan}: runner overloaded: the `{found["step"]}` step stopped at its time budget while the '
-                           f'{overload_text(found["load_average"], found["line"])}. The machine was too loaded for the '
-                           'tests to finish; this is not a failure of this PR.')
+                           f'{overload_text(found["load_average"], found["line"])}. A test that hangs in the PR stops at its '
+                           'budget too, so the load is a fact, not a proven cause: check which test was running.')
         for error in summary['xcresult_unreadable']:
             details.append(f'{plan}: the xcresult could not be read ({error}); the pass count comes from the test log, '
                            f'where all {summary["passed"]} expected test(s) finished and passed (#3374). '
@@ -3006,7 +3012,11 @@ def _t3_on_claimed_device(grouped, request_id, evidence, runtime):
         nonlocal udid
         manifest = run_plan(plan, selectors, output)
         found = runner_overloaded(manifest)
-        if found and not overload_reruns and not lane_sim.unsafe_devices().get(udid):
+        # Not after the runner's whole-run kill ('timed out': a rerun would run past the job's limit and lose the
+        # report), and not after a startup stall (the owner's 2026-10-11 stall rule counts stalls across the job).
+        if found and not overload_reruns and manifest.get('status') != 'timed out' \
+                and not any(step.get('startup_stalls') for step in manifest.get('steps', [])) \
+                and not lane_sim.unsafe_devices().get(udid):
             shown = summarize_manifest(manifest)
             if not shown['failed'] and not shown['flood'] and not shown['build_failed']:
                 # #3374: the test run hit its budget on an overloaded runner. The tests did not fail, the machine

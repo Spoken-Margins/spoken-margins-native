@@ -3800,7 +3800,7 @@ class FreshCloneRerunTests(unittest.TestCase):
         ((verdict, _, _, details, _, _), _, devices, _, _), _ = self.overload_run(
             [overloaded_manifest(), overloaded_manifest(250.0, 40)])
         self.assertEqual((verdict, devices), ('INCONCLUSIVE', ['U1', 'U1']))
-        self.assertTrue(any('stays INCONCLUSIVE: the machine was too loaded' in line for line in details))
+        self.assertTrue(any('so this stays INCONCLUSIVE. Check the log for the test' in line for line in details))
         self.assertTrue(any(line.startswith('app: runner overloaded: the `xcode-tests` step stopped at its time budget '
                                             'while the load average 250') for line in details))
 
@@ -3814,6 +3814,32 @@ class FreshCloneRerunTests(unittest.TestCase):
         ((verdict, _, _, details, _, _), _, devices, _, _), waits = self.overload_run([overloaded_manifest(load=60.0)])
         self.assertEqual((verdict, devices, waits), ('INCONCLUSIVE', ['U1'], []))
         self.assertFalse(any('runner overloaded' in line for line in details))
+
+    def test_the_report_does_not_blame_the_machine_for_a_hang_it_cannot_tell_apart(self):
+        # The audit of #3387: a test that deadlocks stops at its budget at the same load.
+        (_, _, _, details, _, _), *_ = self.overload_run([overloaded_manifest(), overloaded_manifest()])[0]
+        text = ' '.join(details)
+        self.assertIn('a fact, not a proven cause', text)
+        self.assertNotIn('too loaded', text)
+        self.assertNotIn('not a failure of this PR', text)
+
+    def test_a_run_the_runner_killed_at_its_whole_run_limit_is_not_rerun(self):
+        # The audit of #3387: a second hour would run past lane.yml's job limit and the report would be lost.
+        manifest = overloaded_manifest()
+        manifest['steps'][0]['signalled'] = True
+        self.assertIsNone(lane.runner_overloaded(manifest, cpus=10))
+        ((verdict, *_), _, devices, _, _), waits = self.overload_run([manifest])
+        self.assertEqual((verdict, devices, waits), ('INCONCLUSIVE', ['U1'], []))
+        timed_out = {'status': 'timed out', 'error': 'budget ran out; interrupted', 'steps': overloaded_manifest()['steps']}
+        ((verdict, *_), _, devices, _, _), waits = self.overload_run([timed_out])
+        self.assertEqual((verdict, devices, waits), ('INCONCLUSIVE', ['U1'], []))
+
+    def test_a_plan_with_a_startup_stall_is_not_overload_rerun(self):
+        # The audit of #3387: one stall in each run would add up to the two the owner's 2026-10-11 call stops at.
+        manifest = overloaded_manifest()
+        manifest['steps'][0]['startup_stalls'] = [{'attempt': 1}]
+        ((verdict, *_), _, devices, _, _), waits = self.overload_run([manifest])
+        self.assertEqual((verdict, devices, waits), ('INCONCLUSIVE', ['U1'], []))
 
     def test_a_failing_test_on_an_overloaded_runner_is_the_prs_fail_and_is_not_rerun(self):
         manifest = overloaded_manifest()
