@@ -201,26 +201,36 @@ final class ScreenTourTests: XCTestCase {
         capture("24-item-bottom", "The episode's item screen, scrolled to the bottom")
         for _ in 0..<3 { app.swipeDown() }
 
-        // Continue offers Sam's Margin first; hear it in place.
-        scrollTo("item.start.button").tap()
-        let hear = offerButton("newMarginsOffer.review", orLabel: "Hear new Margins first")
-        XCTAssertTrue(hear.waitForExistence(timeout: 5), "Continue did not offer Sam's Margin")
-        capture("25-new-margins-dialog", "Continue: the offer to hear new Margins first")
-        hear.tap()
+        // The item offers two choices (#3219): the big Play starts the episode without asking, and "Hear only …"
+        // reviews Sam's Margin in place. Hear it on its own first.
+        let hearOnly = scrollTo("item.reviewNewMargins.button")
+        capture("25-item-two-choices", "The item's two choices: Play, and Hear only Sam's new Margin")
+        hearOnly.tap()
+        if !element("playback.screen").waitForExistence(timeout: 8) { tapButton("miniPlayer.open.button") }
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8), "Now Playing did not open")
         captureWhenPresent(element("review.comingUp"), timeout: 8, "26-now-review-lead-in",
-                           "Now tab during the review's lead-in before Sam's Margin")
-        captureWhenPresent(element("review.playing"), timeout: 25, "27-now-review-sam", "Now tab while Sam's Margin plays")
+                           "Now tab during the review's lead-in, the pinned card above the title (#3220)")
+        captureWhenPresent(element("review.playing"), timeout: 25, "27-now-review-sam",
+                           "Now tab while Sam's Margin plays in the review, the pinned card above the title (#3220)")
         _ = waitForDisappearance(element("review.progress"), timeout: 25)
 
-        // Normal playback through 5:00, where Sam's Margin sits.
+        // Normal playback just before 5:00, where Sam's Margin sits: the same pinned card, with Next Margin (#3220). The
+        // review marked his Margin heard, so the card says it is up next rather than playing it by itself.
         pausePlaybackIfPlaying()
         scrub(to: 0.19)
         if playPause.label == "Play" { playPause.tap() }
-        let sharedCard = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "playback.now.margin.")).firstMatch
-        captureWhenPresent(sharedCard, timeout: 30, "28-now-sam-arrives",
-                           "Now tab in normal playback as Sam's Margin arrives (the pinned card)")
+        let pinnedCard = element("marginCard")
+        captureWhenPresent(pinnedCard, timeout: 30, "28-now-sam-up-next",
+                           "Now tab in normal playback before Sam's Margin: the pinned card above the title (#3220)")
+        // Next Margin's two presses (#460): the first goes to the lead-in, the second straight to the Margin.
+        let nextMargin = button("marginCard.next")
+        XCTAssertTrue(nextMargin.waitForExistence(timeout: 5), "The pinned card has no Next Margin in normal playback")
+        nextMargin.tap()
+        _ = XCTWaiter().wait(for: [XCTestExpectation(description: "lead-in")], timeout: 2)
+        capture("29-now-next-margin-lead-in", "Now tab after one press of Next Margin: the lead-in to Sam's Margin")
+        if nextMargin.exists { nextMargin.tap() }
+        _ = XCTWaiter().wait(for: [XCTestExpectation(description: "margin")], timeout: 2)
+        capture("29-now-next-margin-again", "Now tab after a second press of Next Margin: Sam's Margin itself")
         pausePlaybackIfPlaying()
 
         // Sam's reply to the listener's Margin comes back.
@@ -228,6 +238,8 @@ final class ScreenTourTests: XCTestCase {
         XCTAssertTrue(element("item.screen").waitForExistence(timeout: 20), "Sam's reply did not open its episode")
         XCTAssertFalse(element("build23.recipient.experience").exists, "Sam's reply opened the Import sheet")
         capture("30-reply-arrival", "Sam's reply: the episode's screen as it opens (\"1 new Margin from Sam\")")
+        // The packet opened the item on its own, with no tab bar under it: back to the tabs first.
+        tapButton("item.home.button")
         tapRoot("Margins")
         XCTAssertTrue(element("margins.screen").waitForExistence(timeout: 5), "Margins did not appear")
         capture("32-margins-with-reply", "Margins tab after Sam's reply")
@@ -241,24 +253,27 @@ final class ScreenTourTests: XCTestCase {
     /// Launch values the sharing loop keeps across its relaunches.
     private var loopEnvironment: [String: String] = [:]
 
-    private func relaunchKeepingLibrary(_ extra: [String: String] = [:]) {
+    private func relaunchKeepingLibrary(_ extra: [String: String] = [:], opensOnLibrary: Bool = true) {
         app.terminate()
         app.launchEnvironment = [:]
         for (key, value) in loopEnvironment.merging(extra, uniquingKeysWith: { $1 }) { app.launchEnvironment[key] = value }
         app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_KEEP_LIBRARY"] = "1"
         launch()
+        guard opensOnLibrary else { return }
         XCTAssertTrue(element("library.screen").waitForExistence(timeout: 10), "Library did not reopen")
     }
 
     /// Relaunches with a fixture packet that the app opens through the same entry point as a listener's tap. The bytes
-    /// travel in the launch because the app can't read this test bundle.
+    /// travel in the launch because the app can't read this test bundle. A packet opens straight onto its episode
+    /// (#3291), so the Library never shows; the caller waits for the item screen. The desk's tour of
+    /// 26f30d4 and hosted run 41974955912 stopped here waiting for the Library.
     private func relaunchOpening(_ fixture: String, markingListenerMarginShared: Bool = false) throws {
         let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: fixture, withExtension: "spokenmargins"),
                                 "\(fixture).spokenmargins is not in the test bundle")
         var extra = ["SPOKEN_MARGINS_UI_TEST_OPEN_PACKET": try Data(contentsOf: url).base64EncodedString(),
                      "SPOKEN_MARGINS_UI_TEST_OPEN_PACKET_NAME": fixture]
         if markingListenerMarginShared { extra["SPOKEN_MARGINS_UI_TEST_LISTENER_SHARED"] = "1" }
-        relaunchKeepingLibrary(extra)
+        relaunchKeepingLibrary(extra, opensOnLibrary: false)
     }
 
     private func openItem(_ itemId: String) {
@@ -286,11 +301,6 @@ final class ScreenTourTests: XCTestCase {
         let control = app.buttons[identifier].firstMatch
         XCTAssertTrue(control.waitForExistence(timeout: 5), "Missing control: \(identifier)")
         control.tap()
-    }
-
-    private func offerButton(_ identifier: String, orLabel label: String) -> XCUIElement {
-        let byIdentifier = app.buttons[identifier].firstMatch
-        return byIdentifier.waitForExistence(timeout: 5) ? byIdentifier : app.buttons[label].firstMatch
     }
 
     /// Taps the position slider at a fraction of its width, as a listener would.
