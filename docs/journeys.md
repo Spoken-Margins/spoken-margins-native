@@ -183,6 +183,22 @@ The whole loop (#3222, part of #3216), with an eye on the human side: how many t
 
 The script `J12SharingLoopJourneyUITests` runs step 2, step 3 up to the package details (not the system share sheet; it counts the taps and fails above two), and, with the friend's packet as a fixture (`SPOKEN_MARGINS_UI_TEST_COOP`, as J9), steps 4 and 5's offer, the in-place play and the Margins tab. It attaches the taps and seconds per step and the packet size. The fixture imports the friend's Margin at launch, so the script cannot catch #3263 (Margins missing until a restart); step 4 of the agent run does. Adding the episode by search needs the network, the system share sheet and the second install are outside what a script can drive, and replying then importing back needs both, so step 1's search, step 3's share sheet, and steps 6 and 7 stay with the agent run. A script pass never stands in for them, and audible content stays with the owner.
 
+## J13 — Following lists friends and shows together, newest first
+
+Following puts every friend who sent Margins and every followed show in one list, ordered by what changed most recently (#3343, part of #3216). A friend sorts by the later of their newest Margin's recorded time and when the listener received the packet; a show sorts by its newest episode. Quiet shows stay in their own section below.
+
+1. Use a Library with at least five friends and three shows. Some friends should be newer than some shows and older than others. Include one show with no episodes and one friend whose packet was recorded long ago but opened today.
+2. Open Following. Record the rows top to bottom with each row's name and its second line ("3 Margins on 1 episode" for a friend, the new-episode count for a show).
+   - Pass: friends and shows are mixed, newest first. The friend whose old packet was opened today sits with today's rows, not a month down. The show with no episodes is last among the shows. The Quiet section is below the list.
+3. Tap a friend who sent Margins on one item.
+   - Pass: that item opens directly.
+4. Go back and tap a friend who sent Margins on several items.
+   - Pass: an items screen opens, newest first. Each item shows its title, the Library's kind and source line, progress or played state, and "N Margins" with how many are new, in words. Tapping an item opens it.
+5. With an empty Library, open Following.
+   - Pass: "You're not following anything yet" shows. With the offline profile, "Showing the last local snapshot" shows above the list.
+
+Check the row text against #3291 ("Cole", "3 Margins on 1 episode") and that VoiceOver reads each friend row as "<name>, <summary>". No step may rely on red or green alone. The ordering rules have host tests (`FollowingFeedTests`); this journey covers what they cannot: the built list, the quiet section and the items screen.
+
 ## Writing scripted journeys
 
 The Test Desk keeps this guide. Threads writing a first pass follow it, and the desk corrects it when a script teaches it something.
