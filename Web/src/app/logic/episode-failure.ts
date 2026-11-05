@@ -16,8 +16,6 @@ export type FailureEvent =
 
 export interface FailureStep {
   failed: boolean;
-  /** True exactly when this event is the one that turned a working episode into a failed one: show the problem now. */
-  announce: boolean;
 }
 
 /**
@@ -28,26 +26,32 @@ export function playRejectionMeansFailed(name: string | undefined): boolean {
   return name !== 'NotAllowedError' && name !== 'AbortError';
 }
 
-/** The state after `event`, and whether to tell the listener. A failure already known is never announced again. */
+/** The state after `event`. A failure already known stays one failure, whichever event says it again. */
 export function nextFailure(failed: boolean, event: FailureEvent): FailureStep {
   switch (event.kind) {
     case 'media-error':
-      return { failed: true, announce: !failed };
+      return { failed: true };
     case 'play-rejected':
-      return playRejectionMeansFailed(event.name) ? { failed: true, announce: !failed } : { failed, announce: false };
+      return { failed: failed || playRejectionMeansFailed(event.name) };
     case 'source-changed':
     case 'retry':
     case 'playing':
-      return { failed: false, announce: false };
+      return { failed: false };
   }
 }
 
 /** The one problem shown for a failed episode, for any item in the player. */
 export const EPISODE_FAILED = 'This episode’s audio couldn’t be loaded.';
 
-/** Whether a failure needs its own toast: not when the cue card is on screen saying it in one sentence. */
-export function failureNeedsToast(cardsShowing: number): boolean {
-  return cardsShowing <= 0;
+/**
+ * Whether the standing problem notice is on screen. A pure function of what is true now, never of what happened when:
+ * the failure may land before the cue card has mounted (the arrival page stores the Margins first), and the listener
+ * may close Now Playing to the mini player or open it later. The card says the sentence by rendering it; the notice
+ * says it only while no card is on screen, and only until the listener closes it. So a failure is never silent and
+ * never two sentences.
+ */
+export function failureNoticeShown(state: { failed: boolean; cardsShowing: number; closed: boolean }): boolean {
+  return state.failed && state.cardsShowing <= 0 && !state.closed;
 }
 
 /**

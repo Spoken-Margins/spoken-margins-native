@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { formatClock } from '../../shared/clock.ts';
 import type { Episode, Margin, Show } from '../../shared/model.ts';
 import { capacitorBridge } from '../../sources/native-http.ts';
@@ -109,9 +109,11 @@ function MarginCue({ margins }: { margins: readonly Margin[] }) {
   const sender = friendMargins(margins)[0]?.author;
   const cue = cueFor(margins, player.time, sender, { failed: player.failed, heardWithoutEpisode: player.withoutEpisode === 'done' });
   // While this card says the episode can't play, the player shows no toast of its own for it (#3356).
-  const sayingFailure = !player.arrived && (cue?.kind === 'unplayable' || cue?.kind === 'unplayable-done');
+  // A Margin card on top of it hides the sentence, unless the Margins are playing without the episode (it was said first).
+  const sayingFailure = (cue?.kind === 'unplayable' || cue?.kind === 'unplayable-done') && (!player.arrived || player.withoutEpisode !== 'idle');
   const { registerFailureCard } = player;
-  useEffect(() => (sayingFailure ? registerFailureCard() : undefined), [sayingFailure, registerFailureCard]);
+  // A layout effect: the card and the player's notice are settled before the screen paints, so never both.
+  useLayoutEffect(() => (sayingFailure ? registerFailureCard() : undefined), [sayingFailure, registerFailureCard]);
   if (player.arrived || !cue) return null;
   if (cue.kind === 'unplayable' || cue.kind === 'unplayable-done') {
     // The episode can't play here (#3356): one sentence, and for the first, one button. No countdown, no Skip.

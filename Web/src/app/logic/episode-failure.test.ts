@@ -2,16 +2,16 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Margin } from '../../shared/model.ts';
 import { ARRIVAL_WORDS, cueFor } from './arrival.ts';
-import { clipRejection, failureNeedsToast, nextFailure, playRejectionMeansFailed, type FailureEvent } from './episode-failure.ts';
+import { clipRejection, failureNoticeShown, nextFailure, playRejectionMeansFailed, type FailureEvent } from './episode-failure.ts';
 
-/** Runs events through the state and returns how many problems were announced and where it ended. */
+/** Runs events through the state and returns how many separate failures began and where it ended. */
 function run(events: FailureEvent[], start = false): { announced: number; failed: boolean } {
   let failed = start;
   let announced = 0;
   for (const event of events) {
     const step = nextFailure(failed, event);
+    if (step.failed && !failed) announced++;
     failed = step.failed;
-    if (step.announce) announced++;
   }
   return { announced, failed };
 }
@@ -115,9 +115,35 @@ test('an unnamed sender reads as “your friend” in the sentence and the butto
   assert.equal(cue?.kind === 'unplayable' && cue.button, 'Hear your friend’s Margins');
 });
 
-test('the failure gets a toast only when no card is on screen to say it', () => {
-  assert.equal(failureNeedsToast(0), true);
-  assert.equal(failureNeedsToast(1), false);
+// The notice is a function of the state now. Each row is one moment; a row sequence is the listener's path through it.
+const shown = (failed: boolean, cardsShowing: number, closed = false) => failureNoticeShown({ failed, cardsShowing, closed });
+
+test('the failure lands before the cue card has mounted, then the card appears: one sentence at a time', () => {
+  // The arrival page stores the Margins before Now Playing opens, so the 404 can come first.
+  assert.equal(shown(true, 0), true, 'no card yet: the notice says it, so the failure is not silent');
+  assert.equal(shown(true, 1), false, 'the card has mounted: the card says it, the notice is gone');
+});
+
+test('closing Now Playing to the mini player brings the notice back, and opening it again takes it down', () => {
+  assert.equal(shown(true, 1), false);
+  assert.equal(shown(true, 0), true);
+  assert.equal(shown(true, 1), false);
+});
+
+test('the card is registered before the failure, and the failure lands: never both', () => {
+  assert.equal(shown(false, 1), false);
+  assert.equal(shown(true, 1), false);
+});
+
+test('a notice the listener closed stays closed until the next failure, and never shows without a failure', () => {
+  assert.equal(shown(true, 0, true), false);
+  assert.equal(shown(false, 0), false);
+  assert.equal(shown(false, 0, true), false);
+});
+
+test('an item with no friend Margins never has a card, so the notice is the sentence', () => {
+  assert.equal(cueFor([], 0, undefined, failedState), undefined);
+  assert.equal(shown(true, 0), true);
 });
 
 test('a clip the browser refuses without a tap waits for one; other rejections skip it', () => {
