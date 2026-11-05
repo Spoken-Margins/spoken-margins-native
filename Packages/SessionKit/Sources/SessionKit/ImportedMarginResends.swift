@@ -132,6 +132,16 @@ public enum ImportedMarginResends {
         guard let heldLayerId = plan.firstHeldLayerId else {
             return try repository.importCommentaryLayer(layer, interjections: interjections)
         }
+        // A sender whose earlier packet carried no id (an older build) now has one. Give it to the layers holding
+        // the Margins this packet repeats, so hiding that sender hides those too, and still works when the packet
+        // brings nothing new (#2846).
+        if let senderId = SenderID.valid(layer.senderId) {
+            let matchedLayerIds = Set(held.filter { plan.identitiesByHeldMargin[$0.margin.id] != nil }.map(\.layerId))
+            for var heldLayer in layers where heldLayer.senderId == nil && matchedLayerIds.contains(heldLayer.id) {
+                heldLayer.senderId = senderId
+                try repository.saveImportedCommentaryLayer(heldLayer)
+            }
+        }
         // Record the identities first. If the import below then fails, the held Margins merely know a
         // packet name they would have been given anyway; the other order could leave a reply orphaned.
         for entry in held {

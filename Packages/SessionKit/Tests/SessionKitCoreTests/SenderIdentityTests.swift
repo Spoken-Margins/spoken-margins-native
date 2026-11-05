@@ -90,4 +90,22 @@ final class SenderIdentityTests: XCTestCase {
         var seeded = SystemRandomNumberGenerator()
         XCTAssertTrue(SenderID.isValid(SenderID.generate(using: &seeded)))
     }
+
+    func testASavedFileGoesThroughTheSameChecksAsANewValue() throws {
+        let ledgerJSON = #"{"idsByGroup":{"a":"0123456789abcdef0123456789abcdef","b":"0123456789abcdef0123456789abcdef","c":"bad"}}"#
+        let ledger = try JSONDecoder().decode(SenderIDLedger.self, from: Data(ledgerJSON.utf8))
+        XCTAssertEqual(ledger.idsByGroup, ["a": senderA], "a repeated id and a bad one are dropped, so no two groups share an id")
+        let hiddenJSON = #"{"entries":[{"senderId":"0123456789abcdef0123456789abcdef","hiddenAt":"2026-11-05T00:00:00Z"},{"senderId":"0123456789abcdef0123456789abcdef","hiddenAt":"2026-11-05T00:00:00Z"},{"senderId":"x","hiddenAt":"2026-11-05T00:00:00Z"}]}"#
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        XCTAssertEqual(try decoder.decode(HiddenSenders.self, from: Data(hiddenJSON.utf8)).entries.map(\.senderId), [senderA])
+    }
+
+    func testAMakerThatKeepsReturningTheSameIdStillGetsAFreshOne() {
+        var ledger = SenderIDLedger()
+        let first = ledger.senderID(forGroup: "one", makeID: { "0123456789abcdef0123456789abcdef" })
+        let second = ledger.senderID(forGroup: "two", makeID: { "0123456789abcdef0123456789abcdef" })
+        XCTAssertNotEqual(first, second)
+        XCTAssertTrue(SenderID.isValid(first) && SenderID.isValid(second))
+    }
 }

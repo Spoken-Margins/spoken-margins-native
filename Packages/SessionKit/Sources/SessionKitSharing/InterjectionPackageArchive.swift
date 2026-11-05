@@ -678,6 +678,9 @@ public enum SpokenMarginsPackageArchive {
 
         let assetsByID = Dictionary(uniqueKeysWithValues: manifest.assets.map { ($0.id, $0) })
         let layer = commentaryLayers[0]
+        guard senderIdentities.count <= 1 else {
+            throw SpokenMarginsPackageArchiveError.invalidManifest("more than one sender identity artifact")
+        }
         if ListeningMapPacket.isMapPacket(manifest) {
             try validateMapOnlyPacket(
                 manifest, layer: layer, proposals: proposals, fingerprintSpines: fingerprintSpines,
@@ -703,10 +706,7 @@ public enum SpokenMarginsPackageArchive {
             throw SpokenMarginsPackageArchiveError.invalidManifest("more than one conversation artifact")
         }
         for conversation in conversations { try validate(conversation, packageScopedIds: Set(scopedIDs)) }
-        // A sender id that isn't one is left out by the importer rather than refusing the Margins; two are refused.
-        guard senderIdentities.count <= 1 else {
-            throw SpokenMarginsPackageArchiveError.invalidManifest("more than one sender identity artifact")
-        }
+        // A sender id that isn't one is left out by the importer rather than refusing the Margins.
     }
 
     /// A map-only packet (#1471): one map for an article, PDF or EPUB, the empty layer older builds count before they

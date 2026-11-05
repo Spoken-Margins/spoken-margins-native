@@ -58,7 +58,20 @@ public struct SenderIDLedger: Codable, Equatable, Sendable {
     public private(set) var idsByGroup: [String: String]
 
     public init(idsByGroup: [String: String] = [:]) {
-        self.idsByGroup = idsByGroup.filter { SenderID.isValid($0.value) }
+        // Two groups with one id would link them, so a repeat keeps only one group (the first by name).
+        var seen = Set<String>()
+        var kept: [String: String] = [:]
+        for (group, id) in idsByGroup.sorted(by: { $0.key < $1.key }) where SenderID.isValid(id) && seen.insert(id).inserted {
+            kept[group] = id
+        }
+        self.idsByGroup = kept
+    }
+
+    // A saved file goes through the same checks as a new value.
+    private enum CodingKeys: String, CodingKey { case idsByGroup }
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(idsByGroup: try values.decode([String: String].self, forKey: .idsByGroup))
     }
 
     /// The group's id, made now when the group has none. `groupKey` is whatever the app uses to name a group on this
@@ -66,11 +79,10 @@ public struct SenderIDLedger: Codable, Equatable, Sendable {
     public mutating func senderID(forGroup groupKey: String, makeID: () -> String = { SenderID.generate() }) -> String {
         if let existing = idsByGroup[groupKey] { return existing }
         var candidate = makeID()
-        // A bad or repeated id from the maker would let two groups be linked, so ask again.
-        var attempts = 0
-        while (!SenderID.isValid(candidate) || idsByGroup.values.contains(candidate)) && attempts < 8 {
+        // A bad or repeated id from the maker would let two groups be linked or write an id readers refuse, so it
+        // is replaced by a random one (16 random bytes, so a repeat is not a practical worry).
+        while !SenderID.isValid(candidate) || idsByGroup.values.contains(candidate) {
             candidate = SenderID.generate()
-            attempts += 1
         }
         idsByGroup[groupKey] = candidate
         return candidate
@@ -99,6 +111,13 @@ public struct HiddenSenders: Codable, Equatable, Sendable {
     public init(entries: [Entry] = []) {
         var seen = Set<String>()
         self.entries = entries.filter { SenderID.isValid($0.senderId) && seen.insert($0.senderId).inserted }
+    }
+
+    // A saved file goes through the same checks as a new value.
+    private enum CodingKeys: String, CodingKey { case entries }
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(entries: try values.decode([Entry].self, forKey: .entries))
     }
 
     /// Newest first, the order Settings lists them in.

@@ -25,7 +25,9 @@ final class SenderIdentityPacketTests: XCTestCase {
 
     private func prepare(_ name: String, senderID: String?) throws -> PreparedSpokenMarginsPackage {
         let revision = InterjectionShareRevision(
-            id: "revision-1", interjectionId: "private-note", itemId: "private-item", sessionId: "private-session",
+            id: "revision-1", interjectionId: "private-note", itemId: "private-item",
+            // A real session id gives each Margin a share token, which is how a re-share is recognised.
+            sessionId: "session-11111111-1111-1111-1111-111111111111",
             createdAt: created, approvedTranscript: "A sender-reviewed thought.",
             anchorBefore: "Before this passage.", anchorAfter: "After this passage.", status: .senderApproved
         )
@@ -105,6 +107,38 @@ final class SenderIdentityPacketTests: XCTestCase {
         data[extra.path] = Data(#"{"id":"sender-identity-2","schemaVersion":"spoken-margins.sender-identity.v1","senderId":"\#(senderB)"}"#.utf8)
         prepared = PreparedSpokenMarginsPackage(manifest: manifest, artifactData: data, assetFiles: prepared.assetFiles)
         XCTAssertThrowsError(try SpokenMarginsPackageArchive.write(prepared, to: root.appendingPathComponent("two.spokenmargins")))
+    }
+
+    /// A friend on an older build shared without an id; after they upgrade, their re-share names one (#2846).
+    func testASenderWhoStartsSendingAnIdCanBeHiddenForMarginsTheyShareAgain() throws {
+        let repository = InMemorySessionRepository()
+        let (older, _) = try read("older", senderID: nil)
+        let (newer, _) = try read("newer", senderID: senderA) // the same Margin again, in a new packet
+        let oldLayer = try importLayer(older, into: repository, itemId: "item-1")
+        XCTAssertNil(oldLayer.senderId)
+
+        let disposition = try SpokenMarginsPackageImporter.importPackage(
+            newer, itemId: "item-1", importedAt: created, repository: repository,
+            makeLocalID: { kind, packageID in "item-1-second-\(kind)-\(packageID)" }
+        )
+        guard case .duplicate = disposition else { return XCTFail("the repeated Margin is held once, got \(disposition)") }
+        let layers = try repository.loadImportedCommentaryLayers(itemId: "item-1")
+        XCTAssertEqual(layers.map(\.senderId), [senderA], "the older layer learned who it is from, so hiding reaches its Margin")
+        var hidden = HiddenSenders()
+        hidden.hide(senderA)
+        XCTAssertTrue(hidden.visible(layers).isEmpty)
+    }
+
+    func testAResendNeverChangesAnIdAlreadyKept() throws {
+        let repository = InMemorySessionRepository()
+        let (first, _) = try read("kept-a", senderID: senderA)
+        let (second, _) = try read("kept-b", senderID: senderB)
+        _ = try importLayer(first, into: repository, itemId: "item-1")
+        _ = try SpokenMarginsPackageImporter.importPackage(
+            second, itemId: "item-1", importedAt: created, repository: repository,
+            makeLocalID: { kind, packageID in "item-1-second-\(kind)-\(packageID)" }
+        )
+        XCTAssertEqual(try repository.loadImportedCommentaryLayers(itemId: "item-1").map(\.senderId), [senderA])
     }
 
     // MARK: hiding
