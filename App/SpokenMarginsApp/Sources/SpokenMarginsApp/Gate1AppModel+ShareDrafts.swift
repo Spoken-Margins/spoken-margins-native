@@ -32,12 +32,13 @@ extension Gate1AppModel {
         } catch { reportFailure(error, context: "Prepare session sharing failed") }
     }
 
-    func openMarginItemExport(itemID: String) {
+    func openMarginItemExport(itemID: String, entry: ShareSheetEntry = .chooseMargins) {
         guard !rejectNavigationOrSessionMutationWhileRecording("open_export") else { return }
         do {
             selectedItem = try loadItemDetail(id: itemID, store: requireStore())
             guard let sessionId = try ItemShareSessionSelection.sessionId(newestFirst: selectedItem.sessionRows.map(\.id), margins: { try requireStore().loadInterjections(sessionId: $0) }) else { return reportFailure("Record at least one Margin on this item before sharing.") }
             exportSessionId = sessionId; prepareExportShareInterjections() // #147: straight to the Share Margins sheet, not the Share/Export screen.
+            if isSharingInterjectionsPresented { sharingState.entry = entry }
         } catch { reportFailure(error, context: "Open item export failed") }
     }
 

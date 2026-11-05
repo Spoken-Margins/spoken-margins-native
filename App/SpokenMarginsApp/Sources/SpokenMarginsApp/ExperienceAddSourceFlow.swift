@@ -18,6 +18,7 @@ struct ExperienceAddSourceFlow: View {
     @State private var fileImportError: String?
     /// Live session (#1989, #2481, prototype).
     @State private var showsLiveSession = false
+    @State private var showsSpokenNote = false
     @FocusState private var focusedField: Field?
 
     private enum Field { case link, title, text }
@@ -166,7 +167,7 @@ struct ExperienceAddSourceFlow: View {
                 .foregroundStyle(AppColors.text)
             // One column at accessibility sizes: two columns broke headline titles mid-word (#1934).
             LazyVGrid(columns: dynamicTypeSize.isAccessibilitySize ? [GridItem(.flexible())] : [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-                ForEach(AddSourcePresentation.tiles(canSearchPodcasts: onSearchPodcasts != nil)) { tile in
+                ForEach(AddSourcePresentation.tiles(canSearchPodcasts: onSearchPodcasts != nil).filter { $0 != .spokenNote }) { tile in
                     Button { choose(tile) } label: {
                         VStack(alignment: .leading, spacing: 8) {
                             Image(systemName: tile.systemImage)
@@ -193,6 +194,34 @@ struct ExperienceAddSourceFlow: View {
                     .accessibilityIdentifier("addSource.route.\(tile.rawValue)")
                 }
             }
+            // Spoken Note sits in a slim row of its own under the grid, so the six tiles above keep their rows and
+            // every way in still fits on screen (#3217, #3108).
+            Button { choose(.spokenNote) } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: AddSourceTile.spokenNote.systemImage)
+                        .font(.title3)
+                        .foregroundStyle(AppColors.evergreen)
+                        .frame(width: 40, height: 40)
+                        .background(AppColors.softGreen, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(AddSourceTile.spokenNote.title)
+                            .font(.headline)
+                            .foregroundStyle(AppColors.text)
+                        Text(AddSourceTile.spokenNote.detail)
+                            .font(.caption)
+                            .foregroundStyle(AppColors.secondaryText)
+                    }
+                    .multilineTextAlignment(.leading)
+                    Spacer(minLength: 0)
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(AppColors.panel, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .overlay { RoundedRectangle(cornerRadius: 18).stroke(AppColors.border) }
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("addSource.route.\(AddSourceTile.spokenNote.rawValue)")
             if let fileImportError {
                 FailureMessageLabel(fileImportError)
                     .accessibilityIdentifier("document.import.error")
@@ -200,6 +229,9 @@ struct ExperienceAddSourceFlow: View {
         }
         .fullScreenCover(isPresented: $showsLiveSession, onDismiss: { dismiss() }) {
             LiveSessionView().environmentObject(model)
+        }
+        .fullScreenCover(isPresented: $showsSpokenNote, onDismiss: { dismiss() }) {
+            SpokenNoteRecordingView().environmentObject(model)
         }
     }
 
@@ -214,6 +246,8 @@ struct ExperienceAddSourceFlow: View {
             onSearchPodcasts?()
         case .liveSession:
             showsLiveSession = true
+        case .spokenNote:
+            showsSpokenNote = true
         case .linkOrPodcast, .pastedText, .quickFolder:
             guard let route = tile.route else { return }
             selectedRoute = route
