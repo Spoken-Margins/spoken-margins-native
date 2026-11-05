@@ -450,7 +450,7 @@ def patterns(apis: dict):
         ('file-io', 'copy/move/removeItem', re.compile(r'\.\s*(copyItem|moveItem|removeItem|replaceItemAt)\s*\(')),
         ('file-io', 'write(to:)', re.compile(r'\.\s*write\s*\(\s*to\s*:')),
         ('file-io', 'FileHandle', re.compile(r'\bFileHandle\s*\(\s*for(?:Reading|Writing|Updating)')),
-        ('file-io', 'SHA256', re.compile(r'\b(?:SHA256|SHA512|Insecure\s*\.\s*(?:MD5|SHA1))\s*\.\s*hash\s*\(|\bCC_SHA\d+\s*\(')),
+        ('file-io', 'SHA256', re.compile(r'\b(?:SHA256|SHA512|Insecure\s*\.\s*(?:MD5|SHA1))\s*\.\s*hash\s*\((?!\s*data\s*:\s*Data\s*\(\s*[A-Za-z_]\w*(?:\s*[?!]?\s*\.\s*[A-Za-z_]\w*)*\s*\.\s*utf8\s*\)\s*\))|\bCC_SHA\d+\s*\(')),  # `hash(data: Data(<name>.utf8))` hashes a short in-memory string, no file read (#1120, #3373)
         ('store-read', 'SQLiteSessionStore.init', re.compile(r'\bSQLiteSessionStore\s*\(\s*path\s*:')),
         ('av-sync', 'AVAudioFile', re.compile(r'\bAVAudioFile\s*\(\s*forReading')),
         ('av-sync', 'AVAudioPlayer', re.compile(r'\bAVAudioPlayer\s*\(\s*contentsOf')),
@@ -1060,8 +1060,6 @@ def main(argv=None, root: Path = ROOT):
     if stale:
         print(f'main-thread-reads: {len(stale)} baseline row(s) are fixed or gone; run scripts/main_thread_reads.py --update '
               f'to tighten the ratchet.')
-        if args.strict:
-            return 1
     if new:
         print('main-thread-reads: new main-thread store/file/audio work (not in scripts/main_thread_reads_baseline.json):')
         for key, extra, mine in new:
@@ -1074,6 +1072,8 @@ def main(argv=None, root: Path = ROOT):
         print('  python3 scripts/main_thread_reads.py --update')
         print('then commit scripts/main_thread_reads_baseline.json. (Rows are keyed by type.function, API and class, so a '
               'read that only moved between files is never listed here.)')
+        return 1
+    if stale and args.strict:  # stale rows fail a strict run, after any new rows above have been printed
         return 1
     print(f"main-thread-reads: ok ({summary['rows']} baselined rows, {len(files)} files)")
     return 0
