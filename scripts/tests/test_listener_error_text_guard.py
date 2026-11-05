@@ -22,13 +22,6 @@ ROOTS = [
     APP / 'SharedSources',
 ]
 
-# Targets that do not link SessionKit, so ListenerErrorText is not there for them. They show the raw text today; #3324
-# moves them over and removes this list.
-ALLOWED_FILES = {
-    'SafariWebExtensionHandler.swift', 'SourceLinkShareViewController.swift',
-    'WatchLink.swift', 'WatchMarginRecorder.swift', 'WatchMicrophoneTest.swift', 'WatchOfflineModels.swift',
-}
-
 # A log reason: written to Diagnostics or handed to a program, in machine words.
 LOG_REASON = re.compile(
     r'diagnostics\[|recordDiagnostic|\bnote\w*\(|\breason:|"[a-z][a-z0-9_]*:\s*\\\(|"\\\([^)]*\): [a-z_]+:\\\('
@@ -61,7 +54,7 @@ def unlisted_uses():
                 text = line.strip()
                 if 'localizedDescription' not in text or text.startswith('//'):
                     continue
-                if LOG_REASON.search(text) or (path.name, text) in ALLOWED or path.name in ALLOWED_FILES:
+                if LOG_REASON.search(text) or (path.name, text) in ALLOWED:
                     continue
                 found.append(f'{path.relative_to(ROOT)}:{number}: {text}')
     return found
@@ -95,7 +88,7 @@ class ListenerErrorTextGuardTests(unittest.TestCase):
         call = re.compile(r'ListenerErrorText\.line\(prefix: "((?:[^"\\]|\\.)*)"')
         used = {
             match.group(1).replace("\\'", "'")
-            for path in (APP / 'SpokenMarginsApp' / 'Sources').rglob('*.swift')
+            for root in ROOTS for path in root.rglob('*.swift')
             for match in call.finditer(path.read_text())
         }
         tested = (ROOT / 'Packages' / 'SessionKit' / 'Tests' / 'SessionKitCoreTests' / 'ListenerErrorTextTests.swift').read_text()

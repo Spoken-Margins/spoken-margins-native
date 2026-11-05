@@ -14,6 +14,11 @@ public enum FollowingFriends {
         /// The name as the newest packet spelled it.
         public let name: String
         public let marginCount: Int
+        /// How many of their Margins the listener hasn't heard yet.
+        public let newCount: Int
+        /// When something last changed for this friend: the later of a Margin's recording time and when the
+        /// listener received its packet (#3343). Nil when no Margin carries a usable date; the row then sorts last.
+        public let newestAt: Date?
         /// Their items, the one with their newest Margin first.
         public let items: [Item]
         /// "3 Margins on 1 episode".
@@ -23,8 +28,14 @@ public enum FollowingFriends {
             public let id: String
             public let title: String
             public let marginCount: Int
+            /// How many of the friend's Margins on this item the listener hasn't heard yet.
+            public let newCount: Int
+            /// The item's own newest-Margin date, as for `Friend.newestAt`.
+            public let newestAt: Date?
             /// "3 Margins".
             public var countLabel: String { FollowingFriends.margins(marginCount) }
+            /// "2 new" when any are unheard; nil otherwise. Words carry it, never a colour alone.
+            public var newLabel: String? { newCount > 0 ? "\(newCount) new" : nil }
         }
     }
 
@@ -33,19 +44,24 @@ public enum FollowingFriends {
             var name: String
             var newest: Date
             var marginIds: Set<String> = []
-            var items: [String: (title: String, newest: Date, marginIds: Set<String>, kind: SharedItemType)] = [:]
+            var newIds: Set<String> = []
+            var items: [String: (title: String, newest: Date, marginIds: Set<String>, newIds: Set<String>, kind: SharedItemType)] = [:]
         }
         var groups: [String: Group] = [:]
         for entry in entries {
             guard let itemId = entry.layer.itemId, let name = displayName(entry.layer.displayLabel) else { continue }
             let key = groupingKey(name)
-            let date = entry.interjection.createdAt
+            let date = activityDate(entry)
             var group = groups[key] ?? Group(name: name, newest: date)
             if date > group.newest { group.newest = date; group.name = name }
             group.marginIds.insert(entry.id)
-            var item = group.items[itemId] ?? (entry.itemTitle, date, [], entry.layer.itemIdentity.itemType)
+            var item = group.items[itemId] ?? (entry.itemTitle, date, [], [], entry.layer.itemIdentity.itemType)
             item.newest = max(item.newest, date)
             item.marginIds.insert(entry.id)
+            if entry.interjection.isNewToListener {
+                group.newIds.insert(entry.id)
+                item.newIds.insert(entry.id)
+            }
             group.items[itemId] = item
             groups[key] = group
         }
@@ -54,16 +70,49 @@ public enum FollowingFriends {
             .map { key, group in
                 let items = group.items
                     .sorted { $0.value.newest != $1.value.newest ? $0.value.newest > $1.value.newest : $0.key < $1.key }
-                    .map { Friend.Item(id: $0.key, title: $0.value.title, marginCount: $0.value.marginIds.count) }
+                    .map {
+                        Friend.Item(
+                            id: $0.key, title: $0.value.title, marginCount: $0.value.marginIds.count,
+                            newCount: $0.value.newIds.count, newestAt: dated($0.value.newest)
+                        )
+                    }
                 let noun = itemNoun(Set(group.items.values.map(\.kind)), count: items.count)
                 return Friend(
                     id: key,
                     name: group.name,
                     marginCount: group.marginIds.count,
+                    newCount: group.newIds.count,
+                    newestAt: dated(group.newest),
                     items: items,
                     summary: "\(margins(group.marginIds.count)) on \(items.count) \(noun)"
                 )
             }
+    }
+
+    /// When a Margin counts as having happened for this listener (#3343): the later of when it was recorded and when
+    /// the packet arrived (`ImportedCommentaryLayer.importedAt`, already stored), so a packet recorded last month and
+    /// opened today sorts as today. `.distantPast` when neither date is usable (at or before 1970).
+    static func activityDate(_ entry: MarginCollection.SharedEntry) -> Date {
+        let later = max(entry.interjection.createdAt, entry.layer.importedAt)
+        return later.timeIntervalSince1970 > 0 ? later : .distantPast
+    }
+
+    static func dated(_ date: Date) -> Date? { date == .distantPast ? nil : date }
+
+    /// A friend's item as a Library row reads it (#3343): site or author, kind, then listening progress, with the
+    /// item's length first when it has one. Built from the same wording the Library row uses.
+    public static func itemDetail(_ row: LibraryItemRow, playbackSpeed: Double) -> LibraryRowDetail {
+        let listening: String? = row.isCompleted ? "Completed" : row.continuationProgressPercent.map { "\($0)%" }
+        return LibraryRowDetail(
+            byline: LibraryRowWording.byline(sourceTitle: row.sourceTitle, author: row.author, title: row.title),
+            kind: LibraryRowWording.kindLabel(
+                mediaType: row.mediaType, sourceReference: row.sourceReference,
+                sourceReferenceType: row.sourceReferenceType, usesNewReader: row.usesNewReader
+            ),
+            length: ListeningTimeEstimator.libraryTotalText(textCharacterCount: row.textCharacterCount, playbackSpeed: playbackSpeed),
+            listening: listening,
+            status: nil
+        )
     }
 
     /// The label as a row shows it: trimmed, inner runs of spaces made one, nil when nothing is left.

@@ -432,7 +432,8 @@ struct SharedMarginRow: Identifiable, Equatable, Sendable {
     }
     /// Its voice hasn't played for this listener yet (#469).
     var isNew: Bool { interjection.isNewToListener }
-    var collectionLabel: String { layer.displayLabel.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 } ?? "Imported collection" }
+    /// The sender's name, or "a friend" when the file names nobody; a stand-in is never shown as a name (#3247).
+    var collectionLabel: String { SharedPacketArrival.senderName(layer.displayLabel) ?? "a friend" }
     var positionDescription: String {
         if let placing = placementStatus.positionDescription { return placing }
         return SharedMarginPlacementWording.line(for: interjection.resolution)

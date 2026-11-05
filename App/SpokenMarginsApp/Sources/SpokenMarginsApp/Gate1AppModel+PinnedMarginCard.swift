@@ -36,27 +36,27 @@ extension Gate1AppModel {
             let stage: PinnedMarginCard.Stage
             switch importedCommentaryPhase {
             case .loading: stage = .loading
-            case .playing: stage = .speaking
+            case .playing: stage = playing.interjection.isWritten ? .reading : .speaking // a synthetic voice is never "speaking" (#3365)
             case .paused: stage = .voicePaused
             case .failed: stage = .failed(canMoveOn: canGoToNextMargin)
             }
             return PinnedMarginCard(
-                subject: .friend(playing.senderLabel), stage: stage,
+                subject: .friend(SharedPacketArrival.senderName(playing.senderLabel)), stage: stage,
                 position: PinnedMarginCard.position(playing.index, of: playing.count), voiceTime: playingVoiceTime)
         }
         if let pending = pendingImportedCommentary {
             return PinnedMarginCard(
-                subject: .friend(pending.senderLabel), stage: .waitingForTap,
+                subject: .friend(SharedPacketArrival.senderName(pending.senderLabel)), stage: .waitingForTap,
                 position: PinnedMarginCard.position(pending.index, of: pending.count))
         }
         if let moment = marginMoment {
             let current = moment.playing ?? moment.target
             let subject: PinnedMarginCard.Subject = current.isYours || !moment.isReview && current.label == nil
-                ? .yours : .friend(current.label)
+                ? .yours : .friend(SharedPacketArrival.senderName(current.label))
             let position = moment.review.map { "\(moment.reviewNumber ?? 1) of \($0.count)" } // a review always counts, even one Margin
             if moment.isPlayingMargin {
                 return PinnedMarginCard(
-                    subject: subject, stage: marginMomentVoiceIsPaused ? .voicePaused : .speaking, position: position,
+                    subject: subject, stage: marginMomentVoiceIsPaused ? .voicePaused : (current.isReadAloud ? .reading : .speaking), position: position,
                     voiceTime: playingVoiceTime)
             }
             // A plain moment that has played its Margin keeps listening for the others: the slot stays, saying so.
@@ -71,8 +71,19 @@ extension Gate1AppModel {
         let remaining = next.mediaTimeMs.flatMap { ms in snapshot.currentMediaTimeMs.map { max(0, ms - $0) } }
         let arrival = sharedMarginArrival(next.prompt)
         return PinnedMarginCard(
-            subject: .friend(next.prompt.senderLabel), stage: .upNext(msRemaining: remaining, arrival: arrival),
-            position: PinnedMarginCard.position(next.prompt.index, of: next.prompt.count))
+            subject: .friend(SharedPacketArrival.senderName(next.prompt.senderLabel)), stage: .upNext(msRemaining: remaining, arrival: arrival),
+            position: PinnedMarginCard.position(next.prompt.index, of: next.prompt.count), isFirstFromSender: next.prompt.index == 1)
+    }
+
+    /// The words on the skip button between a friend's Margins: from the press it will make and the sender of the
+    /// Margin it goes to, so the label always describes the tap (#3247). Nil whenever the card is not that card.
+    var nextMarginWords: NextMarginWords? {
+        guard marginMoment == nil, playingImportedCommentary == nil, pendingImportedCommentary == nil,
+              let next = nextSharedMargin else { return nil }
+        // Text read aloud has no lead-in: the button goes straight to the Margin (`goToNextMargin`).
+        let press: NextMarginPress = isMediaPlaybackSnapshot
+            ? (nextMarginContext.map(NextMarginPress.press) ?? .unavailable) : .playMarginNow
+        return NextMarginWords(press: press, subject: .friend(SharedPacketArrival.senderName(next.prompt.senderLabel)))
     }
 
     /// How far through the sounding Margin voice is, from whichever player has it: a moment's (the conductor) or a

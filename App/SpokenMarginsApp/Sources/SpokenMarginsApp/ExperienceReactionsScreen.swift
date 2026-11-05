@@ -386,12 +386,12 @@ struct ExperienceReactionsScreen: View {
         .accessibilityIdentifier("reactions.hotSpot.\(index)")
     }
 
-    /// The first Margin in the spot that has a voice to play; a sender's written Margin has none.
+    /// The first Margin in the spot that has something to play: a recording, or a written Margin's reading.
     private func playableEntry(in spot: MarginLayerSynthesis.HotSpot) -> MarginLayerSynthesis.Entry? {
         let voiced = spot.entries.first { entry in
             guard let layerId = entry.layerId else { return true }
             return model.selectedItem.importedCommentaryInterjections[layerId]?
-                .first { $0.id == entry.marginId }?.audioPath != nil
+                .first { $0.id == entry.marginId }.map(SharedMarginAudio.canOffer) ?? false
         }
         return voiced ?? spot.entries.first
     }

@@ -55,10 +55,33 @@ public enum SharedPacketArrival {
     public static let aboutTitle = "About this file"
     public static let aboutIntegrity = "Unchanged since it was sent. The name on it comes from the sender's app and isn't proven."
 
-    static func name(_ senderName: String?) -> String? {
-        guard let trimmed = senderName?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else { return nil }
+    /// The labels the app puts where a file names nobody. They are stand-ins for a missing name, never a name: no screen
+    /// on a friend's path may say "From Unsigned sender" or "Shared by Imported collection" (#3247).
+    public static let unsignedSenderLabel = "Unsigned sender"
+    public static let importedCollectionLabel = "Imported collection"
+
+    /// The label a screen's snapshot carries for a file's sender: the sender's own label, or the stand-in when it is
+    /// empty. Every snapshot builder goes through here so `senderName` can tell the stand-in from a name.
+    public static func snapshotSenderLabel(_ label: String?) -> String {
+        guard let label, !label.isEmpty else { return unsignedSenderLabel }
+        return label
+    }
+
+    /// The sender's name as a friend should read it: trimmed, or nil when the file names nobody. Empty or blank
+    /// labels and the stand-ins above (any case, spacing or accents) are nil, so callers fall back to "a friend" or
+    /// "your friend". Use this, never the raw label, wherever a name is shown or read aloud.
+    public static func senderName(_ label: String?) -> String? {
+        guard let trimmed = label?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else { return nil }
+        let folded = trimmed.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+        let standIns = [unsignedSenderLabel, importedCollectionLabel]
+        if standIns.contains(where: { $0.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil) == folded }) {
+            return nil
+        }
         return trimmed
     }
+
+    static func name(_ senderName: String?) -> String? { Self.senderName(senderName) }
 
     static func possessive(_ senderName: String?) -> String {
         name(senderName).map { "\($0)'s" } ?? "your friend's"

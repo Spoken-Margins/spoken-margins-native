@@ -5,7 +5,8 @@ import Foundation
 ///
 /// A Margin is new until its voice first plays (#469, `SharedMarginHearing`). Only Margins the automatic
 /// prompts would play are offered: an enabled layer that isn't the wrong source, and a Margin that is placed
-/// at a time in this copy of the episode and has a voice to play. `MarginMomentSequence(reviewing:)` plays them.
+/// at a time in this copy of the episode and has something to play: a recording, or the words of a written Margin,
+/// which the iPhone's voice reads (#3365). `MarginMomentSequence(reviewing:)` plays them.
 public enum SharedMarginReview {
     /// One new shared Margin, with what the app needs to play it and mark it heard.
     public struct Entry: Sendable, Equatable {
@@ -17,13 +18,24 @@ public enum SharedMarginReview {
         /// What this Margin answers when it is a reply (#3221); nil for any other Margin.
         public var replyContext: ReplyContext?
 
+        public init(
+            layer: ImportedCommentaryLayer, interjection: ImportedCommentaryInterjection, mediaTimeMs: Int,
+            isApproximate: Bool, replyContext: ReplyContext? = nil
+        ) {
+            self.layer = layer
+            self.interjection = interjection
+            self.mediaTimeMs = mediaTimeMs
+            self.isApproximate = isApproximate
+            self.replyContext = replyContext
+        }
+
         /// The identity the playback screen, the conductor and the Timeline all use for this Margin.
         public var marginId: String { SharedMarginReview.marginId(layerId: layer.id, interjectionId: interjection.id) }
         public var senderLabel: String { SharedMarginReview.senderLabel(of: layer) }
         public var anchor: MarginMomentAnchor {
             MarginMomentAnchor(
                 marginId: marginId, mediaTimeMs: mediaTimeMs, label: senderLabel, isApproximate: isApproximate,
-                caption: replyContext?.caption
+                caption: replyContext?.caption, isReadAloud: interjection.isWritten
             )
         }
     }
@@ -33,9 +45,12 @@ public enum SharedMarginReview {
         "shared::\(layerId)::\(interjectionId)"
     }
 
+    /// The layer's sender label as an internal key: it orders Margins, tells senders apart and rides on the Margin's
+    /// anchor. It is not for display: a file that names nobody carries the stand-in here, so every screen goes
+    /// through `SharedPacketArrival.senderName` (the offer, the pinned card and a reply's caption all do).
     public static func senderLabel(of layer: ImportedCommentaryLayer) -> String {
         let label = layer.displayLabel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return label.isEmpty ? "Imported collection" : label
+        return SharedPacketArrival.snapshotSenderLabel(label)
     }
 
     /// The item's new shared Margins in playing order: by place in the episode, then, where two share a place,
@@ -52,7 +67,7 @@ public enum SharedMarginReview {
             let layerRecords = records[layer.id] ?? []
             guard SharedMarginPrompts.isLayerPlaybackEligible(layer, records: layerRecords) else { return [] }
             return layerRecords.compactMap { record -> Entry? in
-                guard record.isNewToListener, record.audioPath != nil,
+                guard record.isNewToListener, SharedMarginAudio.canOffer(record),
                       SharedMarginPrompts.isPlayable(record.resolution),
                       let mediaTimeMs = record.resolution.localMediaTimeMs, mediaTimeMs >= 0 else { return nil }
                 return Entry(
@@ -106,8 +121,19 @@ public enum SharedMarginReview {
 
     /// The text of the offer shown before Continue: how many Margins and whose.
     public static func offerMessage(for entries: [Entry]) -> String {
+        // Named senders are told apart by name. A nameless one has no name to show, so those are counted by file and
+        // read "a friend" or "2 friends", never as a stand-in.
         var senders: [String] = []
-        for entry in entries where !senders.contains(entry.senderLabel) { senders.append(entry.senderLabel) }
+        var namelessFiles = Set<String>()
+        for entry in entries {
+            if let name = SharedPacketArrival.senderName(entry.senderLabel) {
+                if !senders.contains(name) { senders.append(name) }
+            } else {
+                namelessFiles.insert(entry.layer.id)
+            }
+        }
+        if namelessFiles.count == 1 { senders.append("a friend") }
+        if namelessFiles.count > 1 { senders.append("\(namelessFiles.count) friends") }
         let count = entries.count
         let whose: String
         switch senders.count {

@@ -99,7 +99,7 @@ final class WatchOfflineLibraryModel: ObservableObject {
             status = "Package received"
             lastError = nil
         } catch {
-            lastError = error.localizedDescription
+            lastError = ListenerErrorText.message(for: error)
             status = "Package import failed"
         }
     }
@@ -111,7 +111,7 @@ final class WatchOfflineLibraryModel: ObservableObject {
             status = "Audio received"
             lastError = nil
         } catch {
-            lastError = error.localizedDescription
+            lastError = ListenerErrorText.message(for: error)
             status = "Audio import failed"
         }
     }
@@ -122,7 +122,7 @@ final class WatchOfflineLibraryModel: ObservableObject {
             localPackages = Dictionary(uniqueKeysWithValues: packages.map { ($0.id, $0) })
             mergePackageRows(packageRows)
         } catch {
-            lastError = error.localizedDescription
+            lastError = ListenerErrorText.message(for: error)
             status = "Package scan failed"
         }
     }
@@ -131,7 +131,7 @@ final class WatchOfflineLibraryModel: ObservableObject {
         do {
             packageRows = try packageStore.loadPackageRows()
         } catch {
-            lastError = error.localizedDescription
+            lastError = ListenerErrorText.message(for: error)
             status = "Package cache failed"
         }
     }
@@ -302,7 +302,7 @@ final class WatchLocalPlaybackModel: ObservableObject {
             lastError = nil
         } catch {
             clearActivePackage()
-            lastError = error.localizedDescription
+            lastError = ListenerErrorText.message(for: error)
             status = "Package load failed"
         }
     }
@@ -381,7 +381,7 @@ final class WatchLocalPlaybackModel: ObservableObject {
             lastError = nil
             reconcileProgressTicker()
         } catch {
-            lastError = error.localizedDescription
+            lastError = ListenerErrorText.message(for: error)
             status = "\(label) failed"
         }
     }
@@ -405,7 +405,7 @@ final class WatchLocalPlaybackModel: ObservableObject {
                             self.playbackProgressTask = nil
                         }
                     } catch {
-                        self.lastError = error.localizedDescription
+                        self.lastError = ListenerErrorText.message(for: error)
                     }
                 }
             }
@@ -555,7 +555,7 @@ final class WatchConnectivityInbox: NSObject, ObservableObject, WCSessionDelegat
         session.sendMessage(message, replyHandler: nil) { [weak self] error in
             Task { @MainActor in
                 self?.status = "Send failed"
-                self?.lastMessage = error.localizedDescription
+                self?.lastMessage = ListenerErrorText.message(for: error)
             }
         }
     }
@@ -567,7 +567,7 @@ final class WatchConnectivityInbox: NSObject, ObservableObject, WCSessionDelegat
     ) {
         Task { @MainActor [weak self] in
             guard let self else { return }
-            self.status = error.map { "Activation failed: \($0.localizedDescription)" } ?? "Connected"
+            self.status = error.map { ListenerErrorText.line(prefix: "Activation failed:", error: $0) } ?? "Connected"
             self.isReachable = session.isReachable
             self.libraryModel?.setReachable(session.isReachable)
             self.handle(Self.payload(from: session.receivedApplicationContext))
@@ -658,7 +658,7 @@ final class WatchConnectivityInbox: NSObject, ObservableObject, WCSessionDelegat
                 lastMessage = "library_synced"
             } catch {
                 status = "Library decode failed"
-                lastMessage = error.localizedDescription
+                lastMessage = ListenerErrorText.message(for: error)
             }
         case "watchPackage":
             if let data = payload.packageData {
@@ -679,7 +679,7 @@ final class WatchConnectivityInbox: NSObject, ObservableObject, WCSessionDelegat
             lastMessage = "package_received"
         } catch {
             status = "Package import failed"
-            lastMessage = error.localizedDescription
+            lastMessage = ListenerErrorText.message(for: error)
         }
     }
 }

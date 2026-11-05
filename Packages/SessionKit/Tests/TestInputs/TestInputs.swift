@@ -28,6 +28,15 @@ public enum TestInputs {
         case research = "research"
         /// The app's Swift sources, for guards that check the app still calls an extracted helper.
         case appSources = "App/SpokenMarginsApp/Sources/SpokenMarginsApp"
+        /// The rest of the app's shipping Swift: the shared sources, the extensions, the widget and the Watch. Guards that scan
+        /// every app source read these along with `appSources` (#3412).
+        case appSharedSources = "App/SharedSources"
+        case appGate2Shared = "App/Gate2Shared"
+        case appBrowserTextExtension = "App/SpokenMarginsBrowserTextExtension"
+        case appShareExtension = "App/SpokenMarginsShareExtension"
+        case appGate2Widget = "App/SpokenMarginsGate2Widget"
+        case appWatch = "App/SpokenMarginsWatch"
+        case appWatchApp = "App/SpokenMarginsWatchApp"
         /// Packets and other files the app's UI tests launch with, checked in as bytes (#3237).
         case appTestFixtures = "App/TestFixtures"
         /// The app's test sources, for the shipped-reader gate's scan.

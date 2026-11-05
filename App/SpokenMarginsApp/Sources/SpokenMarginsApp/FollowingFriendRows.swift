@@ -49,6 +49,19 @@ struct FollowingFriendItemsScreen: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     let friend: FollowingFriends.Friend
 
+    /// The Library's own row for the item, when it is loaded, so the friend's item reads like a Library row (#3343).
+    private func libraryRow(_ item: FollowingFriends.Friend.Item) -> LibraryItemRow? {
+        model.libraryItems.first { $0.id == item.id }
+    }
+
+    private func detailLine(for item: FollowingFriends.Friend.Item) -> String? {
+        libraryRow(item).map { FollowingFriends.itemDetail($0, playbackSpeed: model.speechPlaybackRateMultiplier).fullLine }
+    }
+
+    private func accessibilityLabel(for item: FollowingFriends.Friend.Item) -> String {
+        [item.title, detailLine(for: item), item.countLabel, item.newLabel].compactMap { $0 }.joined(separator: ", ")
+    }
+
     var body: some View {
         List {
             ForEach(friend.items) { item in
@@ -59,9 +72,20 @@ struct FollowingFriendItemsScreen: View {
                                 .font(.headline)
                                 .foregroundStyle(AppColors.text)
                                 .multilineTextAlignment(.leading)
-                            Text(item.countLabel)
-                                .font(.subheadline)
-                                .foregroundStyle(AppColors.secondaryText)
+                            if let detail = detailLine(for: item) {
+                                Text(detail)
+                                    .font(.subheadline)
+                                    .foregroundStyle(AppColors.secondaryText)
+                                    .multilineTextAlignment(.leading)
+                            }
+                            // The friend's part: how many Margins, and how many are new. Words carry it, not a colour.
+                            HStack(spacing: 6) {
+                                Image(systemName: "person.2.fill").accessibilityHidden(true)
+                                Text(item.countLabel)
+                                if let newLabel = item.newLabel { Text("· \(newLabel)").fontWeight(.bold) }
+                            }
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(AppColors.evergreen)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         Image(systemName: "chevron.right")
@@ -77,6 +101,8 @@ struct FollowingFriendItemsScreen: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityElement(children: .combine)
+                .accessibilityLabel(accessibilityLabel(for: item))
+                .accessibilityHint("Opens the item.")
                 .accessibilityIdentifier("sources.friend.item")
                 .listRowInsets(EdgeInsets(top: 0, leading: horizontalSizeClass == .regular ? 28 : 16, bottom: 0, trailing: horizontalSizeClass == .regular ? 28 : 16))
                 .listRowSeparator(.hidden)

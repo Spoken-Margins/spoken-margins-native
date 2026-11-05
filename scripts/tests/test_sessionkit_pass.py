@@ -47,7 +47,7 @@ def make_repo(root):
         'traces/t.json', 'scripts/run-sessionkit-tests.sh', 'scripts/host-test-lane', 'scripts/verify-tests.py',
         'scripts/sessionkit_pass.py',
         # Not read by the package tests:
-        'docs/a.md', 'App/Gate2Shared/G.swift', 'App/SpokenMarginsApp/Info.plist', 'ops/codex/x.py',
+        'docs/a.md', 'App/SharedResources/browserTextCapture.js', 'App/SpokenMarginsApp/Info.plist', 'ops/codex/x.py',
         'scripts/lane-runner.py', 'research/B1/n.md', 'Site/index.html', 'project.yml',
         'App/SpokenMarginsApp/Resources/Supertonic/asset-manifest.json')}
     for relative, text in files.items():
@@ -96,7 +96,7 @@ class InputsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root, files = make_repo(temporary)
             base = sk.key(root, 'swift 6')
-            for relative in ('docs/a.md', 'App/Gate2Shared/G.swift', 'App/SpokenMarginsApp/Info.plist', 'ops/codex/x.py',
+            for relative in ('docs/a.md', 'App/SharedResources/browserTextCapture.js', 'App/SpokenMarginsApp/Info.plist', 'ops/codex/x.py',
                              'scripts/lane-runner.py', 'research/B1/n.md', 'Site/index.html', 'project.yml'):
                 with self.subTest(relative):
                     self.assertFalse(relative.startswith(sk.READS) or relative in sk.RUNNERS)

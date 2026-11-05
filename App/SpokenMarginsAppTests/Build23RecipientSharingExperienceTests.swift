@@ -45,22 +45,22 @@ final class Build23RecipientSharingExperienceTests: XCTestCase {
         )
     }
 
-    func testAMapPacketSaysMapNotMarginsAndAsksBeforeReplacing() {
+    func testAMapPacketSaysMapNotMarginsAndAsksBeforeReplacing() throws {
         var snapshot = recipientSnapshot(requiresRecipientSource: false, canImport: true)
-        XCTAssertEqual(Build23RecipientPresentation.heading(for: snapshot), "Shared Margins")
+        XCTAssertEqual(Build23RecipientPresentation.heading(for: snapshot), "From Cole")
         XCTAssertEqual(Build23RecipientPresentation.confirmTitle(for: snapshot), "Import")
-        XCTAssertEqual(Build23RecipientPresentation.notice(for: snapshot), Build23RecipientPresentation.importNotice)
+        XCTAssertNil(Build23RecipientPresentation.notice(for: snapshot), "A friend's Margins carry no engineering notice (#3247)")
 
         snapshot.mapChapterCount = 7
         XCTAssertEqual(Build23RecipientPresentation.heading(for: snapshot), "Shared Listening Map")
         XCTAssertEqual(Build23RecipientPresentation.confirmTitle(for: snapshot), "Add Map")
         XCTAssertEqual(Build23RecipientPresentation.progressTitle(for: snapshot), "Adding…")
-        XCTAssertFalse(Build23RecipientPresentation.notice(for: snapshot).contains("replaces"))
+        XCTAssertFalse(try XCTUnwrap(Build23RecipientPresentation.notice(for: snapshot)).contains("replaces"))
 
         snapshot.replacesExistingMap = true
         XCTAssertEqual(Build23RecipientPresentation.confirmTitle(for: snapshot), "Replace Map")
-        XCTAssertTrue(Build23RecipientPresentation.notice(for: snapshot).contains("replaces it"))
-        XCTAssertTrue(Build23RecipientPresentation.notice(for: snapshot).contains("never starts playback"))
+        XCTAssertTrue(try XCTUnwrap(Build23RecipientPresentation.notice(for: snapshot)).contains("replaces it"))
+        XCTAssertTrue(try XCTUnwrap(Build23RecipientPresentation.notice(for: snapshot)).contains("never starts playback"))
         XCTAssertTrue(Build23RecipientPresentation.canConfirmImport(snapshot))
     }
 
@@ -69,8 +69,8 @@ final class Build23RecipientSharingExperienceTests: XCTestCase {
 
         XCTAssertEqual(layer.revealMode, .companion)
         XCTAssertEqual(
-            Build23ImportedLayerPresentation.revealModeLabel(layer.revealMode),
-            "Companion"
+            Build23ImportedLayerPresentation.playModeLabel(layer.revealMode),
+            "A tone marks each one"
         )
     }
 
@@ -79,20 +79,17 @@ final class Build23RecipientSharingExperienceTests: XCTestCase {
         let label = Build23ImportedLayerPresentation.provenanceAccessibilityLabel(for: layer)
 
         XCTAssertFalse(Build23ImportedLayerPresentation.provenanceSymbolName.isEmpty)
-        XCTAssertTrue(label.contains("separate shared layer"))
-        XCTAssertTrue(label.contains("Sender label Cole"))
-        XCTAssertTrue(label.contains("Integrity checked"))
-        XCTAssertTrue(label.contains("not cryptographically verified"))
-        XCTAssertTrue(label.contains("Source resolution Resolved"))
-        XCTAssertTrue(label.contains("Layer enabled"))
-        XCTAssertTrue(label.contains("Layer not muted"))
-        XCTAssertTrue(label.contains("Reveal mode Companion"))
-        XCTAssertTrue(label.contains("2 listening map proposals"))
+        XCTAssertTrue(label.hasPrefix("From Cole"))
+        XCTAssertTrue(label.contains("Cole's Margins are on"))
+        XCTAssertTrue(label.contains("Not muted"))
+        XCTAssertTrue(label.contains("When Margins play: A tone marks each one"))
+        for term in ["layer", "Integrity", "cryptographically", "Reveal mode", "Source resolution"] {
+            XCTAssertFalse(label.localizedCaseInsensitiveContains(term), term)
+        }
     }
 
     func testImportDisclosureExplicitlyRulesOutAutoplay() {
-        XCTAssertTrue(Build23RecipientPresentation.importNotice.contains("never starts playback"))
-        XCTAssertTrue(Build23RecipientPresentation.importNotice.contains("separate layer"))
+        XCTAssertEqual(Build23RecipientPresentation.aboutNote, "Unchanged since it was sent. The name on it comes from the sender's app and isn't proven.")
     }
 
     private func recipientSnapshot(
@@ -132,7 +129,7 @@ final class Build23RecipientSharingExperienceTests: XCTestCase {
                     resolution: .transcriptVerified,
                     positionDescription: "Chapter 2 · 08:14",
                     isPlayable: true,
-                    hasVoice: true
+                    canListen: true
                 )
             ]
         )

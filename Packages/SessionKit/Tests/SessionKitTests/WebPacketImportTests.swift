@@ -105,7 +105,8 @@ final class WebPacketImportTests: XCTestCase {
             layers: [layer], recordsByLayerID: [layer.id: placed], announcedIDs: [], includeAnnounced: false)
         XCTAssertEqual(prompts.map(\.interjection.packageScopedId), placed.map(\.packageScopedId), "both play during playback")
         let review = SharedMarginReview.entries(layers: [layer], records: [layer.id: placed])
-        XCTAssertEqual(review.map(\.mediaTimeMs), [125_250], "the voice Margin is offered, at the sender's time")
+        XCTAssertEqual(review.map(\.mediaTimeMs), [30_000, 125_250], "both are offered, at the sender's times (#3365)")
+        XCTAssertEqual(review.map(\.anchor.isReadAloud), [true, false], "the written one is read aloud, the other is the voice")
         XCTAssertTrue(review.allSatisfy(\.isApproximate), "a clock placement is never shown as a verified one")
     }
 

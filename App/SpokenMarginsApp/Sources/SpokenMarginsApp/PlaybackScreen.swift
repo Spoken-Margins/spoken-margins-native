@@ -1377,7 +1377,7 @@ struct PlaybackScreen: View {
                         } label: {
                             TimelineRow(
                                 percent: margin.resolution.localMediaTimeMs.map(formatPlaybackTime) ?? "SHR",
-                                title: "Shared Margin · \(layer.displayLabel?.nilIfEmpty ?? "Unsigned sender")",
+                                title: "Shared Margin · \(SharedPacketArrival.senderName(layer.displayLabel) ?? "a friend")",
                                 subtitle: margin.approvedTranscript
                             )
                         }

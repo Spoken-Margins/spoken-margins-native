@@ -337,6 +337,7 @@ public final class SystemTextAudioPreparationClient: NSObject, TextAudioPreparat
     private let speechRate: Float
     private let maxSegmentCharacters: Int
     private let allowsSynchronousRendering: Bool
+    private let speaksPlainWords: Bool
     private let fileManager: FileManager
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
@@ -347,8 +348,10 @@ public final class SystemTextAudioPreparationClient: NSObject, TextAudioPreparat
         speechRate: Float = AVSpeechUtteranceDefaultSpeechRate,
         maxSegmentCharacters: Int = 700,
         allowsSynchronousRendering: Bool = true,
+        speaksPlainWords: Bool = false,
         fileManager: FileManager = .default
     ) {
+        self.speaksPlainWords = speaksPlainWords
         self.outputDirectory = outputDirectory
         self.voiceIdentifier = voiceIdentifier?.isEmpty == true ? nil : voiceIdentifier
         self.speechRate = speechRate
@@ -386,9 +389,11 @@ public final class SystemTextAudioPreparationClient: NSObject, TextAudioPreparat
 
     private func prepareTextAudio(itemId: String, title: String, text: String, scope: TextAudioRenderScope) throws -> PreparedTextAudio? {
         #if canImport(AVFoundation)
-        let normalizedText = SpeechTextNormalizer.projectForSystemSpeech(text).text
+        // `speaksPlainWords`: the caller has already cleaned the words (a written Margin, `WrittenMarginSpeech`), in any
+        // script. The article cleaning would drop the combining marks Hindi and Thai are written with.
+        let normalizedText = speaksPlainWords ? text : SpeechTextNormalizer.projectForSystemSpeech(text).text
         guard !normalizedText.isEmpty else { return nil }
-        guard SpeechTextNormalizer.isSystemSpeechSafe(normalizedText) else {
+        guard speaksPlainWords || SpeechTextNormalizer.isSystemSpeechSafe(normalizedText) else {
             throw SessionKitError.persistenceFailed("system_speech_projection_unsafe")
         }
         let allSegments = Self.textSegments(in: normalizedText, maxSegmentCharacters: maxSegmentCharacters)
@@ -472,6 +477,17 @@ public final class SystemTextAudioPreparationClient: NSObject, TextAudioPreparat
         }
         let accumulator = AudioFileAccumulator(outputURL: outputURL)
         let synthesizer = AVSpeechSynthesizer()
+        // A precaution, not a proven fix (#3365): rendering to a file needs no audio output, so this write stays off the
+        // app's audio session while an episode may be playing, as `SystemVoiceChunkRenderer` does. #288 listed a session
+        // clash as one unproven cause of a silent episode; no phone check has shown it for this client. It reaches scene
+        // summaries too, so they get a phone check.
+        #if os(iOS)
+        synthesizer.usesApplicationAudioSession = false
+        #endif
+        // The synthesizer goes on after the last buffer: an empty one, then `didFinish` on the main queue. Letting go of
+        // it as this render returns crashed the app inside TextToSpeech (#1230, #768), so hold it a moment longer.
+        nonisolated(unsafe) let held = synthesizer
+        defer { DispatchQueue.main.asyncAfter(deadline: .now() + 1) { _ = held } }
         var renderedSegments: [MediaTimelineSegment] = []
         var cursorMs = 0
         for (index, segment) in segments.enumerated() {
@@ -505,7 +521,7 @@ public final class SystemTextAudioPreparationClient: NSObject, TextAudioPreparat
         synthesizer: AVSpeechSynthesizer,
         accumulator: AudioFileAccumulator
     ) throws {
-        guard SpeechTextNormalizer.isSystemSpeechSafe(text) else {
+        guard speaksPlainWords || SpeechTextNormalizer.isSystemSpeechSafe(text) else {
             throw SessionKitError.persistenceFailed("system_speech_utterance_unsafe")
         }
         // A render waits on the synthesizer, so it never runs on the main thread. It used to spin a nested

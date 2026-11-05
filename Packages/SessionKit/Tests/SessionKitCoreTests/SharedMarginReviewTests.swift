@@ -23,12 +23,13 @@ final class SharedMarginReviewTests: XCTestCase {
     private func margin(
         _ id: String, in layerId: String = "ana", at ms: Int? = 60_000,
         evidence: AnchorResolutionEvidenceClass = .acousticVerified, voice: Bool = true,
-        heard: Bool = false, createdAt: Date? = nil, replyLinks: [MarginReplyLink]? = nil
+        heard: Bool = false, createdAt: Date? = nil, replyLinks: [MarginReplyLink]? = nil, words: String = "Words"
     ) -> ImportedCommentaryInterjection {
         ImportedCommentaryInterjection(
             id: id, layerId: layerId, packageScopedId: id, createdAt: createdAt ?? early,
-            anchorEvidence: PortableAnchorEvidence(anchorType: .media), approvedTranscript: "Words",
-            audioPath: voice ? "ImportedCommentary/\(id).m4a" : nil, audioDurationMs: 4_000,
+            anchorEvidence: PortableAnchorEvidence(anchorType: .media), approvedTranscript: words,
+            // As an import builds them (`SharingFoundation`): a written Margin has no recording and so no length.
+            audioPath: voice ? "ImportedCommentary/\(id).m4a" : nil, audioDurationMs: voice ? 4_000 : nil,
             resolution: ImportedAnchorResolution(evidenceClass: evidence, localMediaTimeMs: ms, confidence: 1),
             firstHeardAt: heard ? later : nil, replyLinks: replyLinks
         )
@@ -57,15 +58,82 @@ final class SharedMarginReviewTests: XCTestCase {
         XCTAssertEqual(ids(entries), ["new"])
     }
 
-    func testAMarginWithNoVoiceOrNoPlaceInThisCopyIsLeftOut() {
+    func testAMarginWithNoPlaceInThisCopyIsLeftOut() {
         let records = [
             margin("ok", at: 10_000),
-            margin("written", at: 20_000, voice: false),
             margin("unresolved", at: nil, evidence: .unresolved),
             margin("absent", at: 40_000, evidence: .absentFromRecipientEdition),
             margin("textOnly", at: nil, evidence: .articleTextVerified)
         ]
         XCTAssertEqual(ids(SharedMarginReview.entries(layers: [layer("ana")], records: ["ana": records])), ["ok"])
+    }
+
+    /// #3365: a written Margin is in the review (its words are read aloud); a voice Margin with no words and no
+    /// recording is not, and neither is a written one with no place in this copy.
+    func testAWrittenMarginIsOfferedAndAVoiceMarginWithoutItsRecordingIsNot() {
+        let records = [
+            margin("ok", at: 10_000),
+            margin("written", at: 20_000, voice: false),
+            margin("written-nowhere", at: nil, evidence: .unresolved, voice: false),
+            margin("blank", at: 30_000, voice: false, words: "  \n "),
+            margin("placeholder", at: 50_000, voice: false, words: "Voice Margin at 12:34 in “Episode”, recorded 30 Oct 2026")
+        ]
+        let entries = SharedMarginReview.entries(layers: [layer("ana")], records: ["ana": records])
+        XCTAssertEqual(ids(entries), ["ok", "written"])
+        XCTAssertEqual(entries.map(\.anchor.isReadAloud), [false, true])
+    }
+
+    /// A note the voice can't read is not offered at all: a tone would promise a reading that then fails (#3365).
+    func testANoteTheVoiceCantReadIsNotAPlayableMargin() {
+        let layer = self.layer("ana")
+        func playable(_ words: String, voice: Bool = false) -> Bool {
+            SharedMarginPrompts.isPlayable(margin("m", voice: voice, words: words), in: layer)
+        }
+        XCTAssertTrue(playable("Lovely harbour"))
+        XCTAssertTrue(playable("anything", voice: true), "a recording is always something to play")
+        XCTAssertFalse(playable("🎧🔥"))
+        XCTAssertTrue(playable("नमस्ते दुनिया"), "Hindi is words: whether the phone has a voice is the render's answer")
+    }
+
+    func testTheReadingNamesNobodyForTheStandInLabels() {
+        for standIn in ["Imported collection", "Unsigned sender", " unsigned  SENDER "] {
+            XCTAssertEqual(WrittenMarginReading.intro(senderName: standIn), "Your friend wrote:", standIn)
+        }
+        XCTAssertEqual(WrittenMarginReading.intro(senderName: "Cole"), "Cole wrote:")
+    }
+
+    /// The same table `isWritten` is judged by: it is what keeps "Cole wrote: Voice Margin at 12:34" from being said.
+    func testWhichImportedMarginsAreWritten() {
+        func isWritten(_ words: String, voice: Bool = false) -> Bool { margin("m", voice: voice, words: words).isWritten }
+        XCTAssertTrue(isWritten("Great point about the harbour."))
+        XCTAssertTrue(isWritten("  padded with spaces\n"))
+        XCTAssertTrue(isWritten("Café très bien, 東京は良い 🎧"), "Unicode")
+        XCTAssertTrue(isWritten(String(repeating: "A long note. ", count: 2_000)), "very long")
+        XCTAssertTrue(isWritten("Voice Margin at noon is when I listen"), "a note that merely begins that way is a note")
+        XCTAssertTrue(isWritten("My Voice Margin at 12:34 was lost"))
+        XCTAssertFalse(isWritten(""))
+        XCTAssertFalse(isWritten("   "))
+        XCTAssertFalse(isWritten("\n\t"))
+        XCTAssertFalse(isWritten("🎧🔥"), "nothing the voice can say: it would read 'Cole wrote:' and stop")
+        XCTAssertFalse(isWritten("  🎧  \n 🔥 "))
+        XCTAssertTrue(isWritten("🎧 great episode"), "emoji around words are dropped, the words are kept")
+        XCTAssertFalse(isWritten("https://example.com/episode"), "a link alone: nothing to say")
+        XCTAssertTrue(isWritten("नमस्ते दुनिया"), "Hindi is kept whole: the marks it is written with are not dropped")
+        XCTAssertTrue(isWritten("สวัสดีครับ"), "Thai likewise")
+        XCTAssertTrue(isWritten("Great point.Totally agree"), "no space after a full stop is not a web address")
+        XCTAssertTrue(isWritten("Naïve café, très bien"), "composed accents survive")
+        XCTAssertTrue(isWritten("Nai\u{308}ve cafe\u{301}"), "decomposed accents are tone marks, not letters")
+        XCTAssertTrue(isWritten("こんにちは、世界"), "Japanese")
+        XCTAssertTrue(isWritten(String(repeating: "x", count: 50_000)), "a huge note is judged by its start")
+        XCTAssertFalse(isWritten("Voice Margin"), "the placeholder with every optional part left out (an article, no title, no date)")
+        XCTAssertFalse(isWritten("Voice Margin at 12:34"))
+        XCTAssertFalse(isWritten("Voice Margin at 1:02:03"))
+        XCTAssertFalse(isWritten("Voice Margin in “Harbour Lights”"))
+        XCTAssertFalse(isWritten("Voice Margin at 12:34 in “Harbour Lights”, recorded 30 Oct 2026"))
+        XCTAssertFalse(isWritten("Voice Margin at 0:05, recorded 1 Nov 2026"))
+        XCTAssertFalse(isWritten("  Voice Margin at 12:34 in “Caf\u{65}\u{301}”  "), "padding, and a decomposed é")
+        XCTAssertFalse(isWritten("Voice Margin at 12:34 in “…”, recorded 30 Oct 2026"))
+        XCTAssertFalse(isWritten("Great point about the harbour.", voice: true), "a Margin with its recording is a voice Margin")
     }
 
     func testLayersThatWouldNotPlayAutomaticallyAreLeftOut() {
@@ -136,7 +204,59 @@ final class SharedMarginReviewTests: XCTestCase {
         let entry = try XCTUnwrap(SharedMarginReview.entries(layers: [layer("ana")], records: ["ana": [margin("m1", at: 75_000)]]).first)
         XCTAssertEqual(entry.marginId, "shared::ana::m1")
         XCTAssertEqual(entry.anchor, MarginMomentAnchor(marginId: "shared::ana::m1", mediaTimeMs: 75_000, label: "Ana", isApproximate: false))
-        XCTAssertEqual(SharedMarginReview.senderLabel(of: layer("x", label: "  ")), "Imported collection")
+        // A nameless sender's key is an internal stand-in, and it never reads as a name.
+        let key = SharedMarginReview.senderLabel(of: layer("x", label: "  "))
+        XCTAssertEqual(key, SharedPacketArrival.snapshotSenderLabel(nil))
+        XCTAssertNil(SharedPacketArrival.senderName(key))
+    }
+
+    func testTheOfferNeverNamesAStandInAndReadsRightForNamelessSenders() {
+        func entries(_ senders: [String?]) -> [SharedMarginReview.Entry] {
+            let layers = senders.enumerated().map { layer("l\($0.offset)", label: $0.element) }
+            var records: [String: [ImportedCommentaryInterjection]] = [:]
+            for (index, layer) in layers.enumerated() { records[layer.id] = [margin("m\(index)", in: layer.id, at: 10_000 * (index + 1))] }
+            return SharedMarginReview.entries(layers: layers, records: records)
+        }
+        let tail = "Hear them in place first, then carry on from where you were."
+        let table: [([String?], String)] = [
+            ([nil], "1 new Margin from a friend. Hear it in place first, then carry on from where you were."),
+            (["  "], "1 new Margin from a friend. Hear it in place first, then carry on from where you were."),
+            (["Unsigned sender"], "1 new Margin from a friend. Hear it in place first, then carry on from where you were."),
+            (["imported  COLLECTION"], "1 new Margin from a friend. Hear it in place first, then carry on from where you were."),
+            ([nil, "Ana"], "2 new Margins from Ana and a friend. \(tail)"),
+            (["Ana", nil], "2 new Margins from Ana and a friend. \(tail)"),
+            ([nil, ""], "2 new Margins from 2 friends. \(tail)"),
+            ([nil, "Imported collection", "Unsigned sender"], "3 new Margins from 3 friends. \(tail)"),
+            ([nil, "Ana", "Ben"], "3 new Margins from Ana, Ben and a friend. \(tail)"),
+            ([nil, nil, "Ana", "Ben", "Cy"], "5 new Margins from Ana, Ben and 2 others. \(tail)"),
+        ]
+        for (senders, expected) in table {
+            let message = SharedMarginReview.offerMessage(for: entries(senders))
+            XCTAssertEqual(message, expected, "\(senders)")
+            XCTAssertFalse(message.contains("Imported collection") || message.contains("Unsigned"), "\(senders)")
+            XCTAssertFalse(message.contains("a friend and a friend"), "\(senders)")
+        }
+    }
+
+    func testTwoNamelessSendersStillSortStably() {
+        let layers = [layer("a", label: nil), layer("b", label: "")]
+        let records = ["a": [margin("m", in: "a", at: 5_000)], "b": [margin("m", in: "b", at: 5_000)]]
+        let forward = SharedMarginReview.entries(layers: layers, records: records).map(\.marginId)
+        let backward = SharedMarginReview.entries(layers: layers.reversed(), records: records).map(\.marginId)
+        XCTAssertEqual(forward.count, 2)
+        XCTAssertEqual(forward, backward)
+    }
+
+    func testAStandInNeverReachesTheCardOrAReplyCaption() {
+        for raw in ["Unsigned sender", "Imported collection", " imported collection "] {
+            XCTAssertEqual(PinnedMarginCard.Subject.friend(raw).possessive, "A friend's Margin", raw)
+            XCTAssertEqual(PinnedMarginCard.Subject.friend(raw).speaker, "A friend is", raw)
+            XCTAssertEqual(SharedMarginReview.ReplyContext(parent: .shared(marginId: "m", label: raw, mediaTimeMs: nil)).caption,
+                           "Reply to a friend's Margin", raw)
+        }
+        XCTAssertEqual(PinnedMarginCard.Subject.friend("Ana").possessive, "Ana's Margin")
+        XCTAssertEqual(SharedMarginReview.ReplyContext(parent: .shared(marginId: "m", label: "Ana", mediaTimeMs: nil)).caption,
+                       "Reply to Ana's Margin")
     }
 
     func testAMarginPlacedByClockOrMapIsMarkedApproximate() {

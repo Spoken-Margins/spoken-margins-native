@@ -20,7 +20,7 @@ extension Gate1AppModel {
 
     /// The shared Margins on `itemId` that the listener hasn't heard, in playing order. Reads the open item when it
     /// is the one asked about, else the Library's store. A Margin whose recording is gone is left out: it can't be
-    /// played, and nothing would ever mark it heard.
+    /// played, and nothing would ever mark it heard. A written Margin has no recording; its words are read (#3365).
     func newSharedMargins(itemId: String) -> [SharedMarginReview.Entry] {
         let entries: [SharedMarginReview.Entry]
         if selectedItem.id == itemId {
@@ -35,7 +35,7 @@ extension Gate1AppModel {
         } else {
             entries = []
         }
-        return entries.filter { $0.interjection.audioPath.flatMap(resolvedApplicationSupportAssetURL(for:)) != nil }
+        return entries.filter { WrittenMarginReadings.audio(for: $0.interjection, in: $0.layer, voiceFile: resolvedApplicationSupportAssetURL(for:)).file != nil }
     }
 
     /// The listener's own Margins on `itemId`, read from what the app already holds: the open item's and the rows the
@@ -95,6 +95,7 @@ extension Gate1AppModel {
             reportWarning("There are no new Margins to review on this item.")
             return
         }
+        if WrittenMarginReadings.holdReview(itemId: itemId, thenContinue: thenContinue, entries: entries, model: self) { return } // readings not ready yet (#3365)
         endMarginMoment()
         // A Margin voice already playing (your own, #1538, or a friend's) or a shared-Margin card waiting gives way:
         // it would play over the review, and its end would resume the source mid-review.
@@ -123,10 +124,9 @@ extension Gate1AppModel {
         // Written down before the review first moves the source, for the endings it can't give the place back at.
         if let place = ReviewReturnPlace(sequence: sequence) { reviewPlaces.owe(place) }
         var heard: [String: ImportedCommentaryInterjection] = [:]
-        for entry in entries {
-            heard[entry.marginId] = entry.interjection
-            if let url = entry.interjection.audioPath.flatMap(resolvedApplicationSupportAssetURL(for:)) { voiceURLs[entry.marginId] = url }
-        }
+        for entry in entries { heard[entry.marginId] = entry.interjection }
+        // Each Margin's recording, or its reading (rendered now if need be), from `SharedMarginAudio` (#3365, #3412).
+        voiceURLs.merge(WrittenMarginReadings.startingReview(for: entries, voiceFile: resolvedApplicationSupportAssetURL(for:))) { voice, _ in voice }
         startMarginMoment(sequence: sequence, voiceURLs: voiceURLs, title: "New Margins", isApproximate: false)
         marginMomentConductor?.onVoiceStarted = { [weak self] in
             if let margin = heard[$0] { self?.markSharedMarginHeard(margin) }
@@ -134,6 +134,7 @@ extension Gate1AppModel {
         // Their voices get the same chime as the automatic prompt, except for a muted layer's (#932).
         marginMomentConductor?.chimedMarginIds = SharedMarginReview.chimedMarginIds(steps)
         marginMomentConductor?.onChimeStarted = { [weak self] in self?.diagnostics["marginMoment.chime"] = "played:\($0)" }
+        WrittenMarginReadings.rewordUnavailable(on: marginMomentConductor, entries: entries, model: self)
         if !snapshot.status.isPlaybackActive { resumePlayback() }
         screen = .playback
     }

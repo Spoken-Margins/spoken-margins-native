@@ -18,6 +18,20 @@ final class SharedMarginPlaceholderTests: XCTestCase {
         return calendar.date(from: DateComponents(year: 2026, month: 10, day: 30, hour: 14, minute: 5))!
     }
 
+    /// #3365: the words the placeholder writes are always recognised as the placeholder, whatever the title, so a voice
+    /// Margin that arrives without its audio is never read aloud as "Cole wrote: Voice Margin at 12:34".
+    func testEveryPlaceholderTheAppWritesIsRecognisedAsOne() {
+        let someDay = Date(timeIntervalSince1970: 1_700_000_000)
+        for title in [nil, "", "Harbour Lights", "A “quoted” title", String(repeating: "Long ", count: 60), "Café 東京 🎧", "Ends with a quote”"] {
+            for ms in [nil, 0, 754_000, 3_723_000] as [Int?] {
+                for date in [nil, someDay] as [Date?] {
+                    let words = SharedMarginPlaceholder.words(mediaTimeMs: ms, itemTitle: title, recordedAt: date, timeZone: .gmt)
+                    XCTAssertTrue(SharedMarginPlaceholderWords.matches(words), words)
+                }
+            }
+        }
+    }
+
     private func margin(
         transcript: String? = nil,
         cleaned: String? = nil,

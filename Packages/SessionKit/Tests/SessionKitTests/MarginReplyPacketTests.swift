@@ -55,6 +55,24 @@ final class MarginReplyPacketTests: XCTestCase {
         XCTAssertEqual(manifest.artifacts.map(\.kind), [SpokenMarginsArtifactKind.commentaryLayer, SpokenMarginsArtifactKind.conversation])
     }
 
+    /// #3365: a friend's written Margin is read aloud by the iPhone voice, and the listener may answer it.
+    /// What this proves: the manifest asks for no capability beyond the commentary layer, and the frozen Build 29 reader
+    /// imports the packet. What holds the format for Build 34 is `ShippedReplyPacketTests.swift:66-73`, not this test.
+    func testAReplyToAFriendsWrittenMarginNeedsNoNewCapabilityAndImportsInBuild29() throws {
+        let (alice, bob) = (try Listener(name: "A", root: root), try Listener(name: "B", root: root))
+        let (aliceURL, _) = try alice.share([try alice.write("Root thought.", id: "a-1")], packageId: "package-a", scopedIds: ["a-1"], in: root)
+        try bob.importPacket(aliceURL)
+        let parent = try XCTUnwrap(try bob.importedMargins().first { $0.packageScopedId == "a-1" })
+        XCTAssertTrue(parent.isWritten, "the parent must be a written Margin for this test to mean anything")
+
+        let reply = try bob.reply(to: "a-1", "I disagree.", id: "b-1")
+        let (bobURL, manifest) = try bob.share([reply], packageId: "package-b", scopedIds: ["b-1"], in: root)
+
+        XCTAssertEqual(manifest.requiredCapabilities, [SharedCommentaryLayerArtifact.schemaVersion])
+        XCTAssertEqual(try ShippedPacketReader.importedMargins(at: bobURL),
+                       [.init(packageScopedId: "b-1", approvedTranscript: "I disagree.")])
+    }
+
     // MARK: Done when 3: Build 29 hears a reply as an ordinary Margin
 
     func testBuild29ImportsAPacketWithAReplyAndTheReplyIsAnOrdinaryMargin() throws {

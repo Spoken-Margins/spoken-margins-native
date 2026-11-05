@@ -73,7 +73,7 @@ struct PinnedMarginCardView: View {
 
     private func icon(_ card: PinnedMarginCard) -> String {
         switch card.stage {
-        case .speaking, .voicePaused, .loading: "waveform"
+        case .speaking, .reading, .voicePaused, .loading: "waveform"
         case .failed: "exclamationmark.triangle"
         case .comingUp, .waitingForTap, .upNext: "text.bubble"
         }
@@ -83,7 +83,7 @@ struct PinnedMarginCardView: View {
     private func headlineIdentifier(_ card: PinnedMarginCard) -> String {
         guard isReview else { return "marginCard.headline" }
         if case .comingUp = card.stage { return "review.comingUp" }
-        if card.stage == .speaking || card.stage == .voicePaused { return "review.playing" }
+        if card.stage == .speaking || card.stage == .reading || card.stage == .voicePaused { return "review.playing" }
         return "marginCard.headline"
     }
 
@@ -113,7 +113,7 @@ struct PinnedMarginCardView: View {
             Button(action: model.playMarginMomentNow) { wide("Play it now", "play.fill") }
                 .buttonStyle(PrimaryButtonStyle())
                 .accessibilityIdentifier("marginMoment.playNow")
-        case .speaking, .voicePaused, .loading:
+        case .speaking, .reading, .voicePaused, .loading:
             Button(action: skip) { wide(skipTitle, "forward.end.fill") }
                 .buttonStyle(SecondaryButtonStyle())
                 .accessibilityIdentifier("marginMoment.skip")
@@ -128,9 +128,12 @@ struct PinnedMarginCardView: View {
         case .upNext:
             EmptyView()
         }
-        Button(action: model.goToNextMargin) { wide("Next Margin", "forward.end.alt.fill") }
+        // Between a friend's Margins the button is alone on its row, so it has room for the longer words (#3247).
+        let words: NextMarginWords? = card.stage.isUpNext ? model.nextMarginWords : nil
+        Button(action: model.goToNextMargin) { wide(words?.title ?? "Next Margin", "forward.end.alt.fill") }
             .buttonStyle(SecondaryButtonStyle())
             .disabled(!model.canGoToNextMargin)
+            .accessibilityHint(words?.hint ?? "")
             .accessibilityIdentifier("marginCard.next")
     }
 
@@ -167,4 +170,8 @@ struct PinnedMarginCardView: View {
     private func skip() {
         if model.playingImportedCommentary != nil { model.returnToSourceFromImportedCommentary() } else { model.skipMarginMomentVoice() }
     }
+}
+
+private extension PinnedMarginCard.Stage {
+    var isUpNext: Bool { if case .upNext = self { true } else { false } }
 }
