@@ -9,6 +9,7 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
+import { e2eSilence } from './e2e/silence/silence-plugin.ts';
 
 /** Build files only a listener who turns transcription on needs: the transcription worker and its chunks. */
 const OPT_IN_DIR = 'assets/opt-in/';
@@ -45,7 +46,8 @@ export const SHARE_LINKS_TEST_MODE = 'share-links-test';
 
 export default defineConfig(({ mode }) => ({
   base: './',
-  plugins: [react(), serviceWorker()],
+  // e2eSilence() adds nothing unless VITE_E2E_SILENT=1, which only the Playwright web servers set (#3375).
+  plugins: [react(), serviceWorker(), e2eSilence()],
   define: { __SM_SHARE_LINKS__: JSON.stringify(mode === SHARE_LINKS_TEST_MODE) },
   build: { target: 'es2022', sourcemap: false },
   // The transcription worker (src/transcribe/worker.ts) loads transformers.js, which splits into chunks. They are
