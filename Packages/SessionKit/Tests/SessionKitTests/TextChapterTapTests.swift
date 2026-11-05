@@ -61,11 +61,29 @@ final class TextChapterTapTests: XCTestCase {
         XCTAssertEqual(ListenerErrorText.message(for: SessionKitError.invalidCommandForState("jumpToChapter")), ListenerErrorText.fallback)
     }
 
-    func testUnknownChapterStillFailsAsInvalidState() throws {
+    func testAChapterNothingMatchesSaysSo() throws {
         let (engine, _) = try makeEngine(timeline: true)
         _ = try engine.startSession(itemId: "item-3362")
         XCTAssertThrowsError(try engine.jumpToChapter(chapterId: "nope")) {
+            XCTAssertEqual($0 as? ChapterJumpUnavailable, ChapterJumpUnavailable())
+        }
+    }
+
+    /// "Try another one" can't work while a written Margin is open, because no chapter can be reached until it closes.
+    func testAnOpenWrittenMarginIsNotReportedAsABadChapter() throws {
+        let (engine, _) = try makeEngine(timeline: true)
+        _ = try engine.startSession(itemId: "item-3362")
+        _ = try engine.beginWrittenInterjection()
+        XCTAssertThrowsError(try engine.jumpToChapter(chapterId: "ch-1")) {
             XCTAssertEqual($0 as? SessionKitError, .invalidCommandForState("jumpToChapter"))
+            XCTAssertNotEqual(ListenerErrorText.message(for: $0), ChapterJumpUnavailable().errorDescription)
+        }
+    }
+
+    func testNoSessionIsNotReportedAsABadChapter() throws {
+        let (engine, _) = try makeEngine(timeline: true)
+        XCTAssertThrowsError(try engine.jumpToChapter(chapterId: "ch-1")) {
+            XCTAssertNotEqual($0 as? ChapterJumpUnavailable, ChapterJumpUnavailable())
         }
     }
 }

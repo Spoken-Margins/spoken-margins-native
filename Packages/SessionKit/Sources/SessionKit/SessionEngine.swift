@@ -1455,8 +1455,11 @@ public final class SessionEngine {
             stampRequestIfStarting(target: session.currentTargetId)
             return try jumpToMediaChapter(chapterId: chapterId, session: session)
         }
-        guard var session = currentSession, let chapter = textChapterTarget(chapterId: chapterId, session: session) else {
+        guard var session = currentSession else {
             throw SessionKitError.invalidCommandForState("jumpToChapter")
+        }
+        guard let chapter = textChapterTarget(chapterId: chapterId, session: session) else {
+            throw ChapterJumpUnavailable()
         }
         stampRequestIfStarting(target: session.itemId)
         session.currentTargetType = .itemTextTTS
@@ -5201,7 +5204,7 @@ public final class SessionEngine {
         }
         guard let package = currentWatchPackage,
               let chapter = package.chapters.first(where: { $0.id == chapterId }) else {
-            throw SessionKitError.invalidCommandForState("jumpToChapter")
+            throw ChapterJumpUnavailable()
         }
         var updated = session
         let resolved = MediaTimelineAnchorResolver.resolve(

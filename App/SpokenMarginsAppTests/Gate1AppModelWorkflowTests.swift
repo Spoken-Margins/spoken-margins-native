@@ -398,6 +398,20 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertNotEqual(model.feedbackEvent?.kind, .error)
     }
 
+    /// #3362: while a written Margin is open every chapter is blocked, so the banner must not say "Try another one".
+    func testChapterTapWithAWrittenMarginOpenDoesNotSuggestAnotherChapter() throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        model.beginWrittenMargin()
+        XCTAssertNotNil(model.writtenMarginDraft)
+        defer { model.cancelWrittenMargin() }
+
+        model.jumpToMediaChapter(MediaTimelineChapter(id: "any-chapter", title: "Any", startMs: 0, transcriptSegmentId: "any"))
+
+        XCTAssertEqual(model.feedbackEvent?.message, ListenerErrorText.fallback)
+    }
+
     /// #2224: the export carries the voice download log from its file, so a download from an earlier launch shows.
     func testDiagnosticsExportCarriesTheVoiceDownloadLogFromItsFile() throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("voice-log-export-\(UUID().uuidString)", isDirectory: true)

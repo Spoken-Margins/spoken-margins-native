@@ -387,6 +387,15 @@ final class PublisherAudioPlaybackTests: XCTestCase {
         XCTAssertNil(try repository.loadItem(id: "item-post").media)
     }
 
+    func testAChapterNothingMatchesInAMediaSessionSaysSo() throws {
+        let audio = FakePublisherAudioClient()
+        let engine = SessionEngine(profile: profile(), repository: repository(map: map()), audio: audio)
+        _ = try engine.startSession(itemId: "item-post")
+        XCTAssertThrowsError(try engine.jumpToChapter(chapterId: "nope")) {
+            XCTAssertEqual($0 as? ChapterJumpUnavailable, ChapterJumpUnavailable())
+        }
+    }
+
     /// The map keeps only 80% of the article, so its last sentence can be missing.
     private func mapWithoutTheLastSentence() -> TranscriptTimeline {
         let full = map()
