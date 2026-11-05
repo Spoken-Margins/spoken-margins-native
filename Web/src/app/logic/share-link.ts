@@ -48,7 +48,13 @@ export interface ShareLinkRef {
   key: Uint8Array;
 }
 
-export type ParsedLink = { kind: 'link'; link: ShareLinkRef } | { kind: 'damaged' } | { kind: 'none' };
+/**
+ * A damaged link still names its link when the path matched (#3355), so a friend whose link was cut off can reach the
+ * report form. Never the key: it is missing or malformed, and nothing here may carry any part of it.
+ */
+export type DamagedLink = { kind: 'damaged'; reportable?: Pick<ShareLinkRef, 'origin' | 'id'> };
+
+export type ParsedLink = { kind: 'link'; link: ShareLinkRef } | DamagedLink | { kind: 'none' };
 
 // The server's ids are 32 hex characters; uploadLink accepts any URL-safe id, so this does too, within reason.
 const LINK_PATH = /\/l\/([A-Za-z0-9_-]{1,64})\/?$/;
@@ -72,7 +78,7 @@ export function parseShareLink(text: string, base?: string): ParsedLink {
   const match = LINK_PATH.exec(url.pathname);
   if (!match) return { kind: 'none' };
   const key = keyFromFragment(url.hash);
-  if (!key) return { kind: 'damaged' };
+  if (!key) return { kind: 'damaged', reportable: { origin: url.origin, id: match[1] } };
   return { kind: 'link', link: { origin: url.origin, id: match[1], key } };
 }
 

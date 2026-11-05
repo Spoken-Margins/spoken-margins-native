@@ -177,7 +177,7 @@ struct ExperienceSourcesScreen: View {
     private func friendRow(_ friend: FollowingFriends.Friend) -> some View {
         FollowingFriendRowView(friend: friend) {
             if friend.items.count == 1, let item = friend.items.first {
-                model.openItem(id: item.id)
+                model.openItemFromTap(id: item.id)
             } else {
                 openFriend = friend
             }

@@ -132,7 +132,7 @@ extension Gate1AppModel {
             podcastDownloadCoordinator?.queueRemoval(id)
             removeDurableGeneratedAudio(for: item)
             removeEpisodeMapArtifacts(itemId: id)
-            try store.deleteItem(id: id)
+            try deletingFriendRecordings(ofItems: [id], store: store) { try store.deleteItem(id: id) }
             removeLiveSessionRecord(itemId: id)
             removeMarginRecordings(recordings, quarantinedAudioPaths: quarantinedRecordings, store: store)
             try refreshLibraryRows(store: store)
@@ -174,7 +174,7 @@ extension Gate1AppModel {
             ids.forEach { podcastDownloadCoordinator?.queueRemoval($0) }
             items.forEach { removeDurableGeneratedAudio(for: $0) }
             ids.forEach(removeEpisodeMapArtifacts)
-            try store.deleteItems(ids: ids)
+            try deletingFriendRecordings(ofItems: ids, store: store) { try store.deleteItems(ids: ids) }
             ids.forEach(removeLiveSessionRecord)
             removeMarginRecordings(recordings, quarantinedAudioPaths: quarantinedRecordings, store: store)
             try refreshLibraryRows(store: store)

@@ -78,7 +78,7 @@ struct ExperiencePlayQueueScreen: View {
     }
 }
 
-private struct PlayQueueRowLabel: View {
+struct PlayQueueRowLabel: View {
     let row: PlayQueueRow
 
     var body: some View {
@@ -122,10 +122,11 @@ struct PlayQueueSummaryRow: View {
                         Text("Play queue · \(PlayQueueRows.countLine(rows.count))")
                             .font(.headline)
                         if let next = PlayQueueRows.nextLine(rows) {
+                            // Wraps rather than stopping at one line: cut short, a long title read "Next: Are Prediction…"
+                            // at every text size (#1990).
                             Text(next)
                                 .font(.subheadline)
                                 .foregroundStyle(AppColors.secondaryText)
-                                .lineLimit(1)
                         }
                     }
                     Spacer(minLength: 8)

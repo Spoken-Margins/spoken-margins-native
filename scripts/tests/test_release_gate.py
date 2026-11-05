@@ -314,6 +314,13 @@ class BuildSettingTests(unittest.TestCase):
         self.assertFalse(gate.decide("external", plist, {}, TODAY)[0])
         self.assertTrue(gate.decide("external", plist, COMPLETE_WITH_WAIVER, TODAY)[0])
 
+    def test_an_upload_archive_carries_no_phone_setting_and_a_phone_build_carries_both(self):
+        """#3354: the phone builds add Config/PhoneBuild.xcconfig; the upload steps' plain archive does not."""
+        upload = self.built_plist("Release")
+        self.assertEqual((upload["SMPhoneBuild"], upload[gate.PLIST_KEY]), ("NO", "NO"))
+        phone = self.built_plist("Release", SM_PHONE_BUILD="YES", SM_SHARE_LINK_CREATION="YES")
+        self.assertEqual((phone["SMPhoneBuild"], phone[gate.PLIST_KEY]), ("YES", "YES"))
+
     def test_debug_builds_compile_the_creation_code(self):
         self.assertEqual(self.built_plist("Debug")[gate.PLIST_KEY], "YES")
 

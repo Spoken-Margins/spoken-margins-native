@@ -460,7 +460,7 @@ final class Gate1FlowUITests: XCTestCase {
         // Every way in is on screen at once, with no scrolling (#3217).
         XCTAssertTrue(element("addSource.sheet").waitForExistence(timeout: 4))
         let screenBottom = app.windows.firstMatch.frame.maxY
-        for route in ["linkOrPodcast", "findPodcast", "pastedText", "importFromFiles", "quickFolder", "liveSession"] {
+        for route in ["linkOrPodcast", "findPodcast", "pastedText", "importFromFiles", "quickFolder", "liveSession", "spokenNote"] {
             let tile = element("addSource.route.\(route)")
             XCTAssertTrue(tile.waitForExistence(timeout: 4), "Missing typed intake route \(route)")
             XCTAssertTrue(tile.isHittable, "\(route) needs scrolling to reach")

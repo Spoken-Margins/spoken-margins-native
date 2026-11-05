@@ -86,6 +86,7 @@ public enum IncomingPackageSweep {
         keeping: Set<String>,
         only: Set<String>? = nil,
         isUsed: (String) throws -> Bool,
+        beforeRemoving: (URL) -> Void = { _ in },
         fileManager: FileManager = .default
     ) -> Outcome {
         var outcome = Outcome()
@@ -97,6 +98,13 @@ public enum IncomingPackageSweep {
             guard !keeping.contains(name), (try? isUsed(name)) == false else {
                 outcome.kept.append(name)
                 continue
+            }
+            // A derived copy keyed to a file's content (the leveled playback copy of a voice) is found only while the
+            // file exists, so the caller sees each file just before its folder goes (#3406).
+            if let files = fileManager.enumerator(at: folder, includingPropertiesForKeys: [.isRegularFileKey]) {
+                for case let file as URL in files where (try? file.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true {
+                    beforeRemoving(file)
+                }
             }
             do {
                 try fileManager.removeItem(at: folder)
@@ -113,6 +121,7 @@ public enum IncomingPackageSweep {
     @discardableResult
     public static func sweep(
         directory: URL, keeping: Set<String>, only: Set<String>? = nil, store: SQLiteSessionStore,
+        beforeRemoving: (URL) -> Void = { _ in },
         fileManager: FileManager = .default
     ) -> Outcome {
         let candidates = Set(folderNames(in: directory, fileManager: fileManager)
@@ -122,7 +131,7 @@ public enum IncomingPackageSweep {
         return sweep(directory: directory, keeping: keeping, only: only, isUsed: { name in
             guard let used, candidates.contains(name) else { throw Unreadable() }
             return used.contains(name)
-        }, fileManager: fileManager)
+        }, beforeRemoving: beforeRemoving, fileManager: fileManager)
     }
 
     /// The UUID-named sub-folders of `directory`.

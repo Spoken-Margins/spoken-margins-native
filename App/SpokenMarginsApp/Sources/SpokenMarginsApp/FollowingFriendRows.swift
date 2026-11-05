@@ -65,7 +65,7 @@ struct FollowingFriendItemsScreen: View {
     var body: some View {
         List {
             ForEach(friend.items) { item in
-                Button { model.openItem(id: item.id) } label: {
+                Button { model.openItemFromTap(id: item.id) } label: {
                     HStack(spacing: 12) {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(item.title)

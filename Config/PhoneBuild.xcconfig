@@ -1,0 +1,15 @@
+// The phone-only build settings: the one list both rolling phone builds use (#3354). scripts/phone-build (the Mac)
+// and .github/workflows/phone-build.yml (GitHub-hosted, which the owner's Mac installs) each pass
+// `-xcconfig Config/PhoneBuild.xcconfig`, so the two builds can't drift apart again: the hosted one dropped
+// both settings until #3354. Both checks read the built app's Info.plist (SMPhoneBuild, SMShareLinkCreation)
+// against this file before a build reaches the installer.
+//
+// Uploads never read this file. An upload is a plain Release archive (AGENTS.md "Releasing a build"), where
+// project.yml sets both to NO; gates are set at build time, never switched on remotely (owner, 2026-10-17).
+// scripts/tests/test_phone_build_gate.py fails if any other file passes these settings.
+//
+// SM_PHONE_BUILD turns on SM_PHONE_BUILD_CONDITIONS_YES in project.yml (the #3091 locked-Margin spike).
+// SM_SHARE_LINK_CREATION turns on iPhone link creation (#487): the owner's 2026-11-02 call ships it to his own
+// builds behind the build-time flag (docs/decisions.md).
+SM_PHONE_BUILD = YES
+SM_SHARE_LINK_CREATION = YES

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { formatClock } from '../../shared/clock.ts';
 import type { Episode, Margin, Show } from '../../shared/model.ts';
 import { capacitorBridge } from '../../sources/native-http.ts';
@@ -43,6 +43,7 @@ function LandingOffer({ landing }: { landing?: Landing }) {
     episodeId: player.episode?.id,
     playing: player.playing,
     played: playedLanding !== undefined && playedLanding === landing,
+    marginArrived: player.arrived !== undefined,
     loading: player.loading,
   });
   if (!landing || !label) return null;
@@ -106,9 +107,30 @@ function ArrivedMargin({ margins }: { margins: readonly Margin[] }) {
 function MarginCue({ margins }: { margins: readonly Margin[] }) {
   const player = usePlayer();
   const sender = friendMargins(margins)[0]?.author;
-  if (player.arrived) return null;
-  const cue = cueFor(margins, player.time, sender);
-  if (!cue) return null;
+  const cue = cueFor(margins, player.time, sender, { failed: player.failed, heardWithoutEpisode: player.withoutEpisode === 'done' });
+  // While this card says the episode can't play, the player shows no toast of its own for it (#3356).
+  // A Margin card on top of it hides the sentence, unless the Margins are playing without the episode (it was said first).
+  const sayingFailure = (cue?.kind === 'unplayable' || cue?.kind === 'unplayable-done') && (!player.arrived || player.withoutEpisode !== 'idle');
+  const { registerFailureCard } = player;
+  // A layout effect: the card and the player's notice are settled before the screen paints, so never both.
+  useLayoutEffect(() => (sayingFailure ? registerFailureCard() : undefined), [sayingFailure, registerFailureCard]);
+  if (player.arrived || !cue) return null;
+  if (cue.kind === 'unplayable' || cue.kind === 'unplayable-done') {
+    // The episode can't play here (#3356): one sentence, and for the first, one button. No countdown, no Skip.
+    return (
+      <section className="margin-cue" aria-label={`${leading(possessive(cue.who))} Margins`} data-testid="margin-cue">
+        <p className="margin-cue-line">
+          <strong>{cue.sentence}</strong>
+        </p>
+        {cue.kind === 'unplayable' && (
+          <button type="button" className="button button-primary margin-cue-skip" onClick={player.playWithoutEpisode}>
+            <PlayIcon size={18} />
+            {cue.button}
+          </button>
+        )}
+      </section>
+    );
+  }
   if (cue.kind === 'after-last') {
     return (
       <section className="margin-cue" aria-label={`${cue.lead}’s Margins`} data-testid="margin-cue">

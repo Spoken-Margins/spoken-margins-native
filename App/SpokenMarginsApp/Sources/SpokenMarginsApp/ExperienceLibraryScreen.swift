@@ -51,18 +51,23 @@ struct ExperienceLibraryScreen: View {
                 LiveSessionLiveRows() // a running or quick live session, on top (#2487 slice 1a)
                     .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
 
-                controls
-                    .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
+                // One row, always in the list, so the queue's entry can come and go without moving the items below it
+                // (#1990). A list leaves a row's height alone while the row is off screen and takes the new one when the
+                // row comes back into view, with no jump. A new row, by contrast, pushes everything below it down by its
+                // height, and a list running that update overrode every offset set to hold its place. The spacing here
+                // equals the gap two rows with this block's padding had, so the screen looks the same.
+                VStack(alignment: .leading, spacing: 8) {
+                    controls
 
-                if model.sourceLinksWaitingForNetwork > 0 {
-                    PendingLinksWaitingLine(count: model.sourceLinksWaitingForNetwork)
-                        .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
-                }
+                    if model.sourceLinksWaitingForNetwork > 0 {
+                        PendingLinksWaitingLine(count: model.sourceLinksWaitingForNetwork)
+                    }
 
-                if !queuedRows.isEmpty {
-                    PlayQueueSummaryRow(rows: queuedRows) { isPlayQueuePresented = true }
-                        .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
+                    if !queuedRows.isEmpty {
+                        PlayQueueSummaryRow(rows: queuedRows) { isPlayQueuePresented = true }
+                    }
                 }
+                .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
 
                 items
 
@@ -466,7 +471,7 @@ struct ExperienceLibraryScreen: View {
                     row: row,
                     isCurrentItem: entry.isCurrent,
                     playbackSpeed: model.speechPlaybackRateMultiplier,
-                    onOpen: { model.openItem(id: row.id) },
+                    onOpen: { model.openItemFromTap(id: row.id) },
                     onPlay: { model.continueListening(itemId: row.id) { pendingNewMarginsOffer = $0 } },
                     onComplete: { model.markItemCompleted(id: row.id) },
                     onMarkUnfinished: { model.markItemUnfinished(id: row.id) },

@@ -61,6 +61,8 @@ extension Gate1AppModel {
         _ action: PendingPlaybackAfterTerms,
         fromTimeline: Bool,
         message: String,
+        fileID: String = #fileID,
+        line: Int = #line,
         move: (SessionEngine) throws -> Void
     ) {
         guard !requireTermsDecisionBeforePlayback(action) else { return }
@@ -68,7 +70,7 @@ extension Gate1AppModel {
         stopSpeechPreviews()
         marginMomentConductor?.sourceMoved() // a chapter jump over a Margin doesn't play it (#1656)
         clearPendingAutoPlayTurns()
-        run { engine in
+        run(fileID: fileID, line: line) { engine in
             try move(engine)
             refreshSelectedItemAfterTransport()
             screen = .playback
