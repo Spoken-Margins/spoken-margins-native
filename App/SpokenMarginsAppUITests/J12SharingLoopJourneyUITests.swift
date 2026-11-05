@@ -65,15 +65,19 @@ final class J12SharingLoopJourneyUITests: XCTestCase {
 
         XCTContext.runActivity(named: "J12 step 3: Send them: the packet is built and its size is shown") { _ in
             beginStep()
-            tap("playback.margins.button")
-            tap("margins.shareItem.\(itemId)")
+            // Tap 1 (#1507): Share on the playback screen opens the sheet on its review, with Share pinned.
+            tap("playback.shareMargins.button")
             XCTAssertTrue(element("build23.sender.experience").waitForExistence(timeout: 8), "The Share Margins sheet did not open")
             let cleanUpQuestion = app.alerts["Clean selected Margins automatically?"]
             if cleanUpQuestion.waitForExistence(timeout: 2) { cleanUpQuestion.buttons["Not now"].tap() } // first share only
-            tap("build23.sender.select.continue")
-            XCTAssertTrue(element("build23.sender.stage.review").waitForExistence(timeout: 8), "The review step did not open")
-            // The package details are built without opening the iOS share sheet, which a script can't dismiss.
+            XCTAssertTrue(element("build23.sender.stage.review").waitForExistence(timeout: 8), "Share did not open on the review step")
+            // Tap 2 is Share here, which opens the iOS share sheet. It has to be on screen without scrolling.
+            let share = element("build23.sender.review.share")
+            XCTAssertTrue(share.waitForExistence(timeout: 5) && share.isHittable, "Share is not reachable on the review step without scrolling")
+            // The package details are built without opening the iOS share sheet, which a script can't dismiss, so
+            // this tap stands in for Share and counts as the second.
             tap("build23.sender.preview.build")
+            XCTAssertLessThanOrEqual(taps - tapsAtStepStart, 2, "Sharing from the playback screen took more than two taps")
             let size = element("build23.sender.preview.packetSize")
             let builtAt = Date()
             XCTAssertTrue(size.waitForExistence(timeout: 60), "The packet was not built, or its size is not shown")
