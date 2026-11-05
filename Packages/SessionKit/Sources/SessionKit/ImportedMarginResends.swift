@@ -165,12 +165,15 @@ public enum ImportedMarginResends {
 }
 
 extension ImportedCommentaryInterjection {
-    /// A re-sent Margin changes what the sender asked for (#3452): the held copy follows the newest packet, where no
-    /// choice at all means "read aloud". The listener's own choice always wins and is left alone, and a Margin with
-    /// a recording has no choice to change. The words, place and share provenance, not the choice, say it is the same
-    /// Margin (`Fingerprint`), so a flip never makes a second copy.
+    /// A re-sent Margin can turn the sender's "don't read aloud" on (#3452): the held copy follows an explicit `false` in
+    /// the newest packet. A packet with no choice does not turn it back on, because the sender's app sends no key for
+    /// "read aloud" and starts every draft at the default, so a re-share that merely repeats an earlier Margin looks the
+    /// same as "turned back on" and must not cancel the earlier choice (audit on 084da4b). Turning it back on needs the
+    /// sender's app to remember each Margin's choice first. The listener's own choice always wins and is left alone, and
+    /// a Margin with a recording has no choice to change. The words, place and share provenance, not the choice, say it is
+    /// the same Margin (`Fingerprint`), so a flip never makes a second copy.
     mutating func followSenderReadAloud(of incoming: ImportedCommentaryInterjection, arrivedAt: Date) {
-        guard listenerReadAloud == nil, isWritten, (senderReadAloud ?? true) != (incoming.senderReadAloud ?? true) else { return }
+        guard listenerReadAloud == nil, isWritten, incoming.senderReadAloud == false, senderReadAloud != false else { return }
         senderReadAloud = incoming.senderReadAloud
         senderReadAloudAt = arrivedAt
     }

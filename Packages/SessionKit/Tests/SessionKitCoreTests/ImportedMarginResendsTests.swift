@@ -401,18 +401,21 @@ final class ImportedMarginResendsTests: XCTestCase {
         XCTAssertEqual(held.first?.alsoSharedAs, [id("U", "U-1")], "The alias is added in the same pass")
     }
 
-    func testASenderWhoFlipsItBackOnChangesItBack() throws {
+    /// The sender's app sends no key for "read aloud" and starts every draft at the default, so a re-share that only
+    /// repeats an earlier Margin must not cancel the earlier "don't read aloud" (audit on 084da4b).
+    func testAResendWithNoChoiceKeepsTheEarlierDontReadAloud() throws {
         _ = try send(packet("O", from: "Ada", [("one", 60_000)], readAloud: false))
-        XCTAssertEqual(try XCTUnwrap(margins().first).senderReadAloud, false)
-        _ = try send(packet("U", from: "Ada", [("one", 60_000)], readAloud: true))
-        XCTAssertEqual(try margins().count, 1)
-        XCTAssertEqual(try XCTUnwrap(margins().first).readsAloud, true)
-        // No choice at all in the newest packet means "read aloud" too.
+        _ = try send(packet("U", from: "Ada", [("one", 60_000), ("two", 120_000)]))
+        let held = try margins().first { $0.approvedTranscript == "one" }
+        XCTAssertEqual(held?.senderReadAloud, false)
+        XCTAssertEqual(held?.readsAloud, false)
+        XCTAssertNil(held?.senderReadAloudAt, "Nothing changed, so nothing is stamped")
+        XCTAssertEqual(held?.alsoSharedAs, [id("U", "U-1")], "The alias still arrives")
+        XCTAssertEqual(try margins().count, 2)
+        // An explicit false again, then no choice again: it stays off.
         _ = try send(packet("V", from: "Ada", [("one", 60_000)], readAloud: false))
-        XCTAssertEqual(try XCTUnwrap(margins().first).readsAloud, false)
         _ = try send(packet("W", from: "Ada", [("one", 60_000)]))
-        XCTAssertEqual(try XCTUnwrap(margins().first).readsAloud, true)
-        XCTAssertEqual(try margins().count, 1)
+        XCTAssertEqual(try margins().first { $0.approvedTranscript == "one" }?.readsAloud, false)
     }
 
     func testTheSameChoiceAgainChangesNothing() throws {
