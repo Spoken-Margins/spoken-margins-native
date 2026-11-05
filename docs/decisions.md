@@ -374,3 +374,10 @@ How it is used:
 
 - **A cluster run's director is a session the owner starts by typing `/director`, and only he starts one.** That day's director had no marker telling it it was the director. It skipped `docs/workstreams/clusters.md`, and it proposed handing directing to a card, which can only create a managed child. Asked how a director session knows it is one, he was offered a command he types that loads the role's instructions every time. He said: "That sounds like a wonderful plan... Can you build it, please?" The skill is `.claude/skills/director/SKILL.md`. The model can't invoke it, so only he can.
 - **Finished managed sessions are archived without asking.** When finished sessions were left open, he asked: "I'm also curious why you haven't been archiving threads that are done with their work. Are we trying to bump up the amount of memory on my computer being used by senescent sessions?" The director archives a managed session once its final status is on the tracking issue and its PR is armed or handed back. A standing Test Desk keeps running.
+
+## 2026-11-05
+
+- **Cluster leads auto-compact instead of stopping at 250k.** He said this while away from the Mac, after the sharing-core lead stopped at 250k and he could not start a new session: "I feel pretty good about auto-compaction and would be okay with the leads undergoing auto-compaction when they start approaching the 300,000 token limit that we've already set."
+  - **What it changes:** cluster leads no longer stop at 250k. They keep their status comment and hand-off current and let auto-compact run. If the hook's 300k block arrives before a compaction, they hand off. The rule is in [clusters.md](workstreams/clusters.md), "Context budget" (#3373).
+  - **Facts at the time:** in `~/.claude/settings.json`, Opus `autoCompactWindow` is 300000 and Sonnet's is 240000. The hook (`~/.claude/hooks/spoken-margins-context-handoff.py`) counts the latest turn's context, so its count falls after a compaction; its limits are unchanged.
+  - **Not measured:** where compaction actually fires. The retrospective on #3368 calls ~265k an unchecked inference.
