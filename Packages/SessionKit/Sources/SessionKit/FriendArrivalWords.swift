@@ -26,6 +26,15 @@ public enum FriendArrivalWords {
     }
 
     /// The honest note, shown only under "About this file": the file is unchanged, the name isn't proven.
+    /// What "Hide this sender" tells the listener before it hides (#2846). It says where it applies and that nothing is lost.
+    public static let hideSenderMessage =
+        "Their Margins will disappear from every item on this phone. Nothing is deleted, and you can show them again in Settings."
+
+    /// The Settings row for a hidden sender: who it was, or that the sender never gave a name.
+    public static func hiddenSenderName(_ displayLabel: String?) -> String {
+        SharedPacketArrival.name(displayLabel) ?? "A sender who gave no name"
+    }
+
     public static let aboutTitle = SharedPacketArrival.aboutTitle
     public static let aboutNote = SharedPacketArrival.aboutIntegrity
 

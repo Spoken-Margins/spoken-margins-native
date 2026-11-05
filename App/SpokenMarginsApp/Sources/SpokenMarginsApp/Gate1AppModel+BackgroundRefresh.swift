@@ -129,12 +129,13 @@ extension Gate1AppModel {
         let snapshotItemId = snapshot.itemId
         let snapshotSessionId = snapshot.sessionId
         let passes = sharedMarginPlacementPasses
+        let hidden = hiddenSenders.current
         let generation = backgroundRefresh.beginItem()
         backgroundRefresh.holdItem(Task { [weak self] in
             let detail = await Task.detached(priority: .userInitiated) {
                 try? ItemDetailLoader.load(
                     id: id, store: store, snapshotItemId: snapshotItemId,
-                    snapshotSessionId: snapshotSessionId, placementPasses: passes)
+                    snapshotSessionId: snapshotSessionId, placementPasses: passes, hiddenSenders: hidden)
             }.value
             guard let self, let detail, !Task.isCancelled,
                   self.backgroundRefresh.isCurrentItem(generation), self.activeItemId == id else { return }
@@ -244,7 +245,7 @@ extension Gate1AppModel {
         try ItemDetailLoader.load(
             id: id, store: store,
             snapshotItemId: snapshot.itemId, snapshotSessionId: snapshot.sessionId,
-            placementPasses: sharedMarginPlacementPasses)
+            placementPasses: sharedMarginPlacementPasses, hiddenSenders: hiddenSenders.current)
     }
 
     func loadLibraryRows(store: SQLiteSessionStore) throws -> [LibraryItemRow] {

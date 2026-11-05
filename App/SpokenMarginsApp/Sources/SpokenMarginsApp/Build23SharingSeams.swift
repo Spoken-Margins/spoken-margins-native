@@ -197,6 +197,8 @@ struct Build23ImportedLayerSnapshot: Identifiable, Equatable {
     /// The share page of the link these Margins came from, where its "Report this link" form is (#2846).
     /// Nil for Margins from a file, which have no page.
     var reportURL: URL? = nil
+    /// The random id the sender's packet carried, which "Hide this sender" hides by (#2846). Nil for an older packet.
+    var senderId: String? = nil
 }
 
 /// Canonical sender actions. Ultra UI work should call these actions rather
@@ -241,6 +243,8 @@ enum Build23RecipientAction: Equatable {
     case setLayerMuted(id: String, muted: Bool)
     case setLayerRevealMode(id: String, mode: ImportedCommentaryRevealMode)
     case listenToMargin(layerID: String, marginID: String)
+    /// Hides every Margin from the sender of this layer, on this phone only (#2846).
+    case hideSender(layerID: String)
 }
 
 @MainActor
@@ -460,7 +464,8 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
                     revealMode: layer.revealMode ?? .guided,
                     listeningMapProposalCount: layer.listeningMapProposals?.count ?? 0,
                     margins: margins,
-                    reportURL: layer.shareLinkId.flatMap(ShareLinkReport.pageURL(forLinkId:))
+                    reportURL: layer.shareLinkId.flatMap(ShareLinkReport.pageURL(forLinkId:)),
+                    senderId: SenderID.valid(layer.senderId)
                 )
             }
     }
@@ -590,6 +595,9 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
             model.setImportedCommentaryRevealMode(id, mode: mode)
         case .listenToMargin(let layerID, let marginID):
             model.listenToImportedCommentary(layerID: layerID, interjectionID: marginID)
+        case .hideSender(let layerID):
+            guard let layer = model.selectedItem.importedCommentaryLayers.first(where: { $0.id == layerID }) else { return }
+            model.hideSender(layer.senderId, label: layer.displayLabel)
         }
         objectWillChange.send()
     }

@@ -12,6 +12,12 @@ final class FriendArrivalWordsTests: XCTestCase {
         XCTAssertEqual(FriendArrivalWords.fromLine(senderLabel: "   "), "From a friend")
     }
 
+    func testAHiddenSenderIsNamedOrSaidToHaveNoName() {
+        XCTAssertEqual(FriendArrivalWords.hiddenSenderName("  Ada "), "Ada")
+        XCTAssertEqual(FriendArrivalWords.hiddenSenderName(nil), "A sender who gave no name")
+        XCTAssertEqual(FriendArrivalWords.hiddenSenderName("   "), "A sender who gave no name")
+    }
+
     func testOneTitleForOneOrManySenders() {
         XCTAssertEqual(FriendArrivalWords.sectionTitle(senderLabels: ["Cole"]), "From Cole")
         XCTAssertEqual(FriendArrivalWords.sectionTitle(senderLabels: ["Cole", "Cole"]), "From Cole")

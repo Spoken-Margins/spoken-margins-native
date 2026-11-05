@@ -62,6 +62,8 @@ private struct Build23ImportedLayerList: View, Equatable {
     let layers: [Build23ImportedLayerSnapshot]
     let coordinator: Build23SharingCoordinator
     let showsMargins: Bool
+    /// The card whose "Hide this sender" was tapped, until the listener confirms or cancels (#2846).
+    @State private var pendingHide: Build23ImportedLayerSnapshot?
 
     nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.layers == rhs.layers && lhs.coordinator === rhs.coordinator && lhs.showsMargins == rhs.showsMargins
@@ -202,6 +204,30 @@ private struct Build23ImportedLayerList: View, Equatable {
                 }
                 .accessibilityHint("Opens the share page in your browser, where you can report this link.")
                 .accessibilityIdentifier("build23.imported.layer.\(layer.id).report")
+            }
+
+            // Only for Margins whose packet named a sender; an older packet has none, so there is nothing to hide by (#2846).
+            if layer.senderId != nil {
+                Button(role: .destructive) {
+                    pendingHide = layer
+                } label: {
+                    Label("Hide this sender", systemImage: "eye.slash")
+                        .font(.subheadline.weight(.semibold))
+                }
+                .accessibilityHint("Hides every Margin from this sender on this phone. You can show them again in Settings.")
+                .accessibilityIdentifier("build23.imported.layer.\(layer.id).hide-sender")
+                .confirmationDialog(
+                    "Hide this sender?",
+                    isPresented: Binding(get: { pendingHide?.id == layer.id }, set: { if !$0 { pendingHide = nil } }),
+                    titleVisibility: .visible
+                ) {
+                    Button("Hide this sender", role: .destructive) {
+                        coordinator.send(.hideSender(layerID: layer.id))
+                    }
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text(FriendArrivalWords.hideSenderMessage)
+                }
             }
         }
     }

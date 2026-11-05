@@ -75,6 +75,8 @@ extension Gate1AppModel {
 }
 
 extension Gate1AppModel: SkimBridgeHost {
+    var skimHiddenSenders: HiddenSenders { hiddenSenders.current }
+
     var skimBridgeState: SkimBridgeState? {
         get { snapshot.skimBridgeState }
         set { snapshot.skimBridgeState = newValue }
