@@ -196,7 +196,7 @@ targets:
         LSSupportsOpeningDocumentsInPlace: true
         ITSAppUsesNonExemptEncryption: false
         UILaunchScreen: {}
-        NSMicrophoneUsageDescription: Spoken Margins records your spoken Margins while you listen. Recordings stay on your phone.
+        NSMicrophoneUsageDescription: Spoken Margins records your spoken Margins while you listen. Recordings stay on your phone unless you choose to share them.
         NSSpeechRecognitionUsageDescription: Spoken Margins turns your spoken Margins into text so you can search and copy them.
         NSSupportsLiveActivities: true
         UIBackgroundModes:

@@ -93,51 +93,6 @@ final class TextSceneAssemblyTests: XCTestCase {
         XCTAssertEqual(TextSceneAssembly.completionStatus(scenes: one), "Ready with scene summaries (1 of 2 scenes)")
         XCTAssertEqual(TextSceneAssembly.completionStatus(scenes: [one[1]]), "Ready with chapters")
     }
-
-    // MARK: what leaves the device (#3449)
-
-    func testWithoutModelWordsKeepsSceneStartsAndTheQuotationsButNoWordsTheModelWrote() {
-        let characters = Array(text)
-        let scenes = drafts().map { TextSceneAssembly.scene(draft: $0, label: label(), characters: characters) }
-        let proposal = TextSceneAssembly.proposal(safeItemComponent: "article", scenes: scenes)
-
-        let leaving = TextSceneAssembly.withoutModelWords(proposal)
-
-        XCTAssertEqual(leaving.id, proposal.id)
-        XCTAssertEqual(leaving.generator, proposal.generator)
-        XCTAssertEqual(leaving.scenes.map(\.id), ["ch-generated-01", "ch-generated-02"])
-        XCTAssertEqual(leaving.scenes.map { $0.startAnchor.startChar }, [0, 108])
-        XCTAssertEqual(leaving.scenes.map { $0.startAnchor.exactText }, scenes.map { $0.startAnchor.exactText })
-        XCTAssertEqual(leaving.scenes.map { $0.endAnchor.endChar }, [108, text.count])
-        for scene in leaving.scenes {
-            XCTAssertNil(scene.title)
-            XCTAssertNil(scene.summaryText)
-            XCTAssertNil(scene.summaryAssetId)
-            XCTAssertNil(scene.summaryProvenance)
-            XCTAssertNil(scene.eligibilityReason)
-            XCTAssertNil(scene.startAnchor.chapterTitle)
-            XCTAssertNil(scene.endAnchor.chapterTitle)
-            XCTAssertEqual(scene.eligibility, .unknown)
-        }
-        let json = String(data: (try? JSONEncoder().encode(leaving)) ?? Data(), encoding: .utf8) ?? ""
-        for word in ["Crossing the desert", "caravans carried goods", "Editorial content", "modelGenerated", "model_generated"] {
-            XCTAssertFalse(json.contains(word), "\(word) must not leave the device")
-        }
-        XCTAssertEqual(PortableListeningMapContract.violations(in: leaving, itemText: text), [])
-    }
-
-    func testAProposalThatIsNotTheModelsIsReturnedAsItWas() {
-        let scene = PortableListeningMapScene(
-            id: "s1", order: 0, title: "Their title", summaryText: "Their words.", summaryProvenance: .senderAuthored,
-            eligibility: .eligible,
-            startAnchor: PortableAnchorEvidence(anchorType: .text, startChar: 0, endChar: 3, exactText: "The"),
-            endAnchor: PortableAnchorEvidence(anchorType: .text, startChar: 3, endChar: 6, exactText: " ca")
-        )
-        for generator in ["publisher", "listening-edition.v1", "on-device-scene-map.v1", "deterministic-scene-boundaries.v1"] {
-            let proposal = PortableListeningMapProposalArtifact(id: "p", createdAt: Date(), generator: generator, scenes: [scene])
-            XCTAssertEqual(TextSceneAssembly.withoutModelWords(proposal), proposal, generator)
-        }
-    }
 }
 
 /// #3450 / #3449: an export of a text item never takes a chapter title from the model's scenes.

@@ -93,34 +93,4 @@ public enum TextSceneAssembly {
             ? "Ready with chapters"
             : "Ready with scene summaries (\(summarised) of \(scenes.count) scenes)"
     }
-
-    // MARK: what leaves the device
-
-    /// The proposal as it may leave the device: for one this device's model wrote, scene starts and ends only. The
-    /// model's titles, summaries, reasons and chapter titles stay on the phone until the source is known to be public
-    /// (#3449); the scene positions, which are the listener's own text, still travel. Any other proposal is returned
-    /// as it was.
-    public static func withoutModelWords(_ proposal: PortableListeningMapProposalArtifact) -> PortableListeningMapProposalArtifact {
-        guard isModelProposal(proposal) else { return proposal }
-        func plain(_ anchor: PortableAnchorEvidence) -> PortableAnchorEvidence {
-            PortableAnchorEvidence(
-                anchorType: anchor.anchorType, startChar: anchor.startChar, endChar: anchor.endChar,
-                exactText: anchor.exactText, prefix: anchor.prefix, suffix: anchor.suffix,
-                mediaTimeMs: anchor.mediaTimeMs, roughPercent: anchor.roughPercent,
-                transcriptSegmentId: anchor.transcriptSegmentId, chapterTitle: nil,
-                machineEvidenceAssetIds: anchor.machineEvidenceAssetIds
-            )
-        }
-        return PortableListeningMapProposalArtifact(
-            id: proposal.id, schemaVersion: proposal.schemaVersion, languageCode: proposal.languageCode,
-            createdAt: proposal.createdAt, generator: proposal.generator,
-            scenes: proposal.scenes.map { scene in
-                PortableListeningMapScene(
-                    id: scene.id, order: scene.order, title: nil, summaryText: nil, summaryAssetId: nil,
-                    summaryProvenance: nil, eligibility: .unknown, eligibilityReason: nil,
-                    startAnchor: plain(scene.startAnchor), endAnchor: plain(scene.endAnchor)
-                )
-            }
-        )
-    }
 }

@@ -71,7 +71,7 @@
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Spoken Margins records your spoken Margins while you listen. Recordings stay on your phone.</string>
+	<string>Spoken Margins records your spoken Margins while you listen. Recordings stay on your phone unless you choose to share them.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>Spoken Margins turns your spoken Margins into text so you can search and copy them.</string>
 	<key>NSSupportsLiveActivities</key>

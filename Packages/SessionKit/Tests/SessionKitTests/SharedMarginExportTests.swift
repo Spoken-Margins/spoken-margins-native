@@ -129,7 +129,7 @@ final class SharedMarginExportTests: XCTestCase {
     }
 
     func testMapProposalsStripEverySummaryAssetAndPreserveAllOtherFields() {
-        XCTAssertEqual(SharedMarginExport.mapProposals([]), [])
+        XCTAssertEqual(SharedMarginExport.mapProposals([], for: markedPublicItem()), [])
         let varied = PortableListeningMapProposalArtifact(
             id: "varied", schemaVersion: "custom-schema", createdAt: date, generator: "custom-generator",
             scenes: [PortableSceneEligibility.excluded, .unknown].enumerated().map { index, eligibility in
@@ -140,7 +140,7 @@ final class SharedMarginExportTests: XCTestCase {
             }
         )
         let proposals = [proposal(native: false), proposal(native: true), varied]
-        let exported = SharedMarginExport.mapProposals(proposals)
+        let exported = SharedMarginExport.mapProposals(proposals, for: markedPublicItem())
         XCTAssertEqual(exported.count, proposals.count)
         for (actual, original) in zip(exported, proposals) {
             XCTAssertEqual(actual.id, original.id)
@@ -160,7 +160,7 @@ final class SharedMarginExportTests: XCTestCase {
         }
     }
 
-    /// #3450 / #3449: scenes the device's model wrote from the listener's own text leave as scene starts only.
+    /// #3450 / #3449: scenes the device's model wrote from a PDF's text leave as scene starts only.
     func testAProposalTheModelWroteFromTheListenersTextTravelsAsSceneStartsOnly() {
         let text = "The caravans left the oasis before dawn and crossed the dunes in single file. Water was counted by the cup."
         let draft = TextSceneDraft(
@@ -177,16 +177,19 @@ final class SharedMarginExportTests: XCTestCase {
         )
         let other = proposal(native: false)
 
-        let exported = SharedMarginExport.mapProposals([model, other], currentProposalID: model.id)
-        XCTAssertEqual(exported, [TextSceneAssembly.withoutModelWords(model)])
+        var pdf = Item(id: "pdf", title: "Doc", mediaType: "text", text: text, externalReference: "file:///private/var/Doc.pdf",
+                       status: "ready", externalReferenceType: "file")
+        pdf.publicSourceMark = PublicSourceMark(url: "file:///private/var/Doc.pdf", checkedAt: date) // a file can never earn it
+
+        let exported = SharedMarginExport.mapProposals([model, other], currentProposalID: model.id, for: pdf)
+        XCTAssertEqual(exported.map(\.id), [model.id])
         let scene = exported[0].scenes[0]
         XCTAssertEqual(scene.startAnchor.startChar, 0)
         XCTAssertNil(scene.title)
         XCTAssertNil(scene.summaryText)
         XCTAssertNil(scene.summaryProvenance)
         XCTAssertNil(scene.startAnchor.chapterTitle)
-        // A proposal that is not the model's is exported as before.
-        XCTAssertEqual(SharedMarginExport.mapProposals([other]).map(\.id), [other.id])
+        XCTAssertEqual(scene.startAnchor.exactText, "The caravans left the oasis before dawn and crossed the dunes in single file. Water was counted by the cup.")
     }
 
     func testPacketsKeepGoldenBytesAndBuild29ImportsEveryMarginAndAnchor() throws {
@@ -256,7 +259,9 @@ final class SharedMarginExportTests: XCTestCase {
             createdAt: date
         )
 
-        let prepared = try packet(native: false, evidence: false, signature: root.appending(path: "none"), proposalOverride: modelMap)
+        let pdf = Item(id: "pdf", title: "Doc", mediaType: "text", text: "ABC", externalReference: "file:///private/var/Doc.pdf",
+                       status: "ready", externalReferenceType: "file")
+        let prepared = try packet(native: false, evidence: false, signature: root.appending(path: "none"), proposalOverride: modelMap, disclosingFor: pdf)
 
         let mapJSON = try XCTUnwrap(prepared.artifactData.first { $0.key.hasPrefix("artifacts/listening-map-proposal-") }?.value)
         let text = String(decoding: mapJSON, as: UTF8.self)
@@ -297,6 +302,49 @@ final class SharedMarginExportTests: XCTestCase {
 
     private var capturedEvidence: CapturedPodcastAnchorEvidence {
         .init(id: "evidence", localPath: "/unused", durationMs: 12_000, anchorOffsetMs: 4_000)
+    }
+
+    // MARK: Model-written map text leaves only for a public source (#3449)
+
+    func testAPacketFromAFileOrAPaidFeedHoldsNoModelText() throws {
+        var file = Item(id: "pdf", title: "Doc", mediaType: "text", text: nil, externalReference: "file:///private/var/Doc.pdf",
+                        status: "ready", externalReferenceType: "file")
+        file.publicSourceMark = PublicSourceMark(url: "file:///private/var/Doc.pdf", checkedAt: date)
+        let paid = Item(id: "paid", title: "Paid", mediaType: "audio", text: nil, externalReference: "https://www.patreon.com/rss/show",
+                        status: "ready", externalReferenceType: "url")
+        for source in [file, paid] {
+            let exported = SharedMarginExport.mapProposals([modelWrittenProposal()], currentProposalID: nil, for: source)
+            let json = String(decoding: try JSONEncoder().encode(exported), as: UTF8.self)
+            XCTAssertFalse(json.contains("Model "), json)
+            XCTAssertTrue(json.contains("Publisher summary"), "the publisher's own words still go")
+            XCTAssertEqual(exported.first?.scenes.count, 2, "both scene starts still go")
+        }
+    }
+
+    func testAPacketFromAMarkedPublicSourceKeepsItsMap() throws {
+        let exported = SharedMarginExport.mapProposals([modelWrittenProposal()], currentProposalID: nil, for: markedPublicItem())
+        let json = String(decoding: try JSONEncoder().encode(exported), as: UTF8.self)
+        XCTAssertTrue(json.contains("Model title") && json.contains("Model summary"), json)
+    }
+
+    private func modelWrittenProposal() -> PortableListeningMapProposalArtifact {
+        PortableListeningMapProposalArtifact(id: "map", createdAt: date, generator: "on-device", scenes: [
+            PortableListeningMapScene(
+                id: "model", order: 0, title: "Model title", summaryText: "Model summary", summaryProvenance: .modelGenerated,
+                eligibility: .eligible, startAnchor: .init(anchorType: .media, mediaTimeMs: 0, chapterTitle: "Model title"),
+                endAnchor: .init(anchorType: .media, mediaTimeMs: 9_000, chapterTitle: "Model title")),
+            PortableListeningMapScene(
+                id: "publisher", order: 1, title: "Publisher title", summaryText: "Publisher summary", summaryProvenance: .publisherSupplied,
+                eligibility: .eligible, startAnchor: .init(anchorType: .media, mediaTimeMs: 10_000), endAnchor: .init(anchorType: .media, mediaTimeMs: 19_000)),
+        ])
+    }
+
+    /// A source whose address was found public, so its map text may travel (#3449).
+    private func markedPublicItem() -> Item {
+        var item = Item(id: "item-public", title: "Public", mediaType: "text", text: nil,
+                        externalReference: "https://example.com/post", status: "ready", externalReferenceType: "url")
+        item.publicSourceMark = PublicSourceMark(url: "https://example.com/post", checkedAt: Date(timeIntervalSince1970: 1_800_000_000))
+        return item
     }
 
     private func item(text: String? = "ABC") -> Item {
@@ -340,7 +388,8 @@ final class SharedMarginExportTests: XCTestCase {
     }
 
     private func packet(
-        native: Bool, evidence: Bool, signature: URL, proposalOverride: PortableListeningMapProposalArtifact? = nil
+        native: Bool, evidence: Bool, signature: URL, proposalOverride: PortableListeningMapProposalArtifact? = nil,
+        disclosingFor source: Item? = nil
     ) throws -> PreparedSpokenMarginsPackage {
         let item = item()
         let identity = SharedItemIdentity(itemType: native ? .podcast : .text,
@@ -360,7 +409,7 @@ final class SharedMarginExportTests: XCTestCase {
                 anchor: anchor, representation: .textOnly
             )
         }
-        let proposals = SharedMarginExport.mapProposals([proposalOverride ?? proposal(native: native)])
+        let proposals = SharedMarginExport.mapProposals([proposalOverride ?? proposal(native: native)], for: source ?? markedPublicItem())
         return try SpokenMarginsPackageBuilder.prepare(
             packageId: "package-fixed-12345678", createdAt: date, item: identity, itemTransportSelection: transport,
             selections: selections, mapProposals: proposals,
