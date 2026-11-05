@@ -4,7 +4,7 @@
 
 Read with [privacy-policy-draft.md](privacy-policy-draft.md) and [terms-draft.md](terms-draft.md).
 
-The list was cut from 20 questions to 6 on 2026-10-16. A question stays only if the answer turns on legal judgment we can't get from the statute, Apple's rules or a fee table. The rest are decisions, recorded below as defaults the owner can veto by number, or engineering work, filed as issues. The questions were revised on 2026-10-20, when Cole made the decisions D15 to D21 (updated the same day).
+The list was cut from 20 questions to 6 on 2026-10-16. A question stays only if the answer turns on legal judgment we can't get from the statute, Apple's rules or a fee table. The rest are decisions, recorded below as defaults the owner can veto by number, or engineering work, filed as issues. The questions were revised on 2026-10-20, when Cole made the decisions D15 to D21 (updated the same day). Counsel bills per question, so keep each ask brief and raise a follow-up only if an answer is one we don't like (Cole, 2026-11-05).
 
 ## Questions for counsel
 
@@ -14,6 +14,7 @@ In priority order. The first two are where the real exposure is.
    - Planned changes (#1730): the transcript is never written to disk; anchors become hashes and timestamps, not quoted sentences; descriptions are capped at about 25 words, written in our own order, and rejected if they copy 8 or more words in a row.
    - Also: does the Ninth Circuit's RAM-copy rule (*MAI v. Peak*) make the server copy a fixed copy, and does that matter if the use is fair? Is the listener's transcript their own private copy, so that our part is a secondary-liability question?
    - Full transcripts are never shared (D14).
+   - One line on Apple's terms: Apple's developer agreement (3.2(h), 3.3.4(A)(viii)) has the developer promise it holds the rights in what goes to Apple's software. We send a source to the on-device model only when its link is verified public (D22). Is that reasonable? No follow-up unless the answer is no.
 2. **Share links: the source excerpt next to a comment.** A shared Margin is the listener's own commentary on a moment in a source. The share page and the packet show that comment with a short marked quotation of the source around it, plus the title, the show and a link to the source. A link never carries the full source text or the source's audio (D15). Is a short excerpt that only gives a comment its context fair use? Please mark up these starting caps (D16):
    - after the Margin: 120 characters;
    - before the Margin: 3 times the length of the comment, at least 280 and at most 800 characters (for a spoken Margin, the transcript's length, or about 15 characters per second of audio);
@@ -73,6 +74,10 @@ Cole's decisions on 2026-10-20 (his words in quotes):
   - reporters have no unfounded or dispute counts. Every report must pick a category, from the first report on: Cole: "having them have a multiple choice question before a report isn't much of a gate. I think that we can do that immediately" A second report within 7 days from the same phone or reply email requires a written reason before it submits: "if they do a second report in a week, that should be the trigger". This applies to every category; any length is enough, even one character, and the link is disabled the moment the report is filed. Revised the same day: "If we start reporting everything, we are going to be injecting so much noise into them, that we are going to make their job harder" and "I don't think it's too much to say, why we're reporting." A reporter who reports often and gives reasons is welcome. Cole reads the report text, never the reported content. If the reporter seems not to understand the button, we change the design. Refined the same day: a reporter is blocked only when their written reasons show they are misusing the button, and only by Cole's manual decision; "requiring them to write a little note means that it becomes a lot easier to see if they are in the right for abusing the feature." Ignoring or missing the outreach message is never on its own a reason to block. That message is a plain in-app notice from Spoken Margins that says why it was sent, never a pushy "set up a chat" prompt that could look like spam. A reporter whose notes show good-faith reports is never blocked, however many they file;
   - abuse-material and Take It Down reports need the written reason on the same terms as every other category; removal is never delayed, because the link is disabled when the report is filed. In the abuse-material category the reason goes with the tip to the CyberTipline, for context. The sender is never contacted about them;
   - the Terms and the published report policy describe this. A short published content policy covers New York's hateful-conduct law, the EU Digital Services Act Arts. 16 and 17, and the UK Online Safety Act s.20.
+
+Cole's decision on 2026-11-05 (his words in quotes):
+
+- **D22. Source text goes to on-device models only with a verified public link.** "That is enough protection for me to feel comfortable." It gets the one line under question 1, not a question of its own. See [decisions.md](../decisions.md) under 2026-11-05, and #3449.
 
 ## Engineering mitigations filed
 
