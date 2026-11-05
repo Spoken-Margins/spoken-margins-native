@@ -167,10 +167,17 @@ final class SupertonicSpeechTests: XCTestCase {
 
     /// #2856: Kokoro's first render loads and specialises its Core ML models, which outlasted the 15 s wait and handed
     /// the first passage to the iOS voice at offset 0. A renderer that says it is loading its model keeps the wait open.
+    ///
+    /// #3437: the test no longer guesses at timing. The renderer says it is loading from the start, holds its render
+    /// until the test releases it, and counts the times the client asked. Two asks mean the wait limit has passed twice
+    /// with the model still loading, however slow the machine is. Before, a render that began after the first 100 ms
+    /// check, or a result still being handled at a later check, was read as a slow render and failed this in 3 of the
+    /// hosted runs in a week.
     func testFirstRenderStillLoadingItsModelIsNotHandedToTheIOSVoiceAtTheWaitLimit() async throws {
         let template = try makeTestWAV(duration: 0.5)
         defer { try? FileManager.default.removeItem(at: template) }
-        let renderer = LoadingModelRenderer(inner: CountingAudioSupertonicRenderer(templateURL: template), loadTime: .milliseconds(350))
+        let renderer = HeldLoadingModelRenderer(inner: CountingAudioSupertonicRenderer(templateURL: template))
+        defer { renderer.finishLoading() }
         let fallback = RecordingFallbackAudioClient()
         let started = expectation(description: "first passage played in the chosen voice")
         let client = SupertonicSpeechPlaybackClient(
@@ -182,7 +189,10 @@ final class SupertonicSpeechTests: XCTestCase {
         )
         _ = try client.prepareSpeechText("The first passage waits for the model to load.")
         try client.play(targetId: "cold-load", from: 0)
-        await fulfillment(of: [started], timeout: 3)
+        try await renderer.waitForLoadingChecks(2)
+        XCTAssertTrue(fallback.playedOffsets.isEmpty, "two wait limits passed while the model was loading")
+        renderer.finishLoading()
+        await fulfillment(of: [started], timeout: 10)
         XCTAssertTrue(fallback.playedOffsets.isEmpty)
         try client.stop()
     }
@@ -6581,6 +6591,46 @@ private final class LoadingModelRenderer: SupertonicRendering, @unchecked Sendab
     func discardGeneratedAudio(at url: URL) async { await inner.discardGeneratedAudio(at: url) }
 }
 
+
+/// A renderer that is loading its model from the moment it exists and holds its render until `finishLoading()` (#3437).
+/// It counts how often the client asked whether it was loading, so a test can wait for the wait limit to pass.
+private final class HeldLoadingModelRenderer: SupertonicRendering, @unchecked Sendable {
+    struct NoLoadingChecks: Error {}
+
+    private let inner: CountingAudioSupertonicRenderer
+    private let gate: AsyncStream<Void>
+    private let openGate: AsyncStream<Void>.Continuation
+    private let lock = NSLock()
+    private var checks = 0
+
+    init(inner: CountingAudioSupertonicRenderer) {
+        self.inner = inner
+        let pair = AsyncStream<Void>.makeStream()
+        gate = pair.stream
+        openGate = pair.continuation
+    }
+
+    /// True for as long as the render is held and after it, so the client never sees a gap between load and result.
+    var isLoadingModel: Bool { lock.withLock { checks += 1; return true } }
+
+    func finishLoading() { openGate.finish() }
+
+    func waitForLoadingChecks(_ count: Int, timeout: Duration = .seconds(10)) async throws {
+        let deadline = ContinuousClock.now.advanced(by: timeout)
+        while lock.withLock({ checks }) < count {
+            guard ContinuousClock.now < deadline else { throw NoLoadingChecks() }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+    }
+
+    func render(text: String, voice: SupertonicVoiceID, language: String, speed: Float, synthesisSteps: Int) async throws -> SupertonicNarrationResult {
+        for await _ in gate {}
+        try Task.checkCancellation()
+        return try await inner.render(text: text, voice: voice, language: language, speed: speed, synthesisSteps: synthesisSteps)
+    }
+
+    func discardGeneratedAudio(at url: URL) async { await inner.discardGeneratedAudio(at: url) }
+}
 
 /// Records the order of warm-ups and how many ran at the same moment (#2856).
 private final class WarmUpTally: @unchecked Sendable {
