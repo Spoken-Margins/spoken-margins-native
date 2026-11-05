@@ -128,9 +128,12 @@ struct PinnedMarginCardView: View {
         case .upNext:
             EmptyView()
         }
-        Button(action: model.goToNextMargin) { wide("Next Margin", "forward.end.alt.fill") }
+        // Between a friend's Margins the button is alone on its row, so it has room for the longer words (#3247).
+        let words: NextMarginWords? = card.stage.isUpNext ? model.nextMarginWords : nil
+        Button(action: model.goToNextMargin) { wide(words?.title ?? "Next Margin", "forward.end.alt.fill") }
             .buttonStyle(SecondaryButtonStyle())
             .disabled(!model.canGoToNextMargin)
+            .accessibilityHint(words?.hint ?? "")
             .accessibilityIdentifier("marginCard.next")
     }
 
@@ -167,4 +170,8 @@ struct PinnedMarginCardView: View {
     private func skip() {
         if model.playingImportedCommentary != nil { model.returnToSourceFromImportedCommentary() } else { model.skipMarginMomentVoice() }
     }
+}
+
+private extension PinnedMarginCard.Stage {
+    var isUpNext: Bool { if case .upNext = self { true } else { false } }
 }

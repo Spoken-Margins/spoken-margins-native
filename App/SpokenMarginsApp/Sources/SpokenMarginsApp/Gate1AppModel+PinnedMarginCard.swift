@@ -72,7 +72,18 @@ extension Gate1AppModel {
         let arrival = sharedMarginArrival(next.prompt)
         return PinnedMarginCard(
             subject: .friend(SharedPacketArrival.senderName(next.prompt.senderLabel)), stage: .upNext(msRemaining: remaining, arrival: arrival),
-            position: PinnedMarginCard.position(next.prompt.index, of: next.prompt.count))
+            position: PinnedMarginCard.position(next.prompt.index, of: next.prompt.count), isFirstFromSender: next.prompt.index == 1)
+    }
+
+    /// The words on the skip button between a friend's Margins: from the press it will make and the sender of the
+    /// Margin it goes to, so the label always describes the tap (#3247). Nil whenever the card is not that card.
+    var nextMarginWords: NextMarginWords? {
+        guard marginMoment == nil, playingImportedCommentary == nil, pendingImportedCommentary == nil,
+              let next = nextSharedMargin else { return nil }
+        // Text read aloud has no lead-in: the button goes straight to the Margin (`goToNextMargin`).
+        let press: NextMarginPress = isMediaPlaybackSnapshot
+            ? (nextMarginContext.map(NextMarginPress.press) ?? .unavailable) : .playMarginNow
+        return NextMarginWords(press: press, subject: .friend(SharedPacketArrival.senderName(next.prompt.senderLabel)))
     }
 
     /// How far through the sounding Margin voice is, from whichever player has it: a moment's (the conductor) or a
