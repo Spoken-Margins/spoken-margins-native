@@ -46,7 +46,7 @@ struct PlaybackMarginsView: View {
                         PlaybackMarginRowView(title: row.interjection.approvedTranscript,
                             detail: "\(row.collectionLabel) · \(row.positionDescription)",
                             isShared: true, identifier: "margins.shared.row.\(row.id)",
-                            canPlay: SharedMarginAudio.canOffer(row.interjection) && SharedMarginPlaybackPosition(row.interjection) != nil,
+                            canPlay: row.canPlayFromMarginsList,
                             showDetails: { selectedSharedMargin = row }, play: { model.playSharedMarginMoment(row) })
                     }
                 }

@@ -1,4 +1,5 @@
 import SwiftUI
+import SessionKit
 
 /// A detail target and a separate, full-size play target. Both stay available to VoiceOver.
 struct PlaybackMarginRowView: View {
@@ -52,4 +53,13 @@ struct PlaybackMarginRowView: View {
         .padding(.vertical, 10)
         .overlay(alignment: .bottom) { Rectangle().fill(.white.opacity(0.16)).frame(height: 1) }
     }
+}
+
+/// Whether the Play button on a friend's Margin row is enabled (#3425). Asked of `SharedMarginAudio`, so a written
+/// Margin (no recording, a reading) is offered as a voice Margin is; the views and the app tests share these.
+extension SharedMarginRow {
+    /// The Now tab's "Nearby Margins" row.
+    var canPlayFromNearbyList: Bool { SharedMarginAudio.canOffer(interjection) }
+    /// The Margins tab's row also needs a place in the episode to jump to.
+    var canPlayFromMarginsList: Bool { canPlayFromNearbyList && SharedMarginPlaybackPosition(interjection) != nil }
 }

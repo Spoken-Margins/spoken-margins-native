@@ -157,13 +157,41 @@ final class ReactionsViewModel: ObservableObject {
     }
 }
 
+/// What a tap in "Where people reacted" plays: a friend's Margin (`layerId` set) or the listener's own. A type of its own so
+/// an app test drives the same choice and the same play path the screen does (#3425).
+struct ReactionsPlayTarget: Equatable {
+    let layerId: String?
+    let marginId: String
+
+    /// The first Margin in the spot that has something to play: a recording, or a written Margin's reading. A spot with
+    /// nothing playable falls back to its first Margin, so the tap says plainly why it can't play.
+    static func forHotSpot(_ spot: MarginLayerSynthesis.HotSpot, in item: ItemDetailState) -> ReactionsPlayTarget? {
+        let voiced = spot.entries.first { entry in
+            guard let layerId = entry.layerId else { return true }
+            return item.importedCommentaryInterjections[layerId]?
+                .first { $0.id == entry.marginId }.map(SharedMarginAudio.canOffer) ?? false
+        }
+        return (voiced ?? spot.entries.first).map { ReactionsPlayTarget(layerId: $0.layerId, marginId: $0.marginId) }
+    }
+
+    /// The existing "Play this moment" paths: a lead-in, the Margin, then the item.
+    @MainActor
+    func play(in item: ItemDetailState, on model: Gate1AppModel) {
+        if let layerId {
+            guard let layer = item.importedCommentaryLayers.first(where: { $0.id == layerId }),
+                  let margin = item.importedCommentaryInterjections[layerId]?.first(where: { $0.id == marginId })
+            else { return }
+            model.playSharedMarginMoment(SharedMarginRow(interjection: margin, layer: layer, itemTitle: item.title))
+        } else if let margin = item.interjections.first(where: { $0.id == marginId }) {
+            _ = model.playMarginMoment(MarginRow(interjection: margin, itemTitle: item.title, sessionDate: nil))
+        }
+    }
+}
+
 /// "Where people reacted" (#476): the places several people left Margins, in source order, and an
 /// optional summary written on this iPhone that cites the Margins it comes from.
 struct ExperienceReactionsScreen: View {
-    private struct PlayTarget: Equatable {
-        let layerId: String?
-        let marginId: String
-    }
+    private typealias PlayTarget = ReactionsPlayTarget
 
     @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.dismiss) private var dismiss
@@ -347,7 +375,7 @@ struct ExperienceReactionsScreen: View {
 
     private func hotSpotRow(_ spot: MarginLayerSynthesis.HotSpot, index: Int) -> some View {
         Button {
-            if let entry = playableEntry(in: spot) { request(PlayTarget(layerId: entry.layerId, marginId: entry.marginId)) }
+            if let target = PlayTarget.forHotSpot(spot, in: model.selectedItem) { request(target) }
         } label: {
             GutterRow(gutterWidth: 52, alignment: .top, spacing: 12) {
                 Text(MarginLayerSynthesis.clock(spot.startMs))
@@ -386,16 +414,6 @@ struct ExperienceReactionsScreen: View {
         .accessibilityIdentifier("reactions.hotSpot.\(index)")
     }
 
-    /// The first Margin in the spot that has something to play: a recording, or a written Margin's reading.
-    private func playableEntry(in spot: MarginLayerSynthesis.HotSpot) -> MarginLayerSynthesis.Entry? {
-        let voiced = spot.entries.first { entry in
-            guard let layerId = entry.layerId else { return true }
-            return model.selectedItem.importedCommentaryInterjections[layerId]?
-                .first { $0.id == entry.marginId }.map(SharedMarginAudio.canOffer) ?? false
-        }
-        return voiced ?? spot.entries.first
-    }
-
     /// "Ana, Ben and you": the listener reads last.
     private func names(_ labels: [String]) -> String {
         let ordered = labels.filter { $0 != MarginLayerSynthesis.ownSenderLabel }
@@ -410,18 +428,7 @@ struct ExperienceReactionsScreen: View {
         dismiss()
     }
 
-    /// The existing "Play this moment" paths: a lead-in, the Margin, then the item.
-    private func play(_ target: PlayTarget) {
-        let item = model.selectedItem
-        if let layerId = target.layerId {
-            guard let layer = item.importedCommentaryLayers.first(where: { $0.id == layerId }),
-                  let margin = item.importedCommentaryInterjections[layerId]?.first(where: { $0.id == target.marginId })
-            else { return }
-            model.playSharedMarginMoment(SharedMarginRow(interjection: margin, layer: layer, itemTitle: item.title))
-        } else if let margin = item.interjections.first(where: { $0.id == target.marginId }) {
-            _ = model.playMarginMoment(MarginRow(interjection: margin, itemTitle: item.title, sessionDate: nil))
-        }
-    }
+    private func play(_ target: PlayTarget) { target.play(in: model.selectedItem, on: model) }
 
     private func sectionHeading(_ title: String, detail: String) -> some View {
         VStack(alignment: .leading, spacing: 3) {
