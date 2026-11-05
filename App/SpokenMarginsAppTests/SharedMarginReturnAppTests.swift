@@ -469,11 +469,28 @@ struct ReturnFixture {
         guard ready else { return }
         _ = WrittenMarginReader.shared.start(["seed": reading])
         await WrittenMarginReader.shared.waitUntilSettled([reading], upTo: 10)
-        XCTAssertTrue(WrittenMarginReader.shared.isReady(reading), "the reader found the seeded reading")
+        XCTAssertTrue(WrittenMarginReader.shared.isReady(reading), "the reader found the seeded reading (reader now: \(WrittenMarginReader.shared.activity))")
+    }
+
+    /// The reader is one lane for the whole test process, so a test that leaves a render behind makes the next test's
+    /// reading wait behind it (#3423: a seeded reading timed out at 10 s). Call this from the test class's `tearDown`: it
+    /// waits, without a delay of its own, for the readings someone is waiting on, and fails the test that left the reader
+    /// busy, not the one after it. It starts no render.
+    static func expectSharedReaderIdle(file: StaticString = #filePath, line: UInt = #line) async {
+        let activity = await WrittenMarginReader.shared.settle(upTo: 5)
+        XCTAssertTrue(activity.isIdle, "this test left the shared written-Margin reader busy (\(activity)), so the next reading would wait behind it", file: file, line: line)
     }
 
     func cleanUp() {
-        if let reading = writtenReading { try? FileManager.default.removeItem(at: WrittenMarginReader.shared.fileURL(for: reading)) }
+        // The reading's file goes only once the reader has no render of it queued or running. Removed earlier, a render
+        // that was about to look for the file finds none and starts a real speech render, which can block the one lane.
+        if let reading = writtenReading {
+            let file = WrittenMarginReader.shared.fileURL(for: reading)
+            WrittenMarginReader.shared.whenSettled(reading) {
+                try? FileManager.default.removeItem(at: file)
+                WrittenMarginReader.shared.forget(reading)
+            }
+        }
         model.stopInterjectionAudioPlayback()
         model.pendingImportedCommentary = nil
         model.pause()

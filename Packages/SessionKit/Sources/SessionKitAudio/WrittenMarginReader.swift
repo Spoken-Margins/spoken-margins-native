@@ -148,6 +148,65 @@ public final class WrittenMarginReader: @unchecked Sendable {
         lock.withLock { _ = ready.remove(path) }
     }
 
+    /// What the reader is doing right now. It is one render lane for the whole process (`shared`), so a test that leaves a
+    /// render behind holds up the next test's reading; tests read this to see that they have left it as they found it.
+    public struct Activity: Equatable, Sendable, CustomStringConvertible {
+        /// Renders waiting for the lane.
+        public let queued: Int
+        /// Render threads that have not come back, including ones given up on.
+        public let running: Int
+        /// Readings someone is waiting on.
+        public let waiting: Int
+        /// Renders given up on that are still blocked.
+        public let stuck: Int
+        public var isIdle: Bool { queued == 0 && running == 0 && waiting == 0 && stuck == 0 }
+        public var description: String { "queued \(queued), running \(running), waited on \(waiting), stuck \(stuck)" }
+    }
+
+    public var activity: Activity {
+        lock.withLock { Activity(queued: pending.count, running: inFlight.count, waiting: waiting.count, stuck: stuck) }
+    }
+
+    /// Runs `then` once no render of this reading is queued or running: at once when there is none, otherwise right after
+    /// the render that is. No polling and no delay. A test that removes a reading's file uses it so the file is never
+    /// taken from under a render that is about to look for it, which would start a real speech render (#1230).
+    /// A render already given up on has no one waiting for it, so it is not waited for here; `settle` shows it.
+    public func whenSettled(_ reading: WrittenMarginReading, then: @escaping @Sendable () -> Void) {
+        let path = fileURL(for: reading).path
+        lock.lock()
+        if waiting[path] != nil {
+            waiting[path]?.append { _ in then() }
+            lock.unlock()
+            return
+        }
+        lock.unlock()
+        then()
+    }
+
+    /// Returns when every reading someone is waiting on is on disk or has failed, or after `limit` seconds, and says what
+    /// the reader is doing then. Starts no render. `activity.isIdle` is the answer to "did the last test leave nothing
+    /// behind".
+    public func settle(upTo limit: TimeInterval) async -> Activity {
+        let paths = lock.withLock { Array(waiting.keys) }
+        guard !paths.isEmpty else { return activity }
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            let once = Once { continuation.resume() }
+            let remaining = Counter(paths.count)
+            for path in paths {
+                lock.lock()
+                if waiting[path] != nil {
+                    waiting[path]?.append { _ in if remaining.decrement() == 0 { once.fire() } }
+                    lock.unlock()
+                } else {
+                    lock.unlock()
+                    if remaining.decrement() == 0 { once.fire() }
+                }
+            }
+            DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + limit) { once.fire() }
+        }
+        return activity
+    }
+
     /// The system may clear Caches while the app lives, so a "ready" answer is checked against the disk, off the calling
     /// thread and at most every few seconds per file; a file that is gone stops counting as ready.
     private func verifyLater(_ path: String) {

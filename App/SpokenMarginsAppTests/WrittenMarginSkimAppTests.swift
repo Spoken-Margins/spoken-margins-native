@@ -30,6 +30,14 @@ final class WrittenMarginSkimAppTests: XCTestCase {
         defaults.set("systemImmediate", forKey: "ttsMode")
     }
 
+    /// Every test here shares the process-wide written-Margin reader, so each one must leave it as it found it: a render
+    /// left behind makes the next test's seeded reading wait behind it (the #3429 lane failure). The check is the
+    /// shared fixture's, so a leak fails the test that made it.
+    override func tearDown() async throws {
+        await ReturnFixture.expectSharedReaderIdle()
+        try await super.tearDown()
+    }
+
     override func tearDownWithError() throws {
         let defaults = UserDefaults.standard
         for key in Self.firstUseVoiceKeys {
@@ -53,6 +61,21 @@ final class WrittenMarginSkimAppTests: XCTestCase {
 
     private func skimOutcomes(_ model: Gate1AppModel) -> [String] {
         model.playbackEventRecording.events.filter { $0.kind == "skim.press" }.compactMap { $0.fields["outcome"] }
+    }
+
+    /// The warnings of these words that the app put on screen, from the record every banner leaves (`feedback.shown`,
+    /// #3344). The press raises its warning and the episode's resume can overwrite the status text in the same turn, so
+    /// the status text is the wrong thing to watch; the record is not overwritten.
+    private func warningsShown(_ model: Gate1AppModel, saying words: String) -> [String] {
+        let token = DiagnosticsExport.token(words)
+        return model.playbackEventRecording.events
+            .filter { $0.kind == FeedbackShownEvent.shownKind && $0.fields["kind"] == "warning" && $0.fields["textToken"] == token }
+            .compactMap { $0.fields["site"] }
+    }
+
+    private func bannerRecord(_ model: Gate1AppModel) -> [String] {
+        model.playbackEventRecording.events.filter { $0.kind.hasPrefix("feedback.") }
+            .map { "\($0.kind) \($0.fields["kind"] ?? "?") \($0.fields["site"] ?? "?")" }
     }
 
     private func isHeard(_ fixture: ReturnFixture) -> Bool {
@@ -132,10 +155,13 @@ final class WrittenMarginSkimAppTests: XCTestCase {
         model.skimForward()
         defer { model.endMarginMoment(); model.pause() }
         XCTAssertEqual(skimOutcomes(model).last, "started_margin_lead_in", "the Margin is still Skim's next stop")
-        try await fixture.waitUntil("the listener is told the reading couldn't be read aloud") {
-            model.statusMessage == "That Margin couldn't be read aloud, so listening continues."
-                || model.lastError == SharedMarginAudio.unavailableWords(for: fixture.record)
-        }
+        // The warning is raised inside the press, so it is read once, right after it, with nothing to wait for.
+        XCTAssertEqual(warningsShown(model, saying: "That Margin couldn't be read aloud, so listening continues.").count, 1,
+                       "the listener is told the reading couldn't be read aloud; banners: \(bannerRecord(model))")
+        XCTAssertEqual(warningsShown(model, saying: "That Margin's recording couldn't play, so listening continues.").count, 0,
+                       "a written Margin's warning never says \"recording\"")
+        XCTAssertEqual(model.diagnostics["marginMoment.voiceUnavailable"]?.hasPrefix("shared::\(fixture.layer.id)::\(fixture.record.id):"), true,
+                       "\(model.diagnostics["marginMoment.voiceUnavailable"] ?? "nil")")
         XCTAssertFalse(isHeard(fixture), "a reading that never sounded does not mark the Margin heard")
         try await fixture.waitUntil("the episode plays on") { model.snapshot.status == .playing }
 
