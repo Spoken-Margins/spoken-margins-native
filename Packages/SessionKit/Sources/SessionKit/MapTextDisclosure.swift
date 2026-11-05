@@ -1,18 +1,5 @@
 import Foundation
 
-/// A record that the listener's own action found a source publicly available: an anonymous request to its address
-/// succeeded and the response matched the source (#3449). It names the address it checked, so a source whose address
-/// later changes is unmarked again. Local only; it never travels in a packet or an export.
-public struct PublicSourceMark: Codable, Equatable, Sendable {
-    public var url: String
-    public var checkedAt: Date
-
-    public init(url: String, checkedAt: Date) {
-        self.url = url
-        self.checkedAt = checkedAt
-    }
-}
-
 /// What model-written Listening Map text may leave the device (#3449, owner 2026-11-05, until the lawyer answers).
 ///
 /// The on-device model reads every source. Its scene titles and summaries leave the phone, in a packet, an export,
