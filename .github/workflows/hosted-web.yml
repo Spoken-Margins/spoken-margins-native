@@ -86,7 +86,7 @@ jobs:
         if: steps.present.outputs.present == 'true'
         with:
           go-version: ${{ steps.gotool.outputs.version }}
-          cache-dependency-path: research/B4/server/go.sum
+          cache: false  # research/B4/server has no outside modules, so no go.sum to key a cache on
       - name: Install packages
         if: steps.present.outputs.present == 'true'
         working-directory: Web
