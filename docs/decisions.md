@@ -380,4 +380,10 @@ How it is used:
 - **Cluster leads auto-compact instead of stopping at 250k.** He said this while away from the Mac, after the sharing-core lead stopped at 250k and he could not start a new session: "I feel pretty good about auto-compaction and would be okay with the leads undergoing auto-compaction when they start approaching the 300,000 token limit that we've already set."
   - **What it changes:** cluster leads no longer stop at 250k. They keep their status comment and hand-off current and let auto-compact run. If the hook's 300k block arrives before a compaction, they hand off. The rule is in [clusters.md](workstreams/clusters.md), "Context budget" (#3373).
   - **Facts at the time:** in `~/.claude/settings.json`, Opus `autoCompactWindow` is 300000 and Sonnet's is 240000. The hook (`~/.claude/hooks/spoken-margins-context-handoff.py`) counts the latest turn's context, so its count falls after a compaction; its limits are unchanged.
-  - **Not measured:** where compaction actually fires. The retrospective on #3368 calls ~265k an unchecked inference.
+  - **Where compaction fires (his observation):** "For compaction at the 300,000 mark, I've noticed compaction on Opus sessions on a 300,000 limit trigger at 260-odd tokens and also like 270. And I don't think I've ever seen it at 280. So it pretty much matches what we want already." This agrees with the ~265k the retrospective on #3368 had called an unchecked inference.
+- **Answers to the 2026-11-05 list: "Yes, all".** He answered the numbered list with "Yes, all", so each pick below is yes (#3373).
+  1. "May leads merge sub-PRs into their own `ws/cluster-*` branches, never `main`?" Yes. The auto mode permission check had refused one lead's `gh pr merge` while allowing others'; this is the standing rule ([clusters.md](workstreams/clusters.md), "A lead's day").
+  2. "A friend's pinned card: use 'Cole's first Margin in 11 min', then 'Skip to just before Cole', then 'Skip to Cole now' from the blind test, for friend Margins only? Your own Margins and reviews keep 'Next Margin'." Yes (#3247).
+  3. "Share button on the playback dock: add it beside More? It opens the Share sheet on its review step." Yes (PR #3294, #1507).
+  4. "Prompt-submit checklist hook: add a first-turn checklist reminder for directors?" Yes.
+  5. "AGENTS.md: add one line linking the primary-source skill?" Yes.
