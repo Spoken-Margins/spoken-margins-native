@@ -212,7 +212,7 @@ struct ExperienceMarginDetailView: View {
                 if model.isPlayingInterjectionAudio(current.interjection) { model.stopInterjectionAudioPlayback() }
                 switch pendingNavigation {
                 case .moment: model.playMarginMoment(current)
-                case .item: model.openItem(id: current.interjection.itemId)
+                case .item: model.openItemFromTap(id: current.interjection.itemId)
                 case nil: break
                 }
                 pendingNavigation = nil
