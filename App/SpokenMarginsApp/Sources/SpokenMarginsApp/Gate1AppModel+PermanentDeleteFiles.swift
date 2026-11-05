@@ -43,7 +43,10 @@ extension Gate1AppModel {
         try FriendPacketFolders.deleting(
             itemIds: itemIds, store: store,
             directory: supportDirectory.appending(path: "SpokenMargins/IncomingPackages", directoryHint: .isDirectory),
-            keeping: packageImport.foldersInUse, delete: delete)
+            keeping: packageImport.foldersInUse,
+            // The leveled copy of a friend's voice is found by the file's content, so it goes before the file does.
+            beforeRemovingFile: { [leveledMargins = Self.leveledMargins] in leveledMargins.removeCopies(of: $0) },
+            delete: delete)
     }
 
     /// The prepared narration file goes off the main thread (#2510), like the recordings and the episode-map folder,

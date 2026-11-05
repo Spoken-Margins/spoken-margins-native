@@ -50,6 +50,10 @@ public enum FriendPacketFolders {
     /// returns, so a failed delete leaves every file in place and no row is left pointing at nothing. If the names
     /// can't be read, the delete still goes ahead and the launch sweep removes the folders later.
     ///
+    /// `beforeRemovingFile` is called with each file of a folder about to go, so derived copies keyed to the file's
+    /// content (the leveled playback copy of a friend's voice) can be removed while the file can still be read.
+    /// The order is the row delete, then those copies, then the folder.
+    ///
     /// The returned task finishes when the removal does; callers need not wait for it.
     @discardableResult
     public static func deleting(
@@ -57,6 +61,7 @@ public enum FriendPacketFolders {
         store: SQLiteSessionStore,
         directory: URL,
         keeping: Set<String>,
+        beforeRemovingFile: @escaping @Sendable (URL) -> Void = { _ in },
         delete: () throws -> Void
     ) throws -> Task<IncomingPackageSweep.Outcome, Never> {
         let candidates = (try? candidateFolderNames(ofItems: itemIds, store: store)) ?? []
@@ -64,7 +69,8 @@ public enum FriendPacketFolders {
         guard !candidates.isEmpty else { return Task { IncomingPackageSweep.Outcome() } }
         return Task.detached(priority: .utility) {
             IncomingPackageSweep.sweep(
-                directory: directory, keeping: keeping, only: candidates, store: store)
+                directory: directory, keeping: keeping, only: candidates, store: store,
+                beforeRemoving: beforeRemovingFile)
         }
     }
 
