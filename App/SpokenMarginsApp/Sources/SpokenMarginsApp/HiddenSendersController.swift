@@ -27,9 +27,10 @@ final class HiddenSendersController: ObservableObject {
     }
 
     /// The random id this phone puts in every packet it shares (one per phone, #2846). Nil when the phone gives no
-    /// folder to keep it in, so the packet goes out without one rather than with an id that changes every time.
+    /// way to keep it (no folder, a file that cannot be read or written), so the packet goes out without one rather than
+    /// with an id that changes every time.
     static func phoneSenderID() -> String? {
-        defaultDirectory().map { SenderIdentityFileStore<SenderIDLedger>.ledger(in: $0).phoneSenderID() }
+        defaultDirectory().flatMap { SenderIdentityFileStore<SenderIDLedger>.ledger(in: $0).phoneSenderID() }
     }
 
     var isEmpty: Bool { current.entries.isEmpty }
