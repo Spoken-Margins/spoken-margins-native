@@ -57,6 +57,11 @@ export interface Margin {
   author?: string;
   /** The Margin this one answers (2026-10-25 call: recorded during a friend's Margin = a reply). */
   replyToId?: string;
+  /**
+   * The sender's ask, carried from the packet's `readAloud: false` on a written Margin (#3445): the browser's voice
+   * doesn't read it, though its words still show. Only ever `false`; absent means read aloud.
+   */
+  readAloud?: false;
 }
 
 /** Where the listener left off in an episode. */

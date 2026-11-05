@@ -6,7 +6,7 @@ import { useData } from '../data.tsx';
 import { downloadFile } from '../download.ts';
 import { useRestoreFocus } from '../focus.ts';
 import { BackIcon, DownIcon, DownloadIcon, ForwardIcon, MicIcon, PauseIcon, PenIcon, PlayIcon, ShareIcon, SkipIcon, StopIcon } from '../icons.tsx';
-import { cueFor, friendMargins, leading, possessive, senderName, speakingLine } from '../logic/arrival.ts';
+import { cueFor, friendMargins, leading, possessive, readsAloud, senderName, speakingLine } from '../logic/arrival.ts';
 import { landingOffer, type Landing } from '../logic/import.ts';
 import { nextSpeed, timelineFraction, timelinePosts } from '../logic/library.ts';
 import { plainError } from '../logic/messages.ts';
@@ -77,7 +77,7 @@ function ArrivedMargin({ margins }: { margins: readonly Margin[] }) {
   const { margin, blocked } = arrived;
   const words = margin.text ?? (margin.voice ? 'A spoken Margin' : '');
   const line = speakingLine(margin, margins, friendMargins(margins)[0]?.author);
-  const voiced = !margin.voice && typeof window !== 'undefined' && 'speechSynthesis' in window;
+  const voiced = readsAloud(margin) && typeof window !== 'undefined' && 'speechSynthesis' in window;
   return (
     <div className="arrived-margin" role="status" data-testid="arrived-margin">
       <p className="arrived-margin-head">

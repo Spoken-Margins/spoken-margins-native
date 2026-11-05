@@ -4,7 +4,7 @@
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { Episode, Margin } from '../shared/model.ts';
 import { useData } from './data.tsx';
-import { friendMargins } from './logic/arrival.ts';
+import { friendMargins, readsAloud } from './logic/arrival.ts';
 import { clipRejection, EPISODE_FAILED, failureNoticeShown, nextFailure, type FailureEvent } from './logic/episode-failure.ts';
 import { CrossingClock } from './logic/margin-autoplay.ts';
 import { plainError } from './logic/messages.ts';
@@ -179,6 +179,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           setArrived({ margin, blocked: false });
           clearTimeout(shownTimer.current);
           shownTimer.current = setTimeout(() => setArrived((a) => (a?.margin.id === margin.id ? undefined : a)), WRITTEN_SHOWN_MS);
+          // The sender asked that this one not be read aloud: the words stay up, and nothing else changes (#3445).
+          if (!readsAloud(margin)) continue;
           // A tone, then "Cole wrote:" and the words in this browser's own voice, with the episode turned down.
           reading.current?.cancel();
           const audio = audioRef.current;
@@ -273,14 +275,15 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         playClip(margin, next);
       } else {
         setArrived({ margin, blocked: false });
-        const heard = readWrittenMargin(margin.author, margin.text ?? '', {
+        // Not read aloud (#3445): the words show for the usual time, then the run moves on, as with no voice.
+        const heard = readsAloud(margin) ? readWrittenMargin(margin.author, margin.text ?? '', {
           onStart: () => undefined,
           onEnd: () => {
             if (run !== runId.current) return;
             if (reading.current === heard) reading.current = undefined;
             next();
           },
-        });
+        }) : undefined;
         reading.current = heard;
         // A browser with no voice leaves the words up for the usual time, then moves on.
         if (!heard) shownTimer.current = setTimeout(() => run === runId.current && next(), WRITTEN_SHOWN_MS);

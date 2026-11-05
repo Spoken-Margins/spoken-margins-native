@@ -538,6 +538,8 @@ export async function readPacket(input: Uint8Array | ArrayBuffer | Blob, options
     }
     if (sender) margin.author = sender;
     if (replyToId) margin.replyToId = replyToId;
+    // The sender's "don't read this aloud" holds for a written Margin only; a voice Margin is the sender's own voice.
+    if (record.readAloud === false && !margin.voice) margin.readAloud = false;
     margins.push(margin);
   }
   margins.sort((a, b) => a.atSeconds - b.atSeconds);

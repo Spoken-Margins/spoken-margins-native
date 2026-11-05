@@ -11,6 +11,14 @@ export const LEAD_IN_SECONDS = 20;
 /** A written Margin counts this long toward "about N min": the time to hear a tone and a short line read aloud. */
 const WRITTEN_SECONDS = 8;
 
+/**
+ * Whether the browser's voice reads this Margin aloud. A voice Margin plays its own audio; a written one is read unless
+ * the sender asked that it not be (`readAloud: false`, #3445). The words show on screen either way.
+ */
+export function readsAloud(margin: Margin): boolean {
+  return !margin.voice && margin.readAloud !== false;
+}
+
 /** The sender's name as the friend sees it. The packet's name is the sender's own claim, so it is only ever text. */
 export function senderName(sender: string | undefined): string {
   const name = sender?.trim();
@@ -52,7 +60,7 @@ function lengthWords(seconds: number): string {
 
 /** How long the sender's Margins take to hear, in seconds: each voice Margin's length, a written one's reading time. */
 export function marginsSeconds(margins: readonly Margin[]): number {
-  return margins.reduce((sum, m) => sum + (m.voice ? m.voice.durationSeconds : WRITTEN_SECONDS), 0);
+  return margins.reduce((sum, m) => sum + (m.voice ? m.voice.durationSeconds : readsAloud(m) ? WRITTEN_SECONDS : 0), 0);
 }
 
 export function arrivalFacts(sender: string | undefined, margins: readonly Margin[]): ArrivalFacts {
