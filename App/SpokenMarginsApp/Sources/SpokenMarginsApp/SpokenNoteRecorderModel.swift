@@ -82,11 +82,16 @@ final class SpokenNoteRecorderModel: ObservableObject {
 
     var isBusy: Bool { phase == .starting || phase == .stopping }
 
-    func record() {
+    /// - Parameter prepare: Work to finish before the microphone opens (a sentence handing the audio session back).
+    ///   The screen is `.starting` from this call on, so while it runs neither Record nor a sentence can be tapped.
+    func record(after prepare: (@MainActor () async -> Void)? = nil) {
         guard phase == .idle, !isFinished, let environment else { return }
         phase = .starting
         message = nil
-        Task { await begin(environment) }
+        Task {
+            await prepare?()
+            await begin(environment)
+        }
     }
 
     func stop() {
