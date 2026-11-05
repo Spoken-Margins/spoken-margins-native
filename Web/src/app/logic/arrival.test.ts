@@ -14,6 +14,7 @@ import {
   senderInitial,
   senderName,
   speakingLine,
+  stopsPlayback,
   writtenIntro,
 } from './arrival.ts';
 
@@ -167,6 +168,26 @@ test('a Margin that is not read aloud adds no reading time, and still counts as 
   assert.ok(marginsSeconds([read]) > 0);
   assert.equal(marginsSeconds([silent]), 0);
   assert.match(arrivalFacts('Cole', [read, silent]).countLine, /^2 Margins/);
-  // The silent Margin is still a friend's Margin: it shows, counts down and can be skipped to.
+  // The silent Margin is still a friend's Margin: it shows, and it counts in "N of M".
   assert.equal(friendMargins([read, silent]).length, 2);
+});
+
+test('the countdown and its Skip pass a Margin that is not read aloud (#3445)', () => {
+  const silent: Margin = { ...margin('s', 300), readAloud: false };
+  const spoken = margin('v', 600, { spoken: true });
+  assert.equal(stopsPlayback(silent), false);
+  assert.equal(stopsPlayback(spoken), true);
+  assert.equal(stopsPlayback(margin('w', 10)), true);
+  // At 0:00 the next stop is the voice Margin at 10:00, not the silent one at 5:00.
+  const cue = cueFor([silent, spoken], 0, 'Cole');
+  assert.ok(cue && cue.kind === 'countdown');
+  assert.equal(cue.skip.to, 600 - LEAD_IN_SECONDS);
+  assert.match(cue.label, /^Cole’s Margin in$/, 'one Margin to wait for, so no "first"');
+  // Past the voice Margin, only the silent one is behind: nothing is left to count down to.
+  assert.equal(cueFor([silent, spoken], 700, 'Cole')?.kind, 'after-last');
+  // Only silent Margins: nothing to wait for, no card.
+  assert.equal(cueFor([silent], 0, 'Cole'), undefined);
+  assert.equal(cueFor([silent], 0, 'Cole', { failed: true, heardWithoutEpisode: false }), undefined);
+  // The count in "3 of 3" still includes it.
+  assert.equal(speakingLine(silent, [silent, spoken], 'Cole').position, '1 of 2');
 });

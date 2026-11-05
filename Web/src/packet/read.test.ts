@@ -1,12 +1,11 @@
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
 import { test } from 'node:test';
 
 import { PACKET_MESSAGES, PacketError } from './errors.ts';
-import { contentDigest } from './format.ts';
 import { voiceMargins, writeVoice, writeWritten } from './fixtures.ts';
 import { readPacket } from './read.ts';
+import { withLayer } from './resign.ts';
 import { listZip, readZip, writeZip } from './zip.ts';
 
 const root = new URL('../../../', import.meta.url);
@@ -139,33 +138,6 @@ test('an undeclared extra entry is refused', async () => {
   await refusedAs(readPacket(bytes), 'damaged');
 });
 
-/** Re-signs a packet after `change` edits its commentary layer, the way the iPhone app would write a `readAloud` key. */
-async function withLayer(bytes: Uint8Array, change: (interjections: Record<string, unknown>[]) => void): Promise<Uint8Array> {
-  return rezipSigned(bytes, (entries) => {
-    const layer = JSON.parse(new TextDecoder().decode(entries.get('artifacts/commentary-layer.json')));
-    change(layer.interjections);
-    entries.set('artifacts/commentary-layer.json', new TextEncoder().encode(JSON.stringify(layer)));
-  });
-}
-
-async function rezipSigned(bytes: Uint8Array, change: (entries: Map<string, Uint8Array>) => void): Promise<Uint8Array> {
-  const entries = await readZip(bytes, { totalBytes: Infinity, compressionRatio: Infinity, entryBytes: () => Infinity });
-  change(entries);
-  const manifest = JSON.parse(new TextDecoder().decode(entries.get('manifest.json')));
-  // The descriptor of every artifact states its size and hash; the reader checks both.
-  for (const d of manifest.artifacts as { path: string; byteCount: number; sha256: string }[]) {
-    const body = entries.get(d.path) as Uint8Array;
-    d.byteCount = body.length;
-    d.sha256 = createHash('sha256').update(body).digest('hex');
-  }
-  const files = new Map<string, Uint8Array>(
-    [...manifest.artifacts, ...manifest.assets].map((d: { path: string }) => [d.path, entries.get(d.path) as Uint8Array] as const),
-  );
-  manifest.contentDigest = await contentDigest(manifest, entries.get('preview.md') as Uint8Array, files);
-  entries.set('manifest.json', new TextEncoder().encode(JSON.stringify(manifest)));
-  return writeZip([...entries].map(([path, data]) => ({ path, data, deflate: !path.startsWith('assets/') })));
-}
-
 test('a written Margin the sender asked not to be read aloud carries that into the web model (#3445)', async () => {
   const bytes = await writeWritten().then((w) => w.bytes);
   const edited = await withLayer(bytes, (records) => { records[0].readAloud = false; });
@@ -176,12 +148,16 @@ test('a written Margin the sender asked not to be read aloud carries that into t
   assert.ok(result.margins[0].text, 'the words still come through');
 });
 
-test('readAloud true, or a value that is not false, leaves a Margin read aloud (#3445)', async () => {
+test('readAloud true or null leaves a Margin read aloud; another type is refused, as the app does (#3445)', async () => {
   const bytes = await writeWritten().then((w) => w.bytes);
-  for (const value of [true, 'false', 0, null]) {
+  for (const value of [true, null]) {
     const edited = await withLayer(bytes, (records) => { records[0].readAloud = value; });
     const result = await readPacket(edited);
     assert.equal(result.margins[0].readAloud, undefined, `readAloud ${JSON.stringify(value)}`);
+  }
+  for (const value of ['false', 0, 1, {}]) {
+    const edited = await withLayer(bytes, (records) => { records[0].readAloud = value; });
+    await refusedAs(readPacket(edited), 'doesNotMatch');
   }
 });
 
