@@ -193,4 +193,14 @@ final class SpokenNoteTests: XCTestCase {
         XCTAssertEqual(takes.first?["audioFileName"] as? String, "t1.m4a")
         XCTAssertNotNil(takes.first?["createdAt"] as? String, "dates are ISO 8601 text")
     }
+
+    func testAPlaybackSpanHasEndedAtItsEndAndNotBefore() {
+        let take = SpokenNoteTake(id: "t", audioFileName: "a.m4a", durationMs: 5_000, createdAt: Date(timeIntervalSince1970: 0),
+                                  sentences: [SpokenNoteSentence(text: "One.", startMs: 1_000, endMs: 2_000)])
+        let note = SpokenNote(id: "n", takes: [take])
+        let span = note.playback(for: SpokenNote.SentenceRef(takeIndex: 0, sentenceIndex: 0))
+        XCTAssertEqual(span?.hasEnded(atMs: 1_999), false)
+        XCTAssertEqual(span?.hasEnded(atMs: 2_000), true)
+        XCTAssertEqual(span?.hasEnded(atMs: 4_000), true)
+    }
 }

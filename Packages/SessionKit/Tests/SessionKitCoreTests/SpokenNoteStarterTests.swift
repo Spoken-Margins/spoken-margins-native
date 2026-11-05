@@ -92,4 +92,48 @@ final class SpokenNoteStarterTests: XCTestCase {
         XCTAssertNotNil(SpokenNoteStarter.store(noteId: UUID().uuidString.lowercased(), in: support))
         XCTAssertNotNil(SpokenNoteStarter.store(noteId: "note_1-a", in: support))
     }
+
+    // MARK: Reopening a note from its Library row
+
+    func testReopenReturnsTheNoteAsSavedWithTheRowsTitleAndWritesNothing() throws {
+        let started = try SpokenNoteStarter.start(in: support, now: Date(timeIntervalSince1970: 1), makeId: { "n1" })
+        try Data([1]).write(to: started.store.folderURL.appendingPathComponent("take-a.m4a"))
+        try SpokenNoteIntake.addRecordedTake(audioFileName: "take-a.m4a", durationMs: 2_000, to: started.store, now: Date(timeIntervalSince1970: 2), takeId: "a")
+        let before = try Data(contentsOf: started.store.fileURL)
+
+        let reopened = SpokenNoteStarter.reopen(noteId: "n1", title: "Plumber call", in: support, now: Date(timeIntervalSince1970: 9))
+
+        XCTAssertEqual(reopened?.note.takes.map(\.id), ["a"])
+        XCTAssertEqual(reopened?.item.id, "spoken-note-n1", "the same row the note was saved under")
+        XCTAssertEqual(reopened?.item.title, "Plumber call")
+        XCTAssertEqual(try Data(contentsOf: started.store.fileURL), before)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: started.store.itemSavedMarkerURL.path), "reopening alone records nothing")
+    }
+
+    func testReopenOfAMissingOrUnsafeNoteIsNilAndCreatesNothing() throws {
+        XCTAssertNil(SpokenNoteStarter.reopen(noteId: "gone", title: nil, in: support, now: Date()))
+        XCTAssertNil(SpokenNoteStarter.reopen(noteId: "../escape", title: nil, in: support, now: Date()))
+        XCTAssertNil(SpokenNoteStarter.reopen(noteId: "", title: nil, in: support, now: Date()))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: SpokenNoteStarter.notesRoot(in: support).appendingPathComponent("gone").path))
+    }
+
+    func testReopenOfAFolderWithAnUnreadableNoteFileIsAnEmptyNoteNotACrash() throws {
+        let started = try SpokenNoteStarter.start(in: support, now: Date(timeIntervalSince1970: 1), makeId: { "n1" })
+        try Data("not json".utf8).write(to: started.store.fileURL)
+        let reopened = SpokenNoteStarter.reopen(noteId: "n1", title: nil, in: support, now: Date())
+        XCTAssertEqual(reopened?.note.isEmpty, true)
+        XCTAssertEqual(reopened?.item.title, "Spoken note")
+    }
+
+    func testARowOpensAsANoteOnlyWhenItIsOne() {
+        func row(_ type: String, _ reference: String?) -> LibraryItemRow {
+            LibraryItemRow(id: "i", title: "T", status: "s", canDelete: true, mediaType: type, sourceReference: reference)
+        }
+        XCTAssertEqual(row("spoken_note", "note://n1").spokenNoteId, "n1")
+        XCTAssertEqual(row("Spoken_Note", "note://n1").spokenNoteId, "n1", "case does not matter")
+        XCTAssertNil(row("text", "note://n1").spokenNoteId, "an ordinary item that happens to carry the reference")
+        XCTAssertNil(row("spoken_note", nil).spokenNoteId)
+        XCTAssertNil(row("spoken_note", "note://").spokenNoteId)
+        XCTAssertNil(row("spoken_note", "https://example.com/n1").spokenNoteId)
+    }
 }

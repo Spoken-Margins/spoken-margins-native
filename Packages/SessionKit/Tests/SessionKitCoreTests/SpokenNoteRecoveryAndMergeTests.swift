@@ -136,6 +136,7 @@ final class SpokenNoteRecoveryAndMergeTests: XCTestCase {
         let started = try SpokenNoteStarter.start(in: support, now: Date(timeIntervalSince1970: 1), makeId: { "n1" })
         try Data([1]).write(to: started.store.folderURL.appendingPathComponent("take-one.m4a"))
         try SpokenNoteIntake.addRecordedTake(audioFileName: "take-one.m4a", durationMs: 1_000, to: started.store, now: Date(timeIntervalSince1970: 2), takeId: "one")
+        started.store.markItemSaved() // the row was written when take 1 was added
         try writeTake("n1", "take-two.m4a", age: 600)
         let database = FakeDatabase() // no row: it was deleted for good
 
@@ -143,6 +144,64 @@ final class SpokenNoteRecoveryAndMergeTests: XCTestCase {
 
         XCTAssertEqual(started.store.load().takes.map(\.id), ["one", "two"], "the audio is still added to the note")
         XCTAssertNil(database.row(started.item.id), "but the deleted row is not made again")
+    }
+
+    /// The audit's second finding: the first row save failed, the app ended during a later take, and the note had no
+    /// row for good. The row was never written, so recovery makes it.
+    func testARowThatWasNeverSavedIsMadeWhenALaterTakeIsRecovered() async throws {
+        let started = try SpokenNoteStarter.start(in: support, now: Date(timeIntervalSince1970: 1), makeId: { "n1" })
+        let failing = FailingDatabase()
+        let coordinator = SpokenNoteRecordingCoordinator(
+            store: started.store, item: started.item, itemIsSaved: false,
+            recorder: WritingRecorder(), transcriber: GatedTranscriber(), itemWriter: failing,
+            now: { Date(timeIntervalSince1970: 5) }, makeTakeId: { "t1" }
+        )
+        try await coordinator.startTake()
+        try await coordinator.stopTake() // take 1 is in the note; its row save failed
+        XCTAssertFalse(started.store.itemWasSaved)
+        try writeTake("n1", "take-two.m4a", age: 600) // the app ended during take 2
+        let database = FakeDatabase()
+
+        let recovered = SpokenNoteRecovery.recover(
+            in: support, now: Date(timeIntervalSince1970: 10_000), measureDurationMs: { _ in 0 }, itemWriter: database, liveNoteIds: []
+        )
+
+        XCTAssertEqual(recovered, ["n1"])
+        XCTAssertEqual(started.store.load().takes.map(\.id), ["t1", "two"])
+        XCTAssertNotNil(database.row(started.item.id), "the note can be reached from the Library")
+        XCTAssertTrue(started.store.itemWasSaved)
+    }
+
+    func testARowThatWasSavedThenDeletedStaysDeletedWhenALaterTakeIsRecovered() async throws {
+        let started = try SpokenNoteStarter.start(in: support, now: Date(timeIntervalSince1970: 1), makeId: { "n1" })
+        let database = FakeDatabase()
+        let coordinator = SpokenNoteRecordingCoordinator(
+            store: started.store, item: started.item, itemIsSaved: false,
+            recorder: WritingRecorder(), transcriber: GatedTranscriber(), itemWriter: database,
+            now: { Date(timeIntervalSince1970: 5) }, makeTakeId: { "t1" }
+        )
+        try await coordinator.startTake()
+        try await coordinator.stopTake()
+        XCTAssertTrue(started.store.itemWasSaved)
+        database.remove(started.item.id) // trashed and emptied
+        try writeTake("n1", "take-two.m4a", age: 600)
+
+        SpokenNoteRecovery.recover(in: support, now: Date(timeIntervalSince1970: 10_000), measureDurationMs: { _ in 0 }, itemWriter: database, liveNoteIds: [])
+
+        XCTAssertEqual(started.store.load().takes.map(\.id), ["t1", "two"], "the dictation is still reachable in its folder")
+        XCTAssertNil(database.row(started.item.id), "the deleted row is not made again")
+    }
+
+    func testARowThatFailsToSaveDuringRecoveryIsOfferedAgainNextLaunch() throws {
+        let started = try SpokenNoteStarter.start(in: support, now: Date(timeIntervalSince1970: 1), makeId: { "n1" })
+        try writeTake("n1", "take-a.m4a", age: 600)
+        SpokenNoteRecovery.recover(in: support, now: Date(timeIntervalSince1970: 10_000), measureDurationMs: { _ in 0 }, itemWriter: FailingDatabase(), liveNoteIds: [])
+        XCTAssertFalse(started.store.itemWasSaved, "no marker for a row that was not written")
+
+        let database = FakeDatabase()
+        try writeTake("n1", "take-b.m4a", age: 600) // anything new brings the note back into recovery
+        SpokenNoteRecovery.recover(in: support, now: Date(timeIntervalSince1970: 10_000), measureDurationMs: { _ in 0 }, itemWriter: database, liveNoteIds: [])
+        XCTAssertNotNil(database.row(started.item.id))
     }
 
     func testRecoveryLeavesAnUnreadableNoteAloneAndKeepsAFileThatWillNotOpen() throws {
@@ -181,6 +240,10 @@ private final class FakeDatabase: SpokenNoteItemWriting, @unchecked Sendable {
     func row(_ id: String) -> Item? { lock.withLock { rows[id] } }
     func trash(_ id: String) { lock.withLock { rows[id]?.deletedAt = Date(timeIntervalSince1970: 99) } }
     func remove(_ id: String) { lock.withLock { rows[id] = nil } }
+}
+
+private final class FailingDatabase: SpokenNoteItemWriting, @unchecked Sendable {
+    func write(_ item: Item, isFirstSave: Bool) throws { throw NSError(domain: "db", code: 1) }
 }
 
 private final class WritingRecorder: SpokenNoteTakeRecording, @unchecked Sendable {

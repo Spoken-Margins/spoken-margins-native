@@ -42,6 +42,12 @@ public struct SpokenNotePlayback: Equatable, Sendable {
     public let audioFileName: String
     public let startMs: Int
     public let endMs: Int
+
+    /// Whether the audio has played through the span when the player stands at `positionMs`. A player that has
+    /// stopped by itself (position back at 0 after the file ended) is the caller's to detect; this is only the span.
+    public func hasEnded(atMs positionMs: Int) -> Bool {
+        positionMs >= endMs
+    }
 }
 
 /// A spoken note: the listener's dictation as an ordered list of takes (#1609).
@@ -58,6 +64,11 @@ public struct SpokenNote: Codable, Equatable, Sendable {
     public struct SentenceRef: Equatable, Sendable {
         public let takeIndex: Int
         public let sentenceIndex: Int
+
+        public init(takeIndex: Int, sentenceIndex: Int) {
+            self.takeIndex = takeIndex
+            self.sentenceIndex = sentenceIndex
+        }
     }
 
     public let id: String
@@ -153,6 +164,19 @@ public struct SpokenNoteStore: Sendable {
 
     public var fileURL: URL { folderURL.appendingPathComponent("note.json") }
     public var setAsideURL: URL { folderURL.appendingPathComponent("note.unreadable.json") }
+    /// An empty file that says the note's Library row has been written at least once (#3108). It is the record that
+    /// tells a row that was never saved (the first save failed) from one the listener deleted: recovery makes the first
+    /// and leaves the second deleted. It is not part of `note.json`, so the previous build reads the note as before.
+    public var itemSavedMarkerURL: URL { folderURL.appendingPathComponent("item.saved") }
+
+    public var itemWasSaved: Bool { FileManager.default.fileExists(atPath: itemSavedMarkerURL.path) }
+
+    /// Records that the Library row exists. Quiet on failure: without the marker a later recovery only offers the row
+    /// again, which `SpokenNoteItemMerge` turns into a text update on a row that exists, and nothing on a trashed one.
+    public func markItemSaved() {
+        guard !itemWasSaved, FileManager.default.fileExists(atPath: folderURL.path) else { return }
+        FileManager.default.createFile(atPath: itemSavedMarkerURL.path, contents: Data())
+    }
 
     public func load() -> SpokenNote {
         guard let data = try? Data(contentsOf: fileURL) else { return SpokenNote(id: noteId) }

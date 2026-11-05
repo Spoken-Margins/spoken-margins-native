@@ -64,6 +64,19 @@ public enum SpokenNoteStarter {
         throw StartError.noFreeNoteId
     }
 
+    /// Opens a note that already exists, for its screen: its store, its takes as saved, and a Library item for it that
+    /// carries the row's own title. Nil when the id could not name a note folder or no folder is there (the files are not
+    /// on this phone). Nothing is created or written, and an unreadable `note.json` reads as empty here as in `load()`.
+    public static func reopen(noteId: String, title: String?, in applicationSupport: URL, now: Date) -> Started? {
+        guard let store = store(noteId: noteId, in: applicationSupport) else { return nil }
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: store.folderURL.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+            return nil
+        }
+        let note = store.load()
+        return Started(note: note, store: store, item: SpokenNoteItem.makeItem(note: note, title: title, createdAt: now))
+    }
+
     /// Lowercase letters, digits, `-` and `_`, at most 100 of them: one plain folder name that means the same thing on
     /// a case- or Unicode-insensitive volume. Generated ids are lowercase UUIDs. A later slice that needs other ids (a
     /// packet's) widens this on purpose.
