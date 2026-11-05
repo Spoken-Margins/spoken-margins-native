@@ -17,7 +17,8 @@ final class PinnedMarginCardTests: XCTestCase {
         XCTAssertEqual(PinnedMarginCard(subject: .friend(nil), stage: .reading).detail, "Your phone's voice is reading your friend's words.")
         XCTAssertEqual(PinnedMarginCard(subject: cole, stage: .comingUp(msRemaining: 8_000)).headline, "Cole's Margin in 0:08")
         XCTAssertEqual(PinnedMarginCard(subject: cole, stage: .comingUp(msRemaining: nil)).headline, "Getting to Cole's Margin")
-        XCTAssertEqual(PinnedMarginCard(subject: cole, stage: .upNext(msRemaining: 80_000, arrival: .playsByItself)).headline, "Next: Cole's Margin in 1:20")
+        XCTAssertEqual(PinnedMarginCard(subject: .yours, stage: .upNext(msRemaining: 80_000, arrival: .playsByItself)).headline, "Next: Your Margin in 1:20",
+                       "his own Margins keep the old words (#3247)")
         XCTAssertEqual(PinnedMarginCard(subject: cole, stage: .waitingForTap).headline, "Cole's Margin is here")
         XCTAssertEqual(PinnedMarginCard(subject: .yours, stage: .speaking).headline, "You are speaking")
         XCTAssertEqual(PinnedMarginCard(subject: .friend(nil), stage: .speaking).headline, "A friend is speaking")
@@ -159,5 +160,77 @@ final class PinnedMarginCardTests: XCTestCase {
         XCTAssertNil(NextMarginPress.nextMarginMs(after: 90_000, among: [90_000, 10_000]), "the one playing is not the next")
         XCTAssertEqual(NextMarginPress.nextMarginMs(after: nil, among: [90_000, 10_000]), 10_000)
         XCTAssertNil(NextMarginPress.nextMarginMs(after: 5, among: []))
+    }
+
+    // MARK: A friend's words between Margins (#3247)
+
+    private func upNextHeadline(_ subject: PinnedMarginCard.Subject, ms: Int?, first: Bool) -> String {
+        PinnedMarginCard(subject: subject, stage: .upNext(msRemaining: ms, arrival: .playsByItself), isFirstFromSender: first).headline
+    }
+
+    func testAFriendsHeadlineSaysFirstOnlyWhenItIsTrueAndNextAfterThat() {
+        XCTAssertEqual(upNextHeadline(cole, ms: 11 * 60_000 + 28_000, first: true), "Cole's first Margin in 12 min")
+        XCTAssertEqual(upNextHeadline(cole, ms: 11 * 60_000, first: true), "Cole's first Margin in 11 min")
+        XCTAssertEqual(upNextHeadline(cole, ms: 11 * 60_000, first: false), "Cole's next Margin in 11 min")
+        XCTAssertEqual(upNextHeadline(.friend(nil), ms: 11 * 60_000, first: true), "A friend's first Margin in 11 min")
+        XCTAssertEqual(upNextHeadline(.friend("  "), ms: 11 * 60_000, first: false), "A friend's next Margin in 11 min")
+        XCTAssertEqual(upNextHeadline(.friend(SharedPacketArrival.unsignedSenderLabel), ms: 60_000, first: true), "A friend's first Margin in 1 min",
+                       "the stand-in label is never a name")
+        XCTAssertEqual(upNextHeadline(cole, ms: nil, first: true), "Cole's first Margin is ahead")
+        XCTAssertEqual(upNextHeadline(.friend("Bartholomew"), ms: 5_000, first: false), "Bartholomew's next Margin in 5 sec")
+    }
+
+    func testOnlyAFriendsBetweenMarginsCardChangesItsWords() {
+        XCTAssertEqual(upNextHeadline(.yours, ms: 11 * 60_000, first: true), "Next: Your Margin in 11:00")
+        XCTAssertEqual(PinnedMarginCard(subject: cole, stage: .comingUp(msRemaining: 8_000), isFirstFromSender: true).headline, "Cole's Margin in 0:08",
+                       "a review's lead-in keeps its seconds")
+        XCTAssertEqual(PinnedMarginCard(subject: cole, stage: .waitingForTap, isFirstFromSender: true).headline, "Cole's Margin is here")
+        for press in [NextMarginPress.seekToLeadIn(mediaTimeMs: 1), .playMarginNow, .skipVoice, .unavailable] {
+            XCTAssertEqual(NextMarginWords(press: press, subject: .yours).title, "Next Margin", "\(press)")
+            XCTAssertNil(NextMarginWords(press: press, subject: .yours).hint)
+        }
+    }
+
+    func testTheMinuteCountdownRoundsUpNeverSaysZeroAndHandsOverToSecondsAtTheLeadIn() {
+        let leadIn = MarginMomentSequence.reviewLeadInMs
+        XCTAssertEqual(PinnedMarginCard.friendCountdown(11 * 60_000 + 28_000), "in 12 min")
+        XCTAssertEqual(PinnedMarginCard.friendCountdown(11 * 60_000), "in 11 min")
+        XCTAssertEqual(PinnedMarginCard.friendCountdown(120_001), "in 3 min", "rounds up")
+        XCTAssertEqual(PinnedMarginCard.friendCountdown(60_001), "in 2 min")
+        XCTAssertEqual(PinnedMarginCard.friendCountdown(60_000), "in 1 min", "exactly one minute")
+        XCTAssertEqual(PinnedMarginCard.friendCountdown(59_999), "in under 1 min")
+        XCTAssertEqual(PinnedMarginCard.friendCountdown(leadIn + 1), "in under 1 min")
+        XCTAssertEqual(PinnedMarginCard.friendCountdown(leadIn), "in \(leadIn / 1_000) sec", "the lead-in starts the seconds")
+        XCTAssertEqual(PinnedMarginCard.friendCountdown(1), "in 1 sec")
+        XCTAssertEqual(PinnedMarginCard.friendCountdown(1_001), "in 2 sec")
+        XCTAssertEqual(PinnedMarginCard.friendCountdown(0), "in 1 sec")
+        XCTAssertEqual(PinnedMarginCard.friendCountdown(-500), "in 1 sec")
+        for ms in stride(from: 0, through: 15 * 60_000, by: 997) {
+            let text = PinnedMarginCard.friendCountdown(ms)
+            XCTAssertFalse(text.hasPrefix("in 0 "),"\(ms): \(text)")
+            XCTAssertFalse(text.contains(":"), "no clock format: \(text)")
+        }
+    }
+
+    /// The label is built from the press the tap makes, so the two cannot disagree (#3247).
+    func testTheSkipButtonDescribesWhatTheTapDoesAtThatMoment() {
+        let lead = MarginMomentSequence.leadInStartMediaTimeMs(
+            forTarget: MarginMomentAnchor(marginId: "m", mediaTimeMs: 120_000), leadInMs: MarginMomentSequence.reviewLeadInMs)
+        func words(position: Int, arrival: PinnedMarginCard.Arrival = .toneThenTap, sender: String? = "Cole") -> NextMarginWords {
+            let press = NextMarginPress.press(.sharedPlayback(positionMs: position, nextMarginMs: 120_000, arrival: arrival))
+            return NextMarginWords(press: press, subject: .friend(sender))
+        }
+        XCTAssertEqual(words(position: 10_000).title, "Skip to just before Cole")
+        XCTAssertEqual(words(position: lead - 1).title, "Skip to just before Cole")
+        XCTAssertEqual(words(position: lead).title, "Skip to Cole now", "inside the lead-in the second press plays it")
+        XCTAssertEqual(words(position: 10_000, arrival: .waitsForYou).title, "Skip to Cole now", "a Fresh layer has no lead-in")
+        XCTAssertEqual(words(position: 10_000, sender: nil).title, "Skip to just before your friend")
+        XCTAssertEqual(words(position: lead, sender: nil).title, "Skip to your friend now")
+        XCTAssertEqual(words(position: 10_000, sender: "Bartholomew").title, "Skip to just before Bartholomew")
+        XCTAssertEqual(words(position: 10_000, sender: SharedPacketArrival.unsignedSenderLabel).title, "Skip to just before your friend")
+        XCTAssertEqual(words(position: 10_000).hint, "Moves the episode to about 20 seconds before Cole's Margin.")
+        XCTAssertEqual(words(position: lead).hint, "Plays Cole's Margin now.")
+        XCTAssertEqual(NextMarginWords(press: .unavailable, subject: .friend("Cole")).title, "Next Margin")
+        XCTAssertNil(NextMarginWords(press: .unavailable, subject: .friend("Cole")).hint)
     }
 }
