@@ -171,7 +171,7 @@ The whole loop (#3222, part of #3216), with an eye on the human side: how many t
 2. The sender records two Margins, one after the other.
    - Pass: each saves on the item without leaving the playback screen, and the episode carries on.
 3. The sender taps Share and sends the Margins to the friend.
-   - Pass: Review shows the package details with the file size, and Share opens the system share sheet. Record the packet size at this send, the seconds from Preview package details to the size showing, and the taps from the playback screen to the share sheet.
+   - Pass: Review shows the package details with the file size, and Share opens the system share sheet. Record the packet size at this send, the seconds from Preview package details to the size showing, and the taps from the playback screen to the share sheet. The route is Share on the playback screen, then Share on the review (#1507): two taps, with no scrolling; more than two is a fail.
 4. The friend (second simulator) opens the packet. They have not added the episode beforehand.
    - Pass: the episode appears in their Library and the Margins are listed. The Margins tab and the Now tab show the Margins without leaving the screen or restarting (#3263). Record the seconds from opening the packet to the Margins being listed.
 5. The friend hears the Margins in both modes (the big button, and "Hear new Margins first").
@@ -181,7 +181,7 @@ The whole loop (#3222, part of #3216), with an eye on the human side: how many t
 7. The sender opens the replies packet.
    - Pass: each reply plays right after the Margin it answers (#3257), and the sender can reply again.
 
-The script `J12SharingLoopJourneyUITests` runs step 2, step 3 up to the package details (not the system share sheet), and, with the friend's packet as a fixture (`SPOKEN_MARGINS_UI_TEST_COOP`, as J9), steps 4 and 5's offer, the in-place play and the Margins tab. It attaches the taps and seconds per step and the packet size. The fixture imports the friend's Margin at launch, so the script cannot catch #3263 (Margins missing until a restart); step 4 of the agent run does. Adding the episode by search needs the network, the system share sheet and the second install are outside what a script can drive, and replying then importing back needs both, so step 1's search, step 3's share sheet, and steps 6 and 7 stay with the agent run. A script pass never stands in for them, and audible content stays with the owner.
+The script `J12SharingLoopJourneyUITests` runs step 2, step 3 up to the package details (not the system share sheet; it counts the taps and fails above two), and, with the friend's packet as a fixture (`SPOKEN_MARGINS_UI_TEST_COOP`, as J9), steps 4 and 5's offer, the in-place play and the Margins tab. It attaches the taps and seconds per step and the packet size. The fixture imports the friend's Margin at launch, so the script cannot catch #3263 (Margins missing until a restart); step 4 of the agent run does. Adding the episode by search needs the network, the system share sheet and the second install are outside what a script can drive, and replying then importing back needs both, so step 1's search, step 3's share sheet, and steps 6 and 7 stay with the agent run. A script pass never stands in for them, and audible content stays with the owner.
 
 ## Writing scripted journeys
 

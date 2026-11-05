@@ -289,6 +289,7 @@ struct PlaybackScreen: View {
                 }
                 .accessibilityLabel("Playback speed, \(model.compactPlaybackRateDescription)")
                 .accessibilityIdentifier("playback.rate.button")
+                playbackShareButton
                 listeningOptionsButton
             }
             .foregroundStyle(.white)
@@ -311,7 +312,7 @@ struct PlaybackScreen: View {
                 // #142: the same spoken + written row as during playback, so the flow is
                 // finish, add a recap Margin, then Share.
                 marginRow
-                Button(action: model.openExport) {
+                Button(action: model.openPlaybackShare) {
                     Label("Share", systemImage: "square.and.arrow.up").minimumTapTarget()
                 }
                 .font(.subheadline.weight(.medium))
@@ -359,6 +360,20 @@ struct PlaybackScreen: View {
             .accessibilityIdentifier("playback.write.button")
         }
         .disabled(!model.hasActiveSession)
+    }
+
+    /// Share without opening More (#1507): the Share Margins sheet opens on its review, so Share here and Share
+    /// there are two taps to the iOS share sheet. An icon, because the row has no room for a fourth word.
+    private var playbackShareButton: some View {
+        Button(action: model.openPlaybackShare) {
+            Image(systemName: "square.and.arrow.up")
+                .frame(minWidth: dynamicTypeSize.isAccessibilitySize ? 52 : 44, minHeight: dynamicTypeSize.isAccessibilitySize ? 52 : 44)
+                .contentShape(Rectangle())
+        }
+        .fixedSize(horizontal: true, vertical: false)
+        .accessibilityLabel("Share Margins")
+        .accessibilityHint("Opens the review of this item's Margins with Share ready")
+        .accessibilityIdentifier("playback.shareMargins.button")
     }
 
     private var listeningOptionsButton: some View {
