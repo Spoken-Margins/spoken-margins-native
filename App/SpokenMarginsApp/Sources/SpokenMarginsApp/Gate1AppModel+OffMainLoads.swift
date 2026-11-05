@@ -11,10 +11,11 @@ extension Gate1AppModel {
         let snapshotItemId = snapshot.itemId
         let snapshotSessionId = snapshot.sessionId
         let passes = sharedMarginPlacementPasses
+        let hidden = hiddenSenders.current
         return try await StoreReader(store).read(priority: .userInitiated) {
             try ItemDetailLoader.load(
                 id: id, store: $0, snapshotItemId: snapshotItemId,
-                snapshotSessionId: snapshotSessionId, placementPasses: passes)
+                snapshotSessionId: snapshotSessionId, placementPasses: passes, hiddenSenders: hidden)
         }
     }
 

@@ -42,6 +42,8 @@ protocol SkimBridgeHost: AnyObject {
     var skimUsesTextPositions: Bool { get }
     var skimSource: SkimSource? { get }
     var skimStore: SQLiteSessionStore? { get }
+    /// The senders the listener has hidden: their shared map no longer speaks for the Skim scenes (#2846).
+    var skimHiddenSenders: HiddenSenders { get }
     var skimHasEngine: Bool { get }
     /// Nothing else holds the listener's ear (a Margin's voice, a friend's commentary, a recording), so a summary that
     /// finished preparing may start (#2185).
@@ -89,6 +91,7 @@ protocol SkimBridgeHost: AnyObject {
 }
 
 extension SkimBridgeHost {
+    var skimHiddenSenders: HiddenSenders { HiddenSenders() }
     var skimUsesTextPositions: Bool { false }
 
     // A host with no chapters or Margins keeps Skim as it was: the summary or nothing.
@@ -256,6 +259,7 @@ final class SkimBridgeController {
     private func loadResources(itemId: String, usesTextPositions: Bool) {
         if let load = resourceLoad, load.itemId == itemId, load.usesTextPositions == usesTextPositions { return }
         guard let store = host?.skimStore else { return }
+        let hidden = host?.skimHiddenSenders ?? HiddenSenders()
         resourceLoad?.task.cancel()
         let token = UUID()
         let task = Task { @MainActor [weak self] in
@@ -266,7 +270,7 @@ final class SkimBridgeController {
                 self.resourceLoadCount += 1
                 #endif
                 let context = await Task.detached(priority: .userInitiated) {
-                    Self.readResources(store: store, itemId: itemId, usesTextPositions: usesTextPositions)
+                    Self.readResources(store: store, itemId: itemId, usesTextPositions: usesTextPositions, hiddenSenders: hidden)
                 }.value
                 guard self.resourceLoad?.token == token else { return }
                 guard generation == self.resourceGeneration else { continue }
@@ -281,7 +285,7 @@ final class SkimBridgeController {
     }
 
     nonisolated private static func readResources(
-        store: SQLiteSessionStore, itemId: String, usesTextPositions: Bool
+        store: SQLiteSessionStore, itemId: String, usesTextPositions: Bool, hiddenSenders: HiddenSenders
     ) -> SkimResourceContext {
         if usesTextPositions {
             // A text item has no media projection: its map is the proposal placed by character (#1471). An edition read
@@ -300,7 +304,7 @@ final class SkimBridgeController {
             projection: projection,
             proposal: SharedListeningMapPlacement.proposal(
                 for: projection, committed: (try? store.loadPortableListeningMapProposals(itemId: itemId)) ?? [],
-                layers: (try? store.loadImportedCommentaryLayers(itemId: itemId)) ?? []),
+                layers: hiddenSenders.visible((try? store.loadImportedCommentaryLayers(itemId: itemId)) ?? [])),
             assets: (try? store.loadOwnedOfflineAssets(itemId: itemId)) ?? [],
             usesTextPositions: false
         )

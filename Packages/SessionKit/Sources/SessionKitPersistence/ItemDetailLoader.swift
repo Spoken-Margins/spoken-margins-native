@@ -1,14 +1,16 @@
 import Foundation
 import SessionKit
 
-/// Loads item presentation while retaining the store's existing read and write policies.
+/// Loads item presentation while retaining the store's existing read and write policies. `hiddenSenders` is the
+/// listener's own list of hidden senders (kept on the device, outside the library database).
 public struct ItemDetailLoader {
     public static func load(
         id: String,
         store: SQLiteSessionStore,
         snapshotItemId: String?,
         snapshotSessionId currentSnapshotSessionId: String?,
-        placementPasses: SharedMarginPlacementPasses
+        placementPasses: SharedMarginPlacementPasses,
+        hiddenSenders: HiddenSenders = HiddenSenders()
     ) throws -> ItemDetailState {
         let item = try store.loadItem(id: id)
         var map = try store.loadListeningMap(itemId: id)
@@ -26,7 +28,7 @@ public struct ItemDetailLoader {
         let committed = try store.loadPortableListeningMapProposals(itemId: id)
         let proposal = SharedListeningMapPlacement.proposal(
             for: projection, committed: committed,
-            layers: try store.loadImportedCommentaryLayers(itemId: id))
+            layers: hiddenSenders.visible(try store.loadImportedCommentaryLayers(itemId: id)))
         let sceneStarts = SceneStarts(scenes: proposal?.scenes ?? [], projection: projection)
         let listeningMapScenes = sceneStarts.chapters
         let sessions = try store.loadSessions(itemId: id)
@@ -96,8 +98,10 @@ public struct ItemDetailLoader {
                 }.first
             )
         }
-        let importedLayers = try store.loadImportedCommentaryLayers(itemId: id)
-            .filter { $0.deletedAt == nil }
+        // Every screen reads the layers from here, so a hidden sender's Margins are gone from all of them at once.
+        // Nothing is deleted: the layers stay in the store and come back when the listener shows the sender again (#2846).
+        let importedLayers = hiddenSenders.visible(
+            try store.loadImportedCommentaryLayers(itemId: id).filter { $0.deletedAt == nil })
         let importedInterjections = Dictionary(uniqueKeysWithValues: importedLayers.map { layer in
             (layer.id, (try? store.loadImportedCommentaryInterjections(layerId: layer.id)) ?? [])
         })

@@ -79,7 +79,7 @@ extension Gate1AppModel {
         do {
             // Library rows refresh asynchronously on navigation. Retrieval must
             // use durable membership so freshly imported items are not omitted.
-            let entries = try MarginRowsReading.all(store: requireStore())
+            let entries = try MarginRowsReading.all(store: requireStore(), hiddenSenders: hiddenSenders.current)
             MarginRowsTickets.with(self) { $0.noteRebuild() }
             publishMarginEntries(entries)
         } catch {
@@ -95,7 +95,8 @@ extension Gate1AppModel {
             while true {
                 let read = MarginRowsTickets.with(self) { $0.beginRead(.all) }
                 last = read
-                let entries = try await StoreReader(store).read { try MarginRowsReading.all(store: $0) }
+                let hidden = hiddenSenders.current
+                let entries = try await StoreReader(store).read { try MarginRowsReading.all(store: $0, hiddenSenders: hidden) }
                 if let landed = MarginRowsTickets.fullReadLanded { await landed() }
                 switch MarginRowsTickets.with(self, { $0.finish(read) }) {
                 case .publish: return publishMarginEntries(entries)
@@ -116,7 +117,8 @@ extension Gate1AppModel {
             while true {
                 let read = MarginRowsTickets.with(self) { $0.beginRead(.item(itemId)) }
                 last = read
-                let fresh = try await StoreReader(store).read { try MarginRowsReading.item(itemId, store: $0) }
+                let hidden = hiddenSenders.current
+                let fresh = try await StoreReader(store).read { try MarginRowsReading.item(itemId, store: $0, hiddenSenders: hidden) }
                 switch MarginRowsTickets.with(self, { $0.finish(read) }) {
                 case .publish: return applyMarginEntries(fresh, forItem: itemId)
                 case .drop: return await MarginRowsTickets.waitForNewerRead(self, read)

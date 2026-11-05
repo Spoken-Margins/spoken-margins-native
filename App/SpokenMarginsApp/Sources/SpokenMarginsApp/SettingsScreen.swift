@@ -285,6 +285,7 @@ struct SettingsScreen: View {
                     }
                 }
                 MarginOutputSettingsSection()
+                HiddenSendersSettingsSection(hidden: model.hiddenSenders) { model.showSender($0) }
                 Section("Import & Export") {
                     NavigationLink("Import Listening Edition") { ListeningEditionImportScreen().miniPlayerKeepOut() }
                     NavigationLink("Read Later Services") { ReadLaterScreen().miniPlayerKeepOut() }

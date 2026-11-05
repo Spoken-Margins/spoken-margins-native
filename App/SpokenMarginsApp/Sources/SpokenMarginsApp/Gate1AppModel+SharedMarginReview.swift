@@ -31,7 +31,8 @@ extension Gate1AppModel {
         } else if let store {
             // The listener's own Margins let a friend's reply say which of them it answers (#3221). They come from the
             // Margins screen's published rows, so this adds no store read to the main thread.
-            entries = (try? SharedMarginReview.entries(itemId: itemId, in: store, ownMargins: ownMargins(itemId: itemId))) ?? []
+            entries = (try? SharedMarginReview.entries(
+                itemId: itemId, in: store, ownMargins: ownMargins(itemId: itemId), hiddenSenders: hiddenSenders.current)) ?? []
         } else {
             entries = []
         }

@@ -82,9 +82,10 @@ public enum SharedMarginReview {
 
     /// The same, read from the repository for an item that isn't open.
     public static func entries(
-        itemId: String, in repository: some ListeningSessionRepository, ownMargins: [Interjection] = []
+        itemId: String, in repository: some ListeningSessionRepository, ownMargins: [Interjection] = [],
+        hiddenSenders: HiddenSenders = HiddenSenders()
     ) throws -> [Entry] {
-        let layers = try repository.loadImportedCommentaryLayers(itemId: itemId)
+        let layers = hiddenSenders.visible(try repository.loadImportedCommentaryLayers(itemId: itemId))
         var records: [String: [ImportedCommentaryInterjection]] = [:]
         for layer in layers { records[layer.id] = try repository.loadImportedCommentaryInterjections(layerId: layer.id) }
         return entries(layers: layers, records: records, ownMargins: ownMargins)

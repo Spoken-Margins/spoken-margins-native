@@ -212,6 +212,9 @@ final class Gate1AppModel: ObservableObject {
     )
     @Published var sleepTimerState: SleepTimerState = .inactive // set by Gate1AppModel+SleepTimer.swift
     @Published var sleepTimerRemainingSeconds: Int?
+    /// The senders this listener has hidden on this phone (#2846). Read by the loaders below; changed through
+    /// `hideSender` and `showSender` in `Gate1AppModel+HiddenSenders.swift`.
+    let hiddenSenders = HiddenSendersController(directory: HiddenSendersController.defaultDirectory())
     @Published var libraryAccessError: String?
     @Published var recentlyDeletedItems: [LibraryItemRow] = []
     @Published var trashUndo: TrashUndoState?

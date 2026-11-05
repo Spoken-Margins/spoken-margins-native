@@ -319,6 +319,66 @@ final class ItemDetailLoaderTests: XCTestCase {
         }
     }
 
+    /// #2846: hiding a sender removes their layers from everything the detail feeds (the layers, their Margins, the
+    /// shared map's refusal), keeps them in the store, and brings them back when the sender is shown again.
+    func testAHiddenSendersLayersLeaveTheDetailAndComeBackWhenShownAgain() throws {
+        let ana = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", ben = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        try withFixture { _, store, _ in
+            try store.saveItem(item("A"))
+            for (id, sender) in [("ana", ana as String?), ("ben", ben), ("old", nil)] {
+                try store.saveImportedCommentaryLayer(ImportedCommentaryLayer(
+                    id: id, itemId: "A", packageDigest: "d-\(id)", packageId: "p-\(id)",
+                    itemIdentity: SharedItemIdentity(itemType: .podcast, title: "Episode"),
+                    importedAt: Date(timeIntervalSince1970: 10), sharedMapRefusalReason: id == "ana" ? "Ana's map" : nil,
+                    senderId: sender))
+            }
+            func load(_ hidden: HiddenSenders) throws -> ItemDetailState {
+                try ItemDetailLoader.load(id: "A", store: store, snapshotItemId: nil, snapshotSessionId: nil,
+                    placementPasses: SharedMarginPlacementPasses(), hiddenSenders: hidden)
+            }
+            XCTAssertEqual(Set(try load(HiddenSenders()).importedCommentaryLayers.map(\.id)), ["ana", "ben", "old"])
+            XCTAssertEqual(try load(HiddenSenders()).sharedMapRefusalReason, "Ana's map")
+
+            var hidden = HiddenSenders()
+            hidden.hide(ana, displayLabel: "Ana")
+            let hiddenDetail = try load(hidden)
+            XCTAssertEqual(Set(hiddenDetail.importedCommentaryLayers.map(\.id)), ["ben", "old"],
+                "a layer with no sender id is always shown: nothing says who it is from")
+            XCTAssertEqual(Set(hiddenDetail.importedCommentaryInterjections.keys), ["ben", "old"])
+            XCTAssertNil(hiddenDetail.sharedMapRefusalReason, "a hidden sender's refused map no longer speaks for the screen")
+            XCTAssertEqual(try store.loadImportedCommentaryLayers(itemId: "A").count, 3, "nothing is deleted")
+
+            hidden.unhide(ana)
+            XCTAssertEqual(Set(try load(hidden).importedCommentaryLayers.map(\.id)), ["ana", "ben", "old"])
+        }
+    }
+
+    /// #2846: the Margins tab, the Now card and the skim stops read the same rows, so they drop a hidden sender too.
+    func testAHiddenSendersMarginsLeaveTheMarginRowsToo() throws {
+        let ana = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", ben = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        try withFixture { _, store, _ in
+            try store.saveItem(item("A"))
+            for (id, sender) in [("ana", ana), ("ben", ben)] {
+                try store.saveImportedCommentaryLayer(ImportedCommentaryLayer(
+                    id: id, itemId: "A", packageDigest: "d-\(id)", packageId: "p-\(id)",
+                    itemIdentity: SharedItemIdentity(itemType: .podcast, title: "Episode"),
+                    displayLabel: id, importedAt: Date(timeIntervalSince1970: 10), isEnabled: true, senderId: sender))
+                try store.saveImportedCommentaryInterjection(ImportedCommentaryInterjection(
+                    id: "margin-\(id)", layerId: id, packageScopedId: "margin-001", createdAt: Date(timeIntervalSince1970: 11),
+                    anchorEvidence: PortableAnchorEvidence(anchorType: .media, mediaTimeMs: 1_000),
+                    approvedTranscript: "From \(id)",
+                    resolution: ImportedAnchorResolution(evidenceClass: .exactEdition, localMediaTimeMs: 9_000)))
+            }
+            var hidden = HiddenSenders()
+            hidden.hide(ana)
+            XCTAssertEqual(Set(try MarginRowsReading.all(store: store).sharedRows.map(\.layer.id)), ["ana", "ben"])
+            XCTAssertEqual(Set(try MarginRowsReading.all(store: store, hiddenSenders: hidden).sharedRows.map(\.layer.id)), ["ben"])
+            XCTAssertEqual(Set(try MarginRowsReading.item("A", store: store, hiddenSenders: hidden).sharedRows.map(\.layer.id)), ["ben"])
+            hidden.unhide(ana)
+            XCTAssertEqual(Set(try MarginRowsReading.item("A", store: store, hiddenSenders: hidden).sharedRows.map(\.layer.id)), ["ana", "ben"])
+        }
+    }
+
     /// What the app model passes in beside the id: the snapshot's selected item and session.
     private final class Fixture {
         var snapshotItemId: String?
