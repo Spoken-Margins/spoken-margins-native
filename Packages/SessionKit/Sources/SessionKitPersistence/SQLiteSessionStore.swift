@@ -860,6 +860,8 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
             let stored: ImportedCommentaryInterjection? = try loadOptional(kind: "imported_commentary_interjection", id: interjection.id)
             // Slow anchor resolution must preserve additive state saved after its snapshot.
             if interjection.firstHeardAt == nil { interjection.firstHeardAt = stored?.firstHeardAt }
+            // The same for the listener's read-aloud choice: a copy loaded before they made it must not undo it (#3427).
+            if interjection.listenerReadAloud == nil { interjection.listenerReadAloud = stored?.listenerReadAloud }
             var aliases = stored?.alsoSharedAs ?? []
             for identity in interjection.alsoSharedAs ?? [] where !aliases.contains(identity) { aliases.append(identity) }
             interjection.alsoSharedAs = aliases.isEmpty ? nil : aliases

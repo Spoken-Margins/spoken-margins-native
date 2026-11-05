@@ -356,7 +356,9 @@ export async function readPacket(input: Uint8Array | ArrayBuffer | Blob, options
       && lengthOK(anchor.suffix, LIMITS.contextCharactersPerSide)
       && (anchor.roughPercent == null || (anchor.roughPercent >= 0 && anchor.roughPercent <= 100))
       && lengthOK(anchor.transcriptSegmentId, 300)
-      && lengthOK(anchor.chapterTitle, 500);
+      && lengthOK(anchor.chapterTitle, 500)
+      // The app's record declares `readAloud: Bool?`, so another type refuses the packet there (#3445).
+      && (record.readAloud == null || typeof record.readAloud === 'boolean');
     if (!bounded) throw mismatch('a Margin field is absent or out of bounds');
     for (const evidence of anchor.machineEvidenceAssetIds) {
       if (asset(evidence)?.role !== ROLE_SIGNATURE) throw mismatch(`anchor evidence ${evidence} is not an acoustic signature`);
@@ -538,6 +540,8 @@ export async function readPacket(input: Uint8Array | ArrayBuffer | Blob, options
     }
     if (sender) margin.author = sender;
     if (replyToId) margin.replyToId = replyToId;
+    // The sender's "don't read this aloud" holds for a written Margin only; a voice Margin is the sender's own voice.
+    if (record.readAloud === false && !margin.voice) margin.readAloud = false;
     margins.push(margin);
   }
   margins.sort((a, b) => a.atSeconds - b.atSeconds);

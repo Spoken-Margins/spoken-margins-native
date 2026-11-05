@@ -473,6 +473,23 @@ struct Build23MarginEditor: View {
                     }
                     .segmentedUnlessLargeText()
                     .accessibilityIdentifier("build23.sender.representation.\(margin.id)")
+
+                    if margin.representation == .textOnly {
+                        // A text Margin is read aloud by the friend's phone unless you ask it not to; they can change it (#3427).
+                        Toggle(
+                            "Read aloud on their phone",
+                            isOn: Binding(
+                                get: { margin.readAloud },
+                                set: { send(.setReadAloud(id: margin.id, readAloud: $0)) }
+                            )
+                        )
+                        .accessibilityIdentifier("build23.sender.readAloud.\(margin.id)")
+                        Text(margin.readAloud
+                            ? "Their phone reads it out as your words, and Skim stops at it. They can turn that off."
+                            : "They read it on the screen instead. Skim passes it. They can turn reading on.")
+                            .font(.caption)
+                            .foregroundStyle(AppColors.secondaryText)
+                    }
                 }
 
                 Build23AudioPreviewControls(

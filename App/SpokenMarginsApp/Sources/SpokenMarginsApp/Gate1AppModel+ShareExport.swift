@@ -135,7 +135,8 @@ extension Gate1AppModel {
                     packageScopedId: String(format: "margin-%04d", index + 1),
                     revision: revision,
                     anchor: anchor,
-                    representation: representation, replyTo: draft.interjection.replyTo
+                    representation: representation, replyTo: draft.interjection.replyTo,
+                    readAloud: draft.readAloud
                 ))
             }
 

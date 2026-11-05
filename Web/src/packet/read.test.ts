@@ -3,7 +3,9 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { test } from 'node:test';
 
 import { PACKET_MESSAGES, PacketError } from './errors.ts';
+import { voiceMargins, writeVoice, writeWritten } from './fixtures.ts';
 import { readPacket } from './read.ts';
+import { withLayer } from './resign.ts';
 import { listZip, readZip, writeZip } from './zip.ts';
 
 const root = new URL('../../../', import.meta.url);
@@ -134,4 +136,36 @@ test('a zip bomb is refused before it inflates', async () => {
 test('an undeclared extra entry is refused', async () => {
   const bytes = await rezip(podcast(), (entries) => entries.set('artifacts/extra.json', new TextEncoder().encode('{}')));
   await refusedAs(readPacket(bytes), 'damaged');
+});
+
+test('a written Margin the sender asked not to be read aloud carries that into the web model (#3445)', async () => {
+  const bytes = await writeWritten().then((w) => w.bytes);
+  const edited = await withLayer(bytes, (records) => { records[0].readAloud = false; });
+  const result = await readPacket(edited);
+  assert.equal(result.margins.length, 2);
+  assert.equal(result.margins[0].readAloud, false);
+  assert.equal(result.margins[1].readAloud, undefined, 'a Margin without the key is read aloud as before');
+  assert.ok(result.margins[0].text, 'the words still come through');
+});
+
+test('readAloud true or null leaves a Margin read aloud; another type is refused, as the app does (#3445)', async () => {
+  const bytes = await writeWritten().then((w) => w.bytes);
+  for (const value of [true, null]) {
+    const edited = await withLayer(bytes, (records) => { records[0].readAloud = value; });
+    const result = await readPacket(edited);
+    assert.equal(result.margins[0].readAloud, undefined, `readAloud ${JSON.stringify(value)}`);
+  }
+  for (const value of ['false', 0, 1, {}]) {
+    const edited = await withLayer(bytes, (records) => { records[0].readAloud = value; });
+    await refusedAs(readPacket(edited), 'doesNotMatch');
+  }
+});
+
+test('readAloud false on a voice Margin is ignored: the sender\'s own voice still plays (#3445)', async () => {
+  const bytes = await writeVoice().then((w) => w.bytes);
+  const edited = await withLayer(bytes, (records) => { for (const r of records) r.readAloud = false; });
+  const result = await readPacket(edited);
+  const voices = result.margins.filter((m) => m.voice);
+  assert.ok(voices.length > 0 && voiceMargins().length > 0);
+  assert.ok(voices.every((m) => m.readAloud === undefined));
 });

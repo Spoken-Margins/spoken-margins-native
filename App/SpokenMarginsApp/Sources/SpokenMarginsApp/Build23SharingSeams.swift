@@ -68,6 +68,8 @@ struct Build23SharingMarginSnapshot: Identifiable, Equatable {
     var placeholderText: String? = nil
     /// The words that will be sent are still the placeholder.
     var isShowingPlaceholder = false
+    /// Whether the friend's phone is asked to read this Margin aloud when it goes as text (#3427).
+    var readAloud = true
 }
 
 extension Build23SharingMarginSnapshot {
@@ -214,6 +216,8 @@ enum Build23SenderAction: Equatable {
     case setAutoCleanSelectedEnabled(Bool)
     case selectMargin(String?)
     case setRepresentation(id: String, choice: ShareMarginRepresentationChoice)
+    /// Asks the friend's phone to read a text Margin aloud, or not to (#3427).
+    case setReadAloud(id: String, readAloud: Bool)
     case setAnchorBefore(id: String, text: String)
     case setAnchorAfter(id: String, text: String)
     case setReviewedWords(id: String, text: String)
@@ -348,7 +352,8 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
                 originalVoiceURL: originalVoiceURL,
                 cleanedVoiceURL: draft.cleanedAudioURL,
                 placeholderText: draft.placeholderText,
-                isShowingPlaceholder: draft.isShowingPlaceholder
+                isShowingPlaceholder: draft.isShowingPlaceholder,
+                readAloud: draft.readAloud
             )
         }
         let hasReviewedSelection = margins.contains {
@@ -511,6 +516,8 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
             selectedMarginID = id
         case .setRepresentation(let id, let choice):
             mutatePackage { model.setShareDraftRepresentation(id, choice: choice) }
+        case .setReadAloud(let id, let readAloud):
+            mutatePackage { model.setShareDraftReadAloud(id, readAloud: readAloud) }
         case .setAnchorBefore(let id, let text):
             mutatePackage { model.setShareDraftAnchorBefore(id, value: text) }
         case .setAnchorAfter(let id, let text):
@@ -709,6 +716,7 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
                 String(draft.isIncluded),
                 draft.approvedTranscript,
                 draft.representationChoice.rawValue,
+                String(draft.readAloud),
                 draft.anchorBefore,
                 draft.anchorAfter,
                 draft.cleanedAudioURL?.path ?? "",

@@ -54,6 +54,9 @@ public struct ShareInterjectionDraft: Identifiable {
     /// The stand-in words this Margin starts with when it has none of its own (#3027), or `nil`. The listener can
     /// replace them; clearing their words brings these back, so the Margin never goes word-less.
     public var placeholderText: String?
+    /// Whether the listener's phone reads this Margin aloud when it goes as text (#3427). On unless the sender turns it
+    /// off; it means nothing for a Margin that goes as a recording.
+    public var readAloud = true
 
     public init(
         interjection: Interjection,

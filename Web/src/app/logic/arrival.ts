@@ -11,6 +11,22 @@ export const LEAD_IN_SECONDS = 20;
 /** A written Margin counts this long toward "about N min": the time to hear a tone and a short line read aloud. */
 const WRITTEN_SECONDS = 8;
 
+/**
+ * Whether the browser's voice reads this Margin aloud. A voice Margin plays its own audio; a written one is read unless
+ * the sender asked that it not be (`readAloud: false`, #3445). The words show on screen either way.
+ */
+export function readsAloud(margin: Margin): boolean {
+  return !margin.voice && margin.readAloud !== false;
+}
+
+/**
+ * Whether a friend's Margin makes playback wait for it: a voice Margin plays its clip, a written one is read aloud.
+ * One the sender asked not to be read aloud shows its words and is passed, as Skim passes it on the iPhone (#3445).
+ */
+export function stopsPlayback(margin: Margin): boolean {
+  return margin.voice !== undefined || readsAloud(margin);
+}
+
 /** The sender's name as the friend sees it. The packet's name is the sender's own claim, so it is only ever text. */
 export function senderName(sender: string | undefined): string {
   const name = sender?.trim();
@@ -52,7 +68,7 @@ function lengthWords(seconds: number): string {
 
 /** How long the sender's Margins take to hear, in seconds: each voice Margin's length, a written one's reading time. */
 export function marginsSeconds(margins: readonly Margin[]): number {
-  return margins.reduce((sum, m) => sum + (m.voice ? m.voice.durationSeconds : WRITTEN_SECONDS), 0);
+  return margins.reduce((sum, m) => sum + (m.voice ? m.voice.durationSeconds : readsAloud(m) ? WRITTEN_SECONDS : 0), 0);
 }
 
 export function arrivalFacts(sender: string | undefined, margins: readonly Margin[]): ArrivalFacts {
@@ -148,7 +164,8 @@ const CROSS_MARGIN_SECONDS = 0.3;
  * it. After the last Margin it points at the player's own Margin buttons, which are how the friend answers.
  */
 export function cueFor(margins: readonly Margin[], time: number, sender: string | undefined, episode?: EpisodeState): MarginCue | undefined {
-  const friends = friendMargins(margins);
+  // The countdown and its Skip lead to the Margins that play or are read; a silent written one is passed (#3445).
+  const friends = friendMargins(margins).filter(stopsPlayback);
   if (friends.length === 0) return undefined;
   if (episode?.failed) {
     const who = senderName(friends[0].author?.trim() || sender);

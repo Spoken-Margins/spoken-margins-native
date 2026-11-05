@@ -304,6 +304,14 @@ PORTABLE_VERSIONS = {
     "ListeningEdition": "listening-edition.schema.json",
     "SessionExport": "session-export.schema.json",
 }
+# Optional fields the app added to a packet type after Build 29 shipped. Build 29's Codable ignores a key it doesn't
+# know, so the reference reader's SWIFT_TYPES (what the shipped reader needs) leaves them out; the app's struct must
+# hold exactly SWIFT_TYPES plus these, and Build 29's frozen struct exactly SWIFT_TYPES. A field goes here only when
+# it is optional, never required by a manifest capability, and an older reader reads the Margin as it always did.
+FIELDS_ADDED_AFTER_BUILD_29 = {
+    # The sender's "don't read this written Margin aloud" (2026-11-05, #3427): written only when false.
+    "SharedInterjectionPackageRecord": {"readAloud": "Bool?"},
+}
 ARTIFACT_TYPES = {
     "commentary_layer": "SharedCommentaryLayerArtifact",
     "listening_map_proposal": "PortableListeningMapProposalArtifact",
@@ -456,6 +464,7 @@ def codable_problems(reader) -> list[str]:
             if name in custom:
                 problems.append(f"portable formats: {name} in {label} decodes by hand; decode_problem() models "
                                 "synthesized Codable only")
+            fields = {**fields, **(FIELDS_ADDED_AFTER_BUILD_29.get(name, {}) if root == SWIFT_SOURCES else {})}
             if declared != fields:
                 changed = sorted(k for k in set(declared) | set(fields) if declared.get(k) != fields.get(k))
                 problems.append(f"portable formats: {name} differs between {label} and the reference reader's "

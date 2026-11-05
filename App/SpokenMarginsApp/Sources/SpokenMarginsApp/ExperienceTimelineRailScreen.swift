@@ -531,8 +531,13 @@ struct ExperienceTimelineRailScreen: View {
         case .listeningMapScene(let scene):
             model.jumpToListeningMapScene(scene, fromTimeline: true)
         case .sharedMargin(let row):
-            // #158: play the moment directly; details stay on long-press.
-            model.playSharedMarginMoment(row)
+            // #158: play the moment directly; details stay on long-press. A written Margin set not to be read aloud has
+            // nothing to play, so the tap opens its details, where its words and the way to turn reading on are (#3427).
+            if row.interjection.isWritten, !SharedMarginAudio.canOffer(row.interjection) {
+                selectedSharedMargin = row
+            } else {
+                model.playSharedMarginMoment(row)
+            }
         case .margin(let row):
             model.recordTimelineInterjectionViewed(interjectionId: row.interjection.id)
             selectedMargin = row

@@ -50,7 +50,7 @@ enum WrittenMarginReadings {
 
     /// What changes which readings the item screen needs: the ids of the written Margins still new.
     static func waitingKey(_ item: ItemDetailState) -> [String] {
-        item.importedCommentaryInterjections.values.joined().filter { $0.isNewToListener && $0.isWritten }.map(\.id).sorted()
+        item.importedCommentaryInterjections.values.joined().filter { $0.isNewToListener && $0.readsAloud }.map(\.id).sorted()
     }
 
     // MARK: A tap on a written Margin

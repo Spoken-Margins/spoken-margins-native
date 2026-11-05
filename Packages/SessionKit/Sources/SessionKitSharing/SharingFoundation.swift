@@ -36,19 +36,24 @@ public struct ReviewedInterjectionSelection: Sendable {
     public let representation: ReviewedRepresentationSelection
     /// The Margin's `replyTo` when it answers someone's shared Margin (#472).
     public let replyTo: MarginReplyLink?
+    /// Whether the sender wants a written Margin read aloud on the listener's phone (#3427). Only a text-only Margin
+    /// can be read aloud; the choice is carried only when it is "no", so the default stays the old packet.
+    public let readAloud: Bool
 
     public init(
         packageScopedId: String,
         revision: InterjectionShareRevision,
         anchor: PortableAnchorEvidence,
         representation: ReviewedRepresentationSelection,
-        replyTo: MarginReplyLink? = nil
+        replyTo: MarginReplyLink? = nil,
+        readAloud: Bool = true
     ) {
         self.packageScopedId = packageScopedId
         self.revision = revision
         self.anchor = anchor
         self.representation = representation
         self.replyTo = replyTo
+        self.readAloud = readAloud
     }
 }
 
@@ -210,7 +215,8 @@ public enum SpokenMarginsPackageBuilder {
                     commentLength: ExcerptCapRule.commentLength(transcript: approvedTranscript)
                 ),
                 defaultRepresentationId: representation.id,
-                representations: [representation]
+                representations: [representation],
+                readAloud: representation.kind == .textOnly && !selection.readAloud ? false : nil
             ))
         }
 
@@ -508,7 +514,8 @@ public enum SpokenMarginsPackageImporter {
                 resolution: itemResolution.anchorsByPackageScopedId[record.packageScopedId]
                     ?? ImportedAnchorResolution(evidenceClass: .unresolved),
                 replyLinks: replyLinks[record.packageScopedId],
-                shareProvenance: MarginShareProvenance.token(representationID: representation.id)
+                shareProvenance: MarginShareProvenance.token(representationID: representation.id),
+                senderReadAloud: record.readAloud
             ))
         }
         let layer = ImportedCommentaryLayer(

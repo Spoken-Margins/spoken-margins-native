@@ -157,6 +157,8 @@ export interface MarginRecord {
   anchor: Anchor;
   defaultRepresentationId: string;
   representations: Representation[];
+  /** The sender's choice for a written Margin: false asks that it not be read aloud. Absent means read aloud. */
+  readAloud?: boolean;
 }
 
 export interface CommentaryLayer {

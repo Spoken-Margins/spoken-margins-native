@@ -538,6 +538,20 @@ struct SharedMarginDetailView: View {
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+                if current.interjection.isWritten {
+                    // The listener's say on whether the phone's voice reads this one (#3427). The words are above, so a
+                    // Margin that is not read aloud is still read here, and on the Timeline.
+                    Section {
+                        Toggle("Read this aloud", isOn: Binding(
+                            get: { current.interjection.readAloudChoice },
+                            set: { model.setSharedMarginReadAloud(current.interjection, readAloud: $0) }
+                        ))
+                        .accessibilityIdentifier("sharedMargin.readAloud.toggle")
+                    } footer: {
+                        Text(ReadAloudWords.footer(for: current.interjection, senderName: SharedPacketArrival.senderName(current.layer.displayLabel)))
+                            .accessibilityIdentifier("sharedMargin.readAloud.footer")
+                    }
+                }
                 if let context = parentContext {
                     Section("Replying to") {
                         MarginParentContextView(context: context)
@@ -584,6 +598,11 @@ struct SharedMarginDetailView: View {
             .navigationTitle("Shared Margin")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { Button("Done") { dismiss() } }
+            .onAppear {
+                // A written Margin that will not be read aloud is only ever met here, so seeing its words is meeting it (#3427).
+                let margin = current.interjection
+                if margin.isWritten, margin.isNewToListener, !SharedMarginAudio.canOffer(margin) { model.markSharedMarginHeard(margin) }
+            }
             .onDisappear {
                 if shouldOpenItem, let itemID = row.layer.itemId { model.openItemFromTap(id: itemID) }
                 if let pendingReply { model.replyToSharedMargin(current, inWriting: pendingReply == .written) }

@@ -15,7 +15,7 @@
 | Format | Version string | Schema |
 | --- | --- | --- |
 | Packet manifest (`manifest.json` in a `.spokenmargins` zip) | `spoken-margins.package.v1` | `spoken-margins-package.schema.json` |
-| Commentary layer (the Margins, inside a packet) | `spoken-margins.commentary-layer.v1` | `shared-commentary-layer.schema.json` |
+| Commentary layer (the Margins, inside a packet). A Margin may carry `readAloud: false`, the sender's ask that a written Margin not be read aloud; optional, never a required capability, and a reader that doesn't know it reads the Margin aloud (#3427) | `spoken-margins.commentary-layer.v1` | `shared-commentary-layer.schema.json` |
 | Listening Map proposal (inside a packet) | `spoken-margins.listening-map-proposal.v2` | `portable-listening-map-proposal.schema.json` |
 | Margin conversation (reply links, inside a packet) | `spoken-margins.margin-conversation.v1` | `margin-conversation.schema.json` |
 | Sender identity (a random id so a listener can hide one sender, inside a packet; optional) | `spoken-margins.sender-identity.v1` | none yet |

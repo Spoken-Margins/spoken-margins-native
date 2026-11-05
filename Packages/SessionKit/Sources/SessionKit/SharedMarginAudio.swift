@@ -28,7 +28,8 @@ public enum SharedMarginAudio: Equatable, Sendable {
             // A Margin with a recording is never read aloud, even when the recording is gone (`isWritten` is false then).
             return voiceFile(path).map(SharedMarginAudio.voiceFile) ?? .cannotBeRead
         }
-        guard let reading = WrittenMarginReading.of(margin, in: layer) else { return .cannotBeRead }
+        // A written Margin the sender or the listener turned reading off for plays nothing (#3427).
+        guard margin.readsAloud, let reading = WrittenMarginReading.of(margin, in: layer) else { return .cannotBeRead }
         let known = state(reading)
         return known.isReady ? .readingReady(reading, file: known.file) : .readingRendering(reading, file: known.file)
     }
@@ -49,18 +50,20 @@ public enum SharedMarginAudio: Equatable, Sendable {
         }
     }
 
-    /// Whether a Margin is worth offering to play at all: it has a recording, or words the voice can read. Answered from
-    /// the Margin alone (no disk), so a screen can use it to enable a Play button. A recording that has gone missing
-    /// still counts here; `resolve` is what finds that out when the listener taps.
+    /// Whether a Margin is worth offering to play at all: it has a recording, or words the voice can read and will read
+    /// (the sender and the listener have not turned reading off, #3427). Answered from the Margin alone (no disk), so a
+    /// screen can use it to enable a Play button, and Skim, the cards and the review use it to decide what they stop
+    /// at. A recording that has gone missing still counts here; `resolve` is what finds that out when the listener taps.
     public static func canOffer(_ margin: ImportedCommentaryInterjection) -> Bool {
-        margin.audioPath != nil || margin.isWritten
+        margin.audioPath != nil || margin.readsAloud
     }
 
     /// What the listener is told when `resolve` says `cannotBeRead`. The words follow what the Margin is: a recording
     /// that is gone never "can't be read aloud", and a note the voice can't read never "couldn't play".
     public static func unavailableWords(for margin: ImportedCommentaryInterjection) -> String {
-        margin.audioPath != nil
-            ? "That Margin's recording couldn't play."
-            : "This Margin can't be read aloud on this iPhone."
+        if margin.audioPath != nil { return "That Margin's recording couldn't play." }
+        // Words the voice can read, kept silent by a choice: say whose, so the listener knows the way back.
+        if margin.isWritten { return "This Margin is set not to be read aloud. Turn reading on for it to hear it." }
+        return "This Margin can't be read aloud on this iPhone."
     }
 }
