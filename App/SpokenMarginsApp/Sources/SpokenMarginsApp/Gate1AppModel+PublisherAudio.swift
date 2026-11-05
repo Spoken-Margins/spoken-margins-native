@@ -125,7 +125,8 @@ extension Gate1AppModel {
     }
 
     private func lookUpVoiceover(itemId: String, address: String, title: String) {
-        guard let url = URL(string: address), PublisherNarrationEvidence.mayHaveVoiceover(url) else { return }
+        guard let url = URL(string: address),
+              PublisherNarrationEvidence.mayHaveVoiceover(url) || TypeIIIAudioNarration.postURL(for: url) != nil else { return }
         let article = BrowserTextHandoff(captureMode: .readablePage, source: BrowserTextSource(url: address, title: title), text: "")
         rememberSharedLinkVoiceover(sharedURL: url, article: article, itemId: itemId, fetched: FetchedPageMemo())
     }

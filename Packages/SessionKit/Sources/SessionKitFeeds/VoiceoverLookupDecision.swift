@@ -18,7 +18,10 @@ public enum VoiceoverLookupDecision: Equatable, Sendable {
         if alreadyLookedUp { return .skip(reason: "already_looked_up") }
         if (textCharacterCount ?? 0) <= 0 { return .skip(reason: "no_text") }
         guard let address = externalReference, let url = URL(string: address) else { return .skip(reason: "no_address") }
-        if !PublisherNarrationEvidence.mayHaveVoiceover(url) { return .skip(reason: "not_substack_address") }
+        // Substack posts, and LessWrong and EA Forum posts (Type III Audio, #3438): no other address is looked up.
+        if !PublisherNarrationEvidence.mayHaveVoiceover(url), TypeIIIAudioNarration.postURL(for: url) == nil {
+            return .skip(reason: "not_substack_address")
+        }
         if hasPublisherAudioRecord { return .skip(reason: "has_record") }
         return .lookUp(address: address)
     }

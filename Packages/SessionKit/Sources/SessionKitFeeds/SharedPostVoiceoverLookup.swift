@@ -47,14 +47,26 @@ public enum SharedPostVoiceoverLookup {
 
     public static let maximumPageBytes = 4 * 1_024 * 1_024
 
+    /// A LessWrong or EA Forum post (#3438) is not read as a page: Type III Audio's narration is found with one call
+    /// (`TypeIIIAudioNarration`), made only when `fetchNarration` is given, for those two sites' post addresses.
     public static func find(
         sharedURL: URL,
         articleURL: String,
         itemId: String,
         fetched: FetchedPageMemo?,
-        fetchPage: FetchPage
+        fetchPage: FetchPage,
+        fetchNarration: TypeIIIAudioNarration.Fetch? = nil
     ) async -> Outcome {
         let candidates = [sharedURL, URL(string: articleURL)].compactMap { $0 }
+        if let narrated = candidates.first(where: { TypeIIIAudioNarration.postURL(for: $0) != nil }) {
+            guard let fetchNarration else { return .notSubstack }
+            switch await TypeIIIAudioNarration.find(url: narrated, itemId: itemId, fetch: fetchNarration) {
+            case .notCovered: return .notSubstack
+            case .failed(let reason): return .failed(reason)
+            case .noNarration(let reason): return .noVoiceover(reason: reason)
+            case .found(let audio): return .found(audio)
+            }
+        }
         let remembered = candidates.lazy.compactMap { url in
             fetched?.page(for: url).flatMap { page in
                 PublisherNarrationEvidence.mayHaveVoiceover(url) || PublisherNarrationEvidence.declaresPreloads(page.data) ? page : nil
@@ -113,12 +125,16 @@ public struct VoiceoverLookupLedger: Sendable {
         return true
     }
 
+    private static func isNotYet(reason: String) -> Bool {
+        PublisherNarrationEvidence.isNotYet(absence: reason) || TypeIIIAudioNarration.isNotYet(reason: reason)
+    }
+
     /// Takes a lookup's status (`SharedLinkVoiceover.remember`'s report): `failed:` lets the next open try at once
     /// and `none:<reason>` for a "not yet" reason lets it try after the wait; anything else stays settled.
     public mutating func record(status: String, itemId: String, now: Date = Date()) {
         if status.hasPrefix("failed:") {
             settled.remove(itemId)
-        } else if status.hasPrefix("none:"), PublisherNarrationEvidence.isNotYet(absence: String(status.dropFirst("none:".count))) {
+        } else if status.hasPrefix("none:"), Self.isNotYet(reason: String(status.dropFirst("none:".count))) {
             let tries = (notYetTries[itemId] ?? 0) + 1
             notYetTries[itemId] = tries
             guard tries < Self.maximumNotYetTries else { return }
