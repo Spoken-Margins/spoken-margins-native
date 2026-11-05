@@ -1,6 +1,8 @@
 // Playwright builds the app into `dist-e2e/` and serves it through `vite preview` (see webServer), in Chromium at a
 // phone size (390×844) and a laptop size (1280×800), and the `phone-*` specs at iPhone size in Chrome and WebKit.
 // Screenshots go to `artifacts/web-2982/` at the repo root, which git ignores.
+// Nothing here may reach the Mac's speakers (#3375): `--mute-audio` on every Chromium-family project, and the web servers
+// build with VITE_E2E_SILENT=1, which injects e2e/silence/silence-script.js (WebKit refuses `--mute-audio`).
 import { fileURLToPath } from 'node:url';
 import { defineConfig, devices } from '@playwright/test';
 
@@ -21,7 +23,7 @@ export default defineConfig({
     trace: 'retain-on-failure',
     launchOptions: {
       // A fake microphone, so the voice Margin test records without a prompt or a device.
-      args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'],
+      args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', '--mute-audio'],
     },
   },
   projects: [
@@ -39,12 +41,12 @@ export default defineConfig({
       // The owner's phone feedback (#2977) is checked at iPhone size in installed Google Chrome and in WebKit, the
       // engine under Safari on an iPhone: specs named `phone-*.spec.ts`.
       name: 'phone-chrome',
-      testMatch: /phone-[\w-]+\.spec\.ts$/,
+      testMatch: /(phone-[\w-]+|silence)\.spec\.ts$/,
       use: { ...devices['Desktop Chrome'], channel: 'chrome', viewport: { width: 393, height: 659 }, hasTouch: true },
     },
     {
       name: 'phone-webkit',
-      testMatch: /phone-[\w-]+\.spec\.ts$/,
+      testMatch: /(phone-[\w-]+|silence)\.spec\.ts$/,
       // WebKit takes none of Chrome's fake-microphone switches; it brings its own mock microphone.
       use: { ...devices['iPhone 15 Pro'], launchOptions: { args: [] } },
     },
@@ -52,7 +54,7 @@ export default defineConfig({
       // On-device transcription (transcribe.spec.ts) in installed Google Chrome, the browser listeners use, rather
       // than the bundled Chromium. The fake microphone plays a spoken clip once (`%noloop`).
       name: 'chrome-transcribe',
-      testMatch: /transcribe\.spec\.ts$/,
+      testMatch: /(transcribe|silence)\.spec\.ts$/,
       timeout: 180_000,
       use: {
         ...devices['Desktop Chrome'],
@@ -63,6 +65,7 @@ export default defineConfig({
           args: [
             '--use-fake-ui-for-media-stream',
             '--use-fake-device-for-media-stream',
+            '--mute-audio',
             `--use-file-for-fake-audio-capture=${fileURLToPath(new URL('./audio/ask-not-16k.wav', import.meta.url))}%noloop`,
           ],
         },
@@ -74,7 +77,7 @@ export default defineConfig({
       // Its own build in `dist-e2e/` (git-ignored, never deployed), with a relay origin only the tests' routes
       // answer, so the consent journey can count relay calls. Link creation is off here, as in every hosted build.
       command: `npx vite build --outDir dist-e2e --emptyOutDir --logLevel warn && npx vite preview --outDir dist-e2e --host 127.0.0.1 --port ${port} --strictPort`,
-      env: { VITE_RELAY_ORIGIN: 'https://relay.test' },
+      env: { VITE_RELAY_ORIGIN: 'https://relay.test', VITE_E2E_SILENT: '1' },
       cwd: '..',
       url: `http://127.0.0.1:${port}/`,
       reuseExistingServer: false,
@@ -85,7 +88,7 @@ export default defineConfig({
       // git-ignored `dist-share-links/`, never deployed), served with a stub link server on 4174.
       command:
         'npx vite build --mode share-links-test --outDir dist-share-links --emptyOutDir --logLevel warn && node e2e/link-stub-server.ts',
-      env: { VITE_RELAY_ORIGIN: 'http://127.0.0.1:4174' },
+      env: { VITE_RELAY_ORIGIN: 'http://127.0.0.1:4174', VITE_E2E_SILENT: '1' },
       cwd: '..',
       url: 'http://127.0.0.1:4174/',
       reuseExistingServer: false,

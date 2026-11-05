@@ -21,7 +21,7 @@ export default defineConfig({
       // The web player, as the share-link journeys serve it (see e2e/playwright.config.ts).
       command:
         'npx vite build --mode share-links-test --outDir dist-share-links --emptyOutDir --logLevel warn && node e2e/link-stub-server.ts',
-      env: { VITE_RELAY_ORIGIN: 'http://127.0.0.1:4174' },
+      env: { VITE_RELAY_ORIGIN: 'http://127.0.0.1:4174', VITE_E2E_SILENT: '1' },
       cwd: '../..',
       url: 'http://127.0.0.1:4174/',
       reuseExistingServer: false,

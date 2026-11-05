@@ -42,7 +42,9 @@ function LandingOffer({ landing }: { landing?: Landing }) {
   const label = landingOffer(landing, {
     episodeId: player.episode?.id,
     playing: player.playing,
-    played: playedLanding !== undefined && playedLanding === landing,
+    // A Margin that has come up means the episode ran: when the first Margin sits at the landing moment, the clip pauses
+    // the episode a few milliseconds after it starts, too fast for this component to have drawn `player.playing`.
+    played: (playedLanding !== undefined && playedLanding === landing) || (landing !== undefined && player.arrived !== undefined),
     loading: player.loading,
   });
   if (!landing || !label) return null;
