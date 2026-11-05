@@ -13,6 +13,24 @@ final class WrittenMarginTimelineTapAppTests: XCTestCase {
         SharedMarginRow(interjection: fixture.record, layer: fixture.layer, itemTitle: "Real source")
     }
 
+    // The item screen shows Listen from `canListen`. A friend's written Margin has no recording and still gets it (the
+    // review of #3412 found it hidden); a voice Margin with a recording keeps it; a note the voice can't read has none.
+    func testTheItemScreensSnapshotOffersListenToAFriendsWrittenMarginAsWellAsAVoiceMargin() {
+        let layer = ImportedCommentaryLayer(id: "ana", itemId: "item", packageDigest: "digest", packageId: "package",
+            itemIdentity: SharedItemIdentity(itemType: .podcast, title: "Episode", durationMs: 1_800_000),
+            displayLabel: "Ana", importedAt: Date(), sourceResolutionStatus: .resolved, isEnabled: true)
+        func snapshot(audioPath: String?, words: String) -> Build23ImportedMarginSnapshot {
+            let margin = ImportedCommentaryInterjection(id: "m", layerId: layer.id, packageScopedId: "m", createdAt: Date(),
+                anchorEvidence: PortableAnchorEvidence(anchorType: .media), approvedTranscript: words,
+                audioPath: audioPath, audioDurationMs: audioPath == nil ? nil : 4_000,
+                resolution: ImportedAnchorResolution(evidenceClass: .acousticVerified, localMediaTimeMs: 60_000, confidence: 1))
+            return Build23SharingCoordinator.importedMarginSnapshot(margin, in: layer, placementPass: nil, paragraphs: nil)
+        }
+        XCTAssertTrue(snapshot(audioPath: nil, words: "Lovely harbour.").canListen, "a written Margin has no recording and can be listened to")
+        XCTAssertTrue(snapshot(audioPath: "ana.m4a", words: "Words").canListen, "a voice Margin with a recording still can")
+        XCTAssertFalse(snapshot(audioPath: nil, words: "🎧").canListen, "a note the voice cannot read is not offered")
+    }
+
     // A written Margin tapped in the Timeline is heard through the moment: no failure line, a moment starts, and when
     // the moment plays the reading the Margin is marked heard.
     func testTappingAWrittenMarginInTheTimelineHearsItsReadingThroughTheMoment() async throws {

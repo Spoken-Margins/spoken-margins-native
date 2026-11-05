@@ -245,7 +245,7 @@ private struct Build23ImportedLayerList: View, Equatable {
                     .accessibilityLabel(Text("Placement resolution. \(label)"))
             }
 
-            if margin.hasVoice {
+            if margin.canListen {
                 Button {
                     coordinator.send(.listenToMargin(layerID: layerID, marginID: margin.id))
                 } label: {

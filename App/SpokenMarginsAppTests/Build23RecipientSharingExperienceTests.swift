@@ -129,7 +129,7 @@ final class Build23RecipientSharingExperienceTests: XCTestCase {
                     resolution: .transcriptVerified,
                     positionDescription: "Chapter 2 · 08:14",
                     isPlayable: true,
-                    hasVoice: true
+                    canListen: true
                 )
             ]
         )

@@ -178,7 +178,7 @@ struct Build23ImportedMarginSnapshot: Identifiable, Equatable {
     let resolution: AnchorResolutionEvidenceClass
     let positionDescription: String
     let isPlayable: Bool
-    let hasVoice: Bool
+    let canListen: Bool
     /// Shown instead of the resolution while the Margin is being placed (#872).
     var placementLabel: String? = nil
 }
@@ -419,6 +419,27 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
         snapshot.canShareVerifiedFile ? verifiedPreview?.fileURL : nil
     }
 
+    /// One friend's Margin as the item screen shows it. Whether it can be listened to is `SharedMarginAudio`'s answer (a
+    /// recording, or a note the phone's voice reads), never the recording's path alone (#3412).
+    static func importedMarginSnapshot(
+        _ margin: ImportedCommentaryInterjection, in layer: ImportedCommentaryLayer,
+        placementPass: SharedMarginPlacementPasses.Pass?, paragraphs: MarginPlaceIndex?
+    ) -> Build23ImportedMarginSnapshot {
+        let placement = SharedMarginPlacementStatus(resolution: margin.resolution, marginId: margin.id,
+            layerStatus: layer.sourceResolutionStatus, pass: placementPass,
+            hasPositionEvidence: margin.carriesPositionEvidence(in: layer),
+            awaitingPlacementPass: layer.awaitsPlacementPass)
+        return Build23ImportedMarginSnapshot(
+            id: margin.id,
+            reviewedText: margin.approvedTranscript,
+            resolution: margin.resolution.evidenceClass,
+            positionDescription: placement.positionDescription ?? positionDescription(for: margin.resolution, paragraphs: paragraphs),
+            isPlayable: Gate1AppModel.isPlayableImportedCommentaryResolution(margin.resolution),
+            canListen: SharedMarginAudio.canOffer(margin),
+            placementLabel: placement.label
+        )
+    }
+
     private func makeImportedLayers(from item: ItemDetailState) -> [Build23ImportedLayerSnapshot] {
         // Paragraph numbers for text positions (#1974); the text is only read as far as the furthest offset.
         let furthestOffset = item.importedCommentaryInterjections.values.joined().compactMap(\.resolution.localStartChar).max()
@@ -427,21 +448,7 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
             .filter { $0.deletedAt == nil }
             .map { layer in
                 let margins = item.importedCommentaryInterjections[layer.id, default: []]
-                    .map { margin -> Build23ImportedMarginSnapshot in
-                        let placement = SharedMarginPlacementStatus(resolution: margin.resolution, marginId: margin.id,
-                            layerStatus: layer.sourceResolutionStatus, pass: item.sharedMarginPlacement,
-                            hasPositionEvidence: margin.carriesPositionEvidence(in: layer),
-                            awaitingPlacementPass: layer.awaitsPlacementPass)
-                        return Build23ImportedMarginSnapshot(
-                            id: margin.id,
-                            reviewedText: margin.approvedTranscript,
-                            resolution: margin.resolution.evidenceClass,
-                            positionDescription: placement.positionDescription ?? Self.positionDescription(for: margin.resolution, paragraphs: paragraphs),
-                            isPlayable: Gate1AppModel.isPlayableImportedCommentaryResolution(margin.resolution),
-                            hasVoice: margin.audioPath != nil,
-                            placementLabel: placement.label
-                        )
-                    }
+                    .map { Self.importedMarginSnapshot($0, in: layer, placementPass: item.sharedMarginPlacement, paragraphs: paragraphs) }
                 return Build23ImportedLayerSnapshot(
                     id: layer.id,
                     senderLabel: SharedPacketArrival.snapshotSenderLabel(layer.displayLabel),
