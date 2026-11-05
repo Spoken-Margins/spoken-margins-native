@@ -16,6 +16,7 @@ import {
   safeSourceURL,
 } from './share-link-open.mjs';
 import { EXPIRED_MESSAGE, FILE_NOTE, OFFLINE_MESSAGE, SERVER_MESSAGE, playingPageAddress, showSharedMargins } from './share-link-page.mjs';
+import * as pageWords from './share-link-page.mjs';
 
 const vector = JSON.parse(
   readFileSync(new URL('../../../contracts/fixtures/share-link-sealing-vector.json', import.meta.url), 'utf8'),
@@ -263,7 +264,7 @@ test('a link whose item has no public page says the item came as a file, once, a
 test('the page says plainly when the link is missing its key, expired, damaged or unreachable', async () => {
   const never = async () => assert.fail('fetched without a usable key');
   for (const missing of ['', '#', '#not a key', `#${vector.keyFragment.slice(0, -3)}`]) {
-    assert.equal(await showSharedMargins(shell(), missing, never), DAMAGED_MESSAGE, missing);
+    assert.equal(await showSharedMargins(shell(), missing, never), pageWords.CUT_OFF_MESSAGE, missing);
   }
   const overCap = vectorPreview();
   overCap.margins[0].after = 'x'.repeat(MAX_AFTER_CHARACTERS + 1);
@@ -276,9 +277,9 @@ test('the page says plainly when the link is missing its key, expired, damaged o
     ['rate limited', async () => answer(429), SERVER_MESSAGE],
     ['switched off', async () => answer(503), SERVER_MESSAGE],
     ['offline', async () => { throw new TypeError('Failed to fetch'); }, OFFLINE_MESSAGE],
-    ['tampered', async () => answer(200, tampered), DAMAGED_MESSAGE],
-    ['the packet served as the preview', async () => answer(200, sealedPacket), DAMAGED_MESSAGE],
-    ['an excerpt over its ceiling', async () => answer(200, overCapSealed), DAMAGED_MESSAGE],
+    ['tampered', async () => answer(200, tampered), pageWords.CUT_OFF_MESSAGE],
+    ['the packet served as the preview', async () => answer(200, sealedPacket), pageWords.CUT_OFF_MESSAGE],
+    ['an excerpt over its ceiling', async () => answer(200, overCapSealed), pageWords.CUT_OFF_MESSAGE],
   ]) {
     const document = shell();
     assert.equal(await showSharedMargins(document, linkHash, respond), message, name);
@@ -306,13 +307,93 @@ test('the page stays where it is without a web app, without a usable key, or for
   const web = 'https://app.spokenmargins.com';
   assert.equal(playingPageAddress(shellWithWeb(undefined), linkHash, ''), undefined, 'no web app named');
   assert.equal(playingPageAddress(shellWithWeb(''), linkHash, ''), undefined, 'empty web app');
-  for (const missing of ['', '#', '#not a key', `#${vector.keyFragment.slice(0, -3)}`]) {
-    assert.equal(playingPageAddress(shellWithWeb(web), missing, ''), undefined, missing);
-  }
   assert.equal(playingPageAddress(shellWithWeb(web), linkHash, '?report'), undefined, 'the report form');
   assert.equal(playingPageAddress(shellWithWeb(web), linkHash, '?report=1'), undefined);
   // An origin the server never writes (a path, a script, userinfo) is not followed.
   for (const hostile of ['javascript:alert(1)', 'https://evil.test/x', 'https://u:p@evil.test', '//evil.test', 'https://app.example.com/path']) {
     assert.equal(playingPageAddress(shellWithWeb(hostile), linkHash, ''), undefined, hostile);
   }
+});
+
+// A table of neighbouring addresses (#3355): what a messaging app does to a long link. With a web app named, every
+// one of them goes to the web app's page, which words a bad key itself; only `?report` stays on the server page.
+const CUT_OFF = 'This link is cut off. Copy the whole link from the message and open it again.';
+const fullKey = vector.keyFragment;
+const swapCase = (text) => text.replace(/[A-Za-z]/g, (c) => (c === c.toLowerCase() ? c.toUpperCase() : c.toLowerCase()));
+const WEB = 'https://app.spokenmargins.com';
+// [name, hash, search, goesToWebApp, fallbackSays] -- fallbackSays is what the server page says without a web app,
+// where '' means the Margins open.
+const ADDRESS_ROWS = [
+  ['empty hash', '', '', true, CUT_OFF],
+  ['# alone', '#', '', true, CUT_OFF],
+  ['key cut to 20 characters', `#${fullKey.slice(0, 20)}`, '', true, CUT_OFF],
+  ['key one character short', `#${fullKey.slice(0, -1)}`, '', true, CUT_OFF],
+  ['full key', `#${fullKey}`, '', true, ''],
+  ['full key with = padding', `#${fullKey}=`, '', true, ''],
+  ['full key with a trailing .', `#${fullKey}.`, '', true, CUT_OFF],
+  ['full key with a trailing )', `#${fullKey})`, '', true, CUT_OFF],
+  ['full key with a trailing space as %20', `#${fullKey}%20`, '', true, CUT_OFF],
+  ['key wrapped onto a new line as %0A', `#${fullKey.slice(0, 20)}%0A${fullKey.slice(20)}`, '', true, CUT_OFF],
+  ['key in other case (well formed, wrong key)', `#${swapCase(fullKey)}`, '', true, CUT_OFF],
+  ['non-ASCII after the key', `#${fullKey}é`, '', true, CUT_OFF],
+  ['a lookalike letter in the key', `#${fullKey.slice(0, 10)}а${fullKey.slice(11)}`, '', true, CUT_OFF],
+  ['a very long fragment', `#${'A'.repeat(5000)}`, '', true, CUT_OFF],
+  ['?report with the full key', `#${fullKey}`, '?report', false, ''],
+  ['?report with no key', '', '?report', false, ''],
+  ['?report with a cut key', `#${fullKey.slice(0, 20)}`, '?report', false, ''],
+  ['?utm=x with no key', '', '?utm=x', true, CUT_OFF],
+  ['?utm=x with the full key', `#${fullKey}`, '?utm=x', true, ''],
+];
+
+test('the exact words for a cut-off link are shared by the page and the web app', () => {
+  assert.equal(pageWords.CUT_OFF_MESSAGE, CUT_OFF);
+  assert.equal(readFileSync(new URL('../../../../../Web/src/app/logic/arrival.ts', import.meta.url), 'utf8').includes(`cutOff: '${CUT_OFF}'`), true);
+});
+
+test('every neighbouring address goes to the web app unless it asks for the report form (#3355)', () => {
+  const wrong = [];
+  for (const [name, hash, search, goes] of ADDRESS_ROWS) {
+    const want = goes ? `${WEB}/l/${LINK_ID}${hash}` : undefined;
+    if (playingPageAddress(shellWithWeb(WEB), hash, search) !== want) wrong.push(name);
+  }
+  assert.deepEqual(wrong, [], 'rows that went to the wrong place');
+});
+
+test('a bad id, or no web app, keeps the page where it is (#3355)', () => {
+  assert.equal(playingPageAddress(shellWithWeb(undefined), '', ''), undefined, 'no web app');
+  const { document } = parseHTML(`<!doctype html><html><body><section id="margins" data-link="not-an-id" data-web="${WEB}"></section></body></html>`);
+  assert.equal(playingPageAddress(document, `#${fullKey}`, ''), undefined, 'bad id');
+});
+
+test('a hash that is not a # part adds nothing to the address, and nothing alters the path or origin (#3355)', () => {
+  for (const hash of ['abc', '/evil', '//evil.test', 'javascript:alert(1)', '?x', undefined]) {
+    assert.equal(playingPageAddress(shellWithWeb(WEB), hash, ''), `${WEB}/l/${LINK_ID}`, String(hash));
+  }
+  for (const hash of ['#/../x', '#@evil.test', '#\\evil.test', '#?a=b']) {
+    const where = new URL(playingPageAddress(shellWithWeb(WEB), hash, ''));
+    assert.equal(where.origin, WEB, hash);
+    assert.equal(where.pathname, `/l/${LINK_ID}`, hash);
+  }
+});
+
+test('without a web app, the page says the same words as the web app for every neighbouring address (#3355)', async () => {
+  const wrong = [];
+  for (const [name, hash, search, , says] of ADDRESS_ROWS) {
+    const document = shell();
+    const shown = await showSharedMargins(document, hash, async () => answer(200, sealedPreview), search);
+    if (shown !== says || document.getElementById('status').textContent !== says || (says && document.querySelector('article'))) wrong.push(`${name}: said ${JSON.stringify(shown)}`);
+  }
+  assert.deepEqual(wrong, [], 'rows that said the wrong thing');
+  const bad = shell();
+  assert.equal(await showSharedMargins(bad, `#${fullKey}`, async () => answer(200, sealedPacket)), CUT_OFF, 'a damaged blob');
+});
+
+test('?report opens the report form and nothing else does (#3355)', () => {
+  const { document } = parseHTML('<!doctype html><html><body><details id="report"><summary>Report this link</summary></details></body></html>');
+  pageWords.openReportForm(document, '');
+  assert.equal(document.getElementById('report').hasAttribute('open'), false);
+  pageWords.openReportForm(document, '?utm=x');
+  assert.equal(document.getElementById('report').hasAttribute('open'), false);
+  pageWords.openReportForm(document, '?report');
+  assert.equal(document.getElementById('report').hasAttribute('open'), true);
 });
