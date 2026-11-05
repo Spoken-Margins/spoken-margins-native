@@ -189,7 +189,7 @@ final class SharedMarginExportTests: XCTestCase {
         XCTAssertNil(scene.summaryText)
         XCTAssertNil(scene.summaryProvenance)
         XCTAssertNil(scene.startAnchor.chapterTitle)
-        XCTAssertEqual(scene.startAnchor.exactText, "The caravans left the oasis before dawn and crossed the dunes in single file. Water was counted by the cup.")
+        XCTAssertEqual(scene.startAnchor.exactText, String(text.prefix(TextSceneAssembly.quotedCharacters)), "the quote of the source stays, as a Margin's does")
     }
 
     func testPacketsKeepGoldenBytesAndBuild29ImportsEveryMarginAndAnchor() throws {
