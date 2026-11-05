@@ -191,4 +191,23 @@ extension SenderIdentityFileStore where Value == SenderIDLedger {
     public static func ledger(in directory: URL) -> Self {
         .init(fileURL: directory.appendingPathComponent("sender-ids.json"), empty: SenderIDLedger())
     }
+
+    /// The group every share belongs to: one id per phone (owner's call 2026-11-05 on #2846; the app doesn't know who a
+    /// share goes to, and a group step would cost the two-tap share). The id is random and made on first use.
+    public static var phoneGroup: String { "this-phone" } // not stored: a generic type has no static stored property
+
+    /// The id this phone puts in the packets it shares: made the first time and kept in the ledger file after that, so a
+    /// friend who hides this sender once hides every later share too. Nil when no id can be kept: a share then goes out
+    /// without one, because an id that changes every time would let a friend hide only one packet and a share is never
+    /// held back for it. A file that exists but cannot be read right now (a locked or busy file) is left alone and gives
+    /// nil, so a good id is not overwritten; a file that reads but is damaged is replaced.
+    public func phoneSenderID(makeID: () -> String = { SenderID.generate() }) -> String? {
+        let present = FileManager.default.fileExists(atPath: fileURL.path)
+        if present, (try? Data(contentsOf: fileURL)) == nil { return nil }
+        var ledger = load()
+        if let existing = ledger.idsByGroup[Self.phoneGroup] { return existing }
+        let id = ledger.senderID(forGroup: Self.phoneGroup, makeID: makeID)
+        do { try save(ledger) } catch { return nil }
+        return id
+    }
 }

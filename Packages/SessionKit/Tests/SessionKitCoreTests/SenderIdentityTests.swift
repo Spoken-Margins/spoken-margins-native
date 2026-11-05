@@ -28,6 +28,40 @@ final class SenderIdentityTests: XCTestCase {
         )
     }
 
+    func testThePhoneKeepsOneRandomIdAcrossSharesAndRelaunches() throws {
+        let store = SenderIdentityFileStore<SenderIDLedger>.ledger(in: root)
+        let first = try XCTUnwrap(store.phoneSenderID())
+        XCTAssertTrue(SenderID.isValid(first))
+        XCTAssertEqual(store.phoneSenderID(), first, "a second share carries the same id, so one hide covers both")
+        XCTAssertEqual(SenderIdentityFileStore<SenderIDLedger>.ledger(in: root).phoneSenderID(), first, "and after a relaunch")
+        let other = FileManager.default.temporaryDirectory.appendingPathComponent("SenderIdentityTests-other-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: other) }
+        XCTAssertNotEqual(try XCTUnwrap(SenderIdentityFileStore<SenderIDLedger>.ledger(in: other).phoneSenderID()), first, "another phone's id is its own")
+    }
+
+    func testADamagedLedgerIsReplacedByAValidKeptId() throws {
+        try Data("not json".utf8).write(to: root.appendingPathComponent("sender-ids.json"))
+        let store = SenderIdentityFileStore<SenderIDLedger>.ledger(in: root)
+        let id = try XCTUnwrap(store.phoneSenderID(), "a damaged file is replaced, not a reason to share without an id")
+        XCTAssertTrue(SenderID.isValid(id))
+        XCTAssertEqual(store.phoneSenderID(), id, "and the next share keeps the id that replaced it")
+    }
+
+    func testAnIdThatCannotBeKeptIsNotSharedAndAGoodFileIsNeverOverwrittenByAFailedRead() throws {
+        // The folder cannot be made (its parent is a file): no id that would change on every share goes out.
+        let blocker = root.appendingPathComponent("blocker")
+        try Data("x".utf8).write(to: blocker)
+        XCTAssertNil(SenderIdentityFileStore<SenderIDLedger>.ledger(in: blocker.appendingPathComponent("Senders")).phoneSenderID())
+
+        // The file is there but cannot be read (here, a directory stands in for a locked file): it is left alone.
+        let unreadable = root.appendingPathComponent("unreadable", isDirectory: true)
+        try FileManager.default.createDirectory(at: unreadable.appendingPathComponent("sender-ids.json"), withIntermediateDirectories: true)
+        XCTAssertNil(SenderIdentityFileStore<SenderIDLedger>.ledger(in: unreadable).phoneSenderID())
+        var isDirectory: ObjCBool = false
+        XCTAssertTrue(FileManager.default.fileExists(atPath: unreadable.appendingPathComponent("sender-ids.json").path, isDirectory: &isDirectory))
+        XCTAssertTrue(isDirectory.boolValue, "nothing was written over it")
+    }
+
     func testHiddenSendersHideTheirLayersAndNoOnesElse() {
         let layers = [layer("a1", sender: senderA), layer("b1", sender: senderB), layer("none", sender: nil), layer("a2", sender: senderA)]
         var hidden = HiddenSenders()
