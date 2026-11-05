@@ -485,7 +485,7 @@ struct ExperienceLibraryScreen: View {
                     row: row,
                     isCurrentItem: entry.isCurrent,
                     playbackSpeed: model.speechPlaybackRateMultiplier,
-                    onOpen: { model.openItem(id: row.id) },
+                    onOpen: { model.openItemFromTap(id: row.id) },
                     onPlay: { model.continueListening(itemId: row.id) { pendingNewMarginsOffer = $0 } },
                     onComplete: { model.markItemCompleted(id: row.id) },
                     onMarkUnfinished: { model.markItemUnfinished(id: row.id) },

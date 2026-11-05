@@ -63,6 +63,8 @@ struct ExperienceRootTabs: View {
             })
             .environmentObject(model)
         }
+        // A tab, a pushed screen or a sheet chosen while a tapped item is read: that item must not land over it (#2505).
+        .onChange(of: navigation.place) { model.listenerMovedOnFromTap() }
     }
 
     private var addSourceRoute: Binding<AddSourceRoute?> {

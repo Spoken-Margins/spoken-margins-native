@@ -657,4 +657,86 @@ final class BackgroundRefreshGateTests: XCTestCase {
         await model.settleItemReload()
         XCTAssertEqual(model.selectedItem.title, storedTitle)
     }
+
+    // MARK: Opening an item from a tap (#2505)
+
+    func testAnOpenFromATapIsIndependentOfItemReloads() {
+        let gate = BackgroundRefreshGate()
+        let open = gate.beginOpen()
+        _ = gate.beginItem()
+        gate.selectionWasAssigned()
+        XCTAssertTrue(gate.isCurrentOpen(open), "a reload of the item on screen must not drop the tap's open")
+        _ = gate.beginOpen()
+        XCTAssertFalse(gate.isCurrentOpen(open), "a newer open overtakes the older one")
+    }
+
+    /// The tap returns at once, the Library stays on screen while the item is read, and the item shows once read.
+    func testAnOpenTapShowsTheItemOnceItIsRead() async throws {
+        let (model, firstId, secondId) = twoItemModel()
+        XCTAssertEqual(model.selectedItem.id, secondId)
+        model.openHome()
+
+        model.openItemFromTap(id: firstId)
+        XCTAssertEqual(model.screen, .home, "the screen the tap came from stays until the item is read")
+        await model.settleItemOpen()
+
+        XCTAssertEqual(model.screen, .item)
+        XCTAssertEqual(model.selectedItem.id, firstId)
+        XCTAssertEqual(model.activeItemId, firstId)
+    }
+
+    func testTheNewerOfTwoTapsIsTheItemShown() async throws {
+        let (model, firstId, secondId) = twoItemModel()
+        model.openHome()
+        model.openItemFromTap(id: secondId)
+        model.openItemFromTap(id: firstId)
+        await model.settleItemOpen()
+        XCTAssertEqual(model.selectedItem.id, firstId)
+        XCTAssertEqual(model.screen, .item)
+    }
+
+    func testLeavingTheScreenBeforeTheItemIsReadDropsTheOpen() async throws {
+        let (model, firstId, _) = twoItemModel()
+        model.openHome()
+        model.openItemFromTap(id: firstId)
+        model.showSettingsTab()
+        let screenAfterLeaving = model.screen
+        await model.settleItemOpen()
+        XCTAssertEqual(model.screen, screenAfterLeaving, "a late open must not pull the listener back to the item")
+        XCTAssertNotEqual(model.activeItemId, firstId)
+    }
+
+    /// A tab chosen on the tab bar never reaches `screen` or `openHome`; the tab bar reports the move instead.
+    func testMovingOnFromTheTabBarBeforeTheItemIsReadDropsTheOpen() async throws {
+        let (model, firstId, _) = twoItemModel()
+        model.openHome()
+        model.openItemFromTap(id: firstId)
+        model.listenerMovedOnFromTap()
+        await model.settleItemOpen()
+        XCTAssertEqual(model.screen, .home, "a late open must not cover the tab the listener chose")
+        XCTAssertNotEqual(model.activeItemId, firstId)
+    }
+
+    func testAnOpenFromCodeOvertakesATapStillReading() async throws {
+        let (model, firstId, secondId) = twoItemModel()
+        model.openHome()
+        model.openItemFromTap(id: firstId)
+        model.openItem(id: secondId) // a share or an import shows its item at once
+        await model.settleItemOpen()
+        XCTAssertEqual(model.selectedItem.id, secondId)
+        XCTAssertEqual(model.activeItemId, secondId)
+    }
+
+    private func twoItemModel() -> (Gate1AppModel, String, String) {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.importTitle = "First Item"
+        model.importText = "One sentence only."
+        model.importTextItem()
+        let firstId = model.selectedItem.id
+        model.importTitle = "Second Item"
+        model.importText = "Another sentence only."
+        model.importTextItem()
+        return (model, firstId, model.selectedItem.id)
+    }
 }
