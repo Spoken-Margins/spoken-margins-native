@@ -70,6 +70,7 @@ public actor SpokenNoteRecordingCoordinator {
     }
 
     private let store: SpokenNoteStore
+    private nonisolated let noteId: String
     private var item: Item
     /// The item as last written to the database; nil until it has been written.
     private var savedItem: Item?
@@ -104,6 +105,7 @@ public actor SpokenNoteRecordingCoordinator {
         makeTakeId: @escaping @Sendable () -> String = { UUID().uuidString.lowercased() }
     ) {
         self.store = store
+        self.noteId = store.noteId
         self.item = item
         self.savedItem = itemIsSaved ? item : nil
         self.recorder = recorder
@@ -111,6 +113,11 @@ public actor SpokenNoteRecordingCoordinator {
         self.saveItem = saveItem
         self.now = now
         self.makeTakeId = makeTakeId
+        SpokenNoteLiveNotes.add(store.noteId)
+    }
+
+    deinit {
+        SpokenNoteLiveNotes.remove(noteId)
     }
 
     public init(

@@ -89,7 +89,7 @@ final class SpokenNoteRecoveryAndMergeTests: XCTestCase {
         let database = FakeDatabase()
 
         let recovered = SpokenNoteRecovery.recover(
-            in: support, now: Date(timeIntervalSince1970: 10_000), measureDurationMs: { _ in 7_000 }, itemWriter: database
+            in: support, now: Date(timeIntervalSince1970: 10_000), measureDurationMs: { _ in 7_000 }, itemWriter: database, liveNoteIds: []
         )
 
         XCTAssertEqual(recovered, ["n1"])
@@ -101,25 +101,55 @@ final class SpokenNoteRecoveryAndMergeTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: started.store.folderURL.appendingPathComponent("take-abc.m4a").path))
     }
 
-    func testRecoveryRunsTwiceWithoutDoublingAndSkipsAFileStillBeingWritten() throws {
+    func testAFreshFileIsRecoveredAtOnceAndRunningTwiceDoesNotDoubleIt() throws {
+        // Reopening the app within a minute of a crash must still find the dictation: no time window.
         let started = try SpokenNoteStarter.start(in: support, now: Date(timeIntervalSince1970: 1), makeId: { "n1" })
-        try writeTake("n1", "take-old.m4a", age: 600)
-        try writeTake("n1", "take-live.m4a", age: 5)
+        try writeTake("n1", "take-fresh.m4a", age: 5)
         let database = FakeDatabase()
         let now = Date(timeIntervalSince1970: 10_000)
 
-        SpokenNoteRecovery.recover(in: support, now: now, measureDurationMs: { _ in 0 }, itemWriter: database)
-        let again = SpokenNoteRecovery.recover(in: support, now: now, measureDurationMs: { _ in 0 }, itemWriter: database)
+        let first = SpokenNoteRecovery.recover(in: support, now: now, measureDurationMs: { _ in 0 }, itemWriter: database, liveNoteIds: [])
+        let again = SpokenNoteRecovery.recover(in: support, now: now, measureDurationMs: { _ in 0 }, itemWriter: database, liveNoteIds: [])
 
-        XCTAssertEqual(started.store.load().takes.map(\.id), ["old"], "the file written 5 seconds ago is left for a later launch")
+        XCTAssertEqual(first, ["n1"])
+        XCTAssertEqual(started.store.load().takes.map(\.id), ["fresh"])
         XCTAssertEqual(again, [], "nothing new the second time")
+    }
+
+    func testANoteWithARecorderOpenInThisProcessIsLeftAlone() async throws {
+        let started = try SpokenNoteStarter.start(in: support, now: Date(timeIntervalSince1970: 1), makeId: { "n1" })
+        let coordinator = SpokenNoteRecordingCoordinator(
+            store: started.store, item: started.item, itemIsSaved: false,
+            recorder: WritingRecorder(), transcriber: GatedTranscriber(), itemWriter: FakeDatabase()
+        )
+        try await coordinator.startTake() // writes take-<uuid>.m4a, not yet in the note
+        XCTAssertTrue(SpokenNoteLiveNotes.ids().contains("n1"))
+
+        let recovered = SpokenNoteRecovery.recover(in: support, now: Date(), measureDurationMs: { _ in 0 }, itemWriter: FakeDatabase())
+        XCTAssertEqual(recovered, [], "the file being recorded is not adopted by recovery")
+        XCTAssertTrue(started.store.load().takes.isEmpty)
+        withExtendedLifetime(coordinator) {}
+    }
+
+    func testARowTheListenerDeletedIsNotMadeAgainWhenALaterTakeIsRecovered() throws {
+        // The note already had a take (and so a row); the row was trashed and emptied from the trash; take 2 was cut off.
+        let started = try SpokenNoteStarter.start(in: support, now: Date(timeIntervalSince1970: 1), makeId: { "n1" })
+        try Data([1]).write(to: started.store.folderURL.appendingPathComponent("take-one.m4a"))
+        try SpokenNoteIntake.addRecordedTake(audioFileName: "take-one.m4a", durationMs: 1_000, to: started.store, now: Date(timeIntervalSince1970: 2), takeId: "one")
+        try writeTake("n1", "take-two.m4a", age: 600)
+        let database = FakeDatabase() // no row: it was deleted for good
+
+        SpokenNoteRecovery.recover(in: support, now: Date(timeIntervalSince1970: 10_000), measureDurationMs: { _ in 0 }, itemWriter: database, liveNoteIds: [])
+
+        XCTAssertEqual(started.store.load().takes.map(\.id), ["one", "two"], "the audio is still added to the note")
+        XCTAssertNil(database.row(started.item.id), "but the deleted row is not made again")
     }
 
     func testRecoveryLeavesAnUnreadableNoteAloneAndKeepsAFileThatWillNotOpen() throws {
         let started = try SpokenNoteStarter.start(in: support, now: Date(timeIntervalSince1970: 1), makeId: { "n1" })
         try writeTake("n1", "take-cut.m4a", age: 600)
         // A file that will not open is still added (no length), so it is kept and listed.
-        SpokenNoteRecovery.recover(in: support, now: Date(timeIntervalSince1970: 10_000), measureDurationMs: { _ in 0 }, itemWriter: FakeDatabase())
+        SpokenNoteRecovery.recover(in: support, now: Date(timeIntervalSince1970: 10_000), measureDurationMs: { _ in 0 }, itemWriter: FakeDatabase(), liveNoteIds: [])
         XCTAssertEqual(started.store.load().takes.first?.durationMs, 0)
 
         // note.json that cannot be read: nothing is added or written over.
@@ -127,7 +157,7 @@ final class SpokenNoteRecoveryAndMergeTests: XCTestCase {
         try writeTake("n2", "take-z.m4a", age: 600)
         try FileManager.default.removeItem(at: second.store.fileURL)
         try FileManager.default.createDirectory(at: second.store.fileURL, withIntermediateDirectories: false)
-        let recovered = SpokenNoteRecovery.recover(in: support, now: Date(timeIntervalSince1970: 10_000), measureDurationMs: { _ in 0 }, itemWriter: FakeDatabase())
+        let recovered = SpokenNoteRecovery.recover(in: support, now: Date(timeIntervalSince1970: 10_000), measureDurationMs: { _ in 0 }, itemWriter: FakeDatabase(), liveNoteIds: [])
         XCTAssertFalse(recovered.contains("n2"))
         XCTAssertTrue(FileManager.default.fileExists(atPath: second.store.folderURL.appendingPathComponent("take-z.m4a").path))
     }
