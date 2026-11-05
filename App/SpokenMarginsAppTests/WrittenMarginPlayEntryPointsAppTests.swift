@@ -106,17 +106,17 @@ final class WrittenMarginPlayEntryPointsAppTests: XCTestCase {
         XCTAssertNil(model.marginMoment)
     }
 
-    // A voice Margin is still picked as before, ahead of a written one that comes later in the spot.
-    func testAHotSpotStillPicksAVoiceMarginWithARecording() async throws {
+    // A voice Margin is still picked as before: with an unreadable note ahead of it in the spot, the tap takes the recording.
+    func testAHotSpotStillPicksAVoiceMarginWithARecordingOverAnEarlierNoteThatCannotPlay() async throws {
         let fixture = try await ReturnFixture.make(sourcePlaying: true)
         defer { fixture.cleanUp() }
         let model = fixture.model
-        _ = addFriend("Zed", words: uniqueWords(), atMs: 1_500, to: fixture)
+        let unreadable = addFriend("Ana", words: "🎧", atMs: 500, to: fixture)
 
         let spot = try XCTUnwrap(hotSpots(fixture).first)
-        XCTAssertEqual(spot.entries.count, 2)
+        XCTAssertEqual(spot.entries.map(\.marginId), [unreadable.id, fixture.record.id], "Ana's note is first in the spot")
         let target = try XCTUnwrap(ReactionsPlayTarget.forHotSpot(spot, in: model.selectedItem))
-        XCTAssertEqual(target, ReactionsPlayTarget(layerId: fixture.layer.id, marginId: fixture.record.id), "the first Margin that can play, the recording")
+        XCTAssertEqual(target, ReactionsPlayTarget(layerId: fixture.layer.id, marginId: fixture.record.id), "the recording, not the first entry")
     }
 
     // MARK: The Play button on a shared-Margin row
