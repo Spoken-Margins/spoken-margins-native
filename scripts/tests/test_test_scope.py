@@ -590,6 +590,35 @@ class ReachedByNameTests(unittest.TestCase):
         self.assertNotIn('BigTests', result['app_tests'])
         self.assertTrue(any('BigTests (101 tests)' in note for note in result['notes']))
 
+    def test_a_class_already_running_by_file_name_spends_no_budget_and_is_not_called_left_out(self):
+        big = 'final class StopsTests: XCTestCase {\n' + ''.join(
+            f'    func testCase{number}() {{ model.stopChoice(at: {number}) }}\n'
+            for number in range(scope.REACH_MAX_TESTS + 1)) + '}\n'
+        self.tree({'Gate1AppModel+StopsTests.swift': big})
+        result = self.classify(APP + 'Gate1AppModel+Stops.swift')
+        self.assertEqual(result['app_tests'], ['StopsTests', 'ListeningTests'])
+        self.assertFalse(any('StopsTests' in note and 'budget' in note for note in result['notes']))
+
+    def test_an_init_body_is_not_credited_to_the_member_above_it_and_a_switch_pattern_is_not_a_member(self):
+        names = [name for _, _, name in scope.member_declarations([
+            'struct Holder {',
+            '    var shown: Int { 1 }',
+            '    init(model: Model) {',
+            '        let local = model.stopChoice(at: 1)',
+            '    }',
+            '    func run() {',
+            '        switch kind {',
+            '        case let value: print(value)',
+            '        }',
+            '    }',
+            '}'])]
+        self.assertEqual(names, ['Holder', 'shown', 'run'])
+
+    def test_a_url_in_a_string_does_not_hide_the_call_after_it(self):
+        lines = [scope.COMMENT.sub('', line) for line in ['open("https://example.com"); model.stopChoice(at: 1) // note']]
+        self.assertIn('stopChoice', lines[0])
+        self.assertNotIn('note', lines[0])
+
     def test_modifiers_with_a_setter_scope_and_case_lists_declare_their_names(self):
         self.assertEqual(
             [name for _, _, name in scope.member_declarations([

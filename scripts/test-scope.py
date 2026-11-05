@@ -181,12 +181,15 @@ REACH_FANOUT = 9
 REACH_MAX_TESTS = 100
 REACH_LISTED = 5  # how many left-out classes the note names
 TEST_METHOD = re.compile(r'^\s*(?:@\w+\s+)*func test\w*\(')
-COMMENT = re.compile(r'//.*')
+COMMENT = re.compile(r'(?<!:)//.*')  # not the // of https://
 WORD = re.compile(r'[A-Za-z_]\w*')
 MEMBER_DECL = re.compile(
     r'^(\s*)(?:@\w+(?:\([^)]*\))?\s+)*((?:(?:private|fileprivate|internal|public|open|static|final|override|mutating|'
     r'nonisolated|lazy|weak|unowned|indirect|convenience|required|class)(?:\(\w+\))?\s+)*)(func|var|let|struct|enum|'
     r'class|protocol|actor|typealias|case|extension)\s+`?(\w+)((?:\s*,\s*`?\w+)*)')
+# An init or subscript has no name to follow, but its body belongs to it, not to the member declared above it.
+NAMELESS_DECL = re.compile(r'^(\s*)(?:@\w+(?:\([^)]*\))?\s+)*(?:(?:private|fileprivate|internal|public|open|convenience|'
+                           r'required|override|nonisolated|static|class)(?:\(\w+\))?\s+)*(?:init[?!]?\s*[(<]|subscript\s*[(<])')
 TYPE_KINDS = {'struct', 'enum', 'class', 'protocol', 'actor', 'extension'}
 
 
@@ -207,8 +210,15 @@ def member_declarations(lines):
     func inside a function body is not one: no other file can name it."""
     stack, found = [], []  # stack: (indent, kind) of the open declarations
     for index, line in enumerate(lines):
+        nameless = NAMELESS_DECL.match(line)
+        if nameless:
+            indent = len(nameless.group(1))
+            while stack and stack[-1][0] >= indent:
+                stack.pop()
+            stack.append((indent, 'init'))
+            continue
         match = MEMBER_DECL.match(line)
-        if not match:
+        if not match or match.group(4) in ('let', 'var'):  # `case let x` in a switch is a pattern, not a declaration
             continue
         indent, kind, name = len(match.group(1)), match.group(3), match.group(4)
         more = WORD.findall(match.group(5)) if kind == 'case' else []  # `case one, two` declares both
@@ -236,8 +246,10 @@ def test_counts(tests):
     return counts
 
 
-def reaching_classes(root, changed):
+def reaching_classes(root, changed, skip=()):
     """App test classes that reach the changed app source files, nearest first, within REACH_MAX_TESTS.
+
+    <skip> are the classes already running by file name: they neither spend the budget nor count as left out.
 
     Returns ([class names to run], [(class name, test count) that did not fit]). Empty when the test or source folder
     is missing (a synthetic tree)."""
@@ -274,7 +286,7 @@ def reaching_classes(root, changed):
         frontier = reached - seen
         seen |= reached
     counts, picked, left_out, total = test_counts(tests), [], [], 0
-    for name in classes:
+    for name in (name for name in classes if name not in skip):
         if total + counts.get(name, 0) <= REACH_MAX_TESTS:
             picked.append(name)
             total += counts.get(name, 0)
@@ -389,7 +401,7 @@ def classify(paths, diffs=None, root=ROOT):
         note = NOTES.get(finding.category)
         if note and note not in notes:
             notes.append(note)
-    reach, left_out = reaching_classes(root, [f.path for f in findings if f.path.endswith('.swift')])
+    reach, left_out = reaching_classes(root, [f.path for f in findings if f.path.endswith('.swift')], skip=app_tests)
     extra = [name for name in reach if name not in app_tests]
     if extra:
         app_tests.extend(extra)
