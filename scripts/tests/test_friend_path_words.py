@@ -102,5 +102,84 @@ class FriendPathWordsTests(unittest.TestCase):
         self.assertEqual(violations('Text("From Cole") // was "Shared by Cole"'), [])
 
 
+SESSIONKIT = ROOT / 'Packages' / 'SessionKit' / 'Sources'
+ALL_SWIFT_ROOTS = [ROOT / 'App', SESSIONKIT]
+
+# The stand-ins for a missing sender name (#3247). A file that names nobody carries one of these as an internal key;
+# no screen may show one. Only these files may use the constants or the literals.
+STAND_IN = re.compile(r'importedCollectionLabel|unsignedSenderLabel|Imported collection|Unsigned sender')
+STAND_IN_ALLOWED = {
+    # Defines the constants and the one function (senderName) that turns a label into a name or nil.
+    'Packages/SessionKit/Sources/SessionKit/SharedPacketArrival.swift',
+}
+
+# A raw sender label printed on a screen. It may hold a stand-in, so shown text goes through
+# FriendArrivalWords or SharedPacketArrival.senderName instead.
+RAW_SHOWN = re.compile(r'Text\(\s*[\w.]*senderLabel\s*\)|\\\(\s*[\w.]*senderLabel\s*\)')
+RAW_SHOWN_ALLOWED = {
+    # SpokenMarginsPackageImportView is declared (SharingExperience.swift) and never instantiated anywhere under App/,
+    # so it shows nothing today. Left in place for now; delete it, or route it through FriendArrivalWords, with it.
+    'App/SpokenMarginsApp/Sources/SpokenMarginsApp/SharingExperience.swift',
+    # These print a MarginLayerSynthesis label, not a snapshot label: MarginLayerSynthesis.label turns a blank label
+    # into "Someone", and the app never writes a stand-in into a layer's displayLabel. The label also feeds the stored
+    # summary's input and digest, so it must not change here. MarginLayerSummary.swift builds the model prompt.
+    'App/SpokenMarginsApp/Sources/SpokenMarginsApp/ExperienceMarginsScreen.swift',
+    'App/SpokenMarginsApp/Sources/SpokenMarginsApp/ExperienceReactionsScreen.swift',
+    'Packages/SessionKit/Sources/SessionKit/MarginLayerSummary.swift',
+}
+
+
+def swift_files():
+    for base in ALL_SWIFT_ROOTS:
+        yield from sorted(base.rglob('*.swift'))
+
+
+def stand_in_uses(text):
+    return [(number, match.group(0))
+            for number, line in enumerate(text.splitlines(), 1)
+            for match in STAND_IN.finditer(line.split('//', 1)[0])]
+
+
+def raw_shown_uses(text):
+    return [(number, m.group(0)) for number, line in enumerate(text.splitlines(), 1)
+            for m in RAW_SHOWN.finditer(line.split('//', 1)[0])]
+
+
+class StandInGuardTests(unittest.TestCase):
+    def test_no_stand_in_is_used_outside_its_definition(self):
+        for path in swift_files():
+            rel = path.relative_to(ROOT).as_posix()
+            if rel in STAND_IN_ALLOWED:
+                continue
+            self.assertEqual(stand_in_uses(path.read_text(encoding='utf-8')), [], rel)
+
+    def test_no_raw_sender_label_is_printed(self):
+        for path in swift_files():
+            rel = path.relative_to(ROOT).as_posix()
+            if rel in RAW_SHOWN_ALLOWED:
+                continue
+            self.assertEqual(raw_shown_uses(path.read_text(encoding='utf-8')), [], rel)
+
+    def test_the_allowlists_name_files_that_still_need_them(self):
+        for rel in STAND_IN_ALLOWED:
+            self.assertTrue(stand_in_uses((ROOT / rel).read_text(encoding='utf-8')), rel)
+        for rel in RAW_SHOWN_ALLOWED:
+            self.assertTrue(raw_shown_uses((ROOT / rel).read_text(encoding='utf-8')), rel)
+
+    def test_the_unused_import_view_is_still_unused(self):
+        uses = [p for p in (ROOT / 'App').rglob('*.swift')
+                if 'SpokenMarginsPackageImportView(' in p.read_text(encoding='utf-8')]
+        self.assertEqual(uses, [], 'it is now used: route its sender label through FriendArrivalWords')
+
+    def test_the_guard_catches_each_way_to_show_a_stand_in(self):
+        self.assertTrue(stand_in_uses('let x = SharedPacketArrival.importedCollectionLabel'))
+        self.assertTrue(stand_in_uses('Text("Imported collection")'))
+        self.assertTrue(stand_in_uses('return "Unsigned sender"'))
+        self.assertEqual(stand_in_uses('// was "Unsigned sender"\nlet x = 1'), [])
+        self.assertTrue(raw_shown_uses('Text(review.senderLabel)'))
+        self.assertTrue(raw_shown_uses('Text("Reply to \\(layer.senderLabel)")'))
+        self.assertEqual(raw_shown_uses('Text(FriendArrivalWords.fromLine(senderLabel: snapshot.senderLabel))'), [])
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -45,9 +45,12 @@ public enum SharedMarginReview {
         "shared::\(layerId)::\(interjectionId)"
     }
 
+    /// The layer's sender label as an internal key: it orders Margins, tells senders apart and rides on the Margin's
+    /// anchor. It is not for display: a file that names nobody carries the stand-in here, so every screen goes
+    /// through `SharedPacketArrival.senderName` (the offer, the pinned card and a reply's caption all do).
     public static func senderLabel(of layer: ImportedCommentaryLayer) -> String {
         let label = layer.displayLabel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return label.isEmpty ? SharedPacketArrival.importedCollectionLabel : label
+        return SharedPacketArrival.snapshotSenderLabel(label)
     }
 
     /// The item's new shared Margins in playing order: by place in the episode, then, where two share a place,
@@ -118,8 +121,19 @@ public enum SharedMarginReview {
 
     /// The text of the offer shown before Continue: how many Margins and whose.
     public static func offerMessage(for entries: [Entry]) -> String {
+        // Named senders are told apart by name. A nameless one has no name to show, so those are counted by file and
+        // read "a friend" or "2 friends", never as a stand-in.
         var senders: [String] = []
-        for entry in entries where !senders.contains(entry.senderLabel) { senders.append(entry.senderLabel) }
+        var namelessFiles = Set<String>()
+        for entry in entries {
+            if let name = SharedPacketArrival.senderName(entry.senderLabel) {
+                if !senders.contains(name) { senders.append(name) }
+            } else {
+                namelessFiles.insert(entry.layer.id)
+            }
+        }
+        if namelessFiles.count == 1 { senders.append("a friend") }
+        if namelessFiles.count > 1 { senders.append("\(namelessFiles.count) friends") }
         let count = entries.count
         let whose: String
         switch senders.count {
