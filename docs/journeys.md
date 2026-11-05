@@ -118,7 +118,7 @@ The owner's one-phone version, with prepared packets and an episode that shares 
 2. Press "Play".
    - Pass: the episode plays at once, with no question first, and the friend's Margin plays in place when the episode reaches it. A Margin from before the place the listener is at stays new; "Hear only…" plays it. (Continue on the item's row in the Library still asks whether to hear the new Margin first.)
 3. Back out, then choose "Hear only…" on the item screen (or "Hear new Margins first" on the Library row's question).
-   - Pass: the episode jumps to about 20 s before the friend's Margin and plays on. The card is pinned at the top of the Now screen and says "1 of 1" with the friend's name. A short two-note chime, then the friend's voice. The owner checks by ear that the lead-in sounds natural.
+   - Pass: the episode jumps to about 20 s before the friend's Margin and plays on. The card is pinned at the top of the Now screen and says "1 of 1" with the friend's name. A short two-note chime, then the friend's voice. For a Margin the friend wrote, the chime is followed by the iPhone's voice saying "<name> wrote:" and then the words, and the card says "<name> wrote this". The owner checks by ear that the lead-in sounds natural and that the reading does not pass for the friend's own voice.
 4. Let the voice finish.
    - Pass: the episode goes back to where it was paused and carries on. The Margin is no longer marked new.
 5. Repeat with three new Margins, one of them close to another. Use "Skip Margin", "Next Margin", "Play it now" and "Stop review" once each. The title does not move between the Margins.
@@ -175,11 +175,11 @@ The whole loop (#3222, part of #3216), with an eye on the human side: how many t
 4. The friend (second simulator) opens the packet. They have not added the episode beforehand.
    - Pass: the episode appears in their Library and the Margins are listed. The Margins tab and the Now tab show the Margins without leaving the screen or restarting (#3263). Record the seconds from opening the packet to the Margins being listed.
 5. The friend hears the Margins in both modes (the big button, and "Hear new Margins first").
-   - Pass: a short two-note chime, then the sender's voice, at the right place in the episode. Record the seconds from import to the first audio and the taps it took. The owner checks by ear that the voice and the place match.
+   - Pass: a short two-note chime, then the sender's voice, at the right place in the episode. A Margin the sender wrote is read aloud by the iPhone's voice, introduced as "<name> wrote:", after the same chime. Record the seconds from import to the first audio and the taps it took. The owner checks by ear that the voice and the place match.
 6. The friend replies to a Margin, in voice once and in writing once, then sends the replies back.
    - Pass: each reply is saved at that moment of the episode. Record the packet size at this send.
 7. The sender opens the replies packet.
-   - Pass: each reply plays right after the Margin it answers (#3257), and the sender can reply again.
+   - Pass: each reply plays right after the Margin it answers (#3257), the written one read aloud as "<name> wrote:" and the words, and the sender can reply again.
 
 The script `J12SharingLoopJourneyUITests` runs step 2, step 3 up to the package details (not the system share sheet), and, with the friend's packet as a fixture (`SPOKEN_MARGINS_UI_TEST_COOP`, as J9), steps 4 and 5's offer, the in-place play and the Margins tab. It attaches the taps and seconds per step and the packet size. The fixture imports the friend's Margin at launch, so the script cannot catch #3263 (Margins missing until a restart); step 4 of the agent run does. Adding the episode by search needs the network, the system share sheet and the second install are outside what a script can drive, and replying then importing back needs both, so step 1's search, step 3's share sheet, and steps 6 and 7 stay with the agent run. A script pass never stands in for them, and audible content stays with the owner.
 

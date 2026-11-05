@@ -23,12 +23,13 @@ final class SharedMarginReviewTests: XCTestCase {
     private func margin(
         _ id: String, in layerId: String = "ana", at ms: Int? = 60_000,
         evidence: AnchorResolutionEvidenceClass = .acousticVerified, voice: Bool = true,
-        heard: Bool = false, createdAt: Date? = nil, replyLinks: [MarginReplyLink]? = nil
+        heard: Bool = false, createdAt: Date? = nil, replyLinks: [MarginReplyLink]? = nil, words: String = "Words"
     ) -> ImportedCommentaryInterjection {
         ImportedCommentaryInterjection(
             id: id, layerId: layerId, packageScopedId: id, createdAt: createdAt ?? early,
-            anchorEvidence: PortableAnchorEvidence(anchorType: .media), approvedTranscript: "Words",
-            audioPath: voice ? "ImportedCommentary/\(id).m4a" : nil, audioDurationMs: 4_000,
+            anchorEvidence: PortableAnchorEvidence(anchorType: .media), approvedTranscript: words,
+            // As an import builds them (`SharingFoundation`): a written Margin has no recording and so no length.
+            audioPath: voice ? "ImportedCommentary/\(id).m4a" : nil, audioDurationMs: voice ? 4_000 : nil,
             resolution: ImportedAnchorResolution(evidenceClass: evidence, localMediaTimeMs: ms, confidence: 1),
             firstHeardAt: heard ? later : nil, replyLinks: replyLinks
         )
@@ -57,15 +58,52 @@ final class SharedMarginReviewTests: XCTestCase {
         XCTAssertEqual(ids(entries), ["new"])
     }
 
-    func testAMarginWithNoVoiceOrNoPlaceInThisCopyIsLeftOut() {
+    func testAMarginWithNoPlaceInThisCopyIsLeftOut() {
         let records = [
             margin("ok", at: 10_000),
-            margin("written", at: 20_000, voice: false),
             margin("unresolved", at: nil, evidence: .unresolved),
             margin("absent", at: 40_000, evidence: .absentFromRecipientEdition),
             margin("textOnly", at: nil, evidence: .articleTextVerified)
         ]
         XCTAssertEqual(ids(SharedMarginReview.entries(layers: [layer("ana")], records: ["ana": records])), ["ok"])
+    }
+
+    /// #3365: a written Margin is in the review (its words are read aloud); a voice Margin with no words and no
+    /// recording is not, and neither is a written one with no place in this copy.
+    func testAWrittenMarginIsOfferedAndAVoiceMarginWithoutItsRecordingIsNot() {
+        let records = [
+            margin("ok", at: 10_000),
+            margin("written", at: 20_000, voice: false),
+            margin("written-nowhere", at: nil, evidence: .unresolved, voice: false),
+            margin("blank", at: 30_000, voice: false, words: "  \n "),
+            margin("placeholder", at: 50_000, voice: false, words: "Voice Margin at 12:34 in “Episode”, recorded 30 Oct 2026")
+        ]
+        let entries = SharedMarginReview.entries(layers: [layer("ana")], records: ["ana": records])
+        XCTAssertEqual(ids(entries), ["ok", "written"])
+        XCTAssertEqual(entries.map(\.anchor.isReadAloud), [false, true])
+    }
+
+    /// The same table `isWritten` is judged by: it is what keeps "Cole wrote: Voice Margin at 12:34" from being said.
+    func testWhichImportedMarginsAreWritten() {
+        func isWritten(_ words: String, voice: Bool = false) -> Bool { margin("m", voice: voice, words: words).isWritten }
+        XCTAssertTrue(isWritten("Great point about the harbour."))
+        XCTAssertTrue(isWritten("  padded with spaces\n"))
+        XCTAssertTrue(isWritten("Café très bien, 東京は良い 🎧"), "Unicode")
+        XCTAssertTrue(isWritten(String(repeating: "A long note. ", count: 2_000)), "very long")
+        XCTAssertTrue(isWritten("Voice Margin at noon is when I listen"), "a note that merely begins that way is a note")
+        XCTAssertTrue(isWritten("My Voice Margin at 12:34 was lost"))
+        XCTAssertFalse(isWritten(""))
+        XCTAssertFalse(isWritten("   "))
+        XCTAssertFalse(isWritten("\n\t"))
+        XCTAssertFalse(isWritten("Voice Margin"), "the placeholder with every optional part left out (an article, no title, no date)")
+        XCTAssertFalse(isWritten("Voice Margin at 12:34"))
+        XCTAssertFalse(isWritten("Voice Margin at 1:02:03"))
+        XCTAssertFalse(isWritten("Voice Margin in “Harbour Lights”"))
+        XCTAssertFalse(isWritten("Voice Margin at 12:34 in “Harbour Lights”, recorded 30 Oct 2026"))
+        XCTAssertFalse(isWritten("Voice Margin at 0:05, recorded 1 Nov 2026"))
+        XCTAssertFalse(isWritten("  Voice Margin at 12:34 in “Caf\u{65}\u{301}”  "), "padding, and a decomposed é")
+        XCTAssertFalse(isWritten("Voice Margin at 12:34 in “…”, recorded 30 Oct 2026"))
+        XCTAssertFalse(isWritten("Great point about the harbour.", voice: true), "a Margin with its recording is a voice Margin")
     }
 
     func testLayersThatWouldNotPlayAutomaticallyAreLeftOut() {
