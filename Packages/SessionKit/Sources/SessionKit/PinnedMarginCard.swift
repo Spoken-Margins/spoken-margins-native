@@ -15,7 +15,7 @@ public struct PinnedMarginCard: Equatable, Sendable {
         public var possessive: String {
             switch self {
             case .yours: "Your Margin"
-            case .friend(let name): name.map { "\($0)'s Margin" } ?? "A friend's Margin"
+            case .friend(let name): SharedPacketArrival.senderName(name).map { "\($0)'s Margin" } ?? "A friend's Margin"
             }
         }
 
@@ -23,7 +23,7 @@ public struct PinnedMarginCard: Equatable, Sendable {
         public var speaker: String {
             switch self {
             case .yours: "You are"
-            case .friend(let name): name.map { "\($0) is" } ?? "A friend is"
+            case .friend(let name): SharedPacketArrival.senderName(name).map { "\($0) is" } ?? "A friend is"
             }
         }
     }

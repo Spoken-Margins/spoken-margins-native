@@ -64,11 +64,10 @@ This is the normal case. Do it once the page for episode A shows **Download Agai
 
 1. Open `kit-1-episode-a.spokenmargins` in Spoken Margins.
 
-**You should see**, on a sheet titled **Shared Margins**:
-- the episode title, "HPR4737: Keep spare parts for Ethernet run", and "Shared by Ada (synthetic test)" under it;
-- **Integrity checked**;
+**You should see**, on a sheet titled "From Ada (synthetic test)":
+- the episode title, "HPR4737: Keep spare parts for Ethernet run", and "From Ada (synthetic test)" under it;
 - **Margins** says 4;
-- **Source transport** says **Source reference**, and **Item contents** says **Item not included in package**;
+- **About this file**, closed (tap it to read that the file is unchanged and the sender's name isn't proven);
 - the buttons **Import** and **Cancel**.
 
 2. Tap **Import**.
@@ -76,7 +75,7 @@ This is the normal case. Do it once the page for episode A shows **Download Agai
 **You should see:**
 - the page of episode A opens, and a short message says imported, playback has not started;
 - still one copy of episode A in the Library, not two;
-- under **Shared Margins**, a card "Shared by Ada (synthetic test)" with **Separate imported layer** and a **Source resolution** line;
+- under "From Ada (synthetic test)", a card with the same words and no line about placing the Margins unless something went wrong;
 - under **Margin placement**, four Margins with their words. At first each may say **Placing in your copy…**. Wait up to two minutes. Then they should read 0:30, 2:00, 4:30 and 7:00 (a second either way is fine), each with **Combined evidence** or **Audio verified**. Both mean the app found the sound in your copy. Write down any other label and which Margin had it.
 
 3. Tap **Listen** on Margin A one.
@@ -100,14 +99,14 @@ This is issue #456. The packet says it is about episode A, but its places were w
 
 1. Open `kit-3-wrong-cut.spokenmargins`.
 
-**You should see:** the same sheet, with "Shared by Cy (synthetic test, wrong cut)" and **Margins** says 4.
+**You should see:** the same sheet, with "From Cy (synthetic test, wrong cut)" and **Margins** says 4.
 
-2. Tap **Import**. Open episode A if the app doesn't. Scroll to **Shared Margins**. Wait up to two minutes for **Placing in your copy…** to finish.
+2. Tap **Import**. Open episode A if the app doesn't. Scroll to "From Cy (synthetic test, wrong cut)". Wait up to two minutes for **Placing in your copy…** to finish.
 
 **You should see:**
 - Cy's card sits beside Ada's card. Ada's four are unchanged, at 0:30, 2:00, 4:30 and 7:00;
 - none of Cy's four shows a time with **Audio verified** or **Combined evidence**. Margin C one sits in the shared intro. If it shows either label with a time, say so, because that is the bug this step is for;
-- any other label is fine, but write down what each of Cy's four says, and the **Source resolution** line on Cy's card.
+- any other label is fine, but write down what each of Cy's four says, and any line about placing the Margins on Cy's card (it appears only when something went wrong).
 
 3. Tap **Listen** on Margin C two.
 
@@ -119,7 +118,7 @@ This is the case where the packet's source isn't in your Library. It is also the
 
 1. Open `kit-2-episode-b.spokenmargins` in Spoken Margins.
 
-**You should see:** "Shared by Ben (synthetic test)", **Margins** says 3, **Source reference**, **Item not included in package**, and **Import** is available.
+**You should see:** "From Ben (synthetic test)", **Margins** says 3, and **Import** is available.
 
 2. Tap **Import**.
 
@@ -137,7 +136,7 @@ This is the case where the packet's source isn't in your Library. It is also the
 
 1. Open `kit-4-article.spokenmargins` in Spoken Margins.
 
-**You should see:** "Declaration of Independence: A Transcription", "Shared by Dee (synthetic test)", **Margins** says 3, **Source reference**, **Item not included in package**.
+**You should see:** "Declaration of Independence: A Transcription", "From Dee (synthetic test)", **Margins** says 3.
 
 2. Tap **Import**.
 
@@ -153,7 +152,7 @@ https://www.archives.gov/founding-docs/declaration-transcript
 
 4. Open `kit-4-article.spokenmargins` again.
 
-**You should see:** the **Shared Margins** sheet again, because the first import left Dee's Margins without an article. Tap **Import**. The article opens, and Dee's card shows three Margins on the quoted words. Write down the position and label of each. If they all say **Placing in your copy…** after two minutes, say so. If the article does not open, say so: the app did not take your copy for the article in the packet. Margin D three has no voice, only text.
+**You should see:** the sheet "From Dee (synthetic test)" again, because the first import left Dee's Margins without an article. Tap **Import**. The article opens, and Dee's card shows three Margins on the quoted words. Write down the position and label of each. If they all say **Placing in your copy…** after two minutes, say so. If the article does not open, say so: the app did not take your copy for the article in the packet. Margin D three has no voice, only text.
 
 5. Tap **Listen** on Margin D one.
 

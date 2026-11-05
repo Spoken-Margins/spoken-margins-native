@@ -936,10 +936,7 @@ final class Gate1FlowUITests: XCTestCase {
 
         element("build23.sender.recipient-test-session").tap()
         XCTAssertTrue(element("build23.recipient.experience").waitForExistence(timeout: 8))
-        let integrity = app.staticTexts.matching(
-            NSPredicate(format: "label CONTAINS[c] %@", "integrity checked")
-        ).firstMatch
-        XCTAssertTrue(integrity.exists)
+        XCTAssertTrue(element("build23.recipient.sender").exists)
         XCTAssertTrue(app.staticTexts["Add the source to continue"].exists)
 
         let addSource = element("build23.recipient.addToLibrary")
@@ -977,15 +974,16 @@ final class Gate1FlowUITests: XCTestCase {
 
         let provenance = importedLayerElement(suffix: ".provenance")
         XCTAssertTrue(provenance.waitForExistence(timeout: 5))
-        XCTAssertTrue(provenance.label.localizedCaseInsensitiveContains("separate shared layer"))
-        XCTAssertTrue(provenance.label.localizedCaseInsensitiveContains("Reveal mode Companion"))
+        XCTAssertTrue(provenance.label.hasPrefix("From "))
+        XCTAssertTrue(provenance.label.localizedCaseInsensitiveContains("A tone marks each one"))
         captureScreen(named: "second-edition-item-shared-provenance")
 
         element("miniPlayer.open.button").tap()
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 5))
         XCTAssertEqual(element("playback.play.button").label, "Play")
+        let railTitle = String(provenance.label.prefix(while: { $0 != "." }))
         openTimelineExperience()
-        scrollToButton(containingLabel: "Shared Margins").tap()
+        scrollToButton(containingLabel: railTitle).tap()
         let timelineProvenance = importedLayerElement(suffix: ".provenance")
         _ = scrollTo(timelineProvenance)
         XCTAssertTrue(timelineProvenance.waitForExistence(timeout: 5))

@@ -136,7 +136,59 @@ final class SharedMarginReviewTests: XCTestCase {
         let entry = try XCTUnwrap(SharedMarginReview.entries(layers: [layer("ana")], records: ["ana": [margin("m1", at: 75_000)]]).first)
         XCTAssertEqual(entry.marginId, "shared::ana::m1")
         XCTAssertEqual(entry.anchor, MarginMomentAnchor(marginId: "shared::ana::m1", mediaTimeMs: 75_000, label: "Ana", isApproximate: false))
-        XCTAssertEqual(SharedMarginReview.senderLabel(of: layer("x", label: "  ")), "Imported collection")
+        // A nameless sender's key is an internal stand-in, and it never reads as a name.
+        let key = SharedMarginReview.senderLabel(of: layer("x", label: "  "))
+        XCTAssertEqual(key, SharedPacketArrival.snapshotSenderLabel(nil))
+        XCTAssertNil(SharedPacketArrival.senderName(key))
+    }
+
+    func testTheOfferNeverNamesAStandInAndReadsRightForNamelessSenders() {
+        func entries(_ senders: [String?]) -> [SharedMarginReview.Entry] {
+            let layers = senders.enumerated().map { layer("l\($0.offset)", label: $0.element) }
+            var records: [String: [ImportedCommentaryInterjection]] = [:]
+            for (index, layer) in layers.enumerated() { records[layer.id] = [margin("m\(index)", in: layer.id, at: 10_000 * (index + 1))] }
+            return SharedMarginReview.entries(layers: layers, records: records)
+        }
+        let tail = "Hear them in place first, then carry on from where you were."
+        let table: [([String?], String)] = [
+            ([nil], "1 new Margin from a friend. Hear it in place first, then carry on from where you were."),
+            (["  "], "1 new Margin from a friend. Hear it in place first, then carry on from where you were."),
+            (["Unsigned sender"], "1 new Margin from a friend. Hear it in place first, then carry on from where you were."),
+            (["imported  COLLECTION"], "1 new Margin from a friend. Hear it in place first, then carry on from where you were."),
+            ([nil, "Ana"], "2 new Margins from Ana and a friend. \(tail)"),
+            (["Ana", nil], "2 new Margins from Ana and a friend. \(tail)"),
+            ([nil, ""], "2 new Margins from 2 friends. \(tail)"),
+            ([nil, "Imported collection", "Unsigned sender"], "3 new Margins from 3 friends. \(tail)"),
+            ([nil, "Ana", "Ben"], "3 new Margins from Ana, Ben and a friend. \(tail)"),
+            ([nil, nil, "Ana", "Ben", "Cy"], "5 new Margins from Ana, Ben and 2 others. \(tail)"),
+        ]
+        for (senders, expected) in table {
+            let message = SharedMarginReview.offerMessage(for: entries(senders))
+            XCTAssertEqual(message, expected, "\(senders)")
+            XCTAssertFalse(message.contains("Imported collection") || message.contains("Unsigned"), "\(senders)")
+            XCTAssertFalse(message.contains("a friend and a friend"), "\(senders)")
+        }
+    }
+
+    func testTwoNamelessSendersStillSortStably() {
+        let layers = [layer("a", label: nil), layer("b", label: "")]
+        let records = ["a": [margin("m", in: "a", at: 5_000)], "b": [margin("m", in: "b", at: 5_000)]]
+        let forward = SharedMarginReview.entries(layers: layers, records: records).map(\.marginId)
+        let backward = SharedMarginReview.entries(layers: layers.reversed(), records: records).map(\.marginId)
+        XCTAssertEqual(forward.count, 2)
+        XCTAssertEqual(forward, backward)
+    }
+
+    func testAStandInNeverReachesTheCardOrAReplyCaption() {
+        for raw in ["Unsigned sender", "Imported collection", " imported collection "] {
+            XCTAssertEqual(PinnedMarginCard.Subject.friend(raw).possessive, "A friend's Margin", raw)
+            XCTAssertEqual(PinnedMarginCard.Subject.friend(raw).speaker, "A friend is", raw)
+            XCTAssertEqual(SharedMarginReview.ReplyContext(parent: .shared(marginId: "m", label: raw, mediaTimeMs: nil)).caption,
+                           "Reply to a friend's Margin", raw)
+        }
+        XCTAssertEqual(PinnedMarginCard.Subject.friend("Ana").possessive, "Ana's Margin")
+        XCTAssertEqual(SharedMarginReview.ReplyContext(parent: .shared(marginId: "m", label: "Ana", mediaTimeMs: nil)).caption,
+                       "Reply to Ana's Margin")
     }
 
     func testAMarginPlacedByClockOrMapIsMarkedApproximate() {
