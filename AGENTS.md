@@ -21,7 +21,7 @@ Every thread and the coordinator follow these.
 
 Replace this section when the focus changes; do not append to it. Dated decisions go in [docs/decisions.md](docs/decisions.md).
 
-- **Baseline:** Build 34 is Solid Ground, on internal TestFlight; Build 32 is the external one (tags and commits: [docs/decisions.md](docs/decisions.md), 2026-10-17). Packet compatibility is tested against both. The next upload uses a build number above 34.
+- **Baseline:** Build 34 is Solid Ground, on internal TestFlight; Build 32 is the external one (tags and commits: [docs/decisions.md](docs/decisions.md), 2026-10-17). Packet compatibility is tested against both. Build 35 is internal with links on; next upload above 35.
 - **Trunk:** `main` carries all work (`SM_TRUNK=main` since 2026-10-20); `next` is frozen. A build reaches testers only after it passes the owner's own use.
 - **Order of work:** `priority` issues first (the sharing loop, #3216, carries it since 2026-11-02), then `Showcase` (the solo app at its best; scope is in the milestone), with `Open Source: after the flip` alongside; then the rest of `Co-op Experience`, which is never held. A priority is an order of work, never a hold: when the top milestone has no free issue, take the next-highest work. A bug that blocks use, or a pipeline fault, gets `priority` in its normal milestone. Plain app bugs in `Co-op Experience` move to `Showcase`. Milestone names are ours, never Apple's build numbers.
 - **Who does what:** [docs/workstreams/](docs/workstreams/README.md) holds the streams and briefs; "The lead session" in [kickoff.md](docs/workstreams/kickoff.md) says who does what, and `ops/codex/README.md` what runs on the Mac. Claude is the only model on the project.
