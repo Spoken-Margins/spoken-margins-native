@@ -239,6 +239,36 @@ final class SharedMarginExportTests: XCTestCase {
         }
     }
 
+    /// #3450: a Margin packet from an item that has on-device scene summaries holds the scene starts and none of the
+    /// model's words, and the last shipped reader (Build 29, which rejects unknown keys) still imports every Margin.
+    func testAPacketFromAnItemWithModelSceneSummariesHoldsNoModelWordsAndBuild29StillImportsIt() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "SharedMarginExportTests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let draft = TextSceneDraft(
+            id: "ch-generated-01", order: 0, startChar: 0, endChar: 3, fallbackTitle: "ABC", modelText: "ABC", isSummarizable: true)
+        let label = ListeningMapSummaryValidator.SceneLabel(
+            title: "Crossing the desert", description: "How caravans carried goods over the dunes.",
+            eligibility: .eligible, eligibilityReason: "Editorial content.")
+        let modelMap = TextSceneAssembly.proposal(
+            safeItemComponent: "item",
+            scenes: [TextSceneAssembly.scene(draft: draft, label: label, characters: Array("ABC"))],
+            createdAt: date
+        )
+
+        let prepared = try packet(native: false, evidence: false, signature: root.appending(path: "none"), proposalOverride: modelMap)
+
+        let mapJSON = try XCTUnwrap(prepared.artifactData.first { $0.key.hasPrefix("artifacts/listening-map-proposal-") }?.value)
+        let text = String(decoding: mapJSON, as: UTF8.self)
+        for word in ["Crossing the desert", "caravans carried", "Editorial content", "model_generated"] {
+            XCTAssertFalse(text.contains(word), "\(word) must not leave the device")
+        }
+        XCTAssertTrue(text.contains("ch-generated-01"), "the scene start still travels")
+        let url = root.appending(path: "model-map.spokenmargins")
+        _ = try exportPacket(prepared, to: url)
+        XCTAssertEqual(try ShippedPacketReader.importPacket(at: url), ["margin-0001", "margin-0002"])
+    }
+
     // Golden bytes from the pre-extraction helpers (fixed ids, dates and signature).
     private let goldenArtifacts: [String: [String: String]] = [
         "text": [
@@ -309,7 +339,9 @@ final class SharedMarginExportTests: XCTestCase {
         })
     }
 
-    private func packet(native: Bool, evidence: Bool, signature: URL) throws -> PreparedSpokenMarginsPackage {
+    private func packet(
+        native: Bool, evidence: Bool, signature: URL, proposalOverride: PortableListeningMapProposalArtifact? = nil
+    ) throws -> PreparedSpokenMarginsPackage {
         let item = item()
         let identity = SharedItemIdentity(itemType: native ? .podcast : .text,
                                           canonicalURL: native ? "https://example.com/episode" : nil, title: item.title,
@@ -328,7 +360,7 @@ final class SharedMarginExportTests: XCTestCase {
                 anchor: anchor, representation: .textOnly
             )
         }
-        let proposals = SharedMarginExport.mapProposals([proposal(native: native)])
+        let proposals = SharedMarginExport.mapProposals([proposalOverride ?? proposal(native: native)])
         return try SpokenMarginsPackageBuilder.prepare(
             packageId: "package-fixed-12345678", createdAt: date, item: identity, itemTransportSelection: transport,
             selections: selections, mapProposals: proposals,
