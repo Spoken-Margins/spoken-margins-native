@@ -15,6 +15,8 @@ final class SharedLinkVoiceover {
 
     /// Tests replace it, since the share path's page fetch is otherwise the network.
     var fetchPage: FetchPage
+    /// Tests replace it, since Type III Audio's find call (LessWrong and EA Forum posts, #3438) is otherwise the network.
+    var fetchNarration: TypeIIIAudioNarration.Fetch
     /// Each recently shared item's latest outcome, so a later share doesn't hide an earlier post's.
     private var log = SharedPostVoiceoverLog()
     /// Items looked up (or being looked up) in this launch. A failed lookup, or one that found the narration
@@ -31,8 +33,12 @@ final class SharedLinkVoiceover {
     /// inside the task, keeps that to one page fetch (Claude audit on 34af58c).
     func claim(itemId: String) -> Bool { ledger.claim(itemId: itemId, now: now()) }
 
-    init(fetchPage: @escaping FetchPage = SharedLinkVoiceover.fetchFromNetwork) {
+    init(
+        fetchPage: @escaping FetchPage = SharedLinkVoiceover.fetchFromNetwork,
+        fetchNarration: @escaping TypeIIIAudioNarration.Fetch = SharedLinkVoiceover.narrationFromNetwork
+    ) {
         self.fetchPage = fetchPage
+        self.fetchNarration = fetchNarration
     }
 
     /// Looks for the voiceover of the post at `sharedURL` (or the address the article was read from) and
@@ -58,11 +64,13 @@ final class SharedLinkVoiceover {
             report(log.summary)
         }
         let fetchPage = fetchPage
+        let fetchNarration = fetchNarration
         let articleURL = article.source.url
         // Off the main thread: a post page can run to a few hundred KB.
         let outcome = await Task.detached(priority: .utility) {
             await SharedPostVoiceoverLookup.find(
-                sharedURL: sharedURL, articleURL: articleURL, itemId: itemId, fetched: fetched, fetchPage: fetchPage
+                sharedURL: sharedURL, articleURL: articleURL, itemId: itemId, fetched: fetched, fetchPage: fetchPage,
+                fetchNarration: fetchNarration
             )
         }.value
         let found: PublisherAudio
@@ -94,5 +102,28 @@ final class SharedLinkVoiceover {
         guard let finalURL = http.url, finalURL.scheme?.lowercased() == "https" else { throw URLError(.secureConnectionFailed) }
         guard data.count <= SharedPostVoiceoverLookup.maximumPageBytes else { throw URLError(.dataLengthExceedsMaximum) }
         return (String(decoding: data, as: UTF8.self), finalURL)
+    }
+
+    /// Type III Audio's find call: one GET, no cookies, no stored response, no header of ours beyond the system's own.
+    nonisolated static func narrationFromNetwork(_ url: URL) async throws -> (data: Data, status: Int) {
+        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.httpShouldHandleCookies = false
+        let session = URLSession(configuration: .ephemeral)
+        defer { session.finishTasksAndInvalidate() }
+        let (data, response) = try await session.data(for: request, delegate: RefuseRedirects())
+        guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
+        guard data.count <= TypeIIIAudioNarration.maximumResponseBytes else { throw URLError(.dataLengthExceedsMaximum) }
+        return (data, http.statusCode)
+    }
+}
+
+/// Type III's find call is answered where it was sent: a redirect would carry the post's address to another host.
+private final class RefuseRedirects: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    func urlSession(
+        _ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void
+    ) {
+        completionHandler(nil)
     }
 }

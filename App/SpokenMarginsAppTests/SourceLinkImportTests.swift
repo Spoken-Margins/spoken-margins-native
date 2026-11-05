@@ -485,6 +485,50 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(fetched.count, 1, "opening it again in the same launch does not read the page again")
     }
 
+    /// #3438: a LessWrong post that "Add every new item" imported without the listener is not looked up with Type III
+    /// Audio. The one find call happens the first time the listener opens it, and not again in the same launch.
+    func testABackgroundLessWrongImportAsksTypeIIIOnlyWhenTheListenerOpensIt() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let databaseURL = root.appendingPathComponent("background-lesswrong-open.sqlite")
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: databaseURL)
+        model.resetAndSeed()
+        let address = "https://www.lesswrong.com/posts/WQFioaudEH8R7fyhm/local-validity-as-a-key-to-sanity-and-civilization"
+        let body = String(repeating: "A post whose text the page extractor read. ", count: 120)
+        model.readablePageExtractor = RefusingPublisherPageExtractor(result: BrowserTextHandoff(
+            captureMode: .readablePage, source: BrowserTextSource(url: address, title: "Local Validity"), text: body))
+        var narrationCalls: [URL] = []
+        var pageCalls: [URL] = []
+        model.sharedLinkVoiceover.fetchPage = { url in
+            pageCalls.append(url)
+            return (html: "<html></html>", finalURL: url)
+        }
+        model.sharedLinkVoiceover.fetchNarration = { url in
+            narrationCalls.append(url)
+            return (Data(#"{"message":"There is no narration for the provided URL"}"#.utf8), 404)
+        }
+        let store = try SQLiteSessionStore(path: databaseURL.path)
+        try store.saveFeedSubscription(FeedSubscription(id: "s", source: SourceIdentity(id: "lw", kind: .articleFeed,
+            canonicalURL: "https://www.lesswrong.com/feed.xml", host: "www.lesswrong.com", title: "LessWrong"), lastRefreshAt: Date()))
+        let entry = FeedEntry(id: "lw-post", subscriptionId: "s", canonicalURL: address, title: "Local Validity", bodyWordCount: 720)
+        try store.saveFeedEntry(entry)
+
+        model.importFollowedSourceEntry(entry, startedByListener: false)
+        try await waitFor("background import") {
+            (try? store.loadFeedEntries(subscriptionId: "s").first?.state) == .imported
+        }
+        let row = try XCTUnwrap(model.libraryItems.first { $0.title == entry.title })
+        XCTAssertEqual(narrationCalls, [], "importing nobody opened asks Type III nothing")
+        XCTAssertEqual(pageCalls, [])
+
+        model.openItem(id: row.id)
+        try await waitFor("the lookup on open") { narrationCalls.count == 1 }
+        XCTAssertEqual(URLComponents(url: narrationCalls[0], resolvingAgainstBaseURL: false)?.queryItems?.first?.value, address)
+        XCTAssertEqual(pageCalls, [], "Type III's sites are not read as pages")
+        model.openItem(id: row.id)
+        XCTAssertEqual(narrationCalls.count, 1, "an answer of none is final for the launch")
+    }
+
     func testConfirmedNarrationWithoutStoredBodyUsesTheArticleExtractor() async throws {
         let entry = FeedEntry(id: "e", subscriptionId: "s", canonicalURL: "https://publisher.example/p/article",
             audioURL: "https://publisher.example/recording.mp3", title: "Article", bodyWordCount: 720,
