@@ -130,6 +130,51 @@ final class StreamedTurnCursorWriterTests: XCTestCase {
         XCTAssertNil(writer.shape(for: "another-turn"))
     }
 
+    private var chapterReply: String {
+        "<sm_summary>Two parts.</sm_summary><sm_response>Hello world. Second point.</sm_response>"
+            + "<sm_chapters_json>{\"schemaVersion\":\"assistant-response-map.v1\",\"chapters\":[{\"id\":\"ch-1\",\"title\":\"Opening\",\"anchor\":\"Hello world.\"}]}</sm_chapters_json>"
+    }
+
+    private func pausedStreamingEngine(in store: SQLiteSessionStore) throws -> SessionEngine {
+        try store.seed(item: item)
+        try store.saveSession(session)
+        let engine = SessionEngine(profile: profile, repository: store)
+        _ = try engine.inspectSession(sessionId: session.id)
+        _ = try engine.aiStreamDelta(turnId: turnId, content: chapterReply)
+        _ = try engine.activateStreamingTurn(turnId: turnId)
+        _ = try engine.streamingTurnPlaybackStarted(turnId: turnId, charOffset: 0)
+        _ = try engine.updateStreamingTurnPosition(turnId: turnId, charOffset: 2)
+        _ = try engine.pause() // pause while the reply is still generating: its last cursor report re-reads the turn
+        engine.flushPendingSessionWrites()
+        return engine
+    }
+
+    /// Fails without the shared save helper (#2509 audit): the generation finishing saved the turn complete with its
+    /// chapters, but the cursor writer's copy still said "streaming, no chapters", so the published progress showed
+    /// the turn's title, not the chapter's.
+    func testAFinishedReplyShowsItsChapterTitleAfterAPauseDuringGeneration() throws {
+        let store = try SQLiteSessionStore(path: root.appendingPathComponent("finish.sqlite").path)
+        let engine = try pausedStreamingEngine(in: store)
+
+        let published = try engine.aiJobCompleted(turnId: turnId)
+
+        XCTAssertEqual(published.chapterTitle, "Opening")
+    }
+
+    /// The same for chapters that arrive on their own (the chapter-title job), not with the reply.
+    func testChaptersThatArriveAfterAPauseDuringGenerationAreShown() throws {
+        let store = try SQLiteSessionStore(path: root.appendingPathComponent("chapters.sqlite").path)
+        let engine = try pausedStreamingEngine(in: store)
+
+        _ = try engine.aiChaptersCompleted(
+            turnId: turnId,
+            chapters: [Chapter(id: "late", title: "Late Title", startChar: 0, endChar: 12, percent: 50)]
+        )
+        let published = try engine.syncPlaybackProgress()
+
+        XCTAssertEqual(published.chapterTitle, "Late Title")
+    }
+
     /// Neighbouring offsets: negative, inside, at and past the end, for a complete and a still-growing turn.
     func testWhereAReportedOffsetLands() {
         let chapters = [Chapter(id: "a", title: "A", startChar: 0, endChar: 9, percent: 50), Chapter(id: "b", title: "B", startChar: 10, endChar: 20, percent: 50)]

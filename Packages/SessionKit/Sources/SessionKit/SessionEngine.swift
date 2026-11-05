@@ -2399,7 +2399,7 @@ public final class SessionEngine {
             chapters: nil,
             sourceInterjectionIds: lastSummaryCandidates.map(\.id)
         )
-        try repository.saveTurn(turn)
+        try saveEngineTurn(turn)
         let job = aiJob(id: "job-interjection-summary-\(String(format: "%03d", summaryIndex))", kind: "interjection_summary", session: session, turnId: turn.id, status: status)
         try repository.saveAIJob(job)
         snapshot.pendingAiJobKind = job.kind
@@ -2618,7 +2618,7 @@ public final class SessionEngine {
             chapters: nil,
             sourceInterjectionIds: []
         )
-        try repository.saveTurn(userTurn)
+        try saveEngineTurn(userTurn)
         let shouldCall = aiProvider.shouldStartProviderCall(profile: profile, kind: "assistant_response")
         let status = shouldCall ? "pending" : "deferred"
         let responseIndex = try repository.loadTurns(sessionId: session.id).filter { $0.turnType == "assistant_response" }.count + 1
@@ -2635,7 +2635,7 @@ public final class SessionEngine {
             chapters: nil,
             sourceInterjectionIds: []
         )
-        try repository.saveTurn(responseTurn)
+        try saveEngineTurn(responseTurn)
         let job = aiJob(id: "job-assistant-response-\(String(format: "%03d", responseIndex))", kind: "assistant_response", session: session, turnId: responseTurn.id, status: status, messages: [text])
         try repository.saveAIJob(job)
         snapshot.lastUserTurnType = userTurn.turnType
@@ -2669,7 +2669,7 @@ public final class SessionEngine {
             chapters: parsed.chapters,
             sourceInterjectionIds: []
         )
-        try repository.saveTurn(turn)
+        try saveEngineTurn(turn)
         session.phase = .conversation
         currentSession = session
         try persistSession(session)
@@ -2707,7 +2707,7 @@ public final class SessionEngine {
             let hasPartialContent = turn.rawText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
                 || turn.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
             turn.status = hasPartialContent ? "failed_partial" : "failed"
-            try repository.saveTurn(turn)
+            try saveEngineTurn(turn)
         }
         // The snapshot describes the active session; another session's failure leaves it alone.
         guard session.id == currentSession?.id else { return snapshot }
@@ -2735,7 +2735,7 @@ public final class SessionEngine {
             var turns = try repository.loadTurns(sessionId: session.id)
             if let idx = turns.firstIndex(where: { $0.id == turnId }) {
                 turns[idx].status = "streaming"
-                try repository.saveTurn(turns[idx])
+                try saveEngineTurn(turns[idx])
             }
         }
         snapshot.pendingAiJobKind = job.kind
@@ -2752,8 +2752,9 @@ public final class SessionEngine {
     @discardableResult
     public func completeLocalSummary(origin: LocalSummaryRequestOrigin, content: String) throws -> SessionSnapshot {
         let parsed = parseSectionedResponse(from: content)
-        try origin.save(repository: repository, rawText: content, text: parsed.response,
-                        summary: parsed.summary, chapters: parsed.chapters)
+        let saved = try origin.save(repository: repository, rawText: content, text: parsed.response,
+                                    summary: parsed.summary, chapters: parsed.chapters)
+        streamedTurnCursor.noteSaved(saved)
         guard origin.matchesPlayback(snapshot) else { return snapshot }
         snapshot.turnStatus = "complete"
         snapshot.pendingAiJobCount = try repository.loadAIJobs(sessionId: origin.sessionId).filter { $0.status != "complete" }.count
@@ -2792,8 +2793,7 @@ public final class SessionEngine {
         turn.summary = parsed.summary
         turn.text = text
         turn.rawText = combined
-        try repository.saveTurn(turn)
-        streamedTurnCursor.noteSaved(turn)
+        try saveEngineTurn(turn)
         snapshot.turnStatus = "streaming"
         snapshot.spokenUnits = Array(unitsToSpeak)
         return snapshot
@@ -2834,7 +2834,7 @@ public final class SessionEngine {
         snapshot.spokenUnits = Array(allSpeechUnits.dropFirst(alreadySpoken))
         spokenPrefixes[turnId] = allSpeechUnits.count
         streamingBuffers.removeValue(forKey: turnId)
-        try repository.saveTurn(turn)
+        try saveEngineTurn(turn)
         for var job in try repository.loadAIJobs(sessionId: session.id) where job.turnId == turnId {
             job.status = "complete"
             try repository.updateAIJob(job)
@@ -2863,7 +2863,7 @@ public final class SessionEngine {
             throw SessionKitError.invalidCommandForState("aiChaptersCompleted")
         }
         turn.chapters = chapters.sorted { $0.startChar < $1.startChar }
-        try repository.saveTurn(turn)
+        try saveEngineTurn(turn)
         return snapshot
     }
 
@@ -4364,6 +4364,13 @@ public final class SessionEngine {
         default:
             return nil
         }
+    }
+
+    /// Every turn the engine saves goes through here, so the cursor writer's copy of the turn being heard is never
+    /// older than the store's. A save that skipped the note left the published progress on a stale title (#2509).
+    private func saveEngineTurn(_ turn: ConversationTurn) throws {
+        try repository.saveTurn(turn)
+        streamedTurnCursor.noteSaved(turn)
     }
 
     /// The generated turn a snapshot describes. While the streaming queue speaks it, the cursor writer's copy, so a
