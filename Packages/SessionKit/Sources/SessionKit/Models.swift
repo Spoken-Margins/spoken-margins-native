@@ -635,6 +635,19 @@ public struct PDFBibliography: Codable, Equatable, Sendable {
     }
 }
 
+/// A record that the listener's own action found a source publicly available: an anonymous request to its address
+/// succeeded and the response matched the source (#3449). It names the address it checked, so a source whose address
+/// later changes is unmarked again. Local only; it never travels in a packet or an export.
+public struct PublicSourceMark: Codable, Equatable, Sendable {
+    public var url: String
+    public var checkedAt: Date
+
+    public init(url: String, checkedAt: Date) {
+        self.url = url
+        self.checkedAt = checkedAt
+    }
+}
+
 public struct Item: Codable, Equatable, Sendable {
     public var id: String
     public var title: String
