@@ -122,6 +122,24 @@ final class WrittenMarginReaderTests: XCTestCase {
         XCTAssertTrue(reader.isReady(retry))
     }
 
+    /// #3412 audit: a render that came back right at its limit, with the time limit firing before the result was handed
+    /// over, was counted stuck for good (nothing lowers the count for a render that has already returned). After
+    /// `mostStuckRenders` of those every reading failed at once until the app restarted. The hook holds that gap open.
+    func testARenderThatCameBackBeforeTheTimeLimitFiredIsNeverCountedStuck() async throws {
+        let renders = Renders()
+        let reader = WrittenMarginReader(directory: directory, timeLimit: { _ in 0.3 }, mostStuckRenders: 1, renderAudio: { try renders.render($0, scratch: $1) })
+        reader.beforeFinish = { reading in
+            if reading.text.contains("slow hand-off") { Thread.sleep(forTimeInterval: 0.8) } // the limit (0.3 s) fires in here
+        }
+        let slow = WrittenMarginReading(intro: "Cole wrote:", text: "A slow hand-off.")
+        let file = try await reader.rendered(slow) // it came back in time, so it is answered with its file, not `timedOut`
+        XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
+        XCTAssertTrue(reader.isReady(slow))
+        // With one stuck render allowed, a wrongly counted one would fail this at once with `tooManyStuck`.
+        let next = try await reader.rendered(WrittenMarginReading(intro: "Cole wrote:", text: "The next one."))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: next.path))
+    }
+
     func testReadyIsAnsweredFromMemoryAndOnlyOnceTheFileIsThere() async throws {
         let renders = Renders()
         let reader = reader(renders)

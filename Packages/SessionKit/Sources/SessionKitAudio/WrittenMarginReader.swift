@@ -45,6 +45,10 @@ public final class WrittenMarginReader: @unchecked Sendable {
         let reading: WrittenMarginReading
         let target: URL
         var finished = false
+        /// The render thread has come back (set under the reader's lock, in the same section that frees its lane). `finished`
+        /// is set later, by `finish`, so a timeout that looked at `finished` alone could see a render that had already
+        /// returned as still blocked and count it stuck for good (#3412).
+        var returned = false
         init(reading: WrittenMarginReading, target: URL) { self.reading = reading; self.target = target }
     }
 
@@ -70,6 +74,9 @@ public final class WrittenMarginReader: @unchecked Sendable {
     private var doomed = Set<String>() // paths removed while a render of them was running or waiting: they leave no file
     private var sweptScratch = false
     private let recheckAfter: TimeInterval
+    /// Tests only: runs on the render thread after it has come back and before it hands the result over, to hold the
+    /// window in which the time limit can fire (#3412).
+    var beforeFinish: (@Sendable (WrittenMarginReading) -> Void)?
 
     /// `renderAudio` writes the speech for `spokenText` somewhere under `scratch` and returns that file. The default is
     /// the iPhone voice.
@@ -305,17 +312,19 @@ public final class WrittenMarginReader: @unchecked Sendable {
         DispatchQueue.global(qos: .userInitiated).async { [self] in
             let result = Result<URL, Error> { try render(job.reading, to: job.target) }
             lock.lock()
+            job.returned = true
             if lane == myLane { laneBusy = false } else { stuck -= 1 } // an abandoned render came back
             inFlight.remove(job.target.path)
             let removed = doomed.remove(job.target.path) != nil
             if case .success = result, !removed { ready.insert(job.target.path) }
             lock.unlock()
+            beforeFinish?(job.reading)
             finish(job, result)
             pump()
         }
         DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + limit) { [self] in
             lock.lock()
-            let timedOut = !job.finished
+            let timedOut = !job.returned && !job.finished // a render that has come back is not stuck, whatever `finish` has done yet
             if timedOut, lane == myLane { lane += 1; laneBusy = false; stuck += 1 } // give up on this lane; the next render starts fresh
             lock.unlock()
             guard timedOut else { return }
