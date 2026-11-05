@@ -122,11 +122,13 @@ test('a voice Margin without words, backed up and opened again, is not added twi
 
 test('after a file opens, Now Playing offers to start at the first Margin until it plays (#3039)', () => {
   const landing = { episodeId: 'e1', at: 83.6 };
-  const waiting = { episodeId: 'e1', playing: false, played: false, loading: false };
+  const waiting = { episodeId: 'e1', playing: false, played: false, marginArrived: false, loading: false };
   assert.equal(landingOffer(landing, waiting), 'Play from the first Margin, at 1:23');
   assert.equal(landingOffer(landing, { ...waiting, playing: true }), undefined);
   // Paused again after playing (by the listener, or by a friend's clip the browser blocked): no second Play (#3254).
   assert.equal(landingOffer(landing, { ...waiting, played: true }), undefined);
+  // A first Margin at the landing moment pauses the episode before it ever draws as playing: no offer over its clip (#3375).
+  assert.equal(landingOffer(landing, { ...waiting, marginArrived: true }), undefined);
   assert.equal(landingOffer(landing, { ...waiting, loading: true }), undefined);
   assert.equal(landingOffer(landing, { ...waiting, episodeId: 'e2' }), undefined);
   assert.equal(landingOffer(undefined, waiting), undefined);

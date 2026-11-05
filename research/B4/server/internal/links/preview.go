@@ -18,8 +18,11 @@ import (
 // without the key and without JavaScript.
 //
 // With a web app origin configured (-links-web-url, #2168) the same script instead sends a browser that has the key
-// to the web app's page for this link, which plays the episode with the Margins. The key stays in the address's #
-// part and goes only to the web app's own page. "?report" keeps the browser here, on the report form.
+// to the web app's page for this link, which plays the episode with the Margins. A link with no key, or one a
+// messaging app cut short, goes too, and the web app says "This link is cut off" (#3355); the key is never checked
+// here. The key stays in the address's # part and goes only to the web app's own page. "?report" keeps the browser
+// here, on the report form, which is closed (a details element, so it works without JavaScript) until the address
+// asks for it.
 
 // InstallURL must be a real app listing or a TestFlight invitation supplied by
 // the owner, never a guessed listing or an arbitrary redirect on the page.
@@ -39,7 +42,7 @@ var landing = template.Must(template.New("landing").Parse(`<!doctype html>
 <body><main><header><p>Spoken Margins</p><h1>Shared Margins</h1><p>These Margins are available for 30 days. Source audio is not served here.</p></header>
 <section id="margins" data-link="{{.ID}}"{{if .WebURL}} data-web="{{.WebURL}}"{{end}}><p id="status" role="status"></p><noscript><p>Turn on JavaScript to read these Margins. They are sealed, and only your browser can open them with the key in the link.</p></noscript></section>
 <p><a href="{{.InstallURL}}" rel="noreferrer noopener">Install Spoken Margins (App Store / TestFlight)</a></p>
-<form method="post" action="/l/{{.ID}}/report"><h2>Report this link</h2><p>Anyone can report this link. It is taken down at once and nobody reads what it held.</p><p><label for="category">What is wrong?</label> <select id="category" name="category" required><option value="" selected disabled>Choose one</option><option value="intimate_images">Intimate images shared without consent</option><option value="abuse_material">Child sexual abuse material</option><option value="harassment">Harassment or defamation</option><option value="hateful_conduct">Hateful conduct</option><option value="copyright">Copyright (see the copyright page for a formal notice)</option><option value="other">Other</option></select></p><p><label for="link">Only for child sexual abuse material: paste the full link from the address bar, including the part after the #. Leave this empty for everything else.</label> <input id="link" name="link" type="text" maxlength="2048" autocomplete="off"></p> <button type="submit">Report this link</button></form>
+<details id="report"><summary>Report this link</summary><form method="post" action="/l/{{.ID}}/report"><h2>Report this link</h2><p>Anyone can report this link. It is taken down at once and nobody reads what it held.</p><p><label for="category">What is wrong?</label> <select id="category" name="category" required><option value="" selected disabled>Choose one</option><option value="intimate_images">Intimate images shared without consent</option><option value="abuse_material">Child sexual abuse material</option><option value="harassment">Harassment or defamation</option><option value="hateful_conduct">Hateful conduct</option><option value="copyright">Copyright (see the copyright page for a formal notice)</option><option value="other">Other</option></select></p><p><label for="link">Only for child sexual abuse material: paste the full link from the address bar, including the part after the #. Leave this empty for everything else.</label> <input id="link" name="link" type="text" maxlength="2048" autocomplete="off"></p> <button type="submit">Report this link</button></form></details>
 <footer><p>{{range $i, $l := .Policies}}{{if $i}} · {{end}}<a href="{{$l.Path}}">{{$l.Title}}</a>{{end}}</p></footer>
 </main></body></html>`))
 
