@@ -2,8 +2,6 @@ import Foundation
 import SessionKit
 
 #if canImport(AVFoundation)
-import CryptoKit
-
 /// Turns a written Margin's words into an audio file the Margin-moment conductor plays as it plays a recording (#3365):
 /// the same tone, the same pause of the episode, the same skip, interruption and heard-marking, with no second playback
 /// machine. The iPhone's voice does the reading (`SystemTextAudioPreparationClient`, `AVSpeechSynthesizer.write`) for
@@ -53,8 +51,22 @@ public final class WrittenMarginReader: @unchecked Sendable {
     /// Where this reading's file is, or will be. Pure: no disk access.
     public func fileURL(for reading: WrittenMarginReading) -> URL {
         let seed = ["written-margin-reading-v1", voiceIdentifier ?? "default", reading.spokenText].joined(separator: "\u{1f}")
-        let digest = SHA256.hash(data: Data(seed.utf8)).prefix(16).map { String(format: "%02x", $0) }.joined()
+        let digest = Self.fingerprint(seed)
         return directory.appending(path: "\(digest).caf", directoryHint: .notDirectory)
+    }
+
+    /// A stable 128-bit name from two FNV-1a runs with different starting values, plus the length. Plain arithmetic on
+    /// the words in memory: naming a file never reads the disk, so the main thread can ask for a path.
+    static func fingerprint(_ seed: String) -> String {
+        var a: UInt64 = 0xcbf2_9ce4_8422_2325
+        var b: UInt64 = 0x84222325_cbf29ce4
+        var count: UInt64 = 0
+        for byte in seed.utf8 {
+            a = (a ^ UInt64(byte)) &* 0x0000_0100_0000_01b3
+            b = (b ^ UInt64(byte)) &* 0x0000_0100_0000_01b3 &+ count
+            count += 1
+        }
+        return String(format: "%016llx%016llx-%llx", a, b, count)
     }
 
     /// Names each reading's file and starts rendering the ones that are not on disk yet, off the calling thread. Returns

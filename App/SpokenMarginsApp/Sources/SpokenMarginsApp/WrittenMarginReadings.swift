@@ -65,11 +65,13 @@ enum WrittenMarginReadings {
             _ = try? await reader.rendered(reading)
             starting.remove(prompt.id)
             guard let model else { return }
-            let returnsSource = model.sharedMarginReturn.promptDismissed()
-            model.reviewNewMargins(itemId: itemId, thenContinue: returnsSource, entries: [entry])
-            // The card's tone has sounded already, and the Margin is here, so there is no lead-in to wait through.
-            model.marginMomentConductor?.chimedMarginIds = []
-            model.marginMomentConductor?.playTargetNow()
+            model.hangTelemetry.labels.scoped("writtenMarginRead") {
+                let returnsSource = model.sharedMarginReturn.promptDismissed()
+                model.reviewNewMargins(itemId: itemId, thenContinue: returnsSource, entries: [entry])
+                // The card's tone has sounded already, and the Margin is here, so there is no lead-in to wait through.
+                model.marginMomentConductor?.chimedMarginIds = []
+                model.marginMomentConductor?.playTargetNow()
+            }
         }
     }
 }
