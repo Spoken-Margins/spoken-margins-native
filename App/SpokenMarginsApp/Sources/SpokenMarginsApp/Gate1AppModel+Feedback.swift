@@ -12,22 +12,22 @@ extension Gate1AppModel {
 
     /// Records a successful outcome and presents it only when the result is not
     /// otherwise apparent from the current interface.
-    func reportConfirmation(_ message: String, action: UserFeedbackEvent.Action? = nil) {
+    func reportConfirmation(_ message: String, action: UserFeedbackEvent.Action? = nil, fileID: String = #fileID, line: Int = #line) {
         reportSuccess(message)
-        presentFeedback(UserFeedbackEvent(kind: .success, message: message, action: action))
+        presentFeedback(UserFeedbackEvent(kind: .success, message: message, action: action), fileID: fileID, line: line)
     }
 
     /// Presents degraded-but-successful behavior without styling it as either a
     /// normal confirmation or a failure.
-    func reportWarning(_ message: String, origin: FeedbackOrigin? = nil) {
+    func reportWarning(_ message: String, origin: FeedbackOrigin? = nil, fileID: String = #fileID, line: Int = #line) {
         statusMessage = message
         lastError = nil
-        presentFeedback(UserFeedbackEvent(kind: .warning, message: message, origin: origin))
+        presentFeedback(UserFeedbackEvent(kind: .warning, message: message, origin: origin), fileID: fileID, line: line)
         diagnostics["lastStatus"] = message
         diagnostics["recentFailure"] = "none"
     }
 
-    func reportFailure(_ error: Error, context: String? = nil, itemId: String? = nil, retry: UserFeedbackEvent.Retry? = nil) {
+    func reportFailure(_ error: Error, context: String? = nil, itemId: String? = nil, retry: UserFeedbackEvent.Retry? = nil, fileID: String = #fileID, line: Int = #line) {
         let message: String
         let rawMessage: String
         if let urlError = error as? URLError {
@@ -41,21 +41,33 @@ extension Gate1AppModel {
                 rawMessage = String(describing: error)
             }
         }
-        reportFailure([context, message].compactMap { $0 }.joined(separator: ": "), itemId: itemId, retry: retry)
+        reportFailure([context, message].compactMap { $0 }.joined(separator: ": "), itemId: itemId, retry: retry, fileID: fileID, line: line)
         // Bug reports keep the raw text (#1965); the banner and the item's failure line show the plain one.
         diagnostics["recentFailure"] = [context, rawMessage].compactMap { $0 }.joined(separator: ": ")
     }
 
-    func reportFailure(_ message: String, itemId: String? = nil, retry: UserFeedbackEvent.Retry? = nil, feedbackMessage: String? = nil, origin: FeedbackOrigin? = nil) {
+    func reportFailure(_ message: String, itemId: String? = nil, retry: UserFeedbackEvent.Retry? = nil, feedbackMessage: String? = nil, origin: FeedbackOrigin? = nil, fileID: String = #fileID, line: Int = #line) {
         statusMessage = "Error"
         lastError = message
-        presentFeedback(UserFeedbackEvent(kind: .error, message: feedbackMessage ?? message, retry: retry, origin: origin))
+        presentFeedback(UserFeedbackEvent(kind: .error, message: feedbackMessage ?? message, retry: retry, origin: origin), fileID: fileID, line: line)
         itemFailures.record(message, itemId: itemId, visibleItemId: screen == .item ? selectedItem.id : screen == .playback ? snapshot.itemId ?? "" : "")
         diagnostics["recentFailure"] = message
     }
 
-    func presentFeedback(_ event: UserFeedbackEvent) {
-        guard feedbackEvent?.mayBeReplaced(by: event) ?? true else { return }
+    /// The one place a banner is put on screen. It also records a `feedback.shown` playback event (or
+    /// `feedback.suppressed` when a banner already showing refuses the replacement), with no text (#3344).
+    /// `fileID` and `line` default to the caller's, so a call site names itself without changing.
+    func presentFeedback(_ event: UserFeedbackEvent, fileID: String = #fileID, line: Int = #line) {
+        let replaced = feedbackEvent != nil
+        let accepted = feedbackEvent?.mayBeReplaced(by: event) ?? true
+        recordDeveloperDiagnostic(
+            FeedbackShownEvent.kind(suppressed: !accepted),
+            FeedbackShownEvent.fields(
+                kind: event.kind, fileID: fileID, line: line, message: event.message,
+                hasAction: event.action != nil || event.retry != nil, replaced: replaced, suppressed: !accepted
+            )
+        )
+        guard accepted else { return }
         feedbackEvent = event
     }
 
