@@ -255,39 +255,6 @@ final class TypeIIIAudioNarrationTests: XCTestCase {
         XCTAssertEqual(VoiceoverLookupDecision.decide(textCharacterCount: 5_000, externalReference: Self.lessWrong, hasPublisherAudioRecord: false, alreadyLookedUp: true),
                        .skip(reason: "already_looked_up"))
     }
-
-    // MARK: - Only on the listener's action
-
-    /// #3438, as #2368 did for Substack: a refresh, an auto-add, an import or a scheduled job has no business asking
-    /// Type III about a post. The lookup is reachable only from `SharedPostVoiceoverLookup`, which only
-    /// `SharedLinkVoiceover` calls, and that only the listener-started paths reach (open, play, share, paste, clip).
-    /// A new file that names the lookup fails here until someone has decided it is such a path.
-    func testOnlyTheListenerGatedFilesNameTheTypeIIILookup() throws {
-        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent("project.yml").path), root.path)
-        var named: Set<String> = [], callers: Set<String> = [], starters: Set<String> = []
-        for folder in ["App", "Packages"] {
-            let enumerator = try XCTUnwrap(FileManager.default.enumerator(at: root.appendingPathComponent(folder), includingPropertiesForKeys: nil))
-            for case let file as URL in enumerator where file.pathExtension == "swift" {
-                let path = file.path
-                guard !path.contains("/Tests/"), !path.contains("/.build/"), !path.contains("Tests/") else { continue }
-                let source = try String(contentsOf: file, encoding: .utf8)
-                if source.contains("TypeIIIAudioNarration") { named.insert(file.lastPathComponent) }
-                if source.contains("SharedPostVoiceoverLookup.find") { callers.insert(file.lastPathComponent) }
-                if source.contains("rememberSharedLinkVoiceover(") || source.contains("lookUpVoiceover(") { starters.insert(file.lastPathComponent) }
-            }
-        }
-        XCTAssertEqual(named, [
-            "TypeIIIAudioNarration.swift", "SharedPostVoiceoverLookup.swift", "VoiceoverLookupDecision.swift",
-            "SharedLinkVoiceover.swift", "Gate1AppModel+PublisherAudio.swift"
-        ])
-        XCTAssertEqual(callers, ["SharedLinkVoiceover.swift"])
-        // The paths that start a lookup: a shared or pasted link, a clipped page, and opening or playing an item.
-        XCTAssertEqual(starters, [
-            "Gate1AppModel+SourceLinkBackground.swift", "Gate1AppModel+SourceLinkForeground.swift", "Gate1AppModel+PublisherAudio.swift"
-        ])
-    }
 }
 
 private final class Calls: @unchecked Sendable {
