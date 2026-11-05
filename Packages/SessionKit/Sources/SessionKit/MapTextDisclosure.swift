@@ -57,7 +57,7 @@ public enum MapTextDisclosure {
         proposals.map { proposal($0, for: item) }
     }
 
-    /// How many scenes of these proposals `proposals(_:for:)` would reduce to bare starts, so the share preview can say
+    /// How many scenes of these proposals `proposals(_:for:)` would reduce to bare starts, so the share preview (next PR) can say
     /// that scene summaries stay on this phone and its map count matches what is sent.
     public static func withheldSceneCount(_ proposals: [PortableListeningMapProposalArtifact], for item: Item) -> Int {
         guard !allowsModelText(of: item) else { return 0 }
@@ -67,16 +67,32 @@ public enum MapTextDisclosure {
     private static func writtenByModel(_ scene: PortableListeningMapScene) -> Bool {
         switch scene.summaryProvenance {
         case .publisherSupplied, .senderAuthored, .deterministic: false
+        // A scene with no provenance and a title is treated as the model's: a publisher chapter title the map builder
+        // copied into a scene cannot be told apart from a label it wrote, so the safe side wins (#3449).
         case .modelGenerated, nil: scene.title != nil || scene.summaryText != nil || scene.summaryAssetId != nil
             || scene.eligibilityReason != nil || scene.eligibility == .eligible
+            || scene.startAnchor.chapterTitle != nil || scene.endAnchor.chapterTitle != nil
         }
     }
 
     private static func withoutModelText(_ scene: PortableListeningMapScene) -> PortableListeningMapScene {
         guard writtenByModel(scene) else { return scene }
+        // The map builder writes the model's label into both anchors' chapter titles too, so those go with the title.
         return PortableListeningMapScene(
             id: scene.id, order: scene.order, title: nil, summaryText: nil, summaryAssetId: nil, summaryProvenance: nil,
-            eligibility: .unknown, eligibilityReason: nil, startAnchor: scene.startAnchor, endAnchor: scene.endAnchor
+            eligibility: .unknown, eligibilityReason: nil,
+            startAnchor: withoutChapterTitle(scene.startAnchor), endAnchor: withoutChapterTitle(scene.endAnchor)
+        )
+    }
+
+    private static func withoutChapterTitle(_ anchor: PortableAnchorEvidence) -> PortableAnchorEvidence {
+        guard anchor.chapterTitle != nil else { return anchor }
+        return PortableAnchorEvidence(
+            anchorType: anchor.anchorType, startChar: anchor.startChar, endChar: anchor.endChar,
+            exactText: anchor.exactText, prefix: anchor.prefix, suffix: anchor.suffix,
+            mediaTimeMs: anchor.mediaTimeMs, roughPercent: anchor.roughPercent,
+            transcriptSegmentId: anchor.transcriptSegmentId, chapterTitle: nil,
+            machineEvidenceAssetIds: anchor.machineEvidenceAssetIds
         )
     }
 }

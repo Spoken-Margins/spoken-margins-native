@@ -267,7 +267,8 @@ final class SharedMarginExportTests: XCTestCase {
         PortableListeningMapProposalArtifact(id: "map", createdAt: date, generator: "on-device", scenes: [
             PortableListeningMapScene(
                 id: "model", order: 0, title: "Model title", summaryText: "Model summary", summaryProvenance: .modelGenerated,
-                eligibility: .eligible, startAnchor: .init(anchorType: .media, mediaTimeMs: 0), endAnchor: .init(anchorType: .media, mediaTimeMs: 9_000)),
+                eligibility: .eligible, startAnchor: .init(anchorType: .media, mediaTimeMs: 0, chapterTitle: "Model title"),
+                endAnchor: .init(anchorType: .media, mediaTimeMs: 9_000, chapterTitle: "Model title")),
             PortableListeningMapScene(
                 id: "publisher", order: 1, title: "Publisher title", summaryText: "Publisher summary", summaryProvenance: .publisherSupplied,
                 eligibility: .eligible, startAnchor: .init(anchorType: .media, mediaTimeMs: 10_000), endAnchor: .init(anchorType: .media, mediaTimeMs: 19_000)),

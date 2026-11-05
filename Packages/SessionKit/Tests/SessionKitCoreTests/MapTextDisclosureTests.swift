@@ -53,13 +53,15 @@ final class MapTextDisclosureTests: XCTestCase {
         XCTAssertNil(model.summaryProvenance)
         XCTAssertNil(model.eligibilityReason)
         XCTAssertEqual(model.eligibility, .unknown)
-        XCTAssertEqual(model.startAnchor, proposal().scenes[0].startAnchor)
         XCTAssertEqual(stripped.scenes[1], proposal().scenes[1], "the publisher's own words stay")
         XCTAssertEqual(stripped.scenes[2], proposal().scenes[2], "the sender's own words stay")
         XCTAssertEqual(stripped.scenes[3], proposal().scenes[3], "a deterministic label stays")
-        XCTAssertEqual(stripped.scenes[0].startAnchor.chapterTitle, "Chapter One", "a publisher chapter title stays")
-        let json = String(decoding: try JSONEncoder().encode(stripped.scenes[0]), as: UTF8.self)
-        XCTAssertFalse(json.contains("Model title") || json.contains("Model summary") || json.contains("Model reason"), json)
+        XCTAssertEqual(stripped.scenes[0].startAnchor.mediaTimeMs, 0, "the place stays")
+        XCTAssertNil(stripped.scenes[0].startAnchor.chapterTitle, "the map builder copies the model's label into the anchors")
+        XCTAssertNil(stripped.scenes[0].endAnchor.chapterTitle)
+        XCTAssertEqual(stripped.scenes[1].startAnchor.chapterTitle, "Publisher title", "a publisher scene keeps its chapter title")
+        let json = String(decoding: try JSONEncoder().encode(stripped), as: UTF8.self)
+        XCTAssertFalse(json.contains("Model title") || json.contains("Model summary") || json.contains("Model reason"), "nowhere in the whole map: \(json)")
     }
 
     func testAStrippedMapStillPassesThePacketRules() {
@@ -130,10 +132,12 @@ final class MapTextDisclosureTests: XCTestCase {
             PortableListeningMapScene(
                 id: "model", order: 0, title: "Model title", summaryText: "Model summary", summaryProvenance: .modelGenerated,
                 eligibility: .eligible, eligibilityReason: "Model reason",
-                startAnchor: PortableAnchorEvidence(anchorType: .media, mediaTimeMs: 0, chapterTitle: "Chapter One"), endAnchor: start(9_000)),
+                startAnchor: PortableAnchorEvidence(anchorType: .media, mediaTimeMs: 0, chapterTitle: "Model title"),
+                endAnchor: PortableAnchorEvidence(anchorType: .media, mediaTimeMs: 9_000, chapterTitle: "Model title")),
             PortableListeningMapScene(
                 id: "publisher", order: 1, title: "Publisher title", summaryText: "Publisher summary", summaryProvenance: .publisherSupplied,
-                eligibility: .eligible, startAnchor: start(10_000), endAnchor: start(19_000)),
+                eligibility: .eligible,
+                startAnchor: PortableAnchorEvidence(anchorType: .media, mediaTimeMs: 10_000, chapterTitle: "Publisher title"), endAnchor: start(19_000)),
             PortableListeningMapScene(
                 id: "sender", order: 2, title: "Sender title", summaryText: "Sender summary", summaryProvenance: .senderAuthored,
                 eligibility: .eligible, startAnchor: start(20_000), endAnchor: start(29_000)),
