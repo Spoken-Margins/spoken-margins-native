@@ -137,7 +137,7 @@ test('the plugin adds the script only when VITE_E2E_SILENT=1', () => {
 });
 
 // The build the deploy runs (research/B4/deploy/deploy-web.sh: `npm run build -- --outDir ... --emptyOutDir`, without the variable).
-test('a normal production build has no silence code', { skip: !existsSync(join(web, 'node_modules/.bin/vite')) && 'Web/node_modules is not installed here; the hosted web job installs it' }, () => {
+test('a normal production build has no silence code', { skip: !existsSync(join(web, 'node_modules/.bin/vite')) && 'Web/node_modules is not installed here; no hosted job installs it, so this runs only where it exists (Mac fast runs, worktrees)' }, () => {
   const out = mkdtempSync(join(tmpdir(), 'sm-web-prod-'));
   try {
     const env = { ...process.env, VITE_RELAY_ORIGIN: 'https://relay.test' };
