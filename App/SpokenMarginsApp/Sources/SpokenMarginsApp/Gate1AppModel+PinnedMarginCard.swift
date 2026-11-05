@@ -56,7 +56,7 @@ extension Gate1AppModel {
             let position = moment.review.map { "\(moment.reviewNumber ?? 1) of \($0.count)" } // a review always counts, even one Margin
             if moment.isPlayingMargin {
                 return PinnedMarginCard(
-                    subject: subject, stage: marginMomentVoiceIsPaused ? .voicePaused : .speaking, position: position,
+                    subject: subject, stage: marginMomentVoiceIsPaused ? .voicePaused : (current.isReadAloud ? .reading : .speaking), position: position,
                     voiceTime: playingVoiceTime)
             }
             // A plain moment that has played its Margin keeps listening for the others: the slot stays, saying so.

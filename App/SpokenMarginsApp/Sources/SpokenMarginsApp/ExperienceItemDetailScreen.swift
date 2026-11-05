@@ -128,6 +128,7 @@ struct ExperienceItemDetailScreen: View {
                 }
             }
             .task(id: model.selectedItem.id) { await refreshEpisodeLinkStatus() }
+            .task(id: WrittenMarginReadings.waitingKey(model.selectedItem)) { WrittenMarginReadings.prepare(newSharedMargins) } // readings ready before "Hear only the Margins" (#3365)
             .sheet(item: $collectionItem) { item in
                 ItemCollectionSheet(item: item).environmentObject(model)
             }

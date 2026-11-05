@@ -73,7 +73,7 @@ struct PinnedMarginCardView: View {
 
     private func icon(_ card: PinnedMarginCard) -> String {
         switch card.stage {
-        case .speaking, .voicePaused, .loading: "waveform"
+        case .speaking, .reading, .voicePaused, .loading: "waveform"
         case .failed: "exclamationmark.triangle"
         case .comingUp, .waitingForTap, .upNext: "text.bubble"
         }
@@ -83,7 +83,7 @@ struct PinnedMarginCardView: View {
     private func headlineIdentifier(_ card: PinnedMarginCard) -> String {
         guard isReview else { return "marginCard.headline" }
         if case .comingUp = card.stage { return "review.comingUp" }
-        if card.stage == .speaking || card.stage == .voicePaused { return "review.playing" }
+        if card.stage == .speaking || card.stage == .reading || card.stage == .voicePaused { return "review.playing" }
         return "marginCard.headline"
     }
 
@@ -113,7 +113,7 @@ struct PinnedMarginCardView: View {
             Button(action: model.playMarginMomentNow) { wide("Play it now", "play.fill") }
                 .buttonStyle(PrimaryButtonStyle())
                 .accessibilityIdentifier("marginMoment.playNow")
-        case .speaking, .voicePaused, .loading:
+        case .speaking, .reading, .voicePaused, .loading:
             Button(action: skip) { wide(skipTitle, "forward.end.fill") }
                 .buttonStyle(SecondaryButtonStyle())
                 .accessibilityIdentifier("marginMoment.skip")

@@ -125,6 +125,7 @@ extension Gate1AppModel {
         #if canImport(AVFoundation)
         guard let audioPath = prompt.interjection.audioPath,
               let audioURL = resolvedApplicationSupportAssetURL(for: audioPath) else {
+            if prompt.interjection.isWritten { return WrittenMarginReadings.readNow(prompt, model: self) } // its words are read aloud (#3365)
             dismissPendingImportedCommentary()
             reportFailure("This shared Margin contains reviewed text but no playable voice recording.")
             return

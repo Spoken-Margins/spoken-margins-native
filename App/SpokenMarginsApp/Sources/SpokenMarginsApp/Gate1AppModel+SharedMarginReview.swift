@@ -20,7 +20,7 @@ extension Gate1AppModel {
 
     /// The shared Margins on `itemId` that the listener hasn't heard, in playing order. Reads the open item when it
     /// is the one asked about, else the Library's store. A Margin whose recording is gone is left out: it can't be
-    /// played, and nothing would ever mark it heard.
+    /// played, and nothing would ever mark it heard. A written Margin has no recording; its words are read (#3365).
     func newSharedMargins(itemId: String) -> [SharedMarginReview.Entry] {
         let entries: [SharedMarginReview.Entry]
         if selectedItem.id == itemId {
@@ -35,7 +35,7 @@ extension Gate1AppModel {
         } else {
             entries = []
         }
-        return entries.filter { $0.interjection.audioPath.flatMap(resolvedApplicationSupportAssetURL(for:)) != nil }
+        return entries.filter { $0.interjection.isWritten || $0.interjection.audioPath.flatMap(resolvedApplicationSupportAssetURL(for:)) != nil }
     }
 
     /// The listener's own Margins on `itemId`, read from what the app already holds: the open item's and the rows the
@@ -127,6 +127,7 @@ extension Gate1AppModel {
             heard[entry.marginId] = entry.interjection
             if let url = entry.interjection.audioPath.flatMap(resolvedApplicationSupportAssetURL(for:)) { voiceURLs[entry.marginId] = url }
         }
+        voiceURLs.merge(WrittenMarginReadings.start(for: entries)) { voice, _ in voice } // a written Margin's words, read aloud (#3365)
         startMarginMoment(sequence: sequence, voiceURLs: voiceURLs, title: "New Margins", isApproximate: false)
         marginMomentConductor?.onVoiceStarted = { [weak self] in
             if let margin = heard[$0] { self?.markSharedMarginHeard(margin) }
@@ -134,6 +135,7 @@ extension Gate1AppModel {
         // Their voices get the same chime as the automatic prompt, except for a muted layer's (#932).
         marginMomentConductor?.chimedMarginIds = SharedMarginReview.chimedMarginIds(steps)
         marginMomentConductor?.onChimeStarted = { [weak self] in self?.diagnostics["marginMoment.chime"] = "played:\($0)" }
+        WrittenMarginReadings.rewordUnavailable(on: marginMomentConductor, entries: entries, model: self)
         if !snapshot.status.isPlaybackActive { resumePlayback() }
         screen = .playback
     }
