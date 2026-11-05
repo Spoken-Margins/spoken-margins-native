@@ -41,18 +41,18 @@ extension Gate1AppModel {
             case .failed: stage = .failed(canMoveOn: canGoToNextMargin)
             }
             return PinnedMarginCard(
-                subject: .friend(playing.senderLabel), stage: stage,
+                subject: .friend(SharedPacketArrival.senderName(playing.senderLabel)), stage: stage,
                 position: PinnedMarginCard.position(playing.index, of: playing.count), voiceTime: playingVoiceTime)
         }
         if let pending = pendingImportedCommentary {
             return PinnedMarginCard(
-                subject: .friend(pending.senderLabel), stage: .waitingForTap,
+                subject: .friend(SharedPacketArrival.senderName(pending.senderLabel)), stage: .waitingForTap,
                 position: PinnedMarginCard.position(pending.index, of: pending.count))
         }
         if let moment = marginMoment {
             let current = moment.playing ?? moment.target
             let subject: PinnedMarginCard.Subject = current.isYours || !moment.isReview && current.label == nil
-                ? .yours : .friend(current.label)
+                ? .yours : .friend(SharedPacketArrival.senderName(current.label))
             let position = moment.review.map { "\(moment.reviewNumber ?? 1) of \($0.count)" } // a review always counts, even one Margin
             if moment.isPlayingMargin {
                 return PinnedMarginCard(
@@ -71,7 +71,7 @@ extension Gate1AppModel {
         let remaining = next.mediaTimeMs.flatMap { ms in snapshot.currentMediaTimeMs.map { max(0, ms - $0) } }
         let arrival = sharedMarginArrival(next.prompt)
         return PinnedMarginCard(
-            subject: .friend(next.prompt.senderLabel), stage: .upNext(msRemaining: remaining, arrival: arrival),
+            subject: .friend(SharedPacketArrival.senderName(next.prompt.senderLabel)), stage: .upNext(msRemaining: remaining, arrival: arrival),
             position: PinnedMarginCard.position(next.prompt.index, of: next.prompt.count))
     }
 

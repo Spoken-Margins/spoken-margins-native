@@ -15,8 +15,6 @@ enum WrittenMarginReadings {
     /// How long "Hear only the Margins" holds off for its readings before it starts anyway. The review's own lead-in
     /// gives a reading 20 more seconds, so a miss takes about half a minute of waiting in all.
     static let reviewHold: TimeInterval = 10
-    /// Taps and review starts being waited on, so a second tap on the same card doesn't start a second wait.
-    private static var waits: [String: Task<Void, Never>] = [:]
 
     // MARK: Naming and starting the renders
 
@@ -56,58 +54,104 @@ enum WrittenMarginReadings {
 
     // MARK: A tap on a written Margin
 
+    /// A wait for a reading: its own id, so a finished wait never clears a newer one for the same Margin.
+    private struct Wait {
+        let id: UUID
+        let wasPending: Bool
+        let task: Task<Void, Never>
+    }
+    private static var tapWaits: [String: Wait] = [:]
+    private static var holds: [String: Task<Void, Never>] = [:]
+
     /// Listen on a written Margin whose reading isn't ready: the same path as a voice Margin once it is. Waits in one
     /// task, which gives up with a line when the render does, and does nothing when the listener has moved on (the card
-    /// dismissed, another card, another item, a recording started) by the time the reading arrives.
+    /// dismissed, another card, another item, a recording started) by the time the reading arrives. The card's own
+    /// expiry is stopped for the wait, so a tone-only card cannot run out while the reading is being made.
     static func waitThenListen(_ prompt: ImportedCommentaryPrompt, model: Gate1AppModel) {
         guard let reading = reading(for: prompt) else { return }
-        guard waits[prompt.id] == nil else { return } // a second tap while the first is waiting
         let wasPending = model.pendingImportedCommentary?.id == prompt.id
+        if let running = tapWaits[prompt.id] {
+            if running.wasPending == wasPending { return } // a second tap on the same card, or the same Timeline row
+            running.task.cancel() // a card tap after a dismiss, or the other way round: the newest tap is the one that counts
+        }
+        model.importedCommentaryAutoPlayTask?.cancel()
+        model.importedCommentaryAutoPlayTask = nil
         model.reportConfirmation("Getting that Margin ready to read aloud.")
-        waits[prompt.id] = Task { @MainActor [weak model] in
+        let id = UUID()
+        let task = Task { @MainActor [weak model] in
             let rendered = (try? await reader.rendered(reading)) != nil
-            waits[prompt.id] = nil
-            guard !Task.isCancelled, let model, stillWanted(prompt, wasPending: wasPending, model: model) else { return }
+            if tapWaits[prompt.id]?.id == id { tapWaits[prompt.id] = nil }
+            guard !Task.isCancelled, let model else { return }
+            guard model.selectedItem.id == prompt.layer.itemId, !model.recordingNavigationIsLocked else { return } // the listener left
+            if wasPending, model.pendingImportedCommentary?.id != prompt.id { return } // the card was dismissed or replaced
             guard rendered else {
                 if wasPending { model.dismissPendingImportedCommentary() }
                 model.reportWarning("That Margin couldn't be read aloud, so listening continues.")
                 return
             }
+            if !wasPending, model.pendingImportedCommentary != nil || model.playingImportedCommentary != nil || model.marginMoment != nil {
+                // Something else took the sound while the reading was made; the tap is not dropped without a word.
+                model.reportWarning("That Margin is ready now. Tap it again to hear it.")
+                return
+            }
             model.hangTelemetry.labels.scoped("writtenMarginListen") { model.listenToImportedCommentary(prompt) }
         }
-    }
-
-    /// Whether the listener is still where the tap was: the card still up (or, for a Timeline tap, the same item with
-    /// nothing else playing and no recording under way), and the episode not changed.
-    private static func stillWanted(_ prompt: ImportedCommentaryPrompt, wasPending: Bool, model: Gate1AppModel) -> Bool {
-        guard model.selectedItem.id == prompt.layer.itemId, !model.recordingNavigationIsLocked else { return false }
-        if wasPending { return model.pendingImportedCommentary?.id == prompt.id }
-        return model.pendingImportedCommentary == nil && model.playingImportedCommentary == nil && model.marginMoment == nil
+        tapWaits[prompt.id] = Wait(id: id, wasPending: wasPending, task: task)
     }
 
     // MARK: A review
 
+    /// What the listener is doing, as the hold sees it. Any change ends the hold: a second Continue, another item, a Margin
+    /// recorded, a card shown. Anything but time passing means they took over.
+    private struct Where: Equatable {
+        let selected: String
+        let playingItem: String?
+        let session: String?
+        let active: Bool
+        let moment: Bool
+        let pending: String?
+        let playing: String?
+    }
+
+    private static func listenerPlace(_ model: Gate1AppModel) -> Where {
+        Where(selected: model.selectedItem.id, playingItem: model.snapshot.itemId, session: model.snapshot.sessionId,
+              active: model.snapshot.status.isPlaybackActive, moment: model.marginMoment != nil,
+              pending: model.pendingImportedCommentary?.id, playing: model.playingImportedCommentary?.id)
+    }
+
     /// "Hear only the Margins" with a written Margin whose reading isn't ready holds off, for `reviewHold` seconds at
-    /// most, then starts anyway, and only if that item is still the open one; a reading still missing then gets the
-    /// ordinary warning. True when this took the call (the review starts later, from here).
+    /// most, then starts, unless the listener did anything else meanwhile (checked every quarter second against where
+    /// they were when they asked); a reading still missing then gets the ordinary warning. True when this took the call
+    /// (the review starts later, from here).
     static func holdReview(itemId: String, thenContinue: Bool, entries: [SharedMarginReview.Entry], model: Gate1AppModel) -> Bool {
         let key = "review::\(itemId)"
         if releasedReviews.contains(key) { return false } // this is the start after the hold
-        if waits[key] != nil { return true } // a second tap while the hold is running
+        if holds[key] != nil { return true } // a second tap while the hold is running
         let readings = entries.compactMap(\.writtenReading)
         guard readings.contains(where: { !reader.isReady($0) }) else { return false }
-        let openItem = model.selectedItem.id
+        let from = listenerPlace(model)
         model.reportConfirmation("Getting your new Margins ready.")
-        waits[key] = Task { @MainActor [weak model] in
-            await reader.waitUntilSettled(readings, upTo: reviewHold)
-            waits[key] = nil
-            // Only if the listener is still where they were; a miss after the hold gets the ordinary warning.
-            guard !Task.isCancelled, let model, model.selectedItem.id == openItem else { return }
+        let settled = Flag()
+        Task { await reader.waitUntilSettled(readings, upTo: reviewHold); settled.set() }
+        holds[key] = Task { @MainActor [weak model] in
+            defer { holds[key] = nil }
+            while !settled.isSet {
+                try? await Task.sleep(for: .milliseconds(250))
+                guard !Task.isCancelled, let model, listenerPlace(model) == from else { return } // they went elsewhere: nothing starts
+            }
+            guard !Task.isCancelled, let model, listenerPlace(model) == from else { return }
             releasedReviews.insert(key)
             model.hangTelemetry.labels.scoped("writtenMarginReview") { model.reviewNewMargins(itemId: itemId, thenContinue: thenContinue, entries: entries) }
             releasedReviews.remove(key)
         }
         return true
+    }
+
+    private final class Flag: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value = false
+        var isSet: Bool { lock.withLock { value } }
+        func set() { lock.withLock { value = true } }
     }
 
     /// Reviews being started after their hold, so the second call doesn't hold again.
@@ -116,8 +160,8 @@ enum WrittenMarginReadings {
     /// The review is starting: any tap still waiting on a reading gives way (nothing plays from it), and the review's
     /// readings are started or found.
     static func startingReview(for entries: [SharedMarginReview.Entry]) -> [String: URL] {
-        waits.values.forEach { $0.cancel() }
-        waits.removeAll()
+        tapWaits.values.forEach { $0.task.cancel() }
+        tapWaits.removeAll()
         return start(for: entries)
     }
 
@@ -126,11 +170,12 @@ enum WrittenMarginReadings {
     /// A reading that isn't ready when its turn comes behaves as a missing recording does: a warning, listening carries
     /// on, and the Margin stays new. The words don't say "recording", which a written Margin never was.
     static func rewordUnavailable(on conductor: MarginMomentConductor?, entries: [SharedMarginReview.Entry], model: Gate1AppModel) {
-        let written = Set(entries.filter { $0.interjection.isWritten }.map(\.marginId))
+        let written = Dictionary(entries.compactMap { entry in entry.writtenReading.map { (entry.marginId, $0) } }) { first, _ in first }
         guard let conductor, !written.isEmpty else { return }
         let previous = conductor.onVoiceUnavailable
         conductor.onVoiceUnavailable = { [weak model] marginId, reason in
-            guard written.contains(marginId) else { return previous?(marginId, reason) ?? () }
+            guard let reading = written[marginId] else { return previous?(marginId, reason) ?? () }
+            reader.forget(reading) // its file is gone: the next try renders it again
             model?.diagnostics["marginMoment.voiceUnavailable"] = "\(marginId):\(reason)"
             model?.reportWarning("That Margin couldn't be read aloud, so listening continues.")
         }

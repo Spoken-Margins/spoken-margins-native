@@ -50,7 +50,8 @@ final class WrittenMarginTapAppTests: XCTestCase {
         model.listenToPendingImportedCommentary()
         XCTAssertNotNil(model.playingImportedCommentary, "it plays at once, with no wait")
         XCTAssertEqual(model.snapshot.status, .paused, "the episode waits for the reading")
-        XCTAssertEqual(model.pinnedMarginCard?.stage, .reading)
+        // The card says "loading" until the voice's first health check (about 0.2 s); then it says whose words are read.
+        try await fixture.waitUntil("the card says the iPhone's voice is reading") { model.pinnedMarginCard?.stage == .reading }
         XCTAssertTrue(model.pinnedMarginCard?.detail.contains("Your phone's voice is reading Reviewer's words.") == true, "\(String(describing: model.pinnedMarginCard?.detail))")
 
         model.returnToSourceFromImportedCommentary()
@@ -68,6 +69,7 @@ final class WrittenMarginTapAppTests: XCTestCase {
         model.listenToImportedCommentary(layerID: fixture.layer.id, interjectionID: fixture.record.id)
         XCTAssertNotNil(model.playingImportedCommentary)
         XCTAssertEqual(model.snapshot.status, .paused)
+        XCTAssertNil(model.lastError, "no failure line: the sender's time is enough to listen")
     }
 
     // The reading is not ready on the tap: it waits (with the existing line), then plays from the same path once it is.
@@ -81,7 +83,53 @@ final class WrittenMarginTapAppTests: XCTestCase {
         model.listenToPendingImportedCommentary()
         XCTAssertNil(model.playingImportedCommentary, "nothing plays before the reading is ready")
         try await fixture.waitUntil("the reading plays once it is ready") { model.playingImportedCommentary != nil }
-        XCTAssertEqual(model.pinnedMarginCard?.stage, .reading)
+        try await fixture.waitUntil("the card says the iPhone's voice is reading") { model.pinnedMarginCard?.stage == .reading }
+    }
+
+    // A tone-only card expires after a few seconds. Tapping Listen on a reading that isn't ready must stop that expiry,
+    // or the card runs out during the wait and the listener gets silence with no line.
+    func testTappingListenOnAReadingNotReadyStopsTheCardsExpiry() async throws {
+        let fixture = try await ReturnFixture.make(sourcePlaying: true, writtenWords: uniqueWords())
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        try await fixture.seedReading(ready: false)
+        XCTAssertTrue(model.jumpToImportedCommentary(interjectionID: fixture.record.id))
+        let expiry = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(30))
+            model.dismissPendingImportedCommentary()
+        }
+        model.importedCommentaryAutoPlayTask = expiry
+        defer { expiry.cancel() }
+
+        model.listenToPendingImportedCommentary()
+        XCTAssertTrue(expiry.isCancelled, "the card's expiry no longer runs once Listen is tapped")
+        XCTAssertNil(model.importedCommentaryAutoPlayTask)
+    }
+
+    // "Hear only the Margins" holds for readings that aren't ready, but only while the listener does nothing else:
+    // anything they do (here, pausing the episode) means the review never starts from the hold.
+    func testAReviewHoldEndsWhenTheListenerDoesSomethingElse() async throws {
+        let fixture = try await ReturnFixture.make(sourcePlaying: true, writtenWords: uniqueWords())
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        try await fixture.seedReading(ready: false)
+
+        model.reviewNewMargins(itemId: "real-source", thenContinue: true)
+        XCTAssertNil(model.marginMoment, "the review waits for its readings")
+        model.pause()
+        try await Task.sleep(for: .milliseconds(1_200))
+        XCTAssertNil(model.marginMoment, "the listener moved on, so the review does not start by itself")
+    }
+
+    // The same hold, left alone, starts the review once the reading is ready.
+    func testAReviewHoldStartsTheReviewWhenNothingElseHappens() async throws {
+        let fixture = try await ReturnFixture.make(sourcePlaying: true, writtenWords: uniqueWords())
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        try await fixture.seedReading(ready: false)
+
+        model.reviewNewMargins(itemId: "real-source", thenContinue: true)
+        try await fixture.waitUntil("the review starts", timeout: 10) { model.marginMoment != nil }
     }
 
     // Dismissing the card ends the wait: when the reading arrives, nothing plays.
@@ -98,6 +146,7 @@ final class WrittenMarginTapAppTests: XCTestCase {
         try await fixture.waitUntil("the reading is ready, with nobody waiting for it") { WrittenMarginReader.shared.isReady(reading) }
         try await Task.sleep(for: .milliseconds(500))
         XCTAssertNil(model.playingImportedCommentary, "a dismissed card plays nothing when its reading arrives")
+        XCTAssertNil(model.marginMoment)
         XCTAssertNil(model.pendingImportedCommentary)
     }
 }
