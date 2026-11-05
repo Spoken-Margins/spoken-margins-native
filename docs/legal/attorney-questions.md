@@ -14,7 +14,7 @@ In priority order. The first two are where the real exposure is.
    - Planned changes (#1730): the transcript is never written to disk; anchors become hashes and timestamps, not quoted sentences; descriptions are capped at about 25 words, written in our own order, and rejected if they copy 8 or more words in a row.
    - Also: does the Ninth Circuit's RAM-copy rule (*MAI v. Peak*) make the server copy a fixed copy, and does that matter if the use is fair? Is the listener's transcript their own private copy, so that our part is a secondary-liability question?
    - Full transcripts are never shared (D14).
-   - One line on Apple's terms: Apple's developer agreement (3.2(h), 3.3.4(A)(viii)) has the developer promise it holds the rights in what goes to Apple's software. We send a linked source to the on-device model only when a check marks it public, and a file the listener brought in goes without a check (D22). Is that reasonable? No follow-up unless the answer is no.
+   - One line on Apple's terms: Apple's developer agreement (3.2(h), 3.3.4(A)(viii)) has the developer promise it holds the rights in what goes to Apple's software. Any source the listener holds can go to the on-device model, and what the model writes leaves the device only when a check marks the source public (D22). Is that reasonable? No follow-up unless the answer is no.
 2. **Share links: the source excerpt next to a comment.** A shared Margin is the listener's own commentary on a moment in a source. The share page and the packet show that comment with a short marked quotation of the source around it, plus the title, the show and a link to the source. A link never carries the full source text or the source's audio (D15). Is a short excerpt that only gives a comment its context fair use? Please mark up these starting caps (D16):
    - after the Margin: 120 characters;
    - before the Margin: 3 times the length of the comment, at least 280 and at most 800 characters (for a spoken Margin, the transcript's length, or about 15 characters per second of audio);
@@ -77,7 +77,7 @@ Cole's decisions on 2026-10-20 (his words in quotes):
 
 Cole's decision on 2026-11-05 (his words in quotes):
 
-- **D22. A linked source goes to on-device models only with a public mark; files the listener brought in are exempt.** "That is enough protection for me to feel comfortable." He said that of the link check; the file exemption came after, so that PDFs from Files work. It gets the one line under question 1, not a question of its own. See [decisions.md](../decisions.md) under 2026-11-05, and #3449.
+- **Model-written map text leaves the device only when its source is marked public.** Any source may reach the on-device model. "that's good enough protection until we get an answer from a lawyer." It gets the one line under question 1, not a question of its own. See [decisions.md](../decisions.md) under 2026-11-05, and #3449.
 
 ## Engineering mitigations filed
 
