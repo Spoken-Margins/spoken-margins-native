@@ -26,17 +26,10 @@ struct ExperienceSourcesScreen: View {
     /// A friend with Margins on more than one item, whose items are open.
     @State private var openFriend: FollowingFriends.Friend?
 
-    /// The friends who sent Margins, read from the Margins list the app already keeps.
-    private var friends: [FollowingFriends.Friend] {
-        FollowingFriends.friends(from: model.sharedMarginRows.map {
-            MarginCollection.SharedEntry(interjection: $0.interjection, layer: $0.layer, itemTitle: $0.itemTitle)
-        })
-    }
-
     var body: some View {
         NavigationStack(path: $path) {
             let list = model.followingShowListCache
-            let friends = self.friends
+            let friends = model.followingFriends
             List {
                 // An item's Follow can find several feeds; the choice shows here too, not only on the follow screen.
                 if !model.followedSourceCandidates.isEmpty {
@@ -73,7 +66,7 @@ struct ExperienceSourcesScreen: View {
                     .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
                 }
                 // Friends who sent Margins and followed shows in one list, newest first (#3291, #3343).
-                ForEach(FollowingFeed.rows(friends: friends, shows: list.rows)) { row in
+                ForEach(model.followingFeedRows(friends: friends)) { row in
                     switch row {
                     case .friend(let friend): friendRow(friend)
                     case .show(let show): showRow(show)

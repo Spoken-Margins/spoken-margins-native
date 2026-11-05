@@ -49,13 +49,9 @@ struct FollowingFriendItemsScreen: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     let friend: FollowingFriends.Friend
 
-    /// The Library's own row for the item, when it is loaded, so the friend's item reads like a Library row (#3343).
-    private func libraryRow(_ item: FollowingFriends.Friend.Item) -> LibraryItemRow? {
-        model.libraryItems.first { $0.id == item.id }
-    }
-
+    /// The item's Library row wording, when it is loaded, so the friend's item reads like a Library row (#3343).
     private func detailLine(for item: FollowingFriends.Friend.Item) -> String? {
-        libraryRow(item).map { FollowingFriends.itemDetail($0, playbackSpeed: model.speechPlaybackRateMultiplier).fullLine }
+        model.followingFriendItemDetail(item)?.fullLine
     }
 
     private func accessibilityLabel(for item: FollowingFriends.Friend.Item) -> String {
