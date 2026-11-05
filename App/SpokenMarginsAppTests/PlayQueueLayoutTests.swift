@@ -18,6 +18,8 @@ final class PlayQueueLayoutTests: XCTestCase {
     /// than the label really gets, the height its text needs can only come out at or under the real need, so a row
     /// shorter than that is cut off.
     private static let sheetRowInsets: CGFloat = 32
+    /// Less than any entry takes in the Library: its circle alone is 40 pt tall.
+    private static let leastEntryHeight: CGFloat = 40
     private static let sizes: [DynamicTypeSize] = [.large, .accessibility5]
     private static let shortTitle = "Morning brief"
     private static let longTitle = "Are Prediction Markets Gambling? A Lot Rides on the Answer."
@@ -74,56 +76,65 @@ final class PlayQueueLayoutTests: XCTestCase {
             for id in Self.itemIds(3) { model.queueAppend(itemId: id) }
             let mounted = try mount(libraryScreen(model), size: size)
             defer { mounted.close() }
-            let queued = try await settledList(in: mounted) { $0.totalItems >= 7 }
+            let queued = try await settledList(in: mounted) { $0.totalItems >= 6 }
+            let withEntry = try firstRowHeight(in: queued)
             attachScreenshot(of: mounted, name: "library-with-queue-\(size)")
             model.clearPlayQueue()
-            let cleared = try await settledList(in: mounted) { $0.totalItems == queued.totalItems - 1 }
-            XCTAssertEqual(cleared.totalItems, queued.totalItems - 1, "\(size): clearing the queue should remove its entry")
+            // The entry is part of the list's first row, so the row is shorter by the entry once it goes.
+            let cleared = try await settledList(in: mounted) { (try? self.firstRowHeight(in: $0)) != withEntry }
+            let withoutEntry = try firstRowHeight(in: cleared)
+            XCTAssertEqual(cleared.totalItems, queued.totalItems, "\(size): clearing the queue should add or remove no row")
+            XCTAssertGreaterThan(withEntry - withoutEntry, Self.leastEntryHeight,
+                                 "\(size): clearing the queue should remove its entry (\(withEntry) to \(withoutEntry) pt)")
         }
     }
 
     // MARK: - Done when 2: the place in the list holds
 
-    /// The list keeps its offset when a row is added above what is on screen, so adding an item to the queue from its
-    /// menu, partway down the Library, pushed every row down by the entry's height under the listener. The row that
-    /// was at the top must stay at the top as the entry comes, and again as it goes.
+    /// A new row above what is on screen pushed every row down by the entry's height, so adding an item to the queue
+    /// from its menu, partway down the Library, moved the rows under the listener. The row that was at the top must stay
+    /// at the top as the entry comes, and again as it goes. No row count changes, so going back to the top is what shows
+    /// the entry really came and really went: without that, a list that never took the change would pass.
     func testTheRowAtTheTopStaysThereWhenTheQueueEntryComesAndGoes() async throws {
         let model = try makeModel(itemCount: 40)
         let mounted = try mount(libraryScreen(model), size: .large)
         defer { mounted.close() }
         var list = try await settledList(in: mounted) { $0.totalItems >= 40 && $0.view.contentSize.height > 2_000 }
+        let rows = list.totalItems
+        let heightWithoutEntry = try firstRowHeight(in: list)
+        let topIndex = rows / 2
 
-        // A row partway down, scrolled to sit 4 pt past the top edge, as a finger leaves it.
-        let topIndex = list.totalItems / 2
-        let frame = try XCTUnwrap(list.view.layoutAttributesForItem(at: list.paths[topIndex])?.frame)
-        list.view.setContentOffset(CGPoint(x: 0, y: frame.minY - list.view.adjustedContentInset.top + 4), animated: false)
-        try await Task.sleep(for: .milliseconds(500)) // the list's place settles for 150 ms before it counts
-        list = try await settledList(in: mounted) { _ in true }
-        let before = try offsetFromTop(of: topIndex, in: list)
-        let rowsBefore = list.totalItems
-        let shapeBefore = Self.shape(of: list)
+        var before = try await scrollPartWayDown(to: topIndex, in: mounted, from: list)
         attachScreenshot(of: mounted, name: "library-scrolled-before-queue")
-
         model.queueAppend(itemId: Self.itemIds(1)[0])
-        list = try await settledList(in: mounted) { $0.totalItems == rowsBefore + 1 }
+        list = try await listAfterAChangeOffScreen(in: mounted)
         attachScreenshot(of: mounted, name: "library-scrolled-after-queue")
-        let afterAdding = try offsetFromTop(of: topIndex + 1, in: list)
-        let shapeAdded = Self.shape(of: list)
+        let afterAdding = try offsetFromTop(of: topIndex, in: list)
         XCTAssertEqual(afterAdding, before, accuracy: 6,
                        "The row at the top moved \(afterAdding - before) pt when the queue entry appeared above it "
-                           + "(list before: \(shapeBefore); after: \(shapeAdded))")
+                           + "(list after: \(Self.shape(of: list)))")
 
-        try await Task.sleep(for: .milliseconds(500))
+        list = try await scrollBackToTheTop(in: mounted, from: list)
+        let heightWithEntry = try firstRowHeight(in: list)
+        XCTAssertEqual(list.totalItems, rows, "The entry should add no row")
+        XCTAssertGreaterThan(heightWithEntry - heightWithoutEntry, Self.leastEntryHeight,
+                             "The entry never came: the first row went from \(heightWithoutEntry) to \(heightWithEntry) pt")
+
+        before = try await scrollPartWayDown(to: topIndex, in: mounted, from: list)
         model.removeFromQueue(itemId: Self.itemIds(1)[0])
-        list = try await settledList(in: mounted) { $0.totalItems == rowsBefore }
+        list = try await listAfterAChangeOffScreen(in: mounted)
         let afterRemoving = try offsetFromTop(of: topIndex, in: list)
         XCTAssertEqual(afterRemoving, before, accuracy: 6,
                        "The row at the top moved \(afterRemoving - before) pt when the queue entry went away "
-                           + "(list with the entry: \(shapeAdded); after: \(Self.shape(of: list)))")
+                           + "(list after: \(Self.shape(of: list)))")
+
+        list = try await scrollBackToTheTop(in: mounted, from: list)
+        XCTAssertEqual(try firstRowHeight(in: list), heightWithoutEntry, accuracy: 1,
+                       "The entry never went: the first row should be back to the height it had")
     }
 
-    /// The control: a plain list with a row that comes and goes above the rest, and nothing keeping the place. Its rows
-    /// slide by the new row's height, so the measure above can see a jump, and the Library's fix is what holds it.
+    /// The control: a plain list with a row that comes and goes above the rest. Its rows slide by the new row's height,
+    /// so the measure above can see a jump, and keeping the entry in a row that is always there is what holds the place.
     func testWithoutKeepingThePlaceAPlainListSlidesWhenARowArrivesAbove() async throws {
         let toggle = TopRowToggle()
         let mounted = try mount(AnyView(PlainListWithTopRow(toggle: toggle)), size: .large)
@@ -252,6 +263,31 @@ final class PlayQueueLayoutTests: XCTestCase {
     private func offsetFromTop(of index: Int, in list: ListState) throws -> CGFloat {
         let frame = try XCTUnwrap(list.view.layoutAttributesForItem(at: list.paths[index])?.frame)
         return frame.minY - (list.view.contentOffset.y + list.view.adjustedContentInset.top)
+    }
+
+    /// The first row holds the Library's controls and, while something is queued, the queue's entry.
+    private func firstRowHeight(in list: ListState) throws -> CGFloat {
+        try XCTUnwrap(list.view.layoutAttributesForItem(at: list.paths[0])?.frame.height)
+    }
+
+    /// Scrolls so a row partway down sits 4 pt past the top edge, as a finger leaves it, and says where it settled.
+    private func scrollPartWayDown(to index: Int, in mounted: Mounted, from list: ListState) async throws -> CGFloat {
+        let frame = try XCTUnwrap(list.view.layoutAttributesForItem(at: list.paths[index])?.frame)
+        list.view.setContentOffset(CGPoint(x: 0, y: frame.minY - list.view.adjustedContentInset.top + 4), animated: false)
+        try await Task.sleep(for: .milliseconds(500)) // the list's place settles for 150 ms before it counts
+        return try offsetFromTop(of: index, in: try await settledList(in: mounted) { _ in true })
+    }
+
+    private func scrollBackToTheTop(in mounted: Mounted, from list: ListState) async throws -> ListState {
+        list.view.setContentOffset(CGPoint(x: 0, y: -list.view.adjustedContentInset.top), animated: false)
+        try await Task.sleep(for: .milliseconds(300)) // the first row measures itself as it comes into view
+        return try await settledList(in: mounted) { _ in true }
+    }
+
+    /// A change off screen shows in nothing `settledList` could wait for, so this gives the list time to take it first.
+    private func listAfterAChangeOffScreen(in mounted: Mounted) async throws -> ListState {
+        try await Task.sleep(for: .milliseconds(500))
+        return try await settledList(in: mounted) { _ in true }
     }
 
     /// The list's offset, content height, top inset and row count, for a failure message: an offset that moved by the

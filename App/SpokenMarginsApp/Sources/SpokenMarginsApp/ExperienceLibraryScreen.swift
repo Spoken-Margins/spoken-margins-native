@@ -14,7 +14,6 @@ struct ExperienceLibraryScreen: View {
     @Binding var scrollMemory: FollowingScrollMemory
     @State private var scrollTracker = ListScrollTracker()
     @State private var restoredScroll = false
-    @State private var placeKeeper = ListPlaceKeeper()
     @State private var isAudioPreparationQueuePresented = false
     @State private var isPlayQueuePresented = false
     @ObservedObject private var playQueue = PlayQueueState.shared
@@ -35,29 +34,12 @@ struct ExperienceLibraryScreen: View {
         PlayQueueRows.rows(for: PlayQueue(itemIds: playQueue.itemIds), items: model.libraryItems)
     }
 
-    /// The rows above the items that come and go while the list is open: a copied link's card, the links waiting for
-    /// the network, the play queue's entry and its lines. A change here moves every item row: the list keeps its offset,
-    /// so adding an item to the queue from its menu, partway down, pushed the rows down by the entry's height (#1990).
-    /// The queue's entry counts by what it shows, not by the queue's ids: deleting a queued item from the Library, or the
-    /// Library loading late, changes the entry while the ids stay the same.
-    private var rowsAboveItems: RowsAboveItems {
-        let rows = queuedRows
-        return RowsAboveItems(
-            clipboardCard: clipboardLink.showsCard,
-            waitingLine: model.sourceLinksWaitingForNetwork > 0,
-            queueCount: rows.isEmpty ? nil : PlayQueueRows.countLine(rows.count),
-            queueNext: PlayQueueRows.nextLine(rows)
-        )
-    }
-
     /// One identity per item, the Continue row included, so completing the top row removes that row (#585).
     private var listEntries: [LibraryListEntry<LibraryItemRow>] {
         LibraryListRows.entries(visible: model.visibleLibraryItems, currentId: continueItem?.id)
     }
 
     var body: some View {
-        // Here and not in `onChange`, which runs after the list has already taken the new row.
-        let _ = placeKeeper.rowsAboveWillShow(rowsAboveItems, holding: restoredScroll)
         NavigationStack {
             ScrollViewReader { proxy in
             List {
@@ -69,18 +51,23 @@ struct ExperienceLibraryScreen: View {
                 LiveSessionLiveRows() // a running or quick live session, on top (#2487 slice 1a)
                     .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
 
-                controls
-                    .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
+                // One row, always in the list, so the queue's entry can come and go without moving the items below it
+                // (#1990). A list leaves a row's height alone while the row is off screen and takes the new one when the
+                // row comes back into view, with no jump. A new row, by contrast, pushes everything below it down by its
+                // height, and a list running that update overrode every offset set to hold its place. The spacing here
+                // equals the gap two rows with this block's padding had, so the screen looks the same.
+                VStack(alignment: .leading, spacing: 8) {
+                    controls
 
-                if model.sourceLinksWaitingForNetwork > 0 {
-                    PendingLinksWaitingLine(count: model.sourceLinksWaitingForNetwork)
-                        .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
-                }
+                    if model.sourceLinksWaitingForNetwork > 0 {
+                        PendingLinksWaitingLine(count: model.sourceLinksWaitingForNetwork)
+                    }
 
-                if !queuedRows.isEmpty {
-                    PlayQueueSummaryRow(rows: queuedRows) { isPlayQueuePresented = true }
-                        .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
+                    if !queuedRows.isEmpty {
+                        PlayQueueSummaryRow(rows: queuedRows) { isPlayQueuePresented = true }
+                    }
                 }
+                .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
 
                 items
 
@@ -98,7 +85,6 @@ struct ExperienceLibraryScreen: View {
                 scrollTracker.order = ids
                 restoreScroll(in: ids, using: proxy)
             }
-            .background(placeKeeper.anchor)
             .onAppear { if restoredScroll { scrollTracker.thaw() } }
             .onDisappear { rememberScroll() }
             .background(AppColors.bone)
@@ -530,14 +516,6 @@ struct ExperienceLibraryScreen: View {
     private func displayName(_ rawValue: String) -> String {
         LibraryQueryEngine.displayName(rawValue)
     }
-}
-
-/// What the Library's rows above the items show: a change to any of it adds, removes or resizes one of those rows.
-private struct RowsAboveItems: Hashable {
-    var clipboardCard: Bool
-    var waitingLine: Bool
-    var queueCount: String?
-    var queueNext: String?
 }
 
 private struct ExperienceLibraryCompactRow: View {
