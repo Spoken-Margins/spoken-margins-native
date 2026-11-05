@@ -20,6 +20,8 @@ struct ExperienceLibraryScreen: View {
     /// The item whose Continue is waiting on the "hear new Margins first?" question (#474).
     @State private var pendingNewMarginsOffer: NewMarginsOfferRequest?
     @State private var collectionItem: LibraryItemRow?
+    /// A spoken note opened from its row: it has its own screen, not the text item screen (#3108).
+    @State private var openedNote: SpokenNoteOpening?
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.isEdgeSwipePreview) private var isEdgeSwipePreview
     /// A copied link on offer at the top of the Library (#1379).
@@ -108,6 +110,9 @@ struct ExperienceLibraryScreen: View {
                 .environmentObject(model)
         }
         .onAppear { model.loadPlayQueue() }
+        .fullScreenCover(item: $openedNote) { opening in
+            SpokenNoteRecordingView(opening: opening).environmentObject(model)
+        }
         .sheet(item: $collectionItem) { item in
             ItemCollectionSheet(item: item)
                 .environmentObject(model)
@@ -471,8 +476,11 @@ struct ExperienceLibraryScreen: View {
                     row: row,
                     isCurrentItem: entry.isCurrent,
                     playbackSpeed: model.speechPlaybackRateMultiplier,
-                    onOpen: { model.openItemFromTap(id: row.id) },
-                    onPlay: { model.continueListening(itemId: row.id) { pendingNewMarginsOffer = $0 } },
+                    onOpen: { openRow(row) },
+                    onPlay: {
+                        // A note is heard a sentence at a time on its own screen; Play opens it.
+                        if row.spokenNoteId != nil { openRow(row) } else { model.continueListening(itemId: row.id) { pendingNewMarginsOffer = $0 } }
+                    },
                     onComplete: { model.markItemCompleted(id: row.id) },
                     onMarkUnfinished: { model.markItemUnfinished(id: row.id) },
                     onPrepareOffline: { model.prioritizeOfflinePreparation(id: row.id) },
@@ -485,6 +493,14 @@ struct ExperienceLibraryScreen: View {
                 .onAppear { scrollTracker.rowChanged(row.id, isVisible: true) }
                 .onDisappear { scrollTracker.rowChanged(row.id, isVisible: false) }
             }
+        }
+    }
+
+    private func openRow(_ row: LibraryItemRow) {
+        if let noteId = row.spokenNoteId {
+            openedNote = SpokenNoteOpening(noteId: noteId, title: row.title)
+        } else {
+            model.openItemFromTap(id: row.id)
         }
     }
 

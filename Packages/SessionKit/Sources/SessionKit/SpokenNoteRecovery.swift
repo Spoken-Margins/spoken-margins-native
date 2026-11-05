@@ -67,9 +67,16 @@ public enum SpokenNoteRecovery {
             }
             guard added else { continue }
             let note = store.load()
-            // The row is made only for a note that had no take before: its first take is what creates the row. A note that
-            // already had takes had its row made then, so a row the listener has since deleted is not made again.
-            try? itemWriter.write(SpokenNoteItem.makeItem(note: note, createdAt: now), isFirstSave: existing.isEmpty)
+            // The row is made for a note whose row was never written: no take before, or none recorded that the row was
+            // saved (the first save failed and the app ended during a later take). A row that was written and since
+            // deleted by the listener is not made again.
+            let isFirstSave = existing.isEmpty || !store.itemWasSaved
+            do {
+                try itemWriter.write(SpokenNoteItem.makeItem(note: note, createdAt: now), isFirstSave: isFirstSave)
+                store.markItemSaved()
+            } catch {
+                // Not saved now; the marker stays absent, so the next launch offers the row again.
+            }
             recovered.append(noteId)
         }
         return recovered

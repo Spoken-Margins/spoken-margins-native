@@ -18,6 +18,13 @@ struct SpokenNoteRecorderEnvironment {
     var beginBackgroundWork: @MainActor (String) -> (@MainActor () -> Void)
 }
 
+/// A note reopened from its Library row.
+struct SpokenNoteOpening: Identifiable, Equatable {
+    let noteId: String
+    let title: String
+    var id: String { noteId }
+}
+
 /// The recording screen's state: one spoken note, recorded in takes (#3108, #1609 slice 1).
 ///
 /// The note is started on the first Record tap, not when the screen opens, so opening and closing the screen leaves
@@ -34,6 +41,8 @@ final class SpokenNoteRecorderModel: ObservableObject {
     /// Seconds recorded in the take now running.
     @Published private(set) var elapsed: TimeInterval = 0
     @Published var message: String?
+    /// The note's folder, once it is known (a reopened note's at once; a new note's at its first Record tap).
+    @Published private(set) var noteFolder: URL?
 
     private var environment: SpokenNoteRecorderEnvironment?
     private var coordinator: SpokenNoteRecordingCoordinator?
@@ -44,24 +53,55 @@ final class SpokenNoteRecorderModel: ObservableObject {
     /// Keeps the app running while a transcript is being made after a take ends (the phone may be locked by then).
     private var endBackgroundWork: (@MainActor () -> Void)?
 
-    func attach(_ environment: SpokenNoteRecorderEnvironment?) {
+    /// - Parameter opening: a note from the Library to show and add to. Its takes are shown at once, and any take
+    ///   that has no transcript (the app ended before it finished) is asked for again.
+    func attach(_ environment: SpokenNoteRecorderEnvironment?, opening: SpokenNoteOpening? = nil) {
         guard self.environment == nil else { return }
         self.environment = environment
-        if environment == nil { message = "The Library isn't ready yet. Try again in a moment." }
+        guard let environment else {
+            message = "The Library isn't ready yet. Try again in a moment."
+            return
+        }
+        guard let opening else { return }
+        guard let started = SpokenNoteStarter.reopen(
+            noteId: opening.noteId, title: opening.title, in: environment.applicationSupport, now: Date()
+        ) else {
+            message = "This note's recordings aren't on this phone."
+            return
+        }
+        let coordinator = makeCoordinator(started, itemIsSaved: true, environment)
+        self.coordinator = coordinator
+        noteFolder = started.store.folderURL
+        Task {
+            await coordinator.setOnChange { [weak self] report in
+                Task { @MainActor in self?.apply(report) }
+            }
+            await coordinator.resumeTranscripts()
+        }
     }
 
     var isBusy: Bool { phase == .starting || phase == .stopping }
 
-    func record() {
+    /// - Parameter prepare: Work to finish before the microphone opens (a sentence handing the audio session back).
+    ///   The screen is `.starting` from this call on, so while it runs neither Record nor a sentence can be tapped.
+    func record(after prepare: (@MainActor () async -> Void)? = nil) {
         guard phase == .idle, !isFinished, let environment else { return }
         phase = .starting
         message = nil
-        Task { await begin(environment) }
+        Task {
+            await prepare?()
+            await begin(environment)
+        }
     }
 
     func stop() {
         guard phase == .recording else { return }
         Task { await stopTake() }
+    }
+
+    /// Pauses whatever the app is playing, so it isn't mixed with a sentence being played from this note.
+    func pauseOtherPlayback() {
+        environment?.prepareToRecord()
     }
 
     func retryTranscript(forTake takeId: String) {
@@ -131,19 +171,26 @@ final class SpokenNoteRecorderModel: ObservableObject {
     private func ensureCoordinator(_ environment: SpokenNoteRecorderEnvironment) async throws -> SpokenNoteRecordingCoordinator {
         if let coordinator { return coordinator }
         let started = try SpokenNoteStarter.start(in: environment.applicationSupport, now: Date())
-        let coordinator = SpokenNoteRecordingCoordinator(
-            store: started.store,
-            item: started.item,
-            itemIsSaved: false,
-            recorder: SystemSpokenNoteTakeRecorder(),
-            transcriber: SystemSpokenNoteTranscriber(),
-            itemWriter: environment.itemWriter
-        )
+        let coordinator = makeCoordinator(started, itemIsSaved: false, environment)
+        noteFolder = started.store.folderURL
         await coordinator.setOnChange { [weak self] report in
             Task { @MainActor in self?.apply(report) }
         }
         self.coordinator = coordinator
         return coordinator
+    }
+
+    private func makeCoordinator(
+        _ started: SpokenNoteStarter.Started, itemIsSaved: Bool, _ environment: SpokenNoteRecorderEnvironment
+    ) -> SpokenNoteRecordingCoordinator {
+        SpokenNoteRecordingCoordinator(
+            store: started.store,
+            item: started.item,
+            itemIsSaved: itemIsSaved,
+            recorder: SystemSpokenNoteTakeRecorder(),
+            transcriber: SystemSpokenNoteTranscriber(),
+            itemWriter: environment.itemWriter
+        )
     }
 
     private func stopTake() async {
@@ -174,6 +221,8 @@ final class SpokenNoteRecorderModel: ObservableObject {
                 : "Recording stopped. What you said so far is saved."
             if let environment { holdBackgroundWork(environment) }
         }
+        // Transcripts being made (a reopened note's, say) keep the app running if the phone locks meanwhile.
+        if !report.transcribingTakeIds.isEmpty, let environment { holdBackgroundWork(environment) }
         // The transcripts are done: the app may suspend.
         if report.transcribingTakeIds.isEmpty, !report.isRecording {
             endBackgroundWork?()

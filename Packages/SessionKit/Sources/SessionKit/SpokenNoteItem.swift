@@ -60,3 +60,12 @@ public enum SpokenNoteItem {
         )
     }
 }
+
+extension LibraryItemRow {
+    /// The note id behind a Library row, or nil when the row isn't a spoken note. The Library opens such a row in the
+    /// note's own screen, not the text item screen (#3108).
+    public var spokenNoteId: String? {
+        guard SpokenNoteItem.isSpokenNote(mediaType: mediaType) else { return nil }
+        return SpokenNoteItem.noteId(fromReference: sourceReference)
+    }
+}

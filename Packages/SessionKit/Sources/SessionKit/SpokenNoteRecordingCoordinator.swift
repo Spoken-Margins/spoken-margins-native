@@ -113,6 +113,8 @@ public actor SpokenNoteRecordingCoordinator {
         self.saveItem = saveItem
         self.now = now
         self.makeTakeId = makeTakeId
+        // A note reopened from the Library has its row: say so, so recovery never offers it again as a first save.
+        if itemIsSaved { store.markItemSaved() }
         SpokenNoteLiveNotes.add(store.noteId)
     }
 
@@ -308,6 +310,7 @@ public actor SpokenNoteRecordingCoordinator {
         do {
             try saveItem(item, savedItem == nil)
             savedItem = item
+            store.markItemSaved()
         } catch {
             // The note is safe in its own file. The next change tries to save the row again (`savedItem` is unchanged).
         }

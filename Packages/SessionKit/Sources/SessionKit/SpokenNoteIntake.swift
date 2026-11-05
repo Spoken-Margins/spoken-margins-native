@@ -5,9 +5,11 @@ import Foundation
 /// The recorder writes the take's audio file into the note's folder; the transcriber finishes later. So a take is
 /// added the moment its audio is safe on disk, with no transcript, and the transcript is filled in when it arrives.
 /// If the transcriber never finishes, the audio is still in the note and nothing dictated is lost. Both steps read
-/// the note from its store, change it and write it back, so the caller runs them one at a time per note (one serial
-/// queue in the app; nothing here locks).
+/// the note from its store, change it and write it back. Each is one short step under one process-wide lock, so two
+/// screens on the same note (one finishing a transcript while the note is opened again) can't write over each other.
 public enum SpokenNoteIntake {
+    private static let changeLock = NSLock()
+
     public enum IntakeError: Error, Equatable, Sendable {
         /// The audio file name is not one plain file name inside the note's folder.
         case unsafeAudioFileName
@@ -37,6 +39,8 @@ public enum SpokenNoteIntake {
             throw IntakeError.noteNotFound
         }
         guard isRegularFile(store.folderURL.appendingPathComponent(audioFileName)) else { throw IntakeError.audioFileMissing }
+        changeLock.lock()
+        defer { changeLock.unlock() }
         var note = try loadForChange(store)
         let take = SpokenNoteTake(id: takeId, audioFileName: audioFileName, durationMs: durationMs, createdAt: now)
         if note.appendTake(take) { try store.save(note) }
@@ -51,6 +55,8 @@ public enum SpokenNoteIntake {
         forTake takeId: String,
         in store: SpokenNoteStore
     ) throws -> SpokenNote {
+        changeLock.lock()
+        defer { changeLock.unlock() }
         var note = try loadForChange(store)
         let sentences = SpokenNoteSentenceGrouping.sentences(from: words)
         if note.setTranscript(sentences, forTake: takeId) { try store.save(note) }
@@ -81,7 +87,7 @@ public enum SpokenNoteIntake {
     }
 
     /// One plain file name: not empty, no separators, not `.` or `..`, and not the note's own file or its set-aside copies.
-    static func isPlainFileName(_ name: String) -> Bool {
+    public static func isPlainFileName(_ name: String) -> Bool {
         guard !name.isEmpty, name.utf8.count <= 200, name != ".", name != ".." else { return false }
         // Printable ASCII only, so no lookalike separator or letter ("ſ" folds to "s" on a case-insensitive volume)
         // can name another file; the app's own recorder only makes plain names.
