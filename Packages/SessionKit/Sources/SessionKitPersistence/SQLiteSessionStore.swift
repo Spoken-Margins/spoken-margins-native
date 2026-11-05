@@ -2367,18 +2367,42 @@ extension SQLiteSessionStore: StructuredDocumentRepository {
         GROUP BY layer.item_id;
         """
 
-    public func loadSharedMarginTallies() throws -> [String: SharedMarginTally] {
+    /// The same SQL with the listener's hidden senders and hidden Margins left out (#3469): the layers of a hidden
+    /// sender and any Margin hidden on its own are not counted, so the Library row, its New badge and the Shared
+    /// Margins filter agree with every other screen. The ids are bound, never spliced into the text. With nothing
+    /// hidden this is `sharedMarginTalliesSQL` itself.
+    static func sharedMarginTalliesSQL(hidden: HiddenSenders) -> (sql: String, bindings: [String]) {
+        guard !hidden.isEmpty else { return (sharedMarginTalliesSQL, []) }
+        let senderIds = hidden.entries.map(\.senderId), marginIds = hidden.margins.map(\.marginId)
+        var conditions = ""
+        var next = 3
+        func placeholders(_ count: Int) -> String {
+            defer { next += count }
+            return (0..<count).map { "?\(next + $0)" }.joined(separator: ", ")
+        }
+        // A layer with no sender id is always counted, as the screens show it: NULL is kept.
+        if !senderIds.isEmpty { conditions += "\n          AND COALESCE(json_extract(layer.payload, '$.senderId'), '') NOT IN (\(placeholders(senderIds.count)))" }
+        if !marginIds.isEmpty { conditions += "\n          AND note.id NOT IN (\(placeholders(marginIds.count)))" }
+        let sql = sharedMarginTalliesSQL.replacingOccurrences(
+            of: "GROUP BY layer.item_id;", with: conditions + "\nGROUP BY layer.item_id;")
+        precondition(sql != sharedMarginTalliesSQL, "the hidden-list conditions found nowhere to go")
+        return (sql, senderIds + marginIds)
+    }
+
+    public func loadSharedMarginTallies(hiding hidden: HiddenSenders = HiddenSenders()) throws -> [String: SharedMarginTally] {
         let timer = StoreReadTimer(readMeter, method: #function)
         var rowCount = 0
         defer { timer?.finish(rows: rowCount, bytes: 0) }
+        let (sql, bindings) = Self.sharedMarginTalliesSQL(hidden: hidden)
         return try withReadConnection { connection in
             var statement: OpaquePointer?
-            guard sqlite3_prepare_v2(connection, Self.sharedMarginTalliesSQL, -1, &statement, nil) == SQLITE_OK else {
+            guard sqlite3_prepare_v2(connection, sql, -1, &statement, nil) == SQLITE_OK else {
                 throw SessionKitError.persistenceFailed("prepare_shared_margin_tallies")
             }
             defer { sqlite3_finalize(statement) }
             bind(statement, index: 1, value: "imported_commentary_interjection")
             bind(statement, index: 2, value: "imported_commentary_layer")
+            for (offset, value) in bindings.enumerated() { bind(statement, index: Int32(3 + offset), value: value) }
             var tallies: [String: SharedMarginTally] = [:]
             while sqlite3_step(statement) == SQLITE_ROW {
                 guard let raw = sqlite3_column_text(statement, 0) else { continue }
