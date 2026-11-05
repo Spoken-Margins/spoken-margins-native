@@ -388,6 +388,108 @@ final class ImportedMarginResendsTests: XCTestCase {
         }
     }
 
+    // MARK: Read aloud on a re-sent Margin (#3452)
+
+    func testASenderWhoFlipsReadAloudOffChangesTheHeldMargin() throws {
+        _ = try send(packet("O", from: "Ada", [("one", 60_000)]))
+        XCTAssertNil(try XCTUnwrap(margins().first).senderReadAloud)
+        _ = try send(packet("U", from: "Ada", [("one", 60_000)], readAloud: false))
+        let held = try margins()
+        XCTAssertEqual(held.count, 1, "A flip must not make a second copy")
+        XCTAssertEqual(held.first?.senderReadAloud, false)
+        XCTAssertEqual(held.first?.readsAloud, false)
+        XCTAssertEqual(held.first?.alsoSharedAs, [id("U", "U-1")], "The alias is added in the same pass")
+    }
+
+    /// The sender's app sends no key for "read aloud" and starts every draft at the default, so a re-share that only
+    /// repeats an earlier Margin must not cancel the earlier "don't read aloud" (audit on 084da4b).
+    func testAResendWithNoChoiceKeepsTheEarlierDontReadAloud() throws {
+        _ = try send(packet("O", from: "Ada", [("one", 60_000)], readAloud: false))
+        _ = try send(packet("U", from: "Ada", [("one", 60_000), ("two", 120_000)]))
+        let held = try margins().first { $0.approvedTranscript == "one" }
+        XCTAssertEqual(held?.senderReadAloud, false)
+        XCTAssertEqual(held?.readsAloud, false)
+        XCTAssertNil(held?.senderReadAloudAt, "Nothing changed, so nothing is stamped")
+        XCTAssertEqual(held?.alsoSharedAs, [id("U", "U-1")], "The alias still arrives")
+        XCTAssertEqual(try margins().count, 2)
+        // An explicit false again, then no choice again: it stays off.
+        _ = try send(packet("V", from: "Ada", [("one", 60_000)], readAloud: false))
+        _ = try send(packet("W", from: "Ada", [("one", 60_000)]))
+        XCTAssertEqual(try margins().first { $0.approvedTranscript == "one" }?.readsAloud, false)
+    }
+
+    func testTheSameChoiceAgainChangesNothing() throws {
+        _ = try send(packet("O", from: "Ada", [("one", 60_000)], readAloud: false))
+        _ = try send(packet("U", from: "Ada", [("one", 60_000)], readAloud: false))
+        let held = try XCTUnwrap(margins().first)
+        XCTAssertEqual(held.senderReadAloud, false)
+        XCTAssertNil(held.senderReadAloudAt, "Only a change is stamped")
+    }
+
+    func testAListenersOwnChoiceBeatsAResentFlip() throws {
+        _ = try send(packet("O", from: "Ada", [("one", 60_000)]))
+        var mine = try XCTUnwrap(margins().first)
+        mine.listenerReadAloud = false
+        try store.saveImportedCommentaryInterjection(mine)
+        _ = try send(packet("U", from: "Ada", [("one", 60_000)], readAloud: false))
+        _ = try send(packet("V", from: "Ada", [("one", 60_000)], readAloud: true))
+        let held = try XCTUnwrap(margins().first)
+        XCTAssertEqual(held.listenerReadAloud, false)
+        XCTAssertNil(held.senderReadAloud, "The held copy is left as it is")
+        XCTAssertEqual(held.readsAloud, false)
+        XCTAssertEqual(held.alsoSharedAs?.count, 2, "The aliases still arrive")
+    }
+
+    func testAMarginWithARecordingHasNoChoiceToChange() throws {
+        _ = try send(packet("O", from: "Ada", [("one", 60_000)], voiceMs: 4_000, recording: true))
+        _ = try send(packet("U", from: "Ada", [("one", 60_000)], voiceMs: 4_000, readAloud: false, recording: true))
+        let held = try XCTUnwrap(margins().first)
+        XCTAssertNil(held.senderReadAloud)
+        XCTAssertEqual(held.readsAloud, false)
+        XCTAssertEqual(held.alsoSharedAs?.count, 1)
+    }
+
+    func testACopyLoadedBeforeTheResendCannotUndoTheFlip() throws {
+        _ = try send(packet("O", from: "Ada", [("one", 60_000)]))
+        var stale = try XCTUnwrap(margins().first)
+        _ = try send(packet("U", from: "Ada", [("one", 60_000)], readAloud: false))
+        stale.resolution = ImportedAnchorResolution(evidenceClass: .unresolved)
+        try store.saveImportedCommentaryInterjection(stale)
+        XCTAssertEqual(try XCTUnwrap(margins().first).senderReadAloud, false)
+    }
+
+    func testTheFlipSurvivesInMemoryToo() throws {
+        let memory = InMemorySessionRepository()
+        let layer = ImportedCommentaryLayer(
+            id: "layer-O", itemId: "item-1", packageDigest: "O", packageId: "package-O",
+            itemIdentity: item, displayLabel: "Ada", importedAt: clock, isEnabled: true
+        )
+        let first = packet("O", from: "Ada", [("one", 60_000)])
+        _ = try ImportedMarginResends.importLayer(layer, interjections: first.margins, repository: memory)
+        var stale = try XCTUnwrap(memory.loadImportedCommentaryInterjections(layerId: "layer-O").first)
+        let again = packet("U", from: "Ada", [("one", 60_000)], readAloud: false)
+        let layerU = ImportedCommentaryLayer(
+            id: "layer-U", itemId: "item-1", packageDigest: "U", packageId: "package-U",
+            itemIdentity: item, displayLabel: "Ada", importedAt: clock.addingTimeInterval(1), isEnabled: true
+        )
+        _ = try ImportedMarginResends.importLayer(layerU, interjections: again.margins, repository: memory)
+        try memory.saveImportedCommentaryInterjection(stale)
+        stale = try XCTUnwrap(memory.loadImportedCommentaryInterjections(layerId: "layer-O").first)
+        XCTAssertEqual(stale.senderReadAloud, false)
+    }
+
+    func testARecordFromBeforeThisChangeDecodesWithoutAStamp() throws {
+        let margin = ImportedCommentaryInterjection(
+            id: "m", layerId: "l", packageScopedId: "s", createdAt: clock,
+            anchorEvidence: PortableAnchorEvidence(anchorType: .media, mediaTimeMs: 1), approvedTranscript: "words", senderReadAloud: false
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        let json = String(decoding: try encoder.encode(margin), as: UTF8.self)
+        XCTAssertFalse(json.contains("senderReadAloudAt"), json)
+        XCTAssertNil(try JSONDecoder().decode(ImportedCommentaryInterjection.self, from: Data(json.utf8)).senderReadAloudAt)
+    }
+
     // MARK: Helpers
 
     private struct Packet {
@@ -409,7 +511,7 @@ final class ImportedMarginResendsTests: XCTestCase {
     /// A packet's Margins as the importer builds them: new local ids, the packet's own scoped ids.
     private func packet(
         _ digest: String, from label: String?, _ margins: [(String, Int)],
-        voiceMs: Int? = nil, evidence: [String] = [], itemId: String? = "item-1", links: [MarginReplyLink] = [], provenance: Bool = true, person: String? = nil
+        voiceMs: Int? = nil, evidence: [String] = [], itemId: String? = "item-1", links: [MarginReplyLink] = [], provenance: Bool = true, person: String? = nil, readAloud: Bool? = nil, recording: Bool = false
     ) -> Packet {
         var occurrences: [Int: Int] = [:]
         return Packet(
@@ -427,9 +529,11 @@ final class ImportedMarginResendsTests: XCTestCase {
                     createdAt: clock.addingTimeInterval(Double(digest.unicodeScalars.first!.value)),
                     anchorEvidence: PortableAnchorEvidence(anchorType: .media, mediaTimeMs: margin.1, machineEvidenceAssetIds: evidence),
                     approvedTranscript: margin.0,
+                    audioPath: recording ? "/tmp/\(digest)-\(index + 1).m4a" : nil,
                     audioDurationMs: voiceMs,
                     replyLinks: links.isEmpty ? nil : links,
-                    shareProvenance: provenance ? captureOrigins[capture] : nil
+                    shareProvenance: provenance ? captureOrigins[capture] : nil,
+                    senderReadAloud: readAloud
                 )
             },
             links: links
