@@ -136,12 +136,22 @@ final class PlaybackDockHitAreaUITests: XCTestCase {
         XCTAssertTrue(start.waitForExistence(timeout: 8), "The seeded article's start control is missing")
         start.tap()
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8), "Now Playing did not open")
+        // #3422: this failed on its first run and passed on the retry in three hosted runs, always with the same line.
+        // The screen exists as soon as it opens, while the article is still starting and the main thread is busy; a
+        // swipe sent into that, and the Library opening after it, race the start. Wait for the start to finish first,
+        // as the dock test does, so the swipe is the only thing happening.
+        let playPause = app.buttons["playback.play.button"]
+        XCTAssertTrue(waitFor(playPause, "label == %@ AND enabled == true", "Pause", timeout: 20),
+                      "The article never reached the visible playing state")
 
         let from = app.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.5)).withOffset(CGVector(dx: 6, dy: 0))
         let to = app.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5))
         from.press(forDuration: 0.05, thenDragTo: to, withVelocity: .default, thenHoldForDuration: 0)
-        XCTAssertTrue(waitFor(element("playback.screen"), "exists == false") && element("home.screen").exists,
-                      "A swipe from the leading edge did not take Now Playing back to Library")
+        // The commit animation and the Library opening take a moment on a busy hosted runner; the wait is for them.
+        let left = waitFor(element("playback.screen"), "exists == false", timeout: 15) && element("home.screen").exists
+        // If it ever fails again, the line says what was on screen, so the next report has more than "did not".
+        let seen = "playback.screen exists: \(element("playback.screen").exists), home.screen exists: \(element("home.screen").exists), play button: \(playPause.exists ? playPause.label : "gone")"
+        XCTAssertTrue(left, "A swipe from the leading edge did not take Now Playing back to Library (\(seen))")
     }
 
     /// J2's downloaded 25-minute episode: the media scrubber and the seconds skips.
