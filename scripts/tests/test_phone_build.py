@@ -429,6 +429,13 @@ info = {"CFBundleExecutable": "SpokenMarginsApp", "CFBundleIdentifier": "com.exa
         "CFBundleVersion": "29", "CFBundlePackageType": "APPL"}
 if os.environ.get("FAKE_PLIST_KEY"):
     info["SMBuildCommit"] = commit
+if "-xcconfig" in args and not os.environ.get("FAKE_DROP_SETTINGS"):
+    # As Xcode does: the file's settings reach the Info.plist keys project.yml maps them to (#3354).
+    keys = {"SM_PHONE_BUILD": "SMPhoneBuild", "SM_SHARE_LINK_CREATION": "SMShareLinkCreation"}
+    for line in open(args[args.index("-xcconfig") + 1]).read().splitlines():
+        name, _, value = line.split("//")[0].partition("=")
+        if name.strip() in keys:
+            info[keys[name.strip()]] = value.strip()
 with open(os.path.join(app, "Info.plist"), "wb") as handle:
     plistlib.dump(info, handle)
 open(os.path.join(app, "embedded.mobileprovision"), "w").write("profile")
@@ -583,11 +590,36 @@ class PhoneBuildTests(unittest.TestCase):
         builds = self.log.read_text()
         self.assertIn('-configuration Release', builds)
         self.assertIn('-allowProvisioningUpdates', builds)
-        self.assertIn('SM_PHONE_BUILD=YES', builds)  # phone-build-only spikes are on (#3086)
+        # Phone-only spikes and link creation are on, from the file the hosted build passes too (#3086, #3354).
+        self.assertIn(f'-xcconfig {SCRIPTS.parent / "Config/PhoneBuild.xcconfig"}', builds)
+        self.assertNotIn('SM_PHONE_BUILD=YES', builds)
         self.assertNotIn('build-for-testing', builds)  # the runner already tested this commit
         self.assertIn(f'Commit {self.tip[:7]} is ready: 2 things to try.', builds)  # the owner's notification
         self.assertFalse(any((self.phone / '.work').iterdir()))  # temporary logs gone; cache persists
         self.assertNotIn('.work', self.git('worktree', 'list'))
+
+    def commit_phone_settings(self):
+        """Give the commit being built its own Config/PhoneBuild.xcconfig, as every commit after #3354 has."""
+        (self.repo / 'Config').mkdir()
+        shutil.copy(SCRIPTS.parent / 'Config/PhoneBuild.xcconfig', self.repo / 'Config/PhoneBuild.xcconfig')
+        self.git('add', '-A')
+        self.git('commit', '-q', '-m', 'Merge pull request #12: phone settings')
+        self.tip = self.env['FAKE_TIP'] = self.git('rev-parse', 'HEAD')
+
+    def test_passes_the_commits_own_phone_settings_and_checks_the_app_carries_them(self):
+        self.commit_phone_settings()
+        done = self.run_build()
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertRegex(self.log.read_text(), r'-xcconfig \S*/\.cache/src/Config/PhoneBuild\.xcconfig ')
+        app_info = plistlib.loads(((self.phone / 'latest').resolve() / 'SpokenMarginsApp.app/Info.plist').read_bytes())
+        self.assertEqual((app_info['SMPhoneBuild'], app_info['SMShareLinkCreation']), ('YES', 'YES'))
+
+    def test_refuses_a_mac_build_that_lost_the_phone_settings(self):
+        self.commit_phone_settings()
+        done = self.run_build(FAKE_DROP_SETTINGS='1')
+        self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+        self.assertIn('the app lacks the phone build settings', done.stdout)
+        self.assertFalse((self.phone / 'latest').exists())
 
     def test_keeps_the_dsym_next_to_the_app_so_crash_frames_can_be_symbolicated(self):
         done = self.run_build(FAKE_DSYM='1')
@@ -904,19 +936,31 @@ class HostedPhoneBuildTests(unittest.TestCase):
         self.env.update({'SM_PHONE_SOURCE': 'hosted', 'FAKE_BASE_GH': str(self.bin / 'gh-base'),
                          'FAKE_HOSTED_ZIP': str(self.zip)})
 
-    def make_zip(self, commit):
-        """The artifact's app: ad-hoc signed, with a profile and the commit in Info.plist."""
-        app = self.tmp / 'hosted' / commit[:7] / 'SpokenMarginsApp.app'
+    def make_zip(self, commit, bare=False):
+        """The artifact's app: ad-hoc signed, with a profile, the commit and the phone settings in Info.plist.
+
+        `bare` leaves out the phone settings, as every hosted build did before #3354."""
+        app = self.tmp / 'hosted' / (commit[:7] + ('-bare' if bare else '')) / 'SpokenMarginsApp.app'
         app.mkdir(parents=True)
         shutil.copy('/usr/bin/true', app / 'SpokenMarginsApp')
         (app / 'Info.plist').write_bytes(plistlib.dumps({
             'CFBundleExecutable': 'SpokenMarginsApp', 'CFBundleIdentifier': 'com.example.fake',
-            'CFBundleVersion': '35', 'CFBundlePackageType': 'APPL', 'SMBuildCommit': commit}))
+            'CFBundleVersion': '35', 'CFBundlePackageType': 'APPL', 'SMBuildCommit': commit,
+            **({} if bare else {'SMPhoneBuild': 'YES', 'SMShareLinkCreation': 'YES'})}))
         (app / 'embedded.mobileprovision').write_text('profile')
         subprocess.check_call(['codesign', '-s', '-', '--force', str(app)], stderr=subprocess.DEVNULL)
         archive = app.parent / 'SpokenMarginsApp.app.zip'
         subprocess.check_call(['ditto', '-c', '-k', '--keepParent', str(app), str(archive)])
         return archive
+
+    def test_refuses_a_hosted_build_without_the_phone_settings(self):
+        """#3354: the hosted archive dropped SM_PHONE_BUILD and SM_SHARE_LINK_CREATION, and nothing noticed."""
+        self.env['FAKE_HOSTED_ZIP'] = str(self.make_zip(self.tip, bare=True))
+        done = self.run_build()
+        self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+        self.assertIn('the app lacks the phone build settings', done.stdout)
+        self.assertIn("SMPhoneBuild is None, but PhoneBuild.xcconfig sets SM_PHONE_BUILD = YES", done.stdout)
+        self.assertFalse((self.phone / 'latest').exists())
 
     def test_takes_the_hosted_build_without_building_and_writes_the_installers_folder(self):
         done = self.run_build()
