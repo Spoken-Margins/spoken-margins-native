@@ -62,7 +62,7 @@ function webAddress(value: string | undefined): string | undefined {
  * spokenmargins.com), so the packet is read from the server this build was made for; with none set, from the address the
  * page was opened at, as the local stub does.
  */
-function serverFor(link: ShareLinkRef): ShareLinkRef {
+function serverFor<T extends { origin: string }>(link: T): T {
   return RELAY_ORIGIN ? { ...link, origin: RELAY_ORIGIN } : link;
 }
 
@@ -165,7 +165,9 @@ export function Arrival({ link, onDone }: { link: ParsedLink; onDone: (playing: 
     [finish, store, toast],
   );
 
-  const reportHref = link.kind === 'link' ? `${serverFor(link.link).origin}/l/${link.link.id}?report` : undefined;
+  // The report form lives on the link server's page, never on the app's host, and the address carries no key (#3355).
+  const reportable = link.kind === 'link' ? serverFor(link.link) : link.kind === 'damaged' ? link.reportable && serverFor(link.reportable) : undefined;
+  const reportHref = reportable ? `${reportable.origin}/l/${reportable.id}?report` : undefined;
 
   if (state.status === 'opening') {
     return (
@@ -190,6 +192,13 @@ export function Arrival({ link, onDone }: { link: ParsedLink; onDone: (playing: 
             {head}
           </h1>
           {rest && <p className="arrival-text">{rest}</p>}
+          {state.message === ARRIVAL_WORDS.cutOff && reportHref && (
+            <p className="arrival-foot">
+              <a href={reportHref} target="_blank" rel="noopener noreferrer">
+                Report this link
+              </a>
+            </p>
+          )}
         </div>
       </div>
     );

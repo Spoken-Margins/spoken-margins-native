@@ -61,6 +61,8 @@ extension Gate1AppModel {
 
     /// `choose` returns the feed to follow, or nil when the listener has to choose first.
     private func perform(
+        fileID: String = #fileID,
+        line: Int = #line,
         choose: (FollowedSourceCoordinator) async throws -> SourceCandidateEvidence?
     ) async -> FollowLinkOutcome {
         let alreadyFollowed = Set(feedSubscriptions.map(\.id))
@@ -68,7 +70,7 @@ extension Gate1AppModel {
             let store = try requireStore()
             let coordinator = requireFollowedSourceCoordinator(store: store)
             guard let candidate = try await choose(coordinator) else {
-                reportConfirmation(Self.chooseFeedMessage)
+                reportConfirmation(Self.chooseFeedMessage, fileID: fileID, line: line)
                 return .needsChoice
             }
             let subscription = try await coordinator.follow(candidate: candidate)
@@ -86,7 +88,7 @@ extension Gate1AppModel {
             )
             reportConfirmation(
                 FollowPasteDecision.followedMessage(showTitle: title, wasAlreadyFollowed: wasAlreadyFollowed),
-                action: undo)
+                action: undo, fileID: fileID, line: line)
             // The first look at the new show's episodes can wait on the network; the sheet does not.
             refreshFollowedSources(force: true)
             return .followed
@@ -94,9 +96,9 @@ extension Gate1AppModel {
             if let coordinator = followedSourceCoordinator {
                 diagnostics["followSourceFailure"] = FollowedSourceMatching.stampedDiagnostic(await coordinator.failureDiagnostic(for: error))
             }
-            reportFailure(error)
-            let line = (error as? URLError).map { Self.userFacingMessage(for: $0) } ?? ListenerErrorText.message(for: error)
-            return .stopped(line)
+            reportFailure(error, fileID: fileID, line: line)
+            let reason = (error as? URLError).map { Self.userFacingMessage(for: $0) } ?? ListenerErrorText.message(for: error)
+            return .stopped(reason)
         }
     }
 

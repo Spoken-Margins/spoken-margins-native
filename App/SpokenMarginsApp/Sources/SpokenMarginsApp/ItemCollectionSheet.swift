@@ -88,9 +88,9 @@ struct ItemCollectionSheet: View {
 
     /// Saves one change, then reloads so the sheet and the Margins scope show what is stored.
     @discardableResult
-    private func commit(_ change: (SQLiteSessionStore) throws -> Void) -> Bool {
+    private func commit(fileID: String = #fileID, line: Int = #line, _ change: (SQLiteSessionStore) throws -> Void) -> Bool {
         guard let store = model.store else {
-            model.reportFailure("The Library isn't ready yet.")
+            model.reportFailure("The Library isn't ready yet.", fileID: fileID, line: line)
             return false
         }
         defer { load() }
@@ -99,7 +99,7 @@ struct ItemCollectionSheet: View {
             problem = nil
             return true
         } catch {
-            model.reportFailure(error, context: "Collection change failed")
+            model.reportFailure(error, context: "Collection change failed", fileID: fileID, line: line)
             return false
         }
     }

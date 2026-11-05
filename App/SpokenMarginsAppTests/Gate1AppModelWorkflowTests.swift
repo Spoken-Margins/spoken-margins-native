@@ -398,6 +398,35 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertNotEqual(model.feedbackEvent?.kind, .error)
     }
 
+    /// #3344: a toast raised inside `run { }` names the line that called `run`, not `run`'s own catch.
+    func testToastThroughRunNamesTheCallerNotTheWrapper() throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        let callLine = #line + 1
+        model.run { _ in throw SessionKitError.invalidCommandForState("toast_site_test") }
+        let file = try XCTUnwrap(model.diagnosticsExportFileURL())
+        defer { try? FileManager.default.removeItem(at: file) }
+        let payload = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: String])
+        let eventJSON = try XCTUnwrap(payload["playbackEvents"]?.data(using: .utf8))
+        let events = try JSONDecoder().decode(DeveloperDiagnosticRecording.Capture.self, from: eventJSON).events
+        let shown = try XCTUnwrap(events.last { $0.kind == "feedback.shown" })
+        XCTAssertEqual(shown.fields["site"], "Gate1AppModelWorkflowTests.swift:\(callLine)")
+    }
+
+    /// #3362: while a written Margin is open every chapter is blocked, so the banner must not say "Try another one".
+    func testChapterTapWithAWrittenMarginOpenDoesNotSuggestAnotherChapter() throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        model.beginWrittenMargin()
+        XCTAssertNotNil(model.writtenMarginDraft)
+        defer { model.cancelWrittenMargin() }
+
+        model.jumpToMediaChapter(MediaTimelineChapter(id: "any-chapter", title: "Any", startMs: 0, transcriptSegmentId: "any"))
+
+        XCTAssertEqual(model.feedbackEvent?.message, ListenerErrorText.fallback)
+    }
+
     /// #2224: the export carries the voice download log from its file, so a download from an earlier launch shows.
     func testDiagnosticsExportCarriesTheVoiceDownloadLogFromItsFile() throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("voice-log-export-\(UUID().uuidString)", isDirectory: true)
@@ -3473,6 +3502,86 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         assertDeleted(doomedFiles, kept: liveFiles)
         XCTAssertTrue(try store.loadInterjections(itemId: "item-pill").isEmpty)
         XCTAssertEqual(try store.loadInterjections(itemId: liveID).count, 1)
+    }
+
+    /// #3406: the model's permanent delete, single and bulk, takes a friend's imported packet folder off the phone
+    /// at that moment, and only that item's. The host tests cover `FriendPacketFolders`; this ties the model to it.
+    private func giveFriendRecording(
+        store: SQLiteSessionStore, model: Gate1AppModel, itemId: String
+    ) throws -> URL {
+        let folder = try model.applicationSupportDirectory()
+            .appending(path: "SpokenMargins/IncomingPackages/\(UUID().uuidString)", directoryHint: .isDirectory)
+        let voice = folder.appending(path: "assets/voice.m4a")
+        try FileManager.default.createDirectory(at: voice.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("friend voice".utf8).write(to: voice)
+        try Data("packet".utf8).write(to: folder.appending(path: "package.spokenmargins"))
+        let date = Date(timeIntervalSince1970: 1_777_000_000)
+        try store.saveImportedCommentaryLayer(ImportedCommentaryLayer(
+            id: "layer-\(itemId)", itemId: itemId, packageDigest: "digest-\(itemId)", packageId: "package-\(itemId)",
+            itemIdentity: SharedItemIdentity(itemType: .text, title: "Essay"), displayLabel: "Friend", importedAt: date))
+        try store.saveImportedCommentaryInterjection(ImportedCommentaryInterjection(
+            id: "margin-\(itemId)", layerId: "layer-\(itemId)", packageScopedId: "margin-001", createdAt: date,
+            anchorEvidence: PortableAnchorEvidence(anchorType: .text, exactText: "quiet mornings"),
+            approvedTranscript: "A friend's voice", audioPath: voice.path, audioDurationMs: 500))
+        addTeardownBlock { try? FileManager.default.removeItem(at: folder) }
+        return folder
+    }
+
+    func testPermanentDeleteRemovesTheFriendsImportedFolderAtOnceAndOnlyThatItems() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "permanent-delete-friend-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let databaseURL = root.appending(path: "library.sqlite")
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: databaseURL)
+        model.resetAndSeed()
+        let store = try SQLiteSessionStore(path: databaseURL.path)
+        model.importTitle = "Second Item"
+        model.importText = "A second item that stays in the Library."
+        model.importTextItem()
+        let liveID = model.selectedItem.id
+        let doomedFolder = try giveFriendRecording(store: store, model: model, itemId: "item-pill")
+        let liveFolder = try giveFriendRecording(store: store, model: model, itemId: liveID)
+        model.moveItemToTrash(id: "item-pill")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: doomedFolder.path), "Recently Deleted keeps it, so Undo still plays")
+
+        model.permanentlyDeleteItem(id: "item-pill")
+        try await waitFor("the friend's folder to be removed", timeoutNanoseconds: 5_000_000_000) {
+            !FileManager.default.fileExists(atPath: doomedFolder.path)
+        }
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: liveFolder.path), "another item's friend folder is never touched")
+    }
+
+    func testEmptyRecentlyDeletedRemovesEachTrashedItemsFriendFolder() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "empty-trash-friend-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let databaseURL = root.appending(path: "library.sqlite")
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: databaseURL)
+        model.resetAndSeed()
+        let store = try SQLiteSessionStore(path: databaseURL.path)
+        model.importTitle = "Second Item"
+        model.importText = "A second item, also trashed."
+        model.importTextItem()
+        let secondID = model.selectedItem.id
+        model.importTitle = "Third Item"
+        model.importText = "A third item that stays."
+        model.importTextItem()
+        let liveID = model.selectedItem.id
+        let first = try giveFriendRecording(store: store, model: model, itemId: "item-pill")
+        let second = try giveFriendRecording(store: store, model: model, itemId: secondID)
+        let live = try giveFriendRecording(store: store, model: model, itemId: liveID)
+        model.moveItemToTrash(id: "item-pill")
+        model.moveItemToTrash(id: secondID)
+
+        model.permanentlyDeleteRecentlyDeletedItems()
+        try await waitFor("both trashed items' friend folders to be removed", timeoutNanoseconds: 5_000_000_000) {
+            !FileManager.default.fileExists(atPath: first.path) && !FileManager.default.fileExists(atPath: second.path)
+        }
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: live.path), "a live item's friend folder is never touched")
     }
 
     func testRelaunchListsRecentlyDeletedItemsNewestFirstFromTheLaunchRead() throws {

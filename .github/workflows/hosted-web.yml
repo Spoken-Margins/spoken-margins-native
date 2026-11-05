@@ -30,8 +30,9 @@ on:
   workflow_dispatch:
   pull_request:
     branches: [next, main]  # either trunk (#1492); the checks read the PR's own base
-    # Only the web app (and this file, so a change to the job proves itself). A PR that touches neither starts no job.
-    paths: ['Web/**', '.github/workflows/hosted-web.yml']
+    # The web app, the share-link page its specs drive on the real server (#3355), and this file, so a change to the job
+    # proves itself. A PR that touches none of them starts no job.
+    paths: ['Web/**', 'research/B4/server/internal/links/**', '.github/workflows/hosted-web.yml']
 
 permissions:
   contents: read
@@ -71,6 +72,21 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
           cache-dependency-path: Web/package-lock.json
+      # The specs that open a share link on the real server build research/B4/server (#3355), and this image has no Go.
+      # Its go.mod `toolchain` line names the exact patch release; setup-go v5's go-version-file reads only the `go` line
+      # (the minimum), so read the toolchain line here, as hosted-portable.yml does.
+      - name: Read the Go toolchain from go.mod
+        id: gotool
+        if: steps.present.outputs.present == 'true'
+        run: |
+          v=$(sed -n 's/^toolchain go//p' research/B4/server/go.mod)
+          [ -n "$v" ] || { echo "no toolchain line in go.mod" >&2; exit 1; }
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        if: steps.present.outputs.present == 'true'
+        with:
+          go-version: ${{ steps.gotool.outputs.version }}
+          cache: false  # research/B4/server has no outside modules, so no go.sum to key a cache on
       - name: Install packages
         if: steps.present.outputs.present == 'true'
         working-directory: Web

@@ -363,6 +363,13 @@ def linked_issue(pull: dict) -> int | None:
     return int(branch.group(1)) if branch else None
 
 
+def closing_issues(pull: dict) -> list[int]:
+    """Only the issues the PR's title or body closes by a closing word (GitHub's close/fix/resolve family). A branch,
+    "(#n)" in the title or "Part of #n" is not here: those work on an issue without closing it."""
+    text = f'{pull.get("title") or ""}\n{pull.get("body") or ""}'
+    return list(dict.fromkeys(int(n) for n in CLOSING.findall(text)))
+
+
 def check_summary(check_runs: list[dict]) -> dict:
     """Failing and still-running checks on the head. Per check name only the newest run that gave a verdict counts,
     so a later green run of a check clears its earlier failure; skipped and cancelled runs say nothing."""
@@ -552,7 +559,7 @@ def analyse(bundle: dict, classify=None) -> dict:
     return {'number': pull.get('number'), 'title': pull.get('title') or '', 'url': pull.get('html_url') or '',
             'head': head, 'head7': head7, 'draft': bool(pull.get('draft')), 'mergeable': word,
             'labels': [label for label in SHOWN_LABELS if label in labels], 'issue': linked_issue(pull),
-            'issues': linked_issues(pull),
+            'issues': linked_issues(pull), 'closes': closing_issues(pull),
             'lane': short(lane), 't3': short(t3),
             'lane_elsewhere': short(reports[-1]) if reports and not on_head else None,
             'audit': ({'verdict': 'clean' if audit['clean'] else 'blocking', 'who': audit['who'], 'at': audit['at']}
@@ -606,7 +613,11 @@ def audit_text(row: dict) -> str:
 
 def line(row: dict) -> str:
     marks = '!! ' if any(f['severity'] == RED for f in row['flags']) else ('!  ' if row['flags'] else '   ')
-    issue = f'closes #{row["issue"]}' if row['issue'] else 'no linked issue'
+    closes = row.get('closes') or []
+    works_on = [n for n in (row.get('issues') or ([row['issue']] if row.get('issue') else [])) if n not in closes]
+    parts = ([f'closes {", ".join(f"#{n}" for n in closes)}'] if closes else []) + \
+            ([f'works on {", ".join(f"#{n}" for n in works_on)}'] if works_on else [])
+    issue = '; '.join(parts) or 'no linked issue'
     labels = ' '.join(row['labels']) or 'no labels'
     title = row['title'] if len(row['title']) <= 60 else row['title'][:59] + '…'
     checks = row['checks']

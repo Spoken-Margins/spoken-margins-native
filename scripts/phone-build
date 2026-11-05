@@ -115,6 +115,7 @@ sys.path.insert(0, str(PUBLIC / 'scripts'))
 import comment_trust  # noqa: E402  (#1822: whose comments the plan believes)
 import lane_slots  # noqa: E402
 import ops_checkout  # noqa: E402  (#2372: scheduled jobs run from a checkout pinned to main)
+import phone_build_settings  # noqa: E402  (#3354: the settings both phone builds share)
 from trunk import trunk_branch  # noqa: E402  (#1492: the branch it builds)
 
 REPO = 'Spoken-Margins/spoken-margins-native'
@@ -1707,8 +1708,11 @@ def record_attempt(sha: str, result: str) -> None:
         {'sha': sha, 'result': result, 'at': datetime.datetime.now().isoformat(timespec='seconds')}) + '\n')
 
 
-def check_app(app: Path, sha: str, cwd: Path, log: Path) -> dict:
-    """The checks every phone build passes before the installer may see it; returns its Info.plist."""
+def check_app(app: Path, sha: str, cwd: Path, log: Path, settings: dict[str, str] | None = None) -> dict:
+    """The checks every phone build passes before the installer may see it; returns its Info.plist.
+
+    `settings` are the phone-only build settings the app must carry (Config/PhoneBuild.xcconfig, #3354); None
+    skips that check, for a commit from before the file existed."""
     if not (app / 'embedded.mobileprovision').exists():
         raise BuildFailed(f'{app} is missing or has no provisioning profile, so a phone would refuse it')
     if run_logged(['codesign', '--verify', '--strict', str(app)], cwd, log) != 0:
@@ -1716,6 +1720,10 @@ def check_app(app: Path, sha: str, cwd: Path, log: Path) -> dict:
     info = plistlib.loads((app / 'Info.plist').read_bytes())
     if 'SMBuildCommit' in info and info['SMBuildCommit'] != sha:
         raise BuildFailed(f'the app says it was built from {info["SMBuildCommit"]!r}, not {sha}')
+    if settings is not None:
+        problems = phone_build_settings.mismatches(info, settings)
+        if problems:
+            raise BuildFailed('the app lacks the phone build settings: ' + '; '.join(problems))
     return info
 
 
@@ -1981,7 +1989,7 @@ def fetch_hosted(hosted: dict) -> int:
         if run_logged(['ditto', '-x', '-k', str(archive), str(work / 'app')], work, log) != 0:
             raise BuildFailed(f'could not unpack {archive.name}')
         app = work / 'app' / APP_NAME
-        info = check_app(app, sha, work, log)
+        info = check_app(app, sha, work, log, phone_build_settings.read())
         dsym_zip = work / 'download' / f'{APP_NAME}.dSYM.zip'
         if dsym_zip.is_file() and run_logged(['ditto', '-x', '-k', str(dsym_zip), str(work / 'dsym')], work, log) != 0:
             raise BuildFailed(f'could not unpack {dsym_zip.name}')
@@ -2083,17 +2091,22 @@ def build(sha: str) -> int:
             shutil.rmtree(work / 'dd-sim', ignore_errors=True)
             checks = 'host tests (--plan fast) and the simulator build passed here, on this exact commit'
         say(f'checks: {checks}')
+        # The phone-only settings are the commit's own list, the same file the hosted build passes (#3354). A
+        # commit from before the file gets this checkout's list, and its app isn't checked for keys it predates.
+        own = src / 'Config' / 'PhoneBuild.xcconfig'
+        xcconfig = own if own.is_file() else phone_build_settings.XCCONFIG
+        settings = phone_build_settings.read(own) if own.is_file() else None
         say('building the signed Release app for iPhone (waits for a build slot)')
         release = 'started'
         started = datetime.datetime.now()
         if run_logged([*lane, *project, '-configuration', 'Release', '-destination', 'generic/platform=iOS',
-                       '-derivedDataPath', str(derived), '-allowProvisioningUpdates',
-                       f'SM_BUILD_COMMIT={sha}', 'SM_PHONE_BUILD=YES', 'build'], src, log) != 0:
+                       '-derivedDataPath', str(derived), '-allowProvisioningUpdates', '-xcconfig', str(xcconfig),
+                       f'SM_BUILD_COMMIT={sha}', 'build'], src, log) != 0:
             advice = signing_advice(log.read_text(errors='replace'))
             raise BuildFailed('the iPhone build failed' + (f'. Signing needs the owner: {advice}' if advice else ''))
         seconds = int((datetime.datetime.now() - started).total_seconds())
         app = derived / 'Build/Products/Release-iphoneos' / APP_NAME
-        info = check_app(app, sha, src, log)
+        info = check_app(app, sha, src, log, settings)
         release = 'built'
         deliver(app, info, sha, stamp, log, seconds, checks,
                 dsym=app.parent / f'{APP_NAME}.dSYM')
