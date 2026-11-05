@@ -47,7 +47,7 @@ public enum SharedMarginReview {
 
     public static func senderLabel(of layer: ImportedCommentaryLayer) -> String {
         let label = layer.displayLabel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return label.isEmpty ? "Imported collection" : label
+        return label.isEmpty ? SharedPacketArrival.importedCollectionLabel : label
     }
 
     /// The item's new shared Margins in playing order: by place in the episode, then, where two share a place,

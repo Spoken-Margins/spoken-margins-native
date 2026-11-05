@@ -51,8 +51,7 @@ public struct ReplyBackOffer: Equatable, Sendable {
         var labels: [String] = []
         for layer in friends {
             // A friend with no name is "your friend", not "Imported collection".
-            let label = layer.displayLabel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            if !label.isEmpty, !labels.contains(label) { labels.append(label) }
+            if let label = SharedPacketArrival.senderName(layer.displayLabel), !labels.contains(label) { labels.append(label) }
         }
         return ReplyBackOffer(replies: replies, others: others, friendLabels: labels)
     }

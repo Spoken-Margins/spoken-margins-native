@@ -444,7 +444,7 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
                     }
                 return Build23ImportedLayerSnapshot(
                     id: layer.id,
-                    senderLabel: layer.displayLabel?.nilIfEmpty ?? "Unsigned sender",
+                    senderLabel: SharedPacketArrival.snapshotSenderLabel(layer.displayLabel),
                     itemTitle: layer.itemIdentity.title,
                     integrity: layer.integrityStatus,
                     sourceResolution: layer.sourceResolutionStatus,
@@ -769,7 +769,7 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
             fileURL: fileURL,
             fileByteCount: fileByteCount,
             itemTitle: verified.manifest.item.title,
-            senderLabel: verified.manifest.senderDisplayLabel?.nilIfEmpty ?? "Unsigned sender",
+            senderLabel: SharedPacketArrival.snapshotSenderLabel(verified.manifest.senderDisplayLabel),
             transport: transport(verified.manifest.itemTransport.kind),
             margins: margins,
             voiceAssetCount: verified.manifest.assets.filter {
