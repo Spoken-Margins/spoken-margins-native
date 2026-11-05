@@ -28,7 +28,7 @@ Every piece of state has exactly one writer.
 2. Post your status comment: your issues, one line each, with state `todo`.
 3. Make the cluster branch from `main` (`git fetch origin && git switch -c ws/cluster-<slug> origin/main`), push it, and work in your own worktree.
 4. For each issue, hand a background agent a brief: the issue, the files, what done looks like, and the checks below. It works on its own sub-branch and opens a sub-PR into the cluster branch. It returns a summary of under 300 words: what changed, the checks run, and the sub-PR number.
-5. Review the sub-PR's diff summary (have a helper agent review the full diff if it is large), then merge it into the cluster branch yourself.
+5. Review the sub-PR's diff summary (have a helper agent review the full diff if it is large), then merge it into the cluster branch yourself. The owner confirmed this on 2026-11-05: leads merge sub-PRs into their own cluster branch, never `main`.
 6. When the list is done, open one rollup PR from the cluster branch into `main`, and arm it ([lane-request skill](../../.claude/skills/lane-request/SKILL.md)).
 7. Update your status comment at every state change: `todo`, `in progress`, `sub-PR #N`, `merged into cluster`, `in rollup #N`, `handed back`.
 
