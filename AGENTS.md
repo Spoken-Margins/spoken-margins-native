@@ -36,6 +36,7 @@ The owner's words and the detail are in [docs/decisions.md](docs/decisions.md) u
 - **Database changes stay backward compatible.** A full migration happens only after the app tells the listener and they tap to migrate (2026-10-10).
 - **Gated features are never switched on remotely.** The gate is a build setting or `#if`, never a value read from the network or the device, and a gated feature reaches testers only in an upload whose Notes for Review describe it (2026-10-17).
 - **Fetch a publisher's page only on a listener's action, never in the background** (2026-10-21).
+- **Source text or a transcript goes to an on-device model only when its link back is verified public at generation** (2026-11-05). A listener's own Margins are not source text. The gate is #3449; until it ships, don't add a new prompt that holds source text without it.
 - **Owner ideas are challenges, not directives.** Solve the challenge his suggestion serves (2026-10-05).
 - **Timeline shows scenes and rich source elements, not ordinary passages** (2026-10-14).
 - **A public release of share links, Listening Maps and the App Store app waits for the lawyer.** Share-link creation stays behind a build-time flag; the rules are in the record under 2026-10-20 and 2026-11-02.
