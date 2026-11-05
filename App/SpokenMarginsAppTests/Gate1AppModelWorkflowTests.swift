@@ -398,6 +398,35 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertNotEqual(model.feedbackEvent?.kind, .error)
     }
 
+    /// #3344: a toast raised inside `run { }` names the line that called `run`, not `run`'s own catch.
+    func testToastThroughRunNamesTheCallerNotTheWrapper() throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        let callLine = #line + 1
+        model.run { _ in throw SessionKitError.invalidCommandForState("toast_site_test") }
+        let file = try XCTUnwrap(model.diagnosticsExportFileURL())
+        defer { try? FileManager.default.removeItem(at: file) }
+        let payload = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: String])
+        let eventJSON = try XCTUnwrap(payload["playbackEvents"]?.data(using: .utf8))
+        let events = try JSONDecoder().decode(DeveloperDiagnosticRecording.Capture.self, from: eventJSON).events
+        let shown = try XCTUnwrap(events.last { $0.kind == "feedback.shown" })
+        XCTAssertEqual(shown.fields["site"], "Gate1AppModelWorkflowTests.swift:\(callLine)")
+    }
+
+    /// #3362: while a written Margin is open every chapter is blocked, so the banner must not say "Try another one".
+    func testChapterTapWithAWrittenMarginOpenDoesNotSuggestAnotherChapter() throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        model.beginWrittenMargin()
+        XCTAssertNotNil(model.writtenMarginDraft)
+        defer { model.cancelWrittenMargin() }
+
+        model.jumpToMediaChapter(MediaTimelineChapter(id: "any-chapter", title: "Any", startMs: 0, transcriptSegmentId: "any"))
+
+        XCTAssertEqual(model.feedbackEvent?.message, ListenerErrorText.fallback)
+    }
+
     /// #2224: the export carries the voice download log from its file, so a download from an earlier launch shows.
     func testDiagnosticsExportCarriesTheVoiceDownloadLogFromItsFile() throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("voice-log-export-\(UUID().uuidString)", isDirectory: true)
