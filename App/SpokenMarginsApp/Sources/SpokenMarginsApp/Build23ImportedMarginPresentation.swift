@@ -4,45 +4,9 @@ import SessionKit
 enum Build23ImportedLayerPresentation {
     static let provenanceSymbolName = "person.crop.circle"
 
-    static func revealModeLabel(_ mode: ImportedCommentaryRevealMode) -> String {
-        switch mode {
-        case .fresh:
-            return "Fresh"
-        case .companion:
-            return "Companion"
-        case .guided:
-            return "Guided"
-        @unknown default:
-            return "Companion"
-        }
-    }
-
-    static func integrityLabel(_ status: ImportedCommentaryIntegrityStatus) -> String {
-        switch status {
-        case .integrityCheckedUnsigned:
-            return "Integrity checked · sender not cryptographically verified"
-        @unknown default:
-            return "Integrity status unavailable"
-        }
-    }
-
-    static func sourceResolutionLabel(_ status: ImportedSourceResolutionStatus) -> String {
-        switch status {
-        case .pending:
-            return "Matching positions in your episode"
-        case .resolved:
-            return "Resolved"
-        case .contextOnly:
-            return "Context only"
-        case .ambiguous:
-            return "Ambiguous"
-        case .wrongSource:
-            return "Wrong source"
-        case .unavailable:
-            return "Unavailable"
-        @unknown default:
-            return "Unavailable"
-        }
+    /// How the friend's Margins play, in the friend's words (`FriendArrivalWords`).
+    static func playModeLabel(_ mode: ImportedCommentaryRevealMode) -> String {
+        FriendArrivalWords.playModeLabel(mode)
     }
 
     static func marginResolutionLabel(_ resolution: AnchorResolutionEvidenceClass) -> String {
@@ -64,7 +28,7 @@ enum Build23ImportedLayerPresentation {
         case .recipientConfirmed:
             return "Recipient confirmed"
         case .ambiguous:
-            return "Ambiguous"
+            return "Could fit more than one place"
         case .absentFromRecipientEdition:
             return "Not found in this edition"
         case .unresolved:
@@ -75,22 +39,10 @@ enum Build23ImportedLayerPresentation {
     }
 
     static func provenanceAccessibilityLabel(for layer: Build23ImportedLayerSnapshot) -> String {
-        let enabledLabel = layer.isEnabled ? "Layer enabled" : "Layer disabled"
-        let mutedLabel = layer.isMuted ? "Layer muted" : "Layer not muted"
-        let proposalLabel = layer.listeningMapProposalCount == 1
-            ? "1 listening map proposal"
-            : "\(layer.listeningMapProposalCount) listening map proposals"
-
-        return [
-            "Imported Margins, separate shared layer",
-            "Sender label \(layer.senderLabel)",
-            integrityLabel(layer.integrity),
-            "Source resolution \(sourceResolutionLabel(layer.sourceResolution))",
-            enabledLabel,
-            mutedLabel,
-            "Reveal mode \(revealModeLabel(layer.revealMode))",
-            proposalLabel
-        ].joined(separator: ". ")
+        FriendArrivalWords.layerAccessibilityLabel(
+            senderLabel: layer.senderLabel, isEnabled: layer.isEnabled, isMuted: layer.isMuted,
+            mode: layer.revealMode, placementProblem: FriendArrivalWords.placementProblem(layer.sourceResolution)
+        )
     }
 }
 
@@ -117,7 +69,7 @@ private struct Build23ImportedLayerList: View, Equatable {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Shared Margins")
+            Text(FriendArrivalWords.sectionTitle(senderLabels: layers.map(\.senderLabel)))
                 .font(.title3.weight(.bold))
                 .screenTitle()
                 .foregroundStyle(AppColors.text)
@@ -142,8 +94,13 @@ private struct Build23ImportedLayerList: View, Equatable {
                 provenanceHeader(layer)
                 if showsMargins { marginRail(layer) }
 
-                DisclosureGroup("Layer options") {
+                // The honest note and the controls a listener may still want sit behind one plain title (#3247).
+                DisclosureGroup(FriendArrivalWords.aboutTitle) {
                     VStack(alignment: .leading, spacing: 12) {
+                        Text(FriendArrivalWords.aboutNote)
+                            .font(.footnote)
+                            .foregroundStyle(AppColors.secondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
                         layerStateControls(layer)
                         Label(proposalCountLabel(layer.listeningMapProposalCount), systemImage: "point.3.connected.trianglepath.dotted")
                             .font(.subheadline)
@@ -161,12 +118,9 @@ private struct Build23ImportedLayerList: View, Equatable {
         VStack(alignment: .leading, spacing: 12) {
             Label {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Shared by \(layer.senderLabel)")
+                    Text(FriendArrivalWords.fromLine(senderLabel: layer.senderLabel))
                         .font(.headline)
                         .foregroundStyle(AppColors.text)
-                    Text("Separate imported layer")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(AppColors.plum)
                 }
             } icon: {
                 Image(systemName: Build23ImportedLayerPresentation.provenanceSymbolName)
@@ -182,15 +136,9 @@ private struct Build23ImportedLayerList: View, Equatable {
                 .font(.title3.weight(.semibold))
                 .foregroundStyle(AppColors.text)
 
-            VStack(alignment: .leading, spacing: 8) {
-                stateLabel(
-                    Build23ImportedLayerPresentation.integrityLabel(layer.integrity),
-                    systemImage: "checkmark.shield"
-                )
-                stateLabel(
-                    "Source resolution: \(Build23ImportedLayerPresentation.sourceResolutionLabel(layer.sourceResolution))",
-                    systemImage: "scope"
-                )
+            // A passing check says nothing; only a problem with placing the Margins shows (#3247).
+            if let problem = FriendArrivalWords.placementProblem(layer.sourceResolution) {
+                stateLabel(problem, systemImage: "scope")
             }
         }
     }
@@ -198,7 +146,7 @@ private struct Build23ImportedLayerList: View, Equatable {
     private func layerStateControls(_ layer: Build23ImportedLayerSnapshot) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Toggle(
-                "Layer enabled",
+                "\(FriendArrivalWords.possessiveMargins(senderLabel: layer.senderLabel)) on",
                 isOn: Binding(
                     get: { layer.isEnabled },
                     set: { coordinator.send(.setLayerEnabled(id: layer.id, enabled: $0)) }
@@ -207,7 +155,7 @@ private struct Build23ImportedLayerList: View, Equatable {
             .tint(AppColors.evergreen)
 
             Toggle(
-                "Layer muted",
+                "Mute \(FriendArrivalWords.possessiveMargins(senderLabel: layer.senderLabel))",
                 isOn: Binding(
                     get: { layer.isMuted },
                     set: { coordinator.send(.setLayerMuted(id: layer.id, muted: $0)) }
@@ -216,14 +164,14 @@ private struct Build23ImportedLayerList: View, Equatable {
             .tint(AppColors.evergreen)
 
             HStack(alignment: .firstTextBaseline, spacing: 12) {
-                Label("Reveal mode", systemImage: "eye")
+                Label(FriendArrivalWords.playModeTitle, systemImage: "eye")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(AppColors.text)
 
                 Spacer(minLength: 12)
 
                 Picker(
-                    "Reveal mode",
+                    FriendArrivalWords.playModeTitle,
                     selection: Binding(
                         get: { layer.revealMode.rawValue },
                         set: { rawValue in
@@ -235,13 +183,13 @@ private struct Build23ImportedLayerList: View, Equatable {
                     )
                 ) {
                     ForEach(ImportedCommentaryRevealMode.allCases, id: \.rawValue) { mode in
-                        Text(Build23ImportedLayerPresentation.revealModeLabel(mode))
+                        Text(Build23ImportedLayerPresentation.playModeLabel(mode))
                             .tag(mode.rawValue)
                     }
                 }
                 .pickerStyle(.menu)
                 .accessibilityValue(Text(
-                    Build23ImportedLayerPresentation.revealModeLabel(layer.revealMode)
+                    Build23ImportedLayerPresentation.playModeLabel(layer.revealMode)
                 ))
                 .accessibilityIdentifier("build23.imported.layer.\(layer.id).reveal-mode")
             }
@@ -266,7 +214,7 @@ private struct Build23ImportedLayerList: View, Equatable {
                 .foregroundStyle(AppColors.text)
 
             if layer.margins.isEmpty {
-                Text("No Margins in this layer")
+                Text("No Margins here")
                     .font(.subheadline)
                     .foregroundStyle(AppColors.secondaryText)
             } else {
@@ -297,7 +245,7 @@ private struct Build23ImportedLayerList: View, Equatable {
                     .accessibilityLabel(Text("Placement resolution. \(label)"))
             }
 
-            if margin.hasVoice {
+            if margin.canListen {
                 Button {
                     coordinator.send(.listenToMargin(layerID: layerID, marginID: margin.id))
                 } label: {
@@ -346,10 +294,10 @@ private struct Build23ImportedLayerList: View, Equatable {
     private var emptyState: some View {
         ExperienceSurface {
             VStack(alignment: .leading, spacing: 8) {
-                Label("No imported layers", systemImage: "square.3.layers.3d")
+                Label("No Margins from friends yet", systemImage: "square.3.layers.3d")
                     .font(.headline)
                     .foregroundStyle(AppColors.text)
-                Text("Imported shared Margins will appear here as separate layers.")
+                Text("Margins from friends will appear here.")
                     .font(.subheadline)
                     .foregroundStyle(AppColors.secondaryText)
             }

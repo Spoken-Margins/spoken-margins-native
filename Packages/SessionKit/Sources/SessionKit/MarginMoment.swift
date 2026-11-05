@@ -24,10 +24,12 @@ public struct MarginMomentAnchor: Sendable, Equatable {
     public let caption: String?
     /// The listener's own Margin, played in a review as the parent of a friend's reply (#3221).
     public let isYours: Bool
+    /// A friend's written Margin, read aloud by the iPhone's voice; the pinned card says "wrote this", not "speaking" (#3365).
+    public let isReadAloud: Bool
 
     public init(
         marginId: String, mediaTimeMs: Int, label: String? = nil, isApproximate: Bool = false,
-        caption: String? = nil, isYours: Bool = false
+        caption: String? = nil, isYours: Bool = false, isReadAloud: Bool = false
     ) {
         self.marginId = marginId
         self.mediaTimeMs = mediaTimeMs
@@ -35,6 +37,7 @@ public struct MarginMomentAnchor: Sendable, Equatable {
         self.isApproximate = isApproximate
         self.caption = caption
         self.isYours = isYours
+        self.isReadAloud = isReadAloud
     }
 }
 

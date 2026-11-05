@@ -1143,10 +1143,9 @@ final class Gate1AppModel: ObservableObject {
             reportFailure("This shared Margin has no position in the episode.")
             return
         }
-        guard let voiceURL = row.interjection.audioPath.flatMap(resolvedApplicationSupportAssetURL(for:)) else {
-            reportFailure("This shared Margin contains reviewed text but no playable voice recording.")
-            return
-        }
+        // A recording, or a written Margin's reading: asked of `SharedMarginAudio` like every other way to play one (#3412).
+        let audio = WrittenMarginReadings.audio(for: row.interjection, in: row.layer, voiceFile: resolvedApplicationSupportAssetURL(for:))
+        guard let voiceURL = WrittenMarginReadings.startingRender(audio) else { return reportFailure(SharedMarginAudio.unavailableWords(for: row.interjection)) }
         endMarginMoment(); stopInterjectionAudioPlayback() // one Margin voice at a time: a paused one of yours mustn't take the resume below (#1672)
         if snapshot.itemId != itemID || !hasActiveSession { startItem(id: itemID) }
         guard snapshot.itemId == itemID else { return }
@@ -1163,6 +1162,7 @@ final class Gate1AppModel: ObservableObject {
         // Their voice gets the same chime as the automatic prompt, unless the layer is muted (#932).
         marginMomentConductor?.chimedMarginIds = row.layer.isMuted ? [] : [targetID]
         marginMomentConductor?.onChimeStarted = { [weak self] in self?.diagnostics["marginMoment.chime"] = "played:\($0)" }
+        WrittenMarginReadings.rewordUnavailable(on: marginMomentConductor, marginId: targetID, audio: audio, model: self) // a reading that isn't there at its turn
         if !snapshot.status.isPlaybackActive { resumePlayback() }
         screen = .playback
     }

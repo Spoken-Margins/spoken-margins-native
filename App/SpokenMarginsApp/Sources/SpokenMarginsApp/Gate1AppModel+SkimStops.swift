@@ -18,7 +18,7 @@ extension Gate1AppModel {
         let own = marginRows.map(\.interjection).filter { $0.itemId == itemId && $0.isSpokenItemMargin }
         var layerIsEligible: [String: Bool] = [:] // once per layer, not once per Margin
         let shared = sharedMarginRows.filter { row in
-            guard row.layer.itemId == itemId, row.interjection.audioPath != nil else { return false }
+            guard row.layer.itemId == itemId, SharedMarginAudio.canOffer(row.interjection) else { return false }
             if let known = layerIsEligible[row.layer.id] { return known }
             let eligible = Self.isImportedCommentaryLayerPlaybackEligible(
                 row.layer, records: selectedItem.importedCommentaryInterjections[row.layer.id] ?? [])

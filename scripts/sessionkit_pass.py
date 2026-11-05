@@ -29,6 +29,14 @@ READS = (
     # Source-scraping tests (appSource(...), Gate1AppModel.swift) and the shipped-reader gate that scans the app tests.
     'App/SpokenMarginsApp/Sources/SpokenMarginsApp/',
     'App/SpokenMarginsAppTests/',
+    # The guard that scans every shipping app source for a direct audioPath read (#3412): the shared sources, extensions, widget and Watch.
+    'App/SharedSources/',
+    'App/Gate2Shared/',
+    'App/SpokenMarginsBrowserTextExtension/',
+    'App/SpokenMarginsShareExtension/',
+    'App/SpokenMarginsGate2Widget/',
+    'App/SpokenMarginsWatch/',
+    'App/SpokenMarginsWatchApp/',
     # The screen tour's checked-in packets from Sam (the appTestFixtures input), which a package test checks against the seeded episode (#3237).
     'App/TestFixtures/',
     # Supertonic's narration tests read its model from artifacts/voice-catalog/files/ (the supertonicModel input),

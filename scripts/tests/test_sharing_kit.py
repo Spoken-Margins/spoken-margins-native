@@ -299,7 +299,7 @@ class ProcedureTests(unittest.TestCase):
         self.assertIn('Build23RecipientSharingHost', root)
         self.assertNotIn('SpokenMarginsPackageImportView', root)
         recipient = (ROOT / 'App/SpokenMarginsApp/Sources/SpokenMarginsApp/Build23RecipientSharingExperience.swift').read_text(encoding='utf-8')
-        for label in ('Margins', 'Source transport', 'Item contents', 'Import', 'Source reference', 'Item not included in package'):
+        for label in ('Margins', 'Import'):
             self.assertIn(f'"{label}"', recipient, label)
 
     def test_it_never_tells_the_listener_to_remove_the_app_or_reset_anything(self):

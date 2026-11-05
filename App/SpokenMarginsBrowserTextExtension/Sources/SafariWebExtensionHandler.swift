@@ -50,7 +50,7 @@ final class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
                 "openURL": "\(Self.appURLScheme)://browser-text?payloadId=\(payloadID)"
             ]
         } catch {
-            return errorResponse("Unable to store browser text payload: \(error.localizedDescription)")
+            return errorResponse(ListenerErrorText.line(prefix: "Unable to store browser text payload:", error: error))
         }
     }
 
@@ -77,7 +77,7 @@ final class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
                 "openURL": SourceLinkHandoffURL.url(forPayloadID: payloadID).absoluteString
             ]
         } catch {
-            return errorResponse("Unable to send this PDF to Spoken Margins: \(error.localizedDescription)")
+            return errorResponse(ListenerErrorText.line(prefix: "Unable to send this PDF to Spoken Margins:", error: error))
         }
     }
 

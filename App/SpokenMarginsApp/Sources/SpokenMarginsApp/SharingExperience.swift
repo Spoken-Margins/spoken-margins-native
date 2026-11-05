@@ -86,7 +86,7 @@ struct SpokenMarginsPackageImportReview: Identifiable {
     }
 
     var senderLabel: String {
-        contents.manifest.senderDisplayLabel?.nilIfEmpty ?? "Unsigned sender"
+        SharedPacketArrival.snapshotSenderLabel(contents.manifest.senderDisplayLabel)
     }
 
     var includesEmbeddedItem: Bool {

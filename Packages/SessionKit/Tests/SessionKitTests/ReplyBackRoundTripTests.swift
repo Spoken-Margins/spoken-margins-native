@@ -92,6 +92,52 @@ final class ReplyBackRoundTripTests: XCTestCase {
         XCTAssertEqual(try ben.store.quarantinedRecordCount(), 0)
     }
 
+    /// #3365: a friend can answer one Margin in writing and another in voice. Both reach A's review, in their order,
+    /// each saying which of A's Margins it answers; the written one is read aloud, introduced as B's, and gets no
+    /// second tone after its parent.
+    func testAWrittenReplyAndAVoiceReplyAreBothInTheReviewInOrder() throws {
+        let (ana, ben) = (try Person(name: "Ana", root: root, episode: episode), try Person(name: "Ben", root: root, episode: episode))
+        try ana.record("a-1", madeAt: 10, atMs: 754_000)
+        let (anaURL, _) = try ana.send(try ana.margins(), packageId: "package-a", in: root)
+        guard case .imported = try ben.importPacket(anaURL, at: 100) else { return XCTFail("B should import A's packet") }
+
+        let spoken = try ben.record("b-voice", madeAt: 200, atMs: 755_000, replyingTo: "a-1")
+        let written = try ben.record("b-written", madeAt: 210, atMs: 790_000, replyingTo: "a-1", written: true)
+        let (benURL, benManifest) = try ben.send([written, spoken], packageId: "package-b", in: root)
+        XCTAssertEqual(benManifest.requiredCapabilities, [SharedCommentaryLayerArtifact.schemaVersion], "a written reply needs no new capability")
+        guard case .imported = try ana.importPacket(benURL, at: 300) else { return XCTFail("A should import B's packet") }
+
+        let imported = try ana.importedMargins()
+        let importedWritten = try XCTUnwrap(imported.first { $0.packageScopedId == "b-written" })
+        XCTAssertNil(importedWritten.audioPath, "a written Margin arrives with no recording")
+        XCTAssertNil(importedWritten.audioDurationMs, "and no length, which is how the item screen tells it from a voice Margin")
+        XCTAssertTrue(importedWritten.isWritten)
+        XCTAssertFalse(try XCTUnwrap(imported.first { $0.packageScopedId == "b-voice" }).isWritten)
+
+        let own = try ana.margins()
+        let entries = try SharedMarginReview.entries(itemId: ana.itemId, in: ana.store, ownMargins: own)
+        XCTAssertEqual(entries.map(\.interjection.packageScopedId), ["b-voice", "b-written"], "both are in the review, in place order")
+        XCTAssertEqual(entries.map { $0.replyContext?.caption }, Array(repeating: "Reply to your Margin at 12:34", count: 2))
+        XCTAssertEqual(entries.map(\.anchor.isReadAloud), [false, true])
+        XCTAssertEqual(entries[1].writtenReading, WrittenMarginReading(intro: "Ben wrote:", text: "Words from Ben.", itemId: ana.itemId))
+        XCTAssertNil(entries[0].writtenReading)
+        XCTAssertTrue(SharedMarginReview.offerMessage(for: entries).hasPrefix("2 new Margins from Ben."))
+
+        // The item screen counts both, and says "note" rather than "voice note" because one is written.
+        let intro = try XCTUnwrap(FriendMarginsIntro(unheardFriendMargins: entries.map(\.waitingMargin)))
+        XCTAssertTrue(intro.countLine.hasPrefix("2 Margins"))
+        XCTAssertTrue(intro.explanation.hasPrefix("A Margin is a note Ben left"), intro.explanation)
+
+        // One tap: lead-in and tone, A's own Margin, the voice reply, then the written reply, which is announced by the
+        // same tone any Margin not preceded by its parent gets.
+        let steps = SharedMarginReview.playlist(for: entries, ownMargins: own)
+        XCTAssertEqual(steps.count, 3)
+        XCTAssertEqual(steps[0].ownParent?.id, "a-1")
+        XCTAssertEqual(steps[2].entry?.interjection.packageScopedId, "b-written")
+        XCTAssertEqual(SharedMarginReview.chimedMarginIds(steps), [steps[0].anchor.marginId, steps[2].anchor.marginId])
+        XCTAssertEqual(try ana.store.quarantinedRecordCount(), 0)
+    }
+
     func testTheListenerCanAddAnotherNewMarginAndItTravelsToo() throws {
         let (ana, ben) = (try Person(name: "Ana", root: root, episode: episode), try Person(name: "Ben", root: root, episode: episode))
         let (anaURL, _) = try ana.send([try ana.record("a-1", madeAt: 10, atMs: 754_000)], packageId: "package-a", in: root)

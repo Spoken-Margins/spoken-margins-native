@@ -61,7 +61,7 @@ struct PlaybackNowView: View {
                     PlaybackMarginRowView(title: row.interjection.approvedTranscript,
                         detail: "\(row.collectionLabel) · \(entry.isApproximate ? SharedMarginPlacementWording.approximate : row.positionDescription)",
                         countdown: entry.countdown, isShared: true, identifier: "playback.now.margin.\(row.id)",
-                        canPlay: row.interjection.audioPath != nil,
+                        canPlay: SharedMarginAudio.canOffer(row.interjection),
                         showDetails: { selectedSharedMargin = row }, play: { model.playSharedMarginMoment(row) })
                 }
             }

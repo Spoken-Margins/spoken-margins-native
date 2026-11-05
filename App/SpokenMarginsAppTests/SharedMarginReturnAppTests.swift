@@ -367,14 +367,16 @@ final class SharedMarginReturnAppTests: XCTestCase {
 }
 
 @MainActor
-private struct ReturnFixture {
+struct ReturnFixture {
     let model: Gate1AppModel
     let layer: ImportedCommentaryLayer
     let record: ImportedCommentaryInterjection
     private let root: URL
     private let files: [URL]
 
-    static func make(sourcePlaying: Bool, voiceIsReadable: Bool = true) async throws -> ReturnFixture {
+    /// `writtenWords` makes the friend's Margin a written one (no recording, #3365); `unplaced` makes its layer a podcast
+    /// still waiting for its placement pass, so the Margin has only the sender's time (#3059).
+    static func make(sourcePlaying: Bool, voiceIsReadable: Bool = true, writtenWords: String? = nil, unplaced: Bool = false) async throws -> ReturnFixture {
         let root = FileManager.default.temporaryDirectory.appending(path: "margin-return-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let sourceURL = try makeWAV(duration: 30)
@@ -399,13 +401,16 @@ private struct ReturnFixture {
             XCTAssertEqual(model.snapshot.status, .playing, "the model reports the source playing before the test starts")
         }
         let layer = ImportedCommentaryLayer(id: "received", itemId: itemID, packageDigest: "digest", packageId: "package",
-            itemIdentity: SharedItemIdentity(itemType: .other, title: "Source"),
+            itemIdentity: SharedItemIdentity(itemType: unplaced ? .podcast : .other, title: "Source"),
             displayLabel: "Reviewer", importedAt: Date(), sourceResolutionStatus: .resolved,
             isEnabled: true, isMuted: true, revealMode: .companion)
         let record = ImportedCommentaryInterjection(id: "note", layerId: layer.id, packageScopedId: "note", createdAt: Date(),
-            anchorEvidence: PortableAnchorEvidence(anchorType: .media),
-            approvedTranscript: "Reviewed words", audioPath: voiceURL.path, audioDurationMs: 30_000,
-            resolution: ImportedAnchorResolution(evidenceClass: .acousticVerified, localMediaTimeMs: 1_000, confidence: 1))
+            anchorEvidence: PortableAnchorEvidence(anchorType: .media, mediaTimeMs: unplaced ? 1_000 : nil),
+            approvedTranscript: writtenWords ?? "Reviewed words",
+            audioPath: writtenWords == nil ? voiceURL.path : nil, audioDurationMs: writtenWords == nil ? 30_000 : nil,
+            resolution: unplaced
+                ? ImportedAnchorResolution(evidenceClass: .unresolved, localMediaTimeMs: nil, confidence: 0)
+                : ImportedAnchorResolution(evidenceClass: .acousticVerified, localMediaTimeMs: 1_000, confidence: 1))
         // In the store, not only on the model: pause, seek and every transport call refresh the selected item
         // from the store, which would otherwise empty its Margins and make Listen and jump find nothing.
         _ = try store.importCommentaryLayer(layer, interjections: [record])
@@ -448,14 +453,34 @@ private struct ReturnFixture {
         }
     }
 
+    /// The written Margin's reading, as the app names it.
+    var writtenReading: WrittenMarginReading? {
+        WrittenMarginReadings.reading(for: ImportedCommentaryPrompt(layer: layer, interjection: record, index: 1, count: 1))
+    }
+
+    /// Puts a short real audio file where the reading's render would, without the iPhone voice, so a test can follow
+    /// what the app does with a reading. With `ready`, the reader has also looked at it, as after a finished render.
+    func seedReading(ready: Bool) async throws {
+        let reading = try XCTUnwrap(writtenReading)
+        let target = WrittenMarginReader.shared.fileURL(for: reading)
+        try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? FileManager.default.removeItem(at: target)
+        try FileManager.default.moveItem(at: try Self.makeWAV(duration: 30), to: target)
+        guard ready else { return }
+        _ = WrittenMarginReader.shared.start(["seed": reading])
+        await WrittenMarginReader.shared.waitUntilSettled([reading], upTo: 10)
+        XCTAssertTrue(WrittenMarginReader.shared.isReady(reading), "the reader found the seeded reading")
+    }
+
     func cleanUp() {
+        if let reading = writtenReading { try? FileManager.default.removeItem(at: WrittenMarginReader.shared.fileURL(for: reading)) }
         model.stopInterjectionAudioPlayback()
         model.pendingImportedCommentary = nil
         model.pause()
         for url in files + [root] { try? FileManager.default.removeItem(at: url) }
     }
 
-    fileprivate static func makeWAV(duration: TimeInterval) throws -> URL {
+    static func makeWAV(duration: TimeInterval) throws -> URL {
         let url = FileManager.default.temporaryDirectory.appending(path: "margin-return-\(UUID().uuidString).wav")
         let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1))
         let frames = AVAudioFrameCount(44_100 * duration)

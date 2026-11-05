@@ -71,6 +71,13 @@ final class ReplyBackTests: XCTestCase {
         XCTAssertNil(ReplyBackOffer.make(localMargins: [own("new", madeAt: 200)], layers: [layer("ana", deleted: true)]))
     }
 
+    func testAFriendWhoseFileNamedNobodyIsNeverOfferedUnderAStandInName() throws {
+        for label in ["Unsigned sender", " unsigned  sender ", "Imported collection", " ", ""] {
+            let offer = try XCTUnwrap(ReplyBackOffer.make(localMargins: [own("extra", madeAt: 200)], layers: [layer("ana", label: label)]))
+            XCTAssertEqual(offer.title, "Send replies to your friend", label)
+        }
+    }
+
     func testOnlyNewMarginsWithNoReplyAreStillOfferedWithNothingSelected() throws {
         let offer = try XCTUnwrap(ReplyBackOffer.make(localMargins: [own("extra", madeAt: 200)], layers: [layer("ana")]))
         XCTAssertEqual(offer.title, "Send replies to Ana")

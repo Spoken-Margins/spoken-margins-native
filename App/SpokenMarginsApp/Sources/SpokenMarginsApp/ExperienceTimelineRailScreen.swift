@@ -61,7 +61,7 @@ struct ExperienceTimelineRailScreen: View {
                     }
 
                     if !sharingCoordinator.importedLayers.isEmpty {
-                        DisclosureGroup("Shared Margins") {
+                        DisclosureGroup(FriendArrivalWords.sectionTitle(senderLabels: sharingCoordinator.importedLayers.map(\.senderLabel))) {
                             Build23ImportedMarginPresentation(coordinator: sharingCoordinator, showsMargins: false)
                         }
                         .padding(.top, 16)
