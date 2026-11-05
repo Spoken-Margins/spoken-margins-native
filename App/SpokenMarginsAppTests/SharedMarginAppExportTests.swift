@@ -213,6 +213,11 @@ final class SharedMarginAppExportTests: XCTestCase {
         XCTAssertEqual(conversation.linksByPackageScopedId, ["margin-0001": [link]], "only the reply is linked, to the Margin it answers")
         XCTAssertEqual(packet.manifest.requiredCapabilities, [SharedCommentaryLayerArtifact.schemaVersion],
                        "a reply requires no new capability")
+        // One random id per phone rides in an optional artifact, so a friend can hide this sender (#2846); the shipped
+        // reader below skips it. It is the phone's id, so a second export would carry the same one.
+        let senderId = try XCTUnwrap(packet.senderIdentities.first?.senderId, "the packet names its sender by a random id")
+        XCTAssertTrue(SenderID.isValid(senderId))
+        XCTAssertEqual(senderId, HiddenSendersController.phoneSenderID())
         XCTAssertFalse(packet.manifest.assets.contains { $0.role == SpokenMarginsAssetRole.originalVoice },
                        "the parent's recording is not re-exported")
 

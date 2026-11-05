@@ -28,6 +28,26 @@ final class SenderIdentityTests: XCTestCase {
         )
     }
 
+    func testThePhoneKeepsOneRandomIdAcrossSharesAndRelaunches() {
+        let store = SenderIdentityFileStore<SenderIDLedger>.ledger(in: root)
+        let first = store.phoneSenderID()
+        XCTAssertTrue(SenderID.isValid(first))
+        XCTAssertEqual(store.phoneSenderID(), first, "a second share carries the same id, so one hide covers both")
+        XCTAssertEqual(SenderIdentityFileStore<SenderIDLedger>.ledger(in: root).phoneSenderID(), first, "and after a relaunch")
+        let other = FileManager.default.temporaryDirectory.appendingPathComponent("SenderIdentityTests-other-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: other) }
+        XCTAssertNotEqual(SenderIdentityFileStore<SenderIDLedger>.ledger(in: other).phoneSenderID(), first, "another phone's id is its own")
+    }
+
+    func testADamagedLedgerStillGivesAValidIdAndIsRepaired() throws {
+        let url = root.appendingPathComponent("sender-ids.json")
+        try Data("not json".utf8).write(to: url)
+        let store = SenderIdentityFileStore<SenderIDLedger>.ledger(in: root)
+        let id = store.phoneSenderID()
+        XCTAssertTrue(SenderID.isValid(id), "a share is never held back for a damaged file")
+        XCTAssertEqual(store.phoneSenderID(), id, "and the next share keeps the id that replaced it")
+    }
+
     func testHiddenSendersHideTheirLayersAndNoOnesElse() {
         let layers = [layer("a1", sender: senderA), layer("b1", sender: senderB), layer("none", sender: nil), layer("a2", sender: senderA)]
         var hidden = HiddenSenders()

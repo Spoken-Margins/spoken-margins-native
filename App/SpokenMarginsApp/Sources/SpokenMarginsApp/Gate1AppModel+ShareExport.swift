@@ -179,7 +179,8 @@ extension Gate1AppModel {
                 fingerprintSpines: fingerprintSpines,
                 phraseSketches: phraseSketches,
                 machineEvidence: machineEvidence,
-                senderDisplayLabel: senderDisplayLabel.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+                senderDisplayLabel: senderDisplayLabel.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
+                senderID: HiddenSendersController.phoneSenderID() // a friend can hide this sender (#2846)
             )
             prepared = package
             let directory = try applicationSupportDirectory()
