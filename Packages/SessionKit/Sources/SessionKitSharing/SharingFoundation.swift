@@ -103,7 +103,8 @@ public enum SpokenMarginsPackageBuilder {
         phraseSketches: [TranscriptPhraseSketchArtifact] = [],
         machineEvidence: [ReviewedMachineEvidenceAsset] = [],
         senderDisplayLabel: String? = nil,
-        suggestedRevealMode: ImportedCommentaryRevealMode? = nil
+        suggestedRevealMode: ImportedCommentaryRevealMode? = nil,
+        senderID: String? = nil
     ) throws -> PreparedSpokenMarginsPackage {
         let item = removingPrivateLinks(from: item)
         // Each signature may back one landmark across all spines: Build 29's importer keys a dictionary
@@ -339,6 +340,22 @@ public enum SpokenMarginsPackageBuilder {
             ))
         }
 
+        // The sender's random id lets a listener hide this sender (#2846). Only a packet given one gets the artifact,
+        // so every other packet stays byte for byte what Builds 32 and 34 write. It is optional and adds no required
+        // capability: those builds skip it.
+        if let senderID = SenderID.valid(senderID) {
+            let sender = SenderIdentityArtifact(senderId: senderID)
+            let path = "artifacts/sender-identity.json"
+            artifactData[path] = try encodeArtifact(sender)
+            artifacts.append(SpokenMarginsArtifactDescriptor(
+                id: sender.id,
+                kind: SpokenMarginsArtifactKind.senderIdentity,
+                schemaVersion: sender.schemaVersion,
+                path: path,
+                required: false
+            ))
+        }
+
         var requiredCapabilities = [SharedCommentaryLayerArtifact.schemaVersion]
         if itemTransport.kind == .embeddedText {
             requiredCapabilities.append(EmbeddedTextItemArtifact.schemaVersion)
@@ -523,7 +540,9 @@ public enum SpokenMarginsPackageImporter {
                 uniquingKeysWith: { first, _ in first }
             ),
             // Kept only when it really is a link id, so a bad value can't later point the Report action elsewhere.
-            shareLinkId: shareLinkId.flatMap(ShareLinkReport.validLinkId)
+            shareLinkId: shareLinkId.flatMap(ShareLinkReport.validLinkId),
+            // Kept only when it is a sender id; a bad one just means this sender can't be hidden by id.
+            senderId: SenderID.valid(contents.senderIdentities.first?.senderId)
         )
         // A sender who shares again sends their earlier Margins too; the listener keeps one copy of each (#858).
         return try ImportedMarginResends.importLayer(layer, interjections: importedInterjections, repository: repository)

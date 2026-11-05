@@ -425,6 +425,9 @@ public struct ImportedCommentaryLayer: Codable, Equatable, Sendable, Identifiabl
     /// The id of the share link this packet was opened from, so the listener can report that link later (#2846).
     /// Nil for a file handed over directly. It is the link's public id only, never its key. Older builds ignore it.
     public var shareLinkId: String?
+    /// The random id the sender's packet carried, so the listener can hide this sender (#2846). Nil when the packet
+    /// came from a build that doesn't write one. It names no one; older builds ignore the field.
+    public var senderId: String?
 
     public init(
         id: String,
@@ -447,10 +450,12 @@ public struct ImportedCommentaryLayer: Codable, Equatable, Sendable, Identifiabl
         episodeMapEvidencePaths: [String: String]? = nil,
         resolvedRecipientEditionSHA256: String? = nil,
         sharedMapRefusalReason: String? = nil,
-        shareLinkId: String? = nil
+        shareLinkId: String? = nil,
+        senderId: String? = nil
     ) {
         self.sharedMapRefusalReason = sharedMapRefusalReason
         self.shareLinkId = shareLinkId
+        self.senderId = senderId
         self.resolvedRecipientEditionSHA256 = resolvedRecipientEditionSHA256
         self.id = id
         self.itemId = itemId
@@ -478,7 +483,7 @@ public struct ImportedCommentaryLayer: Codable, Equatable, Sendable, Identifiabl
         case resolvedRecipientEditionSHA256
         case sourceResolutionStatus, isEnabled, isMuted, revealMode, deletedAt
         case listeningMapProposals, editionFingerprintSpines, transcriptPhraseSketches, episodeMapEvidencePaths
-        case sharedMapRefusalReason, shareLinkId
+        case sharedMapRefusalReason, shareLinkId, senderId
     }
 
     public init(from decoder: Decoder) throws {
@@ -520,6 +525,7 @@ public struct ImportedCommentaryLayer: Codable, Equatable, Sendable, Identifiabl
         episodeMapEvidencePaths = try values.decodeIfPresent([String: String].self, forKey: .episodeMapEvidencePaths)
         sharedMapRefusalReason = try values.decodeIfPresent(String.self, forKey: .sharedMapRefusalReason)
         shareLinkId = try values.decodeIfPresent(String.self, forKey: .shareLinkId)
+        senderId = try values.decodeIfPresent(String.self, forKey: .senderId)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -545,6 +551,7 @@ public struct ImportedCommentaryLayer: Codable, Equatable, Sendable, Identifiabl
         try values.encodeIfPresent(episodeMapEvidencePaths, forKey: .episodeMapEvidencePaths)
         try values.encodeIfPresent(sharedMapRefusalReason, forKey: .sharedMapRefusalReason)
         try values.encodeIfPresent(shareLinkId, forKey: .shareLinkId)
+        try values.encodeIfPresent(senderId, forKey: .senderId)
     }
 }
 
@@ -858,6 +865,8 @@ public enum SpokenMarginsArtifactKind {
     public static let transcriptPhraseSketch = "transcript_phrase_sketch"
     public static let embeddedTextItem = "embedded_text_item"
     public static let conversation = "conversation"
+    /// The optional random sender id (#2846). Never required, so older builds skip it.
+    public static let senderIdentity = "sender_identity"
 }
 
 public struct SpokenMarginsArtifactDescriptor: Codable, Equatable, Sendable, Identifiable {

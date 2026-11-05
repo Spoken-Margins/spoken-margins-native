@@ -134,4 +134,14 @@ final class StoredImportedLayerBuild29Tests: XCTestCase {
         XCTAssertTrue(payload.contains("shareLinkId"), "the field Build 29 has never seen is in the stored row")
         XCTAssertEqual(try store.loadImportedCommentaryLayer(id: layer.id)?.shareLinkId, layer.shareLinkId)
     }
+
+    /// The sender's random id is saved on the layer so the listener can hide that sender (#2846).
+    func testBuild29DecodesTheLayerThatRemembersItsSender() throws {
+        var layer = try importLayer(suggesting: .guided)
+        layer.senderId = "0123456789abcdef0123456789abcdef"
+        try assertBuild29DecodesTheStoredLayer(layer, "a layer from a packet that carried a sender id")
+        let payload = String(decoding: try storedPayload(kind: "imported_commentary_layer", id: layer.id), as: UTF8.self)
+        XCTAssertTrue(payload.contains("senderId"), "the field Build 29 has never seen is in the stored row")
+        XCTAssertEqual(try store.loadImportedCommentaryLayer(id: layer.id)?.senderId, layer.senderId)
+    }
 }

@@ -18,6 +18,7 @@
 | Commentary layer (the Margins, inside a packet) | `spoken-margins.commentary-layer.v1` | `shared-commentary-layer.schema.json` |
 | Listening Map proposal (inside a packet) | `spoken-margins.listening-map-proposal.v2` | `portable-listening-map-proposal.schema.json` |
 | Margin conversation (reply links, inside a packet) | `spoken-margins.margin-conversation.v1` | `margin-conversation.schema.json` |
+| Sender identity (a random id so a listener can hide one sender, inside a packet; optional) | `spoken-margins.sender-identity.v1` | none yet |
 | Embedded text item (inside a packet) | `spoken-margins.embedded-text-item.v1` | none yet; rules in the reader |
 | Episode fingerprint spine, transcript phrase sketch (inside a packet) | `spoken-margins.edition-fingerprint-spine.v1`, `spoken-margins.transcript-phrase-sketch.v1` | none yet; rules in the Swift reader |
 | Session export (JSON, with a Markdown twin) | `spoken-margins.export.v1` | `session-export.schema.json` |
@@ -67,9 +68,9 @@ Build 29 stops with a fatal error importing a packet in which two fingerprint la
 - **A version string names one shape.** Readers read the versions they know and refuse others; they don't guess. A change that an older reader would misread gets a new version, and the reader keeps reading the old one.
 - **The manifest is closed.** Every shipped reader refuses a manifest key it doesn't list, so new manifest keys mean a new package version. New data goes in a new artifact instead.
 - **New artifacts are optional unless they must not be ignored.** `required: false` artifacts are skipped by older readers; that's how packets with reply links still open in Build 29. Use `required: true`, and list the version in `requiredCapabilities`, only when a reader that skips it would show the listener something wrong.
-- **Inside the commentary layer, the Listening Map proposal and the embedded text item, readers ignore fields they don't know**, so those may gain optional fields within a version. The fingerprint spine, the phrase sketch and the margin conversation are closed like the manifest. Removing or renaming a field, or changing its meaning, always needs a new version.
+- **Inside the commentary layer, the Listening Map proposal and the embedded text item, readers ignore fields they don't know**, so those may gain optional fields within a version. The fingerprint spine, the phrase sketch, the margin conversation and the sender identity are closed like the manifest. Removing or renaming a field, or changing its meaning, always needs a new version.
 - **Packets a new build writes must open in the last shipped build** unless the owner accepts a break (AGENTS.md, "Keep packets compatible"). `coop-packet check` imports a packet with both the current reader and Build 29's.
-- **Releases.** Until the formats are published on their own, a format release is the app build that first shipped it. Build 29 (`testflight/0.1-build-29`) and every build since read `spoken-margins.package.v1` and every artifact version above except the margin conversation, which Build 29 skips (its replies arrive as ordinary Margins). A change to these formats lands with a new row in the table above, a new example packet, and a new line in `expectations.json`.
+- **Releases.** Until the formats are published on their own, a format release is the app build that first shipped it. Build 29 (`testflight/0.1-build-29`) and every build since read `spoken-margins.package.v1` and every artifact version above except the margin conversation, which Build 29 skips (its replies arrive as ordinary Margins), and the sender identity, which every shipped build skips as an unknown optional artifact. A change to these formats lands with a new row in the table above, a new example packet, and a new line in `expectations.json`.
 
 ## Source identity
 

@@ -1,0 +1,93 @@
+import Foundation
+@testable import SessionKit
+import XCTest
+
+/// The device-only pieces of hiding a sender (#2846): the random sender id, the per-group ledger, the hidden list and
+/// the file that keeps them. The packet side is in SenderIdentityPacketTests.
+final class SenderIdentityTests: XCTestCase {
+    private let created = Date(timeIntervalSince1970: 1_777_000_000)
+    private let senderA = "0123456789abcdef0123456789abcdef"
+    private let senderB = "fedcba9876543210fedcba9876543210"
+    private var root: URL!
+
+    override func setUpWithError() throws {
+        root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SenderIdentityTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    }
+
+    override func tearDownWithError() throws {
+        try? FileManager.default.removeItem(at: root)
+    }
+
+    private func layer(_ id: String, sender: String?) -> ImportedCommentaryLayer {
+        ImportedCommentaryLayer(
+            id: id, packageDigest: String(repeating: "a", count: 64), packageId: "package-\(id)",
+            itemIdentity: SharedItemIdentity(itemType: .text, canonicalURL: "https://example.com/\(id)", title: id),
+            displayLabel: "A Friend", importedAt: created, senderId: sender
+        )
+    }
+
+    func testHiddenSendersHideTheirLayersAndNoOnesElse() {
+        let layers = [layer("a1", sender: senderA), layer("b1", sender: senderB), layer("none", sender: nil), layer("a2", sender: senderA)]
+        var hidden = HiddenSenders()
+        XCTAssertEqual(hidden.visible(layers).map(\.id), ["a1", "b1", "none", "a2"])
+        hidden.hide(senderA, displayLabel: "A Friend", at: created)
+        XCTAssertEqual(hidden.visible(layers).map(\.id), ["b1", "none"], "every layer of the sender, and a layer with no sender id stays")
+        hidden.unhide(senderA)
+        XCTAssertEqual(hidden.visible(layers).map(\.id), ["a1", "b1", "none", "a2"], "undo brings everything back")
+    }
+
+    func testOnlyARealSenderIdCanBeHidden() {
+        var hidden = HiddenSenders()
+        for bad in [nil, "", "short", "has spaces in it, has spaces", String(repeating: "a", count: 65)] as [String?] {
+            XCTAssertFalse(hidden.hide(bad))
+        }
+        XCTAssertTrue(hidden.entries.isEmpty)
+        XCTAssertEqual(HiddenSenders(entries: [.init(senderId: "bad", displayLabel: nil, hiddenAt: created)]).entries, [],
+                       "a damaged saved entry is dropped, not kept")
+    }
+
+    func testHidingTwiceKeepsOneEntryAndTheFirstLabel() {
+        var hidden = HiddenSenders()
+        hidden.hide(senderA, displayLabel: "First", at: created)
+        hidden.hide(senderA, displayLabel: "Second", at: created.addingTimeInterval(60))
+        XCTAssertEqual(hidden.entries.map(\.displayLabel), ["First"])
+    }
+
+    func testTheHiddenListIsKeptOnDeviceAndSurvivesARestart() throws {
+        let store = SenderIdentityFileStore<HiddenSenders>.hiddenSenders(in: root.appendingPathComponent("state"))
+        XCTAssertEqual(store.load(), HiddenSenders(), "nothing hidden before the first save")
+        var hidden = store.load()
+        hidden.hide(senderB, displayLabel: "B", at: created)
+        try store.save(hidden)
+        XCTAssertEqual(SenderIdentityFileStore<HiddenSenders>.hiddenSenders(in: root.appendingPathComponent("state")).load(), hidden)
+        try Data("not json".utf8).write(to: store.fileURL)
+        XCTAssertEqual(store.load(), HiddenSenders(), "a damaged file reads as nothing hidden, not a crash")
+    }
+
+    func testTheLedgerGivesOneIdPerGroupAndNeverReusesOne() {
+        var ledger = SenderIDLedger()
+        let family = ledger.senderID(forGroup: "family")
+        let club = ledger.senderID(forGroup: "club")
+        XCTAssertTrue(SenderID.isValid(family))
+        XCTAssertNotEqual(family, club, "nothing links a sender across groups")
+        XCTAssertEqual(ledger.senderID(forGroup: "family"), family, "the same group keeps its id")
+        // A maker that repeats itself or returns junk can't link two groups or write an id readers refuse.
+        let stuck = ledger.senderID(forGroup: "book", makeID: { family })
+        XCTAssertNotEqual(stuck, family)
+        XCTAssertTrue(SenderID.isValid(ledger.senderID(forGroup: "junk", makeID: { "x" })))
+        XCTAssertEqual(Set(ledger.idsByGroup.values).count, ledger.idsByGroup.count)
+    }
+
+    func testGeneratedIdsAreRandomHex() {
+        let ids = (0..<50).map { _ in SenderID.generate() }
+        XCTAssertEqual(Set(ids).count, 50)
+        for id in ids {
+            XCTAssertEqual(id.count, 32)
+            XCTAssertTrue(id.allSatisfy { "0123456789abcdef".contains($0) })
+        }
+        var seeded = SystemRandomNumberGenerator()
+        XCTAssertTrue(SenderID.isValid(SenderID.generate(using: &seeded)))
+    }
+}
