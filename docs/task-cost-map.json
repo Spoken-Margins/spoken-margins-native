@@ -376,36 +376,18 @@
         {
           "route": "From playback",
           "start": "Playback screen",
-          "budget": 6,
-          "leavesScreen": true,
+          "budget": 3,
+          "leavesScreen": false,
           "steps": [
             {
               "do": "tap",
-              "label": "More",
-              "marker": "\"playback.options.button",
+              "label": "Share on the playback screen",
+              "marker": "\"playback.shareMargins.button",
               "file": "PlaybackScreen.swift"
             },
             {
               "do": "tap",
-              "label": "Export",
-              "marker": "\"playback.export.button",
-              "file": "PlaybackScreen.swift"
-            },
-            {
-              "do": "tap",
-              "label": "Share Margins",
-              "marker": "Share Margins",
-              "file": "ExportScreen.swift"
-            },
-            {
-              "do": "tap",
-              "label": "Review",
-              "marker": "\"build23.sender.select.continue",
-              "file": "Build23SenderSharingExperience.swift"
-            },
-            {
-              "do": "tap",
-              "label": "Share",
+              "label": "Share (the sheet opens on its review)",
               "marker": "\"build23.sender.review.share",
               "file": "Build23SenderSharingExperience.swift"
             },
@@ -414,7 +396,7 @@
               "label": "Choose a destination in the iOS share sheet"
             }
           ],
-          "note": "Expensive: six steps and two screens. After finishing an item, playback.finished.share.button skips the first."
+          "note": "Two taps, then the destination (#1507). The sheet opens on its review, so there is no Export screen and no scroll; Back to selection is one tap away. The long Export screen (session export) stays under More."
         }
       ]
     },
