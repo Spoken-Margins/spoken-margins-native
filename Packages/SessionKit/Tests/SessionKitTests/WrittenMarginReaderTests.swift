@@ -186,23 +186,98 @@ final class WrittenMarginReaderTests: XCTestCase {
         XCTAssertFalse(reader.isReady(reading), "forgetting drops it at once")
     }
 
-    /// One answer picks the voice, and the render uses it: a note is never read in a voice that cannot say it (#3365).
-    func testTheVoiceIsChosenFromTheNotesLanguageOrThereIsNone() {
-        let installed = ["en": "voice.en", "es": "voice.es", "ja": "voice.ja"]
-        func voice(_ text: String, has: [String: String] = installed) -> String? {
-            WrittenMarginReader.voice(forNote: text, voiceFor: { has[$0] }, defaultVoice: { "voice.default" })
+
+    /// The gate is capability: one installed voice must cover every script in the note, or there is no reading (#3365).
+    func testOneInstalledVoiceMustCoverEveryScriptInTheNoteOrThereIsNone() {
+        let all = ["en": "v.en", "es": "v.es", "ja": "v.ja", "zh-Hans": "v.zh", "hi": "v.hi", "ar": "v.ar", "ko": "v.ko"]
+        func voice(_ text: String, has: [String: String] = all, available: Bool = true) -> String? {
+            WrittenMarginVoice.voice(forNote: WrittenMarginSpeech.speakable(text), voiceFor: { has[$0] }, defaultVoice: { "v.default" }, isAvailable: { _ in available })
         }
-        XCTAssertEqual(voice("Lovely harbour, hear the gulls near the end of it."), "voice.en")
-        XCTAssertEqual(voice("Me encanta este puerto, escucha las gaviotas al final del episodio."), "voice.es")
-        XCTAssertEqual(voice("これは素晴らしい港です。最後にカモメの声が聞こえます。"), "voice.ja")
-        XCTAssertEqual(voice("Great episode, loved the part about the harbour नमस्ते at the end"), "voice.en", "mostly English with one Hindi word")
-        XCTAssertEqual(voice("ha!"), "voice.default", "too short to tell the language of")
-        XCTAssertEqual(voice("yes"), "voice.default")
-        XCTAssertEqual(voice("🎧 ok"), "voice.default")
-        XCTAssertNil(voice("これは素晴らしい港です。最後にカモメの声が聞こえます。", has: ["en": "voice.en"]), "Japanese with no Japanese voice has no reading")
-        XCTAssertNil(voice("यह एक बहुत सुंदर बंदरगाह है और मुझे यह पसंद है", has: ["en": "voice.en"]), "Hindi with no Hindi voice has no reading")
-        XCTAssertNil(voice("هذا ميناء جميل جدا وأنا أحبه كثيرا", has: ["en": "voice.en"]), "Arabic likewise")
-        XCTAssertEqual(voice("Das ist ein sehr schöner Hafen mit vielen Möwen.", has: ["en": "voice.en"]), "voice.default", "Latin script, no German voice: read in the default voice")
+        XCTAssertEqual(voice("Lovely harbour, hear the gulls near the end of it."), "v.en")
+        XCTAssertEqual(voice("Me encanta este puerto, escucha las gaviotas al final del episodio."), "v.es")
+        XCTAssertEqual(voice("ok はい"), "v.ja", "mixed script: the Japanese voice, which says the English too")
+        XCTAssertEqual(voice("Great point. 你好世界。Listen again."), "v.zh")
+        XCTAssertEqual(voice("Great episode, loved the harbour नमस्ते at the end of it"), "v.hi", "one Hindi word: a voice exists, so it is read")
+        XCTAssertEqual(voice("هذا ميناء جميل جدا"), "v.ar", "a short Arabic note")
+        XCTAssertEqual(voice("ha!"), "v.default", "short English")
+        XCTAssertEqual(voice("yes"), "v.default")
+        XCTAssertEqual(voice("hmm ok so"), "v.default", "a short Latin note in an unsure language: the default voice")
+        XCTAssertEqual(voice(""), "v.default")
+        XCTAssertEqual(voice("?!..."), "v.default", "punctuation only has no script to cover")
+        XCTAssertEqual(voice(String(repeating: "Harbour lights. ", count: 4_000)), "v.en", "a very long note")
+        XCTAssertNil(voice("ok はい", has: ["en": "v.en"]), "no Japanese voice")
+        XCTAssertNil(voice("यह एक बहुत सुंदर बंदरगाह है", has: ["en": "v.en"]), "no Hindi voice")
+        XCTAssertNil(voice("これは नमस्ते です"), "Japanese and Hindi together: no one voice covers both")
+        XCTAssertNil(voice("გამარჯობა მეგობარო"), "a script that isn't in the table is not covered")
+        XCTAssertNil(voice("Hello வணக்கம்"), "likewise, with Latin beside it")
+        XCTAssertNil(voice("ok はい", available: false), "listed but not installed now: no reading")
+        XCTAssertNil(voice("Lovely harbour, hear the gulls near the end of it.", available: false), "also for a Latin note")
+        XCTAssertEqual(voice("Das ist ein sehr schöner Hafen mit vielen Möwen.", has: ["en": "v.en"]), "v.default", "no German voice: read in the default one")
+    }
+
+    func testANoteNoVoiceCanReadIsNeverRenderedAndLeavesNoFile() async throws {
+        let renders = Renders()
+        let none = WrittenMarginReader(directory: directory, voiceForNote: { _ in nil }, renderAudio: { try renders.render($0, scratch: $1) })
+        let note = WrittenMarginReading(intro: "Cole wrote:", text: "ok はい", itemId: "item-a")
+        do { _ = try await none.rendered(note); XCTFail("no voice") } catch { XCTAssertEqual(error as? WrittenMarginReader.RenderError, .noVoice) }
+        XCTAssertTrue(renders.spoken.isEmpty, "nothing was synthesized")
+        XCTAssertFalse(none.isReady(note))
+        XCTAssertFalse(filesInDirectory().contains { $0.hasSuffix(".caf") })
+    }
+
+    /// A sanity check, not proof: a file no longer than the intro alone means the voice said nothing of the note.
+    func testAFileNoLongerThanTheIntroAloneIsAFailureAndKeepsNoFile() async throws {
+        let renders = Renders()
+        @Sendable func seconds(_ url: URL) -> Double? { String(decoding: (try? Data(contentsOf: url)) ?? Data(), as: UTF8.self).contains("harbour") ? 3 : 1 }
+        let reader = WrittenMarginReader(directory: directory, voiceForNote: { _ in "v" }, audioSeconds: { seconds($0) },
+                                         renderAudio: { try renders.render($0, scratch: $1) })
+        let spoken = WrittenMarginReading(intro: "Cole wrote:", text: "Lovely harbour.", itemId: "item-a")
+        let silent = WrittenMarginReading(intro: "Cole wrote:", text: "これは", itemId: "item-a")
+        _ = try await reader.rendered(spoken)
+        do { _ = try await reader.rendered(silent); XCTFail("intro only") } catch { XCTAssertEqual(error as? WrittenMarginReader.RenderError, .nothingToSay) }
+        XCTAssertFalse(reader.isReady(silent))
+        XCTAssertEqual(filesInDirectory().filter { $0.hasSuffix(".caf") }.count, 1, "only the whole reading is kept")
+    }
+
+    /// Render a reading, make its leveled copy through the real leveler, delete the item, then look under the Caches root.
+    func testDeletingAnItemLeavesNothingOfItsReadingsOrTheirLeveledCopiesAndTouchesNothingElse() async throws {
+        let caches = directory.appending(path: "Caches", directoryHint: .isDirectory)
+        let readings = caches.appending(path: "WrittenMargins", directoryHint: .isDirectory)
+        let leveled = LeveledMarginCache(directory: caches.appending(path: "LeveledMargins", directoryHint: .isDirectory))
+        let seed = Seeds()
+        let reader = WrittenMarginReader(directory: readings, voiceForNote: { _ in "v" }, audioSeconds: { $0.deletingLastPathComponent().lastPathComponent == "intro" ? 1 : 5 }, renderAudio: { text, scratch in
+            let file = scratch.appending(path: "speech.caf") // a real, different recording for each text
+            try MarginLoudnessLevelerTests.write([MarginLoudnessLevelerTests.speechLike(seed: seed.next(), lufs: -30)], to: file, aac: false)
+            return file
+        })
+        let a1 = WrittenMarginReading(intro: "Cole wrote:", text: "First note.", itemId: "item-a")
+        let a2 = WrittenMarginReading(intro: "Cole wrote:", text: "Second note.", itemId: "item-a")
+        let b1 = WrittenMarginReading(intro: "Cole wrote:", text: "First note.", itemId: "item-b")
+        var readingFiles: [URL] = []
+        for reading in [a1, a2, b1] { readingFiles.append(try await reader.rendered(reading)) }
+        for file in readingFiles { guard case .leveled = await leveled.level(file) else { return XCTFail("the leveler should make a copy of \(file.lastPathComponent)") } }
+        let recording = directory.appending(path: "recording.wav") // a recording and its own leveled copy: not this path's to touch
+        try MarginLoudnessLevelerTests.write([MarginLoudnessLevelerTests.speechLike(seed: 999, lufs: -40)], to: recording, aac: false)
+        guard case .leveled = await leveled.level(recording) else { return XCTFail("recording copy") }
+        func leveledCount() -> Int { ((try? FileManager.default.contentsOfDirectory(atPath: caches.appending(path: "LeveledMargins").path)) ?? []).filter { $0.hasSuffix(".caf") }.count }
+        XCTAssertEqual(leveledCount(), 4)
+
+        reader.removeReadings(forItem: "item-a", leveled: leveled)
+        try await waitUntil("item-a's readings and their copies are gone") {
+            leveledCount() == 2 && !FileManager.default.fileExists(atPath: readingFiles[0].path) && !FileManager.default.fileExists(atPath: readingFiles[1].path)
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: readingFiles[2].path), "item-b's reading stays")
+        XCTAssertNotNil(leveled.readyCopy(for: readingFiles[2]), "and its leveled copy")
+        XCTAssertNotNil(leveled.readyCopy(for: recording), "the recording's leveled copy is not touched")
+        let left = (FileManager.default.enumerator(atPath: caches.path)?.allObjects as? [String]) ?? []
+        XCTAssertFalse(left.contains { $0.contains(WrittenMarginReader.itemKey("item-a")) }, "nothing named for item-a is left: \(left)")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: recording.path), "no recording was touched")
+    }
+
+    private final class Seeds: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value: UInt64 = 10
+        func next() -> UInt64 { lock.withLock { value += 1; return value } }
     }
 
     func testTheSpokenWordsKeepEverythingButLinksAndEmoji() {
@@ -244,19 +319,6 @@ final class WrittenMarginReaderTests: XCTestCase {
         XCTAssertEqual(again, fileA, "if the item comes back, the reading simply renders again")
     }
 
-    /// Trash is not a permanent delete: the app calls `removeReadings` only for the latter, so Undo finds the file.
-    func testTrashingLeavesTheReadingSoUndoStillHasIt() async throws {
-        let renders = Renders()
-        let reader = reader(renders)
-        let note = WrittenMarginReading(intro: "Cole wrote:", text: "Lovely harbour.", itemId: "item-a")
-        let file = try await reader.rendered(note)
-        // Trash and Undo call nothing on the reader. What the host cannot show: that the player then plays the file.
-        XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
-        XCTAssertTrue(reader.isReady(note))
-        let after = try await reader.rendered(note)
-        XCTAssertEqual(after, file)
-        XCTAssertEqual(renders.spoken.count, 1, "nothing was rendered again")
-    }
 
     func testARenderThatFinishesAfterTheDeleteLeavesNoFile() async throws {
         let release = DispatchSemaphore(value: 0)

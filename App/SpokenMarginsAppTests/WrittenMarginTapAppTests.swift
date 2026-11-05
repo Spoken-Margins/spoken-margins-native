@@ -149,4 +149,80 @@ final class WrittenMarginTapAppTests: XCTestCase {
         XCTAssertNil(model.marginMoment)
         XCTAssertNil(model.pendingImportedCommentary)
     }
+
+    // Leaving the item's screen ends a tap's wait: when the reading arrives, nothing plays (the wiring behind `.onDisappear`).
+    func testLeavingTheItemScreenEndsATapsWait() async throws {
+        let fixture = try await ReturnFixture.make(sourcePlaying: true, writtenWords: uniqueWords())
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        try await fixture.seedReading(ready: false)
+        XCTAssertTrue(model.jumpToImportedCommentary(interjectionID: fixture.record.id))
+
+        model.listenToPendingImportedCommentary()
+        WrittenMarginReadings.leftItemScreen(try XCTUnwrap(fixture.layer.itemId))
+        let reading = try XCTUnwrap(fixture.writtenReading)
+        try await fixture.waitUntil("the reading is ready, with nobody waiting for it") { WrittenMarginReader.shared.isReady(reading) }
+        try await Task.sleep(for: .milliseconds(500))
+        XCTAssertNil(model.playingImportedCommentary, "the listener had left: nothing plays")
+    }
+
+    // The same for a review's hold: it never starts the review after the listener leaves the screen.
+    func testLeavingTheItemScreenEndsAReviewsHold() async throws {
+        let fixture = try await ReturnFixture.make(sourcePlaying: true, writtenWords: uniqueWords())
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        try await fixture.seedReading(ready: false)
+
+        model.reviewNewMargins(itemId: "real-source", thenContinue: true)
+        XCTAssertNil(model.marginMoment, "the review waits for its readings")
+        WrittenMarginReadings.leftItemScreen("real-source")
+        try await Task.sleep(for: .milliseconds(1_200))
+        XCTAssertNil(model.marginMoment, "the listener left, so the review does not start by itself")
+    }
+
+    // A reading that cannot be played (here a file that isn't audio, as a failed or cleared render leaves) is a warning,
+    // not a hearing: nothing plays and the Margin stays new.
+    func testAWrittenMarginWhoseReadingFailsStaysNewAndPlaysNothing() async throws {
+        let fixture = try await ReturnFixture.make(sourcePlaying: true, writtenWords: uniqueWords())
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        let reading = try XCTUnwrap(fixture.writtenReading)
+        let target = WrittenMarginReader.shared.fileURL(for: reading)
+        try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("not audio".utf8).write(to: target)
+        _ = WrittenMarginReader.shared.start(["seed": reading])
+        await WrittenMarginReader.shared.waitUntilSettled([reading], upTo: 10)
+        XCTAssertTrue(model.jumpToImportedCommentary(interjectionID: fixture.record.id))
+
+        model.listenToPendingImportedCommentary()
+        try await fixture.waitUntil("the failure is reported") { model.diagnostics["marginMoment.voiceUnavailable"] != nil || model.playingImportedCommentary == nil && model.pendingImportedCommentary == nil }
+        try await Task.sleep(for: .milliseconds(500))
+        XCTAssertNil(model.playingImportedCommentary)
+        XCTAssertEqual(model.selectedItem.importedCommentaryInterjections[fixture.layer.id]?.first?.isNewToListener, true, "not marked heard")
+    }
+
+    // Permanent delete removes the item's readings; trash and Undo leave them. The files are the reader's, so this is the
+    // wiring: `permanentlyDeleteItem` reaches `removeReadings`, the trash path does not.
+    func testOnlyAPermanentDeleteRemovesAnItemsReadings() async throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        let reading = WrittenMarginReading(intro: "Cole wrote:", text: uniqueWords(), itemId: "item-pill")
+        let file = WrittenMarginReader.shared.fileURL(for: reading)
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("a friend's words".utf8).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+
+        model.moveItemToTrash(id: "item-pill")
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: file.path), "trash leaves the reading")
+        model.undoLastTrash()
+        await model.settleLibraryReload()
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: file.path), "and so does Undo")
+
+        model.moveItemToTrash(id: "item-pill")
+        model.permanentlyDeleteItem(id: "item-pill")
+        for _ in 0..<100 where FileManager.default.fileExists(atPath: file.path) { try await Task.sleep(for: .milliseconds(50)) }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path), "a permanent delete removes it")
+    }
 }

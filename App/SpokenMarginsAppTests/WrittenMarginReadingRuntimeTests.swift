@@ -41,12 +41,14 @@ final class WrittenMarginReadingRuntimeTests: XCTestCase {
         executionTimeAllowance = 180
         try await SystemVoiceRuntime.requireAnsweringVoice()
         let notes = [
-            ("ja-JP", "これは素晴らしい港です。最後にカモメの声が聞こえます。"),
-            ("hi-IN", "यह एक बहुत सुंदर बंदरगाह है और मुझे यह पसंद है।"),
+            ("ja-JP", "これは素晴らしい港です。最後にカモメの声が聞こえます。", 2.0),
+            ("hi-IN", "यह एक बहुत सुंदर बंदरगाह है और मुझे यह पसंद है।", 2.0),
+            ("zh-CN", "Great point. 你好世界。Listen again.", 1.5), // a mixed note: the one voice says the English too
+            ("ja-JP", "ok はい", 0.3),
         ]
         var checked = 0
         var skipped: [String] = []
-        for (language, words) in notes {
+        for (language, words, margin) in notes {
             guard AVSpeechSynthesisVoice(language: language) != nil else { skipped.append("no \(language) voice installed"); continue }
             let directory = FileManager.default.temporaryDirectory.appending(path: "written-margin-script-\(UUID().uuidString)", directoryHint: .isDirectory)
             defer { try? FileManager.default.removeItem(at: directory) }
@@ -54,7 +56,7 @@ final class WrittenMarginReadingRuntimeTests: XCTestCase {
             let intro = WrittenMarginReading.intro(senderName: "Cole")
             let introOnly = try AVAudioPlayer(contentsOf: try await reader.rendered(WrittenMarginReading(intro: intro, text: "ok", itemId: "intro")))
             let whole = try AVAudioPlayer(contentsOf: try await reader.rendered(WrittenMarginReading(intro: intro, text: words, itemId: "note")))
-            XCTAssertGreaterThan(whole.duration, introOnly.duration + 2, "\(language): the note itself was spoken, not only \"\(intro)\"")
+            XCTAssertGreaterThan(whole.duration, introOnly.duration + margin, "\(language): the note itself was spoken, not only \"\(intro)\"")
             checked += 1
         }
         if checked == 0 { throw XCTSkip("this Mac has no Japanese or Hindi voice installed: \(skipped.joined(separator: "; "))") }

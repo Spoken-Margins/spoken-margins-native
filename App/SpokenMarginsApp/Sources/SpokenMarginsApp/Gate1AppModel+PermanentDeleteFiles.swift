@@ -42,7 +42,7 @@ extension Gate1AppModel {
     func removeDurableGeneratedAudio(for item: some LibraryItemFields) {
         // A friend's written Margins were read aloud from files rendered for this item (#3365). Their words go with it. All
         // the logic, and the off-main-thread removal, is the reader's; trash leaves them, so Undo still plays.
-        WrittenMarginReader.shared.removeReadings(forItem: item.id)
+        WrittenMarginReader.shared.removeReadings(forItem: item.id, leveled: Self.leveledMargins)
         guard item.media?.sourceType == .generatedTTSPrerendered,
               let identifier = item.media?.nativeMediaId ?? item.media?.url,
               let url = URL(string: identifier),

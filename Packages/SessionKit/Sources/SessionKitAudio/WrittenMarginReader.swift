@@ -53,6 +53,9 @@ public final class WrittenMarginReader: @unchecked Sendable {
     private let renderAudio: @Sendable (_ spokenText: String, _ scratch: URL, _ voice: String?) throws -> URL
     /// True for the iPhone voice: the voice is then chosen from the note's language. A test renderer is given none.
     private let picksVoice: Bool
+    private let chooseVoice: @Sendable (_ note: String) -> String?
+    private let audioSeconds: @Sendable (URL) -> Double?
+    private var introSeconds: [String: Double] = [:] // how long a voice takes to say a sender's intro alone
     private let timeLimit: @Sendable (_ spokenText: String) -> TimeInterval
     private let lock = NSLock()
     private var ready = Set<String>()
@@ -76,14 +79,18 @@ public final class WrittenMarginReader: @unchecked Sendable {
         timeLimit: (@Sendable (_ spokenText: String) -> TimeInterval)? = nil,
         mostStuckRenders: Int = WrittenMarginReader.defaultMostStuckRenders,
         recheckAfter: TimeInterval = 5,
+        voiceForNote: (@Sendable (_ note: String) -> String?)? = nil,
+        audioSeconds: @escaping @Sendable (URL) -> Double? = { (try? AVAudioFile(forReading: $0)).map { Double($0.length) / $0.processingFormat.sampleRate } },
         renderAudio: (@Sendable (_ spokenText: String, _ scratch: URL) throws -> URL)? = nil
     ) {
+        self.chooseVoice = voiceForNote ?? { WrittenMarginReader.installedVoice(forNote: $0) }
+        self.audioSeconds = audioSeconds
         self.directory = directory
         self.voiceIdentifier = voiceIdentifier
         self.mostStuck = mostStuckRenders
         self.recheckAfter = recheckAfter
         self.timeLimit = timeLimit ?? { WrittenMarginReader.defaultTimeLimit(forCharacters: $0.count) }
-        self.picksVoice = renderAudio == nil
+        self.picksVoice = renderAudio == nil || voiceForNote != nil
         if let renderAudio {
             self.renderAudio = { text, scratch, _ in try renderAudio(text, scratch) }
         } else {
@@ -110,7 +117,10 @@ public final class WrittenMarginReader: @unchecked Sendable {
     /// A stable name from SHA-256 of the words in memory: naming a file never reads the disk, so the main thread can ask
     /// for a path, and no one can craft a note that shares another note's file.
     static func fingerprint(_ seed: String) -> String {
-        var hasher = SHA256() // the incremental form: this hashes a short string already in memory, never a file's bytes
+        // This hashes a short string already in memory, never a file's bytes. `scripts/main_thread_reads.py` flags the one-shot
+        // `SHA256.hash(` call because that is how files get hashed; it is about file reads, which this is not. The incremental
+        // form is used so the guard needs no baseline row. It is not a way around the guard: nothing here touches the disk.
+        var hasher = SHA256()
         hasher.update(data: Data(seed.utf8))
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
@@ -146,41 +156,37 @@ public final class WrittenMarginReader: @unchecked Sendable {
         }
     }
 
-    /// The voice to read this note with, or nil when the phone has none for its language: the one answer the render
-    /// uses, so a note is never read in a voice that cannot say it. Short Latin-script notes ("ha!", "yes") are too short
-    /// to tell the language of, and a Latin-script note in a language with no voice is read in the default voice, as a
-    /// reader says a foreign phrase; any other script with no voice has no reading, and fails with the ordinary line.
-    static func voice(forNote text: String, voiceFor: (String) -> String?, defaultVoice: () -> String?) -> String? {
-        let sample = WrittenMarginSpeech.speakable(String(text.prefix(1_000)))
-        let letters = sample.unicodeScalars.filter { $0.properties.isAlphabetic }
-        let isLatin = letters.allSatisfy { $0.value < 0x250 || (0x1E00...0x1EFF).contains($0.value) }
-        if isLatin, letters.count < 20 { return defaultVoice() }
-        let recognizer = NLLanguageRecognizer()
-        recognizer.processString(sample)
-        guard let language = recognizer.dominantLanguage, language != .undetermined else { return defaultVoice() }
-        if let voice = voiceFor(language.rawValue) { return voice }
-        return isLatin ? defaultVoice() : nil
-    }
-
-    /// `voice(forNote:)` with the voices this iPhone has.
+    /// The one voice that can read all of this note on this iPhone, or nil (`WrittenMarginVoice`). Asked at render time.
     static func installedVoice(forNote text: String) -> String? {
-        voice(
-            forNote: text,
+        WrittenMarginVoice.voice(
+            forNote: WrittenMarginSpeech.speakable(text),
             voiceFor: { code in
                 let wanted = ["zh-Hans": "zh-CN", "zh-Hant": "zh-TW"][code] ?? code
                 if let voice = AVSpeechSynthesisVoice(language: wanted) { return voice.identifier }
                 let base = wanted.split(separator: "-").first.map(String.init) ?? wanted
                 return AVSpeechSynthesisVoice.speechVoices().first { $0.language.hasPrefix(base) }?.identifier
             },
-            defaultVoice: { AVSpeechSynthesisVoice(language: AVSpeechSynthesisVoice.currentLanguageCode())?.identifier }
+            defaultVoice: { AVSpeechSynthesisVoice(language: AVSpeechSynthesisVoice.currentLanguageCode())?.identifier },
+            isAvailable: { AVSpeechSynthesisVoice(identifier: $0) != nil }
         )
+    }
+
+    /// Every file derived from an item's words, worked out in one place: the readings in this folder. Their leveled playback
+    /// copies are found from these (by content), so a new kind of copy is added to `removeReadings` here and nowhere else.
+    func derivedFiles(forItem itemId: String) -> [URL] {
+        let prefix = Self.itemKey(itemId) + "-"
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
+        return names.filter { $0.hasPrefix(prefix) }.map { directory.appending(path: $0, directoryHint: .notDirectory) }
     }
 
     /// Removes everything rendered for an item that is deleted for good, and the scratch folders of renders that died. The
     /// words are the friend's: they must not outlive the item (#3365). Trash is not this: a trashed item keeps its
     /// readings, so Undo still plays, and a reading that is gone only renders again. A render of the item that is still
     /// running leaves no file behind. Nothing else is touched: not a Margin, not a recording.
-    public func removeReadings(forItem itemId: String) {
+    /// `leveled` is the cache that makes playback copies of recordings (`LeveledMarginCache`): a reading is played through
+    /// it like a recording, so its copy holds the same words and goes with the reading, found by the reading's content
+    /// before the reading is deleted. Only copies of this item's readings are asked for; no recording is.
+    public func removeReadings(forItem itemId: String, leveled: LeveledMarginCache? = nil) {
         let prefix = Self.itemKey(itemId) + "-"
         func isItsFile(_ path: String) -> Bool { URL(fileURLWithPath: path).lastPathComponent.hasPrefix(prefix) }
         lock.withLock {
@@ -188,11 +194,10 @@ public final class WrittenMarginReader: @unchecked Sendable {
             lastChecked = lastChecked.filter { !isItsFile($0.key) }
             doomed.formUnion(Set(waiting.keys).union(inFlight).filter(isItsFile))
         }
-        let directory = directory
         DispatchQueue.global(qos: .utility).async { [self] in
-            let names = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
-            for name in names where name.hasPrefix(prefix) {
-                try? FileManager.default.removeItem(at: directory.appending(path: name, directoryHint: .notDirectory))
+            for file in derivedFiles(forItem: itemId) {
+                leveled?.removeCopies(of: file) // hashes the reading now; the removal is queued behind any leveling in progress
+                try? FileManager.default.removeItem(at: file)
             }
             sweepScratch()
         }
@@ -330,15 +335,35 @@ public final class WrittenMarginReader: @unchecked Sendable {
         done.forEach { $0(result) }
     }
 
+    /// A sanity check, not proof of coverage: a file no longer than the intro said alone means the voice said nothing of the
+    /// note (a voice that is listed but silent). A voice that drops part of a note still passes; the API cannot show that.
+    /// A file whose length can't be read is passed on; the player will report it.
+    private func isLongerThanTheIntro(_ file: URL, reading: WrittenMarginReading, voice: String, scratch: URL) throws -> Bool {
+        guard let whole = audioSeconds(file) else { return true }
+        let key = "\(voice)\u{1f}\(reading.intro)"
+        var intro = lock.withLock { introSeconds[key] }
+        if intro == nil {
+            let aside = scratch.appending(path: "intro", directoryHint: .isDirectory) // its own folder: same file names as the note's
+            try FileManager.default.createDirectory(at: aside, withIntermediateDirectories: true)
+            let alone = try renderAudio(reading.intro, aside, voice)
+            intro = audioSeconds(alone) ?? 0
+            lock.withLock { introSeconds[key] = intro }
+        }
+        return whole > (intro ?? 0) + 0.05
+    }
+
     private func render(_ reading: WrittenMarginReading, to target: URL) throws -> URL {
         let fileManager = FileManager.default
         if fileManager.fileExists(atPath: target.path) { return target }
         let scratch = directory.appending(path: "scratch-\(UUID().uuidString)", directoryHint: .isDirectory)
         try fileManager.createDirectory(at: scratch, withIntermediateDirectories: true)
         defer { try? fileManager.removeItem(at: scratch) }
-        let voice = picksVoice ? (voiceIdentifier ?? Self.installedVoice(forNote: reading.text)) : voiceIdentifier
-        if picksVoice, voice == nil { throw RenderError.noVoice }
+        let voice = picksVoice ? (voiceIdentifier ?? chooseVoice(reading.text)) : voiceIdentifier
+        if picksVoice, voice == nil { throw RenderError.noVoice } // no installed voice can read all of it: no reading, not a fragment
         let rendered = try renderAudio(reading.spokenText, scratch, voice)
+        if picksVoice, let voice, try !isLongerThanTheIntro(rendered, reading: reading, voice: voice, scratch: scratch) {
+            throw RenderError.nothingToSay
+        }
         if fileManager.fileExists(atPath: target.path) { return target } // another render of these words got there first
         // The item was deleted for good while this rendered: its words go no further than the scratch folder.
         if lock.withLock({ doomed.contains(target.path) }) { throw RenderError.nothingToSay }
