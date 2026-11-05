@@ -75,7 +75,7 @@ final class SpokenNotePlayerModel: NSObject, ObservableObject, AVAudioPlayerDele
         ticker?.cancel()
         ticker = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(for: .milliseconds(100))
+                try? await Task.sleep(for: .milliseconds(20)) // short, so a sentence does not run into the next one
                 guard let self, let player = self.player, let span = self.span else { return }
                 if !player.isPlaying || span.hasEnded(atMs: Int(player.currentTime * 1_000)) {
                     self.stop()
@@ -85,12 +85,19 @@ final class SpokenNotePlayerModel: NSObject, ObservableObject, AVAudioPlayerDele
         }
     }
 
+    // A callback from a player that has since been replaced (the listener tapped another sentence) is ignored.
     nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
-        Task { @MainActor in self.stop() }
+        let finished = ObjectIdentifier(player)
+        Task { @MainActor in
+            guard self.player.map(ObjectIdentifier.init) == finished else { return }
+            self.stop()
+        }
     }
 
     nonisolated func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) {
+        let failed = ObjectIdentifier(player)
         Task { @MainActor in
+            guard self.player.map(ObjectIdentifier.init) == failed else { return }
             self.stop()
             self.message = "Couldn't play this audio. The recording is still on your phone."
         }
