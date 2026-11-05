@@ -236,7 +236,10 @@ test('an enclosure that fails to load: one sentence and the Margins still play (
   await page.getByTestId('arrival').getByRole('button', { name: 'Play' }).click();
   const cue = page.getByRole('dialog', { name: EPISODE }).getByTestId('margin-cue');
   await expect(cue).toContainText('This episode can’t play here, but you can still hear Web fixture’s Margins.');
-  // (The one-toast rule is link-arrival.spec.ts's #3356 test, which fails on this branch: see the report.)
+  // The card is the one sentence: no problem toast beside it (#3356). Give a late second one time to appear.
+  await page.waitForTimeout(1500);
+  await expect(page.locator('.toast-problem')).toHaveCount(0);
+  await expect(page.getByText('This episode can’t play here', { exact: false })).toHaveCount(1);
   await context.close();
 });
 

@@ -20,6 +20,12 @@ interface Toast {
 
 interface UiApi {
   toast(text: string, tone?: Toast['tone']): void;
+  /**
+   * A standing problem that is on screen exactly while its owner says so: `notice(key, text)` shows it, `notice(key,
+   * undefined)` takes it down, and calling it again with the same words changes nothing. Unlike `toast` it is a state to
+   * show, not an event, so it never depends on when it was raised. `onClose` is called when the listener closes it.
+   */
+  notice(key: string, text: string | undefined, onClose?: () => void): void;
   askRelay(): Promise<boolean>;
 }
 
@@ -27,6 +33,7 @@ const UiContext = createContext<UiApi | null>(null);
 
 export function UiProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [notices, setNotices] = useState<Record<string, { text: string; onClose?: () => void }>>({});
   const [asking, setAsking] = useState<((yes: boolean) => void) | null>(null);
   const nextId = useRef(1);
 
@@ -42,17 +49,46 @@ export function UiProvider({ children }: { children: ReactNode }) {
     [dismiss],
   );
 
+  const notice = useCallback((key: string, text: string | undefined, onClose?: () => void) => {
+    setNotices((now) => {
+      if (text === undefined) {
+        if (!(key in now)) return now;
+        const { [key]: _gone, ...rest } = now;
+        return rest;
+      }
+      return now[key]?.text === text ? now : { ...now, [key]: { text, onClose } };
+    });
+  }, []);
+
   const askRelay = useCallback(() => new Promise<boolean>((resolve) => setAsking(() => resolve)), []);
 
-  const api = useMemo(() => ({ toast, askRelay }), [toast, askRelay]);
+  const api = useMemo(() => ({ toast, notice, askRelay }), [toast, notice, askRelay]);
   return (
     <UiContext.Provider value={api}>
       {children}
       <div className="toasts">
         {/* role="alert" is announced when it arrives with its text, so it exists only while there is a
             problem; the status region below stays in place so polite notes are heard. */}
-        {toasts.some((t) => t.tone === 'problem') && (
+        {(toasts.some((t) => t.tone === 'problem') || Object.keys(notices).length > 0) && (
         <div role="alert">
+          {Object.entries(notices).map(([key, n]) => (
+            <p key={key} className="toast toast-problem">
+              <span className="toast-mark" aria-hidden="true">
+                !
+              </span>
+              <span>{n.text}</span>
+              <button
+                type="button"
+                className="toast-close"
+                onClick={() => {
+                  n.onClose?.();
+                  notice(key, undefined);
+                }}
+              >
+                Close
+              </button>
+            </p>
+          ))}
           {toasts
             .filter((t) => t.tone === 'problem')
             .map((t) => (

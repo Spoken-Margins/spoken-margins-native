@@ -1,11 +1,11 @@
 // The one audio element and everything that drives it: open an episode (resuming where the listener left
 // off), play, pause, skip, speed, seek, and the Media Session, so Android's lock screen and notification
 // controls work. Positions are saved every few seconds while playing, and on pause, seek and leaving.
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { Episode, Margin } from '../shared/model.ts';
 import { useData } from './data.tsx';
 import { friendMargins } from './logic/arrival.ts';
-import { clipRejection, EPISODE_FAILED, failureNeedsToast, nextFailure, type FailureEvent } from './logic/episode-failure.ts';
+import { clipRejection, EPISODE_FAILED, failureNoticeShown, nextFailure, type FailureEvent } from './logic/episode-failure.ts';
 import { CrossingClock } from './logic/margin-autoplay.ts';
 import { plainError } from './logic/messages.ts';
 import { NotSavedError } from './logic/storage.ts';
@@ -62,7 +62,7 @@ const PlayerContext = createContext<PlayerApi | null>(null);
 
 export function PlayerProvider({ children }: { children: ReactNode }) {
   const data = useData();
-  const { toast } = useUi();
+  const { toast, notice } = useUi();
   const relay = useRelay();
   const audioRef = useRef<HTMLAudioElement>(null);
   const [episodeId, setEpisodeId] = useState<string>();
@@ -76,9 +76,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   // Whether the episode failed to load, as a ref (events must see it at once) and as state (the screen shows it).
   const failedRef = useRef(false);
   const [failed, setFailed] = useState(false);
-  // Set when an event turned a working episode into a failed one; the effect below shows the toast unless the card does.
-  const announceRef = useRef(false);
-  const failureCards = useRef(0);
+  // How many cue cards are on screen saying the episode failed, and whether the listener closed the notice for this failure.
+  const [failureCards, setFailureCards] = useState(0);
+  const [noticeClosed, setNoticeClosed] = useState(false);
   const [withoutEpisode, setWithoutEpisode] = useState<'idle' | 'playing' | 'done'>('idle');
   // Which run of the Margins-without-the-episode is current; a new one, or leaving, ends the old one.
   const runId = useRef(0);
@@ -201,37 +201,30 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   /** Feeds the one failure state an event; shows the problem only when this event is the one that made it fail. */
   const apply = useCallback(
     (event: FailureEvent) => {
-      const step = nextFailure(failedRef.current, event);
+      const was = failedRef.current;
+      const step = nextFailure(was, event);
       failedRef.current = step.failed;
       setFailed(step.failed);
       if (!step.failed) setWithoutEpisode((w) => (w === 'playing' ? w : 'idle'));
-      if (step.announce) {
+      if (step.failed && !was) {
         setLoading(false);
         setPlaying(false);
-        announceRef.current = true;
+        setNoticeClosed(false);
       }
     },
     [],
   );
 
-  // The problem is shown after the screen has drawn the failure: the cue card is then registered if it is on screen,
-  // and says it in its own sentence; with no card (no friend Margins, or only the mini player) the toast is the
-  // sentence, so a failure is never silent. Children's effects run first, so the card is counted by now.
-  useEffect(() => {
-    if (!failed) {
-      announceRef.current = false;
-      return;
-    }
-    if (!announceRef.current) return;
-    announceRef.current = false;
-    if (failureNeedsToast(failureCards.current)) toast(EPISODE_FAILED, 'problem');
-  }, [failed, toast]);
+  // The problem sentence: the cue card renders it while it is on screen; otherwise this notice does. It is derived from
+  // the state now, in a layout effect so the screen never paints both, and it holds no memory of when the failure came.
+  const noticeShown = failureNoticeShown({ failed, cardsShowing: failureCards, closed: noticeClosed });
+  useLayoutEffect(() => {
+    notice('episode-failed', noticeShown ? EPISODE_FAILED : undefined, () => setNoticeClosed(true));
+  }, [noticeShown, notice]);
 
   const registerFailureCard = useCallback(() => {
-    failureCards.current++;
-    return () => {
-      failureCards.current--;
-    };
+    setFailureCards((n) => n + 1);
+    return () => setFailureCards((n) => n - 1);
   }, []);
 
   /** A `play()` that was refused or failed: a failed source is the one failure; a refused autoplay is just a wait. */
