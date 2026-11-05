@@ -22,10 +22,8 @@ enum PublicSourceChecks {
         #if DEBUG
         hermetic = hermetic || UITestingHooks.isActive
         #endif
-        let probe: PublicSourceVerifier.Probe = hermetic
-            ? { _, _ in throw URLError(.notConnectedToInternet) }
-            : PublicSourceTransport.probe
-        return PublicSourceMarker(verifier: PublicSourceVerifier(probe: probe))
+        let offline: PublicSourceVerifier.Probe = { @Sendable _, _ in throw URLError(.notConnectedToInternet) }
+        return PublicSourceMarker(verifier: PublicSourceVerifier(probe: hermetic ? offline : PublicSourceTransport.probe))
     }
 
     /// Checks the item and records the mark, off the main thread. The item is untouched when the check finds nothing.
