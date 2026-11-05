@@ -27,6 +27,14 @@ public struct PinnedMarginCard: Equatable, Sendable {
             }
         }
 
+        /// "Cole's words": whose words the iPhone's voice is reading.
+        public var words: String {
+            switch self {
+            case .yours: "your words"
+            case .friend(let name): name.map { "\($0)'s words" } ?? "your friend's words"
+            }
+        }
+
         /// "Cole is speaking" needs a name for the one who speaks.
         public var speaker: String {
             switch self {
@@ -125,7 +133,7 @@ public struct PinnedMarginCard: Equatable, Sendable {
     public var detail: String {
         switch stage {
         case .speaking: voiceTime.map { "\($0) · The episode is paused." } ?? "The episode is paused while this plays."
-        case .reading: voiceTime.map { "\($0) · Read aloud by your iPhone. The episode is paused." } ?? "Read aloud by your iPhone. The episode is paused while this plays."
+        case .reading: voiceTime.map { "\($0) · Your phone's voice is reading \(subject.words)." } ?? "Your phone's voice is reading \(subject.words)."
         case .voicePaused: voiceTime.map { "\($0) · The episode stays paused." } ?? "The episode stays paused until this is done."
         case .loading: "Hold on, this is getting ready."
         case .failed(let canMoveOn):

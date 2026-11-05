@@ -36,7 +36,7 @@ extension Gate1AppModel {
             let stage: PinnedMarginCard.Stage
             switch importedCommentaryPhase {
             case .loading: stage = .loading
-            case .playing: stage = .speaking
+            case .playing: stage = playing.interjection.isWritten ? .reading : .speaking // a synthetic voice is never "speaking" (#3365)
             case .paused: stage = .voicePaused
             case .failed: stage = .failed(canMoveOn: canGoToNextMargin)
             }

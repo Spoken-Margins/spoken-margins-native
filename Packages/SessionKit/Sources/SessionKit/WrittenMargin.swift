@@ -25,11 +25,13 @@ public enum SharedMarginPlaceholderWords {
 extension ImportedCommentaryInterjection {
     /// A written Margin: the sender typed it, so it has words and no recording. A Margin with a recording (even one
     /// this copy has lost), with blank words, or with only a voice Margin's placeholder words is not written, so the
-    /// reading never says "Cole wrote: Voice Margin at 12:34".
+    /// reading never says "Cole wrote: Voice Margin at 12:34". Words the voice has nothing to say for (only emoji, say)
+    /// are not written either: the listener would hear "Cole wrote:" and silence, and the Margin would count as heard.
     public var isWritten: Bool {
         audioPath == nil
             && !approvedTranscript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && !SharedMarginPlaceholderWords.matches(approvedTranscript)
+            && !SpeechTextNormalizer.projectForSystemSpeech(approvedTranscript).text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 }
 
@@ -54,6 +56,12 @@ public struct WrittenMarginReading: Sendable, Equatable {
     }
 
     public var spokenText: String { "\(intro) \(text)" }
+
+    /// A note longer than this is rendered when the listener asks for it, not ahead of time when the item opens: about
+    /// 40 seconds of speech, so the work and the storage are not spent on a Margin that may never be played.
+    public static let preRenderCharacterLimit = 600
+
+    public var isShortEnoughToRenderAhead: Bool { text.count <= Self.preRenderCharacterLimit }
 }
 
 extension SharedMarginReview.Entry {

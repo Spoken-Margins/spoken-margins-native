@@ -95,6 +95,7 @@ extension Gate1AppModel {
             reportWarning("There are no new Margins to review on this item.")
             return
         }
+        if WrittenMarginReadings.holdReview(itemId: itemId, thenContinue: thenContinue, entries: entries, model: self) { return } // readings not ready yet (#3365)
         endMarginMoment()
         // A Margin voice already playing (your own, #1538, or a friend's) or a shared-Margin card waiting gives way:
         // it would play over the review, and its end would resume the source mid-review.
@@ -127,7 +128,7 @@ extension Gate1AppModel {
             heard[entry.marginId] = entry.interjection
             if let url = entry.interjection.audioPath.flatMap(resolvedApplicationSupportAssetURL(for:)) { voiceURLs[entry.marginId] = url }
         }
-        voiceURLs.merge(WrittenMarginReadings.start(for: entries)) { voice, _ in voice } // a written Margin's words, read aloud (#3365)
+        voiceURLs.merge(WrittenMarginReadings.startingReview(for: entries)) { voice, _ in voice } // a written Margin's words, read aloud (#3365)
         startMarginMoment(sequence: sequence, voiceURLs: voiceURLs, title: "New Margins", isApproximate: false)
         marginMomentConductor?.onVoiceStarted = { [weak self] in
             if let margin = heard[$0] { self?.markSharedMarginHeard(margin) }

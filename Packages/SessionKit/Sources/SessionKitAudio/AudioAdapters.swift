@@ -472,6 +472,15 @@ public final class SystemTextAudioPreparationClient: NSObject, TextAudioPreparat
         }
         let accumulator = AudioFileAccumulator(outputURL: outputURL)
         let synthesizer = AVSpeechSynthesizer()
+        // Rendering to a file needs no audio output, and a synthesizer on the app's session can leave a playing episode
+        // silent while it reports "playing" (#288), as `SystemVoiceChunkRenderer` found.
+        #if os(iOS)
+        synthesizer.usesApplicationAudioSession = false
+        #endif
+        // The synthesizer goes on after the last buffer: an empty one, then `didFinish` on the main queue. Letting go of
+        // it as this render returns crashed the app inside TextToSpeech (#1230, #768), so hold it a moment longer.
+        nonisolated(unsafe) let held = synthesizer
+        defer { DispatchQueue.main.asyncAfter(deadline: .now() + 1) { _ = held } }
         var renderedSegments: [MediaTimelineSegment] = []
         var cursorMs = 0
         for (index, segment) in segments.enumerated() {
