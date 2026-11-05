@@ -129,7 +129,7 @@ final class SharedMarginExportTests: XCTestCase {
     }
 
     func testMapProposalsStripEverySummaryAssetAndPreserveAllOtherFields() {
-        XCTAssertEqual(SharedMarginExport.mapProposals([]), [])
+        XCTAssertEqual(SharedMarginExport.mapProposals([], for: markedPublicItem()), [])
         let varied = PortableListeningMapProposalArtifact(
             id: "varied", schemaVersion: "custom-schema", createdAt: date, generator: "custom-generator",
             scenes: [PortableSceneEligibility.excluded, .unknown].enumerated().map { index, eligibility in
@@ -140,7 +140,7 @@ final class SharedMarginExportTests: XCTestCase {
             }
         )
         let proposals = [proposal(native: false), proposal(native: true), varied]
-        let exported = SharedMarginExport.mapProposals(proposals)
+        let exported = SharedMarginExport.mapProposals(proposals, for: markedPublicItem())
         XCTAssertEqual(exported.count, proposals.count)
         for (actual, original) in zip(exported, proposals) {
             XCTAssertEqual(actual.id, original.id)
@@ -240,6 +240,48 @@ final class SharedMarginExportTests: XCTestCase {
         .init(id: "evidence", localPath: "/unused", durationMs: 12_000, anchorOffsetMs: 4_000)
     }
 
+    // MARK: Model-written map text leaves only for a public source (#3449)
+
+    func testAPacketFromAFileOrAPaidFeedHoldsNoModelText() throws {
+        var file = Item(id: "pdf", title: "Doc", mediaType: "text", text: nil, externalReference: "file:///private/var/Doc.pdf",
+                        status: "ready", externalReferenceType: "file")
+        file.publicSourceMark = PublicSourceMark(url: "file:///private/var/Doc.pdf", checkedAt: date)
+        let paid = Item(id: "paid", title: "Paid", mediaType: "audio", text: nil, externalReference: "https://www.patreon.com/rss/show",
+                        status: "ready", externalReferenceType: "url")
+        for source in [file, paid] {
+            let exported = SharedMarginExport.mapProposals([modelWrittenProposal()], currentProposalID: nil, for: source)
+            let json = String(decoding: try JSONEncoder().encode(exported), as: UTF8.self)
+            XCTAssertFalse(json.contains("Model "), json)
+            XCTAssertTrue(json.contains("Publisher summary"), "the publisher's own words still go")
+            XCTAssertEqual(exported.first?.scenes.count, 2, "both scene starts still go")
+        }
+    }
+
+    func testAPacketFromAMarkedPublicSourceKeepsItsMap() throws {
+        let exported = SharedMarginExport.mapProposals([modelWrittenProposal()], currentProposalID: nil, for: markedPublicItem())
+        let json = String(decoding: try JSONEncoder().encode(exported), as: UTF8.self)
+        XCTAssertTrue(json.contains("Model title") && json.contains("Model summary"), json)
+    }
+
+    private func modelWrittenProposal() -> PortableListeningMapProposalArtifact {
+        PortableListeningMapProposalArtifact(id: "map", createdAt: date, generator: "on-device", scenes: [
+            PortableListeningMapScene(
+                id: "model", order: 0, title: "Model title", summaryText: "Model summary", summaryProvenance: .modelGenerated,
+                eligibility: .eligible, startAnchor: .init(anchorType: .media, mediaTimeMs: 0), endAnchor: .init(anchorType: .media, mediaTimeMs: 9_000)),
+            PortableListeningMapScene(
+                id: "publisher", order: 1, title: "Publisher title", summaryText: "Publisher summary", summaryProvenance: .publisherSupplied,
+                eligibility: .eligible, startAnchor: .init(anchorType: .media, mediaTimeMs: 10_000), endAnchor: .init(anchorType: .media, mediaTimeMs: 19_000)),
+        ])
+    }
+
+    /// A source whose address was found public, so its map text may travel (#3449).
+    private func markedPublicItem() -> Item {
+        var item = Item(id: "item-public", title: "Public", mediaType: "text", text: nil,
+                        externalReference: "https://example.com/post", status: "ready", externalReferenceType: "url")
+        item.publicSourceMark = PublicSourceMark(url: "https://example.com/post", checkedAt: Date(timeIntervalSince1970: 1_800_000_000))
+        return item
+    }
+
     private func item(text: String? = "ABC") -> Item {
         .init(id: "item", title: "A title", mediaType: "text", text: text, externalReference: nil, status: "ready")
     }
@@ -299,7 +341,7 @@ final class SharedMarginExportTests: XCTestCase {
                 anchor: anchor, representation: .textOnly
             )
         }
-        let proposals = SharedMarginExport.mapProposals([proposal(native: native)])
+        let proposals = SharedMarginExport.mapProposals([proposal(native: native)], for: markedPublicItem())
         return try SpokenMarginsPackageBuilder.prepare(
             packageId: "package-fixed-12345678", createdAt: date, item: identity, itemTransportSelection: transport,
             selections: selections, mapProposals: proposals,

@@ -94,15 +94,15 @@ final class ManifestBoundTests: XCTestCase {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
         let stored = (0..<5_000).map { proposal(id: "edition-map-rev\($0)", at: $0) }
-        XCTAssertEqual(SharedMarginExport.mapProposals(stored, currentProposalID: "edition-map-rev17").map(\.id), ["edition-map-rev17"])
-        XCTAssertEqual(SharedMarginExport.mapProposals(stored, currentProposalID: "gone").map(\.id), ["edition-map-rev4999"])
-        XCTAssertEqual(SharedMarginExport.mapProposals(stored, currentProposalID: nil).map(\.id), ["edition-map-rev4999"])
-        XCTAssertTrue(SharedMarginExport.mapProposals([], currentProposalID: nil).isEmpty)
+        XCTAssertEqual(SharedMarginExport.mapProposals(stored, currentProposalID: "edition-map-rev17", for: markedPublicItem()).map(\.id), ["edition-map-rev17"])
+        XCTAssertEqual(SharedMarginExport.mapProposals(stored, currentProposalID: "gone", for: markedPublicItem()).map(\.id), ["edition-map-rev4999"])
+        XCTAssertEqual(SharedMarginExport.mapProposals(stored, currentProposalID: nil, for: markedPublicItem()).map(\.id), ["edition-map-rev4999"])
+        XCTAssertTrue(SharedMarginExport.mapProposals([], currentProposalID: nil, for: markedPublicItem()).isEmpty)
 
         let prepared = try SpokenMarginsPackageBuilder.prepare(
             packageId: "many-proposals-package", createdAt: fixedDate, item: podcastItem(), itemTransportSelection: .reference,
             selections: sixMargins(evidenceID: nil),
-            mapProposals: SharedMarginExport.mapProposals(stored, currentProposalID: nil)
+            mapProposals: SharedMarginExport.mapProposals(stored, currentProposalID: nil, for: markedPublicItem())
         )
         let manifest = try exportPacket(prepared, to: root.appendingPathComponent("many-proposals.spokenmargins"))
         XCTAssertEqual(manifest.artifacts.filter { $0.kind == SpokenMarginsArtifactKind.listeningMapProposal }.count, 1)
@@ -184,6 +184,14 @@ final class ManifestBoundTests: XCTestCase {
                            startAnchor: .init(anchorType: .media, mediaTimeMs: 0),
                            endAnchor: .init(anchorType: .media, mediaTimeMs: 30_000))]
         )
+    }
+
+    /// A source whose address was found public, so its map text may travel (#3449).
+    private func markedPublicItem() -> Item {
+        var item = Item(id: "item-public", title: "Public", mediaType: "text", text: nil,
+                        externalReference: "https://example.com/post", status: "ready", externalReferenceType: "url")
+        item.publicSourceMark = PublicSourceMark(url: "https://example.com/post", checkedAt: Date(timeIntervalSince1970: 1_800_000_000))
+        return item
     }
 
     private func podcastItem() -> SharedItemIdentity {

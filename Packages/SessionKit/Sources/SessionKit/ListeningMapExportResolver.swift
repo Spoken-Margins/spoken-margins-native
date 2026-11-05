@@ -17,11 +17,13 @@ public enum ListeningMapExportResolver {
         let legacy = try repository.loadListeningMap(itemId: item.id)
             ?? (try? repository.loadCanonicalSource(itemId: item.id))?.derivedListeningMap()
         let projection = try repository.loadResolvedListeningMapProjection(itemId: item.id)
+        // A scene title is the model's words unless the source is marked public (#3449): without the mark the scene
+        // still places a chapter, with no title.
         let proposal = SharedListeningMapPlacement.proposal(
             for: projection,
             committed: try repository.loadPortableListeningMapProposals(itemId: item.id),
             layers: try repository.loadImportedCommentaryLayers(itemId: item.id)
-        )
+        ).map { MapTextDisclosure.proposal($0, for: item) }
         let scenes = SceneStarts(scenes: proposal?.scenes ?? [], projection: projection).chapters
         guard !scenes.isEmpty else { return legacy }
 

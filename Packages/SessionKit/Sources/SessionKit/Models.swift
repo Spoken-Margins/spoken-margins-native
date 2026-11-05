@@ -671,6 +671,10 @@ public struct Item: Codable, Equatable, Sendable {
     /// "streamed from a feed" mistakes the file for one. Optional and additive, so Build 29's decoder
     /// ignores it.
     public var linkedEpisode: LinkedEpisode? = nil
+    /// Set when the listener's own action found this source public: model-written scene text of its Listening Map may
+    /// then leave the device (#3449, `MapTextDisclosure`). Nil means no mark, which keeps that text on this phone.
+    /// Optional and additive: Builds 32 and 34 decode an item that carries it and ignore it. Never packed into a packet.
+    public var publicSourceMark: PublicSourceMark? = nil
 
     public init(
         id: String,
