@@ -28,6 +28,12 @@ final class WrittenMarginTapAppTests: XCTestCase {
         defaults.set("systemImmediate", forKey: "ttsMode")
     }
 
+    /// Each test leaves the shared written-Margin reader idle, so a leak fails the test that made it (#3423).
+    override func tearDown() async throws {
+        await ReturnFixture.expectSharedReaderIdle()
+        try await super.tearDown()
+    }
+
     override func tearDownWithError() throws {
         let defaults = UserDefaults.standard
         for key in Self.firstUseVoiceKeys {

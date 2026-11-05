@@ -140,6 +140,63 @@ final class WrittenMarginReaderTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: next.path))
     }
 
+    /// #3423: tests share one reader, so each one must see that it left no render behind. `activity` says what is
+    /// queued, running, waited on or stuck, `settle` waits for the readings someone waits on without starting any, and
+    /// `whenSettled` runs a file's removal only after the render that was about to look at it.
+    func testActivityShowsARenderUntilItIsDoneAndSettleWaitsForItWithoutStartingOne() async throws {
+        let release = DispatchSemaphore(value: 0)
+        let started = DispatchSemaphore(value: 0)
+        defer { release.signal() }
+        let reader = WrittenMarginReader(directory: directory, renderAudio: { text, scratch in
+            started.signal()
+            release.wait()
+            let file = scratch.appending(path: "speech.caf")
+            try Data(text.utf8).write(to: file)
+            return file
+        })
+        XCTAssertTrue(reader.activity.isIdle, "a new reader has nothing to do")
+        let idle = await reader.settle(upTo: 5)
+        XCTAssertTrue(idle.isIdle, "settling with nothing waited on starts no render")
+
+        let reading = WrittenMarginReading(intro: "Cole wrote:", text: "Busy words.")
+        let second = WrittenMarginReading(intro: "Cole wrote:", text: "Queued words.")
+        _ = reader.start(["a": reading, "b": second])
+        XCTAssertEqual(started.wait(timeout: .now() + 5), .success, "the first render is running")
+        XCTAssertFalse(reader.activity.isIdle)
+        XCTAssertEqual(reader.activity.waiting, 2)
+        XCTAssertEqual(reader.activity.running, 1)
+        XCTAssertEqual(reader.activity.queued, 1)
+
+        let removed = Flag()
+        reader.whenSettled(reading) { removed.set() }
+        XCTAssertFalse(removed.value, "the render of these words is still running")
+        release.signal()
+        release.signal() // the first render and the queued one
+        let done = await reader.settle(upTo: 5)
+        XCTAssertTrue(done.isIdle, "\(done)")
+        XCTAssertTrue(removed.value, "ran when the render finished, before settle returned")
+        let ran = Flag()
+        reader.whenSettled(reading) { ran.set() }
+        XCTAssertTrue(ran.value, "with no render of these words, it runs at once")
+    }
+
+    func testSettleEndsAtTheLimitAndShowsARenderThatIsStillBlocked() async throws {
+        let stuck = DispatchSemaphore(value: 0)
+        defer { stuck.signal() }
+        let reader = WrittenMarginReader(directory: directory, timeLimit: { _ in 30 }, renderAudio: { _, _ in stuck.wait(); throw WrittenMarginReader.RenderError.nothingToSay })
+        _ = reader.start(["a": WrittenMarginReading(intro: "Cole wrote:", text: "Never.")])
+        let left = await reader.settle(upTo: 0.3)
+        XCTAssertFalse(left.isIdle, "a blocked render is not idle: \(left)")
+        XCTAssertEqual(left.running, 1)
+    }
+
+    private final class Flag: @unchecked Sendable {
+        private let lock = NSLock()
+        private var stored = false
+        var value: Bool { lock.withLock { stored } }
+        func set() { lock.withLock { stored = true } }
+    }
+
     func testReadyIsAnsweredFromMemoryAndOnlyOnceTheFileIsThere() async throws {
         let renders = Renders()
         let reader = reader(renders)

@@ -9,6 +9,12 @@ import XCTest
 /// Timeline builds, a real source player and a real file where the reading would be rendered.
 @MainActor
 final class WrittenMarginTimelineTapAppTests: XCTestCase {
+    /// Each test leaves the shared written-Margin reader idle, so a leak fails the test that made it (#3423).
+    override func tearDown() async throws {
+        await ReturnFixture.expectSharedReaderIdle()
+        try await super.tearDown()
+    }
+
     private func row(_ fixture: ReturnFixture) -> SharedMarginRow {
         SharedMarginRow(interjection: fixture.record, layer: fixture.layer, itemTitle: "Real source")
     }
