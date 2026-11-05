@@ -51,7 +51,11 @@ extension Gate1AppModel {
     private func jumpToEngineChapter(id: String, title: String, fromTimeline: Bool) {
         navigateFromChapterControl(.jumpToChapter(id, fromTimeline: fromTimeline), fromTimeline: fromTimeline, message: "Jumped to \(title).") { engine in
             _ = try ensureSessionForSelectedItem(engine)
-            snapshot = try engine.jumpToChapter(chapterId: id)
+            do {
+                snapshot = try engine.jumpToChapter(chapterId: id)
+            } catch SessionKitError.invalidCommandForState("jumpToChapter") {
+                throw ChapterJumpUnavailable() // the generic line hid why (#3362)
+            }
         }
     }
 
