@@ -194,7 +194,7 @@ It's bundled as pre-recorded audio in James's and Lily's voices, plus the plain 
 **Your first Margin.**
 
 1. Holding Add a Margin for the first time shows a one-line primer before the system prompt:
-   > "To record your Margin, Spoken Margins needs the microphone. Recordings stay on your phone."
+   > "To record your Margin, Spoken Margins needs the microphone. Recordings stay on your phone unless you choose to share them."
    > [Continue]
 2. Then the iPhone's own prompt. The 10 second timeout must not count while that prompt is on screen (#217).
 3. Recording uses today's screen: Save sits where Add a Margin was.
@@ -295,7 +295,7 @@ The same goes for a share from Safari's share sheet made before the app has ever
 4. **The microphone request** ignores its timeout while the system prompt is up (#217), and gets the primer line.
 5. **Speech Recognition is asked explicitly** after the first Margin plays back, not lazily inside transcription.
 6. **The usage strings in `Info.plist`** say "Margins", not "interjections":
-   - Microphone: "Spoken Margins records your spoken Margins while you listen. Recordings stay on your phone."
+   - Microphone: "Spoken Margins records your spoken Margins while you listen. Recordings stay on your phone unless you choose to share them."
    - Speech Recognition: "Spoken Margins turns your spoken Margins into text so you can search and copy them."
 7. **The catalog drawer** stops opening as a sheet at launch. Today's `presentIfFirstRun` is replaced by the doors screen.
 8. **Help copy** is updated. It still says the Link field is only for podcasts, and still mentions a Home screen that doesn't exist (`HelpScreen.swift:92, 95`).

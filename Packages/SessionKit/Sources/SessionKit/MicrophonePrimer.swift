@@ -5,7 +5,7 @@ import Foundation
 /// the microphone it never appears again. Continue goes on to the system prompt; dismissing the line
 /// cancels that Margin, and the next try shows it again while the answer is still undetermined.
 public struct MicrophonePrimer: Equatable, Sendable {
-    public static let message = "To record your Margin, Spoken Margins needs the microphone. Recordings stay on your phone."
+    public static let message = "To record your Margin, Spoken Margins needs the microphone. Recordings stay on your phone unless you choose to share them."
 
     /// The Margin waiting on Continue, if the line is on screen.
     public private(set) var pendingCaptureID: UUID?
