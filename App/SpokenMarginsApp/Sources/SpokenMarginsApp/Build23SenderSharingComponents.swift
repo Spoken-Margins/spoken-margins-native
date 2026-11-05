@@ -1,4 +1,5 @@
 import Foundation
+import SessionKit
 import SessionKitSharing
 import AVFoundation
 import SwiftUI
@@ -730,7 +731,7 @@ struct Build23VerifiedRecipientPreviewPanel: View {
                     Text(preview.itemTitle)
                         .font(.title2.weight(.semibold))
                         .foregroundStyle(AppColors.text)
-                    Text("From \(preview.senderLabel)")
+                    Text(FriendArrivalWords.fromLine(senderLabel: preview.senderLabel))
                         .font(.subheadline)
                         .foregroundStyle(AppColors.secondaryText)
                     Build23StatusLabel(

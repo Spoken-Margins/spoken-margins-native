@@ -87,7 +87,9 @@ extension SharedMarginReview {
         public var caption: String {
             switch parent {
             case .yours(_, let ms): return "Reply to your Margin" + Self.at(ms)
-            case .shared(_, let label, let ms): return "Reply to \(label)'s Margin" + Self.at(ms)
+            case .shared(_, let label, let ms):
+                let whose = SharedPacketArrival.senderName(label).map { "\($0)'s" } ?? "a friend's"
+                return "Reply to \(whose) Margin" + Self.at(ms)
             case .missing: return "Reply to a Margin you don't have yet"
             }
         }
