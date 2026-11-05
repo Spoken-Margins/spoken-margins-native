@@ -79,7 +79,7 @@ The owner's words and the detail are in [docs/decisions.md](docs/decisions.md) u
 - **Don't grow `Gate1AppModel`.** Put new logic in a focused type, in SessionKit when it can be host-tested, and call it from the model. In particular, don't add another "should the source resume" flag or another playback state machine.
 - **Keep packets compatible.** Packets exported by a new build must import into the last shipped build unless the owner explicitly accepts a break. Only require a new manifest capability when the packet actually uses the feature.
 - **Protect owner data.** Never reset, reseed or delete the owner's Library or recordings. Storage changes must let the previous build still open the database.
-- **Keep evidence local.** `artifacts/` is git-ignored; test output, logs, screenshots and recordings stay there, summarized in the commit or PR. Evidence on a PR or issue comes only from fixtures and test simulators, never his Library, Margins, recordings or Diagnostics, as Actions artifacts linked from a comment (2026-10-21).
+- **Keep evidence local.** `artifacts/` is git-ignored; test output, logs, screenshots and recordings stay there, summarized in the commit or PR. Evidence on a PR or issue comes only from fixtures and test simulators, never his Library, Margins, recordings, Diagnostics or TestFlight tester data, as Actions artifacts linked from a comment (2026-10-21).
 - **Don't record instructions as documents.** Owner direction lives in the conversation, issues, Current focus and [docs/decisions.md](docs/decisions.md). Don't append directive logs to other docs.
 - **Use GitHub issues** for bugs and feature requests: one issue per problem, with steps, expected and actual behavior, the build number and board Area.
 
