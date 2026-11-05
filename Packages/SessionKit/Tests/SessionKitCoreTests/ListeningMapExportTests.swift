@@ -8,11 +8,16 @@ import SessionKitPersistence
 /// On Build 35 a podcast episode whose map is a proposal plus a projection exported no map at all,
 /// because only the legacy `ListeningMap` record was read.
 final class ListeningMapExportTests: XCTestCase {
-    private let episode = Item(
-        id: "item-episode", title: "Is There a Bubble?", mediaType: TargetType.transcriptBackedMedia.rawValue, text: nil,
-        externalReference: "https://example.com/episode", status: "ready",
-        media: ItemMedia(sourceType: .remoteStream, url: "https://example.com/episode.mp3", durationMs: 600_000)
-    )
+    /// Found public by the listener's own action, so its model-written scene titles may leave the phone (#3449).
+    private let episode: Item = {
+        var episode = Item(
+            id: "item-episode", title: "Is There a Bubble?", mediaType: TargetType.transcriptBackedMedia.rawValue, text: nil,
+            externalReference: "https://example.com/episode", status: "ready", externalReferenceType: "url",
+            media: ItemMedia(sourceType: .remoteStream, url: "https://example.com/episode.mp3", durationMs: 600_000)
+        )
+        episode.publicSourceMark = PublicSourceMark(url: "https://example.com/episode", checkedAt: Date(timeIntervalSince1970: 1_800_000_000))
+        return episode
+    }()
 
     func testAPodcastMapStoredAsAProposalAndProjectionIsInTheMarkdownAndTheJSON() throws {
         try withStore { store in
@@ -37,6 +42,26 @@ final class ListeningMapExportTests: XCTestCase {
 
             let off = try buildExport(store: store, itemId: episode.id, includeListeningMap: false)
             XCTAssertNil(off.listeningMap, "with the toggle off there is no map")
+        }
+    }
+
+    func testAnUnmarkedSourceExportsItsSceneStartsButNoModelTitles() throws {
+        try withStore { store in
+            var unmarked = episode
+            unmarked.publicSourceMark = nil
+            try store.saveItem(unmarked)
+            try store.savePortableListeningMapProposal(proposal(), itemId: unmarked.id)
+            try store.saveResolvedListeningMapProjection(ResolvedListeningMapProjection(
+                id: "episode-projection-item-episode", itemId: unmarked.id, proposalId: "episode-map-proposal-item-episode",
+                algorithmVersion: "episode-projection.exact-edition.v1", points: [], intervals: []
+            ))
+            let export = try buildExport(store: store, itemId: unmarked.id, includeListeningMap: true)
+
+            let map = try XCTUnwrap(export.listeningMap)
+            XCTAssertEqual(map.chapters.map(\.title), ["Scene 1", "Scene 2", "Scene 3"], "the starts travel, the model's words stay")
+            XCTAssertEqual(map.chapters.map(\.percent), [0, 20, 50])
+            let json = try XCTUnwrap(String(data: JSONEncoder().encode(export), encoding: .utf8))
+            XCTAssertFalse(json.contains("The bull case") || json.contains("Cold open"), json)
         }
     }
 
