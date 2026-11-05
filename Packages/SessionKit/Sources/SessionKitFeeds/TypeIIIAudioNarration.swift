@@ -65,6 +65,24 @@ public enum TypeIIIAudioNarration {
         return canonical.url
     }
 
+    /// The site and post id an address names, as the answer's `source_url` spells it: https or http, either spelling
+    /// of the host, `/posts/<id>[/<slug>]` or a LessWrong sequence post `/s/<sequence>/p/<id>`. Nil for anything else.
+    static func identity(ofSourceAddress address: String) -> String? {
+        guard let components = URLComponents(string: address), let host = components.host?.lowercased() else { return nil }
+        let site: String
+        switch host {
+        case "lesswrong.com", "www.lesswrong.com": site = "lesswrong"
+        case "forum.effectivealtruism.org": site = "eaforum"
+        default: return nil
+        }
+        let segments = components.percentEncodedPath.split(separator: "/").map(String.init)
+        let id: String
+        if segments.count >= 2, segments[0] == "posts" { id = segments[1] }
+        else if segments.count >= 4, segments[0] == "s", segments[2] == "p" { id = segments[3] }
+        else { return nil }
+        return isPostID(id) ? "\(site):\(id)" : nil
+    }
+
     /// The forums' post ids are 17 letters and digits; a shorter or odder id is not a post.
     private static func isPostID(_ segment: String) -> Bool {
         (6...32).contains(segment.count) && segment.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber) }
@@ -106,15 +124,22 @@ public enum TypeIIIAudioNarration {
         guard (200..<300).contains(status) else { return .noNarration(reason: "type3_http_\(status)") }
         guard data.count <= maximumResponseBytes,
               let body = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return .failed("unreadable_answer")
+            // Final for the launch, like any other answer we cannot use: a maintenance or challenge page that answers
+            // 200 must not be asked again on every open.
+            return .noNarration(reason: "type3_unreadable")
         }
         let state = token(body["status"])
         guard state == "Succeeded" || state == "Uploaded" else {
             return .noNarration(reason: "type3_\(state.isEmpty ? "unknown" : state.lowercased())")
         }
-        // A narration the answer names for another address is not this post's.
-        if let source = body["source_url"] as? String, let sourceURL = URL(string: source),
-           let sourcePost = postURL(for: sourceURL), sourcePost != post { return .noNarration(reason: "type3_other_post") }
+        // A narration the answer names for another post is not this post's. The post is the site and the id: the slug
+        // is optional and changes when an author retitles a post, and the old address opens the same post. A
+        // `source_url` that names no post of these sites cannot be this one.
+        if let source = body["source_url"] as? String {
+            guard let named = identity(ofSourceAddress: source), named == identity(ofSourceAddress: post.absoluteString) else {
+                return .noNarration(reason: "type3_other_post")
+            }
+        }
         guard let audio = body["mp3_url"] as? String, let audioURL = URL(string: audio),
               audioURL.scheme?.lowercased() == "https", let host = audioURL.host?.lowercased(),
               host == "type3.audio" || host.hasSuffix(".type3.audio"), audioURL.port == nil, audioURL.user == nil else {

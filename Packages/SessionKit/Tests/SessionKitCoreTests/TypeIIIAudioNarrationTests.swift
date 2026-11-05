@@ -106,6 +106,17 @@ final class TypeIIIAudioNarrationTests: XCTestCase {
             return XCTFail("host spelling and tracking are not a different post")
         }
         guard case .found = outcome(nil) else { return XCTFail("an answer with no source address is taken as asked for") }
+        // The id names the post; the slug does not (a retitled post keeps its id).
+        guard case .found = outcome("https://www.lesswrong.com/posts/WQFioaudEH8R7fyhm") else { return XCTFail("same id, no slug") }
+        guard case .found = outcome("https://www.lesswrong.com/posts/WQFioaudEH8R7fyhm/the-old-title") else { return XCTFail("same id, other slug") }
+        guard case .found = outcome("http://lesswrong.com/posts/WQFioaudEH8R7fyhm/x") else { return XCTFail("same id, http, bare host") }
+        guard case .found = outcome("https://www.lesswrong.com/s/abcDEF123/p/WQFioaudEH8R7fyhm") else { return XCTFail("same id, sequence address") }
+        // Anything that names no post of these sites cannot be this one.
+        for unusable in ["https://example.com/posts/WQFioaudEH8R7fyhm/x", "https://www.lesswrong.com/", "not a url", "", "https://www.lesswrong.com/posts/short/x"] {
+            XCTAssertEqual(outcome(unusable), .noNarration(reason: "type3_other_post"), unusable)
+        }
+        XCTAssertEqual(outcome("https://www.lesswrong.com/posts/ZZZZZZZZZZZZZZZZZ/local-validity-as-a-key-to-sanity-and-civilization"),
+                       .noNarration(reason: "type3_other_post"), "same slug, other id")
         XCTAssertEqual(outcome("https://www.lesswrong.com/posts/ZZZZZZZZZZZZZZZZZ/another"), .noNarration(reason: "type3_other_post"))
         XCTAssertEqual(outcome("https://forum.effectivealtruism.org/posts/WQFioaudEH8R7fyhm/local-validity-as-a-key-to-sanity-and-civilization"),
                        .noNarration(reason: "type3_other_post"), "a crosspost on the other site has its own narration")
@@ -164,9 +175,11 @@ final class TypeIIIAudioNarrationTests: XCTestCase {
         }
         XCTAssertTrue(TypeIIIAudioNarration.isNotYet(reason: "type3_busy"))
         XCTAssertFalse(TypeIIIAudioNarration.isNotYet(reason: "type3_http_403"))
-        XCTAssertEqual(outcome(Data("<html>".utf8), 200), .failed("unreadable_answer"))
-        XCTAssertEqual(outcome(Data("[1]".utf8), 200), .failed("unreadable_answer"))
-        XCTAssertEqual(outcome(Data(count: TypeIIIAudioNarration.maximumResponseBytes + 1), 200), .failed("unreadable_answer"))
+        // An answer we cannot read is final for the launch, so a maintenance page is not asked again on every open.
+        XCTAssertEqual(outcome(Data("<html>".utf8), 200), .noNarration(reason: "type3_unreadable"))
+        XCTAssertEqual(outcome(Data("[1]".utf8), 200), .noNarration(reason: "type3_unreadable"))
+        XCTAssertEqual(outcome(Data(count: TypeIIIAudioNarration.maximumResponseBytes + 1), 200), .noNarration(reason: "type3_unreadable"))
+        XCTAssertFalse(TypeIIIAudioNarration.isNotYet(reason: "type3_unreadable"))
     }
 
     // MARK: - Calls made
