@@ -154,6 +154,7 @@ enum AddSourceTile: String, CaseIterable, Identifiable, Hashable, Sendable {
     case importFromFiles
     case quickFolder
     case liveSession
+    case spokenNote
 
     var id: String { rawValue }
 
@@ -164,7 +165,7 @@ enum AddSourceTile: String, CaseIterable, Identifiable, Hashable, Sendable {
         case .pastedText: .pastedText
         case .importFromFiles: .importFromFiles
         case .quickFolder: .quickFolder
-        case .findPodcast, .liveSession: nil
+        case .findPodcast, .liveSession, .spokenNote: nil
         }
     }
 
@@ -172,6 +173,7 @@ enum AddSourceTile: String, CaseIterable, Identifiable, Hashable, Sendable {
         switch self {
         case .findPodcast: "Find a Podcast"
         case .liveSession: "Live Session"
+        case .spokenNote: "Spoken Note"
         default: route?.title ?? ""
         }
     }
@@ -184,6 +186,7 @@ enum AddSourceTile: String, CaseIterable, Identifiable, Hashable, Sendable {
         case .importFromFiles: "A document, book, audiobook, or Margins packet"
         case .quickFolder: "A folder of eligible local files"
         case .liveSession: "Margins on a meeting or book"
+        case .spokenNote: "Dictate an idea, then read it back"
         }
     }
 
@@ -191,17 +194,19 @@ enum AddSourceTile: String, CaseIterable, Identifiable, Hashable, Sendable {
         switch self {
         case .findPodcast: "magnifyingglass"
         case .liveSession: "clock.badge"
+        case .spokenNote: "mic"
         default: route?.systemImage ?? "plus"
         }
     }
 }
 
 enum AddSourcePresentation {
-    /// The grid's order: the two ways to bring in a podcast sit together, then the two from the device, then the rest.
+    /// The grid's order: the two ways to bring in a podcast sit together, then the two from the device, then the rest, then a note of your own.
     static let tiles: [AddSourceTile] = [
         .linkOrPodcast, .findPodcast,
         .pastedText, .importFromFiles,
-        .quickFolder, .liveSession
+        .quickFolder, .liveSession,
+        .spokenNote
     ]
 
     /// Find a Podcast needs the catalog to open from the sheet; without that, the tile is left out.
