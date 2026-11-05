@@ -18,12 +18,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 APP = ROOT / "App" / "SpokenMarginsApp" / "Sources" / "SpokenMarginsApp"
 
-# Views that still open an item on the main thread. Each is a listener's tap that the Following issue (#3413) did not
-# cover; #3416 moves them. Removing a line here is how to show one is fixed.
-KNOWN_MAIN_THREAD_OPENS = {
-    "ExperienceAudioPreparationQueueScreen.swift": "Recently prepared row: the screen is handed model.openItem",
-    "ExperienceMarginsScreen.swift": "Shared Margin sheet: opens the item when the sheet disappears",
-}
+# Views that may still open an item on the main thread, each with the reason. Empty since #3416 moved the last two. Removing a line here is how to show one is fixed.
+KNOWN_MAIN_THREAD_OPENS: dict = {}
 
 
 def _code(path: Path) -> str:
