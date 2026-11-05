@@ -1,5 +1,6 @@
 import Foundation
 import XCTest
+import SessionKitTestInputs
 
 /// #2846: a hidden sender's Margins stay hidden only if every screen's loader is given the list. The loaders take it
 /// with an empty default, so a new call that forgets it would compile and quietly show the sender again (the first
@@ -12,10 +13,8 @@ final class HiddenSendersCallSiteGuardTests: XCTestCase {
     ]
 
     func testEveryAppCallThatLoadsLayersForAScreenIsGivenTheHiddenSenders() throws {
-        var root = URL(fileURLWithPath: #filePath)
-        for _ in 0..<5 { root.deleteLastPathComponent() }
-        let sources = root.appendingPathComponent("App/SpokenMarginsApp/Sources")
-        guard FileManager.default.fileExists(atPath: sources.path) else { throw XCTSkip("the app sources are not in this checkout") }
+        // Read through TestInputs, so a package checked out alone skips this with the input named.
+        let sources = try TestInputs.directory(.appSources)
 
         var checked = 0
         var missing: [String] = []
