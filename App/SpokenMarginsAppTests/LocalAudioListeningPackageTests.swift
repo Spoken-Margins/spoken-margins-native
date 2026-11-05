@@ -9,6 +9,13 @@ import SessionKitSharing
 
 @MainActor
 final class LocalAudioListeningPackageTests: XCTestCase {
+    /// Where the test packets' shared written Margins sit: late in the second scene, past every scene boundary these tests
+    /// press Skim toward (0:05) and past where they start. A written Margin is a Skim stop since #3412 (the owner's call,
+    /// 2026-11-05: Skim controls what the phone's voice reads), so a Margin ahead of the playhead and before the scene
+    /// would be Skim's next stop and these tests would measure the Margin, not the scenes and summaries they are about.
+    /// #3423; the Margin itself is covered by `WrittenMarginSkimAppTests`.
+    private static let professorMarginMs = 9_000
+
     func testExactAudioImportActivatesMapResolvesMarginsAndSurvivesReconstruction() async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -51,7 +58,7 @@ final class LocalAudioListeningPackageTests: XCTestCase {
             PortableListeningMapScene(id: "scene-\(index)", order: index, title: "Scene \(index)", summaryText: "A short recap.", summaryAssetId: "supplied-summary", summaryProvenance: .modelGenerated, eligibility: .eligible, startAnchor: PortableAnchorEvidence(anchorType: .media, mediaTimeMs: index * 5_000), endAnchor: PortableAnchorEvidence(anchorType: .media, mediaTimeMs: (index + 1) * 5_000))
         })
         let revision = InterjectionShareRevision(id: "revision", interjectionId: "margin", itemId: "sender", sessionId: "sender-session", createdAt: Date(), approvedTranscript: "What assumption matters?", anchorBefore: "", anchorAfter: "", status: .senderApproved)
-        let prepared = try SpokenMarginsPackageBuilder.prepare(packageId: "test-local-audio", createdAt: Date(), item: identity, itemTransportSelection: .recipientSupplied, selections: [ReviewedInterjectionSelection(packageScopedId: "professor", revision: revision, anchor: PortableAnchorEvidence(anchorType: .media, mediaTimeMs: 1_000), representation: .textOnly)], mapProposals: [proposal], senderDisplayLabel: "AI professor")
+        let prepared = try SpokenMarginsPackageBuilder.prepare(packageId: "test-local-audio", createdAt: Date(), item: identity, itemTransportSelection: .recipientSupplied, selections: [ReviewedInterjectionSelection(packageScopedId: "professor", revision: revision, anchor: PortableAnchorEvidence(anchorType: .media, mediaTimeMs: Self.professorMarginMs), representation: .textOnly)], mapProposals: [proposal], senderDisplayLabel: "AI professor")
         // A real AAC asset exercises adoption/playback without an OS voice download.
         let summaryURL = root.appending(path: "summary.m4a")
         try Self.writeSummaryAudio(to: summaryURL)
@@ -68,7 +75,7 @@ final class LocalAudioListeningPackageTests: XCTestCase {
         XCTAssertNil(model.spokenMarginsPackageImportError)
         let layer = try XCTUnwrap(store.loadImportedCommentaryLayer(packageDigest: try XCTUnwrap(manifest.contentDigest)))
         XCTAssertEqual(layer.sourceResolutionStatus, .resolved)
-        XCTAssertEqual(try store.loadImportedCommentaryInterjections(layerId: layer.id).first?.resolution.localMediaTimeMs, 1_000)
+        XCTAssertEqual(try store.loadImportedCommentaryInterjections(layerId: layer.id).first?.resolution.localMediaTimeMs, Self.professorMarginMs)
         await model.settleItemReload() // the placement reloads the item off the main thread (#2505)
         XCTAssertEqual(model.selectedItem.listeningMapScenes.map(\.startMs), [0, 5_000])
         XCTAssertNil(model.snapshot.sessionId, "Import must not autoplay")
@@ -532,7 +539,7 @@ final class LocalAudioListeningPackageTests: XCTestCase {
         let prepared = try SpokenMarginsPackageBuilder.prepare(
             packageId: "shared-podcast-map", createdAt: Date(), item: SharedPacketItemMatcher.localIdentity(for: item, ownedAudiobookDigest: nil),
             itemTransportSelection: .reference,
-            selections: [ReviewedInterjectionSelection(packageScopedId: "friend-margin", revision: revision, anchor: PortableAnchorEvidence(anchorType: .media, mediaTimeMs: 2_000), representation: .textOnly)],
+            selections: [ReviewedInterjectionSelection(packageScopedId: "friend-margin", revision: revision, anchor: PortableAnchorEvidence(anchorType: .media, mediaTimeMs: Self.professorMarginMs), representation: .textOnly)],
             mapProposals: [proposal], fingerprintSpines: [spine], senderDisplayLabel: "Friend"
         )
         let url = root.appending(path: "friend.spokenmargins")
