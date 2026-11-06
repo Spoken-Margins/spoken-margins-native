@@ -11,9 +11,13 @@ conversation, which wakes the coordinator (verified 2026-09-30 in a test project
 Safety rules (owner, 2026-10-01):
 - Every slip fails toward spending less: two ticks in a group take the more cautious one;
   an empty or muddled Mode reads Off.
-- Paced mode needs a usage reading under 3 hours old; with the Mac offline it doesn't fire.
+- Paced mode reads a usage report under 3 hours old at face value. Past that (the Mac is
+  asleep), it adds a cautious burn rate for the report's age and holds when that estimate
+  reaches the hold line or runs too far ahead of the trend (#3518). With no report at all, it
+  doesn't fire.
 - At most one fire outstanding: no new fire until a thread claims an issue after the last
-  one (or 3 hours pass), so fires can't pile up while the plan limit is hit.
+  one (or 3 hours pass), so fires can't pile up while the plan limit is hit. With no thread
+  active, an unanswered fire is retried sooner, backing off from 30 minutes (#3518).
 - Slots are per provider (owner, 2026-10-14): the Threads box is Claude's slot count and the
   Codex workers box is Codex's. The Codex worker (deleted, #1853) left the same
   claim and stop notes under the title `Codex worker N`; the gate counts those against Codex,
@@ -49,13 +53,21 @@ TREND_SLACK = 10                # Paced may run this many points ahead of the tr
 RESET_WEEKDAY = int(os.environ.get('SM_DIAL_RESET_WEEKDAY', '5'))   # Saturday (Mon=0)
 RESET_HOUR_UTC = int(os.environ.get('SM_DIAL_RESET_HOUR', '11'))    # 07:00 EDT
 FINISH_BY = {'reset': 0, 'fri noon': 19, 'fri 7': 24}             # hours before the reset
-USAGE_MAX_AGE = dt.timedelta(hours=3)
+USAGE_MAX_AGE = dt.timedelta(hours=3)    # younger reads at face value; the Mac worker still holds past it
+# Points an hour added to a report past USAGE_MAX_AGE. Measured from 437 reports on #337, 2026-10-01 to 11-06: the
+# busiest 6 hours in 100 burned 2.0 an hour, and the busiest 12 hours ever burned 1.38. Those windows include the
+# owner's Mac sessions, which can't run while it sleeps. How to re-measure: ops/dial/README.md.
+STALE_BURN = 2.0
+USAGE_WINDOW = dt.timedelta(days=8)      # how far back #337 is read: a week, plus a report from before the reset
 MIN_SPACING = dt.timedelta(minutes=15)   # between wake-ups
 FALLBACK = dt.timedelta(hours=3)         # wake-up even when every slot looks full
 THREAD_QUIET = dt.timedelta(hours=2)     # no stop note and nothing on GitHub: count it gone
 THREAD_WINDOW = dt.timedelta(hours=24)   # how far back the gate reads claim and stop notes
 QUIET_SHOWN = dt.timedelta(hours=6)      # the status comment lists stopped/quiet threads this long
 ACK_TIMEOUT = dt.timedelta(hours=3)
+# First retry of an unanswered fire when no thread is active, doubling up to ACK_TIMEOUT. Of the 19 fires from
+# 2026-11-05 19:02Z to 11-06 17:17Z, 12 started a new queue thread that claimed within 3 minutes and 7 started none.
+EMPTY_RETRY = dt.timedelta(minutes=30)
 STATUS_REFRESH = dt.timedelta(minutes=60)
 
 # Whose comments the gate believes (#1822). This file is deployed alone, so the rule of scripts/comment_trust.py is
@@ -332,6 +344,41 @@ def trend_line(now: dt.datetime, stop: int, hours_early: int) -> float:
     return stop * max(0.0, min(1.0, share))
 
 
+def usage_estimate(now: dt.datetime, u: dict) -> dict:
+    """What Paced believes about usage, given the Mac's newest report.
+
+    A report under USAGE_MAX_AGE reads at face value. An older one gets STALE_BURN for its whole
+    age. A report from before this week's reset says nothing about this week: the first report of
+    each of the four weeks from 2026-10-10 read 0%, so the estimate counts up from 0% at the reset."""
+    week_start = next_reset(now) - dt.timedelta(days=7)
+    last_week = u['at'] < week_start
+    if not last_week and now - u['at'] <= USAGE_MAX_AGE:
+        return {'percent': u['percent'], 'estimated': False, 'last_week': False, 'words': f"usage {u['percent']}%"}
+    base, since = (0, week_start) if last_week else (u['percent'], u['at'])
+    percent = base + STALE_BURN * (now - since).total_seconds() / 3600
+    source = ("the Mac last reported before this week's reset, so counted from 0% at the reset" if last_week
+              else f"{u['percent']}% reported {hours(now - u['at'])} ago")
+    return {'percent': percent, 'estimated': True, 'last_week': last_week,
+            'words': f'estimated usage {percent:.0f}% ({source}, plus {STALE_BURN:g} points an hour)'}
+
+
+def ack_wait(state: dict, active: int) -> dt.timedelta:
+    """How long an unanswered fire stays outstanding. A retry at 0 active threads can't overfill the slots unless
+    an earlier fire's thread takes longer than this to claim; answered fires have claimed within 3 minutes. It backs
+    off so a coordinator that isn't answering gets a few wake-ups a night, not one every 15 minutes."""
+    if active > 0:
+        return ACK_TIMEOUT
+    return min(ACK_TIMEOUT, EMPTY_RETRY * 2 ** min(state.get('unanswered', 0), 8))
+
+
+def record_fire(state: dict, fire_id: str, now: dt.datetime, ack: dict | None) -> None:
+    """Save a fire, counting how many in a row have gone unanswered."""
+    last = state.get('last_fire')
+    missed = bool(last) and not (ack and ack['fire'] == last)
+    state.update(last_fire=fire_id, last_fire_at=now.strftime('%Y-%m-%dT%H:%M:%SZ'),
+                 unanswered=state.get('unanswered', 0) + 1 if missed else 0)
+
+
 # ---------- decision (pure) ----------
 
 def decide(now, dial, usage_info, ready_count, ack, state, active) -> dict:
@@ -348,15 +395,15 @@ def decide(now, dial, usage_info, ready_count, ack, state, active) -> dict:
         if usage_info['halted']:
             hold = 'the Mac tick says HALT (usage breaker: Claude)'
         elif u is None:
-            hold = 'no usage report from the Mac found'
-        elif now - u['at'] > USAGE_MAX_AGE:
-            hold = f"the Mac's usage report is {hours(now - u['at'])} old (Mac offline?), so Paced waits"
-        elif u['percent'] >= stop - MARGIN:
-            hold = f"usage {u['percent']}% has reached the hold line {stop - MARGIN}% (stop line {stop}% minus {MARGIN})"
-        elif u['percent'] > trend_line(now, stop, dial.get('hours_early', 0)) + TREND_SLACK:
+            hold = f'no usage report from the Mac found in the last {USAGE_WINDOW.days} days'
+        else:
+            est = usage_estimate(now, u)
             line = trend_line(now, stop, dial.get('hours_early', 0))
-            hold = (f"usage {u['percent']}% is more than {TREND_SLACK} points ahead of the trend "
-                    f"({line:.0f}% by now), so Paced waits for the line to catch up")
+            if est['percent'] >= stop - MARGIN:
+                hold = f"{est['words']} has reached the hold line {stop - MARGIN}% (stop line {stop}% minus {MARGIN})"
+            elif est['percent'] > line + TREND_SLACK:
+                hold = (f"{est['words']} is more than {TREND_SLACK} points ahead of the trend "
+                        f"({line:.0f}% by now), so Paced waits for the line to catch up")
         if hold:
             return {'fire': False, 'why': f'Holding: {hold}.', 'hold': hold}
 
@@ -365,10 +412,10 @@ def decide(now, dial, usage_info, ready_count, ack, state, active) -> dict:
 
     last_fire = state.get('last_fire')
     last_at = parse_time(state['last_fire_at']) if state.get('last_fire_at') else None
-    if last_fire and (not ack or ack['fire'] != last_fire):
-        if last_at and now - last_at < ACK_TIMEOUT:
-            return {'fire': False, 'why': f'Waiting for the coordinator to acknowledge {last_fire} '
-                                          f'(sent {hours(now - last_at)} ago).', 'hold': None}
+    unanswered = bool(last_fire) and (not ack or ack['fire'] != last_fire)
+    if unanswered and last_at and now - last_at < ack_wait(state, active):
+        return {'fire': False, 'why': f'Waiting for the coordinator to acknowledge {last_fire} '
+                                      f'(sent {hours(now - last_at)} ago).', 'hold': None}
     if last_at and now - last_at < MIN_SPACING:
         return {'fire': False, 'why': f'Last wake-up was {hours(now - last_at)} ago; '
                                       f'wake-ups are at least 15 min apart.', 'hold': None}
@@ -382,7 +429,8 @@ def decide(now, dial, usage_info, ready_count, ack, state, active) -> dict:
             return {'fire': False, 'why': f'{why}; a fallback wake-up comes 3 hours after the last one.', 'hold': None}
         return {'fire': True, 'why': f'{active} of {threads} threads look active, but the last wake-up '
                                      f'was 3 hours ago or more: fallback wake-up.', 'hold': None}
-    return {'fire': True, 'why': f'Waking the project: {active} of {threads} threads are active.', 'hold': None}
+    again = f' {last_fire} got no answer, so this is a retry.' if unanswered else ''
+    return {'fire': True, 'why': f'Waking the project: {active} of {threads} threads are active.{again}', 'hold': None}
 
 
 def fire_text(fire_id: str, claude_slots: int, active: list[dict]) -> str:
@@ -411,13 +459,22 @@ def status_text(now, dial, usage_info, ready_count, ack, state, decision, thread
     lines.append(f"- I read: **{dial['mode'].capitalize()}**, {dial['threads']} threads, refill {refill}, {stop}.")
     for p in dial['problems']:
         lines.append(f'- Note: {p}.')
-    lines.append(f"- Usage: {u['percent']}% from the Mac at {t(u['at'])}." if u else '- Usage: no report from the Mac.')
+    est = usage_estimate(now, u) if u else None
+    if not u:
+        lines.append('- Usage: no report from the Mac.')
+    elif est['estimated']:
+        lines.append(f"- Usage: about {est['percent']:.0f}%, an estimate. The Mac's newest report is "
+                     f"{u['percent']}% at {t(u['at'])}" +
+                     (", from before this week's reset, so this counts up from 0% at the reset" if est['last_week'] else '') +
+                     f", plus {STALE_BURN:g} points an hour.")
+    else:
+        lines.append(f"- Usage: {u['percent']}% from the Mac at {t(u['at'])}.")
     if dial['mode'] == 'paced' and dial['stop'] and u:
         line = trend_line(now, dial['stop'], dial.get('hours_early', 0))
         finish = next_reset(now) - dt.timedelta(hours=dial.get('hours_early', 0))
-        gap = u['percent'] - line
+        gap = est['percent'] - line
         lines.append(f"- Trend: about {line:.0f}% by now, reaching {dial['stop']}% by {t(finish)}; "
-                     f"usage is {abs(gap):.0f} points {'ahead' if gap >= 0 else 'behind'} "
+                     f"{'estimated ' if est['estimated'] else ''}usage is {abs(gap):.0f} points {'ahead' if gap >= 0 else 'behind'} "
                      f"(Paced holds if more than {TREND_SLACK} ahead).")
     if usage_info.get('halted_by'):
         mine = 'Claude' if usage_info['halted'] else 'not Claude'
@@ -518,19 +575,21 @@ def save_state(state: dict) -> None:
     tmp.replace(STATE_FILE)
 
 
-def main(argv=None) -> int:
+def main(argv=None, now: dt.datetime | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument('--dry-run', action='store_true', help='print the decision; write and fire nothing')
     args = ap.parse_args(argv)
 
     token = os.environ.get('SM_DIAL_GITHUB_TOKEN') or (CONFIG_DIR / 'github-token').read_text().strip()
-    now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
+    now = now or dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
     state = load_state()
 
     dial_body = gh('GET', f'repos/{REPO}/issues/{DIAL_ISSUE}', token)['body'] or ''
     dial = parse_dial(dial_body)
-    since = (now - dt.timedelta(hours=12)).strftime('%Y-%m-%dT%H:%M:%SZ')
-    tick_comments = gh('GET', f'repos/{REPO}/issues/{STATUS_ISSUE}/comments?since={since}&per_page=100', token)
+    # A 12-hour read lost the Mac's last report on 2026-11-06 at 14:18Z, and any HALT older than that (#3518). #337
+    # gets about 200 comments a week, so this needs paging.
+    since = (now - USAGE_WINDOW).strftime('%Y-%m-%dT%H:%M:%SZ')
+    tick_comments = gh_pages(f'repos/{REPO}/issues/{STATUS_ISSUE}/comments?since={since}&per_page=100', token)
     usage_info = parse_usage(tick_comments)
     ready = gh('GET', f'search/issues?q=repo:{REPO}+is:issue+is:open+label:ready&per_page=1', token)['total_count']
     dial_comments = gh('GET', f'repos/{REPO}/issues/{DIAL_ISSUE}/comments?per_page=100', token)
@@ -561,7 +620,7 @@ def main(argv=None) -> int:
         url = (CONFIG_DIR / 'relay-url').read_text().strip()
         try:
             fire_relay(url, (CONFIG_DIR / 'relay-token').read_text().strip(), text)
-            state.update(last_fire=fire_id, last_fire_at=now.strftime('%Y-%m-%dT%H:%M:%SZ'))
+            record_fire(state, fire_id, now, ack)
         except urllib.error.URLError as e:
             decision = {**decision, 'fire': False, 'why': f'Tried to wake the project, but the relay failed ({e}).'}
 
