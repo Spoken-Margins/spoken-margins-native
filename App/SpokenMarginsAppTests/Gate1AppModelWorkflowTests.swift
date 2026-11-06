@@ -3435,6 +3435,23 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertFalse(model.recentlyDeletedItems.contains(where: { $0.id == "item-pill" }))
     }
 
+    /// #2505: a permanent delete from Recently Deleted drops the row without a table read, so a Library read that began
+    /// before it (Home's, which checks only the revision) must be made stale, or it would publish the row again. A trashed
+    /// row is never in `libraryItems`, so the revision has to move on the `recentlyDeletedItems` change alone.
+    func testPermanentDeleteFromRecentlyDeletedMovesThePresentationRevision() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.moveItemToTrash(id: "item-pill")
+        XCTAssertTrue(model.recentlyDeletedItems.contains(where: { $0.id == "item-pill" }))
+        XCTAssertFalse(model.libraryItems.contains(where: { $0.id == "item-pill" }), "a trashed row is not in the Library list")
+        let before = model.libraryPresentationRevision
+
+        model.permanentlyDeleteItem(id: "item-pill")
+
+        XCTAssertFalse(model.recentlyDeletedItems.contains(where: { $0.id == "item-pill" }))
+        XCTAssertGreaterThan(model.libraryPresentationRevision, before, "a read begun before the delete must be stale")
+    }
+
     func testEmptyRecentlyDeletedPermanentlyDeletesEveryTrashedItem() {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
