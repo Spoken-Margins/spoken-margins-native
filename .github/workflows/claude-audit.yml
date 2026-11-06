@@ -10,6 +10,8 @@
 # - It runs no PR code. The audit reads the diff and the PR's files as text, in a worktree of the trunk, with the
 #   tools Read, Grep and Glob, in a mode that refuses any path outside that worktree. So it can't read this job's
 #   environment.
+# - The token is a secret of the `claude-audit` environment, which only `main` may use. A repository secret would reach
+#   a workflow on any branch, so anyone with write access could read it.
 # - The script skips PRs from forks, keeps the GitHub token out of Claude's environment, and won't post a comment that
 #   contains the Claude token.
 #
@@ -46,6 +48,7 @@ concurrency:
 jobs:
   audit:
     runs-on: ubuntu-latest
+    environment: claude-audit
     # CLAUDE_TIMEOUT_S is 30 minutes per batch, and a run can hold several batches.
     timeout-minutes: 120
     env:

@@ -887,6 +887,8 @@ class HostedAudit(unittest.TestCase):
         text = self.workflow()
         self.assertIn("persist-credentials: false", text)
         self.assertEqual(text.count("secrets."), 1)
+        # Its token is an environment secret only main may use: a repository secret reaches any branch's workflow.
+        self.assertIn("environment: claude-audit", text)
         self.assertIn("CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}", text.split("name: Audit")[1])
         # One exact version, so a new release can't change the merge gate unannounced.
         self.assertRegex(text, r"@anthropic-ai/claude-code@\d+\.\d+\.\d+")
