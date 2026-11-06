@@ -158,6 +158,98 @@ final class PostResumeEvidenceTapThreadingTests: XCTestCase {
         XCTAssertEqual(afterGap.anchorOffsetMs, -30_000, "the window starts at the first audio after the gap, 330 s")
     }
 
+    // #1872: a streamed Margin's post window sometimes never filled on a hosted runner and the stored reason said
+    // nothing about why. The reason now carries what the window saw, so the next failure names its cause.
+
+    private func failureReason(_ results: Results) -> String? {
+        for result in results.all {
+            if case .failed(_, let reason) = result { return reason }
+        }
+        return nil
+    }
+
+    /// The number after `name=` in a failure reason.
+    private func stat(_ name: String, in reason: String) -> Int? {
+        guard let range = reason.range(of: "\(name)=") else { return nil }
+        return Int(reason[range.upperBound...].prefix { $0.isNumber })
+    }
+
+    private func feed(
+        _ tap: PostResumePodcastEvidenceTapContext, format: AVAudioFormat, seconds: [Int], endOfStream: Bool = false
+    ) throws {
+        var generator = SystemRandomNumberGenerator()
+        for (index, second) in seconds.enumerated() {
+            let buffer = try Self.oneSecondOfNoise(format: format, using: &generator)
+            tap.process(
+                bufferList: buffer.mutableAudioBufferList,
+                frameCount: CMItemCount(buffer.frameLength),
+                timeRange: CMTimeRange(
+                    start: CMTime(value: CMTimeValue(second), timescale: 1),
+                    duration: CMTime(value: 1, timescale: 1)
+                ),
+                endOfStream: endOfStream && index == seconds.count - 1
+            )
+        }
+    }
+
+    func testATimedOutWindowReportsHowMuchAudioItGotAndHowSlowTheAppendsWere() throws {
+        let results = Results()
+        let tap = PostResumePodcastEvidenceTapContext(
+            resultHandler: { results.append($0) },
+            becameIdle: {},
+            appendToSignature: { generator, buffer in
+                Thread.sleep(forTimeInterval: 0.05)
+                try generator.append(buffer, at: nil)
+            }
+        )
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 2))
+        tap.prepare(processingFormat: format.streamDescription)
+        // Two seconds of a 4 s window, then nothing more arrives before the timeout.
+        XCTAssertTrue(tap.arm(request("ij-short"), timeoutSeconds: 2))
+        try feed(tap, format: format, seconds: [296, 297])
+
+        XCTAssertTrue(spin(until: 10) { failureReason(results) != nil })
+        let reason = try XCTUnwrap(failureReason(results))
+        XCTAssertTrue(reason.hasPrefix("decoded_playback_sample_timed_out("), reason)
+        XCTAssertEqual(stat("appended_ms", in: reason), 2_000, reason)
+        XCTAssertEqual(stat("restarts", in: reason), 0, reason)
+        XCTAssertEqual(stat("dropped_buffers", in: reason), 0, reason)
+        XCTAssertGreaterThanOrEqual(stat("longest_append_ms", in: reason) ?? 0, 40, reason)
+        XCTAssertTrue(reason.hasSuffix("end_of_stream=false)"), reason)
+    }
+
+    func testAWindowThatStartedAgainSaysSoWhenItTimesOut() throws {
+        let results = Results()
+        let tap = PostResumePodcastEvidenceTapContext(resultHandler: { results.append($0) }, becameIdle: {})
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 2))
+        tap.prepare(processingFormat: format.streamDescription)
+        XCTAssertTrue(tap.arm(request("ij-restarted"), timeoutSeconds: 2))
+        // 297, 298, then playback rewinds to 296: the window starts again and holds 2 s of the replay.
+        try feed(tap, format: format, seconds: [297, 298, 296, 297])
+        tap.noteSeek() // and a seek is a second restart
+
+        XCTAssertTrue(spin(until: 10) { failureReason(results) != nil })
+        let reason = try XCTUnwrap(failureReason(results))
+        XCTAssertEqual(stat("restarts", in: reason), 2, reason)
+        XCTAssertEqual(stat("appended_ms", in: reason), 0, "the seek emptied the window: \(reason)")
+    }
+
+    func testAWindowCutShortByTheEndOfTheStreamSaysTheStreamEnded() throws {
+        let results = Results()
+        let tap = PostResumePodcastEvidenceTapContext(resultHandler: { results.append($0) }, becameIdle: {})
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 2))
+        tap.prepare(processingFormat: format.streamDescription)
+        XCTAssertTrue(tap.arm(request("ij-ended")))
+        // Two seconds is under the 3 s minimum a window needs, so the end of the stream fails it.
+        try feed(tap, format: format, seconds: [296, 297], endOfStream: true)
+
+        XCTAssertTrue(spin(until: 10) { failureReason(results) != nil })
+        let reason = try XCTUnwrap(failureReason(results))
+        XCTAssertTrue(reason.hasPrefix("insufficient_post_resume_audio("), reason)
+        XCTAssertEqual(stat("appended_ms", in: reason), 2_000, reason)
+        XCTAssertTrue(reason.hasSuffix("end_of_stream=true)"), reason)
+    }
+
     private static func oneSecondOfNoise(
         format: AVAudioFormat,
         using generator: inout SystemRandomNumberGenerator

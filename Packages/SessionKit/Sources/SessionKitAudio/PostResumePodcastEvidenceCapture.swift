@@ -78,6 +78,10 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
         var firstMediaTimeMs: Int?
         /// The end of the last decoded buffer this window saw, to notice playback moving back.
         var lastBufferEndMs: Int?
+        /// How often the window started again (a seek, a rewind, dropped buffers), and the slowest single
+        /// signature append, in ms. Kept across restarts: they say why a window never filled (#1872).
+        var restartCount = 0
+        var longestAppendMs = 0
 
         init(request: PostResumeAudioSampleRequest) {
             self.request = request
@@ -90,6 +94,7 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
             skippedFrames = 0
             firstMediaTimeMs = nil
             lastBufferEndMs = nil
+            restartCount += 1
         }
     }
 
@@ -163,6 +168,10 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
     private var tapFormat: AVAudioFormat?
     private var pendingFrames = 0
     private var droppedWhilePending = false
+    /// Buffers the tap dropped over its life, for the failure reasons below.
+    private var droppedBufferCount = 0
+    /// Whether the tap has been given an end-of-stream buffer. Guarded by `lock`.
+    private var endOfStreamSeen = false
     private var latestDecoded: DecodedAudioClockGuard.DecodedSample?
 
     /// Where the latest decoded buffer ends in the source, and when the tap saw it: evidence of the audio
@@ -205,7 +214,8 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
         completionQueue.async { windows.forEach(heardWindowHandler) }
     }
 
-    func arm(_ request: PostResumeAudioSampleRequest) -> Bool {
+    /// `timeoutSeconds` is how long a window may stay unfilled before it fails; a test shortens it.
+    func arm(_ request: PostResumeAudioSampleRequest, timeoutSeconds: Double = 60) -> Bool {
         guard request.targetDurationMs >= PodcastAnchorEvidenceGenerator.minimumEvidenceDurationMs else {
             return false
         }
@@ -217,7 +227,7 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
             return true
         }
         if armed {
-            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 60) { [weak self] in
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + timeoutSeconds) { [weak self] in
                 self?.failIfPending(
                     interjectionId: request.interjectionId,
                     reason: "decoded_playback_sample_timed_out"
@@ -330,6 +340,7 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
             guard let tapFormat else { return nil }
             if Double(pendingFrames + frames) > tapFormat.sampleRate * Self.maxPendingSeconds {
                 droppedWhilePending = true
+                droppedBufferCount += 1
                 return nil
             }
             pendingFrames += frames
@@ -359,6 +370,7 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
             tapLock.withLock {
                 pendingFrames -= frames
                 droppedWhilePending = true
+                droppedBufferCount += 1
             }
             return
         }
@@ -389,6 +401,7 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
     /// Runs on the worker queue: the ring, the heard-audio recorder and the signature appends for one buffer.
     private func processOnWorker(_ work: TapWork) {
         if work.gapBefore { applySeek(at: Date()) }
+        let droppedBuffers = tapLock.withLock { droppedBufferCount }
         let buffer = work.buffer
         let format = buffer.format
         let frameCount = CMItemCount(buffer.frameLength)
@@ -426,6 +439,7 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
                 )
                 heardFinished = heardRecorder?.append(samples: mono, startMediaTimeMs: mediaTimeMs) ?? []
             }
+            if endOfStream { endOfStreamSeen = true }
             for (id, accumulator) in accumulators {
                 // Playback moved back without a noted seek (a later Margin's rejoin step-back, #776): appending
                 // the replayed audio would splice it into this signature under its old start time, so the
@@ -449,7 +463,10 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
                     if accumulator.firstMediaTimeMs == nil {
                         accumulator.firstMediaTimeMs = mediaTimeMs
                     }
+                    let appendStartedNs = DispatchTime.now().uptimeNanoseconds
                     try appendToSignature(accumulator.generator, buffer)
+                    let appendMs = Int((DispatchTime.now().uptimeNanoseconds &- appendStartedNs) / 1_000_000)
+                    accumulator.longestAppendMs = max(accumulator.longestAppendMs, appendMs)
                     accumulator.appendedFrames += Int64(frameCount)
                     let targetFrames = Int64(
                         (Double(accumulator.request.targetDurationMs) * format.sampleRate / 1_000).rounded(.up)
@@ -463,7 +480,10 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
                         completed.append(accumulator)
                         accumulators[id] = nil
                     } else if endOfStream {
-                        failed.append((accumulator, "insufficient_post_resume_audio"))
+                        failed.append((accumulator, failureReason(
+                            "insufficient_post_resume_audio", accumulator,
+                            sampleRate: format.sampleRate, droppedBuffers: droppedBuffers
+                        )))
                         accumulators[id] = nil
                     }
                 } catch {
@@ -504,10 +524,30 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
         }
     }
 
+    /// `base` with what the window saw, so a window that never filled says why (#1872): how often it started again,
+    /// how many buffers the tap dropped, how much audio it got, its slowest signature append and whether the stream
+    /// ended. Call with `lock` held.
+    private func failureReason(
+        _ base: String, _ accumulator: Accumulator, sampleRate: Double?, droppedBuffers: Int
+    ) -> String {
+        let appendedMs = (sampleRate ?? 0) > 0
+            ? Int(Double(accumulator.appendedFrames) / (sampleRate ?? 1) * 1_000)
+            : 0
+        return "\(base)(restarts=\(accumulator.restartCount),dropped_buffers=\(droppedBuffers),"
+            + "appended_ms=\(appendedMs),longest_append_ms=\(accumulator.longestAppendMs),"
+            + "end_of_stream=\(endOfStreamSeen))"
+    }
+
     private func failIfPending(interjectionId: String, reason: String) {
-        let failed = lock.withLock { accumulators.removeValue(forKey: interjectionId) }
-        guard let failed else { return }
-        resultHandler(.failed(request: failed.request, reason: reason))
+        let pending = lock.withLock { () -> (accumulator: Accumulator, reason: String)? in
+            guard let accumulator = accumulators.removeValue(forKey: interjectionId) else { return nil }
+            let dropped = tapLock.withLock { droppedBufferCount }
+            return (accumulator, failureReason(
+                reason, accumulator, sampleRate: format?.sampleRate, droppedBuffers: dropped
+            ))
+        }
+        guard let pending else { return }
+        resultHandler(.failed(request: pending.accumulator.request, reason: pending.reason))
         if lock.withLock({ accumulators.isEmpty }) {
             becameIdle()
         }
