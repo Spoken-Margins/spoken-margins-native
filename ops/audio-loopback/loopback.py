@@ -428,19 +428,25 @@ def score(transcript, expected):
 def explain_recurring(report, expected, slack=0.15):
     """Keep in `recurring` only the matches the expected text accounts for; move the rest to `repeats`.
 
-    A match is accounted for when the words heard during its second time also come at least that many
-    times in the expected text. No words heard there, or a phrase the text says fewer times than it was
-    heard, means sound came back that the source doesn't repeat: a replay."""
+    A match is accounted for when the words heard during its second time come at least twice in the
+    expected text, and at least as often there as in the whole transcript. A replay adds a hearing the
+    text doesn't have, so even a common word ("the") fails it. No words heard there means sound came back
+    that the transcript can't place: a replay. A misheard word makes a true source repeat fail too: strict,
+    never a false pass."""
     def times(sequence, phrase):
         return sum(1 for i in range(len(sequence) - len(phrase) + 1) if sequence[i:i + len(phrase)] == phrase)
 
+    # The recogniser can return several words as one item ("short term memory"); spread them over its time.
+    heard = []
+    for item in report['transcript'].get('words', []):
+        parts = words(item.get('word', ''))
+        start, duration = item.get('start', -1), item.get('duration', 0) or 0
+        heard += [(start + i * duration / len(parts), w) for i, w in enumerate(parts)]
     reference = words(expected)
-    heard_all = report['transcript'].get('words', [])
-    hypothesis = [w for item in heard_all for w in words(item.get('word', ''))]
+    hypothesis = [w for _, w in heard]
     kept = []
     for match in report.get('recurring', []):
-        said = [w for item in heard_all if match['start'] - slack <= item.get('start', -1) < match['end']
-                for w in words(item.get('word', ''))]
+        said = [w for at, w in heard if match['start'] - slack <= at < match['end']]
         if said and times(reference, said) >= max(2, times(hypothesis, said)):
             kept.append({**match, 'words': ' '.join(said)})
         else:

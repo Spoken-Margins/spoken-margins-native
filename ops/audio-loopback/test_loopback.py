@@ -219,6 +219,27 @@ class AnalysisTests(unittest.TestCase):
             self.assertEqual(bool(loopback.verdict(report)), not recurs, report['repeats'])
         self.assertEqual(report['repeats'][0]['words'], 'the harbour master')
 
+    def test_check_with_expected_text_reads_multi_word_items_and_fails_an_unexplained_replay(self):
+        # The recogniser returns items like "short term memory" with one start; each word needs its own.
+        phrase = steady_voice(51, 1.5)
+        path = self.fixture.wav(steady_voice(50, 2, rhythm=(0.22, 0.17, 0.2)) + phrase
+                                + steady_voice(70, 2, rhythm=(0.2, 0.26, 0.17)) + phrase
+                                + steady_voice(53, 2, rhythm=(0.24, 0.18)) + silence(0.5))
+        match = loopback.analyse(path)['recurring'][0]
+        # One item per hearing, starting before the match: only its later words fall inside it.
+        heard = [{'word': 'long short term memory', 'start': at - 0.5, 'duration': 1.2}
+                 for at in (match['original_start'], match['start'])]
+        heard.append({'word': 'and', 'start': match['original_start'] + 1.6, 'duration': 0.2})
+        heard.sort(key=lambda w: w['start'])
+        transcript = {'text': ' '.join(w['word'] for w in heard), 'words': heard}
+        with mock.patch.object(loopback, 'transcribe', return_value=transcript):
+            twice = loopback.check_recording(path, expected='long short term memory and long short term memory')
+            once = loopback.check_recording(path, expected='long short term memory and gated units')
+        self.assertEqual(twice['verdict'], 'PASS', twice['problems'])
+        self.assertEqual(twice['recurring'][0]['words'], 'term memory')
+        self.assertEqual(once['verdict'], 'FAIL')
+        self.assertEqual(once['repeats'][0]['words'], 'term memory')
+
     def test_a_seek_back_after_new_words_is_still_a_repeat(self):
         # Playback that jumps 2.3 s back keeps matching what it replays, so it never looks recurring.
         # (Not 3 s: this voice's rhythm repeats every 1.5 s, so loudness matches at that lag everywhere.)
