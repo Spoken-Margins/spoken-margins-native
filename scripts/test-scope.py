@@ -360,6 +360,7 @@ def reaching_classes(root, changed, skip=()):
     audio_diff = any(APP_AUDIO.search(Path(path).name) for path in changed)
     words = {path: set(WORD.findall('\n'.join(lines))) for path, lines in {**sources, **tests}.items()}
     members = {path: member_declarations(lines) for path, lines in sources.items()}
+
     def fanout(name):
         return sum(name in w for w in words.values())
 
