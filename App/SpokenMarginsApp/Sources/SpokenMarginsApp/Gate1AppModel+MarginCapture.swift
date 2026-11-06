@@ -45,7 +45,7 @@ extension Gate1AppModel {
         let wasCapturing = recordingCaptureHealth == .capturing
         recordingCaptureHealth = health
         gate2CompactControls.setMicrophone(health.liveActivityMicrophone)
-        var fields = engine?.recordingCaptureDiagnostics() ?? [:]
+        var fields = hangTelemetry.labels.scoped("capture.healthDiagnostics") { engine?.recordingCaptureDiagnostics() ?? [:] }
         fields["health"] = health.diagnosticName
         fields["restarts"] = String(restarts)
         if let readyCue = captureWatcher.readyCueResult { fields["readyCue"] = readyCue }
