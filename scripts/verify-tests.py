@@ -972,6 +972,7 @@ HANG_PROBE_TIMING_TESTS = frozenset(f'SessionKitCoreTests/MainThreadHangProbeTes
     'testAThreeHundredFiftyMillisecondBlockIsStillRecorded',
     'testAHundredMillisecondBlockRecordsNothing',
     'testNestedLabelsReadOutermostFirstAndAnUnlabelledHangHasNone',
+    'testALongStallSaysWhereItsSamplesFellAsWellAsWhatItEndedIn',
     'testAStoppedProbeRecordsNothingAndASecondHangAfterAFirstIsCounted',
 ))
 
@@ -981,7 +982,12 @@ READ_METER_SKIPS = frozenset(f'SessionKitCoreTests/StoreReadMeterTests/{test}' f
     'testTheLibraryListDoesNotDecodeEveryArticleText',
     'testReadCostTableAtEveryScale',
 ))
-CORE_ALLOWED_SKIPS = HANG_PROBE_TIMING_TESTS | READ_METER_SKIPS
+# Measurements that build Library-sized fixtures only when asked for, by an environment variable (#2509, #2256).
+MEASURE_ON_REQUEST_SKIPS = frozenset({
+    'SessionKitCoreTests/EngineCompletionCostTests/testTheCostOfEachCompletionCall',
+    'SessionKitCoreTests/PlayAndRecordStartCostTests/testPrintTheStartCostsAtLibrarySize',
+})
+CORE_ALLOWED_SKIPS = HANG_PROBE_TIMING_TESTS | READ_METER_SKIPS | MEASURE_ON_REQUEST_SKIPS
 
 # Pocket's render tests need ~131 MB of git-ignored weights (research/C2/pocket/fetch_weights.sh). Without them they
 # skip with "skipped: weights not fetched", which is how the lane Mac runs them. The renderer's logic tests, with
