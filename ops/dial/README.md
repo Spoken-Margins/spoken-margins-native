@@ -1,3 +1,19 @@
+# Dial gate: Paced with the Mac asleep
+
+The usage figure comes only from the Mac tick on #337, and threads run in the cloud without the Mac. So since #3518 a report that is out of date no longer stops the work by itself.
+
+1. **A report under 3 hours old reads at face value**, as it always did. A Mac that is awake holds no earlier than before.
+2. **An older report gets 2 points an hour for its whole age.** Paced holds when that estimate reaches the hold line (stop line minus 3) or runs more than 10 points ahead of the trend, and the status comment says it is an estimate.
+3. **A report from before this week's reset** counts up from 0% at the reset.
+4. **No report in 8 days** holds. A `HALT (usage breaker: Claude)` holds until its `RESUMED`, including one from before the reset.
+5. **An unanswered fire with no thread active** is retried after 30 minutes, then 1, 2 and 3 hours. With a thread active it waits 3 hours.
+
+The Mac worker (`ops/claude/sm_claude_worker.py`) keeps the plain 3-hour hold: it runs on the Mac, so a stale report there means something is wrong.
+
+**Re-measure the 2 points an hour** when the thread count or the plan changes. Read every `Claude N% used` from #337 with its `created_at`, take the points gained over 6-hour and 12-hour spans inside one week, and look at the high end. Don't use the gaps where the Mac was off: the gate was holding through them, so they read low (0.09 to 0.33 points an hour).
+
+**The sign it's wrong:** the first report after a long gap comes in above the estimate on the status comment's edit log for that time (GraphQL `userContentEdits` on the comment marked `dial-gate-status`).
+
 # Usage breaker, per provider
 
 The usage breaker stops work when a weekly allowance is running ahead of its line. Since 2026-10-09 (owner) it is decided **per provider**: a provider over its line halts only the work that runs on that provider. Claude over its line halts Claude threads, the Mac finisher, the SM integration run and the Dial gate's wake-ups. Codex over its line halts Codex tasks. Before this, either provider over its line halted both.
