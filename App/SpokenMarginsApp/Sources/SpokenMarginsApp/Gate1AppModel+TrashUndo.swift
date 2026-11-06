@@ -107,8 +107,8 @@ extension Gate1AppModel {
 
     /// A permanent delete takes its rows off both lists at once and reads no table: the delete is the one change, and
     /// the row it removes is known. The reload that follows is read off the main thread (it publishes the Preparing
-    /// Audio lists too); the removal bumps `libraryPresentationRevision`, so a read that began before it is read again
-    /// and cannot put the row back (#2505).
+    /// Audio lists too). A row leaving either list bumps `libraryPresentationRevision` (each list's didSet does), so a
+    /// read that began before it is read again, Home's read drops its answer, and neither can put the row back (#2505).
     private func dropPermanentlyDeletedRows(ids: Set<String>) {
         if libraryItems.contains(where: { ids.contains($0.id) }) { libraryItems.removeAll { ids.contains($0.id) } }
         if recentlyDeletedItems.contains(where: { ids.contains($0.id) }) { recentlyDeletedItems.removeAll { ids.contains($0.id) } }

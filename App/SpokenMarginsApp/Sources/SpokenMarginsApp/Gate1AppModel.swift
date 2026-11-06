@@ -216,7 +216,7 @@ final class Gate1AppModel: ObservableObject {
     /// `hideSender` and `showSender` in `Gate1AppModel+HiddenSenders.swift`.
     let hiddenSenders = HiddenSendersController(directory: HiddenSendersController.defaultDirectory())
     @Published var libraryAccessError: String?
-    @Published var recentlyDeletedItems: [LibraryItemRow] = []
+    @Published var recentlyDeletedItems: [LibraryItemRow] = [] { didSet { libraryPresentationRevision += 1 } } // a row leaving this list stales a read begun before it (#2505)
     @Published var trashUndo: TrashUndoState?
     @Published var selectedItem = ItemDetailState() {
         didSet {
