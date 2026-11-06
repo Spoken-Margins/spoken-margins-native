@@ -87,7 +87,7 @@ public enum SharedMarginReview {
     ) throws -> [Entry] {
         let layers = hiddenSenders.visible(try repository.loadImportedCommentaryLayers(itemId: itemId))
         var records: [String: [ImportedCommentaryInterjection]] = [:]
-        for layer in layers { records[layer.id] = try repository.loadImportedCommentaryInterjections(layerId: layer.id) }
+        for layer in layers { records[layer.id] = hiddenSenders.visible(try repository.loadImportedCommentaryInterjections(layerId: layer.id)) }
         return entries(layers: layers, records: records, ownMargins: ownMargins)
     }
 

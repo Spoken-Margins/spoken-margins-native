@@ -88,7 +88,7 @@ extension Gate1AppModel {
             // manifest from an obsolete voice or model identity.
             // The Recently Deleted rows come from this same read: the snapshot already holds deleted items, so a
             // second `listDeletedItemSummaries` pass would read the whole item table again (#2508).
-            let launchData = try LibraryReadSnapshot.read(store: store)
+            let launchData = try LibraryReadSnapshot.read(store: store, hiddenSenders: hiddenSenders.current)
             rows = LibraryRowBuilder.rows(from: launchData, context: startupAudioContext)
             let deletedRows = Self.recentlyDeletedRows(from: launchData)
             try reconcileOnboardingEvidence(items: launchData.liveItems, store: store)

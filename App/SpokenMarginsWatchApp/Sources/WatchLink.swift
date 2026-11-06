@@ -234,7 +234,8 @@ final class WatchLink: NSObject, ObservableObject {
     private func sendFast(_ wrapped: WatchEnvelope, afterHello holding: [String]? = nil) {
         guard WCSession.default.activationState == .activated, WCSession.default.isReachable else { return }
         let sentAt = wrapped.sentAt
-        // `@Sendable`: WatchConnectivity calls the reply on its own queue, and a main-actor closure traps there (#2964).
+        // WatchConnectivity calls this on its own background queue. Without @Sendable the closure takes on this class's
+        // main-actor isolation, and Swift's check at its top stops the app whenever the phone answers (#2964).
         WCSession.default.sendMessage(wrapped.dictionary, replyHandler: { @Sendable [weak self] dictionary in
             let receivedAt = Date()
             guard let reply = WatchPhoneReply(dictionary: dictionary) else { return }
