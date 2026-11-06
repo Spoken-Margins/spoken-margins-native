@@ -166,6 +166,22 @@ final class ReadAloudChoiceTests: XCTestCase {
         XCTAssertFalse(encoded.contains("sentReadAloud"), "a share with no choice is stored exactly as before")
     }
 
+    /// Share ids are random and `updated_at` counts whole seconds, so two shares of one Margin saved back to back (the
+    /// recipient preview built twice) tie on time; the later save must win whatever its id sorts as (audit on 60f95e6).
+    func testTwoSharesSavedInTheSameSecondAreOrderedBySaveNotById() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("ReadAloudChoice-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let store = try SQLiteSessionStore(path: folder.appendingPathComponent("library.sqlite").path)
+        // Ids sort against the order saved: "z" is saved first and "a" second, on and then off.
+        try store.saveInterjectionShareRevision(revision("z", margin: "one", at: 1, sent: true))
+        try store.saveInterjectionShareRevision(revision("a", margin: "one", at: 2, sent: false))
+        // And the reverse for another Margin: off first under "z", then on under "a".
+        try store.saveInterjectionShareRevision(revision("zz", margin: "two", at: 1, sent: false))
+        try store.saveInterjectionShareRevision(revision("aa", margin: "two", at: 2, sent: true))
+        XCTAssertEqual(try store.loadLastSentReadAloud(itemId: "item"), ["one": false, "two": true])
+    }
+
     func testTheLibraryRemembersEachMarginsLastChoicePerItem() throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("ReadAloudChoice-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
