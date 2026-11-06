@@ -87,6 +87,44 @@ export function parseShareLink(text: string, base?: string): ParsedLink {
  * 410, offline when nothing answers, damaged when the bytes don't open under the key.
  */
 export async function openSharedPacket(link: ShareLinkRef, fetchImpl: typeof fetch = fetch): Promise<Uint8Array> {
+  return (await openSharedPacketWithExpiry(link, fetchImpl)).bytes;
+}
+
+/** The header the link server sends with the packet: the UTC day the link stops working, `YYYY-MM-DD` (#2168). */
+export const LINK_EXPIRES_HEADER = 'X-SM-Link-Expires';
+
+/** What the footer says when no usable expiry day reached the page (an older server, a missing or odd header). */
+export const LINK_FOOTER_DEFAULT = 'This link works for 30 days.';
+
+/**
+ * The footer sentence for a link. With a valid expiry day: "This link works until 6 December." in the browser's
+ * locale, with the year only when it isn't this year. Anything else keeps the old 30-day wording.
+ */
+export function linkFooterText(expires: string | undefined, now: Date = new Date(), locale?: string | string[]): string {
+  const match = expires === undefined ? null : /^(\d{4})-(\d{2})-(\d{2})$/.exec(expires);
+  if (!match) return LINK_FOOTER_DEFAULT;
+  const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])];
+  const date = new Date(Date.UTC(year, month - 1, day, 12));
+  // Reject a day that rolled over (2026-02-31) rather than word a date nobody meant.
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return LINK_FOOTER_DEFAULT;
+  try {
+    const words = new Intl.DateTimeFormat(locale, {
+      day: 'numeric',
+      month: 'long',
+      ...(year === now.getUTCFullYear() ? {} : { year: 'numeric' as const }),
+      timeZone: 'UTC',
+    }).format(date);
+    return `This link works until ${words}.`;
+  } catch {
+    return LINK_FOOTER_DEFAULT;
+  }
+}
+
+/** As openSharedPacket, and the expiry day the server sent with it, if it sent one. Only the day, never a time. */
+export async function openSharedPacketWithExpiry(
+  link: ShareLinkRef,
+  fetchImpl: typeof fetch = fetch,
+): Promise<{ bytes: Uint8Array; expires: string | undefined }> {
   let response: Response;
   try {
     response = await fetchImpl(`${link.origin}/l/${link.id}/packet`, {
@@ -109,7 +147,8 @@ export async function openSharedPacket(link: ShareLinkRef, fetchImpl: typeof fet
     throw new ShareLinkError(LINK_MESSAGES.offline, 'offline');
   }
   try {
-    return await openPart(sealed, PART.packet, link.key);
+    const bytes = await openPart(sealed, PART.packet, link.key);
+    return { bytes, expires: response.headers.get(LINK_EXPIRES_HEADER) ?? undefined };
   } catch {
     throw new ShareLinkError(LINK_MESSAGES.damaged, 'damaged');
   }

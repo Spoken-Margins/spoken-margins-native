@@ -117,24 +117,30 @@ func (s *Store) Put(packet []byte, preview []byte, now time.Time) (string, time.
 }
 
 func (s *Store) live(id string, now time.Time) error {
+	_, err := s.liveUntil(id, now)
+	return err
+}
+
+// liveUntil is live that also says when the link stops being served.
+func (s *Store) liveUntil(id string, now time.Time) (time.Time, error) {
 	if !ValidID(id) {
-		return ErrNotFound
+		return time.Time{}, ErrNotFound
 	}
 	data, err := os.ReadFile(filepath.Join(s.dir, id, "meta.json"))
 	if errors.Is(err, os.ErrNotExist) {
-		return ErrNotFound
+		return time.Time{}, ErrNotFound
 	}
 	if err != nil {
-		return err
+		return time.Time{}, err
 	}
 	var meta metadata
 	if err := json.Unmarshal(data, &meta); err != nil {
-		return err
+		return time.Time{}, err
 	}
 	if meta.Disabled || !now.Before(meta.ExpiresAt) {
-		return ErrGone
+		return time.Time{}, ErrGone
 	}
-	return nil
+	return meta.ExpiresAt, nil
 }
 
 // parked reports whether a disabled link's content is still inside its original lifetime, so the sweep
@@ -179,16 +185,24 @@ func (s *Store) Preview(id string, now time.Time) ([]byte, error) {
 
 // Packet opens a real file so serving a download does not buffer another 20 MB.
 func (s *Store) Packet(id string, now time.Time) (*os.File, error) {
+	f, _, err := s.PacketUntil(id, now)
+	return f, err
+}
+
+// PacketUntil is Packet that also returns when the link stops being served. A disabled (held or reported) link
+// is already ErrGone, so the date returned is always the one the server enforces for a served link.
+func (s *Store) PacketUntil(id string, now time.Time) (*os.File, time.Time, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if err := s.live(id, now); err != nil {
-		return nil, err
+	expires, err := s.liveUntil(id, now)
+	if err != nil {
+		return nil, time.Time{}, err
 	}
 	f, err := os.Open(filepath.Join(s.dir, id, "packet"))
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, ErrGone
+		return nil, time.Time{}, ErrGone
 	}
-	return f, err
+	return f, expires, err
 }
 
 func (s *Store) deleteContent(id string) error {
