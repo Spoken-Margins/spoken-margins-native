@@ -6,7 +6,12 @@
 	# install's key id in a header, so strip those fields from every log,
 	# and a map fetch's path names an episode, so reduce it to the route.
 	# Box-wide: other sites' error logs lose client IPs and headers too.
+	# The level is explicit (INFO is Caddy's default, so this changes nothing
+	# today): a "TLS handshake error from <ip>" message is logged at debug
+	# and carries the address in `msg`, which the filter below can't strip,
+	# so a later edit must not lower the level (#2034).
 	log default {
+		level INFO
 		format filter {
 			wrap json
 			fields {
