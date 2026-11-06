@@ -1115,6 +1115,17 @@ def keep_sim_build(ops: Ops, wt: Path, manifest_path: Path, sha: str) -> str:
         return 'not kept: ' + str(error)[:300]
 
 
+BOOT_FAULT_WORDS = 'journeys not run: simulator boot failed'
+
+
+def journeys_never_booted(manifest: dict, summary: dict) -> bool:
+    """The journeys plan stopped at its simulator boot and no journey has a record: an infrastructure fault, not a
+    failing test (run 42249700945 read an assetsd crash at boot as a gating failure, #3519)."""
+    boot_failed = any(step.get('name') == 'simulator-boot' and step.get('exit_code') not in (0, None)
+                      for step in manifest.get('steps', []))
+    return boot_failed and not summary['journeys']
+
+
 def run_tests(ops: Ops, wt: Path, evidence: Path, fds: tuple) -> dict:
     first = summarize(ops.test_plan(wt, evidence / 'app', 'app', fds))
     reruns = []
@@ -1124,15 +1135,22 @@ def run_tests(ops: Ops, wt: Path, evidence: Path, fds: tuple) -> dict:
     result = dict(settle(first, reruns), reruns=len(reruns))
     listing_path = wt / 'TestPlans' / 'scripted-journeys.json'
     listing = json.loads(listing_path.read_text()) if listing_path.exists() else {}
-    gating_failed, probation_failed = [], []
+    gating_failed, probation_failed, boot_fault = [], [], False
     if result['verdict'] != 'INCONCLUSIVE' and (listing.get('gating') or listing.get('probation')):
-        journeys = summarize(ops.test_plan(wt, evidence / 'journeys', 'journeys', fds))
+        raw = ops.test_plan(wt, evidence / 'journeys', 'journeys', fds)
+        journeys = summarize(raw)
+        if journeys_never_booted(raw, journeys):  # one more try: the failed device is unsafe, so this gets a fresh one
+            raw = ops.test_plan(wt, evidence / 'journeys-retry', 'journeys', fds)
+            journeys = summarize(raw)
+        boot_fault = journeys_never_booted(raw, journeys)
         result['journeys'] = script_results(listing, journeys['journeys'])
         result['attachments'] = result['attachments'] + journeys['attachments']
         result['flaky'] = sorted(set(result['flaky']) | set(journeys['retried']))  # the scripted journeys retry too
         result['retry_failures'] = {**journeys.get('retry_failures', {}), **result.get('retry_failures', {})}
         gating = {e['test'].removesuffix('()') for e in listing.get('gating', [])}
-        gating_failed = sorted(t for t, s in result['journeys'].items() if t in gating and s != 'passed')
+        # An unrun gating journey after a boot fault is not a failed one; a journey that ran and failed still is.
+        gating_failed = sorted(t for t, s in result['journeys'].items()
+                               if t in gating and s != 'passed' and not (boot_fault and s == 'not_run'))
         probation_failed = sorted(t for t, s in result['journeys'].items()
                                   if t not in gating and s in ('failed', 'missing'))
     # The verdict and every list the report prints are settled once, here, from the record (see Outcome).
@@ -1140,6 +1158,9 @@ def run_tests(ops: Ops, wt: Path, evidence: Path, fds: tuple) -> dict:
     result.update(verdict=final.verdict, failed=list(final.failing), confirmed=list(final.confirmed),
                   flaky=list(final.retry_passes), gating_failed=list(final.gating_failed),
                   probation_failed=list(final.probation_failed))
+    if boot_fault and result['verdict'] == 'PASS':  # only when the app plan and every journey that ran passed
+        result['verdict'] = 'INCONCLUSIVE'
+        result['errors'] = list(result.get('errors', [])) + [BOOT_FAULT_WORDS]
     if result['verdict'] == 'PASS':  # a tour of a broken build proves nothing; only after a PASS (test-lane.md)
         result['tour'] = run_tour(ops, wt, evidence, fds)
     return result
