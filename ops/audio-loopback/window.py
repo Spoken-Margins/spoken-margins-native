@@ -230,6 +230,9 @@ def summary_line(result):
              f"peak {report['peak_dbfs']} dBFS, sound RMS {report['sound_rms_dbfs']} dBFS",
              f"longest gap {gaps[-1]['seconds']} s ({gaps[-1]['where']})" if gaps else 'no gap over ' + str(report['settings']['stall_seconds']) + ' s',
              f"{len(report['repeats'])} repeat{'s' if len(report['repeats']) != 1 else ''}"]
+    if report.get('recurring'):
+        parts.append(f"{len(report['recurring'])} phrase{'s' if len(report['recurring']) != 1 else ''} "
+                     "said again after new words (not a failure)")
     if 'score' in report:
         s = report['score']
         parts.append(f"words: heard {s['heard_words']} of {s['reference_words']}, word error rate {s['wer']}")

@@ -154,6 +154,57 @@ class AnalysisTests(unittest.TestCase):
         report = self.analyse(chunk + silence(0.6) + late)
         self.assertTrue(report['repeats'], report)
 
+    def test_a_restart_after_a_short_silence_is_a_repeat_wherever_the_chunk_was_cut(self):
+        # Spliced desk recordings (#1790): an exact replay was dropped because a lag one frame off held the
+        # loudness match as long, won, then failed on brightness. These cut points all failed that way.
+        for seed, cut in ((202, 1.3), (202, 1.6), (202, 2.05), (203, 1.15), (203, 1.45), (203, 1.9)):
+            chunk = speech(seed, 6)
+            report = self.analyse(chunk[:int(cut * RATE)] + silence(0.2) + chunk + silence(0.5))
+            self.assertTrue(report['repeats'], f'seed {seed}, cut at {cut} s: {report.get("recurring")}')
+            self.assertAlmostEqual(report['repeats'][0]['lag'], cut + 0.2, delta=0.05)
+
+    def test_digital_silence_at_one_edge_does_not_sink_an_exact_replay(self):
+        # Desk audio has true digital silence (-100 dB). An exact replay whose stretch ends one frame into
+        # the original's silence scored correlation 0.81 until levels below the silence line were clamped.
+        stretch = [-15 - 30 * (0.5 - 0.5 * math.cos(2 * math.pi * i / 20)) for i in range(79)] + [-25.0]
+        env = stretch + [-30.0] * 20 + stretch[:-1] + [loopback.FLOOR_DB]
+        self.assertLess(loopback.similarity(env, 100, 0, 80)[0], 0.9)
+        corr, diff = loopback.similarity(env, 100, 0, 80, floor=-45.0)
+        self.assertGreater(corr, 0.9)
+        self.assertLess(diff, 1.0)
+
+    def test_a_phrase_the_source_says_twice_is_recurring_not_a_repeat(self):
+        # Desk run 2026-10-18, pdf-start.wav: "foundation for American innovation" in two authors'
+        # affiliations, 3.5 s apart with a name between, rendered the same both times. New sound comes
+        # between the two, and different words follow each, so nothing was replayed.
+        phrase = steady_voice(51, 1.5)
+        name = lambda seed, rhythm: steady_voice(seed, 2, rhythm=rhythm)  # noqa: E731
+        samples = (name(50, (0.22, 0.17, 0.2)) + phrase + name(52, (0.16, 0.25, 0.19, 0.2))
+                   + phrase + name(53, (0.24, 0.18)) + silence(0.5))
+        report = self.analyse(samples)
+        self.assertEqual(report['repeats'], [], report['repeats'])
+        self.assertTrue(report['recurring'], report)
+        self.assertAlmostEqual(report['recurring'][0]['lag'], 3.5, delta=0.1)
+        self.assertGreaterEqual(report['recurring'][0]['sound_between'], 0.5)
+        self.assertEqual(loopback.verdict(report), [])
+
+    def test_a_seek_back_after_new_words_is_still_a_repeat(self):
+        # Playback that jumps 2.3 s back keeps matching what it replays, so it never looks recurring.
+        # (Not 3 s: this voice's rhythm repeats every 1.5 s, so loudness matches at that lag everywhere.)
+        chunk = steady_voice(60, 8)
+        report = self.analyse(chunk[:5 * RATE] + chunk[int(2.7 * RATE):] + silence(0.5))
+        self.assertTrue(report['repeats'], report)
+        self.assertAlmostEqual(report['repeats'][0]['lag'], 2.3, delta=0.1)
+        self.assertEqual(report['recurring'], [])
+
+    def test_a_restarted_chunk_followed_by_new_words_is_still_a_repeat(self):
+        # #1762 with more after it: nothing new sits between the cut-off start and the restart.
+        chunk = steady_voice(61, 3)
+        report = self.analyse(chunk[:int(1.4 * RATE)] + silence(0.2) + chunk + steady_voice(62, 3)
+                              + silence(0.5))
+        self.assertTrue(report['repeats'], report)
+        self.assertEqual(report['recurring'], [])
+
     def test_digital_silence_warns(self):
         report = self.analyse(silence(2))
         self.assertEqual(report['sound_seconds'], 0)
