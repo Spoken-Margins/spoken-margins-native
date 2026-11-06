@@ -26,6 +26,13 @@ enum PublicSourceChecks {
         return PublicSourceMarker(verifier: PublicSourceVerifier(probe: hermetic ? offline : PublicSourceTransport.probe))
     }
 
+    /// The engine with the checker installed, so an export that carries the Listening Map checks its source first.
+    /// Kept here so the central model does not grow (the hot-file ratchet).
+    @MainActor static func attached(to engine: SessionEngine) -> SessionEngine {
+        engine.publicSourceMarker = marker
+        return engine
+    }
+
     /// Checks the item and records the mark, off the main thread. The item is untouched when the check finds nothing.
     @MainActor @discardableResult
     static func ensureMark(itemId: String, store: any SessionRepository, timeout: Duration = PublicSourceVerifier.defaultTimeout) async -> PublicSourceVerifier.Outcome {
