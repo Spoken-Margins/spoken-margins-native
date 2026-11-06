@@ -106,6 +106,26 @@ def envelope(rate, samples):
     return frames
 
 
+def tilt(rate, samples):
+    """Brightness every 10 ms: how much of each 30 ms window's energy is in its fast wiggles, in dB.
+
+    The loudness envelope alone cannot tell two words apart when a steady synthetic voice says them in
+    the same rhythm; the vowel and consonant colour can. Energy of the first difference over energy of
+    the signal grows with the high-frequency content, and it does not change when the level does."""
+    hop, window = int(rate * HOP), int(rate * WINDOW)
+    first = [0.0] + [b - a for a, b in zip(samples, samples[1:])]
+    prefix_x, prefix_d = [0.0], [0.0]
+    for x, d in zip(samples, first):
+        prefix_x.append(prefix_x[-1] + x * x)
+        prefix_d.append(prefix_d[-1] + d * d)
+    frames = []
+    for start in range(0, max(1, len(samples) - hop + 1), hop):
+        end = min(len(samples), start + window)
+        frames.append(db((prefix_d[end] - prefix_d[start]) / max(1, end - start))
+                      - db((prefix_x[end] - prefix_x[start]) / max(1, end - start)))
+    return frames
+
+
 def segments(env, silence_db, min_gap, min_sound):
     """[(start_frame, end_frame)] of sound, joining pauses shorter than min_gap and dropping blips."""
     found, start = [], None
@@ -184,13 +204,18 @@ def matched_stretch(env, start, end, lag, silence_db, max_diff_db, smooth=10):
 
 
 def repeats(env, silence_db, min_seconds=0.6, min_lag=0.3, max_lag=30.0, min_peaks=4,
-            min_corr=0.9, max_diff_db=4.0):
+            min_corr=0.9, max_diff_db=4.0, brightness=None, max_tilt_db=1.0):
     """Stretches of audio that replay an earlier stretch nearly exactly.
 
     Syllable peaks vote for the lag between them; a lag that many nearby peaks agree on is a candidate,
     and a candidate counts only if the two envelopes match closely over the whole stretch. A replay of
     the same rendered speech (the way #1762 restarts a chunk) matches to within a dB or two; different
     words, even the same word spoken in a new sentence, do not hold a match for 0.6 s.
+
+    A steady synthetic voice breaks that last claim: new words in the same rhythm at one loudness give
+    nearly the same envelope (desk run 2026-10-18, #1790). So when `brightness` (see `tilt`) is given, the
+    two stretches must also match in brightness, which differs from vowel to vowel and is identical in a
+    true replay.
     """
     marks = peaks(env, silence_db + 6)
     lo, hi = int(min_lag / HOP), int(max_lag / HOP)
@@ -235,6 +260,11 @@ def repeats(env, silence_db, min_seconds=0.6, min_lag=0.3, max_lag=30.0, min_pea
         voiced = sum(1 for t in range(a, b) if env[t] > silence_db) / (b - a)
         if voiced < 0.5:
             continue
+        if brightness is not None:
+            both = [abs(brightness[t] - brightness[t - k]) for t in range(a, b)
+                    if env[t] > silence_db and env[t - k] > silence_db]
+            if both and sum(both) / len(both) > max_tilt_db:
+                continue
         found.append({'start': round(a * HOP, 2), 'end': round(b * HOP, 2),
                       'original_start': round((a - k) * HOP, 2), 'lag': round(k * HOP, 2),
                       'seconds': round((b - a) * HOP, 2), 'correlation': round(corr, 3),
@@ -255,6 +285,7 @@ def analyse(path, silence_db=-45.0, stall=2.0, min_gap=0.25, min_sound=0.05, win
     rate, samples = downsample(rate, samples)
     duration = len(samples) / rate if rate else 0.0
     env = envelope(rate, samples)
+    brightness = tilt(rate, samples)
     found = segments(env, silence_db, min_gap, min_sound)
     sound = sum(b - a for a, b in found) * HOP
     loud = [s for a, b in found for s in samples[int(a * HOP * rate):int(b * HOP * rate)]]
@@ -278,7 +309,7 @@ def analyse(path, silence_db=-45.0, stall=2.0, min_gap=0.25, min_sound=0.05, win
         'first_sound': round(found[0][0] * HOP, 2) if found else None,
         'last_sound': round(found[-1][1] * HOP, 2) if found else None,
         'stalls': gaps,
-        'repeats': repeats(env, silence_db),
+        'repeats': repeats(env, silence_db, brightness=brightness),
         'settings': {'silence_db': silence_db, 'stall_seconds': stall, 'min_gap': min_gap},
     }
     if peak == 0.0:

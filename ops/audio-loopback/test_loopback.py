@@ -41,6 +41,26 @@ def speech(seed, seconds):
     return out[:int(seconds * RATE)]
 
 
+def steady_voice(seed, seconds, rhythm=(0.19, 0.19, 0.24, 0.17, 0.21), pitch=120.0):
+    """A steady synthetic voice like the phone's TTS: one pitch, one loudness, the same syllable rhythm
+    throughout; only the vowel colour (where the harmonics peak) changes from syllable to syllable."""
+    rng = random.Random(seed)
+    out, index = [], 0
+    while len(out) < seconds * RATE:
+        n = int(rhythm[index % len(rhythm)] * RATE)
+        centre = rng.uniform(1.5, 10.0)
+        weights = [math.exp(-(((h - centre) / 1.4) ** 2)) for h in range(1, 13)]
+        voice = [sum(w * math.sin(2 * math.pi * pitch * h * i / RATE) for h, w in enumerate(weights, 1))
+                 for i in range(n)]
+        norm = math.sqrt(sum(v * v for v in voice) / n) or 1.0
+        out += [0.3 * (0.5 - 0.5 * math.cos(2 * math.pi * i / n)) * v / norm for i, v in enumerate(voice)]
+        out += [0.0] * int(0.05 * RATE)
+        index += 1
+        if index % len(rhythm) == 0:
+            out += [0.0] * int(0.25 * RATE)
+    return out[:int(seconds * RATE)]
+
+
 def silence(seconds):
     return [0.0] * int(seconds * RATE)
 
@@ -114,6 +134,25 @@ class AnalysisTests(unittest.TestCase):
         for seed in range(10, 20):
             report = self.analyse(speech(seed, 5) + silence(0.3) + speech(seed + 100, 5))
             self.assertEqual(report['repeats'], [], f'seed {seed}: {report["repeats"]}')
+
+    def test_a_steady_voice_saying_new_words_in_the_same_rhythm_is_not_a_repeat(self):
+        # Desk run 2026-10-18: clean iOS-voice speech was flagged FAIL "repeats" (0.6 to 1.9 s stretches,
+        # correlation 0.90 to 0.99) because a steady voice repeats its loudness pattern with new words.
+        for seed in range(30, 36):
+            report = self.analyse(steady_voice(seed, 8) + silence(0.3) + steady_voice(seed + 100, 8))
+            self.assertEqual(report['repeats'], [], f'seed {seed}: {report["repeats"]}')
+
+    def test_a_steady_voice_replayed_is_still_a_repeat(self):
+        chunk = steady_voice(40, 4)
+        report = self.analyse(chunk[:int(1.4 * RATE)] + chunk + silence(0.5))
+        self.assertTrue(report['repeats'], report)
+        self.assertAlmostEqual(report['repeats'][0]['lag'], 1.4, delta=0.05)
+
+    def test_a_quieter_late_replay_of_a_steady_voice_is_still_a_repeat(self):
+        chunk = steady_voice(41, 3)
+        late = [0.0] * 48 + [0.85 * s for s in chunk[:int(1.5 * RATE)]]
+        report = self.analyse(chunk + silence(0.6) + late)
+        self.assertTrue(report['repeats'], report)
 
     def test_digital_silence_warns(self):
         report = self.analyse(silence(2))
