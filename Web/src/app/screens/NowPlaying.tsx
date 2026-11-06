@@ -9,7 +9,7 @@ import { BackIcon, DownIcon, DownloadIcon, ForwardIcon, MicIcon, PauseIcon, PenI
 import { cueFor, friendMargins, leading, possessive, readsAloud, senderName, speakingLine } from '../logic/arrival.ts';
 import { landingOffer, type Landing } from '../logic/import.ts';
 import { nextSpeed, timelineFraction, timelinePosts } from '../logic/library.ts';
-import { pickedMargins, preselected, replyBackOffer } from '../logic/reply-back.ts';
+import { pickedMargins, preselected, replyBackOffer, savedMarginCard } from '../logic/reply-back.ts';
 import { plainError } from '../logic/messages.ts';
 import { NotSavedError } from '../logic/storage.ts';
 import { shareNativePacket } from '../logic/native-packets.ts';
@@ -103,7 +103,7 @@ function ArrivedMargin({ margins }: { margins: readonly Margin[] }) {
  * margin"). The first Skip lands 20 seconds before it, so the episode's own lead-in is heard; inside the lead-in the
  * Skip goes straight to the Margin. After the last, it points at the Margin buttons below, which are how to answer.
  */
-function MarginCue({ margins }: { margins: readonly Margin[] }) {
+function MarginCue({ margins, saved }: { margins: readonly Margin[]; /** The listener just saved a Margin (2026-11-06 card). */ saved: boolean }) {
   const player = usePlayer();
   const sender = friendMargins(margins)[0]?.author;
   const cue = cueFor(margins, player.time, sender, { failed: player.failed, heardWithoutEpisode: player.withoutEpisode === 'done' });
@@ -113,7 +113,20 @@ function MarginCue({ margins }: { margins: readonly Margin[] }) {
   const { registerFailureCard } = player;
   // A layout effect: the card and the player's notice are settled before the screen paints, so never both.
   useLayoutEffect(() => (sayingFailure ? registerFailureCard() : undefined), [sayingFailure, registerFailureCard]);
-  if (player.arrived || !cue) return null;
+  if (player.arrived) return null;
+  // After a save on a friend's item: what Share does with it, in place of the countdown or "That was X's last Margin"
+  // until a friend's Margin plays (2026-11-06).
+  const card = saved ? savedMarginCard(margins, cue) : undefined;
+  if (card) {
+    return (
+      <section className="margin-cue" aria-label="Your Margin is saved" data-testid="margin-cue">
+        <p className="margin-cue-line">
+          <strong>{card.sentence}</strong>
+        </p>
+      </section>
+    );
+  }
+  if (!cue) return null;
   if (cue.kind === 'unplayable' || cue.kind === 'unplayable-done') {
     // The episode can't play here (#3356): one sentence, and for the first, one button. No countdown, no Skip.
     return (
@@ -197,6 +210,26 @@ export function NowPlaying({ onClose, landing }: { onClose: () => void; landing?
     (closedKind === 'write' ? writeRef : recordRef).current?.focus();
     setClosedKind(undefined);
   }, [closedKind]);
+  // The listener's own Margins on this episode: a rise while a composer was open means a Margin was saved.
+  const ownCount = () => data.margins.filter((m) => m.episodeId === episode?.id && !m.author).length;
+  const ownAtOpen = useRef<number | undefined>(undefined);
+  const composerOpen = composer !== null;
+  // Checked after the render that closes the composer, so the saved Margin is already in `data.margins`.
+  useEffect(() => {
+    if (composerOpen) {
+      ownAtOpen.current ??= ownCount();
+      return;
+    }
+    if (ownAtOpen.current !== undefined && ownCount() > ownAtOpen.current) setSavedCard(true);
+    ownAtOpen.current = undefined;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [composerOpen]);
+  // The saved card stays until a friend's Margin plays (the player's `arrived`).
+  const [savedCard, setSavedCard] = useState(false);
+  const arrivedNow = player.arrived !== undefined;
+  useEffect(() => {
+    if (arrivedNow) setSavedCard(false);
+  }, [arrivedNow]);
   const closeComposer = (kind: 'write' | 'record') => () => {
     setComposer(null);
     setClosedKind(kind);
@@ -290,7 +323,7 @@ export function NowPlaying({ onClose, landing }: { onClose: () => void; landing?
         </div>
         {player.loading && <p className="muted np-status">Loading audio…</p>}
         <LandingOffer landing={landing} />
-        <MarginCue margins={margins} />
+        <MarginCue margins={margins} saved={savedCard} />
         <ArrivedMargin margins={margins} />
 
         {composer ? (

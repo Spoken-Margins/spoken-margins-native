@@ -5,7 +5,8 @@ import { episode } from '../../packet/fixtures.ts';
 import { packetMarginId, readPacket } from '../../packet/read.ts';
 import { writePacket } from '../../packet/write.ts';
 import type { Margin } from '../../shared/model.ts';
-import { friendNames, pickedMargins, preselected, replyBackOffer } from './reply-back.ts';
+import { cueFor } from './arrival.ts';
+import { friendNames, pickedMargins, preselected, replyBackOffer, savedMarginCard } from './reply-back.ts';
 
 const D1 = 'a'.repeat(64);
 const D2 = 'b'.repeat(64);
@@ -100,4 +101,37 @@ test('the written packet holds only the picked Margins, and reads back as a repl
   // The reply keeps its link to the friend's Margin, so Builds 32 and 34 import it as before.
   assert.equal(read.margins.find((m) => m.text === 'r')?.replyToId, friend(1).id);
   assert.equal(read.margins.find((m) => m.text === 'p')?.replyToId, undefined);
+});
+
+const SAVED = (who: string) => `Your Margin is saved. Share sends it to ${who}. You pick which of your Margins go.`;
+const mine = own('mine', '2026-11-02T10:00:00Z');
+
+test('saved card: an item of the listener\'s own gets nothing', () => {
+  assert.equal(savedMarginCard([mine], undefined), undefined);
+  assert.equal(savedMarginCard([], undefined), undefined);
+});
+
+test('saved card: a friend\'s item after a save says Share sends it to the friend, in the owner\'s words (2026-11-06)', () => {
+  const margins = [friend(1), mine];
+  assert.deepEqual(savedMarginCard(margins, cueFor(margins, 999, 'Ana')), { sentence: SAVED('Ana') });
+  assert.deepEqual(savedMarginCard(margins, undefined), { sentence: SAVED('Ana') });
+});
+
+test('saved card: an unnamed sender reads "your friend", as the other cards do', () => {
+  const margins = [friend(1, D1, 'your friend'), mine];
+  assert.deepEqual(savedMarginCard(margins, undefined), { sentence: SAVED('your friend') });
+  const blank = [friend(1, D1, '   '), mine];
+  assert.deepEqual(savedMarginCard(blank, undefined), { sentence: SAVED('your friend') });
+});
+
+test('saved card: it replaces the countdown and the after-last card; an episode that can\'t play keeps its own', () => {
+  const margins = [friend(1), friend(9), mine];
+  const countdown = cueFor(margins, 15, 'Ana');
+  assert.equal(countdown?.kind, 'countdown');
+  assert.deepEqual(savedMarginCard(margins, countdown), { sentence: SAVED('Ana') });
+  const after = cueFor(margins, 999, 'Ana');
+  assert.equal(after?.kind, 'after-last');
+  assert.deepEqual(savedMarginCard(margins, after), { sentence: SAVED('Ana') });
+  const failed = cueFor(margins, 15, 'Ana', { failed: true, heardWithoutEpisode: false });
+  assert.equal(savedMarginCard(margins, failed), undefined);
 });
