@@ -838,14 +838,35 @@ class ReachedByNameTests(unittest.TestCase):
             self.assertIn(name, line)
         self.assertNotIn('gone', lines[2])
 
-    def test_the_numbered_change_to_skim_stops_still_reaches_the_audio_test_that_caught_it(self):
-        # #3412 changed one line of Gate1AppModel+SkimStops.swift and three LocalAudioListeningPackageTests failed on main.
-        # The real tree, and the line found by its text so that a later edit moves the hunk with it.
-        path = APP + 'Gate1AppModel+SkimStops.swift'
-        lines = (scope.ROOT / path).read_text().split('\n')
-        number = next(i for i, line in enumerate(lines, 1) if 'SharedMarginAudio.canOffer' in line)
-        result = scope.classify([path], {path: f'@@ -{number} +{number} @@\n'})
-        self.assertIn('LocalAudioListeningPackageTests', result['app_tests'])
+    def test_the_shape_of_the_3412_change_still_reaches_the_test_that_caught_it_but_not_a_sibling_s(self):
+        # #3412 changed one line in a private member of Gate1AppModel+SkimStops.swift; three LocalAudioListeningPackageTests
+        # failed on main. The chain: that private member, the public member of the same file that calls it, a controller
+        # that calls that, a model extension that calls the controller, and the test. The first version of this test read
+        # the real tree, which drifts: a name crossing REACH_FANOUT on main broke it with this change not involved.
+        self.write(APP + 'Gate1AppModel+SkimStopsLike.swift', (
+            'extension Gate1AppModel {\n'
+            '    private var skimStopList: [Int] {\n'
+            '        let eligible = shared.filter { SharedMarginAudio.canOffer($0) }\n'
+            '        return eligible\n'
+            '    }\n'
+            '    func skimStopChoice(at position: Int) -> Int {\n'
+            '        skimStopList.count + position\n'
+            '    }\n'
+            '    func skimGo() {}\n'
+            '}\n'))
+        self.write(APP + 'SkimBridgeLikeController.swift', (
+            'final class SkimBridgeLikeController {\n    func pick() { host.skimStopChoice(at: 1) }\n}\n'))
+        self.write(APP + 'Gate1AppModel+SkimBridgeLike.swift', (
+            'extension Gate1AppModel {\n    func updateLikeAvailability() { bridge.pick() }\n}\n'))
+        self.write(self.tests + 'LocalAudioLikeTests.swift', (
+            'final class LocalAudioLikeTests: XCTestCase {\n    func testIt() { model.updateLikeAvailability() }\n}\n'))
+        self.write(self.tests + 'SiblingLikeTests.swift', (
+            'final class SiblingLikeTests: XCTestCase {\n    func testGo() { model.skimGo() }\n}\n'))
+        path = APP + 'Gate1AppModel+SkimStopsLike.swift'
+        whole = scope.classify([path], None, root=self.root)['app_tests']
+        narrowed = scope.classify([path], {path: '@@ -3 +3 @@\n'}, root=self.root)['app_tests']
+        self.assertEqual(whole, ['SiblingLikeTests', 'LocalAudioLikeTests'])
+        self.assertEqual(narrowed, ['LocalAudioLikeTests'])
 
     def test_modifiers_with_a_setter_scope_and_case_lists_declare_their_names(self):
         self.assertEqual(
