@@ -261,6 +261,7 @@ final class LiveSessionController: ObservableObject {
     func startSpokenMargin() {
         guard isRunning, !isRecordingSpoken else { return }
         isRecordingSpoken = true
+        LiveSessionSpokenMargins.spokenMarginStarted(on: self)
         finishObserver = NotificationCenter.default.addObserver(
             forName: LiveSessionFinishMargin.requested, object: nil, queue: .main
         ) { [weak self] _ in

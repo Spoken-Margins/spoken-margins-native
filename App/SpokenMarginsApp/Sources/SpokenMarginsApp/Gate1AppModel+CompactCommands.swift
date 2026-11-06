@@ -26,6 +26,14 @@ extension Gate1AppModel {
         playbackRate: Double? = nil,
         origin: String = "app_ui"
     ) {
+        // A play from the Lock Screen, headphones or the Watch while a live session spoken Margin records would start
+        // our player, which takes the audio session and stops the recorder. Ignored, and logged (#3492).
+        if LiveSessionTransportGuard.ignores(
+            command, origin: origin, whileSpokenMarginRecords: LiveSessionSpokenMargins.isRecordingOnPhone
+        ) {
+            recordDeveloperDiagnostic("transport.ignored_during_live_session_margin", ["command": command.rawValue, "origin": origin])
+            return
+        }
         // A headphone double-press (next track) adds a Margin, or skips forward by the listener's setting (#2031).
         // Skip forward from the Lock Screen or the screen never reaches this branch.
         if command == .skipForward, origin.hasSuffix(HeadphoneRemoteSignal.nextTrackOriginSuffix) {
