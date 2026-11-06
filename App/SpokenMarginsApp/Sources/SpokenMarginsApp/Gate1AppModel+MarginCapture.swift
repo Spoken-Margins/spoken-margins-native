@@ -152,22 +152,46 @@ extension Gate1AppModel {
         diagnostics["outcomeCue"] = MarginOutcomeCuePlayer.shared.play(cue)
     }
 
+    /// The same cue, started without waiting for the audio system: reading the session and starting the player wait
+    /// on the system's audio service, and the haptic and the message must not wait behind them. Cues and stops run
+    /// in order on the player's own queue, so a later stop still ends this cue; the outcome is written to the
+    /// diagnostics when it lands. The cue is still never configured against the audio session.
+    private func startOutcomeCue(_ cue: MarginOutcomeCue) {
+        if engine?.recordingReleasedAudioSession() == true {
+            MarginOutcomeCuePlayer.shared.stop()
+            diagnostics["outcomeCue"] = "skipped:session_released"
+            return
+        }
+        MarginOutcomeCuePlayer.shared.play(cue) { [weak self] result in
+            self?.diagnostics["outcomeCue"] = result
+        }
+    }
+
     /// Reports interrupted, unexpectedly short or unverified saved audio without claiming a capture cause.
+    /// `finalizedRecordingIntegrity()` only hands back what the recorder measured when it stopped, so the verdict
+    /// is known here with no file read; the labels name which step a stall is in.
     func reportMarginSaved(_ verdict: MarginCaptureSupervisor.SaveVerdict) {
-        let integrity = engine?.finalizedRecordingIntegrity()
-        if let integrity { recordDeveloperDiagnostic("margin.capture.finalized", integrity.diagnosticFields) }
+        let labels = hangTelemetry.labels
+        let integrity = labels.scoped("marginSave.integrity") { () -> FinalizedRecordingIntegrity? in
+            let integrity = engine?.finalizedRecordingIntegrity()
+            if let integrity { recordDeveloperDiagnostic("margin.capture.finalized", integrity.diagnosticFields) }
+            return integrity
+        }
+        let haptic: HapticKind, cue: MarginOutcomeCue, message: String, isWarning: Bool
         if let integrity, integrity.fileMs == nil {
-            AppHaptics.play(.warning)
-            playOutcomeCue(.savedMaybeCut)
-            reportWarning("Margin saved, but its recording could not be checked. Please play it back.")
+            (haptic, cue, isWarning) = (.warning, .savedMaybeCut, true)
+            message = "Margin saved, but its recording could not be checked. Please play it back."
         } else if (integrity?.qualifying(verdict) ?? verdict) == .saveCutShort {
-            AppHaptics.play(.warning)
-            playOutcomeCue(MarginOutcomeCue(verdict: .saveCutShort))
-            reportWarning("Margin saved, but part of it may be missing.")
+            (haptic, cue, isWarning) = (.warning, MarginOutcomeCue(verdict: .saveCutShort), true)
+            message = "Margin saved, but part of it may be missing."
         } else {
-            AppHaptics.play(.saved)
-            playOutcomeCue(MarginOutcomeCue(verdict: .save))
-            reportConfirmation("Margin saved. Transcription is continuing in the background.")
+            (haptic, cue, isWarning) = (.saved, MarginOutcomeCue(verdict: .save), false)
+            message = "Margin saved. Transcription is continuing in the background."
+        }
+        labels.scoped("marginSave.haptic") { AppHaptics.play(haptic) }
+        labels.scoped("marginSave.cue") { startOutcomeCue(cue) }
+        labels.scoped("marginSave.status") {
+            if isWarning { reportWarning(message) } else { reportConfirmation(message) }
         }
     }
 
