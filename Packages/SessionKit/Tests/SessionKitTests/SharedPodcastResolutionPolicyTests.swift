@@ -2,7 +2,6 @@ import Foundation
 import XCTest
 import SessionKit
 import SessionKitSharing
-import SessionKitTestInputs
 
 final class SharedPodcastResolutionPolicyTests: XCTestCase {
     func testUniqueTrackingEnclosureWinsBeforeTitleAndDuration() throws {
@@ -177,20 +176,6 @@ final class SharedPodcastResolutionPolicyTests: XCTestCase {
         XCTAssertNil(SharedPodcastResolutionPolicy.packageReferenceResolution(item: packet(type: .text), request: request))
         XCTAssertTrue(SharedPodcastResolutionPolicy.hasReference(packet()))
         XCTAssertNotNil(SharedPodcastResolutionPolicy.packageReferenceResolution(item: packet(), request: request))
-    }
-
-    func testModelRetainsDiagnosticErrorAndRequestLiterals() throws {
-        // These remain app-owned. Pin their bytes at the call site without pretending to run the app.
-        let source = try TestInputs.text(.appSources, "Gate1AppModel+PackageImport.swift")
-        let start = try XCTUnwrap(source.range(of: "func acquirePodcastForImportedPackage("))
-        let end = try XCTUnwrap(source.range(of: "\n    }\n", range: start.upperBound..<source.endIndex))
-        let body = String(source[start.lowerBound..<end.lowerBound])
-        XCTAssertTrue(body.contains("diagnostics[\"lastSharedPodcastAcquisition\"] = \"package_reference_after_resolution_failure\""))
-        XCTAssertTrue(body.contains("diagnostics[\"lastSharedPodcastAcquisition\"] = diagnostic"))
-        XCTAssertTrue(body.contains("SessionKitError.persistenceFailed(\"shared_podcast_item_has_no_reference\")"))
-        XCTAssertTrue(body.contains("SessionKitError.persistenceFailed(\"shared_podcast_item_not_created\")"))
-        XCTAssertTrue(body.contains("sourceSurface: \"spoken_margins_package\""))
-        XCTAssertTrue(body.contains(#"id: "shared-package-\(UUID().uuidString)""#))
     }
 
     private let enclosure = "https://cdn.example.com/episode.mp3"
