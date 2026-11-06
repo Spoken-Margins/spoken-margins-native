@@ -23,13 +23,11 @@ Replace this section when the focus changes; do not append to it. Dated decision
 
 - **Baseline:** Build 34 is Solid Ground, on internal TestFlight; Build 32 is the external one (tags and commits: [docs/decisions.md](docs/decisions.md), 2026-10-17). Packet compatibility is tested against both. Build 35 is internal with links on; next upload above 35.
 - **Trunk:** `main` carries all work (`SM_TRUNK=main` since 2026-10-20); `next` is frozen. A build reaches testers only after it passes the owner's own use.
-- **Order of work:** `priority` issues first (the sharing loop, #3216, carries it since 2026-11-02), then `Showcase` (the solo app at its best; scope is in the milestone), with `Open Source: after the flip` alongside; then the rest of `Co-op Experience`, which is never held. A priority is an order of work, never a hold: when the top milestone has no free issue, take the next-highest work. A bug that blocks use, or a pipeline fault, gets `priority` in its normal milestone. Plain app bugs in `Co-op Experience` move to `Showcase`. Milestone names are ours, never Apple's build numbers.
+- **Order of work:** `priority` issues first (the sharing loop, #3216, carries it since 2026-11-02), then `Showcase` (scope is in the milestone), with `Open Source: after the flip` alongside; then the rest of `Co-op Experience`, which is never held. A priority is an order of work, never a hold: when the top milestone has no free issue, take the next-highest work. A bug that blocks use, or a pipeline fault, gets `priority` in its normal milestone. Plain app bugs in `Co-op Experience` move to `Showcase`. Milestone names are ours, never Apple's build numbers.
 - **Who does what:** [docs/workstreams/](docs/workstreams/README.md) holds the streams and briefs; "The lead session" in [kickoff.md](docs/workstreams/kickoff.md) says who does what, and `ops/codex/README.md` what runs on the Mac. Claude is the only model on the project.
 - **Reference:** podcast anchors continue as stream C4 ([docs/podcast-anchor-plan.md](docs/podcast-anchor-plan.md)). `park/co-op-2026-09-24` and `codex/desktop` are parked branches: never merge them, port pieces by hand.
 
 ## Product rules
-
-The owner's words and the detail are in [docs/decisions.md](docs/decisions.md) under the date.
 
 - **No off switches for new features.** The way back is reverting the merge. Build on the current design direction (2026-09-29); the navigation objective is Four tabs ([Design/proposals/four-tabs.md](Design/proposals/four-tabs.md), 2026-10-16).
 - **Default on only when it costs the listener nothing:** no noticeable battery drain, heat or stutter, and airtight on privacy; otherwise opt-in. Keep no user data that could identify someone unless the feature needs it, and then encrypt it end to end (2026-10-05).
@@ -85,12 +83,12 @@ The owner's words and the detail are in [docs/decisions.md](docs/decisions.md) u
 
 ## Verification
 
-Tests that pass while the app is broken usually fake the boundary that broke (audio sessions, players, file paths across containers, network responses). Verify in three layers; a lower layer never stands in for a higher one.
+Tests that pass while the app is broken usually fake the boundary that broke. Verify in three layers; a lower layer never stands in for a higher one.
 
 Pick the lowest tier that covers your change from [docs/workstreams/test-lane.md](docs/workstreams/test-lane.md). Anything that boots a simulator (`--plan app`, journeys) goes through the test lane, not your own session.
 
 1. **Component tests (host, fast).** This is the default loop for every change: `.venv/bin/python scripts/verify-tests.py --plan fast`.
-   - In a new worktree, run `scripts/setup-worktree.sh` once first; it links the main checkout's `.venv` and `node_modules`.
+   - In a new worktree, run `scripts/setup-worktree.sh` once first.
    - Write tests that can fail for the bug they name. Run a new regression test once without the fix and confirm it fails.
    - For a matching, sanitizing or page/title parsing bug, write a table of neighbouring inputs before fixing: case, whitespace, Unicode normalization, punctuation, empty, very long, the same item from another source, and lookalike items. Fix every row that fails in the same commit.
    - Prefer real temporary files, real SQLite and real AVFoundation decoding on macOS over hand-written fakes at the boundary being tested.
@@ -98,8 +96,8 @@ Pick the lowest tier that covers your change from [docs/workstreams/test-lane.md
    - Every app change: build for the simulator and device:
      - `scripts/xcodebuild-lane -project SpokenMarginsNative.xcodeproj -scheme SpokenMarginsApp -destination 'generic/platform=iOS Simulator' build-for-testing`
      - `scripts/xcodebuild-lane -project SpokenMarginsNative.xcodeproj -scheme SpokenMarginsApp -destination 'generic/platform=iOS' build`
-   - `scripts/xcodebuild-lane` takes xcodebuild's arguments, waits for one of two Mac-wide build slots and uses this worktree's `.build/dd`, a link into `~/Library/Caches/SpokenMarginsBuilds` that the disk-relief job can clear ([ops/disk](ops/disk/README.md)). A hook blocks raw `xcodebuild` builds in this repo.
-   - After switching branches, use a fresh `-derivedDataPath`. Stale SessionKit modules in the shared DerivedData produce false "does not conform" errors.
+   - `scripts/xcodebuild-lane` takes xcodebuild's arguments, waits for one of two Mac-wide build slots and uses this worktree's `.build/dd`, which the disk-relief job can clear ([ops/disk](ops/disk/README.md)). A hook blocks raw `xcodebuild` builds in this repo.
+   - After switching branches, use a fresh `-derivedDataPath`.
    - App orchestration changes: run `--plan app` (app-hosted XCTest in one simulator). If it stalls before XCTest connects, stop and report it; don't retry in a loop.
    - `--plan app` uses its own `SpokenMargins Test Runner` simulator, never the journey one.
 3. **Journey checks.** Before calling anything ready, run the affected journeys in [docs/journeys.md](docs/journeys.md) against the built app.
@@ -129,7 +127,7 @@ Only the owner sets `human_validated`.
 
 ## Putting a build on the owner's phone
 
-Use the rolling phone build, not TestFlight ([device-validation.md](docs/device-validation.md#the-rolling-phone-build-384)). `scripts/phone-build` builds `origin/main` (or `--commit <sha>`) on the Mac, and the owner installs it with the **Install Spoken Margins on iPhone** shortcut on the Desktop, which opens its test plan. A fresh build and plan come once a day at 8 am Central, and again at 5 pm Central only when 5 or more new fixes wait on his phone (2026-10-14). The plan is one walkthrough of several fixes, each step naming a real control. Archive and upload only when he says "upload".
+Use the rolling phone build, not TestFlight ([device-validation.md](docs/device-validation.md#the-rolling-phone-build-384)). `scripts/phone-build` builds `origin/main` (or `--commit <sha>`) on the Mac, and the owner installs it with the **Install Spoken Margins on iPhone** shortcut on the Desktop, which opens its test plan. A fresh build and plan come once a day at 8 am Central, and again at 5 pm Central only when 5 or more new fixes wait on his phone (2026-10-14). Archive and upload only when he says "upload".
 
 ## Releasing a build
 
@@ -142,10 +140,10 @@ Apple build numbers identify uploads, not milestones: each replacement upload ne
 3. Archive (`artifacts/` is git-ignored):
    `scripts/xcodebuild-lane -project SpokenMarginsNative.xcodeproj -scheme SpokenMarginsApp -configuration Release -destination generic/platform=iOS -archivePath artifacts/SpokenMargins-<build>.xcarchive -allowProvisioningUpdates archive`
    Check the archive's `CFBundleVersion` is the new build number.
-   The signing team comes from the owner's git-ignored `Config/Local.xcconfig` in the main checkout; `scripts/xcodebuild-lane` links it into the worktree (#1841).
+   The signing team comes from the git-ignored `Config/Local.xcconfig`, which `scripts/xcodebuild-lane` links in (#1841).
 4. Upload (`testFlightInternalTestingOnly` is false in the default plist), then assign only the authorized tester groups:
    `PATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH" xcodebuild -exportArchive -archivePath artifacts/SpokenMargins-<build>.xcarchive -exportOptionsPlist scripts/TestFlightUploadOptions.plist -exportPath artifacts/export-<build> -allowProvisioningUpdates`
-   The PATH prefix matters: Homebrew's rsync breaks Xcode's packaging step. A warning that onnxruntime.framework has no dSYM is expected and harmless.
+   The PATH prefix matters: Homebrew's rsync breaks Xcode's packaging step.
    Check App Store Connect does not mark the uploaded build `Internal`, and confirm its version, build number and group assignment before calling the upload complete.
    Before external assignment, run `scripts/release_gate.py` (#2236).
 5. Tag the archived commit `testflight/0.1-build-N`, and push the tag.
