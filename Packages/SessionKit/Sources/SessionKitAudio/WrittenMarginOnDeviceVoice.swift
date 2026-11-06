@@ -95,6 +95,10 @@ public struct WrittenMarginOnDeviceStage: Sendable {
     /// same block the player obeys (`OnDeviceVoiceEngine.renderingAllowed`), so a hot or low-memory phone is never asked
     /// for more than the player would ask (#3391). A missing voice is false here too.
     public let isAllowed: @Sendable () -> Bool
+    /// Whether a listener can be asked to wait for this voice: a fact the app reads (the app is in front). False in a pocket
+    /// or on the Lock Screen: the reading is then the iPhone voice's, which plays at once from what exists, and the
+    /// on-device voice is not run.
+    public let listenerCanWait: Bool
 
     public init(
         key: String,
@@ -102,8 +106,10 @@ public struct WrittenMarginOnDeviceStage: Sendable {
         mostCharacters: Int = WrittenMarginOnDeviceStage.defaultMostCharacters,
         reads: @escaping @Sendable (_ note: String) -> Bool = WrittenMarginVoiceChoice.onDeviceCanRead,
         isAllowed: @escaping @Sendable () -> Bool = { true },
+        listenerCanWait: Bool = true,
         render: @escaping @Sendable (_ text: String, _ scratch: URL, _ cancel: RenderCancellation) throws -> URL
     ) {
+        self.listenerCanWait = listenerCanWait
         self.key = key
         self.budget = budget
         self.mostCharacters = mostCharacters

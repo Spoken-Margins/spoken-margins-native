@@ -27,7 +27,7 @@ enum WrittenMarginOnDeviceRendering {
 
     /// The reader's on-device stage for `selection`. Its checks and its render run on a background thread and take what
     /// they need from the main actor only at that moment, so building the stage costs nothing.
-    static func stage(for selection: AppTTSVoiceSelection, key: String, model: Gate1AppModel) -> WrittenMarginOnDeviceStage {
+    static func stage(for selection: AppTTSVoiceSelection, key: String, listenerCanWait: Bool, model: Gate1AppModel) -> WrittenMarginOnDeviceStage {
         WrittenMarginOnDeviceStage(
             key: key,
             isAllowed: { [weak model] in
@@ -36,6 +36,7 @@ enum WrittenMarginOnDeviceRendering {
                 guard let model, let plan = try? onMain({ try makePlan(for: selection, model: model) }) else { return false }
                 return plan.allowed()
             },
+            listenerCanWait: listenerCanWait,
             render: { [weak model] text, _, cancel in
                 guard let model else { throw CancellationError() }
                 let plan = try onMain { try makePlan(for: selection, model: model) }
@@ -73,7 +74,7 @@ enum WrittenMarginOnDeviceRendering {
         return Plan(allowed: engine.renderingAllowed, renderer: { engine.renderer })
     }
 
-    enum WrittenMarginOnDeviceError: Error { case notAvailable }
+    enum WrittenMarginOnDeviceError: Error { case notAvailable, flaggedOutput }
 
     /// Runs the async render and waits on this background thread, stopping it at its next step when `cancel` is set.
     nonisolated private static func renderSynchronously(_ renderer: any SupertonicRendering, text: String, voice: SupertonicVoiceID, cancel: RenderCancellation) throws -> URL {
@@ -86,7 +87,19 @@ enum WrittenMarginOnDeviceRendering {
         while done.wait(timeout: .now() + 0.05) == .timedOut {
             if cancel.isCancelled { task.cancel() }
         }
-        return try box.get().audioURL
+        let result = try box.get()
+        // The player's own check (`SupertonicOutputGuard`): Supertonic's output that babbles, or is far too long or short for
+        // its words, is not played. The guard's stand-in does not fit here: it writes iPhone-voice audio next to the original,
+        // which would sit under the on-device voice's name, and a reading's fallback is the reader's own iPhone render at the
+        // iPhone path. So the same check (`SupertonicOutputCheck`) refuses the file, and the reader falls back. Like the guard,
+        // it judges only Supertonic: another engine's pacing would trip its limits falsely, so a downloaded voice passes
+        // through here as it does in the player.
+        if result.engine == SupertonicNarrationResult.supertonicEngine,
+           SupertonicOutputCheck.problem(text: text, durationSeconds: result.modelDuration, speed: 1) != nil {
+            try? FileManager.default.removeItem(at: result.audioURL)
+            throw WrittenMarginOnDeviceError.flaggedOutput
+        }
+        return result.audioURL
     }
 
     private final class ResultBox: @unchecked Sendable {

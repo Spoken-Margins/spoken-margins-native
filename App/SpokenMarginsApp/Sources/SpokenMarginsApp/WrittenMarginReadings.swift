@@ -1,6 +1,9 @@
 import Foundation
 import SessionKit
 import SessionKitAudio
+#if canImport(UIKit)
+import UIKit
+#endif
 
 /// A friend's written Margin is heard: a tone, then the iPhone's voice reads "Cole wrote: …" (owner, 2026-11-02, #3365).
 /// The reading is rendered to a cached audio file and handed to the same players as a recording, so the tone, the pause
@@ -30,7 +33,9 @@ enum WrittenMarginReadings {
     ///
     /// Only what is played asks with this. `prepare`, which runs when a screen opens, never does: opening a screen must
     /// not run the on-device model, so it renders ahead in the iPhone voice, which costs the listener no battery, heat or
-    /// stutter worth noticing (owner rule: default on only when it costs the listener nothing, 2026-10-05).
+    /// stutter worth noticing (owner rule: default on only when it costs the listener nothing, 2026-10-05). The stage
+    /// carries whether the app is in front, read here as a fact: when it is not, nobody can wait, so what exists plays
+    /// at once and the on-device voice is not run (`WrittenMarginOnDeviceStage.listenerCanWait`).
     private static var stage: WrittenMarginOnDeviceStage? {
         guard let model else { return nil }
         let selection = model.ttsVoiceSelection
@@ -39,7 +44,15 @@ enum WrittenMarginReadings {
             candidate: WrittenMarginOnDeviceRendering.candidate(for: selection, model: model)
         )
         guard case .onDevice(let key) = choice else { return nil }
-        return WrittenMarginOnDeviceRendering.stage(for: selection, key: key, model: model)
+        return WrittenMarginOnDeviceRendering.stage(for: selection, key: key, listenerCanWait: appIsInFront, model: model)
+    }
+
+    private static var appIsInFront: Bool {
+        #if canImport(UIKit)
+        UIApplication.shared.applicationState == .active
+        #else
+        true
+        #endif
     }
 
     /// How long "Hear only the Margins" holds off for its readings before it starts anyway. The review's own lead-in
@@ -62,14 +75,14 @@ enum WrittenMarginReadings {
     /// The file to hand a player for `audio`, after starting the render of a reading that isn't ready. Nil: nothing can play.
     static func startingRender(_ audio: SharedMarginAudio) -> URL? { audio.startingRender(on: reader, onDevice: stage) }
 
-    /// Starts the renders for the short written Margins waiting on the item screen, so the ones that will be heard in the
-    /// iPhone voice are ready before "Hear only the Margins" is tapped. A long note waits until it is asked for. One the
-    /// chosen on-device voice will read is not rendered ahead: that would be a file in a voice nobody hears, and opening a
-    /// screen never runs the on-device model (`WrittenMarginReader.prepareAhead`). Touches no disk on the main thread.
+    /// Starts the iPhone voice's renders for the short written Margins waiting on the item screen, whichever voice is
+    /// chosen: they play at once when the app is not in front and are the fallback of a slow on-device try. A long note
+    /// waits until it is asked for. Opening a screen never runs the on-device model, and a reading made here is not the
+    /// first hearing of an on-device listener (`WrittenMarginReader.prepareAhead`). Touches no disk on the main thread.
     static func prepare(_ entries: [SharedMarginReview.Entry]) {
         var readings: [String: WrittenMarginReading] = [:]
         for entry in entries { if let reading = entry.writtenReading, reading.isShortEnoughToRenderAhead { readings[entry.marginId] = reading } }
-        reader.prepareAhead(readings, onDevice: stage)
+        reader.prepareAhead(readings)
     }
 
     /// What changes which readings the item screen needs: the ids of the written Margins still new.
@@ -142,8 +155,15 @@ enum WrittenMarginReadings {
         let task = Task { @MainActor [weak model] in
             let rendered = (try? await reader.rendered(reading, onDevice: stage)) != nil
             if tapWaits[key]?.id == id { tapWaits[key] = nil }
+            // The row's callers are not all on the item screen (Now Playing, skim stops, reactions), so `leftItemScreen` does not
+            // see every way out. Selecting another item, and Trash (which clears the selection and also calls `leftItemScreen`),
+            // are caught here: the tap is dropped unless the row's item is still the selected one.
             guard !Task.isCancelled, let model, model.selectedItem.id == row.layer.itemId, !model.recordingNavigationIsLocked else { return }
             guard rendered else { return model.reportWarning("That Margin couldn't be read aloud, so listening continues.") }
+            if model.pendingImportedCommentary != nil || model.playingImportedCommentary != nil || model.marginMoment != nil {
+                // Something else took the sound while the reading was made; the tap is not dropped without a word.
+                return model.reportWarning("That Margin is ready now. Tap it again to hear it.")
+            }
             replayingAfterWait.insert(key)
             defer { replayingAfterWait.remove(key) }
             model.playSharedMarginMoment(row)
@@ -212,8 +232,9 @@ enum WrittenMarginReadings {
         func set() { lock.withLock { value = true } }
     }
 
-    /// The listener left the item's screen (back to the Library, another tab): a tap's wait and a review's hold for that item
-    /// end, so nothing starts or pulls them back later. The model's own check (`selectedItem`) cannot see this.
+    /// The listener left the item's screen (back to the Library, another tab) or moved the item to Trash: a tap's wait and a
+    /// review's hold for that item end, so nothing starts or pulls them back later. A row's wait also checks the selected
+    /// item when it finishes, which covers the other ways out.
     static func leftItemScreen(_ itemId: String) {
         for (key, wait) in tapWaits where wait.itemId == itemId {
             wait.task.cancel() // its place in the reader's queue goes; a render nobody else waits for stops at its next step (#3391)

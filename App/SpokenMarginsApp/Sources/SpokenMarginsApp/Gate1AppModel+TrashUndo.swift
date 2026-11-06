@@ -20,6 +20,7 @@ extension Gate1AppModel {
             }
             try store.moveItemToTrash(id: id)
             removeMarginRows(forItem: id) // its Margins leave the list with it
+            WrittenMarginReadings.leftItemScreen(id) // a wait for one of its readings ends (#3391)
             showAsRecentlyDeleted(itemId: id, title: item.title)
             // An import-only item can be selected without a session. Clearing that idle selection must not
             // discard another item's live session just because its detail page was open when Delete was tapped.

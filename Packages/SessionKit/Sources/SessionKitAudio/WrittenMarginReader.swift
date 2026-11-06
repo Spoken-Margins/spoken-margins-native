@@ -80,7 +80,7 @@ public final class WrittenMarginReader: @unchecked Sendable {
     /// are never loaded at once, whichever voice is chosen (#3391).
     private let onDeviceRunner = WrittenMarginOnDeviceRunner()
     private var fellBack: [String: Date] = [:] // on-device path -> when the iPhone voice read it instead
-    private var readsCache: [String: Bool] = [:] // voice key + words -> whether that voice can read them (language, asked off the main thread)
+    private var readsCache: [String: Bool] = [:] // hash of voice key + words -> whether that voice can read them (language, asked off the main thread)
     /// How long a reading the iPhone voice made in place of the on-device voice is played as it is, before the on-device
     /// voice is tried for that Margin again (it may be warm by then).
     private let retryOnDeviceAfter: TimeInterval
@@ -160,7 +160,14 @@ public final class WrittenMarginReader: @unchecked Sendable {
         return directory.appending(path: "\(Self.itemKey(reading.itemId))-\(Self.fingerprint(seed)).caf", directoryHint: .notDirectory)
     }
 
-    private func readsKey(_ stage: WrittenMarginOnDeviceStage, _ reading: WrittenMarginReading) -> String { "\(stage.key)\u{1f}\(reading.text)" }
+    /// What the cache holds, for a test that checks it holds no words.
+    var readsCacheKeys: [String] { lock.withLock { Array(readsCache.keys) } }
+
+    /// A hash, never the words: the cache outlives the note, and a permanent delete must not leave a friend's words in memory
+    /// (#3365). Whether a voice reads a note is a fact about its text, so the key is the same for the same words.
+    func readsKey(_ stage: WrittenMarginOnDeviceStage, _ reading: WrittenMarginReading) -> String {
+        Self.fingerprint("written-margin-reads\u{1f}\(stage.key)\u{1f}\(reading.text)")
+    }
 
     private func recentlyFellBack(_ devicePath: String) -> Bool {
         lock.withLock { fellBack[devicePath].map { Date().timeIntervalSince($0) < retryOnDeviceAfter } ?? false }
@@ -168,18 +175,20 @@ public final class WrittenMarginReader: @unchecked Sendable {
 
     /// The stage that applies to this note, from memory alone (the main thread may ask): nil when the iPhone voice reads it
     /// from the start. That is a note the voice takes too long for (`mostCharacters`), one it was found unable to read
-    /// (another script or language), and one it gave up on a moment ago (`retryOnDeviceAfter`). The language is not
+    /// (another script or language), one it gave up on a moment ago (`retryOnDeviceAfter`), and any note when no listener
+    /// can wait (`listenerCanWait`). The language is not
     /// worked out here, because that is not for the main thread: until the render thread has looked (`readsAfterLooking`),
     /// a note is taken to be readable, and the render thread sends the others to the iPhone voice.
     private func effective(_ stage: WrittenMarginOnDeviceStage?, for reading: WrittenMarginReading) -> WrittenMarginOnDeviceStage? {
-        guard let stage, reading.text.count <= stage.mostCharacters else { return nil }
+        guard let stage, stage.listenerCanWait, reading.text.count <= stage.mostCharacters else { return nil }
         if lock.withLock({ readsCache[readsKey(stage, reading)] }) == false { return nil }
         if recentlyFellBack(fileURL(for: reading, onDevice: stage).path) { return nil }
         return stage
     }
 
     /// Whether the chosen on-device voice is still to be given this note, so its first hearing should wait for it. False
-    /// for the iPhone voice, a note too long or unreadable for the voice, and one it gave up on a moment ago. In memory.
+    /// for the iPhone voice, a note too long or unreadable for the voice, and one it gave up on a moment ago. It is also false
+    /// when nobody can wait (`listenerCanWait`, the app not in front): what exists plays at once, as before. In memory.
     public func wantsOnDevice(_ reading: WrittenMarginReading, stage: WrittenMarginOnDeviceStage?) -> Bool {
         effective(stage, for: reading) != nil && !playbackState(for: reading, onDevice: stage).isReady
     }
@@ -386,20 +395,11 @@ public final class WrittenMarginReader: @unchecked Sendable {
         return urls
     }
 
-    /// Renders ahead, when a screen opens, the readings that will be heard in the iPhone voice, which costs the listener
-    /// nothing. A reading the chosen on-device voice will be given when it is played is left alone: rendering it now would
-    /// make a file in a voice nobody hears, and the on-device voice is not run on opening a screen. Works off the calling
-    /// thread, which is where the language of each note is found.
-    public func prepareAhead(_ readings: [String: WrittenMarginReading], onDevice stage: WrittenMarginOnDeviceStage?) {
-        guard let stage else { _ = start(readings); return }
-        let all = Array(readings.values)
-        DispatchQueue.global(qos: .utility).async { [self] in
-            for reading in all {
-                _ = readsAfterLooking(stage, reading)
-                if effective(stage, for: reading) == nil, !isReady(reading) { ensureRendered(reading, onDevice: nil, waiter: nil) { _ in } }
-            }
-        }
-    }
+    /// Renders ahead, when a screen opens, the iPhone voice's reading of every note, whichever voice the listener chose. It
+    /// is what plays at once when the app is not in front (nobody can wait then, `wantsOnDevice`) and what a failed or slow
+    /// on-device try falls back to, so it is never silence. It never runs the on-device voice: that is only for a listener
+    /// who waits (`rendered`). A reading made here is not the first hearing of an on-device listener (`playbackState`).
+    public func prepareAhead(_ readings: [String: WrittenMarginReading]) { _ = start(readings) }
 
     /// The reading's file once it is on disk: already there, or rendered now. Never blocks the caller's thread. Throws
     /// `RenderError.timedOut` when the render outlasts its limit. When the caller's task is cancelled (the listener

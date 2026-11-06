@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 @testable import SessionKit
 @testable import SessionKitAudio
@@ -80,8 +81,9 @@ final class WrittenMarginOnDeviceVoiceTests: XCTestCase {
     private func stage(_ calls: Calls, key: String = "phonon", budget: TimeInterval = 1, mostCharacters: Int = 300,
                        reads: @escaping @Sendable (String) -> Bool = WrittenMarginVoiceChoice.onDeviceCanRead,
                        allowed: @escaping @Sendable () -> Bool = { true },
+                       listenerCanWait: Bool = true,
                        render: @escaping @Sendable (String, RenderCancellation) throws -> URL) -> WrittenMarginOnDeviceStage {
-        WrittenMarginOnDeviceStage(key: key, budget: budget, mostCharacters: mostCharacters, reads: reads, isAllowed: allowed, render: { text, _, cancel in
+        WrittenMarginOnDeviceStage(key: key, budget: budget, mostCharacters: mostCharacters, reads: reads, isAllowed: allowed, listenerCanWait: listenerCanWait, render: { text, _, cancel in
             calls.hitOnDevice()
             return try render(text, cancel)
         })
@@ -367,7 +369,7 @@ final class WrittenMarginOnDeviceVoiceTests: XCTestCase {
         let calls = Calls()
         let reader = reader(calls)
         let voice = stage(calls, render: speaking(voiceOutput))
-        reader.prepareAhead(["a": reading], onDevice: nil) // before the Terms, or no voice chosen
+        reader.prepareAhead(["a": reading])
         _ = await reader.settle(upTo: 5)
         XCTAssertEqual(calls.iPhoneCount, 1)
         XCTAssertTrue(reader.wantsOnDevice(reading, stage: voice), "the first hearing waits for the chosen voice")
@@ -376,22 +378,77 @@ final class WrittenMarginOnDeviceVoiceTests: XCTestCase {
         XCTAssertFalse(reader.wantsOnDevice(reading, stage: voice))
     }
 
-    func testOpeningAScreenRendersAheadOnlyWhatTheIPhoneVoiceWillRead() async throws {
+    // Item 2: opening a screen makes the iPhone reading of every note, so a listener in a pocket and a fallback have one;
+    // it never runs the on-device voice, and a made-ahead reading is still not an on-device listener's first hearing.
+    func testOpeningAScreenRendersTheIPhoneReadingOfEveryNoteAndNeverRunsTheOnDeviceVoice() async throws {
         let calls = Calls()
         let reader = reader(calls)
         let voice = stage(calls, mostCharacters: 60, render: speaking(voiceOutput))
         let japanese = WrittenMarginReading(intro: "Cole wrote:", text: "これは日本語のメモです。", itemId: "item-1")
         let long = WrittenMarginReading(intro: "Cole wrote:", text: String(repeating: "A long note about the harbour. ", count: 4), itemId: "item-1")
-        reader.prepareAhead(["short": reading, "ja": japanese, "long": long], onDevice: voice)
-        let deadline = Date().addingTimeInterval(5)
-        while calls.iPhoneCount < 2, Date() < deadline { try await Task.sleep(for: .milliseconds(20)) }
+        reader.prepareAhead(["short": reading, "ja": japanese, "long": long])
         _ = await reader.settle(upTo: 5)
-        try await Task.sleep(for: .milliseconds(200))
-        XCTAssertEqual(calls.iPhoneCount, 2, "the unreadable-by-voice and the too-long notes only")
+        let deadline = Date().addingTimeInterval(5)
+        while calls.iPhoneCount < 3, Date() < deadline { try await Task.sleep(for: .milliseconds(20)) }
+        _ = await reader.settle(upTo: 5)
+        XCTAssertEqual(calls.iPhoneCount, 3, "all three notes")
         XCTAssertEqual(calls.onDeviceCount, 0, "opening a screen never runs the on-device voice")
-        XCTAssertFalse(reader.isReady(reading), "the short English note is left for the chosen voice")
-        XCTAssertTrue(reader.isReady(japanese))
-        XCTAssertTrue(reader.isReady(long))
+        XCTAssertTrue(reader.isReady(reading))
+        XCTAssertTrue(reader.wantsOnDevice(reading, stage: voice), "with the app in front the first hearing still waits for the chosen voice")
+    }
+
+    // Item 2: with the app not in front nobody waits: what exists plays at once and the on-device voice is not run.
+    func testAnInactiveAppPlaysWhatExistsAndNeverWaitsForTheOnDeviceVoice() async throws {
+        let calls = Calls()
+        let reader = reader(calls)
+        let front = stage(calls, render: speaking(voiceOutput))
+        let pocket = stage(calls, listenerCanWait: false, render: speaking(voiceOutput))
+        XCTAssertTrue(reader.wantsOnDevice(reading, stage: front))
+        XCTAssertFalse(reader.wantsOnDevice(reading, stage: pocket))
+        reader.prepareAhead(["m": reading])
+        _ = await reader.settle(upTo: 5)
+        let deadline = Date().addingTimeInterval(5)
+        while !reader.isReady(reading), Date() < deadline { try await Task.sleep(for: .milliseconds(20)) }
+        let state = reader.playbackState(for: reading, onDevice: pocket)
+        XCTAssertEqual(state.file, reader.fileURL(for: reading), "the iPhone voice's file")
+        XCTAssertTrue(state.isReady, "plays at once, nobody waits")
+        XCTAssertEqual(reader.start(["m": reading], onDevice: pocket)["m"], state.file)
+        XCTAssertEqual(calls.onDeviceCount, 0)
+    }
+
+    // Item 4: the cache of "can this voice read it" holds a hash, never a friend's words, so a permanent delete leaves none.
+    func testTheReadsCacheHoldsNoWordsOfANote() async throws {
+        let calls = Calls()
+        let reader = reader(calls)
+        let voice = stage(calls, render: speaking(voiceOutput))
+        let secret = WrittenMarginReading(intro: "Cole wrote:", text: "Quietly, the lighthouse keeper's confession.", itemId: "item-9")
+        _ = try await reader.rendered(secret, onDevice: voice)
+        let keys = reader.readsCacheKeys
+        XCTAssertFalse(keys.isEmpty, "the render thread looked")
+        for key in keys { XCTAssertFalse(key.contains("lighthouse"), "the key is not the words: \(key)") }
+        reader.removeReadings(forItem: "item-9", leveled: nil)
+        for key in reader.readsCacheKeys { XCTAssertFalse(key.contains("lighthouse")) }
+    }
+
+    // Item 5: a real WAV from a voice, placed at the reader's .caf name, opens in a player and has its length.
+    func testARealWAVPlacedAtTheReadingsNameOpensInAPlayerWithItsDuration() async throws {
+        let calls = Calls()
+        let reader = reader(calls)
+        let folder: URL = voiceOutput
+        let voice = stage(calls) { _, _ in
+            let file = folder.appending(path: "speech-\(UUID().uuidString).wav")
+            let format = AVAudioFormat(standardFormatWithSampleRate: 24_000, channels: 1)!
+            let out = try AVAudioFile(forWriting: file, settings: format.settings)
+            let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 12_000)!
+            buffer.frameLength = 12_000 // half a second
+            for index in 0..<12_000 { buffer.floatChannelData![0][index] = sin(Float(index) * 0.05) * 0.2 }
+            try out.write(from: buffer)
+            return file
+        }
+        let made = try await reader.rendered(reading, onDevice: voice)
+        XCTAssertEqual(made.pathExtension, "caf")
+        let player = try AVAudioPlayer(contentsOf: made)
+        XCTAssertEqual(player.duration, 0.5, accuracy: 0.05)
     }
 
     // Item 4: the voice takes on only what its short budget can do; a longer note is the iPhone voice's from the start.
