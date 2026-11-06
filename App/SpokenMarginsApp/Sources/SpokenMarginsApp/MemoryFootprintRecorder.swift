@@ -64,6 +64,7 @@ final class MemoryFootprintRecorder {
             .store(in: &subscriptions)
         #if canImport(UIKit)
         NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)
+            .receive(on: DispatchQueue.main)
             .sink { [weak self, weak model] _ in
                 guard let self else { return }
                 let itemId = model?.snapshot.itemId
