@@ -101,6 +101,10 @@ public struct InterjectionShareRevision: Codable, Equatable, Sendable, Identifia
     public let anchorBefore: String
     public let anchorAfter: String
     public let status: InterjectionShareRevisionStatus
+    /// The read-aloud choice this share carried for a Margin sent as text (#3472), or `nil` when the Margin went as a
+    /// recording (nothing to choose) or the share is from before the sender's app remembered it. The next share of the
+    /// same Margin starts from the newest one.
+    public let sentReadAloud: Bool?
 
     public init(
         id: String,
@@ -115,7 +119,8 @@ public struct InterjectionShareRevision: Codable, Equatable, Sendable, Identifia
         decisions: [InterjectionCleanupDecision] = [],
         anchorBefore: String,
         anchorAfter: String,
-        status: InterjectionShareRevisionStatus = .draft
+        status: InterjectionShareRevisionStatus = .draft,
+        sentReadAloud: Bool? = nil
     ) {
         self.id = id
         self.interjectionId = interjectionId
@@ -130,6 +135,13 @@ public struct InterjectionShareRevision: Codable, Equatable, Sendable, Identifia
         self.anchorBefore = anchorBefore
         self.anchorAfter = anchorAfter
         self.status = status
+        self.sentReadAloud = sentReadAloud
+    }
+
+    /// The choice the sender's newest text share of a Margin carried, or `nil` if none did (#3472).
+    public static func lastSentReadAloud(in revisions: [InterjectionShareRevision]) -> Bool? {
+        revisions.filter { $0.sentReadAloud != nil }
+            .max { ($0.createdAt, $0.id) < ($1.createdAt, $1.id) }?.sentReadAloud
     }
 }
 

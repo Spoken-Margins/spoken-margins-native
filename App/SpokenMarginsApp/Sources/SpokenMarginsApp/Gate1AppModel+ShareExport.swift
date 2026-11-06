@@ -91,7 +91,9 @@ extension Gate1AppModel {
                     decisions: draft.cleanup?.decisions ?? [],
                     anchorBefore: draft.anchorBefore,
                     anchorAfter: draft.anchorAfter,
-                    status: .senderApproved
+                    status: .senderApproved,
+                    // Remembered so the next share of this Margin starts from it (#3472); a recording has no choice.
+                    sentReadAloud: draft.representationChoice == .textOnly ? draft.readAloud : nil
                 )
                 revisions.append(revision)
 
@@ -136,7 +138,8 @@ extension Gate1AppModel {
                     revision: revision,
                     anchor: anchor,
                     representation: representation, replyTo: draft.interjection.replyTo,
-                    readAloud: draft.readAloud
+                    readAloud: draft.readAloud,
+                    turnsReadAloudBackOn: draft.readAloud && draft.previousReadAloud == false
                 ))
             }
 

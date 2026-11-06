@@ -25,7 +25,7 @@ final class ReadAloudPacketTests: XCTestCase {
         try? FileManager.default.removeItem(at: root)
     }
 
-    private func prepare(_ name: String, readAloud: Bool?, representation: ReviewedRepresentationSelection = .textOnly) throws -> PreparedSpokenMarginsPackage {
+    private func prepare(_ name: String, readAloud: Bool?, turnsBackOn: Bool = false, representation: ReviewedRepresentationSelection = .textOnly) throws -> PreparedSpokenMarginsPackage {
         let revision = InterjectionShareRevision(
             id: "revision-1", interjectionId: "note", itemId: "private-item",
             sessionId: "session-11111111-1111-1111-1111-111111111111",
@@ -34,7 +34,7 @@ final class ReadAloudPacketTests: XCTestCase {
         )
         let anchor = PortableAnchorEvidence(anchorType: .text, exactText: "The durable idea that prompted this note.")
         let selection = ReviewedInterjectionSelection(
-            packageScopedId: "margin-001", revision: revision, anchor: anchor, representation: representation, readAloud: readAloud ?? true)
+            packageScopedId: "margin-001", revision: revision, anchor: anchor, representation: representation, readAloud: readAloud ?? true, turnsReadAloudBackOn: turnsBackOn)
         return try SpokenMarginsPackageBuilder.prepare(
             packageId: "package-\(name)", createdAt: created,
             item: SharedItemIdentity(itemType: .text, canonicalURL: "https://example.com/article", title: "A Useful Article"),
@@ -49,9 +49,9 @@ final class ReadAloudPacketTests: XCTestCase {
         return try XCTUnwrap((layer["interjections"] as? [[String: Any]])?.first)
     }
 
-    private func importMargin(_ name: String, readAloud: Bool?, into repository: some SessionRepository) throws -> (ImportedCommentaryLayer, ImportedCommentaryInterjection) {
+    private func importMargin(_ name: String, readAloud: Bool?, turnsBackOn: Bool = false, into repository: some SessionRepository) throws -> (ImportedCommentaryLayer, ImportedCommentaryInterjection) {
         let url = root.appendingPathComponent("\(name).spokenmargins")
-        try exportPacket(try prepare(name, readAloud: readAloud), to: url) // Build 29's reader opens it too
+        try exportPacket(try prepare(name, readAloud: readAloud, turnsBackOn: turnsBackOn), to: url) // Build 29's reader opens it too
         let verified = try SpokenMarginsPackageArchive.read(from: url, extractingAssetsTo: root.appendingPathComponent("\(name)-assets"))
         _ = try SpokenMarginsPackageImporter.importPackage(
             verified, itemId: "item", importedAt: created, repository: repository,
@@ -65,6 +65,22 @@ final class ReadAloudPacketTests: XCTestCase {
         XCTAssertNil(try recordJSON(prepare("default", readAloud: nil))["readAloud"], "the packet an older build makes is unchanged")
         XCTAssertNil(try recordJSON(prepare("yes", readAloud: true))["readAloud"], "'yes' is the default and travels as nothing")
         XCTAssertEqual(try recordJSON(prepare("no", readAloud: false))["readAloud"] as? Bool, false)
+    }
+
+    /// #3472: when the sender's last share said "no" and this one says "yes", the packet says so, because a missing key
+    /// cannot tell a held copy to read aloud again. Build 29's reader opens it, like any packet with the key.
+    func testTurningItBackOnIsSaidOutLoudAndStillOpensInBuild29() throws {
+        XCTAssertEqual(try recordJSON(prepare("back-on", readAloud: true, turnsBackOn: true))["readAloud"] as? Bool, true)
+        XCTAssertEqual(try recordJSON(prepare("still-off", readAloud: false, turnsBackOn: true))["readAloud"] as? Bool, false, "off wins")
+        let (_, margin) = try importMargin("back-on-import", readAloud: true, turnsBackOn: true, into: InMemorySessionRepository())
+        XCTAssertEqual(margin.senderReadAloud, true)
+        XCTAssertTrue(margin.readsAloud)
+        XCTAssertEqual(try prepare("back-on-caps", readAloud: true, turnsBackOn: true).manifest.requiredCapabilities,
+                       try prepare("plain-caps", readAloud: nil).manifest.requiredCapabilities)
+        let url = root.appendingPathComponent("voice-back-on.m4a")
+        try Data(repeating: 1, count: 16).write(to: url)
+        let voice = try prepare("voice-back-on", readAloud: true, turnsBackOn: true, representation: .originalAudio(sourceURL: url, durationMs: 4_000))
+        XCTAssertNil(try recordJSON(voice)["readAloud"], "a recording carries no choice")
     }
 
     func testAMarginThatGoesAsARecordingNeverCarriesTheChoice() throws {

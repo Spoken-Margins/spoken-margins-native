@@ -716,6 +716,14 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         return revisions.filter { $0.interjectionId == interjectionId }
     }
 
+    /// For each Margin of an item that was ever shared as text, the read-aloud choice its newest share carried (#3472).
+    /// One read for the item's shares, so the share sheet does not read every share once per Margin.
+    public func loadLastSentReadAloud(itemId: String) throws -> [String: Bool] {
+        let revisions: [InterjectionShareRevision] = try loadByItem(kind: "interjection_share_revision", itemId: itemId)
+        return Dictionary(grouping: revisions, by: \.interjectionId)
+            .compactMapValues { InterjectionShareRevision.lastSentReadAloud(in: $0) }
+    }
+
     public func importCommentaryLayer(
         _ layer: ImportedCommentaryLayer,
         interjections: [ImportedCommentaryInterjection]

@@ -147,4 +147,49 @@ final class ReadAloudChoiceTests: XCTestCase {
         defer { try? FileManager.default.removeItem(atPath: path) }
         try assertAStaleCopyCannotUndoTheListenersChoice(try SQLiteSessionStore(path: path))
     }
+
+    // MARK: The sender's app remembers what it last sent (#3472)
+
+    private func revision(_ id: String, margin: String = "m", at seconds: Double, sent: Bool?) -> InterjectionShareRevision {
+        InterjectionShareRevision(
+            id: id, interjectionId: margin, itemId: "item", sessionId: "session",
+            createdAt: Date(timeIntervalSince1970: 1_777_000_000 + seconds), approvedTranscript: "Words.",
+            anchorBefore: "Before", anchorAfter: "After", status: .senderApproved, sentReadAloud: sent
+        )
+    }
+
+    func testTheNewestShareThatCarriedAChoiceIsTheOneRemembered() {
+        XCTAssertNil(InterjectionShareRevision.lastSentReadAloud(in: []))
+        XCTAssertNil(InterjectionShareRevision.lastSentReadAloud(in: [revision("a", at: 1, sent: nil)]))
+        XCTAssertEqual(InterjectionShareRevision.lastSentReadAloud(in: [
+            revision("a", at: 1, sent: true), revision("b", at: 2, sent: false),
+        ]), false, "the sender flipped it off")
+        XCTAssertEqual(InterjectionShareRevision.lastSentReadAloud(in: [
+            revision("b", at: 2, sent: false), revision("a", at: 1, sent: true), revision("c", at: 3, sent: true),
+        ]), true, "the order they are listed in doesn't matter")
+        XCTAssertEqual(InterjectionShareRevision.lastSentReadAloud(in: [
+            revision("a", at: 1, sent: false), revision("b", at: 2, sent: nil),
+        ]), false, "a later share as a recording leaves the choice where it was")
+    }
+
+    func testARevisionSavedByAnEarlierBuildStillLoadsWithNoChoice() throws {
+        let old = #"{"id":"r","interjectionId":"m","itemId":"item","sessionId":"s","createdAt":0,"cleanupPolicyVersion":"cleanup.v1","approvedTranscript":"Words.","decisions":[],"anchorBefore":"B","anchorAfter":"A","status":"sender_approved"}"#
+        let decoded = try JSONDecoder().decode(InterjectionShareRevision.self, from: Data(old.utf8))
+        XCTAssertNil(decoded.sentReadAloud)
+        let encoded = String(decoding: try JSONEncoder().encode(revision("n", at: 0, sent: nil)), as: UTF8.self)
+        XCTAssertFalse(encoded.contains("sentReadAloud"), "a share with no choice is stored exactly as before")
+    }
+
+    func testTheLibraryRemembersEachMarginsLastChoicePerItem() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("ReadAloudChoice-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let store = try SQLiteSessionStore(path: folder.appendingPathComponent("library.sqlite").path)
+        try store.saveInterjectionShareRevision(revision("a", margin: "one", at: 1, sent: false))
+        try store.saveInterjectionShareRevision(revision("b", margin: "one", at: 2, sent: true))
+        try store.saveInterjectionShareRevision(revision("c", margin: "two", at: 1, sent: false))
+        try store.saveInterjectionShareRevision(revision("d", margin: "three", at: 1, sent: nil))
+        XCTAssertEqual(try store.loadLastSentReadAloud(itemId: "item"), ["one": true, "two": false])
+        XCTAssertEqual(try store.loadLastSentReadAloud(itemId: "another item"), [:])
+    }
 }
