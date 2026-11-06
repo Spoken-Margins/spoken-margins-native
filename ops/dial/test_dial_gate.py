@@ -1,8 +1,11 @@
 """Host tests for the Dial gate (#589). Run: python3 -m unittest ops/dial/test_dial_gate.py"""
+import contextlib
 import datetime as dt
+import io
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).parent))
 import dial_gate as g  # noqa: E402
@@ -201,9 +204,11 @@ class Decide(unittest.TestCase):
         self.assertFalse(r['fire'])
         self.assertIn('hold line 94%', r['why'])
 
-    def test_paced_waits_when_the_mac_report_is_stale(self):
-        usage = g.parse_usage([tick(50, NOW - dt.timedelta(hours=4))])
-        self.assertFalse(self.decide(usage_info=usage)['fire'])
+    def test_paced_waits_when_a_stale_report_estimates_past_the_hold_line(self):
+        usage = g.parse_usage([tick(90, NOW - dt.timedelta(hours=4))])  # 98% once 8 points of burn are added
+        r = self.decide(usage_info=usage)
+        self.assertFalse(r['fire'])
+        self.assertIn('estimated usage 98%', r['why'])
 
     def test_cloud_max_ignores_stale_usage(self):
         dial = g.parse_dial(BODY.replace('- [x] Paced', '- [ ] Paced').replace('- [ ] Cloud max', '- [x] Cloud max'))
@@ -212,15 +217,15 @@ class Decide(unittest.TestCase):
 
     def test_one_fire_outstanding_until_acknowledged(self):
         state = {'last_fire': 'fire-20261001T1100Z', 'last_fire_at': ts(NOW - dt.timedelta(hours=2))}
-        self.assertFalse(self.decide(state=state)['fire'])
+        self.assertFalse(self.decide(state=state, active=1)['fire'])
         ack = {'fire': 'fire-20261001T1100Z', 'running': 2, 'at': NOW, 'id': 1}
-        self.assertTrue(self.decide(state=state, ack=ack)['fire'])
+        self.assertTrue(self.decide(state=state, ack=ack, active=1)['fire'])
 
     def test_unacknowledged_fire_is_retried_after_three_hours(self):
         state = {'last_fire': 'fire-x', 'last_fire_at': ts(NOW - dt.timedelta(hours=4))}
-        self.assertTrue(self.decide(state=state)['fire'])
+        self.assertTrue(self.decide(state=state, active=1)['fire'])
         state = {'last_fire': 'fire-x', 'last_fire_at': ts(NOW - dt.timedelta(hours=2))}
-        self.assertFalse(self.decide(state=state)['fire'])
+        self.assertFalse(self.decide(state=state, active=1)['fire'])
 
     def test_a_claim_after_the_fire_counts_as_acknowledged(self):
         state = {'last_fire': 'fire-x', 'last_fire_at': ts(NOW - dt.timedelta(hours=2))}
@@ -322,6 +327,216 @@ def ago(**kw):
 
 def by_stranger(item):
     return dict(item, author_association='NONE', user={'login': 'mallory'})
+
+
+UTC = dt.timezone.utc
+# The Dial on the night of 2026-11-05/06: Paced, 3 threads, stop line 97%, finish at the reset.
+NIGHT_DIAL = g.parse_dial(BODY.replace('- [x] Fri noon', '- [ ] Fri noon').replace('- [ ] Sat 7 AM', '- [x] Sat 7 AM'))
+LAST_REPORT = dt.datetime(2026, 11, 6, 2, 17, 30, tzinfo=UTC)   # 69%, then the lid closed
+LAST_FIRE = dt.datetime(2026, 11, 6, 3, 47, tzinfo=UTC)         # fire-20261106T0347Z
+MAC_BACK = dt.datetime(2026, 11, 6, 16, 16, tzinfo=UTC)         # the next report
+
+
+def night_ticks():
+    """The gate's 15-minute timer from the tick after the last fire to the Mac coming back."""
+    at = LAST_FIRE + dt.timedelta(minutes=15)
+    while at < MAC_BACK:
+        yield at
+        at += dt.timedelta(minutes=15)
+
+
+def night_active(at):
+    """1 of 3 threads until 04:47Z, then none: the status comment's own log, with no thread answering."""
+    return 1 if at < dt.datetime(2026, 11, 6, 4, 47, tzinfo=UTC) else 0
+
+
+def old_rule_holds(now, usage):
+    """The rule this replaces: Paced holds once the report is over 3 hours old, whatever it says."""
+    return now - usage['usage']['at'] > dt.timedelta(hours=3)
+
+
+class NightOfNovember5(unittest.TestCase):
+    """Replays 2026-11-05/06 (#3518): 0 or 1 of 3 threads, 11 ready, usage far behind the trend, the Mac asleep."""
+
+    usage = g.parse_usage([tick(69, LAST_REPORT)])
+
+    def replay(self, answered=False):
+        state = {'last_fire': 'fire-20261106T0347Z', 'last_fire_at': ts(LAST_FIRE), 'unanswered': 0}
+        fires, holds = [], []
+        for at in night_ticks():
+            ack = {'fire': state['last_fire'], 'running': None, 'at': at, 'id': None} if answered else None
+            d = g.decide(at, NIGHT_DIAL, self.usage, 11, ack, state, night_active(at))
+            if d['hold']:
+                holds.append(at)
+            if d['fire']:
+                fires.append(at)
+                g.record_fire(state, f"fire-{at:%Y%m%dT%H%MZ}", at, ack)
+        return fires, holds
+
+    def test_the_old_rule_held_from_05_32(self):
+        first = next(at for at in night_ticks() if old_rule_holds(at, self.usage))
+        self.assertEqual(first, dt.datetime(2026, 11, 6, 5, 32, tzinfo=UTC))
+
+    def test_the_new_rule_keeps_firing_through_the_old_hold(self):
+        fires, holds = self.replay(answered=True)
+        old_hold_starts = dt.datetime(2026, 11, 6, 5, 32, tzinfo=UTC)
+        self.assertGreater(sum(at >= old_hold_starts for at in fires), 30)
+        self.assertEqual(holds[0], dt.datetime(2026, 11, 6, 15, 2, tzinfo=UTC))  # the estimate reaches 94%
+
+    def test_with_nothing_answering_it_retries_a_few_times_not_every_tick(self):
+        fires, _ = self.replay(answered=False)
+        expected = [(4, 47), (5, 47), (7, 47), (10, 47), (13, 47)]   # empty at 04:47, then 1, 2, 3, 3 hours apart
+        self.assertEqual([(at.hour, at.minute) for at in fires], expected)
+
+    def test_the_estimate_is_on_the_status_line(self):
+        at = dt.datetime(2026, 11, 6, 9, 2, tzinfo=UTC)
+        decision = g.decide(at, NIGHT_DIAL, self.usage, 11, None, {}, 0)
+        text = g.status_text(at, NIGHT_DIAL, self.usage, 11, None, {}, decision, [])
+        self.assertIn('Usage: about 82%, an estimate', text)
+        self.assertIn('69%', text)
+        self.assertIn('plus 2 points an hour', text)
+        self.assertIn('estimated usage is', text)
+
+
+class StaleUsage(unittest.TestCase):
+    AT = dt.datetime(2026, 11, 4, 12, 0, tzinfo=UTC)     # a Wednesday; the trend is about 56% by then
+
+    def decide_at(self, percent, age_hours, at=None, **kw):
+        at = at or self.AT
+        usage = g.parse_usage([tick(percent, at - dt.timedelta(hours=age_hours))])
+        return g.decide(at, NIGHT_DIAL, usage, 11, None, {}, 0, **kw)
+
+    def test_a_stale_reading_near_the_stop_line_still_holds(self):
+        late = dt.datetime(2026, 11, 7, 2, 0, tzinfo=UTC)  # trend near 92%, so only the hold line can stop it
+        r = self.decide_at(89, 3.25, at=late)              # 95.5% estimated
+        self.assertFalse(r['fire'])
+        self.assertIn('has reached the hold line 94%', r['why'])
+        self.assertIn('estimated usage', r['why'])
+
+    def test_a_stale_reading_that_runs_too_far_ahead_of_the_trend_holds(self):
+        r = self.decide_at(52, 8)                          # 68% estimated, past the 56% trend plus 10
+        self.assertFalse(r['fire'])
+        self.assertIn('ahead of the trend', r['why'])
+
+    def test_an_on_time_report_reads_at_face_value_as_before(self):
+        # 93% at 2 hours old would be 97% with the burn added. A Mac that is awake holds no earlier than it did.
+        late = dt.datetime(2026, 11, 7, 2, 0, tzinfo=UTC)
+        self.assertTrue(self.decide_at(93, 2, at=late)['fire'])
+        self.assertFalse(g.usage_estimate(late, g.parse_usage([tick(93, late)])['usage'])['estimated'])
+
+    def test_no_report_at_all_keeps_holding(self):
+        r = g.decide(self.AT, NIGHT_DIAL, g.parse_usage([]), 11, None, {}, 0)
+        self.assertFalse(r['fire'])
+        self.assertIn('no usage report', r['why'])
+
+    def test_a_halt_still_holds_however_old_the_report(self):
+        comments = [{'body': '**HALT (usage breaker: Claude)** · over', 'author_association': 'OWNER',
+                     'created_at': ts(self.AT - dt.timedelta(hours=20))}, tick(40, self.AT - dt.timedelta(hours=20))]
+        self.assertFalse(g.decide(self.AT, NIGHT_DIAL, g.parse_usage(comments), 11, None, {}, 0)['fire'])
+
+    def test_a_report_from_before_the_reset_does_not_carry_over(self):
+        sat = dt.datetime(2026, 11, 7, 13, 0, tzinfo=UTC)  # 2 hours into the new week
+        report = dt.datetime(2026, 11, 7, 10, 30, tzinfo=UTC)
+        est = g.usage_estimate(sat, {'percent': 96, 'at': report})
+        self.assertEqual(est['percent'], 4)                # 2 hours from 0% at the reset
+        self.assertTrue(est['last_week'])
+        self.assertTrue(g.decide(sat, NIGHT_DIAL, g.parse_usage([tick(96, report)]), 11, None, {}, 0)['fire'])
+
+
+class EmptyRetry(unittest.TestCase):
+    AT = dt.datetime(2026, 11, 4, 12, 0, tzinfo=UTC)
+
+    def decide_at(self, active, minutes_ago, unanswered=0, threads_box=3):
+        dial = dict(NIGHT_DIAL, threads=threads_box)
+        usage = g.parse_usage([tick(40, self.AT - dt.timedelta(minutes=30))])
+        state = {'last_fire': 'fire-x', 'last_fire_at': ts(self.AT - dt.timedelta(minutes=minutes_ago)),
+                 'unanswered': unanswered}
+        return g.decide(self.AT, dial, usage, 11, None, state, active)
+
+    def test_no_thread_active_retries_after_30_minutes(self):
+        self.assertFalse(self.decide_at(0, 29)['fire'])
+        r = self.decide_at(0, 30)
+        self.assertTrue(r['fire'])
+        self.assertIn('retry', r['why'])
+
+    def test_a_thread_active_keeps_the_three_hour_wait(self):
+        self.assertFalse(self.decide_at(1, 179)['fire'])
+        self.assertTrue(self.decide_at(1, 180)['fire'])
+
+    def test_the_retry_backs_off_to_the_three_hour_wait(self):
+        for missed, minutes in ((1, 60), (2, 120), (3, 180), (50, 180)):
+            self.assertFalse(self.decide_at(0, minutes - 1, unanswered=missed)['fire'], missed)
+            self.assertTrue(self.decide_at(0, minutes, unanswered=missed)['fire'], missed)
+
+    def test_a_retry_cannot_fire_past_a_full_dial(self):
+        # A retry needs 0 active. With every slot full an unanswered fire still waits for the 3-hour fallback.
+        for threads_box in (1, 3):
+            self.assertFalse(self.decide_at(threads_box, 60, threads_box=threads_box)['fire'])
+
+    def test_the_payload_of_a_retry_states_the_slots_and_the_empty_count(self):
+        text = g.fire_text('fire-x', 3, [])
+        self.assertIn('allows up to 3 Claude threads', text)
+        self.assertIn('0 Claude threads look active', text)
+
+    def test_an_answer_resets_the_back_off(self):
+        at = self.AT
+        state = {'last_fire': 'fire-a', 'last_fire_at': ts(at), 'unanswered': 3}
+        g.record_fire(state, 'fire-b', at, {'fire': 'fire-a'})
+        self.assertEqual(state['unanswered'], 0)
+        g.record_fire(state, 'fire-c', at, None)
+        self.assertEqual(state['unanswered'], 1)
+        g.record_fire(state, 'fire-d', at, {'fire': 'fire-a'})   # an answer to an older fire doesn't count
+        self.assertEqual(state['unanswered'], 2)
+
+    def test_the_first_fire_ever_counts_nothing_as_missed(self):
+        state = {}
+        g.record_fire(state, 'fire-a', self.AT, None)
+        self.assertEqual(state['unanswered'], 0)
+
+
+class ReadsTheNewestReport(unittest.TestCase):
+    """main() against a fake GitHub that honours `since`, as the real one does."""
+
+    def run_gate(self, now, comments):
+        def since_of(path):
+            return g.parse_time(path.split('since=')[1].split('&')[0])
+
+        def pages(path, token, max_pages=20):
+            if '/issues/337/comments' in path:
+                return [c for c in comments if g.parse_time(c['created_at']) >= since_of(path)]
+            return []
+
+        def one(method, path, token, body=None):
+            if path.endswith('issues/589'):
+                return {'body': BODY}
+            if path.startswith('search/'):
+                return {'total_count': 10}
+            return []
+
+        out = io.StringIO()
+        with mock.patch.object(g, 'gh', one), mock.patch.object(g, 'gh_pages', pages), \
+                mock.patch.object(g, 'load_state', lambda: {}), mock.patch.dict('os.environ', {'SM_DIAL_GITHUB_TOKEN': 'x'}), \
+                contextlib.redirect_stdout(out):
+            g.main(['--dry-run'], now=now)
+        return out.getvalue()
+
+    def test_the_last_report_is_still_read_after_twelve_hours(self):
+        # On 2026-11-06 at 14:18Z the status became "no usage report from the Mac found": 12 hours after 02:17Z.
+        text = self.run_gate(dt.datetime(2026, 11, 6, 14, 18, tzinfo=UTC), [tick(69, LAST_REPORT)])
+        self.assertIn('an estimate', text)
+        self.assertNotIn('no usage report', text)
+
+    def test_a_halt_older_than_twelve_hours_still_holds(self):
+        # 2026-10-18: a HALT stood 16 hours before its RESUMED. The 12-hour read would have forgotten it.
+        now = dt.datetime(2026, 10, 19, 15, 0, tzinfo=UTC)
+        halt = {'body': '**HALT (usage breaker)**', 'author_association': 'MEMBER', 'created_at': '2026-10-18T23:15:02Z'}
+        text = self.run_gate(now, [halt, tick(40, now - dt.timedelta(hours=1))])
+        self.assertIn('Holding: the Mac tick says HALT', text)
+
+    def test_nothing_in_the_window_keeps_holding(self):
+        now = dt.datetime(2026, 11, 6, 14, 18, tzinfo=UTC)
+        text = self.run_gate(now, [tick(69, now - dt.timedelta(days=9))])
+        self.assertIn('no usage report', text)
 
 
 class Strangers(unittest.TestCase):
