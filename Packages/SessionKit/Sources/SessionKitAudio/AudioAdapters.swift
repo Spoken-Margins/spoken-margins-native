@@ -3584,7 +3584,7 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
                 return false
             case .undetermined:
                 return await withCheckedContinuation { continuation in
-                    AVAudioApplication.requestRecordPermission { granted in
+                    AVAudioApplication.requestRecordPermission { @Sendable granted in
                         continuation.resume(returning: granted)
                     }
                 }
@@ -3613,7 +3613,7 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
             return false
         case .undetermined:
             return await withCheckedContinuation { continuation in
-                session.requestRecordPermission { granted in
+                session.requestRecordPermission { @Sendable granted in
                     continuation.resume(returning: granted)
                 }
             }
