@@ -17,7 +17,7 @@ import XCTest
 @MainActor
 final class RealPlaybackMarginCaptureTests: XCTestCase {
     func testStreamedMarginStoresPreAndPostEvidence() async throws {
-        // The waits below add up to 126 s at their limits, past the AppBehavior plan's 120 s default. A hosted
+        // The waits below add up to 141 s at their limits, past the AppBehavior plan's 120 s default. A hosted
         // runner under audio overload took 147 s to pass once (#3275), so ask for the plan's 180 s maximum.
         executionTimeAllowance = 180
         let root = FileManager.default.temporaryDirectory.appending(path: "margin-capture-\(UUID().uuidString)")
@@ -49,11 +49,12 @@ final class RealPlaybackMarginCaptureTests: XCTestCase {
 
         // The post window needs about 16 s of playback after the rejoin, and the tap restarts a window when it
         // drops a buffer, which a loaded hosted runner does (#3275). The app gives up on a pending capture after
-        // 60 s and stores the reason, so wait past that instead of guessing a shorter limit, and name the stored
-        // status and reasons when evidence never arrives.
+        // 60 s and stores the reason. Wait 20 s past that: at 65 s the lane saw the Margin still "ready" with only
+        // the pre window and no reason, the reason landing a moment after the check (#1872). Name the stored
+        // status and reasons, and the capture's own diagnostics line, when evidence never arrives.
         try await waitUntil(
-            "pre and post evidence to be stored", seconds: 65,
-            diagnostics: { Self.captureSummary(model.selectedItem.interjections.first) },
+            "pre and post evidence to be stored", seconds: 80,
+            diagnostics: { Self.captureSummary(model.selectedItem.interjections.first, model: model) },
             condition: {
                 let roles = Set((model.selectedItem.interjections.first?.podcastAnchorEvidence ?? []).compactMap(\.windowRole))
                 return roles.contains(.preInterjection) && roles.contains(.postResume)
@@ -120,12 +121,16 @@ final class RealPlaybackMarginCaptureTests: XCTestCase {
         throw Timeout(label: label)
     }
 
-    private static func captureSummary(_ margin: Interjection?) -> String {
+    private static func captureSummary(_ margin: Interjection?, model: Gate1AppModel) -> String {
         guard let margin else { return "no Margin was stored" }
         let roles = (margin.podcastAnchorEvidence ?? []).map { $0.windowRole?.rawValue ?? "unknown" }.sorted()
+        // The model's own line says whether the post window was captured and saved ("complete:decoded_playback_
+        // post_resume") or failed in the tap, which the selected item may not show yet.
+        let line = model.diagnostics[Gate1AppModel.marginDiagnosticKey("podcastAnchorEvidence", margin)]
         return "status=\(margin.podcastAnchorEvidenceCaptureStatus?.rawValue ?? "none"); "
             + "roles=\(roles.isEmpty ? "none" : roles.joined(separator: ",")); "
-            + "reasons=\(margin.podcastAnchorEvidenceFailureReason ?? "none")"
+            + "reasons=\(margin.podcastAnchorEvidenceFailureReason ?? "none"); "
+            + "model=\(line ?? "none")"
     }
 
     /// Speech-like noise bursts at a low level: enough features for ShazamKit, quiet on the Mac's speakers.
