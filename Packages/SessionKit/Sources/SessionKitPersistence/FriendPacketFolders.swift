@@ -13,6 +13,14 @@ import SessionKit
 public enum FriendPacketFolders {
     /// The UUID-shaped names in the stored JSON of the item's imported layers and Margins, live and quarantined.
     /// A name here is only a candidate: most are ids, and the sweep keeps anything that is not a folder.
+    ///
+    /// The names are found inside SQLite, so a payload (megabytes for a layer with a shared map) never crosses into
+    /// Swift (#3410). `json_tree` walks every string value and every key of a payload, and only the ones holding a
+    /// UUID-shaped run come back, so the regex runs on a few short strings. That is the same set of names the sweep's
+    /// `importedCommentaryRecordsMentioning` finds by running the regex over the whole stored text, whatever field
+    /// names a payload uses, except a name that appears only inside a string over `maxStringBytes` (a row from a newer build is quarantined with fields this build doesn't know), because
+    /// a UUID-shaped run holds only hex digits and hyphens and so never spans two JSON strings. A row that isn't
+    /// valid JSON has no tree, so it is read whole, as before.
     public static func candidateFolderNames(ofItems itemIds: [String], store: SQLiteSessionStore) throws -> Set<String> {
         var names: Set<String> = []
         let layerIdsOfItem = """
@@ -20,26 +28,38 @@ public enum FriendPacketFolders {
             UNION SELECT id FROM quarantined_records WHERE kind = 'imported_commentary_layer'
               AND CASE WHEN json_valid(payload) THEN json_extract(payload, '$.itemId') END = ?1
             """
-        let queries = [
+        let sources = [
             """
-            SELECT payload FROM records
-            WHERE kind IN ('imported_commentary_layer', 'imported_commentary_interjection') AND item_id = ?1;
+            records WHERE kind IN ('imported_commentary_layer', 'imported_commentary_interjection') AND item_id = ?1
             """,
             """
-            SELECT payload FROM quarantined_records
+            quarantined_records
             WHERE (kind = 'imported_commentary_layer'
                    AND CASE WHEN json_valid(payload) THEN json_extract(payload, '$.itemId') END = ?1)
                OR (kind = 'imported_commentary_interjection'
-                   AND CASE WHEN json_valid(payload) THEN json_extract(payload, '$.layerId') END IN (\(layerIdsOfItem)));
+                   AND CASE WHEN json_valid(payload) THEN json_extract(payload, '$.layerId') END IN (\(layerIdsOfItem)))
             """,
         ]
+        func collect(_ text: String) {
+            for match in uuidShape.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
+                if let range = Range(match.range, in: text) { names.insert(String(text[range])) }
+            }
+        }
         for id in Set(itemIds) {
-            for sql in queries {
-                try store.readTexts(sql, [id], name: "friend_packet_folder_candidates") { payload in
-                    for match in uuidShape.matches(in: payload, range: NSRange(payload.startIndex..., in: payload)) {
-                        if let range = Range(match.range, in: payload) { names.insert(String(payload[range])) }
-                    }
-                }
+            for source in sources {
+                try store.readTexts(
+                    """
+                    SELECT CASE WHEN typeof(j.key) = 'text' AND octet_length(j.key) <= \(maxStringBytes) AND j.key GLOB '\(uuidPrefilter)' THEN j.key || ' ' ELSE '' END
+                         || CASE WHEN j.type = 'text' AND octet_length(j.atom) <= \(maxStringBytes) AND j.atom GLOB '\(uuidPrefilter)' THEN j.atom ELSE '' END
+                    FROM (SELECT payload FROM \(source)) AS r,
+                         json_tree(CASE WHEN json_valid(r.payload) THEN r.payload ELSE '[]' END) AS j
+                    WHERE (typeof(j.key) = 'text' AND octet_length(j.key) <= \(maxStringBytes) AND j.key GLOB '\(uuidPrefilter)')
+                       OR (j.type = 'text' AND octet_length(j.atom) <= \(maxStringBytes) AND j.atom GLOB '\(uuidPrefilter)');
+                    """,
+                    [id], name: "friend_packet_folder_candidates", collect)
+                try store.readTexts(
+                    "SELECT payload FROM (SELECT payload FROM \(source)) WHERE NOT json_valid(payload);",
+                    [id], name: "friend_packet_folder_candidates_unparsed", collect)
             }
         }
         return names
@@ -73,6 +93,18 @@ public enum FriendPacketFolders {
                 beforeRemoving: beforeRemovingFile)
         }
     }
+
+    /// A cheap SQL test that a string might hold a UUID-shaped run: eight hex digits, a hyphen, four hex digits and a
+    /// hyphen. Every real match passes it, so it only decides which strings the regex looks at.
+    /// A path or a key is never this long. Free text (a transcript, a shared map's words) is, and `GLOB` over
+    /// megabytes of it costs seconds, so a string above this is not looked at. A folder named only inside such
+    /// text is not a candidate now; nothing removes it, and the launch sweep takes it once no row names it.
+    private static let maxStringBytes = 2048
+
+    private static let uuidPrefilter: String = {
+        let hex = "[0-9A-Fa-f]"
+        return "*" + String(repeating: hex, count: 8) + "-" + String(repeating: hex, count: 4) + "-*"
+    }()
 
     private static let uuidShape = try! NSRegularExpression(
         pattern: "[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}")
