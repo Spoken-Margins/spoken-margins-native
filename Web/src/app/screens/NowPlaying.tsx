@@ -9,6 +9,7 @@ import { BackIcon, DownIcon, DownloadIcon, ForwardIcon, MicIcon, PauseIcon, PenI
 import { cueFor, friendMargins, leading, possessive, readsAloud, senderName, speakingLine } from '../logic/arrival.ts';
 import { landingOffer, type Landing } from '../logic/import.ts';
 import { nextSpeed, timelineFraction, timelinePosts } from '../logic/library.ts';
+import { pickedMargins, preselected, replyBackOffer } from '../logic/reply-back.ts';
 import { plainError } from '../logic/messages.ts';
 import { NotSavedError } from '../logic/storage.ts';
 import { shareNativePacket } from '../logic/native-packets.ts';
@@ -329,7 +330,7 @@ export function NowPlaying({ onClose, landing }: { onClose: () => void; landing?
                   <MarginRow key={margin.id} margin={margin} compact />
                 ))}
               </ol>
-              <ShareMargins episode={episode} margins={margins} show={show} />
+              <ShareMargins key={episode.id} episode={episode} margins={margins} show={show} />
             </>
           )}
         </section>
@@ -360,11 +361,20 @@ function ShareMargins({ episode, margins, show }: { episode: Episode; margins: M
   // Inside the Android app (#3009) one button writes the file and opens Android's share sheet, which can also save it.
   const [bridge] = useState(() => capacitorBridge());
   const [link, setLink] = useState('');
+  // After a friend's Margins, Share offers "Send replies to <friend>" (#2168, as the app's #3221): the replies picked,
+  // the listener's other new Margins unpicked, the friend's own never listed. With no offer Share is as before.
+  const offer = replyBackOffer(margins);
+  // The listener's own changes sit over the starting picks, so a reply made while this is open starts picked too.
+  const [changed, setChanged] = useState<Readonly<Record<string, boolean>>>({});
+  const starting = offer ? preselected(offer) : new Set<string>();
+  const picked = new Set([...(offer?.candidates ?? [])].map((m) => m.id).filter((id) => changed[id] ?? starting.has(id)));
+  const toWrite = offer ? pickedMargins(offer, picked) : margins;
+  const nothingPicked = toWrite.length === 0;
 
   const share = async (how: 'save' | 'send') => {
     setBusy(true);
     try {
-      const written = await services.packets.writePacket(episode, margins, show);
+      const written = await services.packets.writePacket(episode, toWrite, show);
       if (bridge) {
         if ((await shareNativePacket(bridge, written.bytes, written.fileName, episode.title)) === 'cancelled') return;
         const count = written.included.length === 1 ? '1 Margin' : `${written.included.length} Margins`;
@@ -416,21 +426,41 @@ function ShareMargins({ episode, margins, show }: { episode: Episode; margins: M
 
   return (
     <div className="share-margins">
+      {offer && (
+        <fieldset className="reply-back">
+          <legend>{offer.title}</legend>
+          <ul className="reply-back-list">
+            {offer.candidates.map((margin) => (
+              <li key={margin.id}>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={picked.has(margin.id)}
+                    onChange={(event) => setChanged({ ...changed, [margin.id]: event.target.checked })}
+                  />
+                  <span className="margin-time">{formatClock(margin.atSeconds)}</span>
+                  <span className="margin-text">{margin.text ? margin.text : `Voice Margin, ${formatClock(margin.voice?.durationSeconds ?? 0)}`}</span>
+                </label>
+              </li>
+            ))}
+          </ul>
+        </fieldset>
+      )}
       <p className="muted">Share them as a .spokenmargins file. A friend opens it in Spoken Margins and hears each one at its moment.</p>
       <div className="share-actions">
         {bridge ? (
-          <button type="button" className="button" disabled={busy} onClick={() => void share('send')}>
+          <button type="button" className="button" disabled={busy || nothingPicked} onClick={() => void share('send')}>
             <ShareIcon />
             Save or send
           </button>
         ) : (
-          <button type="button" className="button" disabled={busy} onClick={() => void share('save')}>
+          <button type="button" className="button" disabled={busy || nothingPicked} onClick={() => void share('save')}>
             <DownloadIcon />
             Save as a file
           </button>
         )}
         {!bridge && sendable && (
-          <button type="button" className="button" disabled={busy} onClick={() => void share('send')}>
+          <button type="button" className="button" disabled={busy || nothingPicked} onClick={() => void share('send')}>
             <ShareIcon />
             Send
           </button>
