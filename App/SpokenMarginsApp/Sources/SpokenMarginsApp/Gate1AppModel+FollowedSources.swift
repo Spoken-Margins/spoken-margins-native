@@ -71,7 +71,7 @@ extension Gate1AppModel {
                 let store = try self.requireStore()
                 let coordinator = self.requireFollowedSourceCoordinator(store: store)
                 let candidates = try await coordinator.discover(urlString: value)
-                self.diagnostics["followedSourceNetworkHosts"] = await coordinator.contactedHosts.sorted().joined(separator: ",")
+                self.diagnostics["followedSourceNetworkHosts"] = DiagnosticsHostRedaction.hostCount(await coordinator.contactedHosts)
                 guard candidates.count == 1, let candidate = candidates.first, !candidate.needsConfirmation else {
                     self.followedSourceCandidates = candidates
                     self.reportConfirmation("Choose which feed to follow.")
@@ -91,7 +91,7 @@ extension Gate1AppModel {
         }
     }
 
-    /// #244: a failed Follow said only "FollowedSourceError". Record the case, host and steps.
+    /// #244: a failed Follow said only "FollowedSourceError". Record the case and steps (hosts redacted, #3548).
     private func recordFollowFailure(_ error: Error) async {
         var line = FollowedSourceCoordinator.diagnosticCode(for: error)
         if let coordinator = followedSourceCoordinator { line = await coordinator.failureDiagnostic(for: error) }

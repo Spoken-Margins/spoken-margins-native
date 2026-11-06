@@ -6,6 +6,9 @@ import Foundation
 ///
 /// 1. A Margin whose id is deleted is refused; one already filed in any session, ended and saved ones included,
 ///    is "already filed".
+/// 1a. A Margin the listener aimed at an item ("On this episode", #3494) goes to that item at its position when it was
+///    taken, from the player's own record of playing it or, failing that, the position the Watch saw. Where neither
+///    says, the rest of the rule files it, but never onto a different item, and the answer says where it went.
 /// 2. The named session whose time span holds the Margin's time, after correcting for the recording device's
 ///    clock (the latest-started, if spans overlap).
 /// 3. The session the Margin names: while it runs, or within 30 minutes after it ended ("after the session
@@ -37,13 +40,19 @@ public enum LiveSessionFiling {
         public var sessionId: String?
         /// False for a Margin that may not go onto the player's item.
         public var allowsPlayerItem: Bool
+        /// An item the listener chose over the running session (#3494). Nil for every Margin that didn't.
+        public var itemTarget: WatchItemTarget?
 
-        public init(marginId: String, markedAt: Date, clockOffset: TimeInterval? = nil, sessionId: String? = nil, allowsPlayerItem: Bool = true) {
+        public init(
+            marginId: String, markedAt: Date, clockOffset: TimeInterval? = nil, sessionId: String? = nil, allowsPlayerItem: Bool = true,
+            itemTarget: WatchItemTarget? = nil
+        ) {
             self.marginId = marginId
             self.markedAt = markedAt
             self.clockOffset = clockOffset
             self.sessionId = sessionId
             self.allowsPlayerItem = allowsPlayerItem
+            self.itemTarget = itemTarget
         }
 
         /// Its time by the phone's clock.
@@ -132,6 +141,20 @@ public enum LiveSessionFiling {
         }
     }
 
+    /// A Watch that pauses the phone as it starts recording reaches the phone a moment after the recording began, so a
+    /// run of the chosen item that ended within this long of the Margin's start still holds it (#3494).
+    public static let itemRunGrace: TimeInterval = 10
+
+    /// Where on the chosen item a Margin taken at `time` belongs: the position in a run of that item that holds `time`
+    /// (or ended just before it), else the position the Watch saw. Nil when neither says.
+    static func position(on target: WatchItemTarget, at time: Date, runs: [PlayerRun]) -> Int? {
+        let holding = runs.last {
+            $0.itemId == target.itemId && $0.startedAt <= time && time <= $0.endedAt.addingTimeInterval(itemRunGrace)
+        }
+        if let holding { return holding.positionMs(at: min(time, holding.endedAt)) }
+        return target.positionMs
+    }
+
     public enum Placement: String, Codable, Equatable, Sendable {
         case withinSpan
         case afterEnd
@@ -168,6 +191,11 @@ public enum LiveSessionFiling {
         let time = margin.phoneTime
         let open = sessions.filter { !$0.isSaved }
 
+        // The item the listener chose, whatever session is running.
+        if let target = margin.itemTarget, let position = position(on: target, at: time, runs: playerRuns) {
+            return .playerItem(itemId: target.itemId, positionMs: position)
+        }
+
         // The named session whose span holds it.
         if let match = open.filter({ !$0.isQuick && $0.holds(time, now: now) }).max(by: { ($0.startedAt, $0.id) < ($1.startedAt, $1.id) }) {
             return .session(id: match.id, placement: .withinSpan)
@@ -190,7 +218,8 @@ public enum LiveSessionFiling {
 
         if deletions.deletedSessionHolds(time) { return .rejected(.sessionDeleted) }
 
-        if margin.allowsPlayerItem, let run = playerRuns.last(where: { $0.startedAt <= time && time <= $0.endedAt }) {
+        // A Margin aimed at one item is never put on another because the player moved on (#3494).
+        if margin.allowsPlayerItem, margin.itemTarget == nil, let run = playerRuns.last(where: { $0.startedAt <= time && time <= $0.endedAt }) {
             return .playerItem(itemId: run.itemId, positionMs: run.positionMs(at: time))
         }
 

@@ -327,6 +327,18 @@ final class SharedMarginExportTests: XCTestCase {
         XCTAssertTrue(json.contains("Model title") && json.contains("Model summary"), json)
     }
 
+    func testTheReviewCountsExactlyTheScenesThePacketStrips() throws {
+        let unmarked = Item(id: "pdf", title: "Doc", mediaType: "text", text: nil, externalReference: "file:///private/var/Doc.pdf",
+                            status: "ready", externalReferenceType: "file")
+        let proposals = [modelWrittenProposal()]
+        let held = SharedMarginExport.withheldSceneCount(proposals, currentProposalID: nil, for: unmarked)
+        let sent = SharedMarginExport.mapProposals(proposals, currentProposalID: nil, for: unmarked)
+        XCTAssertEqual(held, 1, "one scene is the model's; the publisher's scene is not counted")
+        XCTAssertEqual(sent.first?.scenes.filter { $0.title == nil && $0.summaryText == nil }.count, held, "the count is what the packet strips")
+        XCTAssertEqual(SharedMarginExport.withheldSceneCount(proposals, currentProposalID: nil, for: markedPublicItem()), 0, "a public source holds nothing back")
+        XCTAssertEqual(SharedMarginExport.withheldSceneCount([], currentProposalID: nil, for: unmarked), 0)
+    }
+
     private func modelWrittenProposal() -> PortableListeningMapProposalArtifact {
         PortableListeningMapProposalArtifact(id: "map", createdAt: date, generator: "on-device", scenes: [
             PortableListeningMapScene(
@@ -343,7 +355,7 @@ final class SharedMarginExportTests: XCTestCase {
     private func markedPublicItem() -> Item {
         var item = Item(id: "item-public", title: "Public", mediaType: "text", text: nil,
                         externalReference: "https://example.com/post", status: "ready", externalReferenceType: "url")
-        item.publicSourceMark = PublicSourceMark(url: "https://example.com/post", checkedAt: Date(timeIntervalSince1970: 1_800_000_000))
+        item.publicSourceMark = PublicSourceMark(url: "https://example.com/post", checkedAt: Date())
         return item
     }
 

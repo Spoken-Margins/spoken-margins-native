@@ -75,6 +75,10 @@ public final class SessionEngine {
     /// The file the recorder closed for a Margin that isn't saved yet. The recorder forgets it once finished and
     /// Save passes no path, so a Save that failed once could never be tried again (#911).
     private var closedRecordingRef: String?
+    /// Checks a source's public copy before an export that carries the Listening Map, so a public source's scene text
+    /// goes out with it and any other source's stays on the phone (#3449). Nil makes no request: every source is then
+    /// treated as unmarked unless it already holds a mark.
+    public var publicSourceMarker: PublicSourceMarker?
     /// Where unsaved recordings are noted so a launch after a kill can find them (#951). Nil keeps no notes.
     public var recordingDraftJournal: RecordingDraftJournal?
     /// Why the last note could not be written or removed. A failed note never stops a recording.
@@ -3274,6 +3278,13 @@ public final class SessionEngine {
         guard let sessionId = options.sessionId else { return try buildExport(options: options) }
         let repository = repository
         let includeFullText = options.includeFullText, includeListeningMap = options.includeListeningMap
+        // The export tap (the Export screen or a batch share): the Listening Map's model-written text goes only for a source
+        // marked public, so look at the source's public copy first. A short wait; the export carries no such text if the
+        // check finds nothing (#3449).
+        if includeListeningMap, let marker = publicSourceMarker {
+            let itemId = await Task.detached(priority: .userInitiated) { try? repository.loadSession(id: sessionId)?.itemId }.value
+            if let itemId { await marker.ensureMark(itemId: itemId, repository: repository, timeout: .seconds(6)) }
+        }
         // Named type, not `Self`: capturing the dynamic `Self` in a detached closure makes Swift 6.2.4 on Linux fail with
         // "pattern that the region based isolation checker does not understand"; macOS accepts both.
         let inputs = try await Task.detached(priority: .userInitiated) {

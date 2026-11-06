@@ -66,6 +66,7 @@
 		CE6654AD4A7C75198C2D1BB4 /* SessionKitFeeds in Frameworks */ = {isa = PBXBuildFile; productRef = 159EF73AA9CDF755A67A5EFA /* SessionKitFeeds */; };
 		D72E9D080287489A9B88FC31 /* BundledJavaScript-NOTICES.txt in Resources */ = {isa = PBXBuildFile; fileRef = 466DDA96AB529FEFB23D4BEE /* BundledJavaScript-NOTICES.txt */; };
 		D73691C7F952FC9D27760936 /* Kitten in Resources */ = {isa = PBXBuildFile; fileRef = 79C73610A77492D5B579839B /* Kitten */; };
+		D744BB30A5A8C33FBCB9387D /* WatchDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 838F864C60DB3A744F7C4F7C /* WatchDiagnostics.swift */; };
 		D8F7672BE271A5C7F955EBD3 /* sharing-loop-sam-margin.spokenmargins in Resources */ = {isa = PBXBuildFile; fileRef = 12BCAD96EDD33184A779F29E /* sharing-loop-sam-margin.spokenmargins */; };
 		D8FED511D7C45D211D991D9E /* popup.css in Resources */ = {isa = PBXBuildFile; fileRef = 1213A7465ECB99E1E9FCE12A /* popup.css */; };
 		DCD0BCAD510043A1EB4EF202 /* SpokenMarginsGate2Widget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = E3D5265FADF5995640D6FB31 /* SpokenMarginsGate2Widget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
@@ -178,6 +179,7 @@
 		69050C3D4931DF4FF8E80364 /* SourceLinkHandoff.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourceLinkHandoff.swift; sourceTree = "<group>"; };
 		742BEE6988765C9B1F078C8B /* icon-256.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "icon-256.png"; sourceTree = "<group>"; };
 		79C73610A77492D5B579839B /* Kitten */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Kitten; path = App/SpokenMarginsApp/Resources/Kitten; sourceTree = SOURCE_ROOT; };
+		838F864C60DB3A744F7C4F7C /* WatchDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchDiagnostics.swift; sourceTree = "<group>"; };
 		8C1BFB86196C5C1BE2E52BEF /* Defuddle-LICENSE.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Defuddle-LICENSE.txt"; sourceTree = "<group>"; };
 		8F367ACB3F416E7998733B56 /* sharing-loop-sam-reply.spokenmargins */ = {isa = PBXFileReference; path = "sharing-loop-sam-reply.spokenmargins"; sourceTree = "<group>"; };
 		8F3CB8553EF550E6A50DC56F /* Kokoro */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Kokoro; path = App/SpokenMarginsApp/Resources/Kokoro; sourceTree = SOURCE_ROOT; };
@@ -456,6 +458,7 @@
 				45170E0354730F22BB2E258A /* SharedTextIntake.swift */,
 				319720F5D1C48499C77B9EE3 /* WatchContract.swift */,
 				C35CC3A6D5622D241C4A34DB /* WatchContractState.swift */,
+				838F864C60DB3A744F7C4F7C /* WatchDiagnostics.swift */,
 			);
 			name = SessionKit;
 			path = Packages/SessionKit/Sources/SessionKit;
@@ -921,6 +924,7 @@
 				6C2EE903F76657DD1D4F42FC /* ListenerErrorText.swift in Sources */,
 				50CB2702E8C858DA64B35EBB /* WatchContract.swift in Sources */,
 				5CB55322C5E78BE68FC70E90 /* WatchContractState.swift in Sources */,
+				D744BB30A5A8C33FBCB9387D /* WatchDiagnostics.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

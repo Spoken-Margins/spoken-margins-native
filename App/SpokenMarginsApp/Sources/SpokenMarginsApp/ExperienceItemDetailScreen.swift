@@ -753,6 +753,7 @@ struct ExperienceItemDetailScreen: View {
                 }
                 if model.canGenerateListeningMap {
                     Button(model.episodeMapPreparationStatus == "Preparing" ? "Preparing Listening Map…" : "Prepare Listening Map", systemImage: "sparkles") {
+                        model.startPublicSourceCheck(itemId: model.activeItemId) // the tap itself, not the shared function a finished transcript also calls (#3449)
                         model.generateListeningMap()
                     }
                     .disabled(model.isGeneratingListeningMap || model.episodeMapPreparationStatus == "Preparing")
