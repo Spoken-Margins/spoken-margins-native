@@ -151,6 +151,65 @@ final class WrittenMarginPlayEntryPointsAppTests: XCTestCase {
         XCTAssertFalse(unreadable.canPlayFromMarginsList)
     }
 
+    // MARK: A reply's parent, and a note with no voice on this phone (#3402)
+
+    private func parentContext(_ fixture: ReturnFixture) -> MarginThreadPresentation.ParentContext {
+        fixture.model.sharedMarginRows = [row(fixture)]
+        return MarginThreadPresentation.ParentContext(parent: .imported(fixture.record.id), senderLabel: "Reviewer", text: fixture.record.approvedTranscript)
+    }
+
+    // "Hear what it answers" on a reply whose parent is a friend's written Margin plays the parent's reading.
+    func testHearingAReplysWrittenParentPlaysItsReading() async throws {
+        let fixture = try await ReturnFixture.make(sourcePlaying: true, writtenWords: uniqueWords())
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        try await fixture.seedReading(ready: true)
+
+        model.playMarginParent(parentContext(fixture))
+        defer { model.endMarginMoment(); model.pause() }
+        XCTAssertNil(model.lastError)
+        XCTAssertNotNil(model.marginMoment)
+        try await waitUntilHeard(fixture)
+    }
+
+    // A parent nothing can read gets the plain line, as every other row does, and no moment starts.
+    func testHearingAReplysParentThatCannotBeReadSaysSo() async throws {
+        let fixture = try await ReturnFixture.make(sourcePlaying: true, writtenWords: "🎧")
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+
+        model.playMarginParent(parentContext(fixture))
+        XCTAssertEqual(model.lastError, "This Margin can't be read aloud on this iPhone.")
+        XCTAssertNil(model.marginMoment)
+    }
+
+    // No voice on this phone can read the note: nothing offers it and nothing calls it new, every row that plays one says
+    // the plain line, and no heard fact is made. A voice arriving later brings it back: it reads as new and is offered.
+    func testANoteWithNoVoiceHereIsNotNewNotOfferedAndComesBackWithAVoice() async throws {
+        let fixture = try await ReturnFixture.make(sourcePlaying: true, writtenWords: uniqueWords())
+        defer { fixture.cleanUp(); WrittenMarginSpeech.useVoiceCheck(nil) }
+        let model = fixture.model
+        let itemId = try XCTUnwrap(fixture.layer.itemId)
+        XCTAssertEqual(model.newSharedMargins(itemId: itemId).count, 1)
+
+        WrittenMarginSpeech.useVoiceCheck { _ in false }
+        let silent = row(fixture)
+        XCTAssertFalse(silent.isNew, "a Margin the listener has no way to meet doesn't wait as new")
+        XCTAssertEqual(model.newSharedMargins(itemId: itemId).count, 0, "the offer and the item's screen")
+        XCTAssertFalse(silent.canPlayFromNearbyList)
+        XCTAssertFalse(silent.canPlayFromMarginsList)
+
+        model.playSharedMarginMoment(silent)
+        XCTAssertEqual(model.lastError, "This Margin can't be read aloud on this iPhone.")
+        XCTAssertNil(model.marginMoment)
+        XCTAssertTrue(fixture.record.isNewToListener, "not new is not heard: firstHeardAt stays empty")
+        XCTAssertNil(model.selectedItem.importedCommentaryInterjections[fixture.layer.id]?.first?.firstHeardAt)
+
+        WrittenMarginSpeech.useVoiceCheck { _ in true }
+        XCTAssertTrue(row(fixture).isNew)
+        XCTAssertEqual(model.newSharedMargins(itemId: itemId).count, 1)
+    }
+
     // A voice Margin keeps its enabled Play button in both lists, and a tap plays its recording through the moment.
     func testThePlayButtonStaysEnabledForAVoiceMargin() async throws {
         let fixture = try await ReturnFixture.make(sourcePlaying: true)

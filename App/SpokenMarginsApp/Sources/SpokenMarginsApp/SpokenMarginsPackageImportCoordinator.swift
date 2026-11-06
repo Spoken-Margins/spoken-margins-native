@@ -461,7 +461,10 @@ final class SpokenMarginsPackageImportCoordinator {
             case .duplicate(let existingLayerId):
                 environment.recordDiagnostic("lastSpokenMarginsPackageImport", "duplicate_layer:\(existingLayerId)")
             case .imported(let layerId, let interjectionIds):
-                newMarginCount = interjectionIds.count
+                // What the offer can play, so the arrival says what the item's screen says (#3402). A failed read is no reason to fail a finished import.
+                newMarginCount = (try? await reader.read { store in
+                    SharedPacketArrival.newMarginCount(importedIds: interjectionIds, saved: try store.loadImportedCommentaryInterjections(layerId: layerId))
+                }) ?? interjectionIds.count
                 environment.recordDiagnostic("lastSpokenMarginsPackageImport", "imported:\(layerId):\(interjectionIds.count)")
                 environment.recordPacketImport(itemId, review.contents.manifest.packageId, interjectionIds.count)
             }
