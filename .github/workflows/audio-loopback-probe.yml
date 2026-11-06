@@ -1,0 +1,102 @@
+# One-time experiment for the owner's "worth a shot" on BlackHole in hosted T3 (2026-11-06). Lives only on this branch,
+# never merges, and runs only on a push to it. It asks, in order, on a throwaway hosted Mac with no simulator:
+# 1. Does BlackHole install? 2. Can the recorder app be given Microphone and Speech Recognition with nobody to click?
+# 3. Does `open` start the app in a hosted session? 4. Does it hear a sentence? 5. Can it transcribe on the device?
+# The only audio is `say` reading a fixed sentence. It touches no secret and no data of anyone's.
+name: audio-loopback-probe
+
+on:
+  push:
+    branches: [probe/hosted-audio-loopback]
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: xcode-27
+    timeout-minutes: 25
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
+      GIT_LFS_SKIP_SMUDGE: '1'
+      LOOP: ops/audio-loopback/loopback.py
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          sparse-checkout: ops/audio-loopback
+      - name: 1. Install BlackHole
+        run: |
+          brew install --cask blackhole-2ch
+          brew install switchaudio-osx
+          sudo killall coreaudiod || true
+          sleep 5
+          SwitchAudioSource -t output -s "BlackHole 2ch"
+          system_profiler SPAudioDataType | grep "BlackHole 2ch"
+      - name: 2a. Build and install the recorder app
+        run: |
+          built=$(ops/audio-loopback/build-app.sh)
+          mkdir -p "$HOME/Applications" "$HOME/Library/Caches/SpokenMarginsLane/recorder-jobs"
+          ditto "$built" "$HOME/Applications/SpokenMarginsLaneRecorder.app"
+          codesign -dv "$HOME/Applications/SpokenMarginsLaneRecorder.app" 2>&1 | grep -E "Identifier|Signature|flags"
+      - name: 3. Does open start the app, and what does it have before any grant?
+        run: python3 "$LOOP" app-run --timeout 40 -- permissions --status || echo "exit $?"
+      - name: 2b. Grant both permissions in the TCC databases, without a signature check
+        run: |
+          cat > "$RUNNER_TEMP/grant.py" <<'EOF'
+          import sqlite3, sys
+          db, csreq_file = sys.argv[1], sys.argv[2] if len(sys.argv) > 2 else ''
+          csreq = open(csreq_file, 'rb').read() if csreq_file else None
+          con = sqlite3.connect(db)
+          columns = [row[1] for row in con.execute('PRAGMA table_info(access)')]
+          print(db, 'columns:', columns)
+          values = {'client': 'com.spokenmargins.ops.audio-loopback', 'client_type': 0, 'auth_value': 2, 'auth_reason': 3,
+                    'auth_version': 1, 'csreq': csreq, 'indirect_object_identifier': 'UNUSED', 'flags': 0, 'last_modified': 0}
+          for service in ('kTCCServiceMicrophone', 'kTCCServiceSpeechRecognition'):
+              row = {**values, 'service': service}
+              con.execute(f"INSERT OR REPLACE INTO access ({','.join(columns)}) VALUES ({','.join('?' * len(columns))})",
+                          [row.get(name) for name in columns])
+          con.commit()
+          print(db, 'rows now:', con.execute("SELECT service, client, auth_value FROM access WHERE client LIKE '%audio-loopback%'").fetchall())
+          EOF
+          python3 "$RUNNER_TEMP/grant.py" "$HOME/Library/Application Support/com.apple.TCC/TCC.db" || echo "user database refused: $?"
+          sudo python3 "$RUNNER_TEMP/grant.py" "/Library/Application Support/com.apple.TCC/TCC.db" || echo "system database refused: $?"
+          sudo killall tccd || true
+          killall tccd || true
+          sleep 2
+          python3 "$LOOP" app-run --timeout 40 -- permissions --status || echo "exit $?"
+      - name: 2c. If that wasn't enough, grant again against the app's own signature
+        run: |
+          app="$HOME/Applications/SpokenMarginsLaneRecorder.app"
+          if python3 "$LOOP" app-run --timeout 40 -- permissions --status | grep -q '"microphone" *: *"allowed"'; then
+            echo "Already allowed; not needed."
+            exit 0
+          fi
+          requirement=$(codesign -dr - "$app" 2>&1 | sed -n 's/^designated => //p')
+          echo "Designated requirement: $requirement"
+          csreq -r "=$requirement" -b "$RUNNER_TEMP/csreq.bin"
+          python3 "$RUNNER_TEMP/grant.py" "$HOME/Library/Application Support/com.apple.TCC/TCC.db" "$RUNNER_TEMP/csreq.bin" || true
+          sudo python3 "$RUNNER_TEMP/grant.py" "/Library/Application Support/com.apple.TCC/TCC.db" "$RUNNER_TEMP/csreq.bin" || true
+          sudo killall tccd || true
+          killall tccd || true
+          sleep 2
+          python3 "$LOOP" app-run --timeout 40 -- permissions --status || echo "exit $?"
+      - name: 4. Does it hear a sentence?
+        run: |
+          proof="$RUNNER_TEMP/proof"
+          mkdir -p "$proof"
+          phrase="The quick brown fox jumps over the lazy dog."
+          echo "$phrase" > "$proof/expected.txt"
+          python3 "$LOOP" app-run --timeout 40 --collect "recording.wav=$proof/recording.wav" \
+            -- record --device "BlackHole 2ch" --seconds 8 --out '{job}/recording.wav' &
+          recorder=$!
+          sleep 2
+          say -a "BlackHole 2ch" "$phrase"
+          wait $recorder || echo "recorder exit $?"
+          ls -l "$proof"
+          python3 "$LOOP" check "$proof/recording.wav" --allow-trailing --min-sound 1
+      - name: 5. Can it transcribe on the device?
+        run: |
+          proof="$RUNNER_TEMP/proof"
+          python3 "$LOOP" check "$proof/recording.wav" --allow-trailing --min-sound 1 \
+            --expected "$proof/expected.txt" --max-wer 0.3 --via-app
