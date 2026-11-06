@@ -69,6 +69,13 @@ on:
         description: 'Link to the T3 PASS report that released it'
         required: false
         type: string
+      auto:
+        # #2170: the hosted audit asks for the merge run after a clean audit. Its re-arm's label change starts no run,
+        # because a workflow's own token did it. lane-runner.py re-reads the PR, and does nothing unless it is open on
+        # this head, armed and from this repository.
+        description: 'true: the automerge run a clean audit released, not the one a T3 PASS released'
+        required: false
+        type: string
 
 permissions:
   # write: the runner pushes the merge commits it tested to next. The checkout keeps no credentials
@@ -588,6 +595,7 @@ jobs:
       PR_NUMBER: ${{ inputs.pr }}
       EVENT_HEAD: ${{ inputs.head }}
       T3_REPORT: ${{ inputs.t3 }}
+      MODE: ${{ inputs.auto == 'true' && 'auto' || 'release' }}
       BASE_REF: ${{ github.ref_name }}
       SM_TRUNK: ${{ vars.SM_TRUNK || 'main' }}
       RUN_ID: ${{ github.run_id }}
@@ -618,7 +626,7 @@ jobs:
         id: run
         run: >-
           /usr/bin/python3 "$RUNNER_TEMP/lane-runner.py" --tree "$GITHUB_WORKSPACE" --pr "$PR_NUMBER"
-          --event-head "$EVENT_HEAD" --run-id "$RUN_ID" --base "$BASE_REF" --mode release --t3-report "$T3_REPORT" $HOSTED_ARGS
+          --event-head "$EVENT_HEAD" --run-id "$RUN_ID" --base "$BASE_REF" --mode "$MODE" --t3-report "$T3_REPORT" $HOSTED_ARGS
       # A dispatched run's check sits on next's tip, not on the PR, so a red one would read as "next is broken"
       # and wake nobody: every verdict stays green here. The report and the lane:done relabel carry a FAIL.
       - name: Verdict
@@ -635,7 +643,7 @@ jobs:
         if: (failure() || cancelled()) && steps.run.outputs.reported != 'true'
         run: >-
           /usr/bin/python3 "$RUNNER_TEMP/lane-runner.py" --cleanup --tree "$GITHUB_WORKSPACE" --pr "$PR_NUMBER"
-          --event-head "$EVENT_HEAD" --run-id "$RUN_ID" --base "$BASE_REF" --mode release $HOSTED_ARGS
+          --event-head "$EVENT_HEAD" --run-id "$RUN_ID" --base "$BASE_REF" --mode "$MODE" $HOSTED_ARGS
       - name: Keep hosted evidence
         if: always() && env.HOSTED_ARGS == '--hosted'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

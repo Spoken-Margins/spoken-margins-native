@@ -374,6 +374,19 @@ class MainWiringTests(unittest.TestCase):
         self.assertIsNone(lane.lane_report_verdict(note))
         self.assertTrue(lane.is_automerge_comment(note))
 
+    def test_the_audit_s_dispatch_for_a_fork_s_pr_or_another_base_runs_nothing(self):
+        # #2170: the automerge job's `if` checks these for a pull_request event; a dispatch has no such event.
+        for pull_repo, base in (('someone/fork', 'main'), ('o/r', 'next')):
+            with self.subTest(repo=pull_repo, base=base):
+                github = FakeGitHub(labels=('automerge',))
+                github.pull = lambda: {'state': 'open', 'head': {'sha': HEAD, 'repo': {'full_name': pull_repo}},
+                                       'base': {'ref': base}, 'labels': [{'name': 'automerge'}]}
+                with mock.patch.object(lane, 'run_auto') as run, \
+                        mock.patch.dict('os.environ', {'GITHUB_EVENT_NAME': 'workflow_dispatch'}):
+                    self.role = 'build'
+                    self.run_main(github, HEAD, 'PASS', '--mode', 'auto')
+                run.assert_not_called()
+
     def test_a_dispatch_for_a_fork_s_pr_or_another_base_runs_nothing(self):
         release, _ = self.release_job(FakeGitHub(labels=('automerge',)), None, repo='someone/fork')
         release.assert_not_called()
@@ -416,9 +429,10 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("runs-on: ${{ fromJSON((" + switches + ") && '[\"ubuntu-latest\"]' || '[\"self-hosted\",\"macOS\",\"sm-lane-build\"]') }}",
                       self.release)
         self.assertIn(f"HOSTED_ARGS: ${{{{ ({switches}) && '--hosted' || '' }}}}", self.release)
-        self.assertIn('--mode release --t3-report "$T3_REPORT" $HOSTED_ARGS', self.release)
-        self.assertIn('--mode release $HOSTED_ARGS', self.release)  # the tidy step too
-        self.assertIn('--mode release', self.release)
+        self.assertIn('--mode "$MODE" --t3-report "$T3_REPORT" $HOSTED_ARGS', self.release)
+        self.assertIn('--mode "$MODE" $HOSTED_ARGS', self.release)  # the tidy step too
+        # A T3 PASS's hand-off, unless the hosted audit asked for the run a clean audit released (#2170).
+        self.assertIn("MODE: ${{ inputs.auto == 'true' && 'auto' || 'release' }}", self.release)
         self.assertIn('group: lane-release-pr-', self.release)  # never replaces a pending automerge run
         # The lane and automerge jobs need a pull_request, so a dispatch never starts a T3 or a second automerge run.
         for job in ('lane', 'automerge'):
