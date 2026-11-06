@@ -612,7 +612,7 @@ class ReachedByNameTests(unittest.TestCase):
             '        }',
             '    }',
             '}'])]
-        self.assertEqual(names, ['Holder', 'shown', 'run'])
+        self.assertEqual(names, ['Holder', 'shown', None, 'run'])
 
     def test_an_audio_loopback_class_is_not_reached_by_a_diff_with_no_audio_file(self):
         # #3480: BlackHole is not on the hosted Mac, so the class would turn a PASS into INCONCLUSIVE.
@@ -633,9 +633,85 @@ class ReachedByNameTests(unittest.TestCase):
         self.assertIn('AudioLoopbackPlaybackTests', result['app_tests'])
 
     def test_a_url_in_a_string_does_not_hide_the_call_after_it(self):
-        lines = [scope.COMMENT.sub('', line) for line in ['open("https://example.com"); model.stopChoice(at: 1) // note']]
+        lines = scope.strip_comments('open("https://example.com"); model.stopChoice(at: 1) // note')
         self.assertIn('stopChoice', lines[0])
         self.assertNotIn('note', lines[0])
+
+    def test_comments_are_blanked_without_moving_a_line_and_strings_keep_their_slashes(self):
+        # #3467 audit of #3466: file:/// cut the line at its second slash, and /* */ was never stripped.
+        text = '\n'.join([
+            'let url = URL(string: "file:///tmp/a")!; model.stopChoice(at: 1) // note',    # 1
+            '/* start',                                                                     # 2
+            '   model.hidden(at: 2) /* nested */ still hidden',                             # 3
+            '*/ model.shown(at: 3)',                                                        # 4
+            'let raw = #"//not a comment"#; model.rawKept()',                               # 5
+            'let many = """',                                                               # 6
+            '   // not a comment either; model.inString()',                                 # 7
+            '"""; model.afterString() // gone',                                             # 8
+            'let escaped = "quote \\" // still in the string"; model.afterEscape()'])       # 9
+        lines = scope.strip_comments(text)
+        self.assertEqual(len(lines), 9)
+        self.assertIn('file:///tmp/a', lines[0])
+        self.assertIn('stopChoice', lines[0])
+        self.assertNotIn('note', lines[0])
+        self.assertNotIn('hidden', lines[2])
+        self.assertNotIn('nested', lines[2])
+        self.assertIn('shown', lines[3])
+        self.assertIn('//not a comment', lines[4])
+        self.assertIn('rawKept', lines[4])
+        self.assertIn('inString', lines[6])
+        self.assertIn('afterString', lines[7])
+        self.assertNotIn('gone', lines[7])
+        self.assertIn('afterEscape', lines[8])
+
+    def test_a_final_init_is_nameless_too(self):
+        names = [name for _, _, name in scope.member_declarations([
+            'final class Holder {',
+            '    func above() {}',
+            '    final init(model: Model) {',
+            '        model.stopChoice(at: 1)',
+            '    }',
+            '}'])]
+        self.assertEqual(names, ['Holder', 'above', None])
+
+    def test_a_mention_in_an_init_body_does_not_reach_a_test_that_only_names_the_member_above_it(self):
+        # #3467 carry-over from the #3466 audit: the init's body was credited to `above`, declared just before it.
+        self.write(APP + 'Holder.swift', (
+            'struct Holder {\n'
+            '    func above() {}\n'
+            '    init(model: Model) {\n'
+            '        let local = model.stopChoice(at: 1)\n'
+            '    }\n'
+            '}\n'))
+        self.tree({'AboveTests.swift': (
+            'final class AboveTests: XCTestCase {\n    func testAbove() { model.above() }\n}\n')})
+        result = self.classify(APP + 'Gate1AppModel+Stops.swift')
+        self.assertNotIn('AboveTests', result['app_tests'])
+
+    def test_a_mention_in_an_init_body_reaches_a_test_that_names_the_type_around_it(self):
+        # The audit of #3467: a hop through `init() { changed() }` still reaches the tests that create the type.
+        self.write(APP + 'Holder.swift', (
+            'struct Holder {\n'
+            '    func above() {}\n'
+            '    init(model: Model) {\n'
+            '        let local = model.stopChoice(at: 1)\n'
+            '    }\n'
+            '}\n'))
+        self.tree({'MakeTests.swift': (
+            'final class MakeTests: XCTestCase {\n    func testMake() { Holder(model: model) }\n}\n')})
+        result = self.classify(APP + 'Gate1AppModel+Stops.swift')
+        self.assertIn('MakeTests', result['app_tests'])
+
+    def test_a_string_inside_an_interpolation_does_not_start_a_comment(self):
+        lines = scope.strip_comments('\n'.join([
+            'let a = "\\(f("a//b"))"; model.afterSlashes()',
+            'let b = "\\(f("/*"))"; model.afterOpener()',
+            'let c = "\\(g(1, (2 + 3)))"; model.afterParens() // gone',
+            'let d = #"\\#(f("//"))"#; model.afterRaw()']))
+        self.assertEqual(len(lines), 4)
+        for line, name in zip(lines, ('afterSlashes', 'afterOpener', 'afterParens', 'afterRaw')):
+            self.assertIn(name, line)
+        self.assertNotIn('gone', lines[2])
 
     def test_modifiers_with_a_setter_scope_and_case_lists_declare_their_names(self):
         self.assertEqual(
