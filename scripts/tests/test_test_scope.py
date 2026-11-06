@@ -764,6 +764,62 @@ class ReachedByNameTests(unittest.TestCase):
         self.assertEqual(self.changed('@@ -7 +7 @@'), {'foo'})   # a body line
         self.assertEqual(self.changed('@@ -3 +3 @@'), {'a'})     # a declaration line
 
+    def test_a_change_inside_a_member_with_a_common_name_starts_from_every_member(self):
+        # Audit of #3467: `reset` is named by more than REACH_FANOUT files, so the narrowed search started from nothing,
+        # where the whole file used to start from SkimPlanner and reach SkimFlowTests.
+        self.write(APP + 'SkimPlanner.swift', (
+            'final class SkimPlanner {\n'
+            '    func reset() {\n'
+            '        count = 0\n'
+            '    }\n'
+            '}\n'))
+        self.write(self.tests + 'SkimFlowTests.swift', (
+            'final class SkimFlowTests: XCTestCase {\n    func testFlow() { SkimPlanner() }\n}\n'))
+        for number in range(scope.REACH_FANOUT + 1):
+            self.write(APP + f'Resetter{number}.swift', f'struct Resetter{number} {{\n    func go() {{ reset() }}\n}}\n')
+        path = APP + 'SkimPlanner.swift'
+        self.assertEqual(scope.classify([path], None, root=self.root)['app_tests'], ['SkimFlowTests'])
+        narrowed = scope.classify([path], {path: '@@ -3 +3 @@\n'}, root=self.root)
+        self.assertEqual(narrowed['app_tests'], ['SkimFlowTests'])
+
+    def test_a_touched_type_declaration_starts_from_every_member_of_the_file(self):
+        self.write(APP + 'Foo.swift', 'final class Foo {\n    func work() {}\n}\n')
+        self.write(self.tests + 'WorkTests.swift', (
+            'final class WorkTests: XCTestCase {\n    func testWork() { work() }\n}\n'))
+        path = APP + 'Foo.swift'
+        one_member = scope.classify([path], {path: '@@ -2 +2 @@\n'}, root=self.root)
+        self.assertEqual(one_member['app_tests'], ['WorkTests'])
+        declaration = scope.classify([path], {path: '@@ -1 +1 @@\n'}, root=self.root)
+        self.assertEqual(declaration['app_tests'], ['WorkTests'])
+        self.assertEqual(scope.changed_members(['final class Foo {', '    func work() {}', '}'],
+                                               scope.member_declarations(['final class Foo {', '    func work() {}', '}']),
+                                               '@@ -1 +1 @@\n'), {'Foo', 'work'})
+
+    def test_a_mention_in_an_init_body_reaches_a_test_that_names_the_type_around_it(self):
+        # The audit of #3467: a hop through `init() { changed() }` still reaches the tests that create the type.
+        self.write(APP + 'Holder.swift', (
+            'struct Holder {\n'
+            '    func above() {}\n'
+            '    init(model: Model) {\n'
+            '        let local = model.stopChoice(at: 1)\n'
+            '    }\n'
+            '}\n'))
+        self.tree({'MakeTests.swift': (
+            'final class MakeTests: XCTestCase {\n    func testMake() { Holder(model: model) }\n}\n')})
+        result = self.classify(APP + 'Gate1AppModel+Stops.swift')
+        self.assertIn('MakeTests', result['app_tests'])
+
+    def test_a_string_inside_an_interpolation_does_not_start_a_comment(self):
+        lines = scope.strip_comments('\n'.join([
+            'let a = "\\(f("a//b"))"; model.afterSlashes()',
+            'let b = "\\(f("/*"))"; model.afterOpener()',
+            'let c = "\\(g(1, (2 + 3)))"; model.afterParens() // gone',
+            'let d = #"\\#(f("//"))"#; model.afterRaw()']))
+        self.assertEqual(len(lines), 4)
+        for line, name in zip(lines, ('afterSlashes', 'afterOpener', 'afterParens', 'afterRaw')):
+            self.assertIn(name, line)
+        self.assertNotIn('gone', lines[2])
+
     def test_the_numbered_change_to_skim_stops_still_reaches_the_audio_test_that_caught_it(self):
         # #3412 changed one line of Gate1AppModel+SkimStops.swift and three LocalAudioListeningPackageTests failed on main.
         # The real tree, and the line found by its text so that a later edit moves the hunk with it.

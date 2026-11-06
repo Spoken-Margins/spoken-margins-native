@@ -194,6 +194,46 @@ NAMELESS_DECL = re.compile(r'^(\s*)(?:@\w+(?:\([^)]*\))?\s+)*(?:(?:private|filep
 TYPE_KINDS = {'struct', 'enum', 'class', 'protocol', 'actor', 'extension'}
 
 
+def string_end(text, i):
+    """The index after the Swift string literal that starts at <i> (#, ", or a raw or multi-line opener), or None when
+    <i> starts no string. A string is kept whole, interpolations and the strings inside them included."""
+    size, hashes = len(text), 0
+    while text.startswith('#', i + hashes):
+        hashes += 1
+    if not text.startswith('"', i + hashes):
+        return None
+    multiline = text.startswith('"""', i + hashes)
+    quote = '"""' if multiline else '"'
+    end, escape = quote + '#' * hashes, '\\' + '#' * hashes
+    j = i + hashes + len(quote)
+    while j < size:
+        if text.startswith(end, j):
+            return j + len(end)
+        if not multiline and text[j] == '\n':
+            return j
+        if text.startswith(escape + '(', j):
+            j = interpolation_end(text, j + len(escape) + 1)
+        elif text.startswith(escape, j):
+            j += len(escape) + 1
+        else:
+            j += 1
+    return size
+
+
+def interpolation_end(text, i):
+    """The index after the ) that closes a \\( interpolation whose code starts at <i>: parentheses nest, and a string
+    inside it is skipped whole, so a // or /* in that string does not start a comment."""
+    depth, size = 1, len(text)
+    while i < size and depth:
+        end = string_end(text, i) if text[i] in '#"' else None
+        if end is not None:
+            i = end
+            continue
+        depth += {'(': 1, ')': -1}.get(text[i], 0)
+        i += 1
+    return i
+
+
 def strip_comments(text):
     """The lines of Swift <text> with // and /* */ comments (which nest) blanked, one output line per input line so that
     an index means the same line to git. A // inside a string literal is not a comment: file:///tmp, "https://x", a raw
@@ -220,24 +260,10 @@ def strip_comments(text):
             depth = 1
             out.append('  ')
             i += 2
-        elif char in '#"':
-            hashes = 0
-            while text.startswith('#', i + hashes):
-                hashes += 1
-            if not text.startswith('"', i + hashes):
-                out.append(text[i:i + hashes])
-                i += hashes
-                continue
-            multiline = text.startswith('"""', i + hashes)
-            quote = '"""' if multiline else '"'
-            end = quote + '#' * hashes
-            escape = '\\' + '#' * hashes
-            j = i + hashes + len(quote)
-            while j < size and not text.startswith(end, j) and (multiline or text[j] != '\n'):
-                j += len(escape) + 1 if text.startswith(escape, j) and j + len(escape) < size else 1
-            j = min(size, j + (len(end) if text.startswith(end, j) else 0))
-            out.append(text[i:j])
-            i = j
+        elif char in '#"' and string_end(text, i) is not None:
+            end = string_end(text, i)
+            out.append(text[i:end])
+            i = end
         else:
             out.append(char)
             i += 1
@@ -345,6 +371,9 @@ def changed_members(lines, holders, diff_text):
         held = holder_at(holders, index, indent)
         if held is None or held[2] is None:  # outside any member, or in an init, which has no name to start from
             return everything
+        declared = MEMBER_DECL.match(lines[index]) if held[0] == index else None
+        if declared and declared.group(3) in TYPE_KINDS:
+            return everything  # the declaration of a type: what it changes is every member's
         if held[0] != index and any(other[1] == indent and other[0] > held[0] and holder_at_before(holders, other) == held
                                     for other in holders):
             return everything  # an attribute line, a signature tail or a closing brace at the members' own indent
@@ -393,10 +422,19 @@ def reaching_classes(root, changed, skip=(), diffs=None):
     words = {path: set(WORD.findall('\n'.join(lines))) for path, lines in {**sources, **tests}.items()}
     members = {path: member_declarations(lines) for path, lines in sources.items()}
     diffs = diffs or {}
-    frontier = set().union(*(changed_members(sources[path], members[path], diffs.get(path, '')) for path in changed))
+    def fanout(name):
+        return sum(name in w for w in words.values())
+
+    frontier = set()
+    for path in changed:
+        seeds = changed_members(sources[path], members[path], diffs.get(path, ''))
+        if seeds and not any(fanout(name) <= REACH_FANOUT for name in seeds):
+            # Only common names changed (reset, body, id): nothing here could be followed, so start from every member.
+            seeds = {name for _, _, name in members[path] if name}
+        frontier |= seeds
     seen, classes = set(frontier), []
     for _ in range(REACH_HOPS):
-        frontier = {name for name in frontier if sum(name in w for w in words.values()) <= REACH_FANOUT}
+        frontier = {name for name in frontier if fanout(name) <= REACH_FANOUT}
         if not frontier:
             break
         for path in sorted(tests):
@@ -412,8 +450,11 @@ def reaching_classes(root, changed, skip=(), diffs=None):
             for index, line in enumerate(lines):
                 if not frontier & set(WORD.findall(line)):
                     continue
-                # The member that holds this line. An init body belongs to the init, which has no name to follow.
+                # The member that holds this line. An init body belongs to the init, which has no name to follow: the
+                # type around it stands for it (not the member declared above it).
                 held = holder_at(holders, index, len(line) - len(line.lstrip()))
+                if held and held[2] is None:
+                    held = holder_at_before(holders, held)
                 if held and held[2]:
                     reached.add(held[2])
         frontier = reached - seen
