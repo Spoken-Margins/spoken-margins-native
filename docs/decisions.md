@@ -38,6 +38,7 @@ How it is used:
     - Otherwise it's opt-in.
   - **Keep no user data that could identify someone unless the feature needs it.** Where a feature needs it (a voice Margin is traceable by voice alone), encrypt it end to end so the server holds only unreadable bytes, as share links do (#805).
   - **Owner ideas are challenges, not directives.** When the owner suggests a solution, solve the challenge it serves. Treat the suggestion as one example and pick whatever works best.
+- **Pricing principle, as recorded on #736.** "If something costs us money per user, the user pays for it." The free exceptions are one book club per listener and a small set of friends, about five (#851); more friends are paid. "Functions that run on the device are never gated by money." Server voices fit this, so they can be paid. The 2026-10-10 limited trial for cloud voices comes first.
 
 ## 2026-10-08
 
