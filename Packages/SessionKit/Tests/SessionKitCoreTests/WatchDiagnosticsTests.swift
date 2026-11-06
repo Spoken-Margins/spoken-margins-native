@@ -133,10 +133,22 @@ final class WatchDiagnosticsTests: XCTestCase {
         XCTAssertFalse(log.hasUnsent)
         log.launched(at: at(0))
         XCTAssertTrue(log.hasUnsent)
-        log.markSent()
+        log.markSent(through: 1)
         XCTAssertFalse(log.hasUnsent)
         log.becameActive(at: at(1))
         XCTAssertTrue(log.hasUnsent)
+    }
+
+    /// An event recorded after a report was made (a failure on another thread) is not marked sent by it.
+    func testMarkSentThroughLeavesALaterEventUnsent() {
+        var log = WatchDiagnosticsLog()
+        log.launched(at: at(0))
+        let reported = log.events.last?.number ?? 0
+        log.failed("activationFailed", detail: "WCErrorDomain/7001", at: at(1))
+        log.markSent(through: reported)
+        XCTAssertTrue(log.hasUnsent)
+        log.markSent(through: 99)
+        XCTAssertFalse(log.hasUnsent, "never past the last event")
     }
 
     func testTheDiagnosticsMessageSurvivesTheEnvelope() throws {
@@ -159,6 +171,30 @@ final class WatchDiagnosticsTests: XCTestCase {
 
     private func temporaryFile() -> URL {
         FileManager.default.temporaryDirectory.appendingPathComponent("watch-diagnostics-\(UUID().uuidString).json")
+    }
+
+    func testTheRecorderSkipsTheWriteWhenNothingChanged() throws {
+        let file = temporaryFile()
+        defer { try? FileManager.default.removeItem(at: file) }
+        let recorder = WatchDiagnosticsRecorder(fileURL: file)
+        recorder.update { $0.wentToBackground() } // phase none -> background: a change, written
+        let old = Date(timeIntervalSince1970: 1_000_000_000)
+        try FileManager.default.setAttributes([.modificationDate: old], ofItemAtPath: file.path)
+        recorder.update { $0.wentToBackground() } // already background: nothing changed, nothing written
+        let after = try FileManager.default.attributesOfItem(atPath: file.path)[.modificationDate] as? Date
+        XCTAssertEqual(after, old)
+        recorder.update { $0.launched(at: self.at(0)) } // a real change writes again
+        let later = try FileManager.default.attributesOfItem(atPath: file.path)[.modificationDate] as? Date
+        XCTAssertNotEqual(later, old)
+    }
+
+    func testThePhoneCreatesItsFolderBeforeSaving() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("watch-diag-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        var log = WatchDiagnosticsLog()
+        log.launched(at: at(0))
+        let file = folder.appendingPathComponent("WatchDiagnostics.json")
+        XCTAssertTrue(WatchDiagnosticsStore.save(log.report(build: "36", osVersion: "26.1", at: at(1)), to: file))
     }
 
     func testTheRecorderWritesEachChangeSoALaterLaunchCanReadIt() {
@@ -210,7 +246,7 @@ final class WatchDiagnosticsTests: XCTestCase {
             WatchDiagnosticEvent(number: $0, at: at(Double($0)), kind: .failure, detail: String(repeating: "z", count: 400))
         }
         let report = WatchDiagnosticsReport(build: String(repeating: "b", count: 300), osVersion: "26.1", sentAt: at(1),
-                                            launchCount: 9, phase: .active, events: events)
+                                            launchCount: 9, phase: "active", events: events)
         WatchDiagnosticsStore.save(report, to: file)
         let kept = try XCTUnwrap(WatchDiagnosticsStore.read(file))
         XCTAssertLessThanOrEqual(kept.events.count, WatchDiagnosticsLog.maxEvents)

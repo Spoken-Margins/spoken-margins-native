@@ -248,7 +248,7 @@ final class WatchLink: NSObject, ObservableObject {
         guard WCSession.isSupported(), WCSession.default.activationState == .activated,
               let report = WatchDiagnostics.reportIfDue() else { return }
         send(.diagnostics(report))
-        WatchDiagnostics.didSend()
+        WatchDiagnostics.didSend(report)
     }
 
     private func sayHello() {

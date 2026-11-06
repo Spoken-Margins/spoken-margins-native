@@ -43,8 +43,11 @@ struct SpokenMarginsWatchApp: App {
 /// screen first appears (DESIGN section 9, changes point 10).
 final class WatchAppDelegate: NSObject, WKApplicationDelegate {
     func applicationDidFinishLaunching() {
-        WatchDiagnostics.launched() // before anything else can fail (#3506)
-        MainActor.assumeIsolated { WatchLink.shared.activate() }
+        WatchDiagnostics.installExceptionHandler()
+        MainActor.assumeIsolated {
+            WatchDiagnostics.launched() // before anything else can fail (#3506)
+            WatchLink.shared.activate()
+        }
     }
 
     func handle(_ backgroundTasks: Set<WKRefreshBackgroundTask>) {

@@ -135,9 +135,10 @@ public struct WatchDiagnosticsLog: Codable, Equatable, Sendable {
         append(.uncaughtException, name, at: date)
     }
 
-    /// Everything recorded so far has been handed to WatchConnectivity.
-    public mutating func markSent() {
-        sentThrough = (events.last?.number ?? nextNumber - 1)
+    /// Events up to and including `number` have been handed to WatchConnectivity. An event recorded after the report was
+    /// made (a failure on another thread) stays unsent.
+    public mutating func markSent(through number: Int) {
+        sentThrough = max(sentThrough, min(number, nextNumber - 1))
     }
 
     /// `NSCocoaErrorDomain/513`: the domain and code of an error, which carry no text of the listener's.
@@ -166,7 +167,7 @@ public struct WatchDiagnosticsLog: Codable, Equatable, Sendable {
 
     public func report(build: String, osVersion: String, at date: Date) -> WatchDiagnosticsReport {
         WatchDiagnosticsReport(build: Self.cleaned(build), osVersion: Self.cleaned(osVersion), sentAt: date,
-                               launchCount: launchCount, phase: phase, events: events)
+                               launchCount: launchCount, phase: phase.rawValue, events: events)
     }
 
     // MARK: Internals
@@ -212,11 +213,12 @@ public struct WatchDiagnosticsReport: Codable, Equatable, Sendable {
     public var osVersion: String
     public var sentAt: Date
     public var launchCount: Int
-    public var phase: WatchDiagnosticsLog.Phase
+    /// `WatchDiagnosticsLog.Phase`'s raw value, as text so a phase a later Watch build adds still decodes.
+    public var phase: String
     public var events: [WatchDiagnosticEvent]
 
     public init(build: String, osVersion: String, sentAt: Date, launchCount: Int,
-                phase: WatchDiagnosticsLog.Phase, events: [WatchDiagnosticEvent]) {
+                phase: String, events: [WatchDiagnosticEvent]) {
         self.build = build
         self.osVersion = osVersion
         self.sentAt = sentAt
@@ -283,8 +285,9 @@ public final class WatchDiagnosticsRecorder: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         var log = read()
+        let before = log
         change(&log)
-        if let fileURL, let data = try? WatchDiagnosticsCoding.encoder.encode(log) {
+        if log != before, let fileURL, let data = try? WatchDiagnosticsCoding.encoder.encode(log) {
             try? data.write(to: fileURL, options: .atomic)
         }
         return log
@@ -319,6 +322,7 @@ public enum WatchDiagnosticsStore {
         if let existing = read(fileURL), existing.sentAt > incoming.sentAt { return false }
         guard let data = try? WatchDiagnosticsCoding.encoder.encode(incoming) else { return false }
         do {
+            try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             try data.write(to: fileURL, options: .atomic)
             return true
         } catch {
