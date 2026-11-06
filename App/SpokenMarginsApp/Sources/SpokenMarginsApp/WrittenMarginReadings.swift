@@ -156,8 +156,8 @@ enum WrittenMarginReadings {
             let rendered = (try? await reader.rendered(reading, onDevice: stage)) != nil
             if tapWaits[key]?.id == id { tapWaits[key] = nil }
             // The row's callers are not all on the item screen (Now Playing, skim stops, reactions), so `leftItemScreen` does not
-            // see every way out. Selecting another item, and Trash (which clears the selection and also calls `leftItemScreen`),
-            // are caught here: the tap is dropped unless the row's item is still the selected one.
+            // see every way out. Selecting another item, and Trash (which clears the selection), are caught here: the tap is
+            // dropped unless the row's item is still the selected one.
             guard !Task.isCancelled, let model, model.selectedItem.id == row.layer.itemId, !model.recordingNavigationIsLocked else { return }
             guard rendered else { return model.reportWarning("That Margin couldn't be read aloud, so listening continues.") }
             if model.pendingImportedCommentary != nil || model.playingImportedCommentary != nil || model.marginMoment != nil {
@@ -166,7 +166,7 @@ enum WrittenMarginReadings {
             }
             replayingAfterWait.insert(key)
             defer { replayingAfterWait.remove(key) }
-            model.playSharedMarginMoment(row)
+            model.hangTelemetry.labels.scoped("writtenMarginRowTap") { model.playSharedMarginMoment(row) }
         }
         tapWaits[key] = Wait(id: id, wasPending: false, task: task, itemId: row.layer.itemId, reading: reading)
         return true
