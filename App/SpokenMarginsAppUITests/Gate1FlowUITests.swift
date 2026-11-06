@@ -697,6 +697,28 @@ final class Gate1FlowUITests: XCTestCase {
         captureScreen(named: "written-margin-accessibility-keyboard")
     }
 
+    /// #3547: on the Live session setup form, Done closes the keyboard, and Start Session is tappable with the
+    /// keyboard still up (no scroll first).
+    func testLiveSessionSetupDoneClosesTheKeyboardAndStartIsReachableWithItUp() throws {
+        app.buttons["home.addSource.button"].tap()
+        scrollToElement("addSource.route.liveSession").tap()
+        let title = element("liveSession.setup.title")
+        XCTAssertTrue(title.waitForExistence(timeout: 6))
+        title.tap()
+        let keyboard = app.keyboards.firstMatch
+        XCTAssertTrue(keyboard.waitForExistence(timeout: 4))
+        let done = element("liveSession.keyboard.done")
+        XCTAssertTrue(done.waitForExistence(timeout: 4), "No Done on the setup keyboard")
+        done.tap()
+        XCTAssertTrue(waitForDisappearance(app.keyboards.firstMatch, timeout: 4), "Done left the keyboard up")
+        title.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 4))
+        let start = app.buttons["liveSession.start"]
+        XCTAssertTrue(start.isHittable, "Start Session is behind the keyboard")
+        start.tap()
+        XCTAssertTrue(element("liveSession.marginText").waitForExistence(timeout: 6), "One tap did not start the session")
+    }
+
     /// #2963: typing a Margin in a Live session, Add Margin is reachable above the keyboard without scrolling.
     func testLiveSessionAddMarginIsAboveTheKeyboardWhileTyping() throws {
         app.buttons["home.addSource.button"].tap()

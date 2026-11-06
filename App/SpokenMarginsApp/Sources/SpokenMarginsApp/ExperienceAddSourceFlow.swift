@@ -92,7 +92,9 @@ struct ExperienceAddSourceFlow: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Close") { dismiss() }
                 }
-                if !showsPinnedTextAction {
+                // Not while the Live Session or Spoken Note cover is up: this Done clears only this sheet's own
+                // fields, and it showed over the cover's keyboard doing nothing (#3547).
+                if !showsPinnedTextAction && !showsLiveSession && !showsSpokenNote {
                     ToolbarItemGroup(placement: .keyboard) {
                         Spacer()
                         Button("Done") { focusedField = nil }
