@@ -174,17 +174,78 @@ final class CantPlayListeningTests: XCTestCase {
 
     // MARK: Whether to take this path
 
-    func testOnlyAnEpisodeWithNoFileThatFailedOrStalledTakesThisPath() {
-        func decide(_ state: PodcastDownloadState?, saved: Bool = false, stalled: Bool = false, margins: Int = 2) -> Bool {
-            CantPlayListening.shouldHearWithoutEpisode(.init(downloadState: state, hasSavedAudio: saved, startStalled: stalled), friendMargins: margins)
+    func testOnlyAnEpisodeWithNoFileThatStalledOrFailedInThePlayerTakesThisPath() {
+        func decide(saved: Bool = false, stalled: Bool = false, failed: Bool = false, margins: Int = 2) -> Bool {
+            CantPlayListening.shouldHearWithoutEpisode(.init(hasSavedAudio: saved, startStalled: stalled, playerFailed: failed), friendMargins: margins)
         }
-        XCTAssertTrue(decide(.failed))
-        XCTAssertTrue(decide(.streamingOnly, stalled: true))
-        XCTAssertTrue(decide(nil, stalled: true))
-        XCTAssertFalse(decide(.failed, margins: 0), "no friend Margins: the ordinary message")
-        XCTAssertFalse(decide(.failed, saved: true), "a saved file that won't start keeps its own message")
-        XCTAssertFalse(decide(.downloading), "still arriving")
-        XCTAssertFalse(decide(.streamingOnly), "streaming and not yet stalled")
-        XCTAssertFalse(decide(.waitingForWiFi))
+        XCTAssertTrue(decide(stalled: true))
+        XCTAssertTrue(decide(failed: true))
+        XCTAssertFalse(decide(), "nothing definite is known: the episode starts the ordinary way and a stall comes here")
+        XCTAssertFalse(decide(stalled: true, margins: 0), "no friend Margins: the ordinary message")
+        XCTAssertFalse(decide(saved: true, stalled: true), "a saved file that won't start keeps its own message")
+        XCTAssertFalse(decide(saved: true, failed: true))
+    }
+
+    /// The first review finding: a download that failed (a missing or short saved file, a dropped transfer) says nothing
+    /// about streaming. The decision has no download state to be fooled by, so this holds the type to that.
+    func testADownloadStateIsNotPartOfTheDecision() {
+        let mirror = Mirror(reflecting: CantPlayListening.Episode(hasSavedAudio: false, startStalled: false, playerFailed: false))
+        XCTAssertEqual(Set(mirror.children.compactMap(\.label)), ["hasSavedAudio", "startStalled", "playerFailed"])
+    }
+
+    // MARK: Whether the listener still wants it after the wait
+
+    private func scene(
+        item: String? = "item", selected: String = "item", _ status: PlaybackStatus = .starting, recording: Bool = false,
+        screen: Bool = true, moment: Bool = false
+    ) -> CantPlayListening.Scene {
+        .init(playerItemId: item, selectedItemId: selected, status: status, isRecording: recording, onPlaybackScreen: screen, hasMarginMoment: moment)
+    }
+
+    func testTheListeningStartsWhenNothingChangedDuringTheWait() {
+        XCTAssertTrue(CantPlayListening.stillWanted(itemId: "item", began: scene(), now: scene()))
+        XCTAssertTrue(CantPlayListening.stillWanted(itemId: "item", began: scene(.failed), now: scene(.failed)))
+        XCTAssertTrue(CantPlayListening.stillWanted(itemId: "item", began: scene(.starting), now: scene(.failed)), "the stalled start then reported its failure")
+        XCTAssertTrue(CantPlayListening.stillWanted(itemId: "item", began: scene(moment: true), now: scene(moment: true)), "an earlier moment is the one it replaces")
+    }
+
+    func testTheListeningDropsWhenTheListenerMovedOnDuringTheWait() {
+        let began = scene()
+        let moved: [(String, CantPlayListening.Scene)] = [
+            ("another item opened", scene(item: "other", selected: "other")),
+            ("the item was left but the player kept it", scene(selected: "other")),
+            ("the player lost the item", scene(item: nil)),
+            ("a recording started", scene(recording: true)),
+            ("they paused", scene(.paused)),
+            ("they pressed Play and it began", scene(.playing)),
+            ("playback was stopped", scene(.idle)),
+            ("they left the playback screen", scene(screen: false)),
+            ("another Margin moment started", scene(moment: true))
+        ]
+        for (what, now) in moved { XCTAssertFalse(CantPlayListening.stillWanted(itemId: "item", began: began, now: now), what) }
+        XCTAssertFalse(CantPlayListening.stillWanted(itemId: "item", began: scene(.failed), now: scene(.starting)), "they pressed Play after it failed")
+        XCTAssertFalse(CantPlayListening.stillWanted(itemId: "item", began: scene(screen: false), now: scene(screen: true)), "they came back to the screen")
+    }
+
+    // MARK: A listening that stops early gives back what it didn't reach
+
+    func testAnEarlyStopGivesBackEveryUnplayedMarginAndNeverTheirWords() throws {
+        let beats = plan([entry("a", at: 0, prefix: "One."), entry("b", at: 0, prefix: "Two."), entry("c", at: 0, prefix: "Three.")])
+        var sequence = try XCTUnwrap(CantPlayListening.sequence(for: beats, itemId: "item", placeMs: 0))
+        _ = sequence.jumpToTarget()
+        sequence.marginFinished() // a's words done; a plays next
+        XCTAssertEqual(CantPlayListening.unreachedMarginIds(in: sequence), ["shared::cole::a", "shared::cole::b", "shared::cole::c"],
+                       "at place zero, where the ordinary rule (ahead of the place) gives nothing back")
+        sequence.marginFinished()
+        sequence.marginFinished()
+        XCTAssertEqual(CantPlayListening.unreachedMarginIds(in: sequence), ["shared::cole::b", "shared::cole::c"])
+    }
+
+    func testOnlyAMarginsOwnIdCanBeMarkedHeardWhenItsVoiceStarts() {
+        let beats = plan([entry("a", prefix: "One."), entry("w", prefix: "Two.", voice: false, words: "I disagree")])
+        let markable = Set(beats.map(\.marginId))
+        let started = CantPlayListening.anchors(for: beats, placeMs: 0).map(\.marginId)
+        XCTAssertEqual(started.filter(markable.contains), beats.map(\.marginId), "the words' ids are never in the heard lookup")
+        XCTAssertEqual(started.filter { !markable.contains($0) }, beats.map(\.contextId))
     }
 }

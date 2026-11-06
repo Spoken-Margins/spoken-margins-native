@@ -20,26 +20,65 @@ public enum CantPlayListening {
 
     // MARK: Whether to take this path
 
-    /// Whether an item's episode counts as unable to play, and the friend's Margins should be heard without it.
+    /// What is known about an item's episode at the moment of asking. A download's state is never part of it: a download
+    /// fails when a saved file is missing, short or its transfer dropped, and in all of those the episode still streams.
     public struct Episode: Equatable, Sendable {
-        public let downloadState: PodcastDownloadState?
         /// A downloaded or imported file is on the phone now.
         public let hasSavedAudio: Bool
         /// The start has been silent past the stall limit (the playback screen's 30 seconds).
         public let startStalled: Bool
+        /// The player itself reported that the start or the playback failed (`PlaybackStatus.failed`), for this item.
+        public let playerFailed: Bool
 
-        public init(downloadState: PodcastDownloadState?, hasSavedAudio: Bool, startStalled: Bool) {
-            self.downloadState = downloadState
+        public init(hasSavedAudio: Bool, startStalled: Bool, playerFailed: Bool) {
             self.hasSavedAudio = hasSavedAudio
             self.startStalled = startStalled
+            self.playerFailed = playerFailed
         }
     }
 
-    /// True when the episode can't play and there are friend Margins to hear instead. An episode with a file on the
-    /// phone is never "can't play" here: a file that won't start keeps its own message (Download Again).
+    /// True when the episode has actually failed to play and there are friend Margins to hear instead. Nothing definite
+    /// known (a download state, a slow network, a tap before any start) means false: the episode starts normally and a
+    /// stall routes here. An episode with a file on the phone is never "can't play" here: a file that won't start keeps
+    /// its own message (Download Again).
     public static func shouldHearWithoutEpisode(_ episode: Episode, friendMargins: Int) -> Bool {
         guard friendMargins > 0, !episode.hasSavedAudio else { return false }
-        return episode.downloadState == .failed || episode.startStalled
+        return episode.startStalled || episode.playerFailed
+    }
+
+    // MARK: Whether the world still wants it
+
+    /// The few facts about the app that decide whether a listening that waited a moment should still start.
+    public struct Scene: Equatable, Sendable {
+        public let playerItemId: String?
+        public let selectedItemId: String
+        public let status: PlaybackStatus
+        public let isRecording: Bool
+        public let onPlaybackScreen: Bool
+        public let hasMarginMoment: Bool
+
+        public init(
+            playerItemId: String?, selectedItemId: String, status: PlaybackStatus, isRecording: Bool,
+            onPlaybackScreen: Bool, hasMarginMoment: Bool
+        ) {
+            self.playerItemId = playerItemId
+            self.selectedItemId = selectedItemId
+            self.status = status
+            self.isRecording = isRecording
+            self.onPlaybackScreen = onPlaybackScreen
+            self.hasMarginMoment = hasMarginMoment
+        }
+    }
+
+    /// Whether the listening decided in `began` still starts in `now`, after the words had time to render. It doesn't if
+    /// the listener moved on: another item, a recording, a pause or Play (any change of status except a stalled start
+    /// that then reported its failure), leaving the playback screen, or another Margin moment that started meanwhile.
+    /// Nothing is ended or paused before this says yes, so a listening that is dropped leaves the app as it was.
+    public static func stillWanted(itemId: String, began: Scene, now: Scene) -> Bool {
+        guard now.playerItemId == itemId, now.selectedItemId == itemId, !now.isRecording else { return false }
+        guard now.onPlaybackScreen == began.onPlaybackScreen else { return false }
+        guard began.hasMarginMoment || !now.hasMarginMoment else { return false }
+        return now.status == began.status || (began.status == .starting && now.status == .failed)
     }
 
     // MARK: The sequence
@@ -130,6 +169,15 @@ public enum CantPlayListening {
     /// The words (not the Margin) are what has the floor or is next.
     public static func isWordsStep(_ sequence: MarginMomentSequence) -> Bool {
         isCantPlayListening(sequence) && isContextId((sequence.playing ?? sequence.target).marginId)
+    }
+
+    /// The Margins (never their words) a listening that stopped early didn't reach. The ordinary review counts a Margin
+    /// as unreached only when it lies ahead of the place the listener left off; here every Margin sits at one flat
+    /// place, so all of the unplayed ones count and go back to the automatic prompts.
+    public static func unreachedMarginIds(in sequence: MarginMomentSequence) -> Set<String> {
+        var left = sequence.unplayed
+        if let playing = sequence.playing { left.append(playing) }
+        return Set(left.map(\.marginId).filter { !isContextId($0) })
     }
 
     /// "2 of 3" counting Margins, not their words. Nil outside a can't-play listening.

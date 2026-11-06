@@ -190,7 +190,9 @@ extension Gate1AppModel {
         let returnTo = review.returnToMediaTimeMs ?? 0
         var left = moment.unplayed
         if let playing = moment.playing { left.append(playing) }
-        let ahead = Set(left.filter { $0.mediaTimeMs > returnTo }.map(\.marginId))
+        let ahead = CantPlayListening.isCantPlayListening(moment)
+            ? CantPlayListening.unreachedMarginIds(in: moment) // one flat place: every unplayed Margin goes back (#3392)
+            : Set(left.filter { $0.mediaTimeMs > returnTo }.map(\.marginId))
         guard !ahead.isEmpty else { return }
         let stillNew = selectedItem.importedCommentaryInterjections.values.joined().filter {
             $0.isNewToListener && ahead.contains(SharedMarginReview.marginId(layerId: $0.layerId, interjectionId: $0.id))
