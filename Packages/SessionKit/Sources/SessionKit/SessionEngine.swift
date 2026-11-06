@@ -174,12 +174,14 @@ public final class SessionEngine {
         playbackRequestedAt = now(); defer { playbackRequestedAt = nil } // time to first audio counts from here (#357)
         try require("startSession", category: "sync", capabilities: ["canonical_persistence", "receive_prepared_packages", "browser_session_handoff"])
         forgetFailure(unlessItemIs: itemId)
-        var item = try repository.loadItem(id: itemId)
-        item = try discardUnavailableGeneratedTextAudio(from: item)
-        item = adoptingPublisherAudio(for: item)
+        let labels = MainThreadOperationLabels.shared // so a slow start names its step (#2256)
+        var item = try labels.scoped("start.loadItem") {
+            let loaded = try discardUnavailableGeneratedTextAudio(from: repository.loadItem(id: itemId))
+            return adoptingPublisherAudio(for: loaded)
+        }
         currentItem = item
-        currentMap = try repository.loadListeningMap(itemId: itemId)
-        item = try prepareGeneratedTextAudioIfAvailable(for: item)
+        currentMap = try labels.scoped("start.loadMap") { try repository.loadListeningMap(itemId: itemId) }
+        item = try labels.scoped("start.prepareAudio") { try prepareGeneratedTextAudioIfAvailable(for: item) }
         currentItem = item
         let targetType = playbackTargetType(for: item)
         let startedAt = now()
@@ -198,9 +200,9 @@ public final class SessionEngine {
             playbackRate: 1
         )
         currentSession = session
-        try persistSession(session)
-        try playCurrentTarget(session)
-        publishPlaybackStart(for: session, phase: .itemPlayback)
+        try labels.scoped("start.persist") { try persistSession(session) }
+        try labels.scoped("start.play") { try playCurrentTarget(session) }
+        labels.scoped("start.publish") { publishPlaybackStart(for: session, phase: .itemPlayback) }
         return snapshot
     }
 
@@ -1577,6 +1579,7 @@ public final class SessionEngine {
             throw SessionKitError.invalidCommandForState("beginInterjection")
         }
         guard var session = currentSession else { throw SessionKitError.invalidCommandForState("beginInterjection") }
+        let labels = MainThreadOperationLabels.shared // so a slow start names its step (#2256)
         // Left in place until the steps that can throw have passed, so a failure here still leaves the app
         // something to put back (`isSourcePausedOnTap`).
         let pendingPause = captureResume.tapPause
@@ -1607,23 +1610,23 @@ public final class SessionEngine {
         }
         marginCaptureTiming?.sourcePaused(at: ProcessInfo.processInfo.systemUptime)
         currentSession = session
-        try persistSession(session)
+        try labels.scoped("begin.persist") { try persistSession(session) }
         captureResume.sourcePaused(in: session.phase)
         let target = currentInterjectionTarget(for: session)
         recordingTargetType = target.type
         recordingTargetId = target.id
         recordingReplyTo = request.replyTo
-        recordingAnchor = buildAnchor(for: session, targetType: target.type, targetId: target.id)
+        recordingAnchor = labels.scoped("begin.anchor") { buildAnchor(for: session, targetType: target.type, targetId: target.id) }
         closedRecordingRef = nil
         storedMarginFinish = nil
         marginCaptureTiming?.anchorReady(at: ProcessInfo.processInfo.systemUptime)
         captureResume.takeOverTapPause() // from here a failure puts the source back itself, below
         do {
             marginCaptureTiming?.recorderRequested(at: ProcessInfo.processInfo.systemUptime)
-            try recorder.beginRecording()
+            try labels.scoped("begin.recorder") { try recorder.beginRecording() }
             marginCaptureTiming?.recorderStarted(at: ProcessInfo.processInfo.systemUptime,
-                                                inputRoute: recorder.captureDiagnostics()["inputs"])
-            noteRecordingDraft(session: session, targetType: target.type, targetId: target.id)
+                                                inputRoute: labels.scoped("begin.inputRoute") { recorder.captureInputRoute() })
+            labels.scoped("begin.draftNote") { noteRecordingDraft(session: session, targetType: target.type, targetId: target.id) }
         } catch {
             try? recorder.cancelRecording() // let go of whatever the failed start grabbed, such as the audio session
             abandonInterjectionStart(session, wasPlaying: wasPlaying)
@@ -1632,7 +1635,7 @@ public final class SessionEngine {
         session.phase = .recordingInterjection
         currentSession = session
         snapshot.recordingTargetId = target.id
-        publish(status: .recording, phase: .recordingInterjection)
+        labels.scoped("begin.publish") { publish(status: .recording, phase: .recordingInterjection) }
         return snapshot
     }
 

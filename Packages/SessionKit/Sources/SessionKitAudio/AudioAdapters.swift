@@ -2055,8 +2055,10 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, HeardAudio
         }
         let sessionStartedAt = ProcessInfo.processInfo.systemUptime
         #if os(iOS) || os(watchOS)
-        try configureStreamAudioSession()
-        try AVAudioSession.sharedInstance().setActive(true)
+        try MainThreadOperationLabels.shared.scoped("audioSession.activate") {
+            try configureStreamAudioSession()
+            try AVAudioSession.sharedInstance().setActive(true)
+        }
         #endif
         let sessionMs = Int((ProcessInfo.processInfo.systemUptime - sessionStartedAt) * 1000)
         let playerTimeMs = player.map { Int(($0.currentTime().seconds.isFinite ? $0.currentTime().seconds : -1) * 1000) } ?? -1
@@ -3636,13 +3638,15 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
         // session already on its route is left here. A restart's cycle sets the category again, as before (#937).
         let wanted = Self.recordingConfiguration(for: inputChoice)
         if cycleSession || AudioSessionConfiguration.needsCategoryChange(current: Self.currentConfiguration(session), wanted: wanted) {
-            try session.setCategory(.playAndRecord, mode: .spokenAudio, options: Self.recordingOptions(for: inputChoice))
+            try MainThreadOperationLabels.shared.scoped("audioSession.category") {
+                try session.setCategory(.playAndRecord, mode: .spokenAudio, options: Self.recordingOptions(for: inputChoice))
+            }
             sessionSwitchFields["sessionCategoryOnMain"] = "set"
         } else {
             sessionSwitchFields["sessionCategoryOnMain"] = "already_set"
         }
         #endif
-        try session.setActive(true)
+        try MainThreadOperationLabels.shared.scoped("audioSession.activate") { try session.setActive(true) }
         #if os(iOS)
         sessionSwitchFields["sessionOnMainMs"] = String(max(0, Int(((ProcessInfo.processInfo.systemUptime - started) * 1_000).rounded())))
         #endif
@@ -3657,6 +3661,8 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
             AVNumberOfChannelsKey: 1,
             AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
         ]
+        let recorderStartLabel = MainThreadOperationLabels.shared.push("recorder.start")
+        defer { MainThreadOperationLabels.shared.pop(recorderStartLabel) }
         let recorder = try AVAudioRecorder(url: url, settings: settings)
         let delegate = CaptureDelegate()
         recorder.delegate = delegate
@@ -3856,6 +3862,14 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
         #if canImport(AVFoundation)
         guard isCaptureActive, let currentURL else { return nil }
         return relativeRecordingPath(for: currentURL)
+        #else
+        return nil
+        #endif
+    }
+
+    public func captureInputRoute() -> String? {
+        #if os(iOS)
+        return AVAudioSession.sharedInstance().currentRoute.inputs.map(\.portType.rawValue).joined(separator: "+")
         #else
         return nil
         #endif

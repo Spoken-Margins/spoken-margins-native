@@ -1357,23 +1357,23 @@ final class Gate1AppModel: ObservableObject {
     func start() {
         guard !blockOfflineEpisodeStart(itemId: activeItemId) else { return }
         guard !requireTermsDecisionBeforePlayback(.startCurrentItem) else { return }
-        if !hasActiveSession {
-            resetMixWithOtherAudioForNewSession()
+        hangTelemetry.labels.scoped("start.clearTheWay") {
+            if !hasActiveSession { resetMixWithOtherAudioForNewSession() }
+            stopSpeechPreviews()
+            streamingSpeechQueue.stopAndClear()
+            let playsRecording = prewarmTextAudioForPlayStart(itemId: activeItemId)
+            narrationStartupProtection.protectUpcomingStart(eligible: narrationRendersOnDevice(itemId: activeItemId, playsRecording: playsRecording))
         }
-        stopSpeechPreviews()
-        streamingSpeechQueue.stopAndClear()
-        let playsRecording = prewarmTextAudioForPlayStart(itemId: activeItemId)
-        narrationStartupProtection.protectUpcomingStart(eligible: narrationRendersOnDevice(itemId: activeItemId, playsRecording: playsRecording))
         run { engine in
-            try prepareSourceMediaPlayback(itemId: activeItemId)
+            try hangTelemetry.labels.scoped("start.prepareSource") { try prepareSourceMediaPlayback(itemId: activeItemId) }
             let started = try engine.startSession(itemId: activeItemId)
-            snapshot = try applyPreferredPlaybackRate(to: started, engine: engine)
+            snapshot = try hangTelemetry.labels.scoped("start.playbackRate") { try applyPreferredPlaybackRate(to: started, engine: engine) }
             if let store, let sessionId = snapshot.sessionId {
                 try seedUITestingSummaryInterjectionIfNeeded(sessionId: sessionId, engine: engine, store: store)
                 try seedUITestingGeneratedTimelineIfNeeded(sessionId: sessionId, engine: engine, store: store)
             }
             if let store {
-                selectedItem = try loadItemDetail(id: activeItemId, store: store)
+                selectedItem = try hangTelemetry.labels.scoped("start.itemDetail") { try loadItemDetail(id: activeItemId, store: store) }
                 refreshLibraryRowsInBackground(mustPublish: true) // #2505
             }
             reflectTextAudioPrewarmStatusIfActive(itemId: activeItemId)
