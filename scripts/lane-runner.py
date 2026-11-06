@@ -129,6 +129,8 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
   clears only with a machine-readable resolution on the PR (the source audit comment, the full head, evidence) and a
   clean audit of the head posted after it. A lookup that can't finish holds the merge too. The hold line reads
   "not merged by the runner: it inherits a blocking audit finding ..." and says what clears it.
+- The web check (#3535). A diff that starts hosted-web.yml's Playwright job merges only once that job passed on its head
+  (hosted_web_check): a red job is a FAIL, and a job that has no verdict yet or ran out its clock holds the merge.
 
 Environment: GH_TOKEN and GH_REPO (the workflow's), SM_LANE_EVIDENCE_DIR (where evidence goes,
 default ~/Library/Caches/SpokenMarginsLane/evidence), SM_LANE_TOOLS (a checkout whose .venv and
@@ -1507,6 +1509,69 @@ def hosted_rest_checks(github, tree: Path, base: str, head: str, base_sha: str, 
         sleep(poll)
 
 
+# #3535: the owner's 2026-10-21 rule is that every test blocks, and this job held no merge: of 24 Web PRs it ran on, 5
+# were green at merge and 11 were still running. It proves the PR by its own run (hosted-web.yml), not by the
+# `lane-hosted-tested` record of the fast checks, so a newer main does not start it again.
+HOSTED_WEB_CHECK = 'hosted web: build and Playwright'
+HOSTED_WEB_STEP = 'hosted web'
+HOSTED_WEB_FAILED = ('failure', 'timed_out')
+
+
+def hosted_web_check(github, tree: Path, base: str, head: str, alive=lambda: None, env=None,
+                     wait: float | None = None, poll: float = HOSTED_FAST_POLL, grace: float = HOSTED_MISSING_GRACE,
+                     clock=time.monotonic, sleep=time.sleep, out=sys.stdout) -> tuple[str | None, str]:
+    """(None, '') when this diff doesn't start hosted web's job (test-scope.py web_check_required, from the base
+    branch), else (verdict, a line for the report) once its newest run on <head> says: PASS only on success. While it
+    runs, or for <grace> while it hasn't shown up, this waits up to <wait> seconds (HOSTED_REST_WAIT in a lane job, else
+    none); it waits on hosted Linux, which holds no Mac. Any doubt holds the merge."""
+    env = os.environ if env is None else env
+    if wait is None:
+        wait = HOSTED_REST_WAIT if env.get('GITHUB_ACTIONS') == 'true' else 0
+    name = f'"{HOSTED_WEB_CHECK}"'
+    try:
+        policy = base_policy(tree, base, 'scripts/test-scope.py')
+        required = getattr(policy, 'web_check_required', None)
+        if required is None or not required(committed_changes(tree, base)[0]):
+            return None, ''
+    except (OSError, subprocess.SubprocessError, ValueError) as error:
+        return 'INCONCLUSIVE', f'the runner could not tell whether {name} applies ({error!r})'
+    started = clock()
+
+    def done(verdict: str, line: str) -> tuple[str, str]:
+        note_step(HOSTED_WEB_STEP, verdict, clock() - started)
+        return verdict, line
+    while True:
+        stop = alive()
+        if stop:
+            return done('INCONCLUSIVE', stop)
+        try:
+            runs = json.loads(github.api(f'repos/{github.repo}/commits/{head}/check-runs?check_name='
+                                         f'{urllib.parse.quote(HOSTED_WEB_CHECK, safe="")}&filter=latest&per_page=50'))
+            # Only GitHub Actions' own runs: another app could post a check run with the same name.
+            runs = [run for run in runs.get('check_runs', []) if (run.get('app') or {}).get('slug') == 'github-actions']
+            run = max(runs, key=lambda run: (run.get('started_at') or '', run.get('id') or 0), default=None)
+        except (OSError, subprocess.SubprocessError, ValueError, AttributeError) as error:
+            run, why = None, f'the runner could not read {name} ({error!r})'
+        else:
+            why = f'no {name} check ran on {head[:7]}'
+        if run and run.get('status') == 'completed':
+            conclusion = run.get('conclusion')
+            where = f'{name} ended {conclusion} on {head[:7]}'
+            if conclusion == 'success':
+                return done('PASS', f'GitHub-hosted check {name}: PASS on this head. {run.get("html_url", "")}'.rstrip())
+            if conclusion in HOSTED_WEB_FAILED:
+                return done('FAIL', f'{where}. Its log is in the PR\'s checks; fix it and push.')
+            return done('INCONCLUSIVE', f'{where}: it ran out its 20-minute clock or was stopped, so it has no verdict. '
+                                        'Run it again, then remove and re-add automerge.')
+        if run:
+            why = f'{name} {NOT_FINISHED} on {head[:7]}'
+        if (not run and clock() - started >= grace) or clock() + poll > started + wait:
+            return done('INCONCLUSIVE', f'{why} (waited {duration(clock() - started)}). Remove and re-add automerge '
+                                        'to run it again.')
+        print(f'[lane] waiting for the hosted web check: {why}', file=out, flush=True)
+        sleep(poll)
+
+
 def hosted_checks_missing(why: str, fallback: str = NEEDS_MAC) -> tuple[str, str, str, list[str]]:
     """What a run that merges on the hosted checks returns when they don't stand: FAIL when one failed on this head
     (the PR's code, as the Mac's own run would have shown), else <fallback> with why."""
@@ -2152,6 +2217,13 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
                 f'not merged by the runner: {b}. It merges once a Codex or Claude audit '
                 'of its head says "No blocking findings".' for b in blockers] + (
                 [owner_tap_note(tap)] if tap else [])
+        web, line = hosted_web_check(github, ROOT, base, head, alive=lambda: pr_moved_on(github, head), wait=rest_wait)
+        if web == 'FAIL':
+            return 'FAIL', 'hosted checks', 'hosted web check: failed', details + [f'not merged: {line}']
+        if web and web != 'PASS':
+            return web, where, ran, details + [f'not merged: {line}']
+        if web:
+            details.append(line)
         now = github.pull()
         if now['head']['sha'] != head or AUTOMERGE not in {label['name'] for label in now.get('labels', [])} \
                 or now.get('state', 'open') != 'open':  # another run merged it meanwhile, or someone closed it
