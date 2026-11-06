@@ -39,59 +39,27 @@ public struct NormalizedSpeechText: Equatable, Sendable {
     }
 }
 
-/// The last long text's projection. A spoken item's text is projected on the main thread by every play, resume, seek
-/// and return from a Margin, and projecting walks all of it (#2256), though the answer depends only on the text. One
-/// entry, because a listener hears one item at a time; short texts skip it, as they are cheap and would evict the item.
-/// It holds the text and its offsets until the next long text replaces them, about 10 MB for a 1 MB text.
-final class SpeechProjectionMemo: @unchecked Sendable {
-    /// In UTF-8 bytes, which a native string knows without walking it.
-    static let minimumBytes = 2_000
-
-    private let lock = NSLock()
-    private var entry: (source: String, projection: NormalizedSpeechText)?
-
-    func projection(of source: String, compute: () -> NormalizedSpeechText) -> NormalizedSpeechText {
-        let bytes = source.utf8.count
-        guard bytes >= Self.minimumBytes else { return compute() }
-        // `==` calls canonically equivalent texts equal, and they project to different scalars: the byte count keeps
-        // a text in another normalization form from taking this one's answer.
-        if let held = lock.withLock({ entry }), held.source.utf8.count == bytes, held.source == source {
-            return held.projection
-        }
-        let projection = compute() // outside the lock: a second thread waits for nobody
-        lock.withLock { entry = (source, projection) }
-        return projection
-    }
-}
-
 public enum SpeechTextNormalizer {
-    private static let plainMemo = SpeechProjectionMemo()
-    private static let systemSpeechMemo = SpeechProjectionMemo()
-
     public static func normalize(_ source: String) -> String {
         normalizeWithSourceOffsets(source).text
     }
 
     public static func normalizeWithSourceOffsets(_ source: String) -> NormalizedSpeechText {
-        plainMemo.projection(of: source) {
-            var rendered = source.enumerated().map { MappedCharacter(character: $0.element, sourceOffset: $0.offset) }
+        var rendered = source.enumerated().map { MappedCharacter(character: $0.element, sourceOffset: $0.offset) }
 
-            rendered = projectAudibleContent(rendered)
-            return finish(rendered, sourceLength: source.count)
-        }
+        rendered = projectAudibleContent(rendered)
+        return finish(rendered, sourceLength: source.count)
     }
 
     /// Produces the conservative plain-text representation handed to Apple's
     /// system speech APIs. The source remains unchanged; every retained spoken
     /// character maps back to its original Character offset.
     public static func projectForSystemSpeech(_ source: String) -> NormalizedSpeechText {
-        systemSpeechMemo.projection(of: source) {
-            var rendered = source.enumerated().map { MappedCharacter(character: $0.element, sourceOffset: $0.offset) }
+        var rendered = source.enumerated().map { MappedCharacter(character: $0.element, sourceOffset: $0.offset) }
 
-            rendered = projectAudibleContent(rendered)
-            rendered = rendered.flatMap(systemSpeechCharacters)
-            return finish(rendered, sourceLength: source.count)
-        }
+        rendered = projectAudibleContent(rendered)
+        rendered = rendered.flatMap(systemSpeechCharacters)
+        return finish(rendered, sourceLength: source.count)
     }
 
     public static func isSystemSpeechSafe(_ text: String) -> Bool {

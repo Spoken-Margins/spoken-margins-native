@@ -61,7 +61,7 @@ final class PlayAndRecordStartCostTests: XCTestCase {
                 let beginTotals = meter.totals().values
                 let cancel = try milliseconds { _ = try engine.cancelInterjection(resumesSource: false) }
                 _ = try engine.endSession()
-                guard run > 0 else { firstStart = start; continue } // the first start fills SQLite's cache and the memo
+                guard run > 0 else { firstStart = start; continue } // the first start fills SQLite's cache
                 starts.append(start); begins.append(begin); cancels.append(cancel); pauses.append(pause); rates.append(rate)
                 startReads = startTotals.reduce(0) { $0 + $1.calls }; startRows = startTotals.reduce(0) { $0 + $1.rows }
                 beginReads = beginTotals.reduce(0) { $0 + $1.calls }; beginRows = beginTotals.reduce(0) { $0 + $1.rows }
@@ -134,101 +134,4 @@ private final class LockedFlag: @unchecked Sendable {
     private var isSet = false
     func set() { lock.withLock { isSet = true } }
     var value: Bool { lock.withLock { isSet } }
-}
-
-/// A spoken item's text is projected again by every play, resume and seek on the main thread, and the answer depends only
-/// on the text (#2256).
-final class SpeechProjectionMemoTests: XCTestCase {
-    private func answer(_ text: String) -> NormalizedSpeechText {
-        NormalizedSpeechText(text: text, sourceOffsets: [], sourceLength: text.count)
-    }
-
-    private let long = String(repeating: "A sentence long enough to matter. ", count: 100)
-
-    func testTheSameLongTextIsProjectedOnce() {
-        let memo = SpeechProjectionMemo()
-        var computed = 0
-        for _ in 0..<3 {
-            XCTAssertEqual(memo.projection(of: long) { computed += 1; return answer(long) }, answer(long))
-        }
-        XCTAssertEqual(computed, 1)
-    }
-
-    func testATextReadBackFromStorageWithItsOwnBytesStillMatches() {
-        let memo = SpeechProjectionMemo()
-        var computed = 0
-        _ = memo.projection(of: long) { computed += 1; return answer(long) }
-        let copy = String(decoding: Array(long.utf8), as: UTF8.self)
-        _ = memo.projection(of: copy) { computed += 1; return answer(copy) }
-        XCTAssertEqual(computed, 1)
-    }
-
-    /// Neighbouring inputs: each must get its own answer, never the held one.
-    func testNeighbouringTextsGetTheirOwnAnswer() {
-        let neighbours: [(String, String)] = [
-            ("one character more", long + "x"),
-            ("same length, last character differs", String(long.dropLast()) + "!"),
-            ("same length, first character differs", "B" + long.dropFirst()),
-            ("trailing whitespace", long + " "),
-            ("a newline for a space", long.replacingOccurrences(of: ". ", with: ".\n")),
-            ("much longer", long + long)
-        ]
-        for (name, other) in neighbours {
-            let memo = SpeechProjectionMemo()
-            _ = memo.projection(of: long) { answer(long) }
-            XCTAssertEqual(memo.projection(of: other) { answer(other) }, answer(other), name)
-        }
-    }
-
-    /// `==` calls these two equal, and they are not the same scalars, so they must not share an answer.
-    func testACanonicallyEquivalentTextInAnotherFormGetsItsOwnAnswer() {
-        let composed = String(repeating: "caf\u{E9} ", count: 500)
-        let decomposed = String(repeating: "cafe\u{301} ", count: 500)
-        XCTAssertEqual(composed, decomposed, "the case this test is about")
-        let memo = SpeechProjectionMemo()
-        _ = memo.projection(of: composed) { answer("composed") }
-        XCTAssertEqual(memo.projection(of: decomposed) { answer("decomposed") }.text, "decomposed")
-    }
-
-    func testAShortTextIsNeverHeldSoItCannotEvictTheItem() {
-        let memo = SpeechProjectionMemo()
-        var longComputed = 0, shortComputed = 0
-        _ = memo.projection(of: long) { longComputed += 1; return answer(long) }
-        for _ in 0..<2 {
-            _ = memo.projection(of: "A short Margin.") { shortComputed += 1; return answer("short") }
-        }
-        _ = memo.projection(of: long) { longComputed += 1; return answer(long) }
-        XCTAssertEqual(shortComputed, 2)
-        XCTAssertEqual(longComputed, 1)
-    }
-
-    /// The listener hears the same words at the same offsets from the memo as from a fresh projection, for texts that hit
-    /// each path through the normalizer.
-    func testEveryProjectionFromTheMemoMatchesAFreshOneInBothVoices() {
-        let openers = [
-            "Plain prose about a walk. ",
-            "See https://example.com/a?b=1 and mail me@example.com today. ",
-            "# A heading\n\n- a list item\n- another **bold** one\n\n",
-            "Caf\u{E9} \u{201C}quoted\u{201D} \u{2014} dash, emoji \u{1F600}, cafe\u{301} too. ",
-            "   \n\t  leading space and a [link](https://example.com) here. "
-        ]
-        for opener in openers {
-            let text = String(repeating: opener, count: SpeechProjectionMemo.minimumBytes / opener.utf8.count + 1)
-            // Each opener's text is new to the memo, so the first of each pair is computed and the second is held.
-            let fresh = SpeechTextNormalizer.normalizeWithSourceOffsets(text)
-            XCTAssertEqual(SpeechTextNormalizer.normalizeWithSourceOffsets(text), fresh, opener)
-            let freshSystem = SpeechTextNormalizer.projectForSystemSpeech(text)
-            XCTAssertEqual(SpeechTextNormalizer.projectForSystemSpeech(text), freshSystem, opener)
-        }
-    }
-
-    func testThePlainAndSystemSpeechProjectionsAreHeldApart() {
-        // A character system speech rewrites and plain projection keeps, so the two answers differ.
-        let text = String(repeating: "A line with an emoji \u{1F600} in it. ", count: 100)
-        let plain = SpeechTextNormalizer.normalizeWithSourceOffsets(text)
-        let system = SpeechTextNormalizer.projectForSystemSpeech(text)
-        XCTAssertNotEqual(plain.text, system.text, "the case this test is about")
-        XCTAssertEqual(SpeechTextNormalizer.normalizeWithSourceOffsets(text), plain)
-        XCTAssertEqual(SpeechTextNormalizer.projectForSystemSpeech(text), system)
-    }
 }
