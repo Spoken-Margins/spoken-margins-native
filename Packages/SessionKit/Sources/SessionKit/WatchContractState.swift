@@ -326,6 +326,43 @@ public struct WatchSessionModel: Codable, Equatable, Sendable {
         return nil
     }
 
+    // MARK: The item the phone is playing (#3494)
+
+    /// A time by the Watch's clock, on the phone's clock.
+    public func phoneTime(of watchTime: Date) -> Date {
+        guard let clock else { return watchTime }
+        return watchTime.addingTimeInterval(-clock.offset)
+    }
+
+    /// The item the phone has loaded, for the first screen: shown while the phone is reachable, or while its last board is
+    /// less than `WatchContract.nowPlayingStaleAfter` old. Nil when the board names no item, so Home stays the single Record.
+    public func nowPlaying(now: Date, phoneReachable: Bool) -> WatchNowPlaying? {
+        guard let playing = board?.nowPlaying, let received = boardReceivedAt else { return nil }
+        if phoneReachable { return playing }
+        return now.timeIntervalSince(received) <= WatchContract.nowPlayingStaleAfter ? playing : nil
+    }
+
+    /// Where the item is now, by the phone's clock as the Watch works it out. Nil when the board names no item.
+    public func nowPlayingPosition(now: Date) -> Int? {
+        board?.nowPlaying?.position(at: phoneTime(of: now))
+    }
+
+    /// The button just pressed, drawn at once: play and pause flip the board's play state, from where the item is now.
+    /// The phone's next board replaces it. A skip changes nothing here, since the phone says where it landed.
+    public mutating func noteTransport(_ transport: WatchTransport, now: Date) {
+        guard var playing = board?.nowPlaying else { return }
+        switch transport {
+        case .play, .pause:
+            let phoneNow = phoneTime(of: now)
+            playing.positionMs = playing.position(at: phoneNow)
+            playing.positionAt = phoneNow
+            playing.isPlaying = transport == .play
+        case .skipBack, .skipForward:
+            return
+        }
+        board?.nowPlaying = playing
+    }
+
     public func home(now: Date, phoneReachable: Bool) -> Home {
         if let (session, place) = running(now: now) {
             var asOf: Date?

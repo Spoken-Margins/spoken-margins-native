@@ -121,6 +121,24 @@ final class WatchLink: NSObject, ObservableObject {
         model.home(now: now, phoneReachable: isReachable)
     }
 
+    /// The item the phone is playing, when the board names one (#3494).
+    func nowPlaying(now: Date) -> WatchNowPlaying? {
+        model.nowPlaying(now: now, phoneReachable: isReachable)
+    }
+
+    func phoneTime(of watchTime: Date) -> Date {
+        model.phoneTime(of: watchTime)
+    }
+
+    /// Play, pause or skip the phone's item. The fast lane only: a command that waited on the sure lane would arrive
+    /// late and surprise the listener, so with the phone out of reach nothing is sent and nothing flips (#3494).
+    func sendTransport(_ transport: WatchTransport) {
+        guard isLoaded, isReachable, WCSession.isSupported(), WCSession.default.activationState == .activated else { return }
+        model.noteTransport(transport, now: Date())
+        saveState()
+        sendFast(.transport(transport))
+    }
+
     func startSession(kind: WatchSessionKind) {
         whenLoaded { self.startSessionNow(kind: kind) }
     }
@@ -155,16 +173,16 @@ final class WatchLink: NSObject, ObservableObject {
     // MARK: Margins
 
     /// A finished recording, closed on disk: it is held until the phone files it.
-    func record(_ finished: WatchMarginCapture.Finished, id: String, wallStart: Date) {
-        whenLoaded { self.recordNow(finished, id: id, wallStart: wallStart) }
+    func record(_ finished: WatchMarginCapture.Finished, id: String, wallStart: Date, itemTarget: WatchItemTarget? = nil) {
+        whenLoaded { self.recordNow(finished, id: id, wallStart: wallStart, itemTarget: itemTarget) }
     }
 
-    private func recordNow(_ finished: WatchMarginCapture.Finished, id: String, wallStart: Date) {
+    private func recordNow(_ finished: WatchMarginCapture.Finished, id: String, wallStart: Date, itemTarget: WatchItemTarget?) {
         let transfer = WatchMarginTransfer(
             id: id, wallStart: wallStart, durationMs: WatchContract.milliseconds(seconds: finished.duration),
             sessionId: model.sessionIdForMargin(now: wallStart),
             clock: model.clock.flatMap { $0.isFresh(at: wallStart) ? $0 : nil },
-            sha256: finished.sha256
+            sha256: finished.sha256, itemTarget: itemTarget
         )
         ledger.record(transfer, fileName: finished.url.lastPathComponent, now: Date())
         lastMarginId = id

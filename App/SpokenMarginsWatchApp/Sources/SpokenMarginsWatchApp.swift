@@ -65,9 +65,14 @@ enum WatchRoute: Hashable {
 
 /// Home: the state line and one big Record button. Below, reached with the crown: what's waiting, Start session or
 /// End, Resume, and the microphone test.
+///
+/// While the phone has an item loaded (#3494) the first screen is "On this episode" (big, blue), "On the session"
+/// (smaller, orange, only while a session runs) and a back, play or pause, forward row. With nothing loaded it is the
+/// single Record it always was. While recording, the screen names the target in large words and offers Stop and Discard.
 struct WatchHomeView: View {
     @EnvironmentObject private var link: WatchLink
     @StateObject private var recorder = WatchMarginRecorder()
+    @State private var asksToDiscard = false
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
@@ -75,11 +80,20 @@ struct WatchHomeView: View {
             let home = link.home(now: now)
             ScrollView {
                 VStack(spacing: 8) {
-                    stateLine(home, now: now)
-                    recordButton(home)
-                        .frame(height: 120)
+                    if recorder.isRecording {
+                        recordingScreen(home, now: now)
+                    } else {
+                        stateLine(home, now: now)
+                        if let playing = link.nowPlaying(now: now) {
+                            episodeButtons(playing, home)
+                            transportRow(playing)
+                        } else {
+                            recordButton(.session)
+                                .frame(height: 120)
+                        }
+                    }
                     statusLine(home, now: now)
-                    below(home, now: now)
+                    if !recorder.isRecording { below(home, now: now) }
                 }
                 .padding(.horizontal, 4)
             }
@@ -94,21 +108,132 @@ struct WatchHomeView: View {
             .accessibilityLabel(home.line(now: now))
     }
 
-    private func recordButton(_ home: WatchSessionModel.Home) -> some View {
+    /// Blue for the episode, orange for the session, always with the words and a different symbol (the owner is
+    /// red-green colour-blind).
+    private func tint(_ target: WatchRecordingTarget) -> Color {
+        target == .episode ? .blue : .orange
+    }
+
+    private func symbol(_ target: WatchRecordingTarget) -> String {
+        target == .episode ? "headphones" : "list.bullet.rectangle"
+    }
+
+    /// The single Record, with nothing loaded: it records for the session, as it always did.
+    private func recordButton(_ target: WatchRecordingTarget) -> some View {
         Button {
-            recorder.toggle()
+            recorder.toggle(target: target)
         } label: {
             VStack(spacing: 4) {
-                Image(systemName: recorder.isRecording ? "stop.fill" : "mic.fill")
+                Image(systemName: "mic.fill")
                     .font(.system(size: 40, weight: .semibold))
-                Text(recorder.isRecording ? "Stop" : "Record")
+                Text("Record")
                     .font(.headline)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        // Blue and orange, with the icon and word carrying the meaning too (the owner is red-green colour-blind).
-        .tint(recorder.isRecording ? .orange : .blue)
-        .accessibilityLabel(recorder.isRecording ? "Stop recording the spoken Margin" : "Record a spoken Margin")
+        .tint(.blue)
+        .accessibilityLabel("Record a spoken Margin")
+    }
+
+    /// "On this episode" is the big one; "On the session" is smaller and only there while a session runs.
+    @ViewBuilder
+    private func episodeButtons(_ playing: WatchNowPlaying, _ home: WatchSessionModel.Home) -> some View {
+        Text(playing.title)
+            .font(.footnote)
+            .lineLimit(2)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        targetButton(.episode, size: 90)
+        if home.session != nil {
+            targetButton(.session, size: 50)
+        }
+    }
+
+    private func targetButton(_ target: WatchRecordingTarget, size: CGFloat) -> some View {
+        Button {
+            recorder.toggle(target: target)
+        } label: {
+            Label(target.words, systemImage: "mic.fill")
+                .font(size > 60 ? .headline : .footnote.weight(.semibold))
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .frame(height: size)
+        .tint(tint(target))
+        .accessibilityLabel("Record a spoken Margin \(target.words.lowercased())")
+    }
+
+    private func transportRow(_ playing: WatchNowPlaying) -> some View {
+        HStack(spacing: 6) {
+            transportButton(.skipBack, symbol: "gobackward", label: "Back")
+            transportButton(
+                playing.isPlaying ? .pause : .play, symbol: playing.isPlaying ? "pause.fill" : "play.fill",
+                label: playing.isPlaying ? "Pause" : "Play"
+            )
+            transportButton(.skipForward, symbol: "goforward", label: "Forward")
+        }
+        .disabled(!link.isReachable)
+        .opacity(link.isReachable ? 1 : 0.4)
+    }
+
+    private func transportButton(_ transport: WatchTransport, symbol: String, label: String) -> some View {
+        Button {
+            link.sendTransport(transport)
+        } label: {
+            Image(systemName: symbol)
+                .frame(maxWidth: .infinity)
+        }
+        .accessibilityLabel(label)
+    }
+
+    /// While recording: the target in large words, how long, and Stop beside Discard (#3494).
+    @ViewBuilder
+    private func recordingScreen(_ home: WatchSessionModel.Home, now: Date) -> some View {
+        let target = recorder.plan?.target ?? .session
+        // Named whenever the listener had a choice to make when it began, so "which one did I click" is always answered.
+        let withTarget = recorder.choiceWasShown
+        if withTarget {
+            Label(target.words, systemImage: symbol(target))
+                .font(.title3.weight(.bold))
+                .foregroundStyle(tint(target))
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity)
+                .accessibilityLabel("Recording \(target.words.lowercased())")
+        }
+        Button {
+            recorder.toggle(target: target)
+        } label: {
+            VStack(spacing: 4) {
+                Image(systemName: "stop.fill")
+                    .font(.system(size: 36, weight: .semibold))
+                Text("Stop")
+                    .font(.headline)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .frame(height: 100)
+        .tint(withTarget ? tint(target) : .orange)
+        .accessibilityLabel("Stop recording the spoken Margin")
+        Button(role: .destructive) {
+            discardTapped(now: now)
+        } label: {
+            Label("Discard", systemImage: "trash")
+                .frame(maxWidth: .infinity)
+        }
+        .accessibilityLabel("Discard this recording")
+        .confirmationDialog("Discard this Margin?", isPresented: $asksToDiscard) {
+            Button("Discard", role: .destructive) { recorder.discardRecording() }
+            Button("Keep recording", role: .cancel) {}
+        }
+    }
+
+    /// A short clip is thrown away at once; a longer one asks first (#3494).
+    private func discardTapped(now: Date) {
+        guard case .recording(let since) = recorder.state else { return }
+        let plan = recorder.plan ?? WatchRecordingPlan(target: .session)
+        if plan.discardAsks(afterRecording: now.timeIntervalSince(since)) {
+            asksToDiscard = true
+        } else {
+            recorder.discardRecording()
+        }
     }
 
     @ViewBuilder
@@ -119,9 +244,11 @@ struct WatchHomeView: View {
             VStack(spacing: 2) {
                 Label(String(format: "Recording %d:%02d", elapsed / 60, elapsed % 60), systemImage: "mic")
                     .font(.footnote.monospacedDigit())
-                Text((home.session?.kind ?? .other).hint)
-                    .font(.footnote)
-                    .multilineTextAlignment(.center)
+                if recorder.plan?.target != .episode {
+                    Text((home.session?.kind ?? .other).hint)
+                        .font(.footnote)
+                        .multilineTextAlignment(.center)
+                }
             }
         case .failed(let message):
             Label(message, systemImage: "exclamationmark.triangle")
