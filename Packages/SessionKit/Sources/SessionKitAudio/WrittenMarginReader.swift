@@ -54,6 +54,9 @@ public final class WrittenMarginReader: @unchecked Sendable {
 
     private let directory: URL
     private let voiceIdentifier: String?
+    private let onDevice: WrittenMarginOnDeviceStage?
+    private let onDeviceRunner = WrittenMarginOnDeviceRunner()
+    private var cancellations: [String: RenderCancellation] = [:] // by file path, while the render runs
     private let renderAudio: @Sendable (_ spokenText: String, _ scratch: URL, _ voice: String?) throws -> URL
     /// True for the iPhone voice: the voice is then chosen from the note's language. A test renderer is given none.
     private let picksVoice: Bool
@@ -87,6 +90,7 @@ public final class WrittenMarginReader: @unchecked Sendable {
         mostStuckRenders: Int = WrittenMarginReader.defaultMostStuckRenders,
         recheckAfter: TimeInterval = 5,
         voiceForNote: (@Sendable (_ note: String) -> String?)? = nil,
+        onDevice: WrittenMarginOnDeviceStage? = nil,
         audioSeconds: @escaping @Sendable (URL) -> Double? = { (try? AVAudioFile(forReading: $0)).map { Double($0.length) / $0.processingFormat.sampleRate } },
         renderAudio: (@Sendable (_ spokenText: String, _ scratch: URL) throws -> URL)? = nil
     ) {
@@ -94,9 +98,11 @@ public final class WrittenMarginReader: @unchecked Sendable {
         self.audioSeconds = audioSeconds
         self.directory = directory
         self.voiceIdentifier = voiceIdentifier
+        self.onDevice = onDevice
         self.mostStuck = mostStuckRenders
         self.recheckAfter = recheckAfter
-        self.timeLimit = timeLimit ?? { WrittenMarginReader.defaultTimeLimit(forCharacters: $0.count) }
+        let baseLimit = timeLimit ?? { WrittenMarginReader.defaultTimeLimit(forCharacters: $0.count) }
+        self.timeLimit = { baseLimit($0) + (onDevice?.budget ?? 0) } // the on-device try's budget comes before the iPhone voice's render
         self.picksVoice = renderAudio == nil || voiceForNote != nil
         if let renderAudio {
             self.renderAudio = { text, scratch, _ in try renderAudio(text, scratch) }
@@ -112,10 +118,17 @@ public final class WrittenMarginReader: @unchecked Sendable {
         }
     }
 
+    /// The listener skipped this Margin: an on-device render of it stops at its next step, and no file is kept. A reading
+    /// whose render is already past that try (the iPhone voice's) finishes as before.
+    public func cancelOnDevice(_ reading: WrittenMarginReading) {
+        let cancel = lock.withLock { cancellations[fileURL(for: reading).path] }
+        cancel?.cancel()
+    }
+
     /// Where this reading's file is, or will be. Pure: no disk access. The name starts with the item's key, so everything
     /// rendered for an item can be found and removed without knowing its words.
     public func fileURL(for reading: WrittenMarginReading) -> URL {
-        let seed = ["written-margin-reading-v2", voiceIdentifier ?? "default", reading.spokenText].joined(separator: "\u{1f}")
+        let seed = ["written-margin-reading-v2", voiceIdentifier ?? onDevice.map { "on-device:\($0.key)" } ?? "default", reading.spokenText].joined(separator: "\u{1f}")
         return directory.appending(path: "\(Self.itemKey(reading.itemId))-\(Self.fingerprint(seed)).caf", directoryHint: .notDirectory)
     }
 
@@ -426,12 +439,25 @@ public final class WrittenMarginReader: @unchecked Sendable {
         let scratch = directory.appending(path: "scratch-\(UUID().uuidString)", directoryHint: .isDirectory)
         try fileManager.createDirectory(at: scratch, withIntermediateDirectories: true)
         defer { try? fileManager.removeItem(at: scratch) }
-        let voice = picksVoice ? (voiceIdentifier ?? chooseVoice(reading.text)) : voiceIdentifier
-        if picksVoice, voice == nil { throw RenderError.noVoice } // no installed voice can read all of it: no reading, not a fragment
-        let rendered = try renderAudio(reading.spokenText, scratch, voice)
-        if picksVoice, let voice, try !isLongerThanTheIntro(rendered, reading: reading, voice: voice, scratch: scratch) {
-            throw RenderError.nothingToSay
+        var rendered: URL?
+        if let onDevice {
+            // The listener's chosen voice first, within its budget; a slow or failed try falls through to the iPhone voice
+            // below, so a reading is never silence. A skip (`cancelOnDevice`) throws and falls back to nothing.
+            let cancel = RenderCancellation()
+            lock.withLock { cancellations[target.path] = cancel }
+            defer { lock.withLock { _ = cancellations.removeValue(forKey: target.path) } }
+            rendered = try onDeviceRunner.attempt(onDevice, text: reading.spokenText, note: reading.text, scratch: scratch, cancel: cancel)
         }
+        if rendered == nil {
+            let voice = picksVoice ? (voiceIdentifier ?? chooseVoice(reading.text)) : voiceIdentifier
+            if picksVoice, voice == nil { throw RenderError.noVoice } // no installed voice can read all of it: no reading, not a fragment
+            let file = try renderAudio(reading.spokenText, scratch, voice)
+            if picksVoice, let voice, try !isLongerThanTheIntro(file, reading: reading, voice: voice, scratch: scratch) {
+                throw RenderError.nothingToSay
+            }
+            rendered = file
+        }
+        guard let rendered else { throw RenderError.nothingToSay }
         if fileManager.fileExists(atPath: target.path) { return target } // another render of these words got there first
         // The item was deleted for good while this rendered: its words go no further than the scratch folder.
         if lock.withLock({ doomed.contains(target.path) }) { throw RenderError.nothingToSay }
