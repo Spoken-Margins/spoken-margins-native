@@ -28,6 +28,8 @@ extension LiveSessionFileWorker {
             withdraw(watchMarginId: id)
         case .transport:
             break // the app runs it on the player; nothing here changes
+        case .diagnostics:
+            break // kept by the phone's receiver, which has the file; nothing in a session changes
         }
         if !changed.isEmpty {
             for session in changed {

@@ -232,6 +232,7 @@ targets:
       - path: Packages/SessionKit/Sources/SessionKit/ListenerErrorText.swift
       - path: Packages/SessionKit/Sources/SessionKit/WatchContract.swift
       - path: Packages/SessionKit/Sources/SessionKit/WatchContractState.swift
+      - path: Packages/SessionKit/Sources/SessionKit/WatchDiagnostics.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native.watchkitapp

@@ -199,6 +199,11 @@ final class WatchMarginReceiver: NSObject {
         // A transport command runs at once, before any filing pass under way: a pause that waits is a pause that is late (#3494).
         // The sure lane repeats every message and may deliver a late copy, so only the fast lane runs one (#3494).
         if fastLane, let transport = envelope.transportToRun(now: now()) { runTransport(transport) }
+        // The Watch's own record (#3506) goes to a file for the Diagnostics export; it is small and not a session change.
+        if case .diagnostics(let report) = envelope.message, let file = WatchDiagnosticsStore.defaultFileURL {
+            // A small file write, off the main thread; an older copy arriving late never replaces a newer one.
+            Task.detached(priority: .utility) { WatchDiagnosticsStore.save(report, to: file) }
+        }
         let previous = lastPass
         let files = files
         let work = Task { [weak self] () -> (WatchPhoneReply, [LiveSessionFileWorker.FiledMargin]) in
@@ -217,7 +222,7 @@ final class WatchMarginReceiver: NSObject {
             case .sessionStart, .sessionEnd, .sessionResume, .withdraw:
                 self.announceChange()
                 LiveSessionBoard.shared.refresh()
-            case .hello, .marginDetails, .transport:
+            case .hello, .marginDetails, .transport, .diagnostics:
                 break // a transport command was run on arrival, above (#3494)
             }
             return (reply, filed)
