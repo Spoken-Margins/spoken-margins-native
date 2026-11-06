@@ -132,11 +132,14 @@ final class WatchLink: NSObject, ObservableObject {
 
     /// Play, pause or skip the phone's item. The fast lane only: a command that waited on the sure lane would arrive
     /// late and surprise the listener, so with the phone out of reach nothing is sent and nothing flips (#3494).
-    func sendTransport(_ transport: WatchTransport) {
-        guard isLoaded, isReachable, WCSession.isSupported(), WCSession.default.activationState == .activated else { return }
+    /// True when it was sent.
+    @discardableResult
+    func sendTransport(_ transport: WatchTransport) -> Bool {
+        guard isLoaded, isReachable, WCSession.isSupported(), WCSession.default.activationState == .activated else { return false }
         model.noteTransport(transport, now: Date())
         saveState()
         sendFast(.transport(transport))
+        return true
     }
 
     func startSession(kind: WatchSessionKind) {

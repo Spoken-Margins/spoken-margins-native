@@ -80,10 +80,10 @@ struct WatchHomeView: View {
             let home = link.home(now: now)
             ScrollView {
                 VStack(spacing: 8) {
+                    stateLine(home, now: now)
                     if recorder.isRecording {
                         recordingScreen(home, now: now)
                     } else {
-                        stateLine(home, now: now)
                         if let playing = link.nowPlaying(now: now) {
                             episodeButtons(playing, home)
                             transportRow(playing)
@@ -93,7 +93,7 @@ struct WatchHomeView: View {
                         }
                     }
                     statusLine(home, now: now)
-                    if !recorder.isRecording { below(home, now: now) }
+                    below(home, now: now)
                 }
                 .padding(.horizontal, 4)
             }
@@ -198,27 +198,35 @@ struct WatchHomeView: View {
                 .frame(maxWidth: .infinity)
                 .accessibilityLabel("Recording \(target.words.lowercased())")
         }
-        Button {
-            recorder.toggle(target: target)
-        } label: {
-            VStack(spacing: 4) {
-                Image(systemName: "stop.fill")
-                    .font(.system(size: 36, weight: .semibold))
-                Text("Stop")
-                    .font(.headline)
+        // Stop and Discard side by side: Stop is the wide one, Discard one tap away from it (#3494).
+        HStack(spacing: 6) {
+            Button {
+                recorder.toggle(target: target)
+            } label: {
+                VStack(spacing: 4) {
+                    Image(systemName: "stop.fill")
+                        .font(.system(size: 30, weight: .semibold))
+                    Text("Stop")
+                        .font(.headline)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .tint(withTarget ? tint(target) : .orange)
+            .accessibilityLabel("Stop recording the spoken Margin")
+            Button(role: .destructive) {
+                discardTapped(now: now)
+            } label: {
+                VStack(spacing: 4) {
+                    Image(systemName: "trash")
+                        .font(.system(size: 20, weight: .semibold))
+                    Text("Discard")
+                        .font(.footnote)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            .accessibilityLabel("Discard this recording")
         }
         .frame(height: 100)
-        .tint(withTarget ? tint(target) : .orange)
-        .accessibilityLabel("Stop recording the spoken Margin")
-        Button(role: .destructive) {
-            discardTapped(now: now)
-        } label: {
-            Label("Discard", systemImage: "trash")
-                .frame(maxWidth: .infinity)
-        }
-        .accessibilityLabel("Discard this recording")
         .confirmationDialog("Discard this Margin?", isPresented: $asksToDiscard) {
             Button("Discard", role: .destructive) { recorder.discardRecording() }
             Button("Keep recording", role: .cancel) {}

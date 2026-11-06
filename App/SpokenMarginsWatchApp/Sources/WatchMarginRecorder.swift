@@ -66,11 +66,12 @@ final class WatchMarginRecorder: ObservableObject {
             currentId = id
             let now = Date()
             // Record pauses the phone's item, as a Margin on the phone does (#3494).
-            let plan = WatchRecordingPlan.begin(target: target, nowPlaying: link.nowPlaying(now: now), phoneNow: link.phoneTime(of: now))
+            var plan = WatchRecordingPlan.begin(target: target, nowPlaying: link.nowPlaying(now: now), phoneNow: link.phoneTime(of: now))
+            // A pause that never left the Watch (the phone out of reach) is not ours to undo later with a Play.
+            if let pause = plan.pauseOnStart, !link.sendTransport(pause) { plan.pausedPhone = false }
             self.plan = plan
             choiceWasShown = link.nowPlaying(now: now) != nil
             state = .recording(since: now)
-            if let pause = plan.pauseOnStart { link.sendTransport(pause) }
         } catch {
             state = .failed(ListenerErrorText.line(prefix: "Couldn't start recording:", error: error))
         }

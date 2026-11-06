@@ -45,8 +45,8 @@ public struct WatchRecordingPlan: Equatable, Sendable {
     public var pauseOnStart: WatchTransport? { pausedPhone ? .pause : nil }
 
     /// The command to send when recording ends (Stop or Discard): play again, but only if the Watch paused it, and not
-    /// when the board now shows another item or none (the listener moved on). A board still showing the same item, even
-    /// playing, gets `play`, which a playing phone ignores.
+    /// when the board now names another item (the listener moved on). A board that is missing, or still shows the same
+    /// item even playing, gets `play`, which a playing phone ignores.
     public func resumeOnEnd(nowPlaying current: WatchNowPlaying?) -> WatchTransport? {
         guard pausedPhone else { return nil }
         if let current, let pausedItemId, current.itemId != pausedItemId { return nil }
