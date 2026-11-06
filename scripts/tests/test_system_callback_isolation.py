@@ -13,17 +13,27 @@ sys.path.insert(0, str(SCRIPTS))
 import system_callback_isolation as sci  # noqa: E402
 
 
+TREE = None
+
+
+def tree_rows():
+    global TREE
+    if TREE is None:
+        TREE = sci.scan(sci.tree_sources())
+    return TREE
+
+
 def rows(source):
     return [(api, problem) for _, _, api, problem in sci.scan([('App/X/Sources/X.swift', source)])]
 
 
 class SystemCallbackIsolationTests(unittest.TestCase):
     def test_the_tree_has_no_unallowed_row(self):
-        bad = sci.unallowed(sci.scan(sci.tree_sources()))
+        bad = sci.unallowed(tree_rows())
         self.assertEqual(bad, [], '\n'.join(f'{p}:{n}: {a}: {m}' for p, n, a, m in bad))
 
     def test_every_allowance_still_names_a_row(self):
-        seen = {(path, api) for path, _, api, _ in sci.scan(sci.tree_sources())}
+        seen = {(path, api) for path, _, api, _ in tree_rows()}
         self.assertEqual(sorted(set(sci.ALLOWED) - seen), [], 'a stale ALLOWED entry: remove it')
 
     def test_the_watch_reply_before_its_fix_is_a_row(self):
@@ -52,6 +62,27 @@ class SystemCallbackIsolationTests(unittest.TestCase):
         self.assertEqual(rows('session.sendMessage(message, replyHandler: nil, errorHandler: nil)'), [])
         self.assertEqual(rows('// remote.addTarget { _ in .success }\nlet s = "x.sendMessage(m) { e in }"'), [])
         self.assertEqual(rows('/* MPMediaItemArtwork(boundsSize: s) { _ in image } */'), [])
+        self.assertEqual(rows('let a = #"he said "x.addTarget { _ in .success }" "#'), [])
+        self.assertEqual(rows('let a = """\n  x.addTarget { _ in .success }\n  """'), [])
+        self.assertEqual(len(rows('let a = #"\\"#; remote.addTarget { _ in .success }')), 1)
+
+    def test_an_allowance_covers_only_its_count(self):
+        path, api = next(iter(sci.ALLOWED))
+        count = sci.ALLOWED[(path, api)][0]
+        same = [(path, n, api, 'x') for n in range(count)]
+        self.assertEqual(sci.unallowed(same), [])
+        self.assertEqual(len(sci.unallowed(same + [(path, 999, api, 'x')])), count + 1)
+
+    def test_background_task_launch_handler_off_main(self):
+        call = 'BGTaskScheduler.shared.register(forTaskWithIdentifier: id, using: nil) { task in self.run(task) }'
+        self.assertEqual(len(rows(call)), 1)
+        self.assertEqual(rows(call.replace('using: nil', 'using: .main')), [])
+        self.assertEqual(rows(call.replace('{ task in', '{ @Sendable task in')), [])
+
+    def test_record_permission_callback(self):
+        self.assertEqual(len(rows('AVAudioApplication.requestRecordPermission { granted in self.granted = granted }')), 1)
+        self.assertEqual(rows('AVAudioApplication.requestRecordPermission { @Sendable granted in c.resume(returning: granted) }'), [])
+        self.assertEqual(rows('let ok = await AVAudioApplication.requestRecordPermission()'), [])
 
     def test_both_closures_of_send_message_are_checked(self):
         found = rows('session.sendMessage(m, replyHandler: { @Sendable r in }) { error in print(error) }')
@@ -70,6 +101,8 @@ class SystemCallbackIsolationTests(unittest.TestCase):
         self.assertEqual(rows(hopped), [])
         self.assertEqual(rows('.onReceive(NotificationCenter.default.publisher(for: AVAudioSession.routeChangeNotification)) { _ in x() }'),
                          [('NotificationCenter.publisher', 'posted off the main thread: add `.receive(on:)`')])
+        swift_name = 'NotificationCenter.default.publisher(for: AVPlayerItem.didPlayToEndTimeNotification).sink { _ in }'
+        self.assertEqual(len(rows(swift_name)), 1)
         main_posted = 'NotificationCenter.default.publisher(for: UIApplication.willTerminateNotification).sink { _ in }'
         self.assertEqual(rows(main_posted), [])
 

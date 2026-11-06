@@ -12,8 +12,10 @@ isolation checks, the only system callbacks that can arrive off the main thread 
 and MediaPlayer's remote-command handlers. This scan keeps new ones out. It knows two shapes:
 
 1. A closure handed to one of CALLBACK_APIS must be a literal that starts `{ @Sendable`, so the compiler makes the
-   body hop to the main actor itself (`Task { @MainActor in … }`). A `nil` is fine; a named function or variable
-   is a row, because the scan can't see its type.
+   body hop to the main actor itself (`Task { @MainActor in … }`). A `nil` is fine, and so is a `.main` queue where
+   the API takes one (`using: .main`); a named function or variable is a row, because the scan can't see its type.
+   Background Tasks and the record-permission callbacks aren't in the inventory's unsafe list today (each site is
+   on main or nonisolated) but are listed because they call off the main thread.
 2. A notification that is posted off the main thread (OFF_MAIN_NOTIFICATIONS) must reach main-actor code through a
    hop. A Combine publisher of one needs `.receive(on:)` before its `sink` (whose closure isn't `@Sendable`). An
    `addObserver(forName:)` block is `@Sendable` in the SDK, so the trap there is `MainActor.assumeIsolated` without
@@ -36,11 +38,17 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
-# name: (where the call starts, labels whose closures are checked; the trailing closure always is).
+# name: (where the call starts, labels whose closures are checked, the queue label that `.main` makes safe). The
+# trailing closure is always checked.
 CALLBACK_APIS = {
-    'MPRemoteCommand.addTarget(handler:)': (r'\.addTarget\s*(?=\(\s*handler\s*:|\{)', ('handler',)),
-    'WCSession.sendMessage': (r'\.sendMessage(?:Data)?\s*(?=\()', ('replyHandler', 'errorHandler')),
-    'MPMediaItemArtwork(boundsSize:requestHandler:)': (r'\bMPMediaItemArtwork\s*(?=\(\s*boundsSize)', ('requestHandler',)),
+    'MPRemoteCommand.addTarget(handler:)': (r'\.addTarget\s*(?=\(\s*handler\s*:|\{)', ('handler',), None),
+    'WCSession.sendMessage': (r'\.sendMessage(?:Data)?\s*(?=\()', ('replyHandler', 'errorHandler'), None),
+    'MPMediaItemArtwork(boundsSize:requestHandler:)':
+        (r'\bMPMediaItemArtwork\s*(?=\(\s*boundsSize)', ('requestHandler',), None),
+    'BGTaskScheduler.register(forTaskWithIdentifier:using:launchHandler:)':
+        (r'\.register\s*(?=\(\s*forTaskWithIdentifier\s*:)', ('launchHandler',), 'using'),
+    'requestRecordPermission(_:)': (r'\.requestRecordPermission\s*(?=\(\s*(?:completionHandler\s*:|\{)|\{)',
+                                    ('completionHandler',), None),
 }
 
 OFF_MAIN_NOTIFICATIONS = (
@@ -49,15 +57,21 @@ OFF_MAIN_NOTIFICATIONS = (
     'mediaServicesWereResetNotification', 'silenceSecondaryAudioHintNotification', 'AVAudioEngineConfigurationChange',
     'AVPlayerItemDidPlayToEndTime', 'AVPlayerItemFailedToPlayToEndTime', 'AVPlayerItemPlaybackStalled',
     'AVPlayerItemTimeJumped', 'AVPlayerItemNewErrorLogEntry', 'AVPlayerItemNewAccessLogEntry',
+    'didPlayToEndTimeNotification', 'failedToPlayToEndTimeNotification', 'playbackStalledNotification',
+    'timeJumpedNotification', 'newErrorLogEntryNotification', 'newAccessLogEntryNotification',
+    'configurationChangeNotification',
 )
 NOTIFICATION = r'(?:\.|\b)(?:' + '|'.join(OFF_MAIN_NOTIFICATIONS) + r')\b'
 
-# (file, api): why the site is safe without `@Sendable`. Keep each reason to what makes it safe.
+# (file, api): (how many rows, why they are safe without `@Sendable`). A further row in the same file still fails.
 ALLOWED = {
-    ('Packages/SessionKit/Sources/SessionKitAudio/AudioAdapters.swift', 'MPRemoteCommand.addTarget(handler:)'):
+    ('Packages/SessionKit/Sources/SessionKitAudio/AudioAdapters.swift', 'MPRemoteCommand.addTarget(handler:)'): (1,
         'AVPlayerStreamPlaybackClient is a nonisolated @unchecked Sendable class: its handlers are not main-actor '
-        'code and carry no isolation check (absent from the #3513 binary inventory).',
+        'code and carry no isolation check (absent from the #3513 binary inventory).'),
 }
+# A file that names none of these can't have a row; skipping it keeps the scan to a second.
+MENTIONS = re.compile(r'addTarget|sendMessage|MPMediaItemArtwork|forTaskWithIdentifier|requestRecordPermission|'
+                      r'Notification\b|' + '|'.join(OFF_MAIN_NOTIFICATIONS))
 
 
 def blank_comments_and_strings(text: str) -> str:
@@ -70,18 +84,20 @@ def blank_comments_and_strings(text: str) -> str:
         elif text.startswith('/*', i):
             end = text.find('*/', i + 2)
             end = n if end < 0 else end + 2
-        elif text[i] == '"':
-            fence = '"""' if text.startswith('"""', i) else '"'
-            end, j = n, i + len(fence)
+        elif text[i] == '"' or (text[i] == '#' and re.match(r'#+"', text[i:])):
+            hashes = len(text[i:]) - len(text[i:].lstrip('#'))
+            quote = '"""' if text.startswith('"""', i + hashes) else '"'
+            opening, closing, escape = '#' * hashes + quote, quote + '#' * hashes, '\\' + '#' * hashes
+            end, j = n, i + len(opening)
             while j < n:
-                if text[j] == '\\':
-                    j += 2
+                if text.startswith(escape, j):
+                    j += len(escape) + 1
                     continue
-                if text.startswith(fence, j) or (fence == '"' and text[j] == '\n'):
-                    end = j + len(fence)
+                if text.startswith(closing, j) or (quote == '"' and text[j] == '\n'):
+                    end = j + len(closing)
                     break
                 j += 1
-            for k in range(i + len(fence), max(i + len(fence), end - len(fence))):
+            for k in range(i + len(opening), max(i + len(opening), end - len(closing))):
                 if out[k] != '\n':
                     out[k] = ' '
             i = end
@@ -133,11 +149,14 @@ def labelled_arguments(text: str, paren: int):
 
 def callback_rows(path: str, text: str):
     rows = []
-    for api, (pattern, labels) in CALLBACK_APIS.items():
+    for api, (pattern, labels, queue_label) in CALLBACK_APIS.items():
         for match in re.finditer(pattern, text):
             at, closures = match.end(), []
             if text[at] == '(':
                 args, end = labelled_arguments(text, at)
+                queue = dict(args).get(queue_label)
+                if queue is not None and re.match(r'(?:\.main|DispatchQueue\.main|OperationQueue\.main)\b', text[queue:]):
+                    continue
                 for label, value in args:
                     if label not in labels:
                         continue
@@ -203,8 +222,9 @@ def scan(sources):
     """Rows for (path, text) pairs: (path, line, api, problem)."""
     rows = []
     for path, text in sources:
-        clean = blank_comments_and_strings(text)
-        rows += callback_rows(path, clean) + notification_rows(path, clean)
+        if MENTIONS.search(text):
+            clean = blank_comments_and_strings(text)
+            rows += callback_rows(path, clean) + notification_rows(path, clean)
     return sorted(rows)
 
 
@@ -219,7 +239,11 @@ def tree_sources(root: Path = ROOT):
 
 
 def unallowed(rows):
-    return [row for row in rows if (row[0], row[2]) not in ALLOWED]
+    """Rows ALLOWED doesn't cover: all of a (file, api) pair's rows once it has more than its count."""
+    counts = {}
+    for path, _, api, _ in rows:
+        counts[(path, api)] = counts.get((path, api), 0) + 1
+    return [row for row in rows if counts[(row[0], row[2])] > ALLOWED.get((row[0], row[2]), (0, ''))[0]]
 
 
 def main(argv=None):
@@ -229,7 +253,7 @@ def main(argv=None):
     rows = scan(tree_sources())
     if args.list:
         for path, line, api, problem in rows:
-            reason = ALLOWED.get((path, api))
+            reason = ALLOWED.get((path, api), (0, ''))[1]
             print(f'{path}:{line}: {api}: ' + (f'allowed: {reason}' if reason else problem))
         return 0
     bad = unallowed(rows)

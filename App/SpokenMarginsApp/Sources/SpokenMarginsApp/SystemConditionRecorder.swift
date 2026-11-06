@@ -56,7 +56,6 @@ final class SystemConditionRecorder {
             .store(in: &subscriptions)
         #if canImport(UIKit)
         NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)
-            .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.recordMemoryWarning() }
             .store(in: &subscriptions)
         #endif
