@@ -78,10 +78,10 @@ public enum DiagnosticsExport {
     /// two exports of one library share no tokens. Inside one export the same id gives the same token in a key
     /// and in a value, so entries about one item still line up.
     public static func token(_ id: String, salt: Data? = nil) -> String {
-        var input = Data()
-        if let salt { input.append(salt) }
-        input.append(Data(id.utf8))
-        return SHA256.hash(data: input).prefix(6).map { String(format: "%02x", $0) }.joined()
+        // The salt goes in as hex text in front of the id, so this stays the plain `SHA256.hash(data: Data(x.utf8))`
+        // shape that scripts/main_thread_reads.py knows is a short in-memory hash, not file work.
+        let combined = (salt?.map { String(format: "%02x", $0) }.joined() ?? "") + id
+        return SHA256.hash(data: Data(combined.utf8)).prefix(6).map { String(format: "%02x", $0) }.joined()
     }
 
     /// A fresh salt for one export.
@@ -142,21 +142,21 @@ public enum DiagnosticsExport {
     /// value. Item ids leave as a token, so entries about one item still line up.
     public static func redactedValue(_ value: String, salt: Data? = nil) -> String {
         var text = value.replacingOccurrences(of: #"https?://[^\s]+"#, with: "<redacted-url>", options: .regularExpression)
-        text = replace(pathPattern, in: text) { _ in "<redacted-path>" }
-        text = replace(quotedFileNamePattern, in: text) { match in "\(match[1])<redacted-file>\(match[2])" }
+        text = substitutingMatches(pathPattern, in: text) { _ in "<redacted-path>" }
+        text = substitutingMatches(quotedFileNamePattern, in: text) { match in "\(match[1])<redacted-file>\(match[2])" }
         return itemIdsAsTokens(text, salt: salt)
     }
 
     /// Item ids and session ids in text, as `<id:token>`. The token form holds no `item-`, so a second pass
     /// leaves it alone. JSON text stays valid: an id holds no quote, backslash or control character.
     static func itemIdsAsTokens(_ text: String, salt: Data?) -> String {
-        replace(itemIdPattern, in: text) { match in "<id:\(token(match[0], salt: salt))>" }
+        substitutingMatches(itemIdPattern, in: text) { match in "<id:\(token(match[0], salt: salt))>" }
     }
 
     /// A record-time token is hashed again with this export's salt, so an event log written before the salt
     /// existed can't be checked against a guessed title either (#3548). An all-digit run is a number, not a token.
     static func resaltedRecordTokens(_ text: String, salt: Data) -> String {
-        replace(recordTokenPattern, in: text) { match in
+        substitutingMatches(recordTokenPattern, in: text) { match in
             match[0].contains(where: { $0.isLetter }) ? token(match[0], salt: salt) : match[0]
         }
     }
@@ -168,7 +168,7 @@ public enum DiagnosticsExport {
     }
 
     /// Replaces each match; `match[0]` is the whole match, the rest are its capture groups.
-    private static func replace(_ regex: NSRegularExpression, in text: String, with make: ([String]) -> String) -> String {
+    private static func substitutingMatches(_ regex: NSRegularExpression, in text: String, with make: ([String]) -> String) -> String {
         let ns = text as NSString
         var out = ""
         var cursor = 0
