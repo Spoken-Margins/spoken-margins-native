@@ -5,7 +5,7 @@ import XCTest
 /// Model-written Listening Map text leaves the device only for a source marked public (#3449).
 final class MapTextDisclosureTests: XCTestCase {
     private let address = "https://example.com/posts/harbour-lights"
-    private let checkedAt = Date(timeIntervalSince1970: 1_800_000_000)
+    private let checkedAt = Date()
 
     // MARK: Which sources can have the mark
 
@@ -115,6 +115,13 @@ final class MapTextDisclosureTests: XCTestCase {
     }
 
     // MARK: Helpers
+
+    func testTheReviewNoteIsPlainAndOnlyShownWhenSomethingStays() {
+        XCTAssertNil(MapTextDisclosure.withheldNote(sceneCount: 0))
+        XCTAssertTrue(MapTextDisclosure.withheldNote(sceneCount: 1)?.contains("1 scene are left out") == true)
+        XCTAssertTrue(MapTextDisclosure.withheldNote(sceneCount: 7)?.contains("7 scenes are left out") == true)
+        XCTAssertTrue(MapTextDisclosure.withheldNote(sceneCount: 7)?.hasPrefix("Scene summaries stay on this phone.") == true)
+    }
 
     private func item(reference: String? = "https://example.com/posts/harbour-lights", type: String? = "url", marked: String?) -> Item {
         var item = Item(id: "item-1", title: "Harbour Lights", mediaType: "text", text: nil, externalReference: reference,
