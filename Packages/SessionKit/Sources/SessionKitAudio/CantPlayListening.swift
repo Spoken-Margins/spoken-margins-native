@@ -20,30 +20,31 @@ public enum CantPlayListening {
 
     // MARK: Whether to take this path
 
-    /// What is known about an item's episode at the moment of asking. A download's state is never part of it: a download
-    /// fails when a saved file is missing, short or its transfer dropped, and in all of those the episode still streams.
-    public struct Episode: Equatable, Sendable {
-        /// A downloaded or imported file is on the phone now.
-        public let hasSavedAudio: Bool
-        /// The start has been silent past the stall limit (the playback screen's 30 seconds).
-        public let startStalled: Bool
-        /// The player itself reported that the start or the playback failed (`PlaybackStatus.failed`), for this item.
-        public let playerFailed: Bool
+    /// The part of a player snapshot that says how an attempt to start went.
+    public struct Start: Equatable, Sendable {
+        public let itemId: String?
+        public let status: PlaybackStatus
+        public let lastFailure: String?
 
-        public init(hasSavedAudio: Bool, startStalled: Bool, playerFailed: Bool) {
-            self.hasSavedAudio = hasSavedAudio
-            self.startStalled = startStalled
-            self.playerFailed = playerFailed
+        public init(itemId: String?, status: PlaybackStatus, lastFailure: String?) {
+            self.itemId = itemId
+            self.status = status
+            self.lastFailure = lastFailure
         }
     }
 
-    /// True when the episode has actually failed to play and there are friend Margins to hear instead. Nothing definite
-    /// known (a download state, a slow network, a tap before any start) means false: the episode starts normally and a
-    /// stall routes here. An episode with a file on the phone is never "can't play" here: a file that won't start keeps
-    /// its own message (Download Again).
-    public static func shouldHearWithoutEpisode(_ episode: Episode, friendMargins: Int) -> Bool {
-        guard friendMargins > 0, !episode.hasSavedAudio else { return false }
-        return episode.startStalled || episode.playerFailed
+    /// The one trigger: this attempt to start this episode just failed. It is the change from `.starting` to `.failed`
+    /// with a start failure, for the item that is open, so it can't fire on an old failure (a snapshot that was already
+    /// failed is not a change), on a mid-playback failure, or on an article (`isPodcastEpisode`). While the player is
+    /// still recovering the status stays `.starting`, so Review keeps its retry. A file on the phone (downloaded or
+    /// brought, `hasPlayableFile`) is never "can't play": a file that won't start keeps its own message.
+    public static func startFailed(
+        from old: Start, to new: Start, selectedItemId: String, isPodcastEpisode: Bool, hasPlayableFile: Bool, friendMargins: Int
+    ) -> Bool {
+        guard friendMargins > 0, isPodcastEpisode, !hasPlayableFile else { return false }
+        guard old.status == .starting, new.status == .failed else { return false }
+        guard old.itemId == new.itemId, new.itemId == selectedItemId else { return false }
+        return new.lastFailure?.hasPrefix("playback_start_failed:") == true
     }
 
     // MARK: Whether the world still wants it
@@ -54,18 +55,19 @@ public enum CantPlayListening {
         public let selectedItemId: String
         public let status: PlaybackStatus
         public let isRecording: Bool
-        public let onPlaybackScreen: Bool
+        /// Which screen is showing (any stable name): leaving it, for another screen or Home, drops the listening.
+        public let screen: String
         public let hasMarginMoment: Bool
 
         public init(
             playerItemId: String?, selectedItemId: String, status: PlaybackStatus, isRecording: Bool,
-            onPlaybackScreen: Bool, hasMarginMoment: Bool
+            screen: String, hasMarginMoment: Bool
         ) {
             self.playerItemId = playerItemId
             self.selectedItemId = selectedItemId
             self.status = status
             self.isRecording = isRecording
-            self.onPlaybackScreen = onPlaybackScreen
+            self.screen = screen
             self.hasMarginMoment = hasMarginMoment
         }
     }
@@ -76,9 +78,9 @@ public enum CantPlayListening {
     /// Nothing is ended or paused before this says yes, so a listening that is dropped leaves the app as it was.
     public static func stillWanted(itemId: String, began: Scene, now: Scene) -> Bool {
         guard now.playerItemId == itemId, now.selectedItemId == itemId, !now.isRecording else { return false }
-        guard now.onPlaybackScreen == began.onPlaybackScreen else { return false }
+        guard now.screen == began.screen else { return false }
         guard began.hasMarginMoment || !now.hasMarginMoment else { return false }
-        return now.status == began.status || (began.status == .starting && now.status == .failed)
+        return now.status == began.status
     }
 
     // MARK: The sequence
@@ -214,7 +216,10 @@ public enum CantPlayListening {
             kept.append(part)
             length += part.count + 1
         }
-        return (takingEnd ? kept.reversed() : kept).joined(separator: " ")
+        let joined = (takingEnd ? kept.reversed() : kept).joined(separator: " ")
+        // Text with no spaces (Japanese, Chinese) has no word to cut at: cut at the character limit.
+        guard joined.count > longestQuoteCharacters else { return joined }
+        return String(takingEnd ? joined.suffix(longestQuoteCharacters) : joined.prefix(longestQuoteCharacters))
     }
 
     /// "At 40 seconds", "At 12 minutes", "At 1 hour 5 minutes". Whole minutes, never rounded up, so the voice never

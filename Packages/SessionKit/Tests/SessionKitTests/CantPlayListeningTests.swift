@@ -79,6 +79,26 @@ final class CantPlayListeningTests: XCTestCase {
         XCTAssertEqual(sequence.marginFinished(), .reviewDone(returnToMediaTimeMs: nil, resumes: false))
     }
 
+    /// The conductor with a recording source: no episode to move through, so it never seeks, and a missing file (words
+    /// not rendered, a recording gone) is passed over to the next step rather than left as silence.
+    @MainActor
+    func testTheConductorPlaysTheWordsThenTheMarginAtOnePlaceAndNeverSeeksTheDeadSource() throws {
+        let beats = plan([entry("a", at: 60_000, prefix: "One."), entry("b", at: 900_000, prefix: "Two.")])
+        var seeks: [Int] = []
+        var resumes = 0
+        let conductor = MarginMomentConductor(
+            sequence: try XCTUnwrap(CantPlayListening.sequence(for: beats, itemId: "item", placeMs: 0)),
+            source: .init(pause: {}, resume: { resumes += 1 }, seek: { seeks.append($0) }),
+            voiceURL: { _ in URL(fileURLWithPath: "/nonexistent/voice.m4a") }
+        )
+        var asked: [String] = []
+        conductor.onVoiceUnavailable = { id, _ in asked.append(id) }
+        conductor.playTargetNow(movingSource: false)
+        XCTAssertEqual(asked, CantPlayListening.anchors(for: beats, placeMs: 0).map(\.marginId), "words, Margin, words, Margin: in that order, none skipped")
+        XCTAssertEqual(seeks, [], "there is no episode to seek")
+        XCTAssertTrue(CantPlayListening.isCantPlayListening(conductor.sequence))
+    }
+
     func testSeveralFriendsKeepTheOrderTheyArePlacedIn() {
         let beats = plan([
             entry("x", layerId: "ana", label: "Ana", at: 60_000, prefix: "Early."),
@@ -142,6 +162,16 @@ final class CantPlayListeningTests: XCTestCase {
         XCTAssertFalse(article.hasSuffix(" word"), "no half word at the cut")
     }
 
+    func testAQuoteWithNoSpacesIsCutAtTheCharacterLimit() {
+        let run = String(repeating: "あ", count: 500) + "い"
+        guard case .quote(let before)? = plan([entry("m", prefix: run)]).first?.context,
+              case .quote(let article)? = plan([entry("m", exact: run)]).first?.context else { return XCTFail("expected quotes") }
+        XCTAssertEqual(before.count, CantPlayListening.longestQuoteCharacters)
+        XCTAssertTrue(before.hasSuffix("い"), "the end, nearest the moment")
+        XCTAssertEqual(article.count, CantPlayListening.longestQuoteCharacters)
+        XCTAssertTrue(article.hasPrefix("あ") && !article.contains("い"), "an article's quote keeps its start")
+    }
+
     func testAQuoteInALanguageWithNoVoiceBecomesThePlace() {
         let japanese = "これは日本語の文章です。"
         let noJapaneseVoice: (String) -> String? = { $0.hasPrefix("ja") ? nil : $0 }
@@ -174,38 +204,84 @@ final class CantPlayListeningTests: XCTestCase {
 
     // MARK: Whether to take this path
 
-    func testOnlyAnEpisodeWithNoFileThatStalledOrFailedInThePlayerTakesThisPath() {
-        func decide(saved: Bool = false, stalled: Bool = false, failed: Bool = false, margins: Int = 2) -> Bool {
-            CantPlayListening.shouldHearWithoutEpisode(.init(hasSavedAudio: saved, startStalled: stalled, playerFailed: failed), friendMargins: margins)
-        }
-        XCTAssertTrue(decide(stalled: true))
-        XCTAssertTrue(decide(failed: true))
-        XCTAssertFalse(decide(), "nothing definite is known: the episode starts the ordinary way and a stall comes here")
-        XCTAssertFalse(decide(stalled: true, margins: 0), "no friend Margins: the ordinary message")
-        XCTAssertFalse(decide(saved: true, stalled: true), "a saved file that won't start keeps its own message")
-        XCTAssertFalse(decide(saved: true, failed: true))
+    private func start(_ status: PlaybackStatus, item: String? = "item", failure: String? = nil) -> CantPlayListening.Start {
+        .init(itemId: item, status: status, lastFailure: failure)
     }
 
-    /// The first review finding: a download that failed (a missing or short saved file, a dropped transfer) says nothing
-    /// about streaming. The decision has no download state to be fooled by, so this holds the type to that.
-    func testADownloadStateIsNotPartOfTheDecision() {
-        let mirror = Mirror(reflecting: CantPlayListening.Episode(hasSavedAudio: false, startStalled: false, playerFailed: false))
-        XCTAssertEqual(Set(mirror.children.compactMap(\.label)), ["hasSavedAudio", "startStalled", "playerFailed"])
+    private func decide(
+        from old: CantPlayListening.Start = CantPlayListening.Start(itemId: "item", status: .starting, lastFailure: nil),
+        to new: CantPlayListening.Start = CantPlayListening.Start(itemId: "item", status: .failed, lastFailure: "playback_start_failed:timed out"),
+        selected: String = "item", podcast: Bool = true, file: Bool = false, margins: Int = 2
+    ) -> Bool {
+        CantPlayListening.startFailed(from: old, to: new, selectedItemId: selected, isPodcastEpisode: podcast, hasPlayableFile: file, friendMargins: margins)
+    }
+
+    func testOnlyThisAttemptToStartAnEpisodeWithNoFileFailingTakesThisPath() {
+        XCTAssertTrue(decide(), "the first tap on a dead episode")
+        XCTAssertFalse(decide(from: start(.failed, failure: "playback_start_failed:x")), "an old failure is not a change")
+        XCTAssertFalse(decide(from: start(.playing)), "a failure after playing is not a start")
+        XCTAssertFalse(decide(from: start(.idle)))
+        XCTAssertFalse(decide(to: start(.failed, failure: "playback_failed:x")), "a mid-playback failure keeps its own message")
+        XCTAssertFalse(decide(to: start(.failed, failure: nil)))
+        XCTAssertFalse(decide(to: start(.starting, failure: "playback_start_failed:x")), "still recovering: Review keeps its retry")
+        XCTAssertFalse(decide(podcast: false), "an article's start timeout is not a dead episode")
+        XCTAssertFalse(decide(file: true), "a saved or brought file that won't start keeps its own message")
+        XCTAssertFalse(decide(margins: 0), "no friend Margins: the ordinary message")
+        XCTAssertFalse(decide(selected: "other"), "not the open item")
+        XCTAssertFalse(decide(from: start(.starting, item: "other")), "the item changed under the attempt")
+    }
+
+    /// The first tap on a dead episode, on the real engine's clock: the start is silent, the player recreates it once at
+    /// 10 seconds (the status stays `.starting`, so Review keeps its retry), and fails it for good at about 20. That one
+    /// change is the trigger; nothing before it and no later reading of the same failure is.
+    func testTheFirstTapOnADeadEpisodeFiresOnceWhenTheEngineGivesUpAtAboutTwentySeconds() throws {
+        let audio = RecordingAudioClient()
+        audio.startStatus = .pending
+        var clock = Date(timeIntervalSince1970: 100)
+        let item = Item(
+            id: "item", title: "Dead", mediaType: "audio", text: nil, externalReference: nil, status: "ready",
+            media: ItemMedia(sourceType: .remoteStream, url: "https://example.com/gone.mp3")
+        )
+        let engine = SessionEngine(
+            profile: RuntimeCapabilityProfile(
+                id: "phone", displayName: "Phone", capabilities: ["sync": ["canonical_persistence"], "playback": ["native_media"]]
+            ),
+            repository: InMemorySessionRepository(items: [item.id: item]), audio: audio, playbackStartTimeout: 10, now: { clock }
+        )
+        func read(_ snapshot: SessionSnapshot) -> CantPlayListening.Start {
+            .init(itemId: snapshot.itemId, status: snapshot.status, lastFailure: snapshot.lastFailure)
+        }
+        func fires(_ old: SessionSnapshot, _ new: SessionSnapshot) -> Bool {
+            CantPlayListening.startFailed(
+                from: read(old), to: read(new), selectedItemId: "item", isPodcastEpisode: true, hasPlayableFile: false, friendMargins: 1
+            )
+        }
+        let tapped = try engine.startSession(itemId: item.id)
+        XCTAssertEqual(tapped.status, .starting)
+        clock = clock.addingTimeInterval(11)
+        let recovering = try engine.syncPlaybackProgress()
+        XCTAssertEqual(recovering.status, .starting, "recreated once; the engine hasn't given up")
+        XCTAssertFalse(fires(tapped, recovering), "while it can still recover Review keeps its retry")
+        clock = clock.addingTimeInterval(11)
+        let failed = try engine.syncPlaybackProgress()
+        XCTAssertEqual(failed.status, .failed)
+        XCTAssertTrue(failed.lastFailure?.hasPrefix("playback_start_failed:") == true)
+        XCTAssertTrue(fires(recovering, failed), "the first tap: quote then voice, with no second tap, at about 20 seconds")
+        XCTAssertFalse(fires(failed, try engine.syncPlaybackProgress()), "a later reading of the same failure is not a new attempt")
     }
 
     // MARK: Whether the listener still wants it after the wait
 
     private func scene(
         item: String? = "item", selected: String = "item", _ status: PlaybackStatus = .starting, recording: Bool = false,
-        screen: Bool = true, moment: Bool = false
+        screen: String = "playback", moment: Bool = false
     ) -> CantPlayListening.Scene {
-        .init(playerItemId: item, selectedItemId: selected, status: status, isRecording: recording, onPlaybackScreen: screen, hasMarginMoment: moment)
+        .init(playerItemId: item, selectedItemId: selected, status: status, isRecording: recording, screen: screen, hasMarginMoment: moment)
     }
 
     func testTheListeningStartsWhenNothingChangedDuringTheWait() {
         XCTAssertTrue(CantPlayListening.stillWanted(itemId: "item", began: scene(), now: scene()))
         XCTAssertTrue(CantPlayListening.stillWanted(itemId: "item", began: scene(.failed), now: scene(.failed)))
-        XCTAssertTrue(CantPlayListening.stillWanted(itemId: "item", began: scene(.starting), now: scene(.failed)), "the stalled start then reported its failure")
         XCTAssertTrue(CantPlayListening.stillWanted(itemId: "item", began: scene(moment: true), now: scene(moment: true)), "an earlier moment is the one it replaces")
     }
 
@@ -219,12 +295,13 @@ final class CantPlayListeningTests: XCTestCase {
             ("they paused", scene(.paused)),
             ("they pressed Play and it began", scene(.playing)),
             ("playback was stopped", scene(.idle)),
-            ("they left the playback screen", scene(screen: false)),
+            ("they left the playback screen", scene(screen: "item")),
+            ("they went Home", scene(screen: "home")),
             ("another Margin moment started", scene(moment: true))
         ]
         for (what, now) in moved { XCTAssertFalse(CantPlayListening.stillWanted(itemId: "item", began: began, now: now), what) }
         XCTAssertFalse(CantPlayListening.stillWanted(itemId: "item", began: scene(.failed), now: scene(.starting)), "they pressed Play after it failed")
-        XCTAssertFalse(CantPlayListening.stillWanted(itemId: "item", began: scene(screen: false), now: scene(screen: true)), "they came back to the screen")
+        XCTAssertFalse(CantPlayListening.stillWanted(itemId: "item", began: scene(screen: "home"), now: scene(screen: "playback")), "they came back to the screen")
     }
 
     // MARK: A listening that stops early gives back what it didn't reach

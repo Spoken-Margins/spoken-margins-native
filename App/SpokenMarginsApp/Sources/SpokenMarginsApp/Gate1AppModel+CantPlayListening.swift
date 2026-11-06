@@ -14,36 +14,32 @@ extension Gate1AppModel {
     /// still isn't there at its turn is passed over and the Margin plays at once (the conductor's missing-file path).
     private static let cantPlayRenderHold: TimeInterval = 6
 
-    /// Whether the item's episode has failed to play, by `CantPlayListening.shouldHearWithoutEpisode`. Only the open item
-    /// can have: nothing is known about an episode that hasn't been started, so it starts the ordinary way and a stall
-    /// comes here. `startStalled`: the playback screen's 30 second stall.
-    func episodeCantPlay(itemId: String, startStalled: Bool) -> Bool {
-        guard snapshot.itemId == itemId, selectedItem.id == itemId else { return false }
-        let episode = CantPlayListening.Episode(
-            hasSavedAudio: podcastDownloadCoordinator?.validatedLocalURL(for: itemId) != nil,
-            startStalled: startStalled, playerFailed: snapshot.status == .failed
-        )
-        return CantPlayListening.shouldHearWithoutEpisode(episode, friendMargins: newSharedMargins(itemId: itemId).count)
-    }
-
     private var cantPlayScene: CantPlayListening.Scene {
         CantPlayListening.Scene(
             playerItemId: snapshot.itemId, selectedItemId: selectedItem.id, status: snapshot.status, isRecording: snapshot.isRecording,
-            onPlaybackScreen: screen == .playback, hasMarginMoment: marginMomentConductor != nil
+            screen: String(describing: screen), hasMarginMoment: marginMomentConductor != nil
         )
     }
 
-    /// Starts the friend's new Margins without the episode, when it has failed to play. True when this took the call: the
+    /// The one trigger, called from `snapshotDidChange` on every snapshot change: this attempt to start the open podcast
+    /// episode has just failed (`CantPlayListening.startFailed`), so a friend's new Margins are heard without it. The
+    /// first tap on a dead episode gets the quote and then the Margin, with no second tap and no screen needed. The
     /// listening starts from here after the first words are rendered (at most `cantPlayRenderHold` seconds), unless the
     /// listener has moved on by then. Nothing is ended or paused until then.
-    @discardableResult
-    func hearFriendMarginsWithoutEpisode(itemId: String, startStalled: Bool, entries offered: [SharedMarginReview.Entry]? = nil) -> Bool {
-        guard episodeCantPlay(itemId: itemId, startStalled: startStalled) else { return false }
-        let entries = offered ?? newSharedMargins(itemId: itemId)
+    func hearFriendMarginsIfStartFailed(from old: SessionSnapshot) {
+        let itemId = snapshot.itemId ?? ""
+        guard old.status == .starting, snapshot.status == .failed, snapshot.itemId == old.itemId, selectedItem.id == itemId else { return }
+        let entries = newSharedMargins(itemId: itemId)
+        guard CantPlayListening.startFailed(
+            from: .init(itemId: old.itemId, status: old.status, lastFailure: old.lastFailure),
+            to: .init(itemId: snapshot.itemId, status: snapshot.status, lastFailure: snapshot.lastFailure),
+            selectedItemId: selectedItem.id, isPodcastEpisode: selectedPodcastDownloadState != nil,
+            hasPlayableFile: localEpisodeFile(for: itemId) != nil, friendMargins: entries.count
+        ) else { return }
         let beats = CantPlayListening.plan(
             entries: entries, episodeTitle: selectedItem.title, voiceFor: Self.installedVoice(forLanguage:), defaultVoice: Self.defaultInstalledVoice
         )
-        guard !beats.isEmpty, !rejectNavigationOrSessionMutationWhileRecording("hear_margins_without_episode") else { return false }
+        guard !beats.isEmpty, !rejectNavigationOrSessionMutationWhileRecording("hear_margins_without_episode") else { return }
 
         let reader = WrittenMarginReader.shared
         var readings: [String: WrittenMarginReading] = [:]
@@ -60,7 +56,6 @@ extension Gate1AppModel {
                   let sequence = CantPlayListening.sequence(for: beats, itemId: itemId, placeMs: place) else { return }
             self.startCantPlayListening(sequence: sequence, beats: beats, files: files)
         }
-        return true
     }
 
     private func startCantPlayListening(sequence: MarginMomentSequence, beats: [CantPlayListening.Beat], files: [String: URL]) {
@@ -71,7 +66,6 @@ extension Gate1AppModel {
         pendingImportedCommentary = nil
         _ = sharedMarginReturn.promptDismissed()
         stopImportedCommentaryPlayback(resumeSource: false)
-        if snapshot.status.isPlaybackActive { pause() } // a stalled start: nothing is coming from it
 
         beats.forEach { sharedMarginOffers.markAnnounced($0.entry.interjection.id) } // the automatic prompts mustn't play them again
         var heard: [String: ImportedCommentaryInterjection] = [:]
@@ -93,7 +87,7 @@ extension Gate1AppModel {
         WrittenMarginReadings.rewordUnavailable(on: conductor, entries: beats.map(\.entry), model: self)
         diagnostics["marginMoment"] = "started:cant_play;beats=\(beats.count)"
         screen = .playback
-        conductor.playTargetNow() // there is no episode to reach the first Margin: the words start now
+        conductor.playTargetNow(movingSource: false) // no episode to move: the words start now, and nothing seeks the dead player
     }
 
     // MARK: Voices installed on this iPhone (the same answer `WrittenMarginReader` gives at render time)

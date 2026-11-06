@@ -132,11 +132,12 @@ public final class MarginMomentConductor {
         playVoice(for: margin)
     }
 
-    /// "Play it now" during the lead-in.
-    public func playTargetNow() {
+    /// "Play it now" during the lead-in. `movingSource: false` leaves the source where it is: for a source that can't
+    /// play (a friend's episode that failed to start, #3392), where a seek would only wake the dead player.
+    public func playTargetNow(movingSource: Bool = true) {
         guard let margin = sequence.jumpToTarget() else { return }
         source.pause()
-        source.seek(margin.mediaTimeMs)
+        if movingSource { source.seek(margin.mediaTimeMs) }
         lastObservedMs = margin.mediaTimeMs
         playVoice(for: margin)
     }

@@ -96,7 +96,6 @@ extension Gate1AppModel {
             reportWarning("There are no new Margins to review on this item.")
             return
         }
-        if hearFriendMarginsWithoutEpisode(itemId: itemId, startStalled: false, entries: entries) { return } // the episode can't play (#3392)
         if WrittenMarginReadings.holdReview(itemId: itemId, thenContinue: thenContinue, entries: entries, model: self) { return } // readings not ready yet (#3365)
         endMarginMoment()
         // A Margin voice already playing (your own, #1538, or a friend's) or a shared-Margin card waiting gives way:
