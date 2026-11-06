@@ -212,7 +212,7 @@ private struct AudioPreparationQueueItemRow: View {
                         .font(.headline)
                     Label(priorityLabel, systemImage: priorityIcon)
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(row.isActivePlaybackItem ? AppColors.ochreText : AppColors.secondaryText)
+                        .foregroundStyle(row.isActivePlaybackItem ? AppColors.ochre : AppColors.secondaryText)
                 }
                 Spacer(minLength: 8)
                 HStack(spacing: 2) {
@@ -232,7 +232,7 @@ private struct AudioPreparationQueueItemRow: View {
 
             if row.plannedChunkCount > 0 {
                 ProgressView(value: row.progress)
-                    .tint(AppColors.ochreText)
+                    .tint(AppColors.ochre)
                     .accessibilityLabel("Audio preparation progress")
             }
 

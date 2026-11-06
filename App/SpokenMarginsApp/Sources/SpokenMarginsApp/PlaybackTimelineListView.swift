@@ -126,7 +126,7 @@ private struct TimelineRailRow: View, Equatable {
         switch entry.provenance {
         case .source, .listeningMap: AppColors.evergreen
         case .myMargin: AppColors.coral
-        case .userResponse: AppColors.ochreText
+        case .userResponse: AppColors.ochre
         case .sharedMargin, .assistantResponse: AppColors.plum
         }
     }
