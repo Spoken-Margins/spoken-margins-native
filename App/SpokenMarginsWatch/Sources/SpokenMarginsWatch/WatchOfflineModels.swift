@@ -552,7 +552,7 @@ final class WatchConnectivityInbox: NSObject, ObservableObject, WCSessionDelegat
         }
         status = "Sending"
         lastMessage = message["type"] as? String ?? "sent"
-        session.sendMessage(message, replyHandler: nil) { [weak self] error in
+        session.sendMessage(message, replyHandler: nil) { @Sendable [weak self] error in
             Task { @MainActor in
                 self?.status = "Send failed"
                 self?.lastMessage = ListenerErrorText.message(for: error)

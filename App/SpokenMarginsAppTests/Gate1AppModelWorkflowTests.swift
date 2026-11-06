@@ -309,7 +309,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.resetAndSeed()
         let readStarted = expectation(description: "navigation snapshot captured")
         let release = AsyncStream<Void>.makeStream()
-        model.navigationLibraryRead = { store in
+        model.navigationLibraryRead = { store, _ in
             let data = try LibraryReadSnapshot.read(store: store)
             readStarted.fulfill()
             for await _ in release.stream { break }

@@ -390,4 +390,74 @@ final class WatchContractTests: XCTestCase {
         let data = try WatchContractCoding.encoder.encode(model)
         XCTAssertEqual(try WatchContractCoding.decoder.decode(WatchSessionModel.self, from: data), model)
     }
+
+    // MARK: #3494: the item target, the now-playing board and the transport command
+
+    func testTheItemTargetTravelsInTheMetadataAndTheJSON() throws {
+        var aimed = transfer("m1")
+        aimed.itemTarget = WatchItemTarget(itemId: "ep-1", positionMs: 61_000)
+        XCTAssertEqual(WatchMarginTransfer(metadata: aimed.metadata), aimed)
+        XCTAssertTrue(PropertyListSerialization.propertyList(aimed.metadata, isValidFor: .binary))
+        XCTAssertEqual(try JSONDecoder().decode(WatchMarginTransfer.self, from: JSONEncoder().encode(aimed)), aimed)
+        aimed.itemTarget = WatchItemTarget(itemId: "ep-1")
+        XCTAssertEqual(WatchMarginTransfer(metadata: aimed.metadata)?.itemTarget, WatchItemTarget(itemId: "ep-1", positionMs: nil))
+    }
+
+    func testAMarginWithoutATargetCarriesNoTargetKeys() {
+        let keys = Set(transfer("m1").metadata.keys)
+        XCTAssertFalse(keys.contains(WatchMarginTransfer.Key.targetItemId))
+        XCTAssertFalse(keys.contains(WatchMarginTransfer.Key.targetPositionMs))
+        XCTAssertNil(WatchMarginTransfer(metadata: transfer("m1").metadata)?.itemTarget)
+    }
+
+    func testABlankOrNegativeTargetReadsAsNoTargetOrNoPosition() throws {
+        var metadata = transfer("m1").metadata
+        metadata[WatchMarginTransfer.Key.targetItemId] = "   "
+        XCTAssertNil(WatchMarginTransfer(metadata: metadata)?.itemTarget)
+        metadata[WatchMarginTransfer.Key.targetItemId] = "ep"
+        metadata[WatchMarginTransfer.Key.targetPositionMs] = -5
+        XCTAssertEqual(WatchMarginTransfer(metadata: metadata)?.itemTarget, WatchItemTarget(itemId: "ep"))
+    }
+
+    func testABoardFromTheBuildBeforeNowPlayingStillDecodesAndANewOneKeepsIt() throws {
+        let old = #"{"endNotes":{},"phoneTime":1800000000}"#
+        let board = try WatchContractCoding.decoder.decode(WatchBoard.self, from: Data(old.utf8))
+        XCTAssertNil(board.nowPlaying)
+        let playing = WatchNowPlaying(itemId: "ep", title: "An episode", isPlaying: true, positionMs: 5_000, positionAt: t0, rate: 1.5)
+        let new = WatchBoard(phoneTime: t0, nowPlaying: playing)
+        XCTAssertEqual(WatchBoard(context: [WatchContract.boardKey: try XCTUnwrap(new.encoded)])?.nowPlaying, playing)
+    }
+
+    func testNowPlayingMovesOnWhilePlayingAndStandsStillWhenPaused() {
+        let playing = WatchNowPlaying(itemId: "ep", title: "t", isPlaying: true, positionMs: 10_000, positionAt: t0, rate: 2)
+        XCTAssertEqual(playing.position(at: t0.addingTimeInterval(5)), 20_000)
+        XCTAssertEqual(playing.position(at: t0.addingTimeInterval(-5)), 10_000, "never before it was read")
+        var paused = playing
+        paused.isPlaying = false
+        XCTAssertEqual(paused.position(at: t0.addingTimeInterval(500)), 10_000)
+        var huge = playing
+        huge.positionMs = Int.max - 1
+        XCTAssertEqual(huge.position(at: t0.addingTimeInterval(500)), Int.max)
+    }
+
+    func testEveryTransportCommandRoundTripsAndOnlyAFreshOneRuns() throws {
+        for command in WatchTransport.allCases {
+            let envelope = WatchEnvelope(seq: 1, sentAt: t0, clock: nil, message: .transport(command))
+            XCTAssertTrue(PropertyListSerialization.propertyList(envelope.dictionary, isValidFor: .binary))
+            XCTAssertEqual(WatchEnvelope(dictionary: envelope.dictionary)?.message, .transport(command))
+        }
+        let sent = WatchEnvelope(seq: 1, sentAt: t0, clock: nil, message: .transport(.skipForward))
+        XCTAssertTrue(sent.transportIsFresh(now: t0.addingTimeInterval(9)))
+        XCTAssertFalse(sent.transportIsFresh(now: t0.addingTimeInterval(11)), "a skip that arrives late is dropped")
+        XCTAssertFalse(sent.transportIsFresh(now: t0.addingTimeInterval(-30)), "a time far in the future is not trusted")
+        // A Watch two minutes ahead of the phone: its clock says 120 s later than the phone's.
+        let ahead = WatchEnvelope(seq: 1, sentAt: t0.addingTimeInterval(120), clock: WatchClockStamp(offset: 120, measuredAt: t0), message: .transport(.pause))
+        XCTAssertTrue(ahead.transportIsFresh(now: t0.addingTimeInterval(3)))
+        XCTAssertFalse(ahead.transportIsFresh(now: t0.addingTimeInterval(30)))
+    }
+
+    func testAnUnknownTransportCommandFromALaterBuildDoesNotDecode() {
+        let json = #"{"v":3,"seq":1,"sentAt":1800000000,"message":{"transport":{"_0":"seekToChapter"}}}"#
+        XCTAssertNil(try? WatchContractCoding.decoder.decode(WatchEnvelope.self, from: Data(json.utf8)))
+    }
 }
