@@ -187,7 +187,7 @@ struct UserFeedbackBanner: View {
     private var iconColor: Color {
         switch feedback.kind {
         case .success: .green
-        case .warning: .orange
+        case .warning: AppColors.warningText
         case .error: AppColors.dangerText // octagon, not triangle: must differ from warnings by shape (#308)
         }
     }

@@ -399,7 +399,7 @@ struct InterjectionSharingView: View {
                         .foregroundStyle(
                             model.sharingState.bulkPreparationFailureCount == 0
                                 ? AppColors.secondaryText
-                                : .orange
+                                : AppColors.warningText
                         )
                     }
                 }
@@ -445,12 +445,15 @@ struct InterjectionSharingView: View {
                             systemImage: "person.crop.circle.badge.exclamationmark"
                         )
                         .font(.caption)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(AppColors.warningText)
                     }
                 } else {
-                    Text("The item itself cannot be included. Make sure the recipient already has the same item.")
-                        .font(.footnote)
-                        .foregroundStyle(.orange)
+                    Label(
+                        "The item itself cannot be included. Make sure the recipient already has the same item.",
+                        systemImage: "exclamationmark.triangle"
+                    )
+                    .font(.footnote)
+                    .foregroundStyle(AppColors.warningText)
                 }
             }
         }
@@ -672,12 +675,12 @@ struct InterjectionSharingView: View {
                 if let warning = draft.warning {
                     Label(warning, systemImage: "exclamationmark.triangle")
                         .font(.caption)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(AppColors.warningText)
                 }
                 if let message = draft.preparationMessage {
                     Label(message, systemImage: "exclamationmark.circle")
                         .font(.caption)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(AppColors.warningText)
                 }
 
                 DisclosureGroup("Words around the Margin") {

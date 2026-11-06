@@ -256,7 +256,7 @@ struct SMExperienceTypeCover: View {
     private var foreground: Color {
         switch stableSeed {
         case 0: AppColors.evergreen
-        case 1: AppColors.ochre
+        case 1: AppColors.ochreText
         default: AppColors.plum
         }
     }

@@ -575,6 +575,8 @@ enum AppColors {
     static let evergreen = dynamicColor(AppSemanticColorRGB.evergreen)
     static let onEvergreen = dynamicColor(AppSemanticColorRGB.onEvergreen)
     static let ochre = dynamicColor(AppSemanticColorRGB.ochre)
+    static let ochreText = dynamicColor(AppSemanticColorRGB.ochreText)
+    static let warningText = dynamicColor(AppSemanticColorRGB.warningText)
     static let coral = dynamicColor(AppSemanticColorRGB.coral)
     static let plum = dynamicColor(AppSemanticColorRGB.plum)
     static let star = dynamicColor(AppSemanticColorRGB.star)

@@ -91,9 +91,12 @@ final class AppColorContrastCoverageTests: XCTestCase {
         XCTAssertEqual(Set(declared), Set(listed), "AppSemanticColorRGB.all must name every token")
         XCTAssertEqual(Set(listed).count, listed.count)
 
-        // A token is covered when some pair uses its exact values as foreground or background.
+        // A token is covered when some pair uses its exact values as foreground or background. `ochre` is the fill and
+        // tint colour only, never a text or icon colour (`ochreText` is, and is audited), so no text sits on its own value
+        // alone; the next test keeps it out of foregrounds (#1920).
         let used = AppColorContrastAudit.allPairs.flatMap { [$0.foreground, $0.background] }
-        for token in AppSemanticColorRGB.all {
+        let fillsOnly: Set<String> = ["ochre"]
+        for token in AppSemanticColorRGB.all where !fillsOnly.contains(token.name) {
             XCTAssertTrue(used.contains(token.color), "\(token.name) has no pair in the contrast audit")
         }
     }
@@ -109,6 +112,29 @@ final class AppColorContrastCoverageTests: XCTestCase {
                 "AppColors must take its values from AppSemanticColorRGB so the audit sees them: \(line)"
             )
         }
+    }
+
+    /// #1920: ochre in light mode is 2.8:1 on bone and the system orange about 2:1 on white. Text and icons use
+    /// `ochreText` and `warningText`, which the audit measures; `ochre` stays a fill. The playback card is dark in both
+    /// appearances, where ochre and the system orange are 7:1 and more, so its files are the only ones allowed.
+    func testNoTextOrIconIsDrawnInOchreOrTheSystemOrange() throws {
+        let allowedBecauseTheyAreAlwaysDark: Set<String> = [
+            "PlaybackScreen.swift", "PlaybackFeedbackTagView.swift", "PlaybackMarginTranscriptionStatusView.swift",
+            "LiveActivityTourPreview.swift"
+        ]
+        let directory = try TestInputs.directory(.appSources)
+        let files = try FileManager.default.contentsOfDirectory(atPath: directory.path).filter { $0.hasSuffix(".swift") }
+        XCTAssertGreaterThan(files.count, 100)
+        let banned = [
+            ".foregroundStyle(AppColors.ochre)", ".tint(AppColors.ochre)", "? AppColors.ochre :",
+            ".foregroundStyle(.orange)", ": .orange\n", "case .warning: .orange"
+        ]
+        var found: [String] = []
+        for file in files where !allowedBecauseTheyAreAlwaysDark.contains(file) {
+            let text = try String(contentsOf: directory.appending(path: file), encoding: .utf8)
+            for pattern in banned where text.contains(pattern) { found.append("\(file): \(pattern)") }
+        }
+        XCTAssertEqual(found, [], "use AppColors.ochreText or AppColors.warningText for text and icons")
     }
 
     func testKnownFailuresAreListedAndStillFail() {
