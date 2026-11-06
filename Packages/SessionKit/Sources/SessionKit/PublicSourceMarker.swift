@@ -38,9 +38,20 @@ public struct PublicSourceMarker: Sendable {
         if outcome == .notPublic { memory.remember(key, now: started) }
         guard case .marked(let mark) = outcome else { return outcome }
         // Read the item again: the check took time, and the listener may have changed it meanwhile. Only the mark is set.
-        guard var fresh = try? repository.loadItem(id: itemId), MapTextDisclosure.checkableAddress(of: fresh) == mark.url else { return .couldNotCheck }
-        fresh.publicSourceMark = mark
-        do { try repository.saveItem(fresh) } catch { return .couldNotCheck }
-        return outcome
+        // The read, the address check and the save are one transaction where the store has them, so another save of the
+        // same item (the add flow, a status or title repair) cannot land between the read and the write and be overwritten
+        // by the older copy (#3449 audit).
+        let attach = { () throws -> Bool in
+            var fresh = try repository.loadItem(id: itemId)
+            guard MapTextDisclosure.checkableAddress(of: fresh) == mark.url else { return false }
+            fresh.publicSourceMark = mark
+            try repository.saveItem(fresh)
+            return true
+        }
+        do {
+            let saved: Bool
+            if let store = repository as? any SessionRepositoryTransaction { saved = try store.withSessionTransaction(attach) } else { saved = try attach() }
+            return saved ? outcome : .couldNotCheck
+        } catch { return .couldNotCheck }
     }
 }

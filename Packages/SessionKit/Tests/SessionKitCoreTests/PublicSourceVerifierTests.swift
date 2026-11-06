@@ -1,5 +1,5 @@
 import Foundation
-import SessionKit
+@testable import SessionKit
 import XCTest
 
 /// The check that earns a source its `PublicSourceMark` (#3449): an anonymous look at its public address.
@@ -297,6 +297,61 @@ final class PublicSourceVerifierTests: XCTestCase, @unchecked Sendable {
         let saved = try repository.loadItem(id: "item-1")
         XCTAssertNil(saved.publicSourceMark, "the mark names the address it checked, and that address is gone")
         XCTAssertEqual(saved.externalReference, "https://example.com/posts/renamed")
+    }
+
+    /// A store with transactions, whose second read of the item is the marker's own. At that moment another writer saves
+    /// the same item. Inside the marker's transaction that save must wait; outside one it would land and then be overwritten.
+    private final class TransactionalRepository: InMemorySessionRepository, SessionRepositoryTransaction, @unchecked Sendable {
+        private let lock = NSRecursiveLock()
+        private let counter = NSLock()
+        private var loads = 0
+        var afterSecondLoad: (@Sendable () -> Void)?
+
+        func withSessionTransaction<T>(_ operation: () throws -> T) throws -> T {
+            lock.lock()
+            defer { lock.unlock() }
+            return try operation()
+        }
+
+        override func loadItem(id: String) throws -> Item {
+            lock.lock()
+            let item = try super.loadItem(id: id)
+            lock.unlock()
+            let count = counter.withLock { () -> Int in loads += 1; return loads }
+            if count == 2 { afterSecondLoad?() }
+            return item
+        }
+
+        override func saveItem(_ item: Item) throws {
+            lock.lock()
+            defer { lock.unlock() }
+            try super.saveItem(item)
+        }
+    }
+
+    func testASaveThatLandsWhileTheMarkIsBeingAttachedIsNotOverwritten() async throws {
+        let repository = TransactionalRepository()
+        repository.items["item-1"] = textItem()
+        let written = DispatchSemaphore(value: 0)
+        repository.afterSecondLoad = { @Sendable in
+            Thread.detachNewThread {
+                var newer = repository.items["item-1"]!
+                newer.title = "Harbour Lights, repaired"
+                try? repository.saveItem(newer)
+                written.signal()
+            }
+            // Without a transaction the writer is done almost at once; with one it waits for the marker to finish.
+            _ = written.wait(timeout: .now() + 0.3)
+            written.signal()
+        }
+        let probe = Probe { _, _ in self.okPage(self.page(self.sentences)) }
+        let marker = PublicSourceMarker(verifier: PublicSourceVerifier(probe: probe.run), now: { self.checkedAt })
+        _ = await marker.ensureMark(itemId: "item-1", repository: repository)
+        XCTAssertEqual(written.wait(timeout: .now() + 5), .success)
+        // The writer's second signal can arrive from either side of the wait above; give its save time to finish.
+        let deadline = Date().addingTimeInterval(5)
+        while try repository.loadItem(id: "item-1").title != "Harbour Lights, repaired", Date() < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(try repository.loadItem(id: "item-1").title, "Harbour Lights, repaired", "the other save survives")
     }
 
     func testAMissingItemCouldNotBeChecked() async {
