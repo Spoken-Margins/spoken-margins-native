@@ -1,6 +1,8 @@
 import AVFoundation
 import SessionKit
 import SessionKitAudio
+import SwiftUI
+import UIKit
 import XCTest
 @testable import SpokenMarginsApp
 
@@ -181,6 +183,32 @@ final class WrittenMarginPlayEntryPointsAppTests: XCTestCase {
         model.playMarginParent(parentContext(fixture))
         XCTAssertEqual(model.lastError, "This Margin can't be read aloud on this iPhone.")
         XCTAssertNil(model.marginMoment)
+    }
+
+    // That line has to be on the friend's sheet the button is on. The root's banner is behind the sheet, so with only that
+    // the tap looked dead. Only the sheet is mounted here, so the banner found is the sheet's own.
+    func testTheLineAboutAParentThatCannotBeReadIsShownOnTheFriendsSheet() async throws {
+        let fixture = try await ReturnFixture.make(sourcePlaying: true, writtenWords: "🎧")
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        let automationWasEnabled = AccessibilityAutomation.enable()
+        defer { if let automationWasEnabled { AccessibilityAutomation.set(automationWasEnabled) } }
+        let context = parentContext(fixture)
+
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previousKeyWindow = scene.windows.first { $0.isKeyWindow }
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        window.rootViewController = UIHostingController(rootView: AnyView(SharedMarginDetailView(row: row(fixture)).environmentObject(model)))
+        window.makeKeyAndVisible()
+        let mounted = MountedTree(window: window, previousKeyWindow: previousKeyWindow)
+        defer { mounted.close() }
+        _ = try await mounted.waitForNode("the sheet") { $0.label == "Hide this Margin" || $0.label == "Read this aloud" }
+
+        model.playMarginParent(context)
+        let line = "This Margin can't be read aloud on this iPhone."
+        let banner = try await mounted.waitForNode("the banner on the sheet") { $0.identifier == "app.feedback.banner" }
+        XCTAssertEqual(banner.label?.contains(line), true, "the banner said \(banner.label ?? "nothing")")
     }
 
     // No voice on this phone can read the note: nothing offers it and nothing calls it new, every row that plays one says

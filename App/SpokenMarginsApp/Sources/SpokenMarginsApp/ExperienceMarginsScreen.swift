@@ -605,6 +605,7 @@ struct SharedMarginDetailView: View {
             .navigationTitle("Shared Margin")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { Button("Done") { dismiss() } }
+            .modifier(SheetFeedbackPresentation()) // "Hear what it answers" can report a line, and the root's banner is behind this sheet
             .confirmationDialog("Hide this Margin?", isPresented: $confirmingHide, titleVisibility: .visible) {
                 Button("Hide this Margin", role: .destructive) {
                     model.hideMargin(layer: current.layer, margin: current.interjection)
