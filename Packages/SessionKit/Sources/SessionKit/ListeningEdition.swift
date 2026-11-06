@@ -108,7 +108,7 @@ public struct ListeningEdition: Codable, Equatable, Sendable {
             let start = blocks[scene.startBlock - 1].startChar
             let end = blocks[scene.endBlock - 1].endChar
             return Chapter(id: "scene-\(index + 1)", title: scene.title, startChar: start, endChar: end, percent: start * 100 / max(1, text.count))
-        })
+        }, modelWrittenText: true) // the overview and scene titles come from a model (#3588)
     }
     public static func prompt(for text: String) -> String {
         """

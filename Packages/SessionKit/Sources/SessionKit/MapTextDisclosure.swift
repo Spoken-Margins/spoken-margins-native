@@ -62,6 +62,23 @@ public enum MapTextDisclosure {
         )
     }
 
+    /// The older map record as it may leave the device for `item`, with the storage-only flag taken off so the export's
+    /// shape does not change. A record a model wrote outside the app (`modelWrittenText`, #3588) loses its overview and
+    /// its chapter titles unless the source is marked public: the chapters stay as bare scene starts, titled by number as
+    /// the portable path does. Any other record, including every one from before the flag, is returned as it was.
+    public static func listeningMap(_ map: ListeningMap, for item: Item) -> ListeningMap {
+        var result = map
+        result.modelWrittenText = nil
+        guard map.modelWrittenText == true, !allowsModelText(of: item) else { return result }
+        result.overview = ""
+        result.chapters = map.chapters.enumerated().map { index, chapter in
+            var bare = chapter
+            bare.title = "Scene \(index + 1)"
+            return bare
+        }
+        return result
+    }
+
     public static func proposals(_ proposals: [PortableListeningMapProposalArtifact], for item: Item) -> [PortableListeningMapProposalArtifact] {
         proposals.map { proposal($0, for: item) }
     }

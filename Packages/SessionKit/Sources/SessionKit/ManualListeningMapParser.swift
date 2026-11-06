@@ -83,7 +83,8 @@ public enum ManualListeningMapParser {
             id: "map-\(item.id)-manual",
             itemId: item.id,
             overview: overview.trimmingCharacters(in: .whitespacesAndNewlines),
-            chapters: chapters
+            chapters: chapters,
+            modelWrittenText: true // a pasted map is a model's answer, so it stays on the phone for an unmarked source (#3588)
         )
     }
 
