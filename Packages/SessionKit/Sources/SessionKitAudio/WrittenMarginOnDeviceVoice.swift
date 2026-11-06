@@ -82,17 +82,24 @@ public struct WrittenMarginOnDeviceStage: Sendable {
     /// Writes the speech for `text` under `scratch` and returns the file. Runs on a background thread, once at a time.
     /// It should stop promptly when `cancel` is cancelled, and must throw when the voice cannot read.
     public let render: @Sendable (_ text: String, _ scratch: URL, _ cancel: RenderCancellation) throws -> URL
+    /// "May this voice render now?", asked on the render's background thread just before it starts (it may read the disk
+    /// and the heat, memory and power governor). False hands the reading to the iPhone voice, for every voice alike: the
+    /// same block the player obeys (`OnDeviceVoiceEngine.renderingAllowed`), so a hot or low-memory phone is never asked
+    /// for more than the player would ask (#3391). A missing voice is false here too.
+    public let isAllowed: @Sendable () -> Bool
 
     public init(
         key: String,
         budget: TimeInterval = WrittenMarginOnDeviceStage.defaultBudget,
         reads: @escaping @Sendable (_ note: String) -> Bool = WrittenMarginVoiceChoice.onDeviceCanRead,
+        isAllowed: @escaping @Sendable () -> Bool = { true },
         render: @escaping @Sendable (_ text: String, _ scratch: URL, _ cancel: RenderCancellation) throws -> URL
     ) {
         self.key = key
         self.budget = budget
         self.reads = reads
         self.render = render
+        self.isAllowed = isAllowed
     }
 }
 
@@ -114,9 +121,10 @@ final class WrittenMarginOnDeviceRunner: @unchecked Sendable {
     /// render failed or ran out of its budget, an earlier attempt is still holding the voice, or it made nothing.
     /// Throws `CancellationError` when `cancel` was cancelled: the listener moved on, so nothing else is rendered.
     func attempt(_ stage: WrittenMarginOnDeviceStage, text: String, note: String, scratch: URL, cancel: RenderCancellation) throws -> URL? {
+        if cancel.isCancelled { throw CancellationError() }
         guard stage.reads(note) else { return nil }
         guard stillRunning == 0 else { return nil } // never a second copy of the voice's models beside a late render
-        if cancel.isCancelled { throw CancellationError() }
+        guard stage.isAllowed() else { return nil } // hot, short of memory, or the voice is gone: the iPhone voice reads
         let folder = scratch.appending(path: "on-device", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let own = RenderCancellation()
@@ -128,24 +136,34 @@ final class WrittenMarginOnDeviceRunner: @unchecked Sendable {
                 box.result = result
                 return box.abandoned
             }
-            if late { lock.withLock { abandoned -= 1 } }
+            if late {
+                // Nobody will play this: it was given up on or skipped. It holds the friend's words, so it goes now.
+                if case .success(let file) = result { try? FileManager.default.removeItem(at: file) }
+                lock.withLock { abandoned -= 1 }
+            }
             done.signal()
         }
         let deadline = Date().addingTimeInterval(stage.budget)
         while done.wait(timeout: .now() + 0.05) == .timedOut {
-            if cancel.isCancelled { own.cancel(); giveUp(box); throw CancellationError() }
-            if Date() >= deadline { own.cancel(); giveUp(box); return nil }
+            if cancel.isCancelled { own.cancel(); discardIfFinished(box); throw CancellationError() }
+            if Date() >= deadline { own.cancel(); discardIfFinished(box); return nil }
         }
-        if cancel.isCancelled { throw CancellationError() }
+        if cancel.isCancelled {
+            if case .success(let file)? = box.lock.withLock({ box.result }) { try? FileManager.default.removeItem(at: file) }
+            throw CancellationError()
+        }
         guard case .success(let file)? = box.lock.withLock({ box.result }), FileManager.default.fileExists(atPath: file.path) else { return nil }
         return file
     }
 
-    private func giveUp(_ box: Box) {
-        let finished = box.lock.withLock { () -> Bool in
+    /// Gives up on a render still running (it is deleted when it comes back), or, if it finished in the meantime, deletes
+    /// what it made.
+    private func discardIfFinished(_ box: Box) {
+        let made = box.lock.withLock { () -> Result<URL, Error>? in
             if box.result == nil { box.abandoned = true }
-            return box.result != nil
+            return box.result
         }
-        if !finished { lock.withLock { abandoned += 1 } }
+        guard let made else { lock.withLock { abandoned += 1 }; return }
+        if case .success(let file) = made { try? FileManager.default.removeItem(at: file) }
     }
 }

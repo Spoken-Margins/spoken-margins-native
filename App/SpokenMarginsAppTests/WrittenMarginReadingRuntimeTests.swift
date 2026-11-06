@@ -43,11 +43,13 @@ final class WrittenMarginReadingRuntimeTests: XCTestCase {
         struct VoiceGone: Error {}
         let directory = FileManager.default.temporaryDirectory.appending(path: "written-margin-ondevice-\(UUID().uuidString)", directoryHint: .isDirectory)
         defer { try? FileManager.default.removeItem(at: directory) }
-        let reader = WrittenMarginReader(directory: directory, onDevice: WrittenMarginOnDeviceStage(key: "test-voice") { _, _, _ in throw VoiceGone() })
+        let reader = WrittenMarginReader(directory: directory)
+        let voice = WrittenMarginOnDeviceStage(key: "test-voice") { _, _, _ in throw VoiceGone() }
         let reading = WrittenMarginReading(intro: WrittenMarginReading.intro(senderName: "Cole"), text: "Lovely harbour. Hear the gulls near the end.")
 
-        let file = try await reader.rendered(reading)
+        let file = try await reader.rendered(reading, onDevice: voice)
         XCTAssertTrue(reader.isReady(reading))
+        XCTAssertEqual(file, reader.fileURL(for: reading), "the iPhone voice's reading is at the iPhone voice's path, not the on-device one's")
         let player = try AVAudioPlayer(contentsOf: file)
         XCTAssertGreaterThan(player.duration, 1, "the iPhone voice read the whole Margin after the on-device voice failed")
     }

@@ -12,31 +12,56 @@ import SessionKitSupertonic
 /// keeps it loaded), and the reader never starts a second on-device render while a late one still holds the voice.
 @MainActor
 enum WrittenMarginOnDeviceRendering {
-    /// The chosen on-device voice as it can be seen from the main thread without touching the disk, or nil when none is
-    /// chosen (the iPhone voice, Kitten) or this build has no renderer for it. A downloaded voice's files are checked
-    /// off the main thread, in its render: a voice that has gone is then a quick failure and the iPhone voice reads.
+    /// The chosen on-device voice as it can be seen from the main thread with no disk and no model: just which voice it is,
+    /// or nil when none is chosen (the iPhone voice, Kitten) or this build has no renderer for it. Whether its files are on
+    /// the phone and whether the heat, memory and power governor allows it are asked of every voice alike on the render's
+    /// own thread (`WrittenMarginOnDeviceStage.isAllowed`), so a missing or blocked voice gives the reading to the iPhone
+    /// voice there.
     static func candidate(for selection: AppTTSVoiceSelection, model: Gate1AppModel) -> WrittenMarginVoiceChoice.Candidate? {
         if let voice = selection.supertonicVoice {
-            return .init(key: "supertonic-\(voice.rawValue)", isInstalled: model.supertonicModel.isModelPresent, allowedNow: true)
+            return .init(key: "supertonic-\(voice.rawValue)", isInstalled: true, allowedNow: true)
         }
         guard selection.choice.downloadedVoiceId != nil, DownloadedVoiceRegistry.descriptor(for: selection.choice) != nil else { return nil }
         return .init(key: "downloaded-\(selection.rawValue)", isInstalled: true, allowedNow: true)
     }
 
-    /// The reader's on-device stage for `selection`. Its render runs on a background thread and takes the renderer from
-    /// the main actor only at that moment, so building the stage costs nothing.
+    /// The reader's on-device stage for `selection`. Its checks and its render run on a background thread and take what
+    /// they need from the main actor only at that moment, so building the stage costs nothing.
     static func stage(for selection: AppTTSVoiceSelection, key: String, model: Gate1AppModel) -> WrittenMarginOnDeviceStage {
-        WrittenMarginOnDeviceStage(key: key) { [weak model] text, scratch, cancel in
-            guard let model else { throw CancellationError() }
-            let renderer = try onMain { try renderer(for: selection, model: model) }
-            return try renderSynchronously(renderer, text: text, voice: selection.supertonicVoice ?? .m2, cancel: cancel)
-        }
+        WrittenMarginOnDeviceStage(
+            key: key,
+            isAllowed: { [weak model] in
+                // The same block the player obeys (`OnDeviceVoiceEngine.renderingAllowed`): model present, chip and memory fit
+                // for a downloaded voice, and the governor's heat, memory and power. Asked off the main thread: it reads the disk.
+                guard let model, let plan = try? onMain({ try makePlan(for: selection, model: model) }) else { return false }
+                return plan.allowed()
+            },
+            render: { [weak model] text, _, cancel in
+                guard let model else { throw CancellationError() }
+                let plan = try onMain { try makePlan(for: selection, model: model) }
+                let renderer = try onMain { try plan.renderer() }
+                return try renderSynchronously(renderer, text: text, voice: selection.supertonicVoice ?? .m2, cancel: cancel)
+            }
+        )
     }
 
-    /// The renderer for `selection` if the voice may render now, else a throw (the iPhone voice then reads).
-    private static func renderer(for selection: AppTTSVoiceSelection, model: Gate1AppModel) throws -> any SupertonicRendering {
-        if selection.supertonicVoice != nil { return try model.makeSupertonicRenderer() } // checks the Terms again
+    /// What reading in `selection`'s voice needs, gathered on the main actor without running the model. Checks the Terms again.
+    private struct Plan: Sendable {
+        let allowed: @Sendable () -> Bool
+        let renderer: @MainActor @Sendable () throws -> any SupertonicRendering
+    }
+
+    private static func makePlan(for selection: AppTTSVoiceSelection, model: Gate1AppModel) throws -> Plan {
         try model.verifyCurrentTermsForOnDeviceVoice()
+        if selection.supertonicVoice != nil {
+            return Plan(
+                allowed: model.supertonicModel.renderingAllowed(when: SupertonicModelNotDownloaded.governorAllowsRendering),
+                renderer: { [weak model] in
+                    guard let model else { throw CancellationError() }
+                    return try model.makeSupertonicRenderer() // the model's cached renderer: no second copy
+                }
+            )
+        }
         guard let descriptor = DownloadedVoiceRegistry.descriptor(for: selection.choice),
               let registration = descriptor.registration,
               let supportDirectory = try? model.applicationSupportDirectory() else { throw WrittenMarginOnDeviceError.notAvailable }
@@ -45,8 +70,7 @@ enum WrittenMarginOnDeviceRendering {
             deviceChipGeneration: model.preparationSeams.deviceChipGeneration,
             renderer: SharedDownloadedRenderers.shared.renderer(for: descriptor, registration: registration, supportDirectory: supportDirectory)
         )
-        guard engine.renderingAllowed() else { throw WrittenMarginOnDeviceError.notAvailable } // not installed, wrong chip, hot or low on memory
-        return engine.renderer
+        return Plan(allowed: engine.renderingAllowed, renderer: { engine.renderer })
     }
 
     enum WrittenMarginOnDeviceError: Error { case notAvailable }

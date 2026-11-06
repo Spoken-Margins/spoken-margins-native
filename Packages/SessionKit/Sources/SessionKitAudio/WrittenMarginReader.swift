@@ -41,22 +41,48 @@ public final class WrittenMarginReader: @unchecked Sendable {
     /// How many abandoned renders may still be blocked before new ones fail at once.
     public static let defaultMostStuckRenders = 2
 
+    /// Someone waiting on a render. A waiter with an `id` leaves when its task is cancelled (the listener skipped); one
+    /// without (`start`, `waitUntilSettled`) wants the reading whatever happens to any one listener.
+    private struct Waiter {
+        let id: UUID?
+        let completion: @Sendable (Result<URL, Error>) -> Void
+    }
+
     private final class Job: @unchecked Sendable {
         let reading: WrittenMarginReading
         let target: URL
+        /// The on-device voice to try first (#3391), nil for the iPhone voice. A job with one writes `target` only if that
+        /// voice made the reading; the iPhone voice's reading is written at the iPhone path, so a file's path always says
+        /// which voice made it.
+        let stage: WrittenMarginOnDeviceStage?
+        /// Set when nobody waits for the on-device try any more: it stops at its next step.
+        let cancel = RenderCancellation()
+        var waiters: [Waiter] = []
+        var started = false
+        /// The on-device try is over (made a file, gave up, or was not asked for): a skip no longer has anything to stop.
+        var pastAttempt = false
+        /// The item was deleted for good while this ran: nothing it makes is kept, whichever voice made it.
+        var doomed = false
         var finished = false
         /// The render thread has come back (set under the reader's lock, in the same section that frees its lane). `finished`
         /// is set later, by `finish`, so a timeout that looked at `finished` alone could see a render that had already
         /// returned as still blocked and count it stuck for good (#3412).
         var returned = false
-        init(reading: WrittenMarginReading, target: URL) { self.reading = reading; self.target = target }
+        init(reading: WrittenMarginReading, target: URL, stage: WrittenMarginOnDeviceStage?) {
+            self.reading = reading; self.target = target; self.stage = stage
+            pastAttempt = stage == nil
+        }
     }
 
     private let directory: URL
     private let voiceIdentifier: String?
-    private let onDevice: WrittenMarginOnDeviceStage?
+    /// One runner for every on-device voice: a late render of one voice holds up an attempt of any other, so two models
+    /// are never loaded at once, whichever voice is chosen (#3391).
     private let onDeviceRunner = WrittenMarginOnDeviceRunner()
-    private var cancellations: [String: RenderCancellation] = [:] // by file path, while the render runs
+    private var fellBack: [String: Date] = [:] // on-device path -> when the iPhone voice read it instead
+    /// How long a reading the iPhone voice made in place of the on-device voice is played as it is, before the on-device
+    /// voice is tried for that Margin again (it may be warm by then).
+    private let retryOnDeviceAfter: TimeInterval
     private let renderAudio: @Sendable (_ spokenText: String, _ scratch: URL, _ voice: String?) throws -> URL
     /// True for the iPhone voice: the voice is then chosen from the note's language. A test renderer is given none.
     private let picksVoice: Bool
@@ -66,15 +92,14 @@ public final class WrittenMarginReader: @unchecked Sendable {
     private let timeLimit: @Sendable (_ spokenText: String) -> TimeInterval
     private let lock = NSLock()
     private var ready = Set<String>()
-    private var waiting: [String: [@Sendable (Result<URL, Error>) -> Void]] = [:]
+    private var jobs: [String: Job] = [:] // by target path, while someone may still wait for it
+    private var active: [Job] = [] // queued or running, until the render thread comes back
     private var pending: [Job] = []
     private var laneBusy = false
     private var lane = 0
     private var stuck = 0
     private let mostStuck: Int
     private var lastChecked: [String: Date] = [:]
-    private var inFlight = Set<String>() // paths whose render thread is running, even one given up on
-    private var doomed = Set<String>() // paths removed while a render of them was running or waiting: they leave no file
     private var sweptScratch = false
     private let recheckAfter: TimeInterval
     /// Tests only: runs on the render thread after it has come back and before it hands the result over, to hold the
@@ -89,8 +114,8 @@ public final class WrittenMarginReader: @unchecked Sendable {
         timeLimit: (@Sendable (_ spokenText: String) -> TimeInterval)? = nil,
         mostStuckRenders: Int = WrittenMarginReader.defaultMostStuckRenders,
         recheckAfter: TimeInterval = 5,
+        retryOnDeviceAfter: TimeInterval = 120,
         voiceForNote: (@Sendable (_ note: String) -> String?)? = nil,
-        onDevice: WrittenMarginOnDeviceStage? = nil,
         audioSeconds: @escaping @Sendable (URL) -> Double? = { (try? AVAudioFile(forReading: $0)).map { Double($0.length) / $0.processingFormat.sampleRate } },
         renderAudio: (@Sendable (_ spokenText: String, _ scratch: URL) throws -> URL)? = nil
     ) {
@@ -98,11 +123,10 @@ public final class WrittenMarginReader: @unchecked Sendable {
         self.audioSeconds = audioSeconds
         self.directory = directory
         self.voiceIdentifier = voiceIdentifier
-        self.onDevice = onDevice
         self.mostStuck = mostStuckRenders
         self.recheckAfter = recheckAfter
-        let baseLimit = timeLimit ?? { WrittenMarginReader.defaultTimeLimit(forCharacters: $0.count) }
-        self.timeLimit = { baseLimit($0) + (onDevice?.budget ?? 0) } // the on-device try's budget comes before the iPhone voice's render
+        self.retryOnDeviceAfter = retryOnDeviceAfter
+        self.timeLimit = timeLimit ?? { WrittenMarginReader.defaultTimeLimit(forCharacters: $0.count) }
         self.picksVoice = renderAudio == nil || voiceForNote != nil
         if let renderAudio {
             self.renderAudio = { text, scratch, _ in try renderAudio(text, scratch) }
@@ -118,18 +142,41 @@ public final class WrittenMarginReader: @unchecked Sendable {
         }
     }
 
-    /// The listener skipped this Margin: an on-device render of it stops at its next step, and no file is kept. A reading
-    /// whose render is already past that try (the iPhone voice's) finishes as before.
-    public func cancelOnDevice(_ reading: WrittenMarginReading) {
-        let cancel = lock.withLock { cancellations[fileURL(for: reading).path] }
-        cancel?.cancel()
-    }
-
     /// Where this reading's file is, or will be. Pure: no disk access. The name starts with the item's key, so everything
     /// rendered for an item can be found and removed without knowing its words.
     public func fileURL(for reading: WrittenMarginReading) -> URL {
-        let seed = ["written-margin-reading-v2", voiceIdentifier ?? onDevice.map { "on-device:\($0.key)" } ?? "default", reading.spokenText].joined(separator: "\u{1f}")
+        path(for: reading, voice: voiceIdentifier ?? "default")
+    }
+
+    /// Where the on-device voice `key`'s reading is, or will be. A different name from the iPhone voice's, so a reading is
+    /// never played for a voice that did not make it (#3391).
+    public func fileURL(for reading: WrittenMarginReading, onDevice stage: WrittenMarginOnDeviceStage) -> URL {
+        path(for: reading, voice: "on-device:\(stage.key)")
+    }
+
+    private func path(for reading: WrittenMarginReading, voice: String) -> URL {
+        let seed = ["written-margin-reading-v2", voice, reading.spokenText].joined(separator: "\u{1f}")
         return directory.appending(path: "\(Self.itemKey(reading.itemId))-\(Self.fingerprint(seed)).caf", directoryHint: .notDirectory)
+    }
+
+    /// The stage that applies to this note: nil when the on-device voice cannot read it (another script or language), so
+    /// the iPhone voice does, from the start.
+    private func effective(_ stage: WrittenMarginOnDeviceStage?, for reading: WrittenMarginReading) -> WrittenMarginOnDeviceStage? {
+        guard let stage, stage.reads(reading.text) else { return nil }
+        return stage
+    }
+
+    /// Where to find the reading to play now and whether it is known to be on disk, for the voice the listener chose
+    /// (`onDevice`, nil for the iPhone voice). With an on-device voice: its own reading if it is there; else the iPhone
+    /// voice's if that voice read this Margin in its place a moment ago; else not ready (the caller renders it). In memory
+    /// only, so the main thread may ask. Starts nothing.
+    public func playbackState(for reading: WrittenMarginReading, onDevice stage: WrittenMarginOnDeviceStage?) -> (file: URL, isReady: Bool) {
+        guard let stage = effective(stage, for: reading) else { return (fileURL(for: reading), isReady(reading)) }
+        let device = fileURL(for: reading, onDevice: stage)
+        if isKnownReady(device.path) { return (device, true) }
+        let recently = lock.withLock { fellBack[device.path].map { Date().timeIntervalSince($0) < retryOnDeviceAfter } ?? false }
+        if recently, isReady(reading) { return (fileURL(for: reading), true) }
+        return (device, false)
     }
 
     static func itemKey(_ itemId: String) -> String { String(fingerprint("written-margin-item\u{1f}\(itemId)").prefix(16)) }
@@ -147,8 +194,9 @@ public final class WrittenMarginReader: @unchecked Sendable {
 
     /// Whether this reading's file is known to be on disk. Answered from memory, so it is safe on the main thread; false
     /// until a render or a check (`start`, `rendered`) has found the file.
-    public func isReady(_ reading: WrittenMarginReading) -> Bool {
-        let path = fileURL(for: reading).path
+    public func isReady(_ reading: WrittenMarginReading) -> Bool { isKnownReady(fileURL(for: reading).path) }
+
+    private func isKnownReady(_ path: String) -> Bool {
         let known = lock.withLock { ready.contains(path) }
         if known { verifyLater(path) }
         return known
@@ -156,9 +204,9 @@ public final class WrittenMarginReader: @unchecked Sendable {
 
     /// Drops a reading from the ready set, so the next ask renders it again. For a reading that was ready and then was not
     /// there when it came to play.
-    public func forget(_ reading: WrittenMarginReading) {
-        let path = fileURL(for: reading).path
-        lock.withLock { _ = ready.remove(path) }
+    public func forget(_ reading: WrittenMarginReading, onDevice stage: WrittenMarginOnDeviceStage? = nil) {
+        let paths = [fileURL(for: reading).path] + (stage.map { [fileURL(for: reading, onDevice: $0).path] } ?? [])
+        lock.withLock { paths.forEach { _ = ready.remove($0) } }
     }
 
     /// What the reader is doing right now. It is one render lane for the whole process (`shared`), so a test that leaves a
@@ -177,7 +225,7 @@ public final class WrittenMarginReader: @unchecked Sendable {
     }
 
     public var activity: Activity {
-        lock.withLock { Activity(queued: pending.count, running: inFlight.count, waiting: waiting.count, stuck: stuck) }
+        lock.withLock { Activity(queued: pending.count, running: active.filter { $0.started }.count, waiting: jobs.count, stuck: stuck) }
     }
 
     /// Runs `then` once no render of this reading is queued or running: at once when there is none, otherwise right after
@@ -187,8 +235,8 @@ public final class WrittenMarginReader: @unchecked Sendable {
     public func whenSettled(_ reading: WrittenMarginReading, then: @escaping @Sendable () -> Void) {
         let path = fileURL(for: reading).path
         lock.lock()
-        if waiting[path] != nil {
-            waiting[path]?.append { _ in then() }
+        if let job = jobs[path] {
+            job.waiters.append(Waiter(id: nil) { _ in then() })
             lock.unlock()
             return
         }
@@ -200,15 +248,15 @@ public final class WrittenMarginReader: @unchecked Sendable {
     /// the reader is doing then. Starts no render. `activity.isIdle` is the answer to "did the last test leave nothing
     /// behind".
     public func settle(upTo limit: TimeInterval) async -> Activity {
-        let paths = lock.withLock { Array(waiting.keys) }
+        let paths = lock.withLock { Array(jobs.keys) }
         guard !paths.isEmpty else { return activity }
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             let once = Once { continuation.resume() }
             let remaining = Counter(paths.count)
             for path in paths {
                 lock.lock()
-                if waiting[path] != nil {
-                    waiting[path]?.append { _ in if remaining.decrement() == 0 { once.fire() } }
+                if let job = jobs[path] {
+                    job.waiters.append(Waiter(id: nil) { _ in if remaining.decrement() == 0 { once.fire() } })
                     lock.unlock()
                 } else {
                     lock.unlock()
@@ -271,7 +319,9 @@ public final class WrittenMarginReader: @unchecked Sendable {
         lock.withLock {
             ready = ready.filter { !isItsFile($0) }
             lastChecked = lastChecked.filter { !isItsFile($0.key) }
-            doomed.formUnion(Set(waiting.keys).union(inFlight).filter(isItsFile))
+            // Whatever of this item is queued, running or still waited on makes no file, whichever voice is reading it. The
+            // job decides, not a path, because an on-device job that falls back writes another path than its own.
+            for job in active + Array(jobs.values) where isItsFile(job.target.path) { job.doomed = true }
         }
         DispatchQueue.global(qos: .utility).async { [self] in
             for file in derivedFiles(forItem: itemId) {
@@ -294,34 +344,70 @@ public final class WrittenMarginReader: @unchecked Sendable {
         }
     }
 
-    /// Names each reading's file and starts rendering the ones that are not on disk yet, off the calling thread. Returns
-    /// at once with the paths, keyed as the caller keyed the readings; a file may not exist yet when this returns.
-    public func start(_ readings: [String: WrittenMarginReading]) -> [String: URL] {
+    /// Names each reading's file and starts rendering the ones that are not ready yet, off the calling thread. Returns at
+    /// once with the paths, keyed as the caller keyed the readings; a file may not exist yet when this returns. With an
+    /// on-device voice (`onDevice`), a reading it has not made yet is rendered by it, so ask only for what is about to be
+    /// played: opening a screen asks with none and gets the iPhone voice's, which costs the listener nothing (#3391).
+    public func start(_ readings: [String: WrittenMarginReading], onDevice stage: WrittenMarginOnDeviceStage? = nil) -> [String: URL] {
         var urls: [String: URL] = [:]
         for (key, reading) in readings {
-            urls[key] = fileURL(for: reading)
-            ensureRendered(reading) { _ in }
+            let state = playbackState(for: reading, onDevice: stage)
+            urls[key] = state.file
+            let applies = effective(stage, for: reading)
+            if applies != nil, state.isReady { continue }
+            ensureRendered(reading, onDevice: applies, waiter: nil) { _ in }
         }
         return urls
     }
 
     /// The reading's file once it is on disk: already there, or rendered now. Never blocks the caller's thread. Throws
-    /// `RenderError.timedOut` when the render outlasts its limit.
-    public func rendered(_ reading: WrittenMarginReading) async throws -> URL {
-        try await withCheckedThrowingContinuation { continuation in
-            ensureRendered(reading) { continuation.resume(with: $0) }
+    /// `RenderError.timedOut` when the render outlasts its limit. When the caller's task is cancelled (the listener
+    /// skipped) the call throws `CancellationError` at once, and the on-device try stops only if no one else is waiting
+    /// for the same reading; a later ask joins a render that is still wanted, or starts a fresh one (#3391).
+    public func rendered(_ reading: WrittenMarginReading, onDevice stage: WrittenMarginOnDeviceStage? = nil) async throws -> URL {
+        let id = UUID()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                ensureRendered(reading, onDevice: stage, waiter: id) { continuation.resume(with: $0) }
+                if Task.isCancelled { leave(id) } // cancelled before the wait was in place
+            }
+        } onCancel: {
+            leave(id)
         }
+    }
+
+    /// A waiter whose task was cancelled stops waiting. If it was the last one for an on-device try that is not over, the
+    /// try is stopped and the job let go, so a new ask starts its own.
+    private func leave(_ id: UUID) {
+        var completion: (@Sendable (Result<URL, Error>) -> Void)?
+        lock.lock()
+        for job in jobs.values {
+            guard let index = job.waiters.firstIndex(where: { $0.id == id }) else { continue }
+            completion = job.waiters.remove(at: index).completion
+            if job.waiters.isEmpty, !job.pastAttempt {
+                job.cancel.cancel()
+                jobs[job.target.path] = nil
+            }
+            break
+        }
+        lock.unlock()
+        completion?(.failure(CancellationError()))
     }
 
     /// Returns when every reading is on disk or has failed, or after `limit` seconds, whichever is first. Starts any
     /// render that has not started. Never throws: the caller goes on and the conductor reports a file that is missing.
-    public func waitUntilSettled(_ readings: [WrittenMarginReading], upTo limit: TimeInterval) async {
+    public func waitUntilSettled(_ readings: [WrittenMarginReading], upTo limit: TimeInterval, onDevice stage: WrittenMarginOnDeviceStage? = nil) async {
         guard !readings.isEmpty else { return }
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             let once = Once { continuation.resume() }
             let remaining = Counter(readings.count)
             for reading in readings {
-                ensureRendered(reading) { _ in if remaining.decrement() == 0 { once.fire() } }
+                let applies = effective(stage, for: reading)
+                if applies != nil, playbackState(for: reading, onDevice: applies).isReady {
+                    if remaining.decrement() == 0 { once.fire() }
+                    continue
+                }
+                ensureRendered(reading, onDevice: applies, waiter: nil) { _ in if remaining.decrement() == 0 { once.fire() } }
             }
             DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + limit) { once.fire() }
         }
@@ -345,16 +431,20 @@ public final class WrittenMarginReader: @unchecked Sendable {
         func decrement() -> Int { lock.withLock { value -= 1; return value } }
     }
 
-    private func ensureRendered(_ reading: WrittenMarginReading, completion: @escaping @Sendable (Result<URL, Error>) -> Void) {
-        let target = fileURL(for: reading)
+    private func ensureRendered(_ reading: WrittenMarginReading, onDevice stage: WrittenMarginOnDeviceStage?, waiter: UUID?, completion: @escaping @Sendable (Result<URL, Error>) -> Void) {
+        let stage = effective(stage, for: reading)
+        let target = stage.map { fileURL(for: reading, onDevice: $0) } ?? fileURL(for: reading)
         lock.lock()
-        if waiting[target.path] != nil {
-            waiting[target.path]?.append(completion) // the same words are already being rendered: share that render
+        if let job = jobs[target.path] {
+            job.waiters.append(Waiter(id: waiter, completion: completion)) // the same words are already being rendered: share that render
             lock.unlock()
             return
         }
-        waiting[target.path] = [completion]
-        pending.append(Job(reading: reading, target: target))
+        let job = Job(reading: reading, target: target, stage: stage)
+        job.waiters = [Waiter(id: waiter, completion: completion)]
+        jobs[target.path] = job
+        active.append(job)
+        pending.append(job)
         let sweep = !sweptScratch
         sweptScratch = true
         lock.unlock()
@@ -369,26 +459,25 @@ public final class WrittenMarginReader: @unchecked Sendable {
         guard !laneBusy, !pending.isEmpty else { lock.unlock(); return }
         let job = pending.removeFirst()
         if stuck >= mostStuck {
-            doomed.remove(job.target.path)
+            active.removeAll { $0 === job }
             lock.unlock()
             finish(job, .failure(RenderError.tooManyStuck)) // no new thread behind renders the service hasn't given back
             pump()
             return
         }
         laneBusy = true
-        inFlight.insert(job.target.path)
+        job.started = true
         let myLane = lane
         lock.unlock()
 
-        let limit = timeLimit(job.reading.spokenText)
+        let limit = timeLimit(job.reading.spokenText) + (job.stage?.budget ?? 0) // the on-device try's budget comes before the iPhone voice's render
         DispatchQueue.global(qos: .userInitiated).async { [self] in
-            let result = Result<URL, Error> { try render(job.reading, to: job.target) }
+            let result = Result<URL, Error> { try render(job) }
             lock.lock()
             job.returned = true
             if lane == myLane { laneBusy = false } else { stuck -= 1 } // an abandoned render came back
-            inFlight.remove(job.target.path)
-            let removed = doomed.remove(job.target.path) != nil
-            if case .success = result, !removed { ready.insert(job.target.path) }
+            active.removeAll { $0 === job }
+            if case .success(let file) = result, !job.doomed { ready.insert(file.path) }
             lock.unlock()
             beforeFinish?(job.reading)
             finish(job, result)
@@ -411,9 +500,11 @@ public final class WrittenMarginReader: @unchecked Sendable {
         lock.lock()
         guard !job.finished else { lock.unlock(); return }
         job.finished = true
-        let done = waiting.removeValue(forKey: job.target.path) ?? []
+        let done = job.waiters
+        job.waiters = []
+        if jobs[job.target.path] === job { jobs[job.target.path] = nil }
         lock.unlock()
-        done.forEach { $0(result) }
+        done.forEach { $0.completion(result) }
     }
 
     /// A sanity check, not proof of coverage: a file no longer than the intro said alone means the voice said nothing of the
@@ -433,37 +524,62 @@ public final class WrittenMarginReader: @unchecked Sendable {
         return whole > (intro ?? 0) + 0.05
     }
 
-    private func render(_ reading: WrittenMarginReading, to target: URL) throws -> URL {
+    /// The reading's speech by the iPhone voice, in `scratch`.
+    private func renderWithIPhone(_ reading: WrittenMarginReading, scratch: URL) throws -> URL {
+        let voice = picksVoice ? (voiceIdentifier ?? chooseVoice(reading.text)) : voiceIdentifier
+        if picksVoice, voice == nil { throw RenderError.noVoice } // no installed voice can read all of it: no reading, not a fragment
+        let file = try renderAudio(reading.spokenText, scratch, voice)
+        if picksVoice, let voice, try !isLongerThanTheIntro(file, reading: reading, voice: voice, scratch: scratch) {
+            throw RenderError.nothingToSay
+        }
+        return file
+    }
+
+    /// Puts a finished render at `target`, or discards it. The item deleted for good while it rendered keeps nothing, and
+    /// the file is removed here, not left where the voice wrote it.
+    private func place(_ file: URL, at target: URL, job: Job) throws -> URL {
         let fileManager = FileManager.default
-        if fileManager.fileExists(atPath: target.path) { return target }
+        if fileManager.fileExists(atPath: target.path) { try? fileManager.removeItem(at: file); return target } // another render of these words got there first
+        if lock.withLock({ job.doomed }) {
+            try? fileManager.removeItem(at: file)
+            throw RenderError.nothingToSay
+        }
+        do { try fileManager.moveItem(at: file, to: target) } catch {
+            if fileManager.fileExists(atPath: target.path) { try? fileManager.removeItem(at: file); return target }
+            throw error
+        }
+        return target
+    }
+
+    private func render(_ job: Job) throws -> URL {
+        let fileManager = FileManager.default
+        if job.cancel.isCancelled { throw CancellationError() }
+        if fileManager.fileExists(atPath: job.target.path) { return job.target }
         let scratch = directory.appending(path: "scratch-\(UUID().uuidString)", directoryHint: .isDirectory)
         try fileManager.createDirectory(at: scratch, withIntermediateDirectories: true)
         defer { try? fileManager.removeItem(at: scratch) }
-        var rendered: URL?
-        if let onDevice {
-            // The listener's chosen voice first, within its budget; a slow or failed try falls through to the iPhone voice
-            // below, so a reading is never silence. A skip (`cancelOnDevice`) throws and falls back to nothing.
-            let cancel = RenderCancellation()
-            lock.withLock { cancellations[target.path] = cancel }
-            defer { lock.withLock { _ = cancellations.removeValue(forKey: target.path) } }
-            rendered = try onDeviceRunner.attempt(onDevice, text: reading.spokenText, note: reading.text, scratch: scratch, cancel: cancel)
+        let reading = job.reading
+        guard let stage = job.stage else {
+            return try place(try renderWithIPhone(reading, scratch: scratch), at: job.target, job: job)
         }
-        if rendered == nil {
-            let voice = picksVoice ? (voiceIdentifier ?? chooseVoice(reading.text)) : voiceIdentifier
-            if picksVoice, voice == nil { throw RenderError.noVoice } // no installed voice can read all of it: no reading, not a fragment
-            let file = try renderAudio(reading.spokenText, scratch, voice)
-            if picksVoice, let voice, try !isLongerThanTheIntro(file, reading: reading, voice: voice, scratch: scratch) {
-                throw RenderError.nothingToSay
-            }
-            rendered = file
+        // The listener's chosen voice first, within its budget. A slow, failed or blocked try (and the iPhone voice for a
+        // note it cannot read) falls through to the iPhone voice, so a reading is never silence. A skip throws and falls
+        // back to nothing. The on-device voice's file is `target`; the iPhone voice's goes to its own path, so a path
+        // never names a voice that did not make the file.
+        var made: URL?
+        do {
+            made = try onDeviceRunner.attempt(stage, text: reading.spokenText, note: reading.text, scratch: scratch, cancel: job.cancel)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            made = nil
         }
-        guard let rendered else { throw RenderError.nothingToSay }
-        if fileManager.fileExists(atPath: target.path) { return target } // another render of these words got there first
-        // The item was deleted for good while this rendered: its words go no further than the scratch folder.
-        if lock.withLock({ doomed.contains(target.path) }) { throw RenderError.nothingToSay }
-        try fileManager.moveItem(at: rendered, to: target)
-        lock.withLock { if !doomed.contains(target.path) { ready.insert(target.path) } }
-        return target
+        lock.withLock { job.pastAttempt = true }
+        if let made { return try place(made, at: job.target, job: job) }
+        lock.withLock { fellBack[job.target.path] = Date() }
+        let phone = fileURL(for: reading)
+        if fileManager.fileExists(atPath: phone.path) { return phone }
+        return try place(try renderWithIPhone(reading, scratch: scratch), at: phone, job: job)
     }
 }
 #endif

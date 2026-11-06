@@ -9,16 +9,25 @@ extension SharedMarginAudio {
         _ margin: ImportedCommentaryInterjection,
         in layer: ImportedCommentaryLayer,
         voiceFile: (_ audioPath: String) -> URL?,
-        reader: WrittenMarginReader
+        reader: WrittenMarginReader,
+        onDevice stage: WrittenMarginOnDeviceStage? = nil
     ) -> SharedMarginAudio {
-        resolve(margin, in: layer, voiceFile: voiceFile, reading: { (reader.fileURL(for: $0), reader.isReady($0)) })
+        resolve(margin, in: layer, voiceFile: voiceFile, reading: { reader.playbackState(for: $0, onDevice: stage) })
     }
 
     /// The file to play, after making sure a reading that is not ready is being rendered (the same call starts and finds a
     /// render already running). Nil when nothing can play.
-    public func startingRender(on reader: WrittenMarginReader) -> URL? {
-        if case .readingRendering(let reading, _) = self { return reader.start(["margin": reading])["margin"] }
-        return file
+    ///
+    /// With an on-device voice a reading it has not made is rendered by it, because this is the Margin being played. A
+    /// caller that cannot wait (it hands the player a file now) gets the iPhone voice's reading when that is already on
+    /// disk, so nothing fails or goes silent; the on-device reading is then ready for the next play (#3391).
+    public func startingRender(on reader: WrittenMarginReader, onDevice stage: WrittenMarginOnDeviceStage? = nil) -> URL? {
+        guard case .readingRendering(let reading, _) = self else { return file }
+        if stage != nil, stage?.reads(reading.text) == true, reader.isReady(reading) {
+            _ = reader.start(["margin": reading], onDevice: stage)
+            return reader.fileURL(for: reading)
+        }
+        return reader.start(["margin": reading], onDevice: stage)["margin"]
     }
 }
 #endif
