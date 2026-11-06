@@ -716,6 +716,30 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         return revisions.filter { $0.interjectionId == interjectionId }
     }
 
+    /// For each Margin of an item that was ever shared as text, the read-aloud choice its newest share carried (#3472).
+    /// One read for the item's shares that pulls only the Margin id and the choice out of each row, so the share sheet
+    /// decodes no transcripts and reads no share once per Margin. Shares are saved once and never changed. `updated_at`
+    /// counts whole seconds and share ids are random, so two shares saved in the same second are ordered by `rowid`,
+    /// which is the order they were inserted in, not by `id`.
+    public func loadLastSentReadAloud(itemId: String) throws -> [String: Bool] {
+        struct Row: Decodable { let margin: String; let choice: Int }
+        var choices: [String: Bool] = [:]
+        try readTexts(
+            """
+            SELECT json_object('margin', json_extract(payload, '$.interjectionId'), 'choice', json_extract(payload, '$.sentReadAloud'))
+            FROM records WHERE kind = 'interjection_share_revision' AND item_id = ?
+              AND CASE WHEN json_valid(payload)
+                       THEN json_extract(payload, '$.sentReadAloud') IS NOT NULL AND json_extract(payload, '$.interjectionId') IS NOT NULL
+                       ELSE 0 END
+            ORDER BY updated_at ASC, rowid ASC;
+            """, [itemId], name: "last_sent_read_aloud"
+        ) { text in
+            guard let row = try? decoder.decode(Row.self, from: Data(text.utf8)) else { return }
+            choices[row.margin] = row.choice != 0
+        }
+        return choices
+    }
+
     public func importCommentaryLayer(
         _ layer: ImportedCommentaryLayer,
         interjections: [ImportedCommentaryInterjection]

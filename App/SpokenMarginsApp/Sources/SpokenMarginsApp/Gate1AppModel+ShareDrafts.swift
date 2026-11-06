@@ -73,6 +73,8 @@ extension Gate1AppModel {
             sharingState.confirmsPrivateSharingRights = sharingState.isAppAuthoredItem
         }
         // A voice Margin with no words starts with placeholder words instead of being left out (#3027).
+        // The switch starts where the sender last put it for each Margin, so a re-share keeps it (#3472).
+        let lastSentReadAloud = (try? requireStore().loadLastSentReadAloud(itemId: selectedItem.id)) ?? [:]
         sharingState.drafts = candidates.map { interjection in
             ShareInterjectionDraft.initial(
                 for: interjection,
@@ -80,7 +82,8 @@ extension Gate1AppModel {
                     ?? (!hasStarredCandidates || interjection.isStarredForSharing == true),
                 hasVoice: interjection.audioPath.flatMap(resolvedInterjectionAudioURL(for:)) != nil,
                 itemTitle: selectedItem.title,
-                anchorWarning: shareAnchorWarning(for: interjection)
+                anchorWarning: shareAnchorWarning(for: interjection),
+                lastSentReadAloud: lastSentReadAloud[interjection.id]
             )
         }
         sharingState.isPreparing = false
