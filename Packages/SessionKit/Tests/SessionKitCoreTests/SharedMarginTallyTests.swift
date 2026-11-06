@@ -76,6 +76,49 @@ final class SharedMarginTallyTests: XCTestCase {
                        "hearing one Margin takes one off the new count, across a reopen")
     }
 
+    /// #3469: a hidden sender's layers and a Margin hidden on its own leave the count; a layer with no sender id stays.
+    func testHiddenSendersAndHiddenMarginsAreLeftOutOfTheCount() throws {
+        let path = FileManager.default.temporaryDirectory.appending(path: "shared-tally-hidden-\(UUID().uuidString).sqlite").path
+        defer { for suffix in ["", "-wal", "-shm"] { try? FileManager.default.removeItem(atPath: path + suffix) } }
+        let store = try SQLiteSessionStore(path: path)
+        for id in ["a", "b", "c"] { try store.saveItem(item(id)) }
+        let ana = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", ben = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        func senderLayer(_ id: String, item: String, sender: String?) -> ImportedCommentaryLayer {
+            var layer = self.layer(id, item: item)
+            layer.senderId = sender
+            return layer
+        }
+        // a: Ana (two Margins) and Ben (one). b: a layer with no sender id (one). c: Ben only (one).
+        _ = try store.importCommentaryLayer(senderLayer("ana", item: "a", sender: ana), interjections: [margin("m1", layer: "ana"), margin("m2", layer: "ana")])
+        _ = try store.importCommentaryLayer(senderLayer("ben", item: "a", sender: ben), interjections: [margin("m3", layer: "ben")])
+        _ = try store.importCommentaryLayer(senderLayer("old", item: "b", sender: nil), interjections: [margin("m4", layer: "old")])
+        _ = try store.importCommentaryLayer(senderLayer("ben2", item: "c", sender: ben), interjections: [margin("m5", layer: "ben2")])
+
+        XCTAssertEqual(try store.loadSharedMarginTallies(hiding: HiddenSenders()), try store.loadSharedMarginTallies())
+        XCTAssertEqual(try store.loadSharedMarginTallies()["a"], SharedMarginTally(total: 3, new: 3))
+
+        var hidden = HiddenSenders()
+        hidden.hide(ben)
+        XCTAssertEqual(try store.loadSharedMarginTallies(hiding: hidden), [
+            "a": SharedMarginTally(total: 2, new: 2), "b": SharedMarginTally(total: 1, new: 1)
+        ], "Ben's Margins are gone from both items; the layer with no sender id still counts")
+
+        hidden.hideMargin("m1")
+        XCTAssertEqual(try store.loadSharedMarginTallies(hiding: hidden), [
+            "a": SharedMarginTally(total: 1, new: 1), "b": SharedMarginTally(total: 1, new: 1)
+        ], "one Margin hidden on its own leaves its neighbour")
+
+        hidden.hideMargin("m2")
+        hidden.hideMargin("m4")
+        XCTAssertEqual(try store.loadSharedMarginTallies(hiding: hidden), [:], "an item with nothing left has no row")
+
+        hidden.unhide(ben)
+        hidden.unhideMargin("m1")
+        hidden.unhideMargin("m2")
+        hidden.unhideMargin("m4")
+        XCTAssertEqual(try store.loadSharedMarginTallies(hiding: hidden), try store.loadSharedMarginTallies(), "showing again brings them back")
+    }
+
     /// The audit of #1792: matching a layer to its Margins inside a CASE made SQLite scan every layer for every
     /// Margin. The plan must find each layer by its primary key and scan the Margins once.
     func testTheCountFindsEachLayerByPrimaryKeyInsteadOfScanningLayersPerMargin() throws {

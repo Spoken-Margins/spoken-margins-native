@@ -30,6 +30,9 @@ final class LiveSessionController: ObservableObject {
     private var endedCardExpiry: Task<Void, Never>?
     private let phoneRecorder = LiveSessionPhoneRecorder()
     private var diskObserver: NSObjectProtocol?
+    /// Finish tapped on the Lock Screen card while a spoken Margin records (#3499); lives only while one records.
+    private var finishObserver: NSObjectProtocol?
+    private var cardUpdate: Task<Void, Never>?
 
     init(sessionId: String? = nil, files: LiveSessionFileWorker = .shared) {
         requestedSessionId = sessionId
@@ -48,6 +51,7 @@ final class LiveSessionController: ObservableObject {
             // A session started or discarded while the file was read is newer than the file.
             if saveGeneration == generation { session = stored }
             didLoad = true
+            syncCardRecording() // a card left on "Recording" by an earlier screen or run goes back to Mark (#3499)
             WatchMarginReceiver.shared.fileWaitingMarks()
             startPolling()
             observeDisk()
@@ -226,6 +230,7 @@ final class LiveSessionController: ObservableObject {
     func discard() {
         if isRecordingSpoken {
             isRecordingSpoken = false
+            removeFinishObserver()
             Task { [phoneRecorder, spokenStart] in
                 await spokenStart?.value
                 await phoneRecorder.cancel()
@@ -256,12 +261,19 @@ final class LiveSessionController: ObservableObject {
     func startSpokenMargin() {
         guard isRunning, !isRecordingSpoken else { return }
         isRecordingSpoken = true
+        finishObserver = NotificationCenter.default.addObserver(
+            forName: LiveSessionFinishMargin.requested, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.stopSpokenMargin() }
+        }
         spokenStart = Task { [weak self, phoneRecorder] in
             do {
                 try await LiveSessionPhoneRecorder.checkCanRecord()
                 try await phoneRecorder.start()
+                self?.syncCardRecording()
             } catch {
                 self?.isRecordingSpoken = false
+                self?.removeFinishObserver()
                 self?.errorMessage = ListenerErrorText.message(for: error)
             }
         }
@@ -271,8 +283,10 @@ final class LiveSessionController: ObservableObject {
     func stopSpokenMargin() {
         guard isRecordingSpoken else { return }
         isRecordingSpoken = false
+        removeFinishObserver()
         Task { [weak self, phoneRecorder, spokenStart] in
             await spokenStart?.value // a stop tapped while the start was still opening the microphone waits for it
+            self?.syncCardRecording()
             do {
                 guard let recording = try await phoneRecorder.stop() else { return }
                 self?.fileSpokenMargin(recording)
@@ -280,6 +294,22 @@ final class LiveSessionController: ObservableObject {
                 self?.errorMessage = ListenerErrorText.line(prefix: "Couldn't save the spoken Margin:", error: error)
             }
         }
+    }
+
+    /// The Lock Screen card says a spoken Margin records, with Finish, or goes back to Mark (#3499).
+    /// One update at a time, each following `isRecordingSpoken` as it is when written.
+    private func syncCardRecording() {
+        guard let id = session?.id else { return }
+        let previous = cardUpdate
+        cardUpdate = Task { [weak self] in
+            await previous?.value
+            await LiveSessionActivities.showRecording(isRecording: { self?.isRecordingSpoken == true }, sessionId: id)
+        }
+    }
+
+    private func removeFinishObserver() {
+        if let finishObserver { NotificationCenter.default.removeObserver(finishObserver) }
+        finishObserver = nil
     }
 
     private func fileSpokenMargin(_ recording: LiveSessionPhoneRecorder.Recording) {

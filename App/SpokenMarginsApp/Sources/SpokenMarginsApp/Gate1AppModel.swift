@@ -193,8 +193,8 @@ final class Gate1AppModel: ObservableObject {
     @Published var retryingInterjectionTranscriptionIds: Set<String> = []
     var libraryPresentationRevision = 0
     var navigationRefreshTask: Task<Void, Never>?
-    var navigationLibraryRead: @Sendable (SQLiteSessionStore) async throws -> LibraryReadSnapshot = { store in
-        try await Task.detached(priority: .utility) { try LibraryReadSnapshot.read(store: store) }.value
+    var navigationLibraryRead: @Sendable (SQLiteSessionStore, HiddenSenders) async throws -> LibraryReadSnapshot = { store, hidden in
+        try await Task.detached(priority: .utility) { try LibraryReadSnapshot.read(store: store, hiddenSenders: hidden) }.value
     }
     var activePlaybackDetail: ItemDetailState?
     let backgroundRefresh = BackgroundRefreshGate() // #2102

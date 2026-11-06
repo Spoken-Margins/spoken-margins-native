@@ -249,6 +249,8 @@ enum Build23RecipientAction: Equatable {
     case listenToMargin(layerID: String, marginID: String)
     /// Hides every Margin from the sender of this layer, on this phone only (#2846).
     case hideSender(layerID: String)
+    /// Hides this one Margin, on this phone only (#2846).
+    case hideMargin(layerID: String, marginID: String)
 }
 
 @MainActor
@@ -605,6 +607,11 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
         case .hideSender(let layerID):
             guard let layer = model.selectedItem.importedCommentaryLayers.first(where: { $0.id == layerID }) else { return }
             model.hideSender(layer.senderId, label: layer.displayLabel)
+        case .hideMargin(let layerID, let marginID):
+            guard let layer = model.selectedItem.importedCommentaryLayers.first(where: { $0.id == layerID }),
+                  let margin = model.selectedItem.importedCommentaryInterjections[layerID]?.first(where: { $0.id == marginID })
+            else { return }
+            model.hideMargin(layer: layer, margin: margin)
         }
         objectWillChange.send()
     }

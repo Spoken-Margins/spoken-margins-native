@@ -8,7 +8,8 @@ import SessionKitTestInputs
 final class HiddenSendersCallSiteGuardTests: XCTestCase {
     /// Calls that read the imported layers a screen shows, each of which must be passed the hidden senders.
     private static let needles = [
-        "ItemDetailLoader.load(", "MarginRowsReading.all(", "MarginRowsReading.item(", "SharedMarginReview.entries("
+        "ItemDetailLoader.load(", "MarginRowsReading.all(", "MarginRowsReading.item(", "SharedMarginReview.entries(",
+        "LibraryReadSnapshot.read(" // the Library row's shared count (#3469)
     ]
 
     func testEveryAppCallThatLoadsLayersForAScreenIsGivenTheHiddenSenders() throws {
@@ -49,7 +50,7 @@ final class HiddenSendersCallSiteGuardTests: XCTestCase {
                 }
             }
         }
-        XCTAssertGreaterThanOrEqual(checked, 7, "the guard no longer finds the calls it guards; update its list")
+        XCTAssertGreaterThanOrEqual(checked, 11, "the guard no longer finds the calls it guards; update its list")
         XCTAssertEqual(missing, [], "these calls would show a hidden sender's Margins again")
     }
 }

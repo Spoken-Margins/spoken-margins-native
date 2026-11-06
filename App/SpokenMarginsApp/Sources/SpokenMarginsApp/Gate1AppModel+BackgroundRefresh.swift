@@ -173,11 +173,12 @@ extension Gate1AppModel {
         guard let store else { return }
         let (generation, publishRequired) = backgroundRefresh.beginLibraryReload(mustPublish: mustPublish)
         let read = navigationLibraryRead
+        let hidden = hiddenSenders.current
         backgroundRefresh.holdLibrary(Task { [weak self] in
             for attempt in 0..<3 {
                 guard let revision = self?.libraryPresentationRevision,
                       let listsBefore = self?.audioPreparationLists,
-                      let data = try? await read(store) else { return }
+                      let data = try? await read(store, hidden) else { return }
                 guard let self, !Task.isCancelled, self.backgroundRefresh.isCurrentLibrary(generation) else { return }
                 // Moving or prioritizing a job and a chunk's progress set the Preparing Audio lists without touching
                 // `libraryItems`, so the revision can't see them: a list that changed during the read is read again.
@@ -249,11 +250,12 @@ extension Gate1AppModel {
     }
 
     func loadLibraryRows(store: SQLiteSessionStore) throws -> [LibraryItemRow] {
-        LibraryRowBuilder.rows(from: try LibraryReadSnapshot.read(store: store), context: startupAudioContext)
+        LibraryRowBuilder.rows(from: try LibraryReadSnapshot.read(store: store, hiddenSenders: hiddenSenders.current), context: startupAudioContext)
     }
 
     func refreshLibraryRows(store: SQLiteSessionStore) throws {
-        let data = try hangTelemetry.labels.scoped("loadLibraryRows") { try LibraryReadSnapshot.read(store: store) }
+        let hidden = hiddenSenders.current
+        let data = try hangTelemetry.labels.scoped("loadLibraryRows") { try LibraryReadSnapshot.read(store: store, hiddenSenders: hidden) }
         libraryItems = LibraryRowBuilder.rows(from: data, context: startupAudioContext)
         recentlyDeletedItems = Self.recentlyDeletedRows(from: data)
         try applyAudioPreparationPresentation(from: data, store: store)
