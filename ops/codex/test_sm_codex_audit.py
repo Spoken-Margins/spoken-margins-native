@@ -25,6 +25,22 @@ import sm_codex_audit as A  # noqa: E402
 HEAD = "68fc3337b3e0e95b75bde01c7c94130e22b62226"
 OLD = "1ec94f3f0000000000000000000000000000abcd"
 
+# The script takes its hosted path when GITHUB_ACTIONS is "true" and its token from CLAUDE_CODE_OAUTH_TOKEN. Both are
+# ambient on a hosted runner, so every test starts without them and a test that wants the hosted path sets them itself.
+# Without this, the tests passed on a Mac and 7 failed in hosted fast: portable (#3508).
+AMBIENT = ("GITHUB_ACTIONS", "CLAUDE_CODE_OAUTH_TOKEN")
+_environ = patch.dict(os.environ)
+
+
+def setUpModule():
+    _environ.start()
+    for name in AMBIENT:
+        os.environ.pop(name, None)
+
+
+def tearDownModule():
+    _environ.stop()
+
 FIXTURE = json.loads(r"""
 {
   "comments_audited_old_head": [
