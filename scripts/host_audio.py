@@ -70,11 +70,16 @@ def output_starts(run=subprocess.run, timeout=START_TIMEOUT):
 
 
 def audio_output(reader=read, starts=output_starts):
-    """{'usable': bool, 'why': str}, plus `'stuck': True` when the default output never starts (#1956).
+    """{'usable': bool, 'why': str}, plus `'stuck': True` when the default output never starts (#1956, #3585).
     Anything it can't read counts as usable: this must never turn a real failure into a lane fault by
-    guessing."""
+    guessing.
+
+    The built-in speakers switched off by a closed lid are not played to (#909): that state is already named. A
+    virtual default output (BlackHole, a conferencing device) with the lid closed is the same "not usable" answer but
+    can also be the one that never starts, as on 2026-11-06 (#3585), so it is still probed. The probe waits
+    `START_TIMEOUT` only when the output is stuck; a healthy one returns at once."""
     state = speaker_state(reader)
-    if not state['usable']:
+    if not state['usable'] and not state.get('virtual_output'):
         return state
     probe = starts()
     if probe['starts']:
@@ -101,5 +106,6 @@ def speaker_state(reader=read):
         return {'usable': True, 'why': 'could not read the Mac\'s lid, display or audio state'}
     if transport not in (None, 'Built-in', 'Virtual', 'Unknown'):
         return {'usable': True, 'why': f'lid closed, default output is {transport}'}
-    return {'usable': False, 'why': 'lid closed with no external display or other audio output, so the built-in '
-                                    'speakers are off and AVPlayer cannot advance'}
+    return {'usable': False, 'virtual_output': transport in ('Virtual', 'Unknown'),
+            'why': 'lid closed with no external display or other audio output, so the built-in '
+                   'speakers are off and AVPlayer cannot advance'}

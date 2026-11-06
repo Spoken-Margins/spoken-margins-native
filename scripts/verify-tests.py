@@ -2071,13 +2071,15 @@ class Run:
         # The build gets its own limit, so a cold build under load can't use up the tests' time (#844).
         # The tests' limit covers about 1,000 tests, including real-time AVPlayer tests that took
         # 150 s of a 230 s run with the Mac's load average at 40 to 180 (2026-10-05).
-        self.command('package-build', [*PACKAGE_RUNNER, '--build-only'], timeout=PACKAGE_BUILD_TIMEOUT)
+        # #1956, #3585: an output that never starts hangs the real-player tests until the step's limit, and a build
+        # that comes first only delays the answer (about 14 minutes on 2026-11-06, every plan holding a slot). Ask
+        # first: a healthy Mac answers at once, a stuck one in START_TIMEOUT seconds.
         audio = self.manifest['audio_output'] = host_audio.audio_output()
-        # #1956: an output that never starts hangs the real-player tests until the step's limit. Say so now.
         if audio.get('stuck') and not in_codex_sandbox():
             self.manifest['lane_fault'] = f'no audio output: {audio["why"]}'
             self.save()
             raise RuntimeError(f'lane fault, not the PR: {self.manifest["lane_fault"]}')
+        self.command('package-build', [*PACKAGE_RUNNER, '--build-only'], timeout=PACKAGE_BUILD_TIMEOUT)
         # Inside Codex's sandbox the audio tests are tolerated and the runner stays as it was: one serial step.
         core = {test for test in expected if test.startswith('SessionKitCoreTests/')}
         split = (bool(core) and not in_codex_sandbox()) or core_elsewhere
