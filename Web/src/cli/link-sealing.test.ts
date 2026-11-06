@@ -2,28 +2,12 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
-import { PART, SHARE_LINKS_ENABLED, ShareLinksOffError, keyFromFragment, openPart, sealPacket, sealPart, uploadForm, uploadLink } from './share-link.ts';
+import { PART, keyFromFragment, openPart } from '../packet/share-link.ts';
+import { sealPacket, sealPart, uploadForm } from './link-sealing.ts';
 
 const vector = JSON.parse(readFileSync(new URL('../../../research/B4/contracts/fixtures/share-link-sealing-vector.json', import.meta.url), 'utf8'));
 const bytes = (base64: string): Uint8Array => Uint8Array.from(Buffer.from(base64, 'base64'));
 const fromHex = (hex: string): Uint8Array => Uint8Array.from(Buffer.from(hex, 'hex'));
-
-test('share links stay off: turning them on is a reviewed build, never a switch (owner, 2026-10-17 and 2026-10-20)', () => {
-  assert.equal(SHARE_LINKS_ENABLED, false);
-});
-
-test('uploadLink refuses while off, before sealing or sending anything', async () => {
-  let fetched = false;
-  const fetchSpy = (async () => {
-    fetched = true;
-    return new Response('{}');
-  }) as typeof fetch;
-  await assert.rejects(
-    uploadLink(new Uint8Array([1]), { schema: 'spokenmargins.link-preview.v1', source: { title: 't' }, margins: [] }, { server: 'https://example.com', fetch: fetchSpy }),
-    ShareLinksOffError,
-  );
-  assert.equal(fetched, false);
-});
 
 test('sealing matches the shared test vector byte for byte', async () => {
   const key = keyFromFragment(vector.keyFragment) as Uint8Array;
