@@ -61,6 +61,9 @@ public enum ImportedMarginResends {
         public var newMargins: [ImportedCommentaryInterjection]
         /// Held Margins the packet carries again, with the identities that packet gives them.
         public var identitiesByHeldMargin: [String: [MarginPacketIdentity]]
+        /// The packet's copy of each held Margin it carries again, so the held one can follow the sender's newest
+        /// read-aloud choice (#3452).
+        public var incomingByHeldMargin: [String: ImportedCommentaryInterjection] = [:]
         /// The layer holding the first Margin the packet carries again, if any.
         public var firstHeldLayerId: String?
     }
@@ -77,7 +80,7 @@ public enum ImportedMarginResends {
         for entry in held where entry.margin.shareProvenance.map(MarginShareProvenance.isValidToken) == true {
             heldByFingerprint[Fingerprint(entry.margin), default: []].append(entry)
         }
-        var plan = Plan(newMargins: [], identitiesByHeldMargin: [:], firstHeldLayerId: nil)
+        var plan = Plan(newMargins: [], identitiesByHeldMargin: [:], incomingByHeldMargin: [:], firstHeldLayerId: nil)
         for margin in incoming {
             let fingerprint = Fingerprint(margin)
             guard margin.shareProvenance.map(MarginShareProvenance.isValidToken) == true,
@@ -90,6 +93,7 @@ public enum ImportedMarginResends {
             plan.identitiesByHeldMargin[match.margin.id, default: []].append(
                 MarginPacketIdentity(packageDigest: packageDigest, packageScopedId: margin.packageScopedId)
             )
+            plan.incomingByHeldMargin[match.margin.id] = margin
             if plan.firstHeldLayerId == nil { plan.firstHeldLayerId = match.layerId }
         }
         return plan
@@ -147,6 +151,9 @@ public enum ImportedMarginResends {
         for entry in held {
             guard let identities = plan.identitiesByHeldMargin[entry.margin.id] else { continue }
             var margin = entry.margin
+            if let incoming = plan.incomingByHeldMargin[entry.margin.id] {
+                margin.followSenderReadAloud(of: incoming, arrivedAt: layer.importedAt)
+            }
             margin.alsoSharedAs = (margin.alsoSharedAs ?? []) + identities.filter { !(margin.alsoSharedAs ?? []).contains($0) }
             try repository.saveImportedCommentaryInterjection(margin)
         }
@@ -154,5 +161,20 @@ public enum ImportedMarginResends {
         // resolves maps from these layer fields, independently of its list of Margins.
         guard !plan.newMargins.isEmpty || hasLayerArtifacts(layer) else { return .duplicate(existingLayerId: heldLayerId) }
         return try repository.importCommentaryLayer(layer, interjections: plan.newMargins)
+    }
+}
+
+extension ImportedCommentaryInterjection {
+    /// A re-sent Margin can turn the sender's "don't read aloud" on (#3452): the held copy follows an explicit `false` in
+    /// the newest packet. A packet with no choice does not turn it back on, because the sender's app sends no key for
+    /// "read aloud" and starts every draft at the default, so a re-share that merely repeats an earlier Margin looks the
+    /// same as "turned back on" and must not cancel the earlier choice (audit on 084da4b). Turning it back on needs the
+    /// sender's app to remember each Margin's choice first. The listener's own choice always wins and is left alone, and
+    /// a Margin with a recording has no choice to change. The words, place and share provenance, not the choice, say it is
+    /// the same Margin (`Fingerprint`), so a flip never makes a second copy.
+    mutating func followSenderReadAloud(of incoming: ImportedCommentaryInterjection, arrivedAt: Date) {
+        guard listenerReadAloud == nil, isWritten, incoming.senderReadAloud == false, senderReadAloud != false else { return }
+        senderReadAloud = incoming.senderReadAloud
+        senderReadAloudAt = arrivedAt
     }
 }
