@@ -77,6 +77,7 @@ struct PinnedMarginCardView: View {
         case .failed: "exclamationmark.triangle"
         case .comingUp, .waitingForTap, .upNext: "text.bubble"
         case .answerSaved: "checkmark.circle"
+        case .lastMargin: "text.bubble"
         }
     }
 
@@ -126,7 +127,7 @@ struct PinnedMarginCardView: View {
             Button(action: model.retryImportedCommentary) { wide("Retry", "arrow.clockwise") }
                 .buttonStyle(SecondaryButtonStyle())
                 .accessibilityIdentifier("importedCommentary.retry")
-        case .upNext, .answerSaved:
+        case .upNext, .answerSaved, .lastMargin:
             EmptyView()
         }
         // Between a friend's Margins the button is alone on its row, so it has room for the longer words (#3247).

@@ -80,6 +80,9 @@ public struct PinnedMarginCard: Equatable, Sendable {
         /// A friend just saved a Margin of their own: it can be sent with Share (`answerSaved`). `atMs` is its place in the
         /// episode, nil on text; `sentTo` is who it would go to.
         case answerSaved(atMs: Int?, sentTo: String)
+        /// The last of a friend's Margins has played and none is ahead (`friendsLast`). `senders` is how many people's
+        /// Margins the item holds; the subject names the one when there is one.
+        case lastMargin(senders: Int)
     }
 
     /// What happens when the episode gets to the next Margin.
@@ -150,6 +153,8 @@ public struct PinnedMarginCard: Equatable, Sendable {
         case .upNext(let ms, _): upNextHeadline(msRemaining: ms)
         case .answerSaved(let atMs, _):
             "Your Margin is saved" + (atMs.map { " at \(SharedMarginReview.ReplyContext.clock($0))" } ?? "")
+        case .lastMargin(let senders):
+            senders > 1 ? "That was the last of your friends' Margins" : "That was \(subject.nameOrYourFriend)'s last Margin"
         }
     }
 
@@ -174,6 +179,7 @@ public struct PinnedMarginCard: Equatable, Sendable {
         case .comingUp: "It plays by itself when the episode gets there."
         case .waitingForTap: "The episode is paused. Tap Listen to hear it."
         case .answerSaved(_, let sentTo): "To send it to \(sentTo), tap Share below. You pick which of your Margins go."
+        case .lastMargin(let senders): "To answer \(senders > 1 ? "your friends" : subject.nameOrYourFriend), add a Margin of your own."
         case .upNext(_, let arrival):
             switch arrival {
             case .playsByItself: "It plays by itself when the episode gets there."
