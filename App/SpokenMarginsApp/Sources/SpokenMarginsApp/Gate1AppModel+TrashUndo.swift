@@ -105,6 +105,16 @@ extension Gate1AppModel {
         trashUndo = nil
     }
 
+    /// A permanent delete takes its rows off both lists at once and reads no table: the delete is the one change, and
+    /// the row it removes is known. The reload that follows is read off the main thread (it publishes the Preparing
+    /// Audio lists too); the removal bumps `libraryPresentationRevision`, so a read that began before it is read again
+    /// and cannot put the row back (#2505).
+    private func dropPermanentlyDeletedRows(ids: Set<String>) {
+        if libraryItems.contains(where: { ids.contains($0.id) }) { libraryItems.removeAll { ids.contains($0.id) } }
+        if recentlyDeletedItems.contains(where: { ids.contains($0.id) }) { recentlyDeletedItems.removeAll { ids.contains($0.id) } }
+        refreshLibraryRowsInBackground(mustPublish: true)
+    }
+
     func restoreItem(id: String) {
         do {
             let store = try requireStore()
@@ -135,7 +145,7 @@ extension Gate1AppModel {
             try deletingFriendRecordings(ofItems: [id], store: store) { try store.deleteItem(id: id) }
             removeLiveSessionRecord(itemId: id)
             removeMarginRecordings(recordings, quarantinedAudioPaths: quarantinedRecordings, store: store)
-            try refreshLibraryRows(store: store)
+            dropPermanentlyDeletedRows(ids: [id])
             guard !libraryItems.contains(where: { $0.id == id }),
                   !recentlyDeletedItems.contains(where: { $0.id == id }),
                   (try? store.loadItemSummary(id: id)) == nil,
@@ -177,7 +187,7 @@ extension Gate1AppModel {
             try deletingFriendRecordings(ofItems: ids, store: store) { try store.deleteItems(ids: ids) }
             ids.forEach(removeLiveSessionRecord)
             removeMarginRecordings(recordings, quarantinedAudioPaths: quarantinedRecordings, store: store)
-            try refreshLibraryRows(store: store)
+            dropPermanentlyDeletedRows(ids: Set(ids))
             guard recentlyDeletedItems.isEmpty,
                   ids.allSatisfy({ (try? store.loadItemSummary(id: $0)) == nil }) else {
                 throw SessionKitError.persistenceFailed("bulk_permanent_delete_verification_failed")

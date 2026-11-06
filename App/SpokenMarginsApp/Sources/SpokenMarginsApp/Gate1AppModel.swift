@@ -1582,8 +1582,8 @@ final class Gate1AppModel: ObservableObject {
             }
             item.status = "ready"
             try store.saveItem(item)
-            libraryItems = try loadLibraryRows(store: store)
-            selectedItem = try loadItemDetail(id: activeItemId, store: store)
+            refreshLibraryRowsInBackground(mustPublish: true) // #2505
+            refreshSelectedItemInBackground()
             diagnostics["lastAppliedMap"] = map.id
             diagnostics["lastAppliedMapChapters"] = "\(map.chapters.count)"
             schedulePrewarmAfterPreparedTextChange(itemId: activeItemId)
@@ -2934,7 +2934,7 @@ final class Gate1AppModel: ObservableObject {
                 layer.revealMode = enabled ? .guided : .companion
                 try store.saveImportedCommentaryLayer(layer)
             }
-            refreshSelectedItem()
+            refreshSelectedItemInBackground() // #2505
             reportConfirmation(enabled
                 ? "Shared Margins will play automatically after their cue."
                 : "A tone will mark each shared Margin and the episode will play on. Tap Listen to hear it.")
@@ -2952,7 +2952,7 @@ final class Gate1AppModel: ObservableObject {
             guard var layer = try store.loadImportedCommentaryLayer(id: layerID) else { return }
             mutation(&layer)
             try store.saveImportedCommentaryLayer(layer)
-            refreshSelectedItem()
+            refreshSelectedItemInBackground() // #2505
         } catch {
             reportFailure(error, context: "Shared Margin settings could not be saved")
         }
