@@ -377,17 +377,9 @@ final class EpisodeMapPreparer {
                 for draft in drafts {
                     try Task.checkCancellation()
                     let text = EpisodeMapAssembly.sceneText(for: draft, in: timeline)
-                    var label: ListeningMapSummaryValidator.SceneLabel?
-                    if host.localFoundationModelClient.availability().isAvailable, !text.isEmpty {
-                        for _ in 0..<2 where label == nil {
-                            if let candidate = try? await host.localFoundationModelClient.labelListeningMapChapter(
-                                text: text,
-                                chapterNumber: draft.order + 1
-                            ) {
-                                label = try? ListeningMapSummaryValidator.validate(candidate, sourceText: text)
-                            }
-                        }
-                    }
+                    // The step an article's scenes share (#3450).
+                    let label = await SceneSummaryLabeler(client: host.localFoundationModelClient)
+                        .label(text: text, chapterNumber: draft.order + 1)
                     scenes.append(EpisodeMapAssembly.scene(draft: draft, label: label, landmarks: allLandmarks))
                 }
                 let proposal = PortableListeningMapProposalArtifact(

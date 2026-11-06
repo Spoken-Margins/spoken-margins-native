@@ -503,6 +503,7 @@ final class Gate1AppModel: ObservableObject {
     let libraryAudioLoop = LibraryAudioPreparationLoop() // the foreground loop, its render gate and turns (#281, #534, #995)
     var libraryAudioPreparingItemId: String? { get { libraryAudioLoop.turns.preparingItemId } set { libraryAudioLoop.turns.preparingItemId = newValue } }
     lazy var episodeMapPreparer = EpisodeMapPreparer(host: self) // private episode map preparation: task, status, pending request (#957)
+    lazy var textSceneMapPreparer = TextSceneMapPreparer(host: self) // on-device scene summaries for an article or PDF (#3450)
     var backgroundPreparationPlanner = BackgroundPreparationPlanner()
     var sourceImportTask: Task<Void, Never>?
     var offlineServicesStartupTasks: [Task<Void, Never>] = [] // `startOfflineServices`; cancelled with the model (#2195)
@@ -1552,20 +1553,6 @@ final class Gate1AppModel: ObservableObject {
         }
         generateLocalListeningMap(confirmation: "Generated Listening Map.")
         isGeneratingListeningMap = false
-    }
-
-    private func generateLocalListeningMap(confirmation: String) {
-        run { engine in
-            snapshot = try engine.generateListeningMap(itemId: activeItemId)
-            if let store {
-                libraryItems = try loadLibraryRows(store: store)
-            }
-            refreshSelectedItem()
-            diagnostics["lastGeneratedMapItem"] = activeItemId
-            diagnostics["lastListeningMapMode"] = "local_deterministic"
-            schedulePrewarmAfterPreparedTextChange(itemId: activeItemId)
-            reportConfirmation(confirmation)
-        }
     }
 
     /// Why a friend's shared map couldn't be placed on this item's copy, as stored on its packets (#481).
@@ -2723,6 +2710,7 @@ final class Gate1AppModel: ObservableObject {
             cancelSkimBridge(restoringOrigin: true, resumeSource: false)
         }
         episodeMapPreparer.cancel(itemId: itemId)
+        textSceneMapPreparer.cancel(itemId: itemId)
         // The map folder holds the transient folder, so one removal covers both; the files go off the main thread (#2510).
         Self.removeEpisodeTranscriptionFilesInBackground(itemId: itemId, directories: [try? episodeMapDirectory(itemId: itemId)].compactMap { $0 })
         try? deleteTransientTranscriptAssets(itemId: itemId)

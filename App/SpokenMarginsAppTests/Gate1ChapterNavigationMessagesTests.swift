@@ -54,9 +54,11 @@ final class Gate1ChapterNavigationMessagesTests: XCTestCase {
         XCTAssertEqual(model.screen, .playback)
     }
 
+    /// #3450: with the on-device model, the chapters are made first and the same message says summaries are being written.
     func testOnDeviceMapGenerationSaysGeneratedListeningMap() {
         let model = Gate1AppModel(
-            audioPlaybackClient: NoopAudioPlaybackClient()
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            localFoundationModelClient: AvailableFoundationModelClient()
         )
         model.resetAndSeed()
         importPlainText(into: model)
@@ -64,7 +66,7 @@ final class Gate1ChapterNavigationMessagesTests: XCTestCase {
         model.generateListeningMap()
 
         XCTAssertNil(model.lastError)
-        XCTAssertEqual(model.statusMessage, "Generated Listening Map.")
+        XCTAssertEqual(model.statusMessage, "Generated Listening Map. Writing scene summaries on this device.")
         XCTAssertEqual(model.diagnostics["lastListeningMapMode"], "local_deterministic")
         XCTAssertFalse(model.isGeneratingListeningMap)
     }
@@ -83,7 +85,11 @@ final class Gate1ChapterNavigationMessagesTests: XCTestCase {
         model.generateListeningMap()
 
         XCTAssertNil(model.lastError)
-        XCTAssertEqual(model.statusMessage, "Generated Listening Map.")
+        // #3450: the chapters are still made, and the listener is told why they have no summaries.
+        XCTAssertEqual(
+            model.statusMessage,
+            "Generated Listening Map. Scene summaries need the on-device model, so the chapters have no summaries. No on-device model in this test."
+        )
         XCTAssertEqual(model.diagnostics["lastListeningMapMode"], "local_deterministic")
         XCTAssertFalse(model.selectedItem.chapters.isEmpty)
     }
@@ -99,6 +105,17 @@ final class Gate1ChapterNavigationMessagesTests: XCTestCase {
 
 private struct NoModelFoundationModelClient: LocalFoundationModelClient {
     func availability() -> LocalFoundationModelAvailability { .unavailable("No on-device model in this test") }
+    func summarizeInterjections(context: String) async throws -> String { throw LocalFoundationModelError.unavailable("test") }
+    func labelListeningMapChapter(text: String, chapterNumber: Int) async throws -> LocalListeningMapLabel {
+        throw LocalFoundationModelError.unavailable("test")
+    }
+    func summarizeListeningMap(labels: [LocalListeningMapLabel]) async throws -> String {
+        throw LocalFoundationModelError.unavailable("test")
+    }
+}
+
+private struct AvailableFoundationModelClient: LocalFoundationModelClient {
+    func availability() -> LocalFoundationModelAvailability { .available }
     func summarizeInterjections(context: String) async throws -> String { throw LocalFoundationModelError.unavailable("test") }
     func labelListeningMapChapter(text: String, chapterNumber: Int) async throws -> LocalListeningMapLabel {
         throw LocalFoundationModelError.unavailable("test")
