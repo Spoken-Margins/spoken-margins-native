@@ -58,7 +58,7 @@ struct Gate1RootView: View {
             }
         }
         .onAppear {
-            model.bootstrapLibraryIfNeeded()
+            MainThreadOperationLabels.shared.scoped("launch.bootstrapLibrary") { model.bootstrapLibraryIfNeeded() }
             catalogDrawer.noteLaunch(of: model)
         }
         .firstLaunchWelcomeOrder(model: model, drawer: catalogDrawer)
