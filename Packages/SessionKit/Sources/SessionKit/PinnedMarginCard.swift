@@ -211,8 +211,9 @@ public enum NextMarginPress: Equatable, Sendable {
     case unavailable
 
     public enum Context: Equatable, Sendable {
-        /// A review or "Play this moment" is waiting at its lead-in.
-        case momentLeadIn(isReview: Bool)
+        /// A review or "Play this moment" is waiting at its lead-in. In a review the episode plays on between Margins,
+        /// so `positionMs` and `targetMs` (the playhead and the Margin ahead, nil when not known) say how far off it is.
+        case momentLeadIn(isReview: Bool, positionMs: Int? = nil, targetMs: Int? = nil)
         /// A review's or moment's voice is sounding.
         case momentVoice(isReview: Bool, isLastMargin: Bool)
         /// No moment is running: the episode plays and a friend's Margins come as it reaches them. `positionMs` is the
@@ -220,10 +221,23 @@ public enum NextMarginPress: Equatable, Sendable {
         case sharedPlayback(positionMs: Int?, nextMarginMs: Int?, arrival: PinnedMarginCard.Arrival)
     }
 
+    private static let leadInSlackMs = 1_000
+
     public static func press(_ context: Context) -> NextMarginPress {
         switch context {
-        case .momentLeadIn(let isReview):
-            return isReview ? .playMarginNow : .unavailable
+        case .momentLeadIn(let isReview, let position, let target):
+            guard isReview else { return .unavailable }
+            // The episode plays on between a review's Margins and nothing hops ahead by itself: the first press goes to the
+            // next Margin's lead-in, the second plays the Margin. A second of slack, so the lead-in's own seek (which can
+            // land a millisecond short) is not offered as a hop of its own.
+            if let position, let target {
+                let leadIn = MarginMomentSequence.leadInStartMediaTimeMs(
+                    forTarget: MarginMomentAnchor(marginId: "next", mediaTimeMs: target),
+                    leadInMs: MarginMomentSequence.reviewLeadInMs
+                )
+                if position + leadInSlackMs < leadIn { return .seekToLeadIn(mediaTimeMs: max(0, leadIn)) }
+            }
+            return .playMarginNow
         case .momentVoice(let isReview, let isLastMargin):
             return isReview && !isLastMargin ? .skipVoice : .unavailable
         case .sharedPlayback(let position, let next, let arrival):

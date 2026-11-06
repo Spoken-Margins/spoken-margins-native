@@ -528,9 +528,9 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         XCTAssertNil(model.diagnostics["marginMoment.chime"], "a muted layer's Margin plays with no chime (#932)")
     }
 
-    /// #474: "Review new Margins" plays each new shared Margin in turn, marks each heard, and then leaves the
-    /// source paused where the listener left off.
-    func testReviewingNewMarginsPlaysEachInOrderAndLeavesTheSourcePaused() throws {
+    /// #474: "Review new Margins" plays each new shared Margin in turn and marks each heard. The listener had not begun
+    /// the episode, so after the last Margin it plays on from there, never back to the start (owner, 2026-11-06).
+    func testReviewingNewMarginsPlaysEachInOrderThenPlaysOnFromTheLastMargin() throws {
         let fixture = try SharedMarginHearingFixture(itemID: "real-source", makeWAV: makeTestWAV, secondMarginAtMs: 2_500)
         defer { fixture.cleanUp() }
         let model = fixture.model
@@ -547,7 +547,8 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         let second = try XCTUnwrap(try fixture.storedRecord("note2")?.firstHeardAt)
         XCTAssertLessThan(first, second, "heard in the order they sit in the episode")
         try waitUntil("the review ends after the last Margin", timeout: 10) { model.marginMoment == nil }
-        XCTAssertEqual(model.snapshot.status, .paused, "it stops after the last one")
+        XCTAssertGreaterThanOrEqual(model.snapshot.currentMediaTimeMs ?? 0, 2_400,
+                                    "the episode plays on from the last Margin; it was not sent back to the start")
         XCTAssertTrue(model.newSharedMargins(itemId: "real-source").isEmpty, "both are heard now")
     }
 

@@ -402,11 +402,10 @@ final class SharedMarginReviewTests: XCTestCase {
         XCTAssertEqual(sequence.phase, .listening)
     }
 
-    /// Reports the playing voice as finished the way the conductor does, following a hop or the next Margin.
+    /// Reports the playing voice as finished the way the conductor does, following the next Margin that sits at the same place.
     private func finish(_ sequence: inout MarginMomentSequence, at position: Int, heard: inout [String]) -> Int {
         while true {
             switch sequence.marginFinished(sourceAtMediaTimeMs: position) {
-            case .seek(let ms): return ms
             case .continueSource, .reviewDone: return position
             case .playNow(let margin): heard.append(margin.label ?? "?")
             }
