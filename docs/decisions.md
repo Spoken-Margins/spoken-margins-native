@@ -38,6 +38,7 @@ How it is used:
     - Otherwise it's opt-in.
   - **Keep no user data that could identify someone unless the feature needs it.** Where a feature needs it (a voice Margin is traceable by voice alone), encrypt it end to end so the server holds only unreadable bytes, as share links do (#805).
   - **Owner ideas are challenges, not directives.** When the owner suggests a solution, solve the challenge it serves. Treat the suggestion as one example and pick whatever works best.
+- **Pricing principle, as recorded on #736.** "If something costs us money per user, the user pays for it." The free exceptions are one book club per listener and a small set of friends, about five (#851); more friends are paid. "Functions that run on the device are never gated by money." Server voices fit this, so they can be paid. The 2026-10-10 limited trial for cloud voices comes first.
 
 ## 2026-10-08
 
@@ -422,3 +423,19 @@ How it is used:
 - **Recording the room at 16 kHz suits him (#3493).** Told many speech recognizers work at 16 kHz, so 24 kHz may gain nothing: "16 kHz is even better". The spike still checks recognition holds up.
 - **A crash with no logs means building the logs first (#2964, #3506).** #2964 was fixed and closed with no crash log and the cause unconfirmed, and the same crash came back. "I just expected the fact that we didn't have any logs to mean that we would create them so we could track down the issue instead of letting it fester." So a thread that meets a crash it cannot read gets the report or adds the logging first, and does not close the issue on a guess.
 - **Four design-audit calls go ahead (#1920, #3207, #3215, #2844).** Each was put to him with a pick of yes. Contrast, "darken the ochre and orange text so it's readable, and add an icon": "yes". Voice settings, "fold the roughly 14 controls into one collapsed group": "yes". Library, "move the Preparing audio card above the list and retire the options menu": "ok". Journal suggestions, "keep the app's listening out of them": "for now we might revisit". So the exclusion stands until he reopens it.
+- **Share means a person, Export means yourself (#3211).** Shown the issue's first plan, which renamed the session exports to "Share Margins", he said: "reading this does not make me feel like we figured it out". Asked "Is the rule right: Share means a person, Export means yourself?": "Yes, use that rule". Share makes a `.spokenmargins` packet or a link, from one friend sheet. Export makes a Markdown or JSON file, from one export sheet. AI Handoff and per-session files stay, inside Export.
+- **A cluster run may start during a runner-fault red once the fast plan passes (#3519).** Asked "Start the leads once the fast plan passes, without waiting for hosted integration?", he picked "Yes, after fast plan". The context: hosted integration's last completed run on `main` failed because a simulator boot crash left the journeys unrun, and it reported no test failure. This applies to run #3519. `docs/workstreams/clusters.md` still says no cluster starts on a red `main`; the run's retrospective decides whether to change that.
+- **Hang counts from his phone export that reached public GitHub stay, and diagnostics get a privacy pass.** Asked whether to leave those counts or remove them, he picked leaving them and said: "I agree maybe we can do a quick privacy pass on diagnostics, there might already be an issue for it. I think they could be useful as evidence. No harm no foul but good catch all the same!" The 2026-10-21 evidence rule stays in force until that pass says otherwise.
+- **Diagnostics may be public evidence only by allow-list (#3548; narrows 2026-10-21).** Asked to narrow the rule, with the option text "allow only the hang counts line, the build and plain counts, by allow-list", he said: "I am ok with this change". A code-only privacy pass (#3548) found the rest of the export unsafe: timestamps, item ids, tokens, playback events and error text stay off GitHub.
+- **Public privacy words: publish section A of the redlines (#2842).** Asked about the false lines on the privacy page and web Settings, he picked publishing section A of `docs/legal/public-wording-redlines-2842.md` and said: "great section a is great". Section B waits for the lawyer and shipped sealed sender; section C waits for the #2034 host check. Part of #2842.
+- **The web card after a friend saves an answer (#2168).** He approved the words "Your Margin is saved. Share sends it to {sender}. You pick which of your Margins go." with: "sounds good". Part of #2168.
+
+## Background moved out of the guide (2026-11-06)
+- **From the guide.** Explanations that stood next to rules in `AGENTS.md`, moved here to keep it under its 4,000-word cap (the rules themselves are unchanged):
+  - Verification layers: tests that pass while the app is broken usually fake the boundary that broke, such as audio sessions, players, file paths across containers and network responses.
+  - `scripts/setup-worktree.sh` links the main checkout's `.venv` and `node_modules`.
+  - `.build/dd` is a link into `~/Library/Caches/SpokenMarginsBuilds`.
+  - After switching branches, stale SessionKit modules in the shared DerivedData produce false "does not conform" errors; that is why a fresh `-derivedDataPath` is needed.
+  - The rolling phone build's plan is one walkthrough of several fixes, each step naming a real control.
+  - A warning that onnxruntime.framework has no dSYM during upload is expected and harmless.
+  - Current focus, Showcase: the solo app at its best.
