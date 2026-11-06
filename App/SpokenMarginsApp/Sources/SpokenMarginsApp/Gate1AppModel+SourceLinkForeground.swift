@@ -145,7 +145,7 @@ extension Gate1AppModel {
             diagnostics["lastSourceLinkFailureReason"] = snapshot.linkResolutionFailureReason ?? "none"
             let sourceLinkProvider = engine.lastLinkResolutionResult?.originalLink.provider
                 ?? engine.lastLinkResolutionResult?.candidates.first?.sourceLink.provider
-            diagnostics["lastSourceLinkProvider"] = sourceLinkProvider ?? "unknown"
+            diagnostics["lastSourceLinkProvider"] = DiagnosticsHostRedaction.providerLabel(sourceLinkProvider)
             if snapshot.linkResolutionStatus == LinkResolutionStatus.needsReview.rawValue,
                let result = engine.lastLinkResolutionResult,
                presentSourceLinkCandidateReviewIfAvailable(request: request, result: result, startSession: shouldStartSession) {
@@ -220,7 +220,7 @@ extension Gate1AppModel {
             diagnostics["lastSourceLinkStatus"] = snapshot.linkResolutionStatus ?? "unknown"
             diagnostics["lastSourceLinkFailureReason"] = snapshot.linkResolutionFailureReason ?? "none"
             let sourceLinkProvider = result.originalLink.provider ?? result.candidates.first?.sourceLink.provider
-            diagnostics["lastSourceLinkProvider"] = sourceLinkProvider ?? "unknown"
+            diagnostics["lastSourceLinkProvider"] = DiagnosticsHostRedaction.providerLabel(sourceLinkProvider)
             if snapshot.linkResolutionStatus == LinkResolutionStatus.playable.rawValue, let title = snapshot.title {
                 markOnboardingSteps([.addedOwnSource, .addedPodcast])
                 screen = startSession ? .playback : .item
