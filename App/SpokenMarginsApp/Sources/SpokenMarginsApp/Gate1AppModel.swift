@@ -2379,15 +2379,10 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func activateListeningEditionAudio(itemId: String, timeline: TranscriptTimeline) {
-        guard let edition = try? ListeningEditionStore.application().load(itemID: itemId), let store else { return }
-        do {
-            let (proposal, projection) = try edition.audioMap(timeline: timeline)
-            try store.savePortableListeningMapProposal(proposal, itemId: itemId)
-            try store.saveResolvedListeningMapProjection(projection)
-            if selectedItem.id == itemId { refreshSelectedItemInBackground() }
-            prepareImportedLocalAudioBridges(itemId: itemId)
-            Task { await ListeningReadyNotifications.notify(itemID: itemId, title: edition.title, revision: edition.revision) }
-        } catch { diagnostics["listeningEditionAudio"] = "not_ready" }
+        Task { [weak self] in // the map is written off main (#2509)
+            guard let self, let edition = await self.saveListeningEditionAudioMap(itemId: itemId, timeline: timeline) else { return }
+            self.hangTelemetry.labels.scoped("listeningEdition.activateAudio") { self.finishListeningEditionAudio(itemId: itemId, edition: edition) }
+        }
     }
 
     // MARK: Portable listening editions and personal knowledge output

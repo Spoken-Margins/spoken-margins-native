@@ -1196,13 +1196,25 @@ public final class SessionEngine {
 
     @discardableResult
     public func attachListeningMap(_ map: ListeningMap) throws -> SessionSnapshot {
+        try attachListeningMap(try listeningMapPersister().persist(map))
+    }
+
+    /// The store half of `attachListeningMap`, for a caller that runs it off the main thread (#2509): the item may
+    /// hold megabytes of text, which this half loads and the status flip writes back. It holds the repository and no
+    /// engine state, so it is safe to run anywhere; `attachListeningMap(_ persisted:)` is the engine half, on the main thread.
+    public func listeningMapPersister() throws -> ListeningMapPersister {
         try require("attachListeningMap", category: "sync", capabilities: ["canonical_persistence"])
-        var item = try repository.loadItem(id: map.itemId)
-        try repository.saveListeningMap(map)
-        if item.status == "needs_listening_map" {
-            item.status = "ready"
-            try saveItem(item)
-        }
+        return ListeningMapPersister(repository: repository)
+    }
+
+    /// The engine half of `attachListeningMap`: updates what the engine has open to match what was just saved.
+    /// It reads the engine's state as it is now, so an item the listener opened or moved off in between is judged
+    /// by where they are, not where they were when the save began.
+    @discardableResult
+    public func attachListeningMap(_ persisted: PersistedListeningMap) throws -> SessionSnapshot {
+        try require("attachListeningMap", category: "sync", capabilities: ["canonical_persistence"])
+        let map = persisted.map
+        let item = persisted.item
         guard currentItem?.id == map.itemId || currentSession?.itemId == map.itemId else {
             return snapshot
         }
