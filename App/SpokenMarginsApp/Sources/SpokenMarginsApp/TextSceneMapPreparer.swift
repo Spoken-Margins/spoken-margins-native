@@ -56,7 +56,8 @@ enum TextSceneSummaryOutcome: Equatable {
     case audioPaused(EpisodeMapRunStop)
     /// The on-device model threw instead of answering (busy, or not ready). The summaries so far are saved, and it says
     /// nothing about the scenes left, so they stay waiting.
-    case modelStopped(written: Int, total: Int)
+    /// `progressed` is false when the run decided no scene before the model stopped it.
+    case modelStopped(written: Int, total: Int, progressed: Bool)
     case cancelled
     case failed(String)
 
@@ -87,7 +88,7 @@ enum TextSceneSummaryOutcome: Equatable {
             "\(EpisodeMapRunGuard.pausedStatus(stop)). \(written) of \(total) scene summaries are saved. Tap Continue Scene Summaries to pick up there."
         case .audioPaused(let stop):
             "\(EpisodeMapRunGuard.pausedStatus(stop)). The scene summaries are saved, and Skim makes their audio later."
-        case .modelStopped(let written, let total):
+        case .modelStopped(let written, let total, _):
             "The on-device model stopped answering. \(written) of \(total) scene summaries are saved. Tap Continue Scene Summaries to try again."
         case .cancelled: "Stopped writing scene summaries. The ones already written are kept."
         case .failed(let reason): "Couldn't write scene summaries. \(reason)"
@@ -102,7 +103,7 @@ enum TextSceneSummaryOutcome: Equatable {
         case .keptOtherMap: "kept_other_map"
         case .paused(let stop, let written, let total): "\(stop.code) \(written) of \(total)"
         case .audioPaused(let stop): "audio \(stop.code)"
-        case .modelStopped(let written, let total): "model_stopped \(written) of \(total)"
+        case .modelStopped(let written, let total, _): "model_stopped \(written) of \(total)"
         case .cancelled: "cancelled"
         case .failed(let reason): "failed: \(reason)"
         }
@@ -227,7 +228,7 @@ final class TextSceneMapPreparer {
         case .otherMapAppeared:
             return .keptOtherMap
         case .modelFailed:
-            return .modelStopped(written: result.summarisedScenes, total: result.scenes.count)
+            return .modelStopped(written: result.summarisedScenes, total: result.scenes.count, progressed: result.newDecisions > 0)
         case .paused(let stop):
             return .paused(stop, written: result.summarisedScenes, total: result.scenes.count)
         case .finished:

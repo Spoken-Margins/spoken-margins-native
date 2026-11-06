@@ -10,7 +10,8 @@ extension Gate1AppModel: TextSceneMapPreparerHost {
         if policy == .whileCharging {
             if outcome.settlesBackgroundRun {
                 TextSceneBackgroundMemo.settle(itemId)
-            } else if case .modelStopped = outcome, TextSceneBackgroundMemo.noteModelStop(itemId) {
+            } else if case .modelStopped(_, _, let progressed) = outcome,
+                      TextSceneBackgroundMemo.noteModelStop(itemId, progressed: progressed) {
                 // The model stopped on this item several passes in a row; an error that never clears must not hold the
                 // pass on one item while the ones behind it wait. The listener's tap still works.
                 TextSceneBackgroundMemo.settle(itemId)
@@ -101,13 +102,15 @@ enum TextSceneBackgroundMemo {
     }
 
     private static let stopsKey = "textSceneSummaries.backgroundModelStops"
-    /// How many model stops in a row, with no run that finished between, settle an item for the background pass.
+    /// How many model stops in a row that decided no scene settle an item for the background pass.
     static let modelStopLimit = 3
 
-    /// Counts a background run that the model stopped. True when this was the `modelStopLimit`th in a row.
-    static func noteModelStop(_ itemId: String, _ defaults: UserDefaults = .standard) -> Bool {
+    /// Notes a background run the model stopped. A run that decided scenes before it stopped is progress: it clears the
+    /// item's count (a long PDF needs several windows). True when this was the `modelStopLimit`th stop in a row with
+    /// no progress, so an error that never clears can't hold the pass on one item.
+    static func noteModelStop(_ itemId: String, progressed: Bool, _ defaults: UserDefaults = .standard) -> Bool {
         var stops = defaults.dictionary(forKey: stopsKey) as? [String: Int] ?? [:]
-        stops[itemId, default: 0] += 1
+        stops[itemId] = progressed ? nil : stops[itemId, default: 0] + 1
         defaults.set(stops, forKey: stopsKey)
         return stops[itemId, default: 0] >= modelStopLimit
     }

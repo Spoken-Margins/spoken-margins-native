@@ -196,7 +196,7 @@ final class TextSceneMapPreparerTests: XCTestCase {
             renderBridge: { _, _ in XCTFail("no summary, no audio") }
         )
 
-        XCTAssertEqual(outcome, .modelStopped(written: 0, total: 2))
+        XCTAssertEqual(outcome, .modelStopped(written: 0, total: 2, progressed: false))
         XCTAssertFalse(outcome.settlesBackgroundRun)
         XCTAssertTrue(outcome.canBeContinued)
         XCTAssertEqual(try fixture.store.loadPortableListeningMapProposals(itemId: fixture.itemId), [])
@@ -229,13 +229,26 @@ final class TextSceneMapPreparerTests: XCTestCase {
         XCTAssertFalse(SceneSummaryLabeler.repeatsForTheSameText(URLError(.notConnectedToInternet)), "an error nobody classified stays a fault of the moment")
     }
 
-    func testThreeModelStopsInARowSettleAnItemForTheBackgroundPass() throws {
+    func testThreeModelStopsThatDecidedNothingSettleAnItemForTheBackgroundPass() throws {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: "p3461-\(UUID().uuidString)"))
-        XCTAssertFalse(TextSceneBackgroundMemo.noteModelStop("a", defaults))
-        XCTAssertFalse(TextSceneBackgroundMemo.noteModelStop("b", defaults))
-        XCTAssertFalse(TextSceneBackgroundMemo.noteModelStop("a", defaults))
-        XCTAssertTrue(TextSceneBackgroundMemo.noteModelStop("a", defaults))
-        XCTAssertFalse(TextSceneBackgroundMemo.noteModelStop("b", defaults))
+        XCTAssertFalse(TextSceneBackgroundMemo.noteModelStop("a", progressed: false, defaults))
+        XCTAssertFalse(TextSceneBackgroundMemo.noteModelStop("b", progressed: false, defaults))
+        XCTAssertFalse(TextSceneBackgroundMemo.noteModelStop("a", progressed: false, defaults))
+        XCTAssertTrue(TextSceneBackgroundMemo.noteModelStop("a", progressed: false, defaults))
+        XCTAssertFalse(TextSceneBackgroundMemo.noteModelStop("b", progressed: false, defaults))
+    }
+
+    /// The audit on 7e9d3ed: a long PDF that is rate limited in several charging windows but moves on in each must keep
+    /// its place in the pass.
+    func testModelStopsThatEachDecidedScenesNeverSettleAnItem() throws {
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "p3461-\(UUID().uuidString)"))
+        for _ in 0..<10 {
+            XCTAssertFalse(TextSceneBackgroundMemo.noteModelStop("pdf", progressed: true, defaults))
+        }
+        XCTAssertFalse(TextSceneBackgroundMemo.noteModelStop("pdf", progressed: false, defaults))
+        XCTAssertFalse(TextSceneBackgroundMemo.noteModelStop("pdf", progressed: false, defaults))
+        XCTAssertFalse(TextSceneBackgroundMemo.noteModelStop("pdf", progressed: true, defaults), "progress clears the count")
+        XCTAssertFalse(TextSceneBackgroundMemo.noteModelStop("pdf", progressed: false, defaults))
     }
 
     func testHeatDuringTheAudioRendersDoesNotSendTheListenerToAContinueButton() async throws {

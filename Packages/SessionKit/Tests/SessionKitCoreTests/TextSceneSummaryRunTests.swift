@@ -225,6 +225,7 @@ final class TextSceneSummaryRunTests: XCTestCase {
         )
 
         XCTAssertEqual(result.ending, .modelFailed)
+        XCTAssertEqual(result.newDecisions, 2, "progress is what the background pass uses to tell a stuck item from a long one")
         XCTAssertEqual(asked, 3, "the run stops at the first thrown error instead of spending the charge on every scene")
         XCTAssertEqual(summaries(saves.latest), drafts.prefix(2).map(\.id))
         // The three scenes left are waiting, not judged, so a later run asks about them.
@@ -240,6 +241,7 @@ final class TextSceneSummaryRunTests: XCTestCase {
         )
 
         XCTAssertEqual(result.ending, .modelFailed)
+        XCTAssertEqual(result.newDecisions, 0)
         XCTAssertTrue(saves.proposals.isEmpty)
         XCTAssertTrue(TextSceneSummaryProgress.state(proposals: []).offersRun)
     }
