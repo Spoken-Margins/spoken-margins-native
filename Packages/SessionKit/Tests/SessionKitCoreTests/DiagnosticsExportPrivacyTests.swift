@@ -1,6 +1,7 @@
 import Foundation
 import XCTest
 @testable import SessionKit
+import SessionKitTestInputs
 
 /// #3548: the export decides by the shape of a value, not only by a hand-kept list of keys, so a new key that
 /// carries an item id, a title or a path can't leak it by being new.
@@ -231,9 +232,8 @@ final class DiagnosticsExportPrivacyTests: XCTestCase {
     }
 
     private static func appDiagnosticKeys() throws -> [String] {
-        var url = URL(fileURLWithPath: #filePath)
-        for _ in 0..<5 { url.deleteLastPathComponent() }
-        let sources = url.appendingPathComponent("App/SpokenMarginsApp/Sources")
+        // Through the helper, so a package checked out alone skips with the input named (#1851).
+        let sources = try TestInputs.directory(.appSources)
         guard let walker = FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil) else {
             XCTFail("The app sources are not at \(sources.path): this guard reads them.")
             return []
