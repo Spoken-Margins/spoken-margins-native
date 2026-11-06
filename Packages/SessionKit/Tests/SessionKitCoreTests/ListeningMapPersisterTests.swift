@@ -36,17 +36,37 @@ final class ListeningMapPersisterTests: XCTestCase {
         XCTAssertNil(engine.currentMap)
     }
 
-    func testAdoptOnlyTouchesTheItemTheEngineHasOpen() throws {
+    func testAdoptLeavesTheEngineAloneWhenItIsOnAnotherItem() throws {
+        let (store, path) = try makeStore(); defer { try? FileManager.default.removeItem(at: path) }
+        let (item, map) = try markdown()
+        var other = item
+        other.id = "item-2"
+        try store.seed(item: item)
+        try store.seed(item: other)
+        let engine = engine(store)
+        try engine.prepareSpeechText(itemId: other.id, targetType: .itemTextTTS)
+        let persisted = try engine.listeningMapPersister().persist(map)
+        let before = engine.snapshot
+        let snapshot = try engine.attachListeningMap(persisted)
+        XCTAssertEqual(snapshot.itemId, before.itemId, "the snapshot is not rewritten for an item that is not open")
+        XCTAssertEqual(snapshot.title, before.title)
+        XCTAssertEqual(engine.currentItem?.id, other.id)
+        XCTAssertNil(engine.currentMap)
+    }
+
+    func testAdoptTakesTheMapWhenTheItemIsOpen() throws {
         let (store, path) = try makeStore(); defer { try? FileManager.default.removeItem(at: path) }
         let (item, map) = try markdown()
         try store.seed(item: item)
         let engine = engine(store)
+        try engine.prepareSpeechText(itemId: item.id, targetType: .itemTextTTS)
         let persisted = try engine.listeningMapPersister().persist(map)
+        XCTAssertNil(engine.currentMap, "persisting alone adopts nothing")
         let snapshot = try engine.attachListeningMap(persisted)
-        XCTAssertEqual(snapshot.itemId, before(engine), "an item that is not open is left alone")
-        XCTAssertNil(engine.currentMap)
+        XCTAssertEqual(engine.currentMap?.id, map.id)
+        XCTAssertEqual(engine.currentItem?.status, "ready")
+        XCTAssertEqual(snapshot.itemId, item.id)
     }
-    private func before(_ engine: SessionEngine) -> String? { engine.snapshot.itemId }
 
     func testAttachStillDoesBothHalvesAndRefusesWithoutTheCapability() throws {
         let (store, path) = try makeStore(); defer { try? FileManager.default.removeItem(at: path) }
