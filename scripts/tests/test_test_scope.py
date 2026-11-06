@@ -800,6 +800,58 @@ class ReachedByNameTests(unittest.TestCase):
         narrowed = scope.classify([path], {path: '@@ -3 +3 @@\n'}, root=self.root)
         self.assertEqual(narrowed['app_tests'], ['SkimFlowTests'])
 
+    def test_a_common_name_called_from_the_same_file_still_starts_from_every_member(self):
+        # Audit of d6e59ab: replan calls reset, replan is followable, so the all-common fallback did not fire and reset
+        # was dropped silently.
+        self.write(APP + 'SkimPlanner.swift', (
+            'final class SkimPlanner {\n'
+            '    func reset() {\n'
+            '        count = 0\n'
+            '    }\n'
+            '    func replan() {\n'
+            '        reset()\n'
+            '    }\n'
+            '}\n'))
+        self.write(self.tests + 'SkimFlowTests.swift', (
+            'final class SkimFlowTests: XCTestCase {\n    func testFlow() { SkimPlanner() }\n}\n'))
+        for number in range(scope.REACH_FANOUT + 1):
+            self.write(APP + f'Resetter{number}.swift', f'struct Resetter{number} {{\n    func go() {{ reset() }}\n}}\n')
+        path = APP + 'SkimPlanner.swift'
+        narrowed = scope.classify([path], {path: '@@ -3 +3 @@\n'}, root=self.root)
+        self.assertEqual(narrowed['app_tests'], ['SkimFlowTests'])
+
+    def test_a_hunk_that_only_removes_lines_counts_for_the_member_below_it_as_well(self):
+        # Audit of d6e59ab: removing the @MainActor line above beta was credited to alpha, the line above it.
+        self.write(APP + 'Gate1AppModel+Wide.swift', (
+            'extension Gate1AppModel {\n'
+            '    func alpha() -> Int { 1 }\n'
+            '    func beta() -> Int { 2 }\n'
+            '}\n'))
+        self.write(self.tests + 'AlphaTests.swift', (
+            'final class AlphaTests: XCTestCase {\n    func testAlpha() { model.alpha() }\n}\n'))
+        self.write(self.tests + 'BetaTests.swift', (
+            'final class BetaTests: XCTestCase {\n    func testBeta() { model.beta() }\n}\n'))
+        path = APP + 'Gate1AppModel+Wide.swift'
+        # `@MainActor` was line 3, between alpha (line 2) and beta (now line 3): `@@ -3 +2,0 @@`.
+        result = scope.classify([path], {path: '@@ -3 +2,0 @@\n'}, root=self.root)
+        self.assertEqual(result['app_tests'], ['AlphaTests', 'BetaTests'])
+
+    def test_a_private_member_called_only_from_an_init_reaches_the_type_around_it(self):
+        self.write(APP + 'Maker.swift', (
+            'struct Maker {\n'
+            '    private func setupParts() {\n'
+            '        parts = 1\n'
+            '    }\n'
+            '    init() {\n'
+            '        setupParts()\n'
+            '    }\n'
+            '}\n'))
+        self.write(self.tests + 'MakerTests.swift', (
+            'final class MakerTests: XCTestCase {\n    func testMake() { Maker() }\n}\n'))
+        path = APP + 'Maker.swift'
+        result = scope.classify([path], {path: '@@ -3 +3 @@\n'}, root=self.root)
+        self.assertEqual(result['app_tests'], ['MakerTests'])
+
     def test_a_touched_type_declaration_starts_from_every_member_of_the_file(self):
         self.write(APP + 'Foo.swift', 'final class Foo {\n    func work() {}\n}\n')
         self.write(self.tests + 'WorkTests.swift', (

@@ -345,13 +345,15 @@ def touched_lines(diff_text):
         start = int(hunk.group(2))
         count = int(hunk.group(3)) if hunk.group(3) is not None else 1
         if count == 0:
-            touched.append((max(start, 1) - 1, True))
+            # Only removed lines: they sat between the line before and the line after, either of which may be the
+            # member the removal belongs to (an attribute removed above a member sits with the member below it).
+            touched.extend([(max(start, 1) - 1, True), (start, True)])
         else:
             touched.extend((start - 1 + offset, removed > 0) for offset in range(count))
     return touched
 
 
-def changed_members(lines, holders, diff_text):
+def changed_members(lines, holders, diff_text, common=lambda name: False):
     """The names of the members whose lines a -U0 diff touches (#3467). Every named member when there is no diff to
     read, or a touched line sits where no named member holds it (an import, a top-level statement), in an init or
     deinit (no name to start from), or at the members' own indent (an attribute, a signature tail, a closing brace:
@@ -383,6 +385,8 @@ def changed_members(lines, holders, diff_text):
                                     for other in holders):
             return everything  # an attribute line, a signature tail or a closing brace at the members' own indent
         names.add(held[2])
+    if any(common(name) for name in names):
+        return everything  # a touched member the name search would drop (reset, body, id): the type's tests are the way in
     # A member in the same file that calls a changed one sits in the same neighbourhood: it is no hop away. (The file's
     # private members are seen from nowhere else, so a hop through the file's own callers is the only way out of it.)
     grown = True
@@ -391,6 +395,8 @@ def changed_members(lines, holders, diff_text):
         for index, line in enumerate(lines):
             if names & set(WORD.findall(line)):
                 held = holder_at(holders, index, len(line) - len(line.lstrip()))
+                if held and held[2] is None:
+                    held = holder_at_before(holders, held)  # an init: the type around it
                 if held and held[2] and held[2] not in names:
                     names.add(held[2])
                     grown = True
@@ -428,19 +434,19 @@ def reaching_classes(root, changed, skip=(), diffs=None):
     words = {path: set(WORD.findall('\n'.join(lines))) for path, lines in {**sources, **tests}.items()}
     members = {path: member_declarations(lines) for path, lines in sources.items()}
     diffs = diffs or {}
+
     def fanout(name):
         return sum(name in w for w in words.values())
 
+    def common(name):
+        return fanout(name) > REACH_FANOUT
+
     frontier = set()
     for path in changed:
-        seeds = changed_members(sources[path], members[path], diffs.get(path, ''))
-        if seeds and not any(fanout(name) <= REACH_FANOUT for name in seeds):
-            # Only common names changed (reset, body, id): nothing here could be followed, so start from every member.
-            seeds = {name for _, _, name in members[path] if name}
-        frontier |= seeds
+        frontier |= changed_members(sources[path], members[path], diffs.get(path, ''), common)
     seen, classes = set(frontier), []
     for _ in range(REACH_HOPS):
-        frontier = {name for name in frontier if fanout(name) <= REACH_FANOUT}
+        frontier = {name for name in frontier if not common(name)}
         if not frontier:
             break
         for path in sorted(tests):
