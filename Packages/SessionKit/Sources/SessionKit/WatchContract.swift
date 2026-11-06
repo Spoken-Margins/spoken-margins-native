@@ -164,6 +164,7 @@ public struct WatchNowPlaying: Codable, Equatable, Sendable {
     /// Where the item was at `positionAt`.
     public var positionMs: Int
     public var positionAt: Date
+    /// How fast the position moves while playing. 0 means it doesn't: text read aloud has no media time (#3494).
     public var rate: Double
 
     public init(itemId: String, title: String, isPlaying: Bool, positionMs: Int, positionAt: Date, rate: Double = 1) {
