@@ -98,7 +98,7 @@ final class BackgroundRefreshGateTests: XCTestCase {
     }
 
     private func holdReads(_ held: HeldReads, on model: Gate1AppModel) {
-        model.navigationLibraryRead = { store in
+        model.navigationLibraryRead = { store, _ in
             let call = held.next()
             let data = try LibraryReadSnapshot.read(store: store)
             held.started.continuation.yield(())

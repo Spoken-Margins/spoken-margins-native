@@ -505,6 +505,7 @@ struct SharedMarginDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var shouldOpenItem = false
     @State private var pendingReply: ReplyKind?
+    @State private var confirmingHide = false
     let row: SharedMarginRow
     /// The model's current copy, so placement progress updates while the sheet is open (#872).
     private var current: SharedMarginRow { model.sharedMarginRows.first { $0.id == row.id } ?? row }
@@ -574,6 +575,12 @@ struct SharedMarginDetailView: View {
                         Text("Your reply is saved at this moment and goes out with the item. Their recording is not sent again.")
                     }
                 }
+                Section {
+                    Button("Hide this Margin", systemImage: "eye.slash", role: .destructive) { confirmingHide = true }
+                        .accessibilityIdentifier("sharedMargin.hide.button")
+                } footer: {
+                    Text("Hides it on this phone only. You can show it again in Settings.")
+                }
                 Section("Source & position") {
                     Text(row.itemTitle)
                     Text(current.positionDescription)
@@ -598,6 +605,15 @@ struct SharedMarginDetailView: View {
             .navigationTitle("Shared Margin")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { Button("Done") { dismiss() } }
+            .confirmationDialog("Hide this Margin?", isPresented: $confirmingHide, titleVisibility: .visible) {
+                Button("Hide this Margin", role: .destructive) {
+                    model.hideMargin(layer: current.layer, margin: current.interjection)
+                    dismiss()
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text(FriendArrivalWords.hideMarginMessage)
+            }
             .onAppear {
                 // A written Margin that will not be read aloud is only ever met here, so seeing its words is meeting it (#3427).
                 let margin = current.interjection

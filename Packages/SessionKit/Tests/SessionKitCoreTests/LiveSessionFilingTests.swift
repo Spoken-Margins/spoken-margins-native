@@ -18,10 +18,10 @@ final class LiveSessionFilingTests: XCTestCase {
     private func decide(
         _ seconds: TimeInterval, id: String = "new", names: String? = nil, offset: TimeInterval? = nil, allowsPlayer: Bool = true,
         sessions: [LiveSessionFiling.Candidate]? = nil, deletions: LiveSessionFiling.Deletions = .init(),
-        player: [LiveSessionFiling.PlayerRun] = [], now: Date? = nil
+        player: [LiveSessionFiling.PlayerRun] = [], now: Date? = nil, target: WatchItemTarget? = nil
     ) -> LiveSessionFiling.Decision {
         LiveSessionFiling.decide(
-            .init(marginId: id, markedAt: at(seconds), clockOffset: offset, sessionId: names, allowsPlayerItem: allowsPlayer),
+            .init(marginId: id, markedAt: at(seconds), clockOffset: offset, sessionId: names, allowsPlayerItem: allowsPlayer, itemTarget: target),
             sessions: sessions ?? [meeting], deletions: deletions, playerRuns: player, now: now ?? self.now
         )
     }
@@ -274,5 +274,45 @@ final class LiveSessionFilingTests: XCTestCase {
         XCTAssertEqual(removed, [])
         XCTAssertEqual(Set(kept.map(\.id)), ["saved", "meet", "other"])
         XCTAssertEqual(kept.first { $0.id == "other" }?.margins.map(\.id), ["o1"])
+    }
+
+    // MARK: 1a. "On this episode" (#3494)
+
+    func testAMarginAimedAtTheItemGoesThereEvenWhileASessionRuns() {
+        let over = LiveSessionFiling.Candidate(id: "over", startedAt: at(10_000), endedAt: nil)
+        XCTAssertEqual(
+            decide(10_100, names: "over", sessions: [over], player: [episode], now: at(11_000), target: .init(itemId: "ep")),
+            .playerItem(itemId: "ep", positionMs: 210_000)
+        )
+        // The same Margin aimed at nothing stays in the session, as before.
+        XCTAssertEqual(decide(10_100, names: "over", sessions: [over], player: [episode], now: at(11_000)), .session(id: "over", placement: .withinSpan))
+    }
+
+    func testTheWatchPausingThePhoneAMomentLateStillHoldsTheMargin() {
+        // The run ended at 10 600; the Margin began 4 s before that, and 10 s of grace after is allowed.
+        XCTAssertEqual(decide(10_604, player: [episode], now: at(11_000), target: .init(itemId: "ep")), .playerItem(itemId: "ep", positionMs: 60_000 + 900_000))
+        XCTAssertEqual(decide(10_610, player: [episode], now: at(11_000), target: .init(itemId: "ep")), .playerItem(itemId: "ep", positionMs: 60_000 + 900_000))
+        XCTAssertEqual(decide(10_611, player: [episode], now: at(11_000), target: .init(itemId: "ep")), .newQuick, "past the grace, nothing says where")
+    }
+
+    func testAPausedItemUsesThePositionTheWatchSaw() {
+        XCTAssertEqual(decide(20_000, now: at(21_000), target: .init(itemId: "ep", positionMs: 123_000)), .playerItem(itemId: "ep", positionMs: 123_000))
+        XCTAssertEqual(decide(20_000, now: at(21_000), target: .init(itemId: "ep", positionMs: 0)), .playerItem(itemId: "ep", positionMs: 0))
+    }
+
+    func testARunOfAnotherItemNeverPlacesAMarginOnTheChosenOne() {
+        XCTAssertEqual(decide(10_100, player: [episode], now: at(11_000), target: .init(itemId: "other")), .newQuick)
+        XCTAssertEqual(decide(10_100, player: [episode], now: at(11_000), target: .init(itemId: "other", positionMs: 5_000)), .playerItem(itemId: "other", positionMs: 5_000))
+    }
+
+    func testTheClockOffsetStillCorrectsAnItemMargin() {
+        // The Watch runs 100 s ahead: its 10 200 is the phone's 10 100.
+        XCTAssertEqual(decide(10_200, offset: 100, player: [episode], now: at(11_000), target: .init(itemId: "ep")), .playerItem(itemId: "ep", positionMs: 210_000))
+    }
+
+    func testDeletedAndAlreadyFiledItemMarginsAreStillRefused() {
+        XCTAssertEqual(decide(10_100, id: "gone", deletions: .init(marginIds: ["gone"]), player: [episode], now: at(11_000), target: .init(itemId: "ep")), .rejected(.marginDeleted))
+        let holder = LiveSessionFiling.Candidate(id: "over", startedAt: at(10_000), endedAt: nil, marginIds: ["dup"])
+        XCTAssertEqual(decide(10_100, id: "dup", sessions: [holder], player: [episode], now: at(11_000), target: .init(itemId: "ep")), .alreadyFiled(sessionId: "over"))
     }
 }
