@@ -418,6 +418,51 @@ final class ImportedMarginResendsTests: XCTestCase {
         XCTAssertEqual(try margins().first { $0.approvedTranscript == "one" }?.readsAloud, false)
     }
 
+    /// #3472: the sender's app now writes an explicit "on" when the Margin's last share said "off", so the held copy
+    /// can follow the sender back.
+    func testASenderWhoTurnsReadAloudBackOnChangesTheHeldMarginBack() throws {
+        _ = try send(packet("O", from: "Ada", [("one", 60_000)], readAloud: false))
+        XCTAssertEqual(try XCTUnwrap(margins().first).readsAloud, false)
+        _ = try send(packet("U", from: "Ada", [("one", 60_000)], readAloud: true))
+        let held = try margins()
+        XCTAssertEqual(held.count, 1, "A flip must not make a second copy")
+        XCTAssertEqual(held.first?.senderReadAloud, true)
+        XCTAssertEqual(held.first?.readsAloud, true)
+        XCTAssertNotNil(held.first?.senderReadAloudAt, "A change is stamped")
+        XCTAssertEqual(held.first?.alsoSharedAs, [id("U", "U-1")], "The alias is added in the same pass")
+        // And off again, then a packet with no choice: still off.
+        _ = try send(packet("V", from: "Ada", [("one", 60_000)], readAloud: false))
+        _ = try send(packet("W", from: "Ada", [("one", 60_000)]))
+        XCTAssertEqual(try XCTUnwrap(margins().first).readsAloud, false)
+    }
+
+    func testAnExplicitOnWhenNothingWasTurnedOffChangesNothing() throws {
+        _ = try send(packet("O", from: "Ada", [("one", 60_000)]))
+        _ = try send(packet("U", from: "Ada", [("one", 60_000)], readAloud: true))
+        let held = try XCTUnwrap(margins().first)
+        XCTAssertNil(held.senderReadAloud, "The held copy is left as it was")
+        XCTAssertNil(held.senderReadAloudAt, "Nothing changed, so nothing is stamped")
+        XCTAssertTrue(held.readsAloud)
+    }
+
+    func testAListenersOwnChoiceBeatsTheSendersTurningItBackOn() throws {
+        _ = try send(packet("O", from: "Ada", [("one", 60_000)], readAloud: false))
+        var mine = try XCTUnwrap(margins().first)
+        mine.listenerReadAloud = false
+        try store.saveImportedCommentaryInterjection(mine)
+        _ = try send(packet("U", from: "Ada", [("one", 60_000)], readAloud: true))
+        let held = try XCTUnwrap(margins().first)
+        XCTAssertEqual(held.senderReadAloud, false, "The held copy is left as it is")
+        XCTAssertEqual(held.listenerReadAloud, false)
+        XCTAssertFalse(held.readsAloud)
+    }
+
+    func testARecordingHasNoChoiceToTurnBackOn() throws {
+        _ = try send(packet("O", from: "Ada", [("one", 60_000)], voiceMs: 4_000, recording: true))
+        _ = try send(packet("U", from: "Ada", [("one", 60_000)], voiceMs: 4_000, readAloud: true, recording: true))
+        XCTAssertNil(try XCTUnwrap(margins().first).senderReadAloud)
+    }
+
     func testTheSameChoiceAgainChangesNothing() throws {
         _ = try send(packet("O", from: "Ada", [("one", 60_000)], readAloud: false))
         _ = try send(packet("U", from: "Ada", [("one", 60_000)], readAloud: false))
@@ -490,6 +535,90 @@ final class ImportedMarginResendsTests: XCTestCase {
         XCTAssertNil(try JSONDecoder().decode(ImportedCommentaryInterjection.self, from: Data(json.utf8)).senderReadAloudAt)
     }
 
+    // MARK: Report this link on a Margin held before the link (#2846)
+
+    private let linkA = "0123456789abcdef0123456789abcdef"
+    private let linkB = "fedcba9876543210fedcba9876543210"
+    private let sender = "00112233445566778899aabbccddeeff"
+
+    private func linkIds() throws -> [String: String] {
+        Dictionary(uniqueKeysWithValues: try layers().map { ($0.packageDigest, $0.shareLinkId ?? "-") })
+    }
+
+    func testAReShareThroughALinkGivesTheEarlierFileTheLink() throws {
+        try send(packet("O", from: "Ada", [("one", 60_000)]))
+        try send(packet("U", from: "Ada", [("one", 60_000), ("two", 120_000)]), linkId: linkA)
+        XCTAssertEqual(try linkIds(), ["O": linkA, "U": linkA])
+    }
+
+    func testAReShareWithNothingNewStillGivesTheHeldLayerTheLink() throws {
+        try send(packet("U", from: "Ada", [("one", 60_000), ("two", 120_000)]))
+        XCTAssertFalse(try send(packet("O", from: "Ada", [("one", 60_000)]), linkId: linkA).isImported)
+        XCTAssertEqual(try linkIds(), ["U": linkA])
+    }
+
+    func testAHeldLinkIsKeptWhenAnotherLinkBringsTheSameMargins() throws {
+        try send(packet("O", from: "Ada", [("one", 60_000)]), linkId: linkA)
+        try send(packet("U", from: "Ada", [("one", 60_000), ("two", 120_000)]), linkId: linkB)
+        XCTAssertEqual(try linkIds(), ["O": linkA, "U": linkB])
+    }
+
+    func testALinkThatIsNotALinkIdIsNotKept() throws {
+        try send(packet("O", from: "Ada", [("one", 60_000)]))
+        for bad in ["", "../x", "0123456789ABCDEF0123456789ABCDEF", String(linkA.dropLast()), linkA + "0", "https://example.com/l/" + linkA] {
+            try send(packet("U", from: "Ada", [("one", 60_000)]), linkId: bad)
+        }
+        XCTAssertEqual(try linkIds(), ["O": "-"])
+    }
+
+    func testALinkOnlyReachesTheLayersHoldingTheRepeatedMargins() throws {
+        try send(packet("O", from: "Ada", [("one", 60_000)]))
+        try send(packet("B", from: "Ada", [("other", 180_000)]))
+        try send(packet("C", from: "Ben", [("one", 60_000)], person: "Ben"))
+        try send(packet("U", from: "Ada", [("one", 60_000)]), linkId: linkA)
+        XCTAssertEqual(try linkIds(), ["O": linkA, "B": "-", "C": "-"])
+    }
+
+    func testTheSenderIdAndTheLinkBothSurviveOneReShare() throws {
+        try send(packet("O", from: "Ada", [("one", 60_000)]))
+        try send(packet("U", from: "Ada", [("one", 60_000)]), linkId: linkA, senderId: sender)
+        let held = try XCTUnwrap(layers().first { $0.packageDigest == "O" })
+        XCTAssertEqual(held.shareLinkId, linkA)
+        XCTAssertEqual(held.senderId, sender, "the link back-fill must not save an older copy over the sender id")
+    }
+
+    func testRememberingALinkOnAHeldPacket() throws {
+        try send(packet("O", from: "Ada", [("one", 60_000)]))
+        try ImportedMarginResends.rememberShareLink(linkA, onLayerWithDigest: "O", repository: store)
+        XCTAssertEqual(try linkIds(), ["O": linkA])
+        try ImportedMarginResends.rememberShareLink(linkB, onLayerWithDigest: "O", repository: store)
+        XCTAssertEqual(try linkIds(), ["O": linkA], "the first link stays")
+    }
+
+    func testRememberingALinkIgnoresBadValuesMissingPacketsAndDeletedLayers() throws {
+        try send(packet("O", from: "Ada", [("one", 60_000)]))
+        for bad in [nil, "", "nope", "../" + linkA] {
+            try ImportedMarginResends.rememberShareLink(bad, onLayerWithDigest: "O", repository: store)
+        }
+        try ImportedMarginResends.rememberShareLink(linkA, onLayerWithDigest: "no-such-packet", repository: store)
+        var layer = try XCTUnwrap(layers().first)
+        layer.deletedAt = clock
+        try store.saveImportedCommentaryLayer(layer)
+        try ImportedMarginResends.rememberShareLink(linkA, onLayerWithDigest: "O", repository: store)
+        XCTAssertEqual(try linkIds(), ["O": "-"])
+    }
+
+    func testTheLinkBackFillSurvivesInMemoryToo() throws {
+        let memory = InMemorySessionRepository()
+        let first = packet("O", from: "Ada", [("one", 60_000)])
+        let layerO = ImportedCommentaryLayer(
+            id: "layer-O", itemId: "item-1", packageDigest: "O", packageId: "package-O", itemIdentity: item,
+            displayLabel: "Ada", importedAt: clock, isEnabled: true)
+        _ = try ImportedMarginResends.importLayer(layerO, interjections: first.margins, repository: memory)
+        try ImportedMarginResends.rememberShareLink(linkA, onLayerWithDigest: "O", repository: memory)
+        XCTAssertEqual(try memory.loadImportedCommentaryLayer(packageDigest: "O")?.shareLinkId, linkA)
+    }
+
     // MARK: Helpers
 
     private struct Packet {
@@ -546,10 +675,11 @@ final class ImportedMarginResendsTests: XCTestCase {
     }
 
     @discardableResult
-    private func send(_ packet: Packet) throws -> ImportedCommentaryImportDisposition {
+    private func send(_ packet: Packet, linkId: String? = nil, senderId: String? = nil) throws -> ImportedCommentaryImportDisposition {
         let layer = ImportedCommentaryLayer(
             id: "layer-\(packet.digest)", itemId: packet.itemId, packageDigest: packet.digest, packageId: "package-\(packet.digest)",
-            itemIdentity: item, displayLabel: packet.label, importedAt: clock, isEnabled: true
+            itemIdentity: item, displayLabel: packet.label, importedAt: clock, isEnabled: true,
+            shareLinkId: linkId, senderId: senderId
         )
         clock = clock.addingTimeInterval(1)
         // The app asks the store first; a packet with a layer is a duplicate there.

@@ -99,6 +99,20 @@ public enum ImportedMarginResends {
         return plan
     }
 
+    /// A packet already held arrives again through a share link (the same file opened from a link, or a link opened
+    /// after the file): the held layer keeps the link, so Report this link shows on it (#2846). A layer that has a
+    /// link keeps its first one, a deleted layer is left alone, and a value that is not a link id changes nothing.
+    /// Call it after any other change to the layer, which would otherwise save an older copy over this one.
+    public static func rememberShareLink(
+        _ linkId: String?, onLayerWithDigest packageDigest: String, repository: ListeningSessionRepository
+    ) throws {
+        guard let linkId = linkId.flatMap(ShareLinkReport.validLinkId),
+              var held = try repository.loadImportedCommentaryLayer(packageDigest: packageDigest),
+              held.deletedAt == nil, held.shareLinkId == nil else { return }
+        held.shareLinkId = linkId
+        try repository.saveImportedCommentaryLayer(held)
+    }
+
     /// Artifact-only layers still need the app's podcast placement pass after commentary deduplication.
     public static func hasLayerArtifacts(_ layer: ImportedCommentaryLayer) -> Bool {
         !(layer.listeningMapProposals ?? []).isEmpty
@@ -138,13 +152,23 @@ public enum ImportedMarginResends {
         }
         // A sender whose earlier packet carried no id (an older build) now has one. Give it to the layers holding
         // the Margins this packet repeats, so hiding that sender hides those too, and still works when the packet
-        // brings nothing new (#2846).
-        if let senderId = SenderID.valid(layer.senderId) {
-            let matchedLayerIds = Set(held.filter { plan.identitiesByHeldMargin[$0.margin.id] != nil }.map(\.layerId))
-            for var heldLayer in layers where heldLayer.senderId == nil && matchedLayerIds.contains(heldLayer.id) {
+        // brings nothing new (#2846). The same goes for the share link this packet came through: a layer first
+        // imported from a file, or through an older link, gets a Report this link action too (#2846). One loop and
+        // one save per layer, so neither back-fill saves a stale copy over the other.
+        let matchedLayerIds = Set(held.filter { plan.identitiesByHeldMargin[$0.margin.id] != nil }.map(\.layerId))
+        let senderId = SenderID.valid(layer.senderId)
+        let linkId = layer.shareLinkId.flatMap(ShareLinkReport.validLinkId)
+        for var heldLayer in layers where matchedLayerIds.contains(heldLayer.id) {
+            var changed = false
+            if let senderId, heldLayer.senderId == nil {
                 heldLayer.senderId = senderId
-                try repository.saveImportedCommentaryLayer(heldLayer)
+                changed = true
             }
+            if let linkId, heldLayer.shareLinkId == nil {
+                heldLayer.shareLinkId = linkId
+                changed = true
+            }
+            if changed { try repository.saveImportedCommentaryLayer(heldLayer) }
         }
         // Record the identities first. If the import below then fails, the held Margins merely know a
         // packet name they would have been given anyway; the other order could leave a reply orphaned.
@@ -165,15 +189,16 @@ public enum ImportedMarginResends {
 }
 
 extension ImportedCommentaryInterjection {
-    /// A re-sent Margin can turn the sender's "don't read aloud" on (#3452): the held copy follows an explicit `false` in
-    /// the newest packet. A packet with no choice does not turn it back on, because the sender's app sends no key for
-    /// "read aloud" and starts every draft at the default, so a re-share that merely repeats an earlier Margin looks the
-    /// same as "turned back on" and must not cancel the earlier choice (audit on 084da4b). Turning it back on needs the
-    /// sender's app to remember each Margin's choice first. The listener's own choice always wins and is left alone, and
-    /// a Margin with a recording has no choice to change. The words, place and share provenance, not the choice, say it is
-    /// the same Margin (`Fingerprint`), so a flip never makes a second copy.
+    /// A re-sent Margin can change the sender's read-aloud choice (#3452, #3472): the held copy follows an explicit choice in
+    /// the newest packet, "off" or "on". A packet with no choice changes nothing, because the sender's app writes no key
+    /// for the default, so a re-share that merely repeats an earlier Margin must not cancel the earlier choice (audit on
+    /// 084da4b). The sender's app now remembers each Margin's last-sent choice and writes an explicit "on" only when that
+    /// was "off", so an explicit "on" really is the sender turning it back on. The listener's own choice always wins and is
+    /// left alone, and a Margin with a recording has no choice to change. The words, place and share provenance, not the
+    /// choice, say it is the same Margin (`Fingerprint`), so a flip never makes a second copy.
     mutating func followSenderReadAloud(of incoming: ImportedCommentaryInterjection, arrivedAt: Date) {
-        guard listenerReadAloud == nil, isWritten, incoming.senderReadAloud == false, senderReadAloud != false else { return }
+        guard listenerReadAloud == nil, isWritten, let choice = incoming.senderReadAloud,
+              choice != (senderReadAloud ?? true) else { return }
         senderReadAloud = incoming.senderReadAloud
         senderReadAloudAt = arrivedAt
     }

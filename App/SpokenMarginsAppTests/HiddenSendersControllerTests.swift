@@ -37,6 +37,26 @@ final class HiddenSendersControllerTests: XCTestCase {
         XCTAssertTrue(controller.isEmpty)
     }
 
+    func testAHiddenMarginStaysHiddenAfterARelaunchUntilShownAgain() {
+        let first = HiddenSendersController(directory: directory)
+        XCTAssertTrue(first.hideMargin("margin-1", senderLabel: "Ana", text: "A few words"))
+        XCTAssertTrue(first.isMarginHidden("margin-1"))
+        XCTAssertFalse(first.isEmpty)
+
+        let relaunched = HiddenSendersController(directory: directory)
+        XCTAssertEqual(relaunched.current.listedMargins.map(\.marginId), ["margin-1"])
+        XCTAssertTrue(relaunched.current.entries.isEmpty, "hiding one Margin hides no sender")
+
+        relaunched.unhideMargin("margin-1")
+        XCTAssertTrue(HiddenSendersController(directory: directory).isEmpty)
+    }
+
+    func testAMarginWithNoIdCannotBeHidden() {
+        let controller = HiddenSendersController(directory: directory)
+        XCTAssertFalse(controller.hideMargin("", senderLabel: nil, text: "words"))
+        XCTAssertTrue(controller.isEmpty)
+    }
+
     func testADamagedFileShowsEveryoneAgainAndIsNotAnError() throws {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try Data("not json".utf8).write(to: directory.appendingPathComponent("hidden-senders.json"))

@@ -64,6 +64,14 @@ private struct Build23ImportedLayerList: View, Equatable {
     let showsMargins: Bool
     /// The card whose "Hide this sender" was tapped, until the listener confirms or cancels (#2846).
     @State private var pendingHide: Build23ImportedLayerSnapshot?
+    /// The layer and Margin ids of the Margin the listener is being asked to hide (#2846).
+    @State private var pendingHideMargin: HideMarginRequest?
+
+    private struct HideMarginRequest: Identifiable, Equatable {
+        let layerID: String
+        let marginID: String
+        var id: String { marginID }
+    }
 
     nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.layers == rhs.layers && lhs.coordinator === rhs.coordinator && lhs.showsMargins == rhs.showsMargins
@@ -279,6 +287,29 @@ private struct Build23ImportedLayerList: View, Equatable {
                 }
                 .buttonStyle(SecondaryButtonStyle())
                 .accessibilityIdentifier("build23.imported.margin.\(margin.id).listen")
+            }
+
+            Button(role: .destructive) {
+                pendingHideMargin = HideMarginRequest(layerID: layerID, marginID: margin.id)
+            } label: {
+                Label("Hide this Margin", systemImage: "eye.slash")
+                    .font(.subheadline.weight(.semibold))
+            }
+            .accessibilityHint("Hides this one Margin on this phone. You can show it again in Settings.")
+            .accessibilityIdentifier("build23.imported.margin.\(margin.id).hide")
+            .confirmationDialog(
+                "Hide this Margin?",
+                isPresented: Binding(
+                    get: { pendingHideMargin?.marginID == margin.id },
+                    set: { if !$0 { pendingHideMargin = nil } }),
+                titleVisibility: .visible
+            ) {
+                Button("Hide this Margin", role: .destructive) {
+                    coordinator.send(.hideMargin(layerID: layerID, marginID: margin.id))
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text(FriendArrivalWords.hideMarginMessage)
             }
         }
         .padding(14)

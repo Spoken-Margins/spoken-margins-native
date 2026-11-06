@@ -103,7 +103,7 @@ public struct ItemDetailLoader {
         let importedLayers = hiddenSenders.visible(
             try store.loadImportedCommentaryLayers(itemId: id).filter { $0.deletedAt == nil })
         let importedInterjections = Dictionary(uniqueKeysWithValues: importedLayers.map { layer in
-            (layer.id, (try? store.loadImportedCommentaryInterjections(layerId: layer.id)) ?? [])
+            (layer.id, hiddenSenders.visible((try? store.loadImportedCommentaryInterjections(layerId: layer.id)) ?? []))
         })
         // Worked out here so the Item screen's `body` doesn't read the store for it on every render (#2506).
         let sharedMapRefusalReason = SharedListeningMapPlacement.storedRefusalReason(

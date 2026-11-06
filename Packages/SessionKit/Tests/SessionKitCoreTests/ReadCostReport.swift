@@ -120,6 +120,7 @@ struct ReadCostReport {
             ("loadCommunityMapUpload(episodeKey:)", { _ = try store.loadCommunityMapUpload(episodeKey: "upload-1") }),
             ("loadCommunityMapUploads()", { _ = try store.loadCommunityMapUploads() }),
             ("loadInterjectionShareRevisions(interjectionId:)", { _ = try store.loadInterjectionShareRevisions(interjectionId: "note-1") }),
+            ("loadLastSentReadAloud(itemId:)", { _ = try store.loadLastSentReadAloud(itemId: article) }),
             ("loadImportedCommentaryLayer(id:)", { _ = try store.loadImportedCommentaryLayer(id: "layer-0") }),
             ("loadImportedCommentaryLayer(packageDigest:)", { _ = try store.loadImportedCommentaryLayer(packageDigest: "digest-0") }),
             ("loadImportedCommentaryLayers(itemId:)", { _ = try store.loadImportedCommentaryLayers(itemId: article) }),

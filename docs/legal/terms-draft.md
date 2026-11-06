@@ -76,7 +76,7 @@ Spoken Margins' data practices are described in the Privacy Policy at https://sp
 
 **5C. Copyright complaints and repeat sharers**
 
-**If you believe a share link infringes your copyright, send a notice to the Developer's designated agent: [[agent name, address, email]]. The notice must include the information required by 17 U.S.C. § 512(c)(3), including the link, the work you believe is infringed, and a statement under penalty of perjury that you are the owner or authorized to act for the owner. The Developer will remove or disable access to the material it identifies. A copyright notice counts as a report under section 5B. [[For counsel: keep or remove this sentence, given that the sender's notice does not name the category: If your link was removed and you believe that was a mistake, you may send a counter-notice as described in 17 U.S.C. § 512(g).]]**
+**If you believe a share link infringes your copyright, send a notice to the Developer's designated agent: Copyright Agent, Proximity to Progress LLC, 3547 Dempster St, PMB 1021, Skokie, IL 60076, (847) 306-9442, cole@proximitytoprogress.com. The notice must include the information required by 17 U.S.C. § 512(c)(3), including the link, the work you believe is infringed, and a statement under penalty of perjury that you are the owner or authorized to act for the owner. The Developer will remove or disable access to the material it identifies. A copyright notice counts as a report under section 5B. [[For counsel: keep or remove this sentence, given that the sender's notice does not name the category: If your link was removed and you believe that was a mistake, you may send a counter-notice as described in 17 U.S.C. § 512(g).]]**
 
 **Repeat sharers. One rule applies to every report category, copyright included. Two reported links from the same installation within [[90 days]] make a strike:**
 
@@ -96,7 +96,7 @@ The Developer may revise these Terms prospectively as Spoken Margins evolves. Th
 
 8. Support
 
-Questions about these Terms or Spoken Margins may be sent to resists.fabric-0o@icloud.com. **[[Keep, or replace with the support address Cole chooses for the App Store listing (#173).]]**
+Questions about these Terms or Spoken Margins may be sent to cole@proximitytoprogress.com, or by mail to Proximity to Progress LLC, 3547 Dempster St, PMB 1021, Skokie, IL 60076.
 
 ---
 

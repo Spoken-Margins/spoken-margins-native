@@ -160,6 +160,38 @@ final class SharedMarginExportTests: XCTestCase {
         }
     }
 
+    /// #3450 / #3449: scenes the device's model wrote from a PDF's text leave as scene starts only.
+    func testAProposalTheModelWroteFromTheListenersTextTravelsAsSceneStartsOnly() {
+        let text = "The caravans left the oasis before dawn and crossed the dunes in single file. Water was counted by the cup."
+        let draft = TextSceneDraft(
+            id: "ch-generated-01", order: 0, startChar: 0, endChar: text.count, fallbackTitle: "The caravans left",
+            modelText: text, isSummarizable: true
+        )
+        let label = ListeningMapSummaryValidator.SceneLabel(
+            title: "Crossing the desert", description: "How caravans carried goods over the dunes.",
+            eligibility: .eligible, eligibilityReason: "Editorial content.")
+        let model = TextSceneAssembly.proposal(
+            safeItemComponent: "article",
+            scenes: [TextSceneAssembly.scene(draft: draft, label: label, characters: Array(text))],
+            createdAt: date
+        )
+        let other = proposal(native: false)
+
+        var pdf = Item(id: "pdf", title: "Doc", mediaType: "text", text: text, externalReference: "file:///private/var/Doc.pdf",
+                       status: "ready", externalReferenceType: "file")
+        pdf.publicSourceMark = PublicSourceMark(url: "file:///private/var/Doc.pdf", checkedAt: date) // a file can never earn it
+
+        let exported = SharedMarginExport.mapProposals([model, other], currentProposalID: model.id, for: pdf)
+        XCTAssertEqual(exported.map(\.id), [model.id])
+        let scene = exported[0].scenes[0]
+        XCTAssertEqual(scene.startAnchor.startChar, 0)
+        XCTAssertNil(scene.title)
+        XCTAssertNil(scene.summaryText)
+        XCTAssertNil(scene.summaryProvenance)
+        XCTAssertNil(scene.startAnchor.chapterTitle)
+        XCTAssertEqual(scene.startAnchor.exactText, String(text.prefix(TextSceneAssembly.quotedCharacters)), "the quote of the source stays, as a Margin's does")
+    }
+
     func testPacketsKeepGoldenBytesAndBuild29ImportsEveryMarginAndAnchor() throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "SharedMarginExportTests-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -208,6 +240,38 @@ final class SharedMarginExportTests: XCTestCase {
                 ), name)
             }
         }
+    }
+
+    /// #3450: a Margin packet from an item that has on-device scene summaries holds the scene starts and none of the
+    /// model's words, and the last shipped reader (Build 29, which rejects unknown keys) still imports every Margin.
+    func testAPacketFromAnItemWithModelSceneSummariesHoldsNoModelWordsAndBuild29StillImportsIt() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "SharedMarginExportTests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let draft = TextSceneDraft(
+            id: "ch-generated-01", order: 0, startChar: 0, endChar: 3, fallbackTitle: "ABC", modelText: "ABC", isSummarizable: true)
+        let label = ListeningMapSummaryValidator.SceneLabel(
+            title: "Crossing the desert", description: "How caravans carried goods over the dunes.",
+            eligibility: .eligible, eligibilityReason: "Editorial content.")
+        let modelMap = TextSceneAssembly.proposal(
+            safeItemComponent: "item",
+            scenes: [TextSceneAssembly.scene(draft: draft, label: label, characters: Array("ABC"))],
+            createdAt: date
+        )
+
+        let pdf = Item(id: "pdf", title: "Doc", mediaType: "text", text: "ABC", externalReference: "file:///private/var/Doc.pdf",
+                       status: "ready", externalReferenceType: "file")
+        let prepared = try packet(native: false, evidence: false, signature: root.appending(path: "none"), proposalOverride: modelMap, disclosingFor: pdf)
+
+        let mapJSON = try XCTUnwrap(prepared.artifactData.first { $0.key.hasPrefix("artifacts/listening-map-proposal-") }?.value)
+        let text = String(decoding: mapJSON, as: UTF8.self)
+        for word in ["Crossing the desert", "caravans carried", "Editorial content", "model_generated"] {
+            XCTAssertFalse(text.contains(word), "\(word) must not leave the device")
+        }
+        XCTAssertTrue(text.contains("ch-generated-01"), "the scene start still travels")
+        let url = root.appending(path: "model-map.spokenmargins")
+        _ = try exportPacket(prepared, to: url)
+        XCTAssertEqual(try ShippedPacketReader.importPacket(at: url), ["margin-0001", "margin-0002"])
     }
 
     // Golden bytes from the pre-extraction helpers (fixed ids, dates and signature).
@@ -335,7 +399,10 @@ final class SharedMarginExportTests: XCTestCase {
         })
     }
 
-    private func packet(native: Bool, evidence: Bool, signature: URL) throws -> PreparedSpokenMarginsPackage {
+    private func packet(
+        native: Bool, evidence: Bool, signature: URL, proposalOverride: PortableListeningMapProposalArtifact? = nil,
+        disclosingFor source: Item? = nil
+    ) throws -> PreparedSpokenMarginsPackage {
         let item = item()
         let identity = SharedItemIdentity(itemType: native ? .podcast : .text,
                                           canonicalURL: native ? "https://example.com/episode" : nil, title: item.title,
@@ -354,7 +421,7 @@ final class SharedMarginExportTests: XCTestCase {
                 anchor: anchor, representation: .textOnly
             )
         }
-        let proposals = SharedMarginExport.mapProposals([proposal(native: native)], for: markedPublicItem())
+        let proposals = SharedMarginExport.mapProposals([proposalOverride ?? proposal(native: native)], for: source ?? markedPublicItem())
         return try SpokenMarginsPackageBuilder.prepare(
             packageId: "package-fixed-12345678", createdAt: date, item: identity, itemTransportSelection: transport,
             selections: selections, mapProposals: proposals,
