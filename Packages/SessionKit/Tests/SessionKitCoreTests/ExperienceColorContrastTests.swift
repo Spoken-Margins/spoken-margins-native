@@ -123,16 +123,24 @@ final class AppColorContrastCoverageTests: XCTestCase {
             "LiveActivityTourPreview.swift"
         ]
         let directory = try TestInputs.directory(.appSources)
-        let files = try FileManager.default.contentsOfDirectory(atPath: directory.path).filter { $0.hasSuffix(".swift") }
+        let enumerator = try XCTUnwrap(FileManager.default.enumerator(at: directory, includingPropertiesForKeys: nil))
+        let files = enumerator.compactMap { $0 as? URL }.filter { $0.pathExtension == "swift" }
         XCTAssertGreaterThan(files.count, 100)
-        let banned = [
-            ".foregroundStyle(AppColors.ochre)", ".tint(AppColors.ochre)", "? AppColors.ochre :",
-            ".foregroundStyle(.orange)", ": .orange\n", "case .warning: .orange"
+        // Whitespace is collapsed first, so a modifier split over lines is still seen. A mark drawn in ochre or the
+        // system orange: as a foreground or tint, or as an arm of a ternary or switch that returns a colour. A fill
+        // (`.opacity` tints, a shape's `.overlay`) is allowed.
+        let banned: [(String, String)] = [
+            (#"(foregroundStyle|foregroundColor|tint)\(\s*(AppColors\.ochre(?!Text)\b(?!\.(?:opacity|overlay))|\.orange\b|Color\.orange\b)"#, "foreground or tint"),
+            (#"[?:]\s*AppColors\.ochre(?!Text)\b(?!\.(?:opacity|overlay))"#, "ternary or switch arm"),
+            (#"[?:]\s*(Color)?\.orange\b"#, "ternary or switch arm")
         ]
         var found: [String] = []
-        for file in files where !allowedBecauseTheyAreAlwaysDark.contains(file) {
-            let text = try String(contentsOf: directory.appending(path: file), encoding: .utf8)
-            for pattern in banned where text.contains(pattern) { found.append("\(file): \(pattern)") }
+        for file in files where !allowedBecauseTheyAreAlwaysDark.contains(file.lastPathComponent) {
+            let text = try String(contentsOf: file, encoding: .utf8)
+            let collapsed = text.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            for (pattern, what) in banned where collapsed.range(of: pattern, options: .regularExpression) != nil {
+                found.append("\(file.lastPathComponent): \(what)")
+            }
         }
         XCTAssertEqual(found, [], "use AppColors.ochreText or AppColors.warningText for text and icons")
     }

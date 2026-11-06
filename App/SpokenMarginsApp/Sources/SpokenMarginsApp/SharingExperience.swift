@@ -448,11 +448,12 @@ struct InterjectionSharingView: View {
                         .foregroundStyle(AppColors.warningText)
                     }
                 } else {
-                    Label(
-                        "The item itself cannot be included. Make sure the recipient already has the same item.",
-                        systemImage: "exclamationmark.triangle"
-                    )
-                    .font(.footnote)
+                    Label {
+                        Text("The item itself cannot be included. Make sure the recipient already has the same item.")
+                            .font(.footnote)
+                    } icon: {
+                        Image(systemName: "exclamationmark.triangle")
+                    }
                     .foregroundStyle(AppColors.warningText)
                 }
             }
