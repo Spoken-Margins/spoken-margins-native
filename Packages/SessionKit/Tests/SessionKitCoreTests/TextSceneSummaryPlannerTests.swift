@@ -176,6 +176,15 @@ final class TextSceneSummaryPlannerTests: XCTestCase {
         XCTAssertEqual(drafts.last?.endChar, text.count)
     }
 
+    /// The audit on 946f910: a line that is only a year or a figure is text, not a page number.
+    func testABodyLineThatIsOnlyAYearIsKeptAndABarePageNumberIsNot() {
+        let text = sentence(1) + "\n1990\n" + sentence(2) + "\n12\n" + sentence(3)
+        let model = TextSceneSummaryPlanner.plan(text: text, chapters: [])[0].modelText
+
+        XCTAssertTrue(model.contains("\n1990\n"), model)
+        XCTAssertFalse(model.contains("\n12\n"), model)
+    }
+
     func testALineThatRepeatsOnlyTwiceIsKeptAndSoIsALongRepeatedLine() {
         let twice = "Sidebar note\n" + sentence(1) + "\nSidebar note\n" + sentence(2)
         let planned = TextSceneSummaryPlanner.plan(text: twice, chapters: [])

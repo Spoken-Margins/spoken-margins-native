@@ -162,7 +162,18 @@ final class TextSceneMapPreparer {
 
         try Task.checkCancellation()
         let proposal = TextSceneAssembly.proposal(safeItemComponent: safeItemComponent, scenes: scenes)
-        try await Gate1AppModel.offMain { try store.savePortableListeningMapProposal(proposal, itemId: itemId) }
+        // The run took minutes. If a friend's map was imported meanwhile, it replaced the chapters these scenes were
+        // planned on, so saving now would put out-of-date scenes beside it and Skim would read the wrong ones.
+        let plannedStarts = loaded.chapters.map(\.startChar)
+        let stillCurrent = try await Gate1AppModel.offMain { () throws -> Bool in
+            let others = try store.loadPortableListeningMapProposals(itemId: itemId)
+                .contains { !TextSceneAssembly.isModelProposal($0) }
+            let starts = try store.loadListeningMap(itemId: itemId)?.chapters.map(\.startChar) ?? []
+            guard !others, starts == plannedStarts else { return false }
+            try store.savePortableListeningMapProposal(proposal, itemId: itemId)
+            return true
+        }
+        guard stillCurrent else { return .keptOtherMap }
 
         // Skim also prepares a summary's audio when it needs it, so one scene that fails to render is not a failed map.
         for scene in summarised {

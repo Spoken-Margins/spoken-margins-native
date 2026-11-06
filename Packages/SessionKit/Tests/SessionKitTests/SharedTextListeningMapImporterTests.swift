@@ -140,6 +140,27 @@ final class SharedTextListeningMapImporterTests: XCTestCase {
         XCTAssertEqual(try store.loadPortableListeningMapProposals(itemId: item.id).map(\.id), [proposal.id])
     }
 
+    /// The audit on 946f910: Builds 32 to 35 save a friend's proposal with the sender's generator unchanged, which can
+    /// be this app's scene generator. Beside a shared Listening Map it is the friend's, and a new import must warn.
+    func testAFriendsMapSavedByAnOlderBuildUnderTheSceneGeneratorStillWarnsBeforeItIsReplaced() throws {
+        let item = try seed(text: text)
+        try store.saveListeningMap(ListeningMap(id: "shared-map-\(item.id)", itemId: item.id, overview: "", chapters: [
+            Chapter(id: "c1", title: "Theirs", startChar: 0, endChar: text.count, percent: 0)
+        ]))
+        let draft = TextSceneDraft(
+            id: "c1", order: 0, startChar: 0, endChar: text.count, fallbackTitle: "Theirs", modelText: text, isSummarizable: true)
+        try store.savePortableListeningMapProposal(
+            TextSceneAssembly.proposal(
+                safeItemComponent: "theirs",
+                scenes: [TextSceneAssembly.scene(draft: draft, label: nil, characters: Array(text))]
+            ),
+            itemId: item.id
+        )
+        let other = try XCTUnwrap(ListeningMapPacket.proposal(in: try package(mapId: "map-other")))
+
+        XCTAssertEqual(try SharedTextListeningMapImporter.existing(for: other, itemId: item.id, repository: store), .differentMap)
+    }
+
     /// #3450: a map whose sender used this app's on-device generator is saved as the friend's, not as scenes this
     /// device made, so the next import still warns before replacing it.
     func testAFriendsSceneMapIsNotMistakenForScenesThisDeviceMade() throws {

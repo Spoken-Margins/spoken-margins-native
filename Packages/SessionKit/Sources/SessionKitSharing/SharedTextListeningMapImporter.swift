@@ -45,10 +45,14 @@ public enum SharedTextListeningMapImporter {
         if let same = stored.first(where: { $0.id == proposal.id }) { return .sameMap(chapterCount: same.scenes.count) }
         // The scenes this device's model made from the listener's own text can be made again, so replacing them costs
         // nothing, like the headings the app found (#3450).
-        if stored.contains(where: { !TextSceneAssembly.isModelProposal($0) }) { return .differentMap }
+        // A friend's map saved by a build from before #3450 keeps the sender's generator, which can be this app's own
+        // scene generator, so a proposal beside a shared Listening Map is never treated as this device's.
+        let map = try repository.loadListeningMap(itemId: itemId)
+        let sharedMapIsHere = map?.id == "shared-map-" + itemId
+        if stored.contains(where: { sharedMapIsHere || !TextSceneAssembly.isModelProposal($0) }) { return .differentMap }
         // A map the listener made or pasted in is saved only as a Listening Map, with no proposal beside it. Saving a
         // new map deletes it, so the sheet has to say "Replace" before that happens.
-        if let map = try repository.loadListeningMap(itemId: itemId), !isAppDerived(map, itemId: itemId) { return .differentMap }
+        if let map, !isAppDerived(map, itemId: itemId) { return .differentMap }
         return .none
     }
 

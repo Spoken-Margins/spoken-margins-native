@@ -240,9 +240,10 @@ struct PageFurniture {
         return collapsed.replacingOccurrences(of: "##+", with: "#", options: .regularExpression)
     }
 
-    /// "12", "Page 3 of 10", "- 4 -": a line that is only a page number, whatever else is on the page.
+    /// "12", "Page 3 of 10", "- 4 -": a line that is only a page number, whatever else is on the page. A bare number of
+    /// four digits is a year or a figure in the text ("1990"), so only "Page N" and "N of M" go that high.
     private static func isPageNumber(_ line: String) -> Bool {
-        let pattern = #"^\s*[-–—]?\s*(page\s+)?\d{1,4}(\s*(of|/)\s*\d{1,4})?\s*[-–—]?\s*$"#
+        let pattern = #"^\s*[-–—]?\s*(\d{1,3}|page\s+\d{1,4}|\d{1,4}\s*(of|/)\s*\d{1,4})(\s*(of|/)\s*\d{1,4})?\s*[-–—]?\s*$"#
         return line.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil
     }
 }

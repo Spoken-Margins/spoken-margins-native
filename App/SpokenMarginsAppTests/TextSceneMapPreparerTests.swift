@@ -88,6 +88,34 @@ final class TextSceneMapPreparerTests: XCTestCase {
         XCTAssertEqual(try fixture.store.loadPortableListeningMapProposals(itemId: fixture.itemId).map(\.id), ["shared-map"])
     }
 
+    /// The audit on 946f910: a run takes minutes, and a friend's map imported meanwhile replaced the chapters the scenes
+    /// were planned on, so the run must not save its scenes beside it.
+    func testAFriendsMapImportedWhileTheRunWorksIsNotLeftWithOutOfDateScenesBesideIt() async throws {
+        let fixture = try makeFixture()
+        let theirs = PortableListeningMapProposalArtifact(
+            id: "shared-map", createdAt: Date(), generator: "sender", scenes: [PortableListeningMapScene(
+                id: "s1", order: 0, title: "Theirs", eligibility: .unknown,
+                startAnchor: PortableAnchorEvidence(anchorType: .text, startChar: 0, endChar: 5, exactText: "The c"),
+                endAnchor: PortableAnchorEvidence(anchorType: .text, startChar: 5, endChar: 10, exactText: "aravan")
+            )]
+        )
+        let client = ScriptedLabelClient(label: LocalListeningMapLabel(title: "Crossing", description: "how the caravans crossed the dunes", eligibility: .eligible))
+        client.onLabel = {
+            try? fixture.store.saveListeningMap(ListeningMap(id: "shared-map-article", itemId: "article", overview: "", chapters: [
+                Chapter(id: "theirs-1", title: "Theirs", startChar: 0, endChar: fixture.text.count, percent: 0)
+            ]))
+            try? fixture.store.savePortableListeningMapProposal(theirs, itemId: "article")
+        }
+
+        let outcome = try await TextSceneMapPreparer.summarise(
+            itemId: fixture.itemId, safeItemComponent: "article", store: fixture.store, client: client,
+            renderBridge: { _, _ in XCTFail("nothing was saved, so nothing to render") }
+        )
+
+        XCTAssertEqual(outcome, .keptOtherMap)
+        XCTAssertEqual(try fixture.store.loadPortableListeningMapProposals(itemId: fixture.itemId).map(\.id), ["shared-map"])
+    }
+
     func testARunOnlyLooksAtTheListenersOwnText() async throws {
         // The planner and the model read the item's stored text; nothing is fetched, so a run works offline.
         let fixture = try makeFixture()
@@ -116,11 +144,14 @@ private final class ScriptedLabelClient: LocalFoundationModelClient, @unchecked 
     init(label: LocalListeningMapLabel) { self.label = label }
 
     var texts: [String] { lock.withLock { seen } }
+    /// Called on each model call, to let a test change the library while the run is working.
+    var onLabel: (@Sendable () -> Void)?
 
     func availability() -> LocalFoundationModelAvailability { .available }
     func summarizeInterjections(context: String) async throws -> String { throw LocalFoundationModelError.unavailable("test") }
     func labelListeningMapChapter(text: String, chapterNumber: Int) async throws -> LocalListeningMapLabel {
         lock.withLock { seen.append(text) }
+        onLabel?()
         return label
     }
     func summarizeListeningMap(labels: [LocalListeningMapLabel]) async throws -> String { throw LocalFoundationModelError.unavailable("test") }
