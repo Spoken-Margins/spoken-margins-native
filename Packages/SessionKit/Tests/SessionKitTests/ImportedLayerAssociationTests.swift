@@ -68,6 +68,7 @@ final class ImportedLayerAssociationTests: XCTestCase {
         let absent = makeMargin(id: "absent", packageScopedId: "not-in-packet")
         repository.importedCommentaryLayers[existing.id] = existing
         repository.importedCommentaryInterjections = [known.id: known, absent.id: absent]
+        try repository.saveItem(Item(id: "new", title: "New", mediaType: "text", text: "Text", externalReference: nil, status: "ready"))
         try SpokenMarginsPackageImporter.repairAssociation(
             existing: existing, contents: makeContents(), itemId: "new", localItem: identity,
             itemText: nil, repository: repository
@@ -95,6 +96,7 @@ final class ImportedLayerAssociationTests: XCTestCase {
         repository.importedCommentaryLayers[existing.id] = existing
         repository.importedCommentaryInterjections = [first.id: first, second.id: second]
         repository.failMarginId = second.id
+        try repository.saveItem(Item(id: "new", title: "New", mediaType: "text", text: "Text", externalReference: nil, status: "ready"))
         XCTAssertThrowsError(try SpokenMarginsPackageImporter.repairAssociation(
             existing: existing, contents: makeContents(), itemId: "new", localItem: identity,
             itemText: nil, repository: repository

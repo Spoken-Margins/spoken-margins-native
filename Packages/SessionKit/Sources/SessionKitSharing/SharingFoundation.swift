@@ -597,6 +597,11 @@ public enum SpokenMarginsPackageImporter {
             guard var layer = try repository.loadImportedCommentaryLayer(id: existing.id) else {
                 throw SessionKitError.persistenceFailed("shared_package_repair_layer_is_gone")
             }
+            // And the item the listener chose: a delete of it that landed first would leave the layer on a row that no
+            // longer exists, where nothing shows it.
+            guard (try? repository.loadItem(id: itemId)) != nil else {
+                throw SessionKitError.persistenceFailed("shared_package_repair_item_is_unavailable")
+            }
             layer.itemId = itemId
             layer.sourceResolutionStatus = resolution.status
             try repository.saveImportedCommentaryLayer(layer)

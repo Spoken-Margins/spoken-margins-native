@@ -69,6 +69,20 @@ final class ImportedLayerRepairTransactionTests: XCTestCase {
         XCTAssertTrue(try store.loadImportedCommentaryInterjections(layerId: "layer").isEmpty)
     }
 
+    /// The other delete: the item the listener chose goes while the repair waits. The layer must not move onto a row
+    /// that no longer exists, where nothing would show it and it would look lost.
+    func testARepairOntoAnItemDeletedMeanwhileThrowsAndLeavesTheLayerWhereItWas() throws {
+        try seedLayerWithTwoMargins()
+        try store.deleteItem(id: "new-item")
+        let before = try snapshot()
+
+        XCTAssertThrowsError(try repair()) { error in
+            XCTAssertEqual(error as? SessionKitError, .persistenceFailed("shared_package_repair_item_is_unavailable"))
+        }
+
+        XCTAssertEqual(try snapshot(), before, "the layer stays on the old item and no Margin was re-resolved")
+    }
+
     func testARepairInsideAnotherTransactionJoinsItAndRollsBackWithIt() throws {
         try seedLayerWithTwoMargins()
         struct Abandon: Error {}
@@ -169,6 +183,7 @@ final class ImportedLayerRepairTransactionTests: XCTestCase {
     }
 
     private func seedLayerWithTwoMargins() throws {
+        try store.saveItem(Item(id: "new-item", title: "Book", mediaType: "text", text: "Text", externalReference: nil, status: "ready"))
         try store.saveImportedCommentaryLayer(ImportedCommentaryLayer(
             id: "layer", itemId: "old-item", packageDigest: "packet-digest", packageId: "packet",
             itemIdentity: identity, displayLabel: "Friend", importedAt: date,

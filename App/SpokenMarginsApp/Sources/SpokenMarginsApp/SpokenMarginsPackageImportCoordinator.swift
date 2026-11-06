@@ -15,8 +15,9 @@ import SessionKitSharing
 ///   confirm that saved nothing naming it, such as a resend or repair with nothing new (#3409); by permanent delete,
 ///   for the folders the deleted item's rows named (#3406); and by the launch sweep for a folder an app kill left
 ///   behind (#2154). Every one of them goes through `IncomingPackageSweep`, so none removes a folder an imported layer
-///   or Margin still names, and none removes a folder a review, restore or stage owns. The restore-audio task removes
-///   nothing; only the launch sweep reclaims its folder.
+///   or Margin still names, and none removes a folder a review, restore or stage owns. The one removal outside the
+///   sweep is the restore-audio task's own (`Gate1AppModel+PackageImport`): its folder is a private extraction no row
+///   names, removed when the restore ends. The launch sweep reclaims it if the app is killed first.
 /// - One review shows at a time (#2122). A packet opened while one is showing, or importing, waits behind it in
 ///   `PacketReviewQueue` and comes up when that one is imported or cancelled; it is never replaced or dropped.
 /// - The file a packet was opened from is released (the Share inbox copy deleted) only when the packet is imported,
