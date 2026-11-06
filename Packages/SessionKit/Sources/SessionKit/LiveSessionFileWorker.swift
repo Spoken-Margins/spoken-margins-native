@@ -302,6 +302,31 @@ public actor LiveSessionFileWorker {
         return session
     }
 
+    /// Files a spoken Margin recorded on the phone into the stored session `sessionId`, whatever screen is or isn't
+    /// open (#3489). A Margin is never lost because its screen closed, the phone locked or the session ended while
+    /// it recorded: an ended session takes it too, at the moment it was started. A screen save that hasn't seen it
+    /// keeps it (`keepingUnseen`). Returns the saved session, or nil when the session was discarded, the Margin is
+    /// already there or the save failed.
+    @discardableResult
+    public func attachSpokenMargin(
+        sessionId: String, marginId: String, audioPath: String, markedAt: Date, durationMs: Int?, spokenOn: String
+    ) -> LiveSession? {
+        let stored = sessions() // loads the deletions too
+        guard !deletions.deletedSession(sessionId), !deletions.marginIds.contains(marginId),
+              let before = stored[sessionId] else { return nil }
+        var session = before
+        guard session.attachSpokenMargin(
+            id: marginId, audioPath: audioPath, markedAt: markedAt, durationMs: durationMs, spokenOn: spokenOn
+        ) else { return nil }
+        noteUnseen(from: before, to: session)
+        do {
+            try persist([session])
+        } catch {
+            return nil
+        }
+        return session
+    }
+
     // MARK: Filing
 
     /// Files each received Watch Margin by `LiveSessionFiling`: stored in `WatchMarginInbox` first, then filed, and only

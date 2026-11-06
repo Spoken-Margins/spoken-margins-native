@@ -88,7 +88,12 @@ struct LiveSessionView: View {
             .navigationTitle("Live session")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) { Button("Close") { dismiss() } }
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Close") {
+                        controller.stopSpokenMargin() // a spoken Margin still recording is saved, not dropped (#3489)
+                        dismiss()
+                    }
+                }
                 // Return is a new line in a Margin, so Add Margin is on the keyboard itself, not below it (#2963).
                 ToolbarItemGroup(placement: .keyboard) {
                     if marginFieldFocused {

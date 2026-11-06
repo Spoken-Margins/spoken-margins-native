@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import SessionKit
 import SessionKitAudio
@@ -112,5 +113,116 @@ actor LiveSessionPhoneRecorder {
         guard startedAt != nil else { return }
         startedAt = nil
         try? recorder.cancelRecording()
+    }
+
+    /// False once iOS has stopped the recorder on its own (a call, another app's audio, our own player taking the
+    /// audio session). What it took in up to then is still in its file.
+    func isCapturing() -> Bool {
+        guard startedAt != nil else { return false }
+        return recorder.captureReading()?.recorderRunning ?? false
+    }
+}
+
+/// Owns the phone's spoken Margin while it records, for the life of the app, not of a screen (#3489). The recording
+/// used to belong to the live session screen: Close, End, or iOS rebuilding the screen after the phone locked let go
+/// of it, and the Margin was never filed. Now every way a recording ends files it into its session in the store, at
+/// the moment it was started. Only Discard throws it away.
+@MainActor
+final class LiveSessionSpokenCapture: ObservableObject {
+    static let shared = LiveSessionSpokenCapture()
+
+    /// The session the phone is recording a spoken Margin for, or nil.
+    @Published private(set) var sessionId: String?
+    /// Something the listener should hear about a recording that no screen was showing when it happened. The open
+    /// live session screen shows it once.
+    @Published var notice: String?
+
+    private let recorder = LiveSessionPhoneRecorder()
+    private let files: LiveSessionFileWorker
+    private var starting: Task<Void, Never>?
+    private var watcher: Task<Void, Never>?
+
+    init(files: LiveSessionFileWorker = .shared) {
+        self.files = files
+    }
+
+    func isRecording(for id: String?) -> Bool { id != nil && sessionId == id }
+
+    /// Starts recording a spoken Margin for `id`. During a call it says to use the Watch instead: the call holds the
+    /// phone's microphone, so nothing would be recorded.
+    func start(sessionId id: String) {
+        guard sessionId == nil else { return }
+        sessionId = id
+        starting = Task { [weak self, recorder] in
+            do {
+                try await LiveSessionPhoneRecorder.checkCanRecord()
+                try await recorder.start()
+                self?.watchRecorder(for: id)
+            } catch {
+                if self?.sessionId == id { self?.sessionId = nil }
+                self?.notice = ListenerErrorText.message(for: error)
+            }
+        }
+    }
+
+    /// Stops the recording, whichever session it is for, and files it there. The returned task finishes once the
+    /// Margin is in the store, so an End can wait for it. Nil when nothing was recording.
+    @discardableResult
+    func stopAndFile() -> Task<Void, Never>? {
+        guard let id = sessionId else { return nil }
+        sessionId = nil
+        watcher?.cancel()
+        watcher = nil
+        let started = starting
+        return Task { [weak self, recorder, files] in
+            await started?.value // a stop tapped while the start was still opening the microphone waits for it
+            do {
+                guard let recording = try await recorder.stop() else { return }
+                await Self.file(recording, into: id, files: files)
+            } catch {
+                self?.notice = ListenerErrorText.line(prefix: "Couldn't save the spoken Margin:", error: error)
+            }
+        }
+    }
+
+    /// Throws the recording away. Only for a session the listener is discarding.
+    func cancel(sessionId id: String) {
+        guard sessionId == id else { return }
+        sessionId = nil
+        watcher?.cancel()
+        watcher = nil
+        Task { [recorder, starting] in
+            await starting?.value
+            await recorder.cancel()
+        }
+    }
+
+    /// iOS can stop the recorder without telling this screen (#3489: the Margin recorded while the phone was locked).
+    /// When it has, file what it took in at once, so the Margin is there whatever the listener taps next.
+    private func watchRecorder(for id: String) {
+        watcher?.cancel()
+        watcher = Task { [weak self, recorder] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(2))
+                guard !Task.isCancelled, self?.sessionId == id else { return }
+                if await recorder.isCapturing() { continue }
+                guard let self, sessionId == id else { return }
+                stopAndFile()
+                notice = "The phone stopped recording your spoken Margin. What you said up to then is saved."
+                return
+            }
+        }
+    }
+
+    private static func file(_ recording: LiveSessionPhoneRecorder.Recording, into sessionId: String, files: LiveSessionFileWorker) async {
+        let marginId = "phone-\(UUID().uuidString.lowercased())"
+        let filed = await files.attachSpokenMargin(
+            sessionId: sessionId, marginId: marginId, audioPath: recording.audioPath, markedAt: recording.startedAt,
+            durationMs: recording.durationMs, spokenOn: "phone"
+        )
+        guard filed != nil else { return }
+        NotificationCenter.default.post(name: LiveSessionSpokenMargins.changedOnDisk, object: nil)
+        guard let text = await LiveSessionSpokenMargins.transcribe(audioPath: recording.audioPath) else { return }
+        await LiveSessionSpokenMargins.updateStored(in: files, marginId: marginId) { $0.setTranscript(text, forMarginId: marginId) }
     }
 }
