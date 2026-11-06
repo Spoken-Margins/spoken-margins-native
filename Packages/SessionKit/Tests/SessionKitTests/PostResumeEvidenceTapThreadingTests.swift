@@ -128,6 +128,7 @@ final class PostResumeEvidenceTapThreadingTests: XCTestCase {
         XCTAssertLessThanOrEqual(tap.pendingTapFrames, capFrames,
                                  "25 s of audio arrived behind a stalled worker; the tap keeps at most 20 s")
         XCTAssertGreaterThan(tap.pendingTapFrames, capFrames / 2)
+        XCTAssertGreaterThanOrEqual(tap.droppedBuffers, 1, "the buffers past the cap were counted (#1872)")
 
         gate.signal()
         XCTAssertTrue(spin(until: 10) { tap.pendingTapFrames == 0 }, "the worker catches up once it is unstuck")

@@ -82,6 +82,8 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
         /// signature append, in ms. Kept across restarts: they say why a window never filled (#1872).
         var restartCount = 0
         var longestAppendMs = 0
+        /// The rate of the audio it was fed, kept here because the tap forgets its format when the item stops.
+        var sampleRate = 0.0
 
         init(request: PostResumeAudioSampleRequest) {
             self.request = request
@@ -179,6 +181,9 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
     var latestDecodedSample: DecodedAudioClockGuard.DecodedSample? { tapLock.withLock { latestDecoded } }
 
     var retainsContinuousCollection: Bool { continuousCollection }
+
+    /// Buffers the tap dropped because the worker was too far behind.
+    var droppedBuffers: Int { tapLock.withLock { droppedBufferCount } }
 
     /// Decoded frames the tap has handed over that the worker hasn't finished with.
     var pendingTapFrames: Int { tapLock.withLock { pendingFrames } }
@@ -467,6 +472,7 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
                     try appendToSignature(accumulator.generator, buffer)
                     let appendMs = Int((DispatchTime.now().uptimeNanoseconds &- appendStartedNs) / 1_000_000)
                     accumulator.longestAppendMs = max(accumulator.longestAppendMs, appendMs)
+                    accumulator.sampleRate = format.sampleRate
                     accumulator.appendedFrames += Int64(frameCount)
                     let targetFrames = Int64(
                         (Double(accumulator.request.targetDurationMs) * format.sampleRate / 1_000).rounded(.up)
@@ -481,8 +487,7 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
                         accumulators[id] = nil
                     } else if endOfStream {
                         failed.append((accumulator, failureReason(
-                            "insufficient_post_resume_audio", accumulator,
-                            sampleRate: format.sampleRate, droppedBuffers: droppedBuffers
+                            "insufficient_post_resume_audio", accumulator, droppedBuffers: droppedBuffers
                         )))
                         accumulators[id] = nil
                     }
@@ -528,10 +533,10 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
     /// how many buffers the tap dropped, how much audio it got, its slowest signature append and whether the stream
     /// ended. Call with `lock` held.
     private func failureReason(
-        _ base: String, _ accumulator: Accumulator, sampleRate: Double?, droppedBuffers: Int
+        _ base: String, _ accumulator: Accumulator, droppedBuffers: Int
     ) -> String {
-        let appendedMs = (sampleRate ?? 0) > 0
-            ? Int(Double(accumulator.appendedFrames) / (sampleRate ?? 1) * 1_000)
+        let appendedMs = accumulator.sampleRate > 0
+            ? Int(Double(accumulator.appendedFrames) / accumulator.sampleRate * 1_000)
             : 0
         return "\(base)(restarts=\(accumulator.restartCount),dropped_buffers=\(droppedBuffers),"
             + "appended_ms=\(appendedMs),longest_append_ms=\(accumulator.longestAppendMs),"
@@ -542,9 +547,7 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
         let pending = lock.withLock { () -> (accumulator: Accumulator, reason: String)? in
             guard let accumulator = accumulators.removeValue(forKey: interjectionId) else { return nil }
             let dropped = tapLock.withLock { droppedBufferCount }
-            return (accumulator, failureReason(
-                reason, accumulator, sampleRate: format?.sampleRate, droppedBuffers: dropped
-            ))
+            return (accumulator, failureReason(reason, accumulator, droppedBuffers: dropped))
         }
         guard let pending else { return }
         resultHandler(.failed(request: pending.accumulator.request, reason: pending.reason))
