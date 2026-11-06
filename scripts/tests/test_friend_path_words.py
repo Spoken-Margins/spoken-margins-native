@@ -41,12 +41,8 @@ TERMS = (
 KNOWN_STAND_INS = frozenset({
     'Article text verified', 'Transcript verified', 'Audio verified',
     'Add the source to continue',
-    'This verified package stays ready while you add the matching source. Import remains unavailable until the source is resolved.',
-    'Opens Add to Library and keeps this package ready to resume',
     'A matching source is required for ',
     'Add the matching source before importing',
-    'No package ready for review',
-    'Open a verified shared package to preview it before importing.',
 })
 
 WORDS = re.compile(r'\b(package|source|layer|integrity|verified)\b', re.IGNORECASE)
@@ -100,6 +96,50 @@ class FriendPathWordsTests(unittest.TestCase):
             self.assertTrue(violations(f'Text("{term} and more")'), term)
         self.assertEqual(violations('// "Integrity checked" was the old line\nText("From Cole")'), [])
         self.assertEqual(violations('Text("From Cole") // was "Shared by Cole"'), [])
+
+
+# The sender's side and the screens that show a file's Margins once it is in (#3210). The words below are the file-format
+# and cryptography terms the design audit found on the main path: "verified package", "integrity check",
+# "acoustic anchor signatures". Main-path labels say "Margins" (or "the file" where a file is the point). The rights
+# wording in SharingRightsPresentation.swift is a lawyer's to review and is not read here.
+SENDER_PATH_FILES = [
+    APP / 'Build23SenderSharingExperience.swift',
+    APP / 'Build23SenderSharingComponents.swift',
+    APP / 'SharingExperience.swift',
+    APP / 'ExperienceMarginsScreen.swift',
+    APP / 'ShareLinkSender.swift',
+]
+
+# Case-sensitive. Each is a phrase a listener once read.
+RETIRED_PHRASES = (
+    'verified package', 'Verified package', 'Share verified', 'verified share file', 'verifying the recipient',
+    'could not be verified', 'No verified recipient', 'verified projection', 'package-affecting',
+    'Package contents', 'Package ready', 'Package details', 'Package and placement', 'Preview package details',
+    'Acoustic anchor signatures', 'Integrity checked', 'Package integrity', 'integrity check', 'cryptographically',
+    'Verified from the written package', 'in the package', 'the package ', 'Verifying',
+)
+
+
+def retired_phrases(text):
+    return [(number, phrase) for number, literal in literals(text) for phrase in RETIRED_PHRASES if phrase in literal]
+
+
+class SenderPathWordsTests(unittest.TestCase):
+    def test_the_files_are_there(self):
+        for path in SENDER_PATH_FILES:
+            self.assertTrue(path.is_file(), path)
+
+    def test_no_retired_phrase_returns_to_the_sharing_screens(self):
+        for path in SENDER_PATH_FILES:
+            self.assertEqual(retired_phrases(path.read_text(encoding='utf-8')), [], path.name)
+
+    def test_the_guard_catches_each_phrase_and_ignores_comments(self):
+        for phrase in RETIRED_PHRASES:
+            self.assertTrue(retired_phrases(f'Text("{phrase} and more")'), phrase)
+        self.assertEqual(retired_phrases('// "Share verified package" was the old label\nText("Share your Margins")'), [])
+        self.assertEqual(retired_phrases('Text("We can\'t prove who sent this.")'), [])
+        # The identifiers and rights wording that keep these words are not literals in these files.
+        self.assertEqual(retired_phrases('.accessibilityIdentifier("build23.sender.recipient.verified-preview")'), [])
 
 
 SESSIONKIT = ROOT / 'Packages' / 'SessionKit' / 'Sources'

@@ -587,8 +587,8 @@ struct SharedMarginDetailView: View {
                     }
                 }
                 Section {
-                    DisclosureGroup("Package details") {
-                        Text("Package integrity checked. Sender identity is unverified; this does not restrict playback.")
+                    DisclosureGroup("About this file") {
+                        Text("We can't prove who sent this. It does not limit what plays.")
                         Text("Imported \(row.layer.importedAt.formatted(date: .abbreviated, time: .omitted))")
                     }
                 }

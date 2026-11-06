@@ -158,7 +158,7 @@ struct SpokenMarginsPackageImportView: View {
                                 .font(.title3.weight(.semibold))
                             Text(review.senderLabel)
                                 .font(.headline)
-                            Text("Integrity checked · Sender identity is not verified")
+                            Text("We can't prove who sent this.")
                                 .font(.caption)
                                 .foregroundStyle(AppColors.secondaryText)
                             Text("\(review.marginCount) shared Margin\(review.marginCount == 1 ? "" : "s")")
@@ -168,10 +168,10 @@ struct SpokenMarginsPackageImportView: View {
                     Text(importExplanation)
                         .font(.callout)
 
-                    DisclosureGroup("Package contents") {
+                    DisclosureGroup("What is included") {
                         VStack(alignment: .leading, spacing: 5) {
-                            Text("Voice files: \(review.contents.manifest.assets.filter { [SpokenMarginsAssetRole.originalVoice, SpokenMarginsAssetRole.cleanedVoice].contains($0.role) }.count)")
-                            Text("Acoustic anchor signatures: \(review.contents.manifest.assets.filter { $0.role == SpokenMarginsAssetRole.acousticSignature }.count)")
+                            Text("Voice recordings: \(review.contents.manifest.assets.filter { [SpokenMarginsAssetRole.originalVoice, SpokenMarginsAssetRole.cleanedVoice].contains($0.role) }.count)")
+                            Text("Podcast matching signatures: \(review.contents.manifest.assets.filter { $0.role == SpokenMarginsAssetRole.acousticSignature }.count)")
                             Text("Listening Map proposals: \(review.contents.listeningMapProposals.count) (stored as proposals; not activated)")
                             Text(review.includesEmbeddedItem ? "Full listened-to item: included" : "Full listened-to item: not included")
                             Text("Podcast audio: not included")
@@ -251,7 +251,7 @@ struct InterjectionSharingView: View {
                                 VStack(alignment: .leading, spacing: 8) {
                                     Text("Review what you are sending")
                                         .font(.headline)
-                                    Text("The package includes only selected Margins, the reviewed text and voice version shown below, the words around each Margin, item identity, and optional acoustic signatures. It never includes the podcast audio, raw diagnostics, or unrelated sessions.")
+                                    Text("Only the Margins you picked go: their text and voice, the words around each one, and which item they belong to. The podcast audio and the rest of your phone stay put.")
                                         .font(.callout)
                                         .foregroundStyle(AppColors.secondaryText)
                                 }
@@ -480,7 +480,7 @@ struct InterjectionSharingView: View {
                             .foregroundStyle(AppColors.secondaryText)
                         Text(note)
                             .font(.callout)
-                        Text("Only you can see this note; it is not included in the package.")
+                        Text("Only you can see this note; it is not sent.")
                             .font(.footnote)
                             .foregroundStyle(AppColors.secondaryText)
                     }
@@ -915,7 +915,7 @@ struct SharedSpokenMarginsPackageReadyView: View {
             VStack(alignment: .leading, spacing: 18) {
                 ProductPanel {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("Package ready")
+                        Text("Your Margins are ready")
                             .font(.headline)
                         Text(packageURL.lastPathComponent)
                             .font(.caption)

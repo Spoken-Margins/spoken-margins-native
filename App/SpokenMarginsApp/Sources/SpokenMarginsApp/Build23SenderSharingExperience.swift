@@ -146,7 +146,7 @@ struct Build23SenderSharingExperience: View {
             .accessibilityIdentifier("build23.sender.review.share")
         case .recipientPreview:
             Button(
-                snapshot.previewState == .building ? "Verifying…" : "Share \(includedCount)",
+                snapshot.previewState == .building ? "Getting ready…" : "Share \(includedCount)",
                 systemImage: snapshot.previewState == .building ? "hourglass" : "square.and.arrow.up"
             ) {
                 shareVerifiedPackage()
@@ -301,7 +301,7 @@ struct Build23SenderSharingExperience: View {
                         set: { coordinator.send(.setIncludesAcousticEvidence($0)) }
                     )
                 )
-                .accessibilityHint("Controls whether supported listening evidence travels with the package")
+                .accessibilityHint("Controls whether supported listening evidence travels with your Margins")
                 .accessibilityIdentifier("build23.sender.include-acoustic-evidence")
 
                 if Build23SenderPresentation.showsLinklessRightsControl(for: snapshot.transport) {
@@ -502,7 +502,7 @@ struct Build23SenderSharingExperience: View {
                 .foregroundStyle(AppColors.text)
                 .accessibilityIdentifier("build23.sender.stage.review")
 
-            DisclosureGroup("Package and placement details") {
+            DisclosureGroup("Details") {
                 VStack(alignment: .leading, spacing: 16) {
                     Build23TransportConsequenceCard(
                         transport: snapshot.transport,
@@ -528,12 +528,12 @@ struct Build23SenderSharingExperience: View {
                 .buttonStyle(.bordered)
                 .accessibilityIdentifier("build23.sender.review.back")
 
-                Button("Preview package details", systemImage: "doc.text.magnifyingglass") {
+                Button("Preview what your friend gets", systemImage: "doc.text.magnifyingglass") {
                     coordinator.send(.buildRecipientPreview)
                 }
                 .buttonStyle(.bordered)
                 .disabled(!snapshot.canAdvance)
-                .accessibilityHint("Optionally builds and shows the verified package details")
+                .accessibilityHint("Optionally shows what your friend will get")
                 .accessibilityIdentifier("build23.sender.preview.build")
             }
         }
@@ -554,7 +554,7 @@ struct Build23SenderSharingExperience: View {
                             .tint(AppColors.evergreen)
                         Build23StatusLabel(
                             icon: "doc.badge.gearshape",
-                            title: "Writing, reading back, and verifying the recipient package…",
+                            title: "Getting your Margins ready to share…",
                             tint: AppColors.evergreen
                         )
                     }
@@ -579,34 +579,34 @@ struct Build23SenderSharingExperience: View {
                     Build23VerifiedRecipientPreviewPanel(preview: verifiedPreview)
                 } else {
                     unavailablePreview(
-                        title: "The verified projection is unavailable.",
-                        detail: "Return to review and build the recipient preview again."
+                        title: "The preview is not available.",
+                        detail: "Go back to review and preview again."
                     )
                 }
 
             case .stale:
                 unavailablePreview(
-                    title: "The recipient preview is stale.",
-                    detail: "A package-affecting choice changed. Build and verify a fresh preview before sharing."
+                    title: "The preview is out of date.",
+                    detail: "You changed something. Preview again before sharing."
                 )
 
             case let .failed(message):
                 unavailablePreview(
-                    title: "The package could not be verified.",
+                    title: "Your Margins could not be made ready to share.",
                     detail: message,
                     isFailure: true
                 )
 
             case .notBuilt:
                 unavailablePreview(
-                    title: "No verified recipient preview is available.",
-                    detail: "Return to review and build the package first."
+                    title: "There is no preview yet.",
+                    detail: "Go back to review and preview first."
                 )
             }
         }
     }
 
-    /// A stale or unbuilt preview is a notice; a package that failed verification is a failure (#308).
+    /// A stale or unbuilt preview is a notice; Margins that could not be made ready are a failure (#308).
     private func unavailablePreview(title: String, detail: String, isFailure: Bool = false) -> some View {
         ExperienceSurface(tint: AppColors.ochre.opacity(0.12)) {
             VStack(alignment: .leading, spacing: 10) {
@@ -629,7 +629,7 @@ struct Build23SenderSharingExperience: View {
 
     private func shareStage(_ snapshot: Build23SharingSnapshot) -> some View {
         VStack(alignment: .leading, spacing: 20) {
-            Text("Share verified package")
+            Text("Share your Margins")
                 .font(.headline)
                 .foregroundStyle(AppColors.text)
                 .accessibilityIdentifier("build23.sender.stage.share")
@@ -637,7 +637,7 @@ struct Build23SenderSharingExperience: View {
                 ExperienceSurface(tint: AppColors.softGreen) {
                     Build23StatusLabel(
                         icon: "square.and.arrow.up.circle.fill",
-                        title: isSystemSharePresented ? "System share sheet open" : "Verified package ready",
+                        title: isSystemSharePresented ? "System share sheet open" : "Your Margins are ready",
                         tint: AppColors.evergreen
                     )
                 }
@@ -658,8 +658,8 @@ struct Build23SenderSharingExperience: View {
                 }
             } else {
                 unavailablePreview(
-                    title: "The verified share file is no longer available.",
-                    detail: "Return to selection and build a fresh recipient preview."
+                    title: "The file to share is no longer available.",
+                    detail: "Go back to selection and preview again."
                 )
             }
         }
