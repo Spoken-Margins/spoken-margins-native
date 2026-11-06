@@ -147,4 +147,53 @@ final class ReadAloudChoiceTests: XCTestCase {
         defer { try? FileManager.default.removeItem(atPath: path) }
         try assertAStaleCopyCannotUndoTheListenersChoice(try SQLiteSessionStore(path: path))
     }
+
+    // MARK: The sender's app remembers what it last sent (#3472)
+
+    private func revision(_ id: String, margin: String = "m", at seconds: Double, sent: Bool?) -> InterjectionShareRevision {
+        InterjectionShareRevision(
+            id: id, interjectionId: margin, itemId: "item", sessionId: "session",
+            createdAt: Date(timeIntervalSince1970: 1_777_000_000 + seconds), approvedTranscript: "Words.",
+            anchorBefore: "Before", anchorAfter: "After", status: .senderApproved, sentReadAloud: sent
+        )
+    }
+
+    func testARevisionSavedByAnEarlierBuildStillLoadsWithNoChoice() throws {
+        let old = #"{"id":"r","interjectionId":"m","itemId":"item","sessionId":"s","createdAt":0,"cleanupPolicyVersion":"cleanup.v1","approvedTranscript":"Words.","decisions":[],"anchorBefore":"B","anchorAfter":"A","status":"sender_approved"}"#
+        let decoded = try JSONDecoder().decode(InterjectionShareRevision.self, from: Data(old.utf8))
+        XCTAssertNil(decoded.sentReadAloud)
+        let encoded = String(decoding: try JSONEncoder().encode(revision("n", at: 0, sent: nil)), as: UTF8.self)
+        XCTAssertFalse(encoded.contains("sentReadAloud"), "a share with no choice is stored exactly as before")
+    }
+
+    /// Share ids are random and `updated_at` counts whole seconds, so two shares of one Margin saved back to back (the
+    /// recipient preview built twice) tie on time; the later save must win whatever its id sorts as (audit on 60f95e6).
+    func testTwoSharesSavedInTheSameSecondAreOrderedBySaveNotById() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("ReadAloudChoice-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let store = try SQLiteSessionStore(path: folder.appendingPathComponent("library.sqlite").path)
+        // Ids sort against the order saved: "z" is saved first and "a" second, on and then off.
+        try store.saveInterjectionShareRevision(revision("z", margin: "one", at: 1, sent: true))
+        try store.saveInterjectionShareRevision(revision("a", margin: "one", at: 2, sent: false))
+        // And the reverse for another Margin: off first under "z", then on under "a".
+        try store.saveInterjectionShareRevision(revision("zz", margin: "two", at: 1, sent: false))
+        try store.saveInterjectionShareRevision(revision("aa", margin: "two", at: 2, sent: true))
+        XCTAssertEqual(try store.loadLastSentReadAloud(itemId: "item"), ["one": false, "two": true])
+    }
+
+    func testTheLibraryRemembersEachMarginsLastChoicePerItem() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("ReadAloudChoice-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let store = try SQLiteSessionStore(path: folder.appendingPathComponent("library.sqlite").path)
+        try store.saveInterjectionShareRevision(revision("a", margin: "one", at: 1, sent: false))
+        try store.saveInterjectionShareRevision(revision("b", margin: "one", at: 2, sent: true))
+        try store.saveInterjectionShareRevision(revision("c", margin: "two", at: 1, sent: false))
+        try store.saveInterjectionShareRevision(revision("d", margin: "three", at: 1, sent: nil))
+        // A later share as a recording carries no choice and leaves the earlier one where it was.
+        try store.saveInterjectionShareRevision(revision("e", margin: "two", at: 2, sent: nil))
+        XCTAssertEqual(try store.loadLastSentReadAloud(itemId: "item"), ["one": true, "two": false])
+        XCTAssertEqual(try store.loadLastSentReadAloud(itemId: "another item"), [:])
+    }
 }

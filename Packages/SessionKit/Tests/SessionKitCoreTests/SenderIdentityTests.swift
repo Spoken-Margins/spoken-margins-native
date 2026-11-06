@@ -125,6 +125,58 @@ final class SenderIdentityTests: XCTestCase {
         XCTAssertTrue(SenderID.isValid(SenderID.generate(using: &seeded)))
     }
 
+    // #2846: hiding one received Margin on its own.
+    func testASingleMarginCanBeHiddenAndShownAgainWithoutTouchingTheSenders() {
+        var hidden = HiddenSenders()
+        XCTAssertTrue(hidden.isEmpty)
+        hidden.hide(senderA, displayLabel: "A", at: created)
+        XCTAssertTrue(hidden.hideMargin("margin-1", senderLabel: "A", text: "  First   words\nhere ", at: created))
+        XCTAssertFalse(hidden.hideMargin("", text: "no id"), "a Margin with no id can't be named, so it isn't hidden")
+        XCTAssertTrue(hidden.isMarginHidden("margin-1"))
+        XCTAssertFalse(hidden.isMarginHidden("margin-2"))
+        XCTAssertEqual(hidden.listedMargins.map(\.snippet), ["First words here"], "whitespace is collapsed in the kept words")
+        hidden.unhideMargin("margin-1")
+        XCTAssertFalse(hidden.isMarginHidden("margin-1"))
+        XCTAssertEqual(hidden.entries.count, 1, "showing a Margin again leaves the hidden sender hidden")
+        hidden.unhide(senderA)
+        XCTAssertTrue(hidden.isEmpty)
+    }
+
+    func testHidingAMarginTwiceKeepsOneEntryAndTheKeptWordsAreShort() {
+        var hidden = HiddenSenders()
+        hidden.hideMargin("m", text: String(repeating: "word ", count: 100), at: created)
+        hidden.hideMargin("m", text: "other", at: created.addingTimeInterval(60))
+        XCTAssertEqual(hidden.margins.count, 1)
+        XCTAssertLessThanOrEqual(hidden.margins[0].snippet.count, HiddenSenders.HiddenMargin.snippetLimit + 1)
+        XCTAssertTrue(hidden.margins[0].snippet.hasSuffix("…"))
+    }
+
+    func testHiddenMarginsAreFilteredOutOfAMarginList() {
+        func margin(_ id: String) -> ImportedCommentaryInterjection {
+            ImportedCommentaryInterjection(
+                id: id, layerId: "layer", packageScopedId: id, createdAt: created,
+                anchorEvidence: PortableAnchorEvidence(anchorType: .media, mediaTimeMs: 1_000),
+                approvedTranscript: id, resolution: ImportedAnchorResolution(evidenceClass: .exactEdition))
+        }
+        var hidden = HiddenSenders()
+        XCTAssertEqual(hidden.visible([margin("a"), margin("b")]).map(\.id), ["a", "b"])
+        hidden.hideMargin("a")
+        XCTAssertEqual(hidden.visible([margin("a"), margin("b")]).map(\.id), ["b"])
+    }
+
+    func testTheHiddenMarginsSurviveARestartAndAFileFromBeforeThemStillReads() throws {
+        let store = SenderIdentityFileStore<HiddenSenders>.hiddenSenders(in: root.appendingPathComponent("margins-state"))
+        var hidden = HiddenSenders()
+        hidden.hide(senderA, displayLabel: "A", at: created)
+        hidden.hideMargin("margin-1", senderLabel: "A", text: "words", at: created)
+        try store.save(hidden)
+        XCTAssertEqual(store.load(), hidden)
+        // A file written by the build that only knew senders has no "margins" key.
+        try Data(#"{"entries":[{"senderId":"0123456789abcdef0123456789abcdef","hiddenAt":"2026-11-05T00:00:00Z"}]}"#.utf8).write(to: store.fileURL)
+        XCTAssertEqual(store.load().entries.map(\.senderId), [senderA])
+        XCTAssertEqual(store.load().margins, [])
+    }
+
     func testASavedFileGoesThroughTheSameChecksAsANewValue() throws {
         let ledgerJSON = #"{"idsByGroup":{"a":"0123456789abcdef0123456789abcdef","b":"0123456789abcdef0123456789abcdef","c":"bad"}}"#
         let ledger = try JSONDecoder().decode(SenderIDLedger.self, from: Data(ledgerJSON.utf8))

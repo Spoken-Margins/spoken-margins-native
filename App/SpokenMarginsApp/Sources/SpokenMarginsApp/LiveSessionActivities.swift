@@ -37,6 +37,7 @@ enum LiveSessionActivities {
         state.sessionId = plan.sessionId
         state.endedAt = plan.stoppedAt
         state.resumeUntil = plan.resumeUntil
+        state.isRecordingMargin = nil // an ended card never says it records (#3499)
         return state
     }
 
@@ -99,7 +100,22 @@ enum LiveSessionActivities {
         }
         for activity in activities {
             let current = activity.content.state
-            let state = runningState(for: session, markCount: current.markCount, lastMarkAt: current.lastMarkAt)
+            var state = runningState(for: session, markCount: current.markCount, lastMarkAt: current.lastMarkAt)
+            state.isRecordingMargin = current.isRecordingMargin // a sync pass must not wipe "Recording" (#3499)
+            await activity.update(ActivityContent(state: state, staleDate: nil))
+        }
+    }
+
+    /// Makes the running card say a spoken Margin is recording, with a Finish button, or go back to Mark (#3499).
+    /// `isRecording` is read at the moment of each write, so the card always follows what the screen holds now, even
+    /// when a start and a stop land close together. No "already that" shortcut: a stop would skip a start's write that
+    /// has not landed yet.
+    @MainActor
+    static func showRecording(isRecording: @MainActor () -> Bool, sessionId: String) async {
+        for activity in Activity<LiveSessionActivityAttributes>.activities where isCard(activity, for: sessionId) {
+            var state = activity.content.state
+            guard !state.hasEnded else { continue }
+            state.isRecordingMargin = LiveSessionCardRecording.flag(isRunning: true, isRecordingSpoken: isRecording())
             await activity.update(ActivityContent(state: state, staleDate: nil))
         }
     }

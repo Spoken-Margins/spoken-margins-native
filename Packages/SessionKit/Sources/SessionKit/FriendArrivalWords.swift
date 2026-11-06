@@ -30,6 +30,20 @@ public enum FriendArrivalWords {
     public static let hideSenderMessage =
         "Their Margins will disappear from every item on this phone. Nothing is deleted, and you can show them again in Settings."
 
+    /// What "Hide this Margin" tells the listener before it hides one Margin (#2846): the same promise, for one.
+    public static let hideMarginMessage =
+        "This Margin will disappear from every list and from playback on this phone. Nothing is deleted, and you can show it again in Settings."
+
+    /// The Settings row for a Margin hidden on its own: its first words, or that it had none to show.
+    public static func hiddenMarginName(_ margin: HiddenSenders.HiddenMargin) -> String {
+        margin.snippet.isEmpty ? "A Margin with no words" : "\u{201C}\(margin.snippet)\u{201D}"
+    }
+
+    /// Who the hidden Margin was from, under its words.
+    public static func hiddenMarginSender(_ margin: HiddenSenders.HiddenMargin) -> String {
+        "From \(hiddenSenderName(margin.senderLabel))"
+    }
+
     /// The Settings row for a hidden sender: who it was, or that the sender never gave a name.
     public static func hiddenSenderName(_ displayLabel: String?) -> String {
         SharedPacketArrival.name(displayLabel) ?? "A sender who gave no name"

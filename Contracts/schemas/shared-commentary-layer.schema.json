@@ -68,7 +68,7 @@
           "items": { "$ref": "#/$defs/representation" }
         },
         "readAloud": {
-          "description": "The sender's choice for a written Margin: false asks that the listener's phone not read it aloud. Optional and written only when false. A reader that does not know it reads the Margin aloud, as every build did before.",
+          "description": "The sender's choice for a written Margin: false asks that the listener's phone not read it aloud. Optional. Written when false, and as true only when the sender's earlier share of the same Margin said false, so a listener's held copy can follow the sender back (#3472). A reader that does not know it reads the Margin aloud, as every build did before.",
           "type": "boolean"
         }
       }

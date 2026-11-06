@@ -22,10 +22,14 @@ public struct LiveSessionActivityAttributes: ActivityAttributes {
         /// When Resume stops being offered. The card's `staleDate` is the same moment, so the system marks it stale
         /// (`ActivityViewContext.isStale`) and the card drops the button even if the app never runs again.
         public var resumeUntil: Date?
+        /// True while a spoken Margin records on the phone (#3499): the card then says so and offers Finish. Optional,
+        /// like the fields above, so a card started by an earlier build still decodes and reads as not recording.
+        public var isRecordingMargin: Bool?
 
         public init(
             markCount: Int, lastMarkAt: Date? = nil, clockOrigin: Date? = nil, clockTitle: String? = nil,
-            sessionId: String? = nil, endedAt: Date? = nil, resumeUntil: Date? = nil
+            sessionId: String? = nil, endedAt: Date? = nil, resumeUntil: Date? = nil,
+            isRecordingMargin: Bool? = nil
         ) {
             self.markCount = markCount
             self.lastMarkAt = lastMarkAt
@@ -34,7 +38,11 @@ public struct LiveSessionActivityAttributes: ActivityAttributes {
             self.sessionId = sessionId
             self.endedAt = endedAt
             self.resumeUntil = resumeUntil
+            self.isRecordingMargin = isRecordingMargin
         }
+
+        /// True while the card says a spoken Margin records. An ended card never does.
+        public var isRecordingNow: Bool { isRecordingMargin == true && endedAt == nil }
 
         /// True once the session has ended and the card is only waiting out the Resume window.
         public var hasEnded: Bool { endedAt != nil }
@@ -143,6 +151,33 @@ struct LiveSessionResumeIntent: LiveActivityIntent {
             await activity.update(ActivityContent(state: state, staleDate: nil))
         }
         NotificationCenter.default.post(name: LiveSessionResumeQueue.requested, object: nil)
+        return .result()
+    }
+}
+
+/// Finish tapped on the card while a spoken Margin records (#3499). The intent runs in the app's process, so it only
+/// says so: the screen that holds the recording stops and saves it (`LiveSessionController`), and the card stops saying
+/// "Recording" at once. Finishing doesn't start the microphone.
+public enum LiveSessionFinishMargin {
+    /// Posted in the app's process when Finish is tapped on the card.
+    public static let requested = Notification.Name("LiveSessionFinishMargin.requested")
+}
+
+struct LiveSessionFinishMarginIntent: LiveActivityIntent {
+    static let title: LocalizedStringResource = "Finish Spoken Margin"
+    static let description = IntentDescription("Stops and saves the spoken Margin that is recording in the live session, without opening Spoken Margins.")
+    static let openAppWhenRun = false
+
+    init() {}
+
+    func perform() async throws -> some IntentResult {
+        for activity in Activity<LiveSessionActivityAttributes>.activities {
+            var state = activity.content.state
+            guard state.isRecordingNow else { continue }
+            state.isRecordingMargin = nil
+            await activity.update(ActivityContent(state: state, staleDate: nil))
+        }
+        NotificationCenter.default.post(name: LiveSessionFinishMargin.requested, object: nil)
         return .result()
     }
 }

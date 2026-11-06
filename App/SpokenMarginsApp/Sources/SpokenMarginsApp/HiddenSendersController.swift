@@ -33,7 +33,7 @@ final class HiddenSendersController: ObservableObject {
         defaultDirectory().flatMap { SenderIdentityFileStore<SenderIDLedger>.ledger(in: $0).phoneSenderID() }
     }
 
-    var isEmpty: Bool { current.entries.isEmpty }
+    var isEmpty: Bool { current.isEmpty }
 
     func isHidden(_ senderId: String?) -> Bool { current.isHidden(senderId) }
 
@@ -49,6 +49,23 @@ final class HiddenSendersController: ObservableObject {
     func unhide(_ senderId: String) {
         var next = current
         next.unhide(senderId)
+        apply(next)
+    }
+
+    func isMarginHidden(_ marginId: String) -> Bool { current.isMarginHidden(marginId) }
+
+    /// Hides one received Margin. False when it has no id, so no button offers it.
+    @discardableResult
+    func hideMargin(_ marginId: String, senderLabel: String?, text: String, at date: Date = Date()) -> Bool {
+        var next = current
+        guard next.hideMargin(marginId, senderLabel: senderLabel, text: text, at: date) else { return false }
+        apply(next)
+        return true
+    }
+
+    func unhideMargin(_ marginId: String) {
+        var next = current
+        next.unhideMargin(marginId)
         apply(next)
     }
 

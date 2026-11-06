@@ -182,6 +182,21 @@ final class SharedMarginPlaceholderTests: XCTestCase {
         XCTAssertEqual(draft.approvedTranscript, "Remember this.")
     }
 
+    /// #3472: a re-share starts the read-aloud switch where the sender last put it for this Margin.
+    func testAReShareKeepsTheReadAloudSwitchWhereItWasLastSent() {
+        func draft(_ lastSent: Bool?) -> ShareInterjectionDraft {
+            ShareInterjectionDraft.initial(
+                for: margin(transcript: "Remember this.", status: "completed"), isIncluded: true, hasVoice: false,
+                itemTitle: "T", anchorWarning: nil, lastSentReadAloud: lastSent, timeZone: chicago
+            )
+        }
+        XCTAssertTrue(draft(nil).readAloud, "never shared: on, as before")
+        XCTAssertNil(draft(nil).previousReadAloud)
+        XCTAssertFalse(draft(false).readAloud, "last shared with it off: still off")
+        XCTAssertEqual(draft(false).previousReadAloud, false)
+        XCTAssertTrue(draft(true).readAloud)
+    }
+
     func testAWrittenMarginWithoutWordsIsStillWarnedAndLeftOut() {
         let draft = ShareInterjectionDraft.initial(
             for: margin(captureKind: .written), isIncluded: true, hasVoice: false, itemTitle: "T",

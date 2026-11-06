@@ -57,6 +57,9 @@ public struct ShareInterjectionDraft: Identifiable {
     /// Whether the listener's phone reads this Margin aloud when it goes as text (#3427). On unless the sender turns it
     /// off; it means nothing for a Margin that goes as a recording.
     public var readAloud = true
+    /// The choice the sender's last text share of this Margin carried (#3472), or `nil` if it was never shared as text.
+    /// When it was "no" and the switch is now on, the packet says "yes" so the listener's held copy follows.
+    public var previousReadAloud: Bool?
 
     public init(
         interjection: Interjection,
@@ -122,6 +125,7 @@ extension ShareInterjectionDraft {
         hasVoice: Bool,
         itemTitle: String?,
         anchorWarning: String?,
+        lastSentReadAloud: Bool? = nil,
         timeZone: TimeZone = .current
     ) -> ShareInterjectionDraft {
         let words = SharedMarginTextRequirement.initialReviewedText(for: interjection)
@@ -133,7 +137,7 @@ extension ShareInterjectionDraft {
             after: interjection.anchor.anchorAfter,
             commentLength: ExcerptCapRule.commentLength(transcript: words)
         )
-        return ShareInterjectionDraft(
+        var draft = ShareInterjectionDraft(
             interjection: interjection,
             isIncluded: isIncluded,
             approvedTranscript: transcript,
@@ -143,6 +147,10 @@ extension ShareInterjectionDraft {
             anchorAfter: context.after,
             placeholderText: placeholder
         )
+        // A re-share keeps the switch where the sender last put it for this Margin (#3472).
+        draft.readAloud = lastSentReadAloud ?? true
+        draft.previousReadAloud = lastSentReadAloud
+        return draft
     }
 
     /// The listener's words for a Margin that started with placeholder words. Clearing them brings the placeholder

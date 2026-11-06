@@ -39,6 +39,9 @@ public struct ReviewedInterjectionSelection: Sendable {
     /// Whether the sender wants a written Margin read aloud on the listener's phone (#3427). Only a text-only Margin
     /// can be read aloud; the choice is carried only when it is "no", so the default stays the old packet.
     public let readAloud: Bool
+    /// The sender's last share of this Margin said "no" and this one says "yes" (#3472). The packet then says "yes"
+    /// out loud, because a missing key cannot tell the listener's held copy to start reading aloud again.
+    public let turnsReadAloudBackOn: Bool
 
     public init(
         packageScopedId: String,
@@ -46,7 +49,8 @@ public struct ReviewedInterjectionSelection: Sendable {
         anchor: PortableAnchorEvidence,
         representation: ReviewedRepresentationSelection,
         replyTo: MarginReplyLink? = nil,
-        readAloud: Bool = true
+        readAloud: Bool = true,
+        turnsReadAloudBackOn: Bool = false
     ) {
         self.packageScopedId = packageScopedId
         self.revision = revision
@@ -54,6 +58,7 @@ public struct ReviewedInterjectionSelection: Sendable {
         self.representation = representation
         self.replyTo = replyTo
         self.readAloud = readAloud
+        self.turnsReadAloudBackOn = turnsReadAloudBackOn
     }
 }
 
@@ -216,7 +221,8 @@ public enum SpokenMarginsPackageBuilder {
                 ),
                 defaultRepresentationId: representation.id,
                 representations: [representation],
-                readAloud: representation.kind == .textOnly && !selection.readAloud ? false : nil
+                readAloud: representation.kind == .textOnly
+                    ? (selection.readAloud ? (selection.turnsReadAloudBackOn ? true : nil) : false) : nil
             ))
         }
 

@@ -38,12 +38,14 @@ struct LiveSessionActivityWidget: Widget {
                     }
                 }
                 DynamicIslandExpandedRegion(.trailing) {
-                    Text(context.state.hasEnded ? "Ended" : markLabel(context.state.markCount))
+                    Text(context.state.hasEnded ? "Ended" : context.state.isRecordingNow ? "Recording" : markLabel(context.state.markCount))
                         .font(.caption)
                 }
                 DynamicIslandExpandedRegion(.bottom) {
                     if context.state.hasEnded {
                         LiveSessionResumeButton(sessionId: context.state.sessionId, isStale: context.isStale)
+                    } else if context.state.isRecordingNow {
+                        LiveSessionFinishButton()
                     } else {
                         VStack(spacing: 8) {
                             LiveSessionMarkButton()
@@ -52,17 +54,20 @@ struct LiveSessionActivityWidget: Widget {
                     }
                 }
             } compactLeading: {
-                Image(systemName: context.state.hasEnded ? "stop.circle" : "bookmark")
+                Image(systemName: context.state.hasEnded ? "stop.circle" : context.state.isRecordingNow ? "waveform" : "bookmark")
             } compactTrailing: {
                 if context.state.hasEnded {
                     Text("Ended")
+                        .font(.caption)
+                } else if context.state.isRecordingNow {
+                    Text("Rec")
                         .font(.caption)
                 } else {
                     Text("\(context.state.markCount)")
                         .font(.caption.monospacedDigit())
                 }
             } minimal: {
-                Image(systemName: context.state.hasEnded ? "stop.circle" : "bookmark")
+                Image(systemName: context.state.hasEnded ? "stop.circle" : context.state.isRecordingNow ? "waveform" : "bookmark")
             }
             .widgetURL(LiveSessionDeepLink.url())
         }
@@ -78,14 +83,24 @@ struct LiveSessionActivityWidget: Widget {
                     Text(context.state.clockOrigin ?? context.attributes.sessionStartedAt, style: .timer)
                         .font(.title2.monospacedDigit().weight(.semibold))
                         .foregroundStyle(.white)
-                    Text(markLabel(context.state.markCount))
-                        .font(.caption)
-                        .foregroundStyle(.white.opacity(0.8))
+                    if context.state.isRecordingNow {
+                        Label("Recording a Margin", systemImage: "waveform")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.white)
+                    } else {
+                        Text(markLabel(context.state.markCount))
+                            .font(.caption)
+                            .foregroundStyle(.white.opacity(0.8))
+                    }
                 }
                 Spacer(minLength: 8)
-                LiveSessionMarkButton()
+                if context.state.isRecordingNow {
+                    LiveSessionFinishButton()
+                } else {
+                    LiveSessionMarkButton()
+                }
             }
-            LiveSessionMarginLinks()
+            if !context.state.isRecordingNow { LiveSessionMarginLinks() }
         }
     }
 
@@ -142,6 +157,19 @@ private struct LiveSessionMarkButton: View {
         }
         .tint(.blue)
         .accessibilityLabel("Mark this moment")
+    }
+}
+
+/// Finish, while a spoken Margin records (#3499): stops and saves it without opening the app.
+private struct LiveSessionFinishButton: View {
+    var body: some View {
+        Button(intent: LiveSessionFinishMarginIntent()) {
+            Label("Finish Margin", systemImage: "checkmark.circle.fill")
+                .font(.headline)
+                .frame(minWidth: 88, minHeight: 44)
+        }
+        .tint(.blue)
+        .accessibilityLabel("Finish and save the spoken Margin")
     }
 }
 
