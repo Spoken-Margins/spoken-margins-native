@@ -47,7 +47,7 @@ enum LiveSessionSpokenMargins {
 
     /// True while a live session spoken Margin records on the phone. A play from the Lock Screen, headphones or the
     /// Watch is ignored then (`LiveSessionTransportGuard`), because our player taking the audio session stops the recorder.
-    @MainActor static var isRecordingOnPhone: Bool { recordingScreen?.isRecordingSpoken == true }
+    @MainActor static var isRecordingOnPhone: Bool { recordingScreen.map { $0.isRunning && $0.isRecordingSpoken } == true }
 
     @MainActor static func spokenMarginStarted(on screen: LiveSessionController) { recordingScreen = screen }
 
