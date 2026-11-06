@@ -66,6 +66,7 @@ extension Gate1AppModel {
             let remaining = moment.msUntilTarget(currentMediaTimeMs: moment.review == nil ? (marginMomentPositionMs ?? moment.startMediaTimeMs) : snapshot.currentMediaTimeMs)
             return PinnedMarginCard(subject: subject, stage: .comingUp(msRemaining: remaining), position: position)
         }
+        if let saved = friendAnswerSavedCard { return saved }
         // Auto-play off still holds the slot: Next Margin is reachable between Margins and the title never moves.
         guard let next = nextSharedMargin else { return nil }
         let remaining = next.mediaTimeMs.flatMap { ms in snapshot.currentMediaTimeMs.map { max(0, ms - $0) } }
