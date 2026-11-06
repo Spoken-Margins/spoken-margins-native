@@ -77,9 +77,11 @@ final class WrittenMarginOnDeviceVoiceTests: XCTestCase {
     }
 
     /// An on-device voice whose render writes to `voiceOutput`, like the real one.
-    private func stage(_ calls: Calls, key: String = "phonon", budget: TimeInterval = 1, allowed: @escaping @Sendable () -> Bool = { true },
+    private func stage(_ calls: Calls, key: String = "phonon", budget: TimeInterval = 1, mostCharacters: Int = 300,
+                       reads: @escaping @Sendable (String) -> Bool = WrittenMarginVoiceChoice.onDeviceCanRead,
+                       allowed: @escaping @Sendable () -> Bool = { true },
                        render: @escaping @Sendable (String, RenderCancellation) throws -> URL) -> WrittenMarginOnDeviceStage {
-        WrittenMarginOnDeviceStage(key: key, budget: budget, isAllowed: allowed, render: { text, _, cancel in
+        WrittenMarginOnDeviceStage(key: key, budget: budget, mostCharacters: mostCharacters, reads: reads, isAllowed: allowed, render: { text, _, cancel in
             calls.hitOnDevice()
             return try render(text, cancel)
         })
@@ -317,6 +319,162 @@ final class WrittenMarginOnDeviceVoiceTests: XCTestCase {
         do { _ = try await render.value; XCTFail("a deleted item's reading is not made") } catch {}
         _ = await reader.settle(upTo: 5)
         XCTAssertTrue(allFiles().isEmpty, "no reading of the deleted item is on disk: \(allFiles())")
+    }
+
+    // MARK: The seam between what a caller is handed and what is written (round two)
+
+    private func waitUntilExists(_ file: URL, upTo seconds: TimeInterval = 5) async -> Bool {
+        let deadline = Date().addingTimeInterval(seconds)
+        while !FileManager.default.fileExists(atPath: file.path), Date() < deadline { try? await Task.sleep(for: .milliseconds(20)) }
+        return FileManager.default.fileExists(atPath: file.path)
+    }
+
+    // A: the player is only ever given a file that exists or that a render is writing at exactly that path.
+    func testACallerThatCannotWaitIsNeverHandedAPathNoRenderWrites() async throws {
+        let calls = Calls()
+        let reader = reader(calls)
+        let voice = stage(calls, render: speaking(voiceOutput))
+        let audio = SharedMarginAudio.readingRendering(reading, file: reader.playbackState(for: reading, onDevice: voice).file)
+        let handed = try XCTUnwrap(audio.startingRender(on: reader, onDevice: voice))
+        XCTAssertNotEqual(handed, reader.fileURL(for: reading, onDevice: voice), "the on-device path is not named while nothing writes it")
+        let appeared = await waitUntilExists(handed)
+        XCTAssertTrue(appeared, "the file it was handed appears")
+        XCTAssertEqual(calls.onDeviceCount, 0, "a caller that cannot wait starts no on-device render")
+        XCTAssertTrue(try text(handed).hasPrefix("iphone:"))
+    }
+
+    func testTheFileAWaitReturnsIsTheFileTheNextAskNames_WhateverVoiceMadeIt() async throws {
+        let calls = Calls()
+        let reader = reader(calls)
+        let cold = stage(calls, budget: 0.1) { _, _ in throw CancellationError() }
+        let fell = try await reader.rendered(reading, onDevice: cold) // the fallback
+        let afterFall = SharedMarginAudio.readingRendering(reading, file: fell)
+        XCTAssertEqual(afterFall.startingRender(on: reader, onDevice: cold), fell)
+        XCTAssertTrue(reader.playbackState(for: reading, onDevice: cold).isReady)
+        let warm = stage(calls, key: "lily", render: speaking(voiceOutput))
+        let other = WrittenMarginReading(intro: "Cole wrote:", text: "A second note.", itemId: "item-1")
+        let made = try await reader.rendered(other, onDevice: warm) // on-device success
+        let state = reader.playbackState(for: other, onDevice: warm)
+        XCTAssertEqual(state.file, made)
+        XCTAssertTrue(state.isReady)
+        XCTAssertEqual(SharedMarginAudio.readingRendering(other, file: state.file).startingRender(on: reader, onDevice: warm), made)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: made.path))
+    }
+
+    // B: the first hearing of a note is the chosen voice's. An iPhone reading made ahead is not taken for it, and nothing
+    // is rendered ahead in a voice nobody will hear.
+    func testAnIPhoneReadingMadeAheadIsNotTheFirstHearingOfAnOnDeviceListener() async throws {
+        let calls = Calls()
+        let reader = reader(calls)
+        let voice = stage(calls, render: speaking(voiceOutput))
+        reader.prepareAhead(["a": reading], onDevice: nil) // before the Terms, or no voice chosen
+        _ = await reader.settle(upTo: 5)
+        XCTAssertEqual(calls.iPhoneCount, 1)
+        XCTAssertTrue(reader.wantsOnDevice(reading, stage: voice), "the first hearing waits for the chosen voice")
+        let file = try await reader.rendered(reading, onDevice: voice)
+        XCTAssertTrue(try text(file).hasPrefix("on-device:"))
+        XCTAssertFalse(reader.wantsOnDevice(reading, stage: voice))
+    }
+
+    func testOpeningAScreenRendersAheadOnlyWhatTheIPhoneVoiceWillRead() async throws {
+        let calls = Calls()
+        let reader = reader(calls)
+        let voice = stage(calls, mostCharacters: 60, render: speaking(voiceOutput))
+        let japanese = WrittenMarginReading(intro: "Cole wrote:", text: "これは日本語のメモです。", itemId: "item-1")
+        let long = WrittenMarginReading(intro: "Cole wrote:", text: String(repeating: "A long note about the harbour. ", count: 4), itemId: "item-1")
+        reader.prepareAhead(["short": reading, "ja": japanese, "long": long], onDevice: voice)
+        let deadline = Date().addingTimeInterval(5)
+        while calls.iPhoneCount < 2, Date() < deadline { try await Task.sleep(for: .milliseconds(20)) }
+        _ = await reader.settle(upTo: 5)
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(calls.iPhoneCount, 2, "the unreadable-by-voice and the too-long notes only")
+        XCTAssertEqual(calls.onDeviceCount, 0, "opening a screen never runs the on-device voice")
+        XCTAssertFalse(reader.isReady(reading), "the short English note is left for the chosen voice")
+        XCTAssertTrue(reader.isReady(japanese))
+        XCTAssertTrue(reader.isReady(long))
+    }
+
+    // Item 4: the voice takes on only what its short budget can do; a longer note is the iPhone voice's from the start.
+    func testANoteLongerThanTheVoiceTakesOnIsReadByTheIPhoneVoiceWithNoOnDeviceRender() async throws {
+        let calls = Calls()
+        let reader = reader(calls)
+        let voice = stage(calls, mostCharacters: 20, render: speaking(voiceOutput))
+        XCTAssertFalse(reader.wantsOnDevice(reading, stage: voice))
+        let file = try await reader.rendered(reading, onDevice: voice)
+        XCTAssertEqual(calls.onDeviceCount, 0)
+        XCTAssertEqual(file, reader.fileURL(for: reading))
+        XCTAssertTrue(reader.playbackState(for: reading, onDevice: voice).isReady)
+    }
+
+    // C: no on-device render without a listener waiting on it.
+    func testLeavingAReviewStopsTheOnDeviceRendersNobodyWaitsFor() async throws {
+        let calls = Calls()
+        let reader = reader(calls)
+        let stopped = Calls()
+        let started = DispatchSemaphore(value: 0)
+        let voice = stage(calls, budget: 30) { _, cancel in
+            started.signal()
+            while !cancel.isCancelled { Thread.sleep(forTimeInterval: 0.01) }
+            stopped.hitOnDevice()
+            throw CancellationError()
+        }
+        let notes = (1...5).map { WrittenMarginReading(intro: "Cole wrote:", text: "Note number \($0) about the harbour.", itemId: "item-1") }
+        let hold = Task { await reader.waitUntilSettled(notes, upTo: 30, onDevice: voice) }
+        XCTAssertEqual(started.wait(timeout: .now() + 5), .success)
+        hold.cancel() // the listener backed out of the screen
+        await hold.value
+        let deadline = Date().addingTimeInterval(5)
+        while stopped.onDeviceCount == 0, Date() < deadline { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(stopped.onDeviceCount, 1, "the render that was running saw the stop")
+        _ = await reader.settle(upTo: 5)
+        XCTAssertEqual(calls.onDeviceCount, 1, "the four queued behind it never started")
+        XCTAssertEqual(calls.iPhoneCount, 0)
+        XCTAssertTrue(allFiles().isEmpty)
+    }
+
+    func testAHoldThatRunsOutLeavesTheRendersItStartedAndAskedFor() async throws {
+        let calls = Calls()
+        let reader = reader(calls)
+        let stopped = Calls()
+        let started = DispatchSemaphore(value: 0)
+        let voice = stage(calls, budget: 30) { _, cancel in
+            started.signal()
+            while !cancel.isCancelled { Thread.sleep(forTimeInterval: 0.01) }
+            stopped.hitOnDevice()
+            throw CancellationError()
+        }
+        let notes = (1...3).map { WrittenMarginReading(intro: "Cole wrote:", text: "Note number \($0) about the harbour.", itemId: "item-1") }
+        await reader.waitUntilSettled(notes, upTo: 0.3, onDevice: voice)
+        XCTAssertEqual(started.wait(timeout: .now() + 5), .success)
+        let deadline = Date().addingTimeInterval(5)
+        while stopped.onDeviceCount == 0, Date() < deadline { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(stopped.onDeviceCount, 1)
+        _ = await reader.settle(upTo: 5)
+        XCTAssertEqual(calls.onDeviceCount, 1)
+    }
+
+    // Item 5: the language of a note is never worked out by a caller on the main thread.
+    func testTheLanguageGateIsNeverAskedOnTheMainThread() async throws {
+        let calls = Calls()
+        let reader = reader(calls)
+        let askedOnMain = Calls()
+        let asked = Calls()
+        let voice = stage(calls, reads: { _ in
+            asked.hitOnDevice()
+            if Thread.isMainThread { askedOnMain.hitOnDevice() }
+            return true
+        }, render: speaking(voiceOutput))
+        let reading = self.reading
+        await MainActor.run {
+            _ = reader.playbackState(for: reading, onDevice: voice)
+            _ = reader.wantsOnDevice(reading, stage: voice)
+            _ = reader.start(["a": reading], onDevice: voice)
+        }
+        _ = await reader.settle(upTo: 5)
+        XCTAssertEqual(asked.onDeviceCount, 0, "asking what plays looks at no language")
+        _ = try await reader.rendered(reading, onDevice: voice)
+        XCTAssertGreaterThan(asked.onDeviceCount, 0, "the render thread looked")
+        XCTAssertEqual(askedOnMain.onDeviceCount, 0)
     }
     #endif
 }

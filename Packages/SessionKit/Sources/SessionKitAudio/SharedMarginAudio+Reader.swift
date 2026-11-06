@@ -15,18 +15,15 @@ extension SharedMarginAudio {
         resolve(margin, in: layer, voiceFile: voiceFile, reading: { reader.playbackState(for: $0, onDevice: stage) })
     }
 
-    /// The file to play, after making sure a reading that is not ready is being rendered (the same call starts and finds a
-    /// render already running). Nil when nothing can play.
+    /// The file to hand a player now, after making sure the iPhone voice is making it when no better reading is ready (the
+    /// same call starts and finds a render already running). Nil when nothing can play.
     ///
-    /// With an on-device voice a reading it has not made is rendered by it, because this is the Margin being played. A
-    /// caller that cannot wait (it hands the player a file now) gets the iPhone voice's reading when that is already on
-    /// disk, so nothing fails or goes silent; the on-device reading is then ready for the next play (#3391).
+    /// A caller that cannot wait gets a file that exists or is being written for exactly that path: the on-device
+    /// voice's reading when it is ready, otherwise the iPhone voice's, never a path no render is writing. It starts no
+    /// on-device render: only a caller that waits for one asks (`WrittenMarginReader.rendered`), so nothing is rendered in
+    /// a voice nobody hears (#3391).
     public func startingRender(on reader: WrittenMarginReader, onDevice stage: WrittenMarginOnDeviceStage? = nil) -> URL? {
         guard case .readingRendering(let reading, _) = self else { return file }
-        if stage != nil, stage?.reads(reading.text) == true, reader.isReady(reading) {
-            _ = reader.start(["margin": reading], onDevice: stage)
-            return reader.fileURL(for: reading)
-        }
         return reader.start(["margin": reading], onDevice: stage)["margin"]
     }
 }

@@ -80,6 +80,7 @@ public final class WrittenMarginReader: @unchecked Sendable {
     /// are never loaded at once, whichever voice is chosen (#3391).
     private let onDeviceRunner = WrittenMarginOnDeviceRunner()
     private var fellBack: [String: Date] = [:] // on-device path -> when the iPhone voice read it instead
+    private var readsCache: [String: Bool] = [:] // voice key + words -> whether that voice can read them (language, asked off the main thread)
     /// How long a reading the iPhone voice made in place of the on-device voice is played as it is, before the on-device
     /// voice is tried for that Margin again (it may be warm by then).
     private let retryOnDeviceAfter: TimeInterval
@@ -159,24 +160,51 @@ public final class WrittenMarginReader: @unchecked Sendable {
         return directory.appending(path: "\(Self.itemKey(reading.itemId))-\(Self.fingerprint(seed)).caf", directoryHint: .notDirectory)
     }
 
-    /// The stage that applies to this note: nil when the on-device voice cannot read it (another script or language), so
-    /// the iPhone voice does, from the start.
+    private func readsKey(_ stage: WrittenMarginOnDeviceStage, _ reading: WrittenMarginReading) -> String { "\(stage.key)\u{1f}\(reading.text)" }
+
+    private func recentlyFellBack(_ devicePath: String) -> Bool {
+        lock.withLock { fellBack[devicePath].map { Date().timeIntervalSince($0) < retryOnDeviceAfter } ?? false }
+    }
+
+    /// The stage that applies to this note, from memory alone (the main thread may ask): nil when the iPhone voice reads it
+    /// from the start. That is a note the voice takes too long for (`mostCharacters`), one it was found unable to read
+    /// (another script or language), and one it gave up on a moment ago (`retryOnDeviceAfter`). The language is not
+    /// worked out here, because that is not for the main thread: until the render thread has looked (`readsAfterLooking`),
+    /// a note is taken to be readable, and the render thread sends the others to the iPhone voice.
     private func effective(_ stage: WrittenMarginOnDeviceStage?, for reading: WrittenMarginReading) -> WrittenMarginOnDeviceStage? {
-        guard let stage, stage.reads(reading.text) else { return nil }
+        guard let stage, reading.text.count <= stage.mostCharacters else { return nil }
+        if lock.withLock({ readsCache[readsKey(stage, reading)] }) == false { return nil }
+        if recentlyFellBack(fileURL(for: reading, onDevice: stage).path) { return nil }
         return stage
     }
 
-    /// Where to find the reading to play now and whether it is known to be on disk, for the voice the listener chose
-    /// (`onDevice`, nil for the iPhone voice). With an on-device voice: its own reading if it is there; else the iPhone
-    /// voice's if that voice read this Margin in its place a moment ago; else not ready (the caller renders it). In memory
-    /// only, so the main thread may ask. Starts nothing.
+    /// Whether the chosen on-device voice is still to be given this note, so its first hearing should wait for it. False
+    /// for the iPhone voice, a note too long or unreadable for the voice, and one it gave up on a moment ago. In memory.
+    public func wantsOnDevice(_ reading: WrittenMarginReading, stage: WrittenMarginOnDeviceStage?) -> Bool {
+        effective(stage, for: reading) != nil && !playbackState(for: reading, onDevice: stage).isReady
+    }
+
+    /// Whether the voice can read the note, asked of the voice and kept. Runs the language recognizer: render threads only.
+    private func readsAfterLooking(_ stage: WrittenMarginOnDeviceStage, _ reading: WrittenMarginReading) -> Bool {
+        let key = readsKey(stage, reading)
+        if let known = lock.withLock({ readsCache[key] }) { return known }
+        let answer = stage.reads(reading.text)
+        lock.withLock { readsCache[key] = answer }
+        return answer
+    }
+
+    /// The one answer to "what plays for this Margin now", for the voice the listener chose (`onDevice`, nil for the iPhone
+    /// voice). `file` is always a file that exists or that a render is being made for at exactly that path: the
+    /// on-device voice's reading when it has made it, otherwise the iPhone voice's. `isReady` says whether that file is
+    /// there and should play now. It is false for a note the on-device voice is still to be given (not tried yet, or its
+    /// time to retry has come), so the first hearing waits for it (`rendered`) instead of playing an iPhone reading made
+    /// ahead, and true once the voice gave up on the note or cannot read it. In memory only, so the main thread may ask.
+    /// Starts nothing.
     public func playbackState(for reading: WrittenMarginReading, onDevice stage: WrittenMarginOnDeviceStage?) -> (file: URL, isReady: Bool) {
         guard let stage = effective(stage, for: reading) else { return (fileURL(for: reading), isReady(reading)) }
         let device = fileURL(for: reading, onDevice: stage)
         if isKnownReady(device.path) { return (device, true) }
-        let recently = lock.withLock { fellBack[device.path].map { Date().timeIntervalSince($0) < retryOnDeviceAfter } ?? false }
-        if recently, isReady(reading) { return (fileURL(for: reading), true) }
-        return (device, false)
+        return (fileURL(for: reading), false)
     }
 
     static func itemKey(_ itemId: String) -> String { String(fingerprint("written-margin-item\u{1f}\(itemId)").prefix(16)) }
@@ -344,20 +372,33 @@ public final class WrittenMarginReader: @unchecked Sendable {
         }
     }
 
-    /// Names each reading's file and starts rendering the ones that are not ready yet, off the calling thread. Returns at
-    /// once with the paths, keyed as the caller keyed the readings; a file may not exist yet when this returns. With an
-    /// on-device voice (`onDevice`), a reading it has not made yet is rendered by it, so ask only for what is about to be
-    /// played: opening a screen asks with none and gets the iPhone voice's, which costs the listener nothing (#3391).
+    /// Names the file to hand a player for each reading, keyed as the caller keyed the readings, and starts the iPhone voice
+    /// on any that are not ready. For a caller that cannot wait: the file named is the on-device voice's if it is ready,
+    /// else the iPhone voice's, which is being written. Returns at once; a file may not exist yet. It never starts the
+    /// on-device voice: that is `rendered` and `waitUntilSettled`, which have a listener waiting (#3391).
     public func start(_ readings: [String: WrittenMarginReading], onDevice stage: WrittenMarginOnDeviceStage? = nil) -> [String: URL] {
         var urls: [String: URL] = [:]
         for (key, reading) in readings {
             let state = playbackState(for: reading, onDevice: stage)
             urls[key] = state.file
-            let applies = effective(stage, for: reading)
-            if applies != nil, state.isReady { continue }
-            ensureRendered(reading, onDevice: applies, waiter: nil) { _ in }
+            if state.file == fileURL(for: reading), !isReady(reading) { ensureRendered(reading, onDevice: nil, waiter: nil) { _ in } }
         }
         return urls
+    }
+
+    /// Renders ahead, when a screen opens, the readings that will be heard in the iPhone voice, which costs the listener
+    /// nothing. A reading the chosen on-device voice will be given when it is played is left alone: rendering it now would
+    /// make a file in a voice nobody hears, and the on-device voice is not run on opening a screen. Works off the calling
+    /// thread, which is where the language of each note is found.
+    public func prepareAhead(_ readings: [String: WrittenMarginReading], onDevice stage: WrittenMarginOnDeviceStage?) {
+        guard let stage else { _ = start(readings); return }
+        let all = Array(readings.values)
+        DispatchQueue.global(qos: .utility).async { [self] in
+            for reading in all {
+                _ = readsAfterLooking(stage, reading)
+                if effective(stage, for: reading) == nil, !isReady(reading) { ensureRendered(reading, onDevice: nil, waiter: nil) { _ in } }
+            }
+        }
     }
 
     /// The reading's file once it is on disk: already there, or rendered now. Never blocks the caller's thread. Throws
@@ -395,22 +436,33 @@ public final class WrittenMarginReader: @unchecked Sendable {
     }
 
     /// Returns when every reading is on disk or has failed, or after `limit` seconds, whichever is first. Starts any
-    /// render that has not started. Never throws: the caller goes on and the conductor reports a file that is missing.
+    /// render that has not started, the on-device voice's included, for a listener who is waiting. When it returns, or when
+    /// the caller's task is cancelled (the listener left), it stops waiting: an on-device try that nobody else waits for
+    /// stops at its next step, so nothing keeps rendering with no one to hear it (#3391). Never throws: the caller goes
+    /// on and the conductor reports a file that is missing.
     public func waitUntilSettled(_ readings: [WrittenMarginReading], upTo limit: TimeInterval, onDevice stage: WrittenMarginOnDeviceStage? = nil) async {
         guard !readings.isEmpty else { return }
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            let once = Once { continuation.resume() }
-            let remaining = Counter(readings.count)
-            for reading in readings {
-                let applies = effective(stage, for: reading)
-                if applies != nil, playbackState(for: reading, onDevice: applies).isReady {
-                    if remaining.decrement() == 0 { once.fire() }
-                    continue
+        let ids = readings.map { _ in UUID() }
+        let leaveAll: @Sendable () -> Void = { [self] in ids.forEach { leave($0) } }
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                let once = Once { continuation.resume() }
+                let remaining = Counter(readings.count)
+                for (reading, id) in zip(readings, ids) {
+                    let applies = effective(stage, for: reading)
+                    if playbackState(for: reading, onDevice: applies).isReady {
+                        if remaining.decrement() == 0 { once.fire() }
+                        continue
+                    }
+                    ensureRendered(reading, onDevice: applies, waiter: id) { _ in if remaining.decrement() == 0 { once.fire() } }
                 }
-                ensureRendered(reading, onDevice: applies, waiter: nil) { _ in if remaining.decrement() == 0 { once.fire() } }
+                if Task.isCancelled { leaveAll() }
+                DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + limit) { once.fire() }
             }
-            DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + limit) { once.fire() }
+        } onCancel: {
+            leaveAll()
         }
+        leaveAll()
     }
 
     private final class Once: @unchecked Sendable {
@@ -432,7 +484,9 @@ public final class WrittenMarginReader: @unchecked Sendable {
     }
 
     private func ensureRendered(_ reading: WrittenMarginReading, onDevice stage: WrittenMarginOnDeviceStage?, waiter: UUID?, completion: @escaping @Sendable (Result<URL, Error>) -> Void) {
-        let stage = effective(stage, for: reading)
+        // The on-device voice is tried only for someone who is waiting (a waiter with an id, who can leave). A caller with
+        // none gets the iPhone voice, so no on-device render can run with nobody there to hear it.
+        let stage = waiter == nil ? nil : effective(stage, for: reading)
         let target = stage.map { fileURL(for: reading, onDevice: $0) } ?? fileURL(for: reading)
         lock.lock()
         if let job = jobs[target.path] {
@@ -568,6 +622,7 @@ public final class WrittenMarginReader: @unchecked Sendable {
         // never names a voice that did not make the file.
         var made: URL?
         do {
+            guard readsAfterLooking(stage, reading) else { throw RenderError.noVoice } // a note it cannot read: the iPhone voice, at once
             made = try onDeviceRunner.attempt(stage, text: reading.spokenText, note: reading.text, scratch: scratch, cancel: job.cancel)
         } catch is CancellationError {
             throw CancellationError()

@@ -62,20 +62,14 @@ enum WrittenMarginReadings {
     /// The file to hand a player for `audio`, after starting the render of a reading that isn't ready. Nil: nothing can play.
     static func startingRender(_ audio: SharedMarginAudio) -> URL? { audio.startingRender(on: reader, onDevice: stage) }
 
-    /// The iPhone voice's files for the written Margins among `entries`, keyed by `marginId`, and the renders started for
-    /// any that aren't on disk yet. Touches no disk on the calling thread: the paths come from the words, and the check
-    /// and the render run on the reader's own thread. Never the on-device voice (see `stage`).
-    private static func start(for entries: [SharedMarginReview.Entry]) -> [String: URL] {
-        var readings: [String: WrittenMarginReading] = [:]
-        for entry in entries { readings[entry.marginId] = entry.writtenReading }
-        return reader.start(readings)
-    }
-
-    /// Starts the renders for the short written Margins waiting on the item screen, so they are ready before "Hear only
-    /// the Margins" is tapped. A long note waits until it is asked for.
+    /// Starts the renders for the short written Margins waiting on the item screen, so the ones that will be heard in the
+    /// iPhone voice are ready before "Hear only the Margins" is tapped. A long note waits until it is asked for. One the
+    /// chosen on-device voice will read is not rendered ahead: that would be a file in a voice nobody hears, and opening a
+    /// screen never runs the on-device model (`WrittenMarginReader.prepareAhead`). Touches no disk on the main thread.
     static func prepare(_ entries: [SharedMarginReview.Entry]) {
-        let short = entries.filter { $0.writtenReading?.isShortEnoughToRenderAhead == true }
-        _ = start(for: short)
+        var readings: [String: WrittenMarginReading] = [:]
+        for entry in entries { if let reading = entry.writtenReading, reading.isShortEnoughToRenderAhead { readings[entry.marginId] = reading } }
+        reader.prepareAhead(readings, onDevice: stage)
     }
 
     /// What changes which readings the item screen needs: the ids of the written Margins still new.
@@ -134,6 +128,32 @@ enum WrittenMarginReadings {
 
     // MARK: A review
 
+    /// A tap on a Timeline row, for a Margin whose reading in the chosen voice isn't made yet: it waits for that reading (the
+    /// on-device voice, within its short budget, else the iPhone voice, never silence), then plays the moment as an
+    /// ordinary tap does. True when this took the tap. Never twice for one wait: after the wait the moment is played from
+    /// whatever file there is, so a reading that can't be made can't send the tap round again.
+    static func waitsThenPlays(_ audio: SharedMarginAudio, row: SharedMarginRow, model: Gate1AppModel) -> Bool {
+        let key = row.interjection.id
+        guard case .readingRendering(let reading, _) = audio, !replayingAfterWait.contains(key),
+              reader.wantsOnDevice(reading, stage: stage) else { return false } // the iPhone voice's moment starts at once, as it always did
+        if tapWaits[key] != nil { return true } // a second tap during the wait
+        model.reportConfirmation("Getting that Margin ready to read aloud.")
+        let id = UUID()
+        let task = Task { @MainActor [weak model] in
+            let rendered = (try? await reader.rendered(reading, onDevice: stage)) != nil
+            if tapWaits[key]?.id == id { tapWaits[key] = nil }
+            guard !Task.isCancelled, let model, model.selectedItem.id == row.layer.itemId, !model.recordingNavigationIsLocked else { return }
+            guard rendered else { return model.reportWarning("That Margin couldn't be read aloud, so listening continues.") }
+            replayingAfterWait.insert(key)
+            defer { replayingAfterWait.remove(key) }
+            model.playSharedMarginMoment(row)
+        }
+        tapWaits[key] = Wait(id: id, wasPending: false, task: task, itemId: row.layer.itemId, reading: reading)
+        return true
+    }
+
+    private static var replayingAfterWait = Set<String>()
+
     /// What the listener is doing, as the hold sees it. Any change ends the hold: another item or session, playback paused
     /// or started, a Margin moment begun, a card shown or a Margin voice playing. Leaving the screen ends it too
     /// (`leftItemScreen`). Anything but time passing means they took over. A recording being started is not in this list;
@@ -168,9 +188,11 @@ enum WrittenMarginReadings {
         let from = listenerPlace(model)
         model.reportConfirmation("Getting your new Margins ready.")
         let settled = Flag()
-        Task { await reader.waitUntilSettled(readings, upTo: reviewHold, onDevice: stage); settled.set() }
+        let settling = Task { await reader.waitUntilSettled(readings, upTo: reviewHold, onDevice: stage); settled.set() }
         holds[key] = Task { @MainActor [weak model] in
-            defer { holds[key] = nil }
+            // However the hold ends (the review starts, the listener moves, they leave the screen), the wait for the readings
+            // ends with it, and an on-device try nobody waits for stops (#3391).
+            defer { holds[key] = nil; settling.cancel() }
             while !settled.isSet {
                 try? await Task.sleep(for: .milliseconds(250))
                 guard !Task.isCancelled, let model, listenerPlace(model) == from else { return } // they went elsewhere: nothing starts

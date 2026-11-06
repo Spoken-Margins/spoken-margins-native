@@ -76,7 +76,15 @@ public struct WrittenMarginOnDeviceStage: Sendable {
     /// reason T3 and the owner's phone must see a real render.
     public static let defaultBudget: TimeInterval = 5
 
+    /// The longest note the on-device voice takes on, in characters: about 20 seconds of speech. The budget is a fixed
+    /// short wait (the listener is waiting for the first hearing), so what the voice must manage in it is a rate: 20
+    /// seconds in 5 is 4 times real time. A longer note would need more, a note of 600 characters 8 times, so a longer
+    /// one is read by the iPhone voice from the start and nothing is rendered in a voice that would be thrown away.
+    /// The rate a phone really manages is unchecked.
+    public static let defaultMostCharacters = 300
+
     public let budget: TimeInterval
+    public let mostCharacters: Int
     /// Whether the on-device voice reads this note (see `WrittenMarginVoiceChoice.onDeviceCanRead`).
     public let reads: @Sendable (_ note: String) -> Bool
     /// Writes the speech for `text` under `scratch` and returns the file. Runs on a background thread, once at a time.
@@ -91,12 +99,14 @@ public struct WrittenMarginOnDeviceStage: Sendable {
     public init(
         key: String,
         budget: TimeInterval = WrittenMarginOnDeviceStage.defaultBudget,
+        mostCharacters: Int = WrittenMarginOnDeviceStage.defaultMostCharacters,
         reads: @escaping @Sendable (_ note: String) -> Bool = WrittenMarginVoiceChoice.onDeviceCanRead,
         isAllowed: @escaping @Sendable () -> Bool = { true },
         render: @escaping @Sendable (_ text: String, _ scratch: URL, _ cancel: RenderCancellation) throws -> URL
     ) {
         self.key = key
         self.budget = budget
+        self.mostCharacters = mostCharacters
         self.reads = reads
         self.render = render
         self.isAllowed = isAllowed
