@@ -106,6 +106,6 @@ def speaker_state(reader=read):
         return {'usable': True, 'why': 'could not read the Mac\'s lid, display or audio state'}
     if transport not in (None, 'Built-in', 'Virtual', 'Unknown'):
         return {'usable': True, 'why': f'lid closed, default output is {transport}'}
-    return {'usable': False, 'virtual_output': transport in ('Virtual', 'Unknown'),
+    return {'usable': False, 'virtual_output': transport == 'Virtual',
             'why': 'lid closed with no external display or other audio output, so the built-in '
                    'speakers are off and AVPlayer cannot advance'}
