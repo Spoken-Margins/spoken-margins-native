@@ -180,6 +180,11 @@ REACH_FANOUT = 9
 # that does not fit is named in the note with its test count, so the lead can add it by hand when the diff warrants it.
 REACH_MAX_TESTS = 100
 REACH_LISTED = 5  # how many left-out classes the note names
+# #3480: AudioLoopback classes record what the Mac plays and need BlackHole, which the hosted Mac lacks, so a run that
+# includes one without it comes back INCONCLUSIVE ("unexpected skip"). Following names reaches them through a shared
+# helper in diffs that touch no audio file (#3468: hidden-sender loaders and Settings), so they are only reached when a
+# changed file is an audio file. A test class named for the changed file, or named in a `tests:` line, is unaffected.
+REACH_AUDIO_DEVICE_CLASS = re.compile(r'^AudioLoopback')
 TEST_METHOD = re.compile(r'^\s*(?:@\w+\s+)*func test\w*\(')
 HUNK = re.compile(r'^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@', re.M)
 WORD = re.compile(r'[A-Za-z_]\w*')
@@ -419,6 +424,7 @@ def reaching_classes(root, changed, skip=(), diffs=None):
     changed = [path for path in changed if path in sources]
     if not changed or not tests:
         return [], []
+    audio_diff = any(APP_AUDIO.search(Path(path).name) for path in changed)
     words = {path: set(WORD.findall('\n'.join(lines))) for path, lines in {**sources, **tests}.items()}
     members = {path: member_declarations(lines) for path, lines in sources.items()}
     diffs = diffs or {}
@@ -440,7 +446,7 @@ def reaching_classes(root, changed, skip=(), diffs=None):
         for path in sorted(tests):
             if words[path] & frontier:
                 for name in TEST_CLASS.findall('\n'.join(tests[path])):
-                    if name not in classes:
+                    if name not in classes and (audio_diff or not REACH_AUDIO_DEVICE_CLASS.match(name)):
                         classes.append(name)
         reached = set()
         for path, lines in sources.items():

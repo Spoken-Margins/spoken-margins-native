@@ -164,6 +164,9 @@ public enum LiveSessionMarkdown {
             } else if margin.place == nil, let note = margin.whereNote?.trimmingCharacters(in: .whitespacesAndNewlines), !note.isEmpty {
                 lines += ["", "Where: \(note) or so."]
             }
+            if let photo = margin.validPhoto {
+                lines += ["", "Photo: \(photo.path) (\(margin.photoAltText ?? "Photo of the page"); stays on this phone)"]
+            }
             lines += ["", "Position: " + evidence(margin: margin, placed: placed, session: session)]
             if let text = placed?.matchText {
                 let speaker = placed?.matchSpeaker.map { "\($0): " } ?? ""
