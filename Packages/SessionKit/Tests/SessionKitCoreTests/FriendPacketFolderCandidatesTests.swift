@@ -55,9 +55,11 @@ final class FriendPacketFolderCandidatesTests: XCTestCase {
                     rows: [Row(kind: "imported_commentary_layer", id: "l1", payload: #"{"id":"l1","itemId":"a","episodeMapEvidencePaths":{"spine":"\#(voice(f1, file: "spine.json"))","\#(f3)":"x"}}"#)]),
             Fixture(name: "reply links and a resend alias name a folder-shaped id", folders: [f1, f2],
                     rows: [Row(payload: #"{"audioPath":"\#(voice(f1))","replyLinks":[{"targetId":"\#(f2)"}],"alsoSharedAs":[{"packageId":"\#(f2)"}]}"#)]),
-            Fixture(name: "Build 32 style layer (legacy sourceIdentity, no map fields)", folders: [f1, f2],
+            // The next two are written by hand to look like older rows. They were not taken from a Build 32 or 34
+            // database, so they show the read copes with those shapes, not that real old rows behave.
+            Fixture(name: "hand-written layer in the older shape (legacy sourceIdentity, no map fields)", folders: [f1, f2],
                     rows: [Row(kind: "imported_commentary_layer", id: "l1", payload: #"{"id":"l1","itemId":"a","packageDigest":"d","packageId":"\#(f1)","sourceIdentity":{"canonicalURL":"https://x.example/y"},"importedAt":1}"#)]),
-            Fixture(name: "Build 34 style margin (plain optional keys only)", folders: [f1, f2],
+            Fixture(name: "hand-written margin with plain optional keys only", folders: [f1, f2],
                     rows: [Row(payload: #"{"id":"m","layerId":"l1","packageScopedId":"m-001","audioPath":"\#(voice(f2))","audioDurationMs":500,"senderReadAloud":false}"#)]),
             Fixture(name: "Unicode normalisation in the file name (NFC and NFD)", folders: [f1, f2],
                     rows: [Row(payload: #"{"audioPath":"\#(voice(f1, file: "caf\u{E9}.m4a"))","x":"\#(voice(f2, file: "cafe\u{301}.m4a"))"}"#)]),
@@ -89,9 +91,9 @@ final class FriendPacketFolderCandidatesTests: XCTestCase {
                     rows: [Row(table: "quarantined_records", kind: "imported_commentary_layer", id: "l1", itemId: nil, payload: #"{"id":"l1","itemId":"a","episodeMapEvidencePaths":{"s":"\#(voice(f1))"}}"#)]),
             // A quarantined layer that is not valid JSON has no readable itemId, so no item owns it: neither the old
             // read nor this one attributes it, and the sweep keeps any folder it names. Not a fixture here.
-            // The JSON text spells the first character as an escape. The sweep reads the raw text and misses it;
-            // the read decodes it and finds it. More names than the sweep, never fewer: a folder is only ever
-            // removed by the sweep's own check, so this cannot remove anything in use.
+            // The JSON text spells the first character as an escape. The read decodes strings and finds the name; the
+            // sweep reads the raw text and does not. So here the read finds MORE than the sweep, never fewer. A
+            // folder is only removed by the sweep's own check, so this cannot remove anything in use.
             Fixture(name: "unicode escape inside the name (read finds more)", folders: [f1],
                     rows: [Row(payload: #"{"audioPath":"/x/A\#(f1.dropFirst())/a.m4a"}"#)], mayExceedSweep: true),
         ]
@@ -125,6 +127,43 @@ final class FriendPacketFolderCandidatesTests: XCTestCase {
             if !(try FriendPacketFolders.candidateFolderNames(ofItems: ["a"], store: store)).isEmpty { found += 1 }
         }
         XCTAssertGreaterThan(found, 20)
+    }
+
+    /// The point of #3410: whole payloads must not cross into Swift. The store's read meter counts the bytes each
+    /// read hands to Swift; the old read handed over every payload (about 10 MB here), this one a few hundred bytes.
+    func testNoPayloadCrossesIntoSwift() throws {
+        let meter = StoreReadMeter()
+        let (store, path, directory) = try makeStore(meter: meter)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let filler = String(repeating: "a shared map spans many words ", count: 3_400)
+        var rows: [Row] = []
+        for index in 0..<50 {
+            rows.append(Row(id: "m\(index)", payload: #"{"approvedTranscript":"\#(filler)","audioPath":"\#(voice(UUID().uuidString))"}"#))
+        }
+        let sketch = (0..<60_000).map { "\"h\($0)abcdefgh\"" }.joined(separator: ",")
+        rows.append(Row(kind: "imported_commentary_layer", id: "l1", payload: #"{"id":"l1","itemId":"a","transcriptPhraseSketches":[{"windows":[\#(sketch)]}],"episodeMapEvidencePaths":{"s":"\#(voice(f1))"}}"#))
+        try insert(rows, at: path)
+
+        let names = try FriendPacketFolders.candidateFolderNames(ofItems: ["a"], store: store)
+
+        let totals = meter.totals()
+        let bytes = totals.values.reduce(0) { $0 + $1.bytes }
+        XCTAssertLessThan(bytes, 20_000, "payloads reached Swift: \(totals)")
+        XCTAssertEqual(names.count, 51)
+        XCTAssertTrue(names.contains(f1))
+    }
+
+    /// A folder named only inside a bulk artifact field (a sketch) is not a candidate: the field is cut out before
+    /// the walk. Real writers put a recipient's folder only in `audioPath`, `podcastAnchorEvidence[].localPath` and
+    /// `episodeMapEvidencePaths` (SharingFoundation.swift), never in these fields. The sweep keeps such a name while
+    /// the row exists, and the launch sweep takes the folder once the row is gone.
+    func testAFolderNamedOnlyInABulkArtifactFieldIsNotACandidate() throws {
+        let (store, path, directory) = try makeStore()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try insert([Row(kind: "imported_commentary_layer", id: "l1", payload: #"{"id":"l1","itemId":"a","transcriptPhraseSketches":[{"note":"\#(f2)"}],"episodeMapEvidencePaths":{"s":"\#(voice(f1))"}}"#)], at: path)
+
+        XCTAssertEqual(try FriendPacketFolders.candidateFolderNames(ofItems: ["a"], store: store), [f1])
+        XCTAssertEqual(try store.importedCommentaryRecordsMentioning(among: [f1, f2]), [f1, f2])
     }
 
     /// A folder named only inside a string over 2 KB (a transcript) is not a candidate: the sweep keeps it while the
@@ -169,6 +208,27 @@ final class FriendPacketFolderCandidatesTests: XCTestCase {
         XCTAssertTrue(names.contains(f1))
     }
 
+    /// A layer carrying a phrase sketch at the 5 MB artifact cap (windows of 24 hashes). Prints the time.
+    func testLayerWithFiveMegabyteSketch() throws {
+        let (store, path, directory) = try makeStore()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var windows: [String] = []
+        var size = 0
+        while size < 5 * 1_024 * 1_024 {
+            let hashes = (0..<24).map { _ in "\"\(Data((0..<8).map { _ in UInt8.random(in: 0...255) }).base64EncodedString())\"" }
+            let window = #"{"id":"w\#(windows.count)","sourceStartMs":\#(windows.count * 1000),"sourceEndMs":\#(windows.count * 1000 + 999),"hashes":[\#(hashes.joined(separator: ","))]}"#
+            windows.append(window)
+            size += window.utf8.count
+        }
+        try insert([Row(kind: "imported_commentary_layer", id: "l1", payload: #"{"id":"l1","itemId":"a","transcriptPhraseSketches":[{"id":"s1","itemId":"a","windows":[\#(windows.joined(separator: ","))]}],"episodeMapEvidencePaths":{"s":"\#(voice(f1))"}}"#)], at: path)
+
+        let start = Date()
+        let names = try FriendPacketFolders.candidateFolderNames(ofItems: ["a"], store: store)
+        print("FRIEND_FOLDER_SKETCH_READ_SECONDS \(Date().timeIntervalSince(start)) payload_bytes \(size)")
+
+        XCTAssertEqual(names, [f1])
+    }
+
     private func insert(_ rows: [Row], at path: String) throws {
         for row in rows {
             if row.table == "records" {
@@ -183,11 +243,11 @@ final class FriendPacketFolderCandidatesTests: XCTestCase {
         }
     }
 
-    private func makeStore() throws -> (SQLiteSessionStore, String, URL) {
+    private func makeStore(meter: StoreReadMeter? = nil) throws -> (SQLiteSessionStore, String, URL) {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("friend-candidates-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let path = directory.appendingPathComponent("library.sqlite").path
-        return (try SQLiteSessionStore(path: path), path, directory)
+        return (try SQLiteSessionStore(path: path, readMeter: meter), path, directory)
     }
 }

@@ -15,12 +15,21 @@ public enum FriendPacketFolders {
     /// A name here is only a candidate: most are ids, and the sweep keeps anything that is not a folder.
     ///
     /// The names are found inside SQLite, so a payload (megabytes for a layer with a shared map) never crosses into
-    /// Swift (#3410). `json_tree` walks every string value and every key of a payload, and only the ones holding a
-    /// UUID-shaped run come back, so the regex runs on a few short strings. That is the same set of names the sweep's
+    /// Swift (#3410). `json_tree` walks the strings and keys of a payload, and only the ones holding a UUID-shaped
+    /// run come back, so the regex runs on a few short strings. That is the names the sweep's
     /// `importedCommentaryRecordsMentioning` finds by running the regex over the whole stored text, whatever field
-    /// names a payload uses, except a name that appears only inside a string over `maxStringBytes` (a row from a newer build is quarantined with fields this build doesn't know), because
-    /// a UUID-shaped run holds only hex digits and hyphens and so never spans two JSON strings. A row that isn't
-    /// valid JSON has no tree, so it is read whole, as before.
+    /// names a payload uses (a row from a newer build is quarantined with fields this build doesn't know), because a
+    /// UUID-shaped run holds only hex digits and hyphens and so never spans two JSON strings.
+    ///
+    /// Three things are not looked at, and each can only leave a folder for the launch sweep, never remove one in
+    /// use (the sweep's own check decides every removal):
+    /// - the bulk artifact fields (`bulkFields`: a shared map's proposals and sketches, up to 5 MB), cut out before
+    ///   the walk, because they hold no path;
+    /// - a string over `maxStringBytes` (free text such as a transcript);
+    /// - a row that isn't valid JSON has no tree, so it is read whole, as before.
+    ///
+    /// The one difference the other way: a name spelled with a JSON escape (`\u0041`) is found here, because the walk
+    /// decodes strings, and not by the sweep, which reads the raw text.
     public static func candidateFolderNames(ofItems itemIds: [String], store: SQLiteSessionStore) throws -> Set<String> {
         var names: Set<String> = []
         let layerIdsOfItem = """
@@ -52,7 +61,7 @@ public enum FriendPacketFolders {
                     SELECT CASE WHEN typeof(j.key) = 'text' AND octet_length(j.key) <= \(maxStringBytes) AND j.key GLOB '\(uuidPrefilter)' THEN j.key || ' ' ELSE '' END
                          || CASE WHEN j.type = 'text' AND octet_length(j.atom) <= \(maxStringBytes) AND j.atom GLOB '\(uuidPrefilter)' THEN j.atom ELSE '' END
                     FROM (SELECT payload FROM \(source)) AS r,
-                         json_tree(CASE WHEN json_valid(r.payload) THEN r.payload ELSE '[]' END) AS j
+                         json_tree(CASE WHEN json_valid(r.payload) THEN json_remove(r.payload, \(bulkFields)) ELSE '[]' END) AS j
                     WHERE (typeof(j.key) = 'text' AND octet_length(j.key) <= \(maxStringBytes) AND j.key GLOB '\(uuidPrefilter)')
                        OR (j.type = 'text' AND octet_length(j.atom) <= \(maxStringBytes) AND j.atom GLOB '\(uuidPrefilter)');
                     """,
@@ -100,6 +109,9 @@ public enum FriendPacketFolders {
     /// megabytes of it costs seconds, so a string above this is not looked at. A folder named only inside such
     /// text is not a candidate now; nothing removes it, and the launch sweep takes it once no row names it.
     private static let maxStringBytes = 2048
+
+    /// Fields of an imported layer that carry a shared map's artifacts: arrays of hashes and windows, never a path.
+    private static let bulkFields = "'$.listeningMapProposals', '$.editionFingerprintSpines', '$.transcriptPhraseSketches'"
 
     private static let uuidPrefilter: String = {
         let hex = "[0-9A-Fa-f]"
