@@ -10,9 +10,11 @@ import SessionKitSharing
 ///
 /// The coordinator reaches the app only through `Environment`, so its tests run with a real SQLite store and real
 /// packet files but without a `Gate1AppModel`.
-/// - Success keeps `SpokenMargins/IncomingPackages/<uuid>/assets` for good. The folder is removed only by
-///   `cancel`, a failed stage, duplicate staging and the model's restore-audio task, and by the launch sweep for a
-///   folder an app kill left behind that no imported Margin uses (#2154).
+/// - Success keeps `SpokenMargins/IncomingPackages/<uuid>/assets` while any imported layer or Margin names it. The
+///   folder is removed by `cancel`, a failed stage, duplicate staging and the model's restore-audio task; by the end
+///   of a confirm that saved nothing naming it, such as a resend or repair with nothing new (#3409); by permanent
+///   delete, for the folders the deleted item's rows named (#3406); and by the launch sweep for a folder an app kill
+///   left behind that no imported Margin uses (#2154). Each of those leaves a folder a row still names.
 /// - One review shows at a time (#2122). A packet opened while one is showing, or importing, waits behind it in
 ///   `PacketReviewQueue` and comes up when that one is imported or cancelled; it is never replaced or dropped.
 /// - The file a packet was opened from is released (the Share inbox copy deleted) only when the packet is imported,
@@ -329,6 +331,20 @@ final class SpokenMarginsPackageImportCoordinator {
         }
     }
 
+    /// Once an import has finished, removes its working folder if no imported layer or Margin names it (#3409): a
+    /// resend or repair with nothing new saves nothing that points at the fresh copy it extracted. The review has left
+    /// the queue by now, so `foldersInUse` no longer holds it, and the check reads the Library after the import's rows
+    /// are saved, so a folder any row names stays. The read and the removal run off the main actor. A failure keeps the
+    /// folder; the next launch's sweep tries again.
+    private func removeFolderIfNothingNamesIt(_ folder: URL, store: SQLiteSessionStore) async {
+        let keeping = foldersInUse
+        let name = folder.lastPathComponent
+        let incoming = folder.deletingLastPathComponent()
+        _ = try? await Gate1AppModel.offMain {
+            FriendPacketFolders.removeIfUnused(folder: name, directory: incoming, keeping: keeping, store: store)
+        }
+    }
+
     // MARK: Cancel and re-match
 
     func cancel() {
@@ -493,6 +509,7 @@ final class SpokenMarginsPackageImportCoordinator {
             ) {
                 environment.reportConfirmation(announcement)
             }
+            await removeFolderIfNothingNamesIt(review.extractionDirectory, store: store)
         } catch {
             isImporting = false
             if queue.isShowing(review.id) { importError = SharedMarginsImportMessage.userFacing(error) }

@@ -85,7 +85,9 @@ final class ImportedLayerAssociationTests: XCTestCase {
         XCTAssertEqual(repository.importedCommentaryInterjections[absent.id], expectedAbsent)
     }
 
-    func testRepairKeepsPartialWritesWhenAMarginSaveThrows() throws {
+    /// An in-memory repository has no transactions, so the repair has nothing to roll back there. The real store's
+    /// all-or-nothing behavior is in `ImportedLayerRepairTransactionTests`.
+    func testRepairOnARepositoryWithoutTransactionsStillStopsAtTheFailedMargin() throws {
         let repository = RecordingRepository()
         let existing = makeLayer()
         let first = makeMargin(id: "a", packageScopedId: "in-packet")

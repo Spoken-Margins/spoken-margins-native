@@ -74,6 +74,25 @@ public enum FriendPacketFolders {
         }
     }
 
+    /// Removes the folder an import just finished with when no imported layer or Margin names it (#3409): a resend or
+    /// a repair that brings nothing new saves nothing that points at the fresh copy of the packet it extracted, so
+    /// the copy, holding the friend's audio, would wait for the next launch's sweep. It is `IncomingPackageSweep`
+    /// with `only:` set to this one folder, so it removes nothing that a row names (an earlier layer of the same
+    /// packet, or this import's own rows, keep the folder), nothing in `keeping` (a review, a restore or a stage in
+    /// flight), and nothing else in the directory. Call it after the import's rows are saved and its review has left
+    /// `keeping`. A failed check keeps the folder.
+    @discardableResult
+    public static func removeIfUnused(
+        folder: String,
+        directory: URL,
+        keeping: Set<String>,
+        store: SQLiteSessionStore,
+        fileManager: FileManager = .default
+    ) -> IncomingPackageSweep.Outcome {
+        IncomingPackageSweep.sweep(
+            directory: directory, keeping: keeping, only: [folder], store: store, fileManager: fileManager)
+    }
+
     private static let uuidShape = try! NSRegularExpression(
         pattern: "[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}")
 }
