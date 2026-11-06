@@ -1,0 +1,42 @@
+# Tell the owner when merging has stopped, from a machine that isn't his laptop (#3502).
+#
+# On 2026-11-05 nothing merged for 11.5 hours while his Mac slept, and the only thing that would have said so ran on that
+# Mac. scripts/merge_stall_watch.py decides: nothing on the trunk for an hour, and an armed PR that hasn't moved for an
+# hour. It then opens one issue that @mentions him, which the GitHub mobile app pushes, and closes it when something
+# merges. It runs nobody's PR code: the script comes from the trunk, and it reads PRs only through the API.
+name: merge-stall
+
+on:
+  schedule:
+    - cron: '7,22,37,52 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: write
+  checks: read
+
+concurrency:
+  group: merge-stall
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/merge_stall_watch.py
+            scripts/comment_trust.py
+            scripts/trunk.py
+          sparse-checkout-cone-mode: false
+      - name: Look for a stall
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SM_TRUNK: ${{ vars.SM_TRUNK || 'main' }}
+        run: python3 scripts/merge_stall_watch.py
