@@ -614,6 +614,24 @@ class ReachedByNameTests(unittest.TestCase):
             '}'])]
         self.assertEqual(names, ['Holder', 'shown', 'run'])
 
+    def test_an_audio_loopback_class_is_not_reached_by_a_diff_with_no_audio_file(self):
+        # #3480: BlackHole is not on the hosted Mac, so the class would turn a PASS into INCONCLUSIVE.
+        loopback = ('final class AudioLoopbackPlaybackTests: XCTestCase {\n'
+                    '    func testVoice() { model.stopForwardTitle }\n}\n')
+        self.tree({'AudioLoopbackPlaybackTests.swift': loopback})
+        result = self.classify(APP + 'Gate1AppModel+Stops.swift')
+        self.assertEqual(result['app_tests'], ['ListeningTests'])
+        self.assertNotIn('AudioLoopbackPlaybackTests', ' '.join(result['notes']))
+        self.assertNotIn('AudioLoopbackPlaybackTests', result['lane_request'] or '')
+
+    def test_an_audio_loopback_class_is_still_reached_by_a_diff_that_touches_an_audio_file(self):
+        loopback = ('final class AudioLoopbackPlaybackTests: XCTestCase {\n'
+                    '    func testVoice() { player.speakHelper() }\n}\n')
+        self.tree({'AudioLoopbackPlaybackTests.swift': loopback})
+        self.write(APP + 'PlaybackController.swift', 'final class PlaybackController {\n    func speakHelper() {}\n}\n')
+        result = self.classify(APP + 'PlaybackController.swift')
+        self.assertIn('AudioLoopbackPlaybackTests', result['app_tests'])
+
     def test_a_url_in_a_string_does_not_hide_the_call_after_it(self):
         lines = [scope.COMMENT.sub('', line) for line in ['open("https://example.com"); model.stopChoice(at: 1) // note']]
         self.assertIn('stopChoice', lines[0])
