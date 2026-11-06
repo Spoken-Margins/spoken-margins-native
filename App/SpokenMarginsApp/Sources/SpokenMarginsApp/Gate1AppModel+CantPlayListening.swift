@@ -8,8 +8,8 @@ import UIKit
 /// place, and then the sender's Margin plays (owner, 2026-11-02, #3392). What is read, in what order, whether the
 /// episode really failed and whether the listener still wants it after the wait is `CantPlayListening` (SessionKit,
 /// host-tested). This file only reads the app's state into it and hands the steps to the one Margin-moment machine and
-/// the one reader a written Margin already uses, so heard-marking, the chime, skip and interruptions are the ones every
-/// friend Margin has. No resume flag and no second playback state machine.
+/// the one reader a written Margin already uses, so the chime, skip and interruptions are the ones every friend Margin
+/// has. Heard-marking is not: by default a can't-play listening marks nothing heard (see `startCantPlayListening`). No resume flag and no second playback state machine.
 extension Gate1AppModel {
     /// How long the first words get to render before the listening starts anyway. The words are short; a reading that
     /// still isn't there at its turn is passed over and the Margin plays at once (the conductor's missing-file path).
@@ -42,7 +42,7 @@ extension Gate1AppModel {
     /// While the open podcast episode is dead (its start failed, no file on the phone), the Margins Review can offer:
     /// all of them, since a Review tap asks. Nil when it isn't dead, so every other item reads `entries` as before.
     func deadEpisodeEntries(itemId: String) -> [SharedMarginReview.Entry]? {
-        guard snapshot.itemId == itemId, selectedItem.id == itemId,
+        guard snapshot.status == .failed, snapshot.itemId == itemId, selectedItem.id == itemId,
               CantPlayListening.isDeadEpisode(
                   .init(itemId: snapshot.itemId, status: snapshot.status, lastFailure: snapshot.lastFailure), cantPlayAround(friendMargins: 0)
               ) else { return nil }
@@ -93,7 +93,9 @@ extension Gate1AppModel {
             await reader.waitUntilSettled(first, upTo: Self.cantPlayRenderHold)
             guard let self, CantPlayListening.stillWanted(itemId: itemId, began: began, now: self.cantPlayScene),
                   let sequence = CantPlayListening.sequence(for: beats, itemId: itemId, placeMs: place) else { return }
-            self.startCantPlayListening(sequence: sequence, beats: beats, files: files, asking: asking)
+            self.hangTelemetry.labels.scoped("cantPlayListening") {
+                self.startCantPlayListening(sequence: sequence, beats: beats, files: files, asking: asking)
+            }
         }
     }
 
