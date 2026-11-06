@@ -434,7 +434,10 @@ public actor LiveSessionFileWorker {
         let corrected = LiveSessionWatchSessions.phoneTime(transfer.wallStart, clock: transfer.clock)
         let offset = transfer.clock.flatMap { $0.isFresh(at: transfer.wallStart) ? $0.offset : nil }
         let decision = LiveSessionFiling.decide(
-            .init(marginId: transfer.marginId, markedAt: transfer.wallStart, clockOffset: offset, sessionId: transfer.sessionId),
+            .init(
+                marginId: transfer.marginId, markedAt: transfer.wallStart, clockOffset: offset, sessionId: transfer.sessionId,
+                itemTarget: transfer.itemTarget
+            ),
             sessions: candidates(), deletions: deletions, playerRuns: playerRuns, now: now
         )
         switch decision {

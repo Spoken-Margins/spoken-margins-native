@@ -198,8 +198,8 @@ final class WatchMarginReceiver: NSObject {
             case .sessionStart, .sessionEnd, .sessionResume, .withdraw:
                 self.announceChange()
                 LiveSessionBoard.shared.refresh()
-            case .hello, .marginDetails:
-                break
+            case .hello, .marginDetails, .transport:
+                break // a transport command is run by the player's owner, in the next slice (#3494)
             }
             return (reply, filed)
         }
