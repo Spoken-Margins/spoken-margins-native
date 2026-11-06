@@ -6,7 +6,8 @@ import XCTest
 /// #3449 Done when 5, on the app's real model and a temporary SQLite library: a PDF from Files gets on-device scene
 /// summaries with no network check, Skim reads them by character, and the Share Margins review says in plain words that
 /// the summaries stay on the phone, with the count of scenes held back. A probe that records every request stands in for
-/// the network; the test fails if the check ever reaches it.
+/// the network. A control item from a web address, checked through the same marker, shows the probe is wired: it makes
+/// one request, so the PDF's zero is not a probe that cannot be reached.
 @MainActor
 final class PublicMapTextPDFFromFilesTests: XCTestCase {
     private final class CountingProbe: @unchecked Sendable {
@@ -33,17 +34,23 @@ final class PublicMapTextPDFFromFilesTests: XCTestCase {
     private static let section1 = "The caravans left the oasis before dawn and crossed the dunes in single file. Water was counted by the cup. "
     private static let section2 = "At the coast the cargo was weighed, taxed and loaded onto narrow boats. Brokers argued over every sack of salt. "
 
+    /// Four sentences of eight words or more: enough for the check to sample, so it makes its request.
+    private static let controlText = "The caravans left the oasis before dawn and crossed the dunes in single file. "
+        + "At the coast the cargo was weighed, taxed and loaded onto narrow boats by the harbour clerks. "
+        + "Brokers argued over every sack of salt until the evening bell rang across the harbour. "
+        + "The boats sailed north with the tide and returned only when the winter storms had passed."
+
     func testAPDFFromFilesGetsSummariesWithNoNetworkCheckSkimReadsThemAndTheShareReviewSaysTheyStayHome() async throws {
         let counting = CountingProbe()
         let previousMarker = PublicSourceChecks.marker
         PublicSourceChecks.marker = PublicSourceMarker(verifier: PublicSourceVerifier(probe: counting.probe))
-        addTeardownBlock { @MainActor in PublicSourceChecks.marker = previousMarker }
+        defer { PublicSourceChecks.marker = previousMarker }
 
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
         let store = try XCTUnwrap(model.store)
 
-        // The picked PDF becomes an item exactly as Add from Files builds it.
+        // The picked PDF becomes an item through the same builder Add from Files uses; its origin is "file" on every branch.
         let prepared = try SourceFileItemBuilder.prepare(
             ImportedSourceText(text: Self.section1 + "\n\n" + Self.section2, documentStructure: nil, title: "Salt roads"),
             fileURL: URL(fileURLWithPath: "/private/var/mobile/Salt roads.pdf"), itemId: "pdf-3449", createdAt: Date())
@@ -83,5 +90,12 @@ final class PublicMapTextPDFFromFilesTests: XCTestCase {
 
         XCTAssertEqual(counting.requests, [], "summaries, Skim and the share review made no request to any publisher")
         XCTAssertNil(try store.loadItem(id: itemId).publicSourceMark)
+
+        // Control: an article added from a web address, checked through the same marker, does reach the probe once.
+        try store.saveItem(Item(id: "web-3449", title: "Article", mediaType: "text", text: Self.controlText,
+                                externalReference: "https://example.com/salt-roads", status: "ready", externalReferenceType: "url"))
+        _ = await PublicSourceChecks.ensureMark(itemId: "web-3449", store: store)
+        XCTAssertEqual(counting.requests, ["https://example.com/salt-roads"], "the probe is wired; the PDF made no request")
+        XCTAssertNil(try store.loadItem(id: "web-3449").publicSourceMark, "a page that is not this article earns no mark")
     }
 }
