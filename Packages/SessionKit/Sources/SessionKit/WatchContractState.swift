@@ -437,8 +437,13 @@ public struct WatchSessionModel: Codable, Equatable, Sendable {
 
     // MARK: The phone's board
 
-    public mutating func apply(_ newBoard: WatchBoard, receivedAt: Date) {
+    /// `keepingNowPlaying` is for the reply to a transport command: the phone made it around the moment the command ran, so
+    /// its play state may be the old one, and the button already drawn must not flip back. A board sent after the command
+    /// says what really happened (#3494).
+    public mutating func apply(_ newBoard: WatchBoard, receivedAt: Date, keepingNowPlaying: Bool = false) {
+        let drawn = board?.nowPlaying
         board = newBoard
+        if keepingNowPlaying { board?.nowPlaying = drawn }
         boardReceivedAt = receivedAt
         let running = newBoard.running
 

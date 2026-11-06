@@ -121,6 +121,29 @@ final class WatchSessionModelNowPlayingTests: XCTestCase {
         XCTAssertNil(empty.board, "nothing to flip with no board")
     }
 
+    func testTheReplyToACommandLeavesTheButtonAndTheNextBoardSaysWhatIsTrue() {
+        var model = model(item: item(playing: true), receivedAt: t0)
+        model.noteTransport(.pause, now: t0)
+        let later = t0.addingTimeInterval(1)
+        let madeBeforeThePause = WatchBoard(phoneTime: later, nowPlaying: item(playing: true))
+
+        model.apply(madeBeforeThePause, receivedAt: later, keepingNowPlaying: true)
+        XCTAssertEqual(model.board?.nowPlaying?.isPlaying, false, "the reply must not flip the drawn button back")
+        XCTAssertEqual(model.board?.phoneTime, later, "the rest of the reply still counts")
+        XCTAssertEqual(model.boardReceivedAt, later)
+
+        model.apply(madeBeforeThePause, receivedAt: later)
+        XCTAssertEqual(model.board?.nowPlaying?.isPlaying, true, "a board sent after the command wins, so a refused command is corrected")
+    }
+
+    func testAReplyWithNoItemBoardStillKeepsTheDrawnItemUntilABoardSaysSo() {
+        var model = model(item: item(playing: false), receivedAt: t0)
+        model.apply(WatchBoard(phoneTime: t0, nowPlaying: nil), receivedAt: t0, keepingNowPlaying: true)
+        XCTAssertNotNil(model.board?.nowPlaying)
+        model.apply(WatchBoard(phoneTime: t0, nowPlaying: nil), receivedAt: t0)
+        XCTAssertNil(model.board?.nowPlaying, "nothing loaded: back to the single Record")
+    }
+
     func testTheModelStillDecodesFromWhatTheLastBuildSaved() throws {
         let old = #"{"endedHere":{}}"#
         XCTAssertNoThrow(try WatchContractCoding.decoder.decode(WatchSessionModel.self, from: Data(old.utf8)))

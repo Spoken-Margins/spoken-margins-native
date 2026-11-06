@@ -255,13 +255,18 @@ final class WatchLink: NSObject, ObservableObject {
     private func sendFast(_ wrapped: WatchEnvelope, afterHello holding: [String]? = nil) {
         guard WCSession.default.activationState == .activated, WCSession.default.isReachable else { return }
         let sentAt = wrapped.sentAt
+        let isTransport = if case .transport = wrapped.message { true } else { false }
+        // A command that never arrived leaves the button drawn wrong and sends no board, so ask the phone what is true.
+        let onError: (@Sendable (any Error) -> Void)? = isTransport ? { @Sendable [weak self] _ in
+            Task { @MainActor in self?.sayHello() }
+        } : nil
         // WatchConnectivity calls this on its own background queue. Without @Sendable the closure takes on this class's
         // main-actor isolation, and Swift's check at its top stops the app whenever the phone answers (#2964).
         WCSession.default.sendMessage(wrapped.dictionary, replyHandler: { @Sendable [weak self] dictionary in
             let receivedAt = Date()
             guard let reply = WatchPhoneReply(dictionary: dictionary) else { return }
-            Task { @MainActor in self?.apply(reply, sentAt: sentAt, receivedAt: receivedAt, helloHolding: holding) }
-        }, errorHandler: nil)
+            Task { @MainActor in self?.apply(reply, sentAt: sentAt, receivedAt: receivedAt, helloHolding: holding, isTransport: isTransport) }
+        }, errorHandler: onError)
     }
 
     private func sayHello() {
@@ -274,11 +279,11 @@ final class WatchLink: NSObject, ObservableObject {
 
     // MARK: What the phone says
 
-    private func apply(_ reply: WatchPhoneReply, sentAt: Date, receivedAt: Date, helloHolding: [String]?) {
+    private func apply(_ reply: WatchPhoneReply, sentAt: Date, receivedAt: Date, helloHolding: [String]?, isTransport: Bool) {
         if let stamp = WatchClockStamp.measure(sentAt: sentAt, phoneTime: reply.phoneTime, receivedAt: receivedAt) {
             model.clock = stamp
         }
-        model.apply(reply.board, receivedAt: receivedAt)
+        model.apply(reply.board, receivedAt: receivedAt, keepingNowPlaying: isTransport)
         for answer in reply.answers { apply(answer) }
         if let helloHolding {
             let answered = Set(reply.answers.map(\.receipt.captureId))
