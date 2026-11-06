@@ -16,8 +16,15 @@ public enum PublicSourceTransport {
     }
 
     static func configuration() -> URLSessionConfiguration {
-        let configuration = BridgePublicTransport.configuration(resourceTimeout: 10)
+        // The same switches-off as the product server's anonymous requests, for a publisher's address instead.
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.urlCache = nil
+        configuration.httpCookieStorage = nil
+        configuration.httpShouldSetCookies = false
+        configuration.urlCredentialStorage = nil
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         configuration.timeoutIntervalForRequest = 8
+        configuration.timeoutIntervalForResource = 10
         return configuration
     }
 
