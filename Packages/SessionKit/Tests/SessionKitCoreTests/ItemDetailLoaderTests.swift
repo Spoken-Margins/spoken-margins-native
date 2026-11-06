@@ -379,6 +379,47 @@ final class ItemDetailLoaderTests: XCTestCase {
         }
     }
 
+    /// #2846: one Margin hidden on its own leaves the item detail and the Margins rows, its neighbour in the same
+    /// layer stays, nothing is deleted, and showing it again brings it back.
+    func testASingleHiddenMarginLeavesTheDetailAndTheRowsAndComesBack() throws {
+        try withFixture { _, store, _ in
+            try store.saveItem(item("A"))
+            try store.saveImportedCommentaryLayer(ImportedCommentaryLayer(
+                id: "layer", itemId: "A", packageDigest: "d", packageId: "p",
+                itemIdentity: SharedItemIdentity(itemType: .podcast, title: "Episode"),
+                displayLabel: "Ana", importedAt: Date(timeIntervalSince1970: 10), isEnabled: true))
+            for id in ["margin-one", "margin-two"] {
+                try store.saveImportedCommentaryInterjection(ImportedCommentaryInterjection(
+                    id: id, layerId: "layer", packageScopedId: id, createdAt: Date(timeIntervalSince1970: 11),
+                    anchorEvidence: PortableAnchorEvidence(anchorType: .media, mediaTimeMs: 1_000),
+                    approvedTranscript: "Words of \(id)",
+                    resolution: ImportedAnchorResolution(evidenceClass: .exactEdition, localMediaTimeMs: 9_000)))
+            }
+            func detailIds(_ hidden: HiddenSenders) throws -> Set<String> {
+                let detail = try ItemDetailLoader.load(id: "A", store: store, snapshotItemId: nil, snapshotSessionId: nil,
+                    placementPasses: SharedMarginPlacementPasses(), hiddenSenders: hidden)
+                return Set(detail.importedCommentaryInterjections["layer", default: []].map(\.id))
+            }
+            func rowIds(_ hidden: HiddenSenders) throws -> Set<String> {
+                Set(try MarginRowsReading.all(store: store, hiddenSenders: hidden).sharedRows.map(\.interjection.id))
+            }
+            XCTAssertEqual(try detailIds(HiddenSenders()), ["margin-one", "margin-two"])
+
+            var hidden = HiddenSenders()
+            hidden.hideMargin("margin-one", senderLabel: "Ana", text: "Words of margin-one")
+            XCTAssertEqual(try detailIds(hidden), ["margin-two"])
+            XCTAssertEqual(try rowIds(hidden), ["margin-two"])
+            XCTAssertEqual(try store.loadImportedCommentaryInterjections(layerId: "layer").count, 2, "nothing is deleted")
+            XCTAssertEqual(try ItemDetailLoader.load(id: "A", store: store, snapshotItemId: nil, snapshotSessionId: nil,
+                placementPasses: SharedMarginPlacementPasses(), hiddenSenders: hidden).importedCommentaryLayers.map(\.id),
+                ["layer"], "the layer itself stays: only the one Margin is hidden")
+
+            hidden.unhideMargin("margin-one")
+            XCTAssertEqual(try detailIds(hidden), ["margin-one", "margin-two"])
+            XCTAssertEqual(try rowIds(hidden), ["margin-one", "margin-two"])
+        }
+    }
+
     /// What the app model passes in beside the id: the snapshot's selected item and session.
     private final class Fixture {
         var snapshotItemId: String?
