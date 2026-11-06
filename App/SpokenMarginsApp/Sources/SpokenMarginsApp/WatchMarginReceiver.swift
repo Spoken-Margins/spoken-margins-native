@@ -37,6 +37,10 @@ final class WatchMarginReceiver: NSObject {
     private(set) var lastPublishedContext: [String: Any]?
     /// The last board sent, kept for tests.
     private(set) var lastBoard: WatchBoard?
+    /// The item the player has loaded, put on every board sent to the Watch (#3494).
+    private(set) var nowPlaying: WatchNowPlaying?
+    /// Runs a transport command from the Watch. Replaceable in tests, which have no player.
+    var runTransport: (WatchTransport) -> Void = { PlayerRunController.runWatchTransport($0) }
     /// Answers handed to WatchConnectivity, newest last (at most 50), kept for tests and diagnostics.
     private(set) var sentAnswers: [WatchMarginAnswer] = []
     /// Passes run one after another, so each Margin is filed once.
@@ -77,6 +81,17 @@ final class WatchMarginReceiver: NSObject {
         }
         lastPass = pass
         return pass
+    }
+
+    /// The player's loaded item changed in a way the Watch could not predict: sends the board again with it (#3494).
+    func nowPlayingChanged(_ next: WatchNowPlaying?) {
+        nowPlaying = next
+        // Not queued behind a filing pass: that may be waiting for speech recognition, and the Watch is watching the time.
+        let files = files
+        Task { [weak self] in
+            let board = await files.watchBoard()
+            self?.publish(board: board)
+        }
     }
 
     /// Files Lock Screen Marks now, if any are waiting. Cheap when none are.
@@ -181,6 +196,8 @@ final class WatchMarginReceiver: NSObject {
     /// is out, so the fast lane answers in a second, not after speech recognition.
     @discardableResult
     func handle(_ envelope: WatchEnvelope, now: @escaping @Sendable () -> Date = { Date() }) -> Task<WatchPhoneReply, Never> {
+        // A transport command runs at once, before any filing pass under way: a pause that waits is a pause that is late (#3494).
+        if let transport = envelope.transportToRun(now: now()) { runTransport(transport) }
         let previous = lastPass
         let files = files
         let work = Task { [weak self] () -> (WatchPhoneReply, [LiveSessionFileWorker.FiledMargin]) in
@@ -188,8 +205,9 @@ final class WatchMarginReceiver: NSObject {
             let filed = await self?.fileWaiting() ?? []
             // A Margin deleted on the Watch may already be on the item it was playing (#2542).
             if case .withdraw(let id) = envelope.message { await PlayerRunController.withdrawWatchMargin(id: id) }
-            let reply = await files.applyWatch(envelope, now: now())
+            var reply = await files.applyWatch(envelope, now: now())
             guard let self else { return (reply, filed) }
+            reply.board = reply.board.with(nowPlaying: self.nowPlaying)
             self.send(reply.answers)
             self.publish(board: reply.board)
             // A reminder set for "it's still going" must not arrive for a session the Watch has ended (#2709).
@@ -199,7 +217,7 @@ final class WatchMarginReceiver: NSObject {
                 self.announceChange()
                 LiveSessionBoard.shared.refresh()
             case .hello, .marginDetails, .transport:
-                break // a transport command is run by the player's owner, in the next slice (#3494)
+                break // a transport command was run on arrival, above (#3494)
             }
             return (reply, filed)
         }
@@ -226,6 +244,7 @@ final class WatchMarginReceiver: NSObject {
 
     /// Sends the phone's view of the session to the Watch.
     func publish(board: WatchBoard) {
+        let board = board.with(nowPlaying: nowPlaying)
         let context = Self.context(for: board)
         lastBoard = board
         lastPublishedContext = context

@@ -110,6 +110,28 @@ final class WatchContractAppTests: XCTestCase {
         XCTAssertEqual(reply.answers.first?.filedWords, "Filed in a quick session")
     }
 
+    /// #3494: a fresh transport command reaches the player at once, a stale one never does, and the reply board names the
+    /// item the player has loaded.
+    func testAFreshTransportRunsAStaleOneDoesNotAndTheReplyBoardNamesTheItem() async throws {
+        let receiver = makeReceiver(LiveSessionFileWorker(root: root))
+        var ran: [WatchTransport] = []
+        receiver.runTransport = { ran.append($0) }
+        let playing = WatchNowPlaying(itemId: "ep", title: "Episode", isPlaying: true, positionMs: 5_000, positionAt: Date())
+        receiver.nowPlayingChanged(playing)
+
+        let fresh = try await receiver.handle(try overTheWire(envelope(.transport(.pause), sentAt: Date()))).value
+        XCTAssertEqual(ran, [.pause])
+        XCTAssertEqual(fresh.board.nowPlaying, playing)
+
+        let stale = try await receiver.handle(try overTheWire(envelope(.transport(.skipForward), sentAt: Date().addingTimeInterval(-60)))).value
+        XCTAssertEqual(ran, [.pause], "a skip that arrives a minute late is dropped")
+        XCTAssertEqual(stale.board.nowPlaying, playing)
+
+        receiver.nowPlayingChanged(nil)
+        let none = await receiver.handle(try overTheWire(envelope(.hello(holding: [])))).value
+        XCTAssertNil(none.board.nowPlaying, "nothing loaded: the Watch goes back to its single Record")
+    }
+
     /// Hello after a lost answer: the reply answers what the phone filed; the rest gets nothing and is sent again.
     func testHelloClearsAStuckWaitingList() async throws {
         let files = LiveSessionFileWorker(root: root)
