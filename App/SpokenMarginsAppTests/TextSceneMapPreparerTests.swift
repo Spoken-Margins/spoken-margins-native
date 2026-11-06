@@ -196,7 +196,7 @@ final class TextSceneMapPreparerTests: XCTestCase {
             renderBridge: { _, _ in XCTFail("no summary, no audio") }
         )
 
-        XCTAssertEqual(outcome, .modelStopped(written: 0, total: 2, progressed: false))
+        XCTAssertEqual(outcome, .modelStopped(written: 0, total: 2))
         XCTAssertFalse(outcome.settlesBackgroundRun)
         XCTAssertTrue(outcome.canBeContinued)
         XCTAssertEqual(try fixture.store.loadPortableListeningMapProposals(itemId: fixture.itemId), [])
@@ -229,26 +229,67 @@ final class TextSceneMapPreparerTests: XCTestCase {
         XCTAssertFalse(SceneSummaryLabeler.repeatsForTheSameText(URLError(.notConnectedToInternet)), "an error nobody classified stays a fault of the moment")
     }
 
-    func testThreeModelStopsThatDecidedNothingSettleAnItemForTheBackgroundPass() throws {
+    func testThreeModelStopsThatSavedNothingSettleAnItemForTheBackgroundPass() throws {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: "p3461-\(UUID().uuidString)"))
-        XCTAssertFalse(TextSceneBackgroundMemo.noteModelStop("a", progressed: false, defaults))
-        XCTAssertFalse(TextSceneBackgroundMemo.noteModelStop("b", progressed: false, defaults))
-        XCTAssertFalse(TextSceneBackgroundMemo.noteModelStop("a", progressed: false, defaults))
-        XCTAssertTrue(TextSceneBackgroundMemo.noteModelStop("a", progressed: false, defaults))
-        XCTAssertFalse(TextSceneBackgroundMemo.noteModelStop("b", progressed: false, defaults))
+        func stop(_ id: String) -> Bool { TextSceneBackgroundMemo.noteRun(id, progressed: false, modelStopped: true, defaults) }
+        XCTAssertFalse(stop("a"))
+        XCTAssertFalse(stop("b"))
+        XCTAssertFalse(stop("a"))
+        XCTAssertTrue(stop("a"))
+        XCTAssertFalse(stop("b"))
     }
 
-    /// The audit on 7e9d3ed: a long PDF that is rate limited in several charging windows but moves on in each must keep
-    /// its place in the pass.
-    func testModelStopsThatEachDecidedScenesNeverSettleAnItem() throws {
+    /// The audit on 7e9d3ed and 0e75777: a long PDF that is rate limited in several charging windows but saves scenes
+    /// in the windows between must keep its place in the pass, however those windows ended (heat, iOS's cut-off, a tap).
+    func testRunsThatSavedScenesClearTheStopCountWhateverEndedThem() throws {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: "p3461-\(UUID().uuidString)"))
+        func stop() -> Bool { TextSceneBackgroundMemo.noteRun("pdf", progressed: false, modelStopped: true, defaults) }
+        // Rate limited, then a window that saved and ended any other way (heat, cancel), over and over.
         for _ in 0..<10 {
-            XCTAssertFalse(TextSceneBackgroundMemo.noteModelStop("pdf", progressed: true, defaults))
+            XCTAssertFalse(stop())
+            XCTAssertFalse(TextSceneBackgroundMemo.noteRun("pdf", progressed: true, modelStopped: false, defaults))
         }
-        XCTAssertFalse(TextSceneBackgroundMemo.noteModelStop("pdf", progressed: false, defaults))
-        XCTAssertFalse(TextSceneBackgroundMemo.noteModelStop("pdf", progressed: false, defaults))
-        XCTAssertFalse(TextSceneBackgroundMemo.noteModelStop("pdf", progressed: true, defaults), "progress clears the count")
-        XCTAssertFalse(TextSceneBackgroundMemo.noteModelStop("pdf", progressed: false, defaults))
+        XCTAssertFalse(stop())
+        XCTAssertFalse(stop())
+        XCTAssertFalse(TextSceneBackgroundMemo.noteRun("pdf", progressed: true, modelStopped: true, defaults), "progress clears the count")
+        XCTAssertFalse(stop())
+        // A pause or cancel that saved nothing neither adds nor clears.
+        XCTAssertFalse(TextSceneBackgroundMemo.noteRun("pdf", progressed: false, modelStopped: false, defaults))
+        XCTAssertFalse(stop())
+        XCTAssertTrue(stop())
+    }
+
+    /// The audit on 0e75777: scenes the check refused, followed by a model error, save nothing, so the next window asks
+    /// about them again. That is not progress, or the pass would never get past the item.
+    func testRefusedScenesBeforeAModelErrorAreNotSavedAndSoNotProgress() async throws {
+        let fixture = try makeFixture()
+        let client = ScriptedLabelClient(label: LocalListeningMapLabel(title: "Crossing", description: "how the caravans crossed the dunes", eligibility: .eligible))
+        client.failure = { text in text.contains("oasis") ? LocalFoundationModelError.invalidStructuredResponse : LocalFoundationModelError.unavailable("busy") }
+        let saves = CountBox()
+
+        let outcome = try await TextSceneMapPreparer.summarise(
+            itemId: fixture.itemId, safeItemComponent: "article", store: fixture.store, client: client,
+            onSaved: { _ = saves.next() }, renderBridge: { _, _ in }
+        )
+
+        XCTAssertEqual(outcome, .modelStopped(written: 0, total: 2))
+        XCTAssertEqual(saves.next(), 1, "no save happened before this call")
+        XCTAssertEqual(try fixture.store.loadPortableListeningMapProposals(itemId: fixture.itemId), [])
+    }
+
+    func testASummaryThatWasSavedBeforeTheModelStoppedIsProgress() async throws {
+        let fixture = try makeFixture()
+        let client = ScriptedLabelClient(label: LocalListeningMapLabel(title: "Crossing", description: "how the caravans crossed the dunes", eligibility: .eligible))
+        client.failure = { text in text.contains("coast") ? LocalFoundationModelError.unavailable("busy") : nil }
+        let saves = CountBox()
+
+        let outcome = try await TextSceneMapPreparer.summarise(
+            itemId: fixture.itemId, safeItemComponent: "article", store: fixture.store, client: client,
+            onSaved: { _ = saves.next() }, renderBridge: { _, _ in }
+        )
+
+        XCTAssertEqual(outcome, .modelStopped(written: 1, total: 2))
+        XCTAssertEqual(saves.next(), 2, "one save happened before this call")
     }
 
     func testHeatDuringTheAudioRendersDoesNotSendTheListenerToAContinueButton() async throws {

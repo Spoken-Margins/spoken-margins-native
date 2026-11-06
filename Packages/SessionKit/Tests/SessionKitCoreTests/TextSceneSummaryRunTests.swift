@@ -225,7 +225,7 @@ final class TextSceneSummaryRunTests: XCTestCase {
         )
 
         XCTAssertEqual(result.ending, .modelFailed)
-        XCTAssertEqual(result.newDecisions, 2, "progress is what the background pass uses to tell a stuck item from a long one")
+        XCTAssertEqual(saves.proposals.count, 2, "each summary is saved as it passes; the app counts these saves as progress")
         XCTAssertEqual(asked, 3, "the run stops at the first thrown error instead of spending the charge on every scene")
         XCTAssertEqual(summaries(saves.latest), drafts.prefix(2).map(\.id))
         // The three scenes left are waiting, not judged, so a later run asks about them.
@@ -241,9 +241,27 @@ final class TextSceneSummaryRunTests: XCTestCase {
         )
 
         XCTAssertEqual(result.ending, .modelFailed)
-        XCTAssertEqual(result.newDecisions, 0)
         XCTAssertTrue(saves.proposals.isEmpty)
         XCTAssertTrue(TextSceneSummaryProgress.state(proposals: []).offersRun)
+    }
+
+    func testScenesRefusedBeforeTheModelThrowsAreNotSavedSoTheyAreNotProgress() async throws {
+        let (drafts, characters) = drafts(paragraphs: 6)
+        let saves = Saves()
+        var asked = 0
+        // The first scenes fail the check, then the model throws: nothing passed, so nothing is saved, and the next
+        // run asks about the same scenes again. The app counts saves as progress, so this must save none (#3461).
+        for _ in 0..<3 {
+            asked = 0
+            let result = try await TextSceneSummaryRun.run(
+                drafts: drafts, characters: characters, saved: saves.latest,
+                label: { _ in asked += 1; return asked <= 5 ? .rejected : .modelFailed },
+                yieldReason: { nil }, checkpoint: { saves.save($0) }
+            )
+            XCTAssertEqual(result.ending, .modelFailed)
+            XCTAssertEqual(asked, 6, "every window asks the same five scenes again")
+        }
+        XCTAssertTrue(saves.proposals.isEmpty)
     }
 
     func testASceneWhoseSummaryFailsTheCheckIsSettledSoContinueIsNotOfferedForever() async throws {

@@ -17,7 +17,19 @@ protocol TextSceneMapPreparerHost: AnyObject {
     ) async throws -> OwnedOfflineAsset?
     /// Heat and Low Power Mode, asked before every scene (#3461). The model already answers this for podcast maps.
     func episodeMapDeviceConditions() -> SpeechEngineConditions
-    func textSceneSummariesDidFinish(itemId: String, outcome: TextSceneSummaryOutcome, policy: PreparationJobPolicy)
+    /// `progressed` is true when the run saved at least one scene (a summary, or scenes it decided beside one), however
+    /// it ended; scenes decided but never saved are not progress, since the next run would ask about them again.
+    func textSceneSummariesDidFinish(
+        itemId: String, outcome: TextSceneSummaryOutcome, policy: PreparationJobPolicy, progressed: Bool
+    )
+}
+
+/// Counts the saves a run made. A cancelled run throws, so what it saved is read from here, not from its result.
+private final class TextSceneSaveCount: @unchecked Sendable {
+    private let lock = NSLock()
+    private var saves = 0
+    func add() { lock.lock(); saves += 1; lock.unlock() }
+    var hasSaved: Bool { lock.lock(); defer { lock.unlock() }; return saves > 0 }
 }
 
 /// How a run to summarise an article's or PDF's scenes began.
@@ -56,8 +68,7 @@ enum TextSceneSummaryOutcome: Equatable {
     case audioPaused(EpisodeMapRunStop)
     /// The on-device model threw instead of answering (busy, or not ready). The summaries so far are saved, and it says
     /// nothing about the scenes left, so they stay waiting.
-    /// `progressed` is false when the run decided no scene before the model stopped it.
-    case modelStopped(written: Int, total: Int, progressed: Bool)
+    case modelStopped(written: Int, total: Int)
     case cancelled
     case failed(String)
 
@@ -147,9 +158,11 @@ final class TextSceneMapPreparer {
         itemId = requestedItemId
         task = Task { [weak self] in
             let outcome: TextSceneSummaryOutcome
+            let saves = TextSceneSaveCount()
             do {
                 outcome = try await Self.summarise(
                     itemId: requestedItemId, safeItemComponent: safeItem, store: store, client: client,
+                    onSaved: { saves.add() },
                     yieldReason: { [weak self] in
                         guard let host = self?.host else { return nil }
                         return EpisodeMapRunGuard.yieldReason(conditions: host.episodeMapDeviceConditions(), policy: policy)
@@ -169,7 +182,9 @@ final class TextSceneMapPreparer {
             guard let self else { return }
             self.task = nil
             self.itemId = nil
-            self.host?.textSceneSummariesDidFinish(itemId: requestedItemId, outcome: outcome, policy: policy)
+            self.host?.textSceneSummariesDidFinish(
+                itemId: requestedItemId, outcome: outcome, policy: policy, progressed: saves.hasSaved
+            )
         }
         return .started
     }
@@ -180,6 +195,7 @@ final class TextSceneMapPreparer {
         safeItemComponent: String,
         store: SQLiteSessionStore,
         client: any LocalFoundationModelClient,
+        onSaved: @escaping @Sendable () -> Void = {},
         yieldReason: @escaping @MainActor () -> EpisodeMapRunStop? = { nil },
         renderBridge: @escaping @MainActor (PortableListeningMapScene, String) async throws -> Void
     ) async throws -> TextSceneSummaryOutcome {
@@ -218,6 +234,7 @@ final class TextSceneMapPreparer {
                     let starts = try store.loadListeningMap(itemId: itemId)?.chapters.map(\.startChar) ?? []
                     guard !others, starts == plannedStarts else { return false }
                     try store.savePortableListeningMapProposal(proposal, itemId: itemId)
+                    onSaved()
                     return true
                 }
             }
@@ -228,7 +245,7 @@ final class TextSceneMapPreparer {
         case .otherMapAppeared:
             return .keptOtherMap
         case .modelFailed:
-            return .modelStopped(written: result.summarisedScenes, total: result.scenes.count, progressed: result.newDecisions > 0)
+            return .modelStopped(written: result.summarisedScenes, total: result.scenes.count)
         case .paused(let stop):
             return .paused(stop, written: result.summarisedScenes, total: result.scenes.count)
         case .finished:

@@ -75,9 +75,6 @@ public enum TextSceneSummaryRun {
         public let ending: Ending
         /// Summaries this run wrote, not counting the ones carried over.
         public let newSummaries: Int
-        /// Scenes this run decided, with a summary or without (the model passed them over, or its answer failed the
-        /// check). Zero means the run made no progress, however it ended.
-        public let newDecisions: Int
 
         public var summarisedScenes: Int {
             scenes.filter { $0.summaryText?.isEmpty == false }.count
@@ -121,16 +118,15 @@ public enum TextSceneSummaryRun {
         let carried = carriedScenes(drafts: drafts, saved: saved)
         var scenes = drafts.map { carried[$0.id] ?? TextSceneAssembly.scene(draft: $0, label: nil, characters: characters) }
         var written = 0
-        var decided = 0
         var unsaved = false
 
         func settle(_ ending: Ending) async throws -> Result {
             if ending != .otherMapAppeared, unsaved, scenes.contains(where: { $0.summaryText?.isEmpty == false }) {
                 guard try await checkpoint(scenes) else {
-                    return Result(scenes: scenes, ending: .otherMapAppeared, newSummaries: written, newDecisions: decided)
+                    return Result(scenes: scenes, ending: .otherMapAppeared, newSummaries: written)
                 }
             }
-            return Result(scenes: scenes, ending: ending, newSummaries: written, newDecisions: decided)
+            return Result(scenes: scenes, ending: ending, newSummaries: written)
         }
 
         for (index, draft) in drafts.enumerated() where !TextSceneSummaryProgress.isDecided(scenes[index]) {
@@ -147,11 +143,10 @@ public enum TextSceneSummaryRun {
             case .modelFailed: return try await settle(.modelFailed)
             }
             scenes[index] = scene
-            decided += 1
             unsaved = true
             if scene.summaryText?.isEmpty == false {
                 written += 1
-                guard try await checkpoint(scenes) else { return Result(scenes: scenes, ending: .otherMapAppeared, newSummaries: written, newDecisions: decided) }
+                guard try await checkpoint(scenes) else { return Result(scenes: scenes, ending: .otherMapAppeared, newSummaries: written) }
                 unsaved = false
             }
         }
