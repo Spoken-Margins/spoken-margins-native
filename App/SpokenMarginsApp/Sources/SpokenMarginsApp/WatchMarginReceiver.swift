@@ -195,9 +195,10 @@ final class WatchMarginReceiver: NSObject {
     /// filed first, so one whose file has just landed is answered as filed; transcribing them waits until the reply
     /// is out, so the fast lane answers in a second, not after speech recognition.
     @discardableResult
-    func handle(_ envelope: WatchEnvelope, now: @escaping @Sendable () -> Date = { Date() }) -> Task<WatchPhoneReply, Never> {
+    func handle(_ envelope: WatchEnvelope, fastLane: Bool = true, now: @escaping @Sendable () -> Date = { Date() }) -> Task<WatchPhoneReply, Never> {
         // A transport command runs at once, before any filing pass under way: a pause that waits is a pause that is late (#3494).
-        if let transport = envelope.transportToRun(now: now()) { runTransport(transport) }
+        // The sure lane repeats every message and may deliver a late copy, so only the fast lane runs one (#3494).
+        if fastLane, let transport = envelope.transportToRun(now: now()) { runTransport(transport) }
         let previous = lastPass
         let files = files
         let work = Task { [weak self] () -> (WatchPhoneReply, [LiveSessionFileWorker.FiledMargin]) in
@@ -305,7 +306,7 @@ extension WatchMarginReceiver: WCSessionDelegate {
     /// The sure lane: answers go back on it too.
     nonisolated func session(_ session: WCSession, didReceiveUserInfo userInfo: [String: Any]) {
         guard let envelope = WatchEnvelope(dictionary: userInfo) else { return }
-        Task { @MainActor in self.handle(envelope) }
+        Task { @MainActor in self.handle(envelope, fastLane: false) }
     }
 
     /// The fast lane: the reply carries the phone's clock, the board and any answers.

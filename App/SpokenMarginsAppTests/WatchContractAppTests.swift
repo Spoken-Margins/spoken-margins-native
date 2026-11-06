@@ -110,7 +110,7 @@ final class WatchContractAppTests: XCTestCase {
         XCTAssertEqual(reply.answers.first?.filedWords, "Filed in a quick session")
     }
 
-    /// #3494: a fresh transport command reaches the player at once, a stale one never does, and the reply board names the
+    /// #3494: a fresh fast-lane transport command reaches the player at once, a stale one or a sure-lane copy never does, and the reply board names the
     /// item the player has loaded.
     func testAFreshTransportRunsAStaleOneDoesNotAndTheReplyBoardNamesTheItem() async throws {
         let receiver = makeReceiver(LiveSessionFileWorker(root: root))
@@ -126,6 +126,9 @@ final class WatchContractAppTests: XCTestCase {
         let stale = try await receiver.handle(try overTheWire(envelope(.transport(.skipForward), sentAt: Date().addingTimeInterval(-60)))).value
         XCTAssertEqual(ran, [.pause], "a skip that arrives a minute late is dropped")
         XCTAssertEqual(stale.board.nowPlaying, playing)
+
+        _ = await receiver.handle(try overTheWire(envelope(.transport(.skipBack), sentAt: Date())), fastLane: false).value
+        XCTAssertEqual(ran, [.pause], "the sure lane never runs a transport command")
 
         receiver.nowPlayingChanged(nil)
         let none = await receiver.handle(try overTheWire(envelope(.hello(holding: [])))).value
