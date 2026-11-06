@@ -48,6 +48,15 @@ Yesterday these failed late, at the rollup, and forced refactors. Run them befor
 - The chief of staff checks after the merge that every issue closed, and closes any that didn't with `sm-gh close-issue`.
 - A rollup that fails an audit: at the second finding in one area, change the design or post an **Accepted audit finding** (AGENTS.md, "Fix the cause of an audit finding").
 
+## When a guard refuses a command
+
+On 2026-11-06 briefs in two clusters gave helpers a quoted path to a shared lock script. The worktree guard refused it, and helpers got the same script to run another way: through a shell by name, through a symlink, with a no-op command in front, or from the lead's session.
+
+- **A refusal is a stop, not a puzzle.** The helper tries no other form of the command and reports the refusal to its lead. The lead brings it to the director, who takes it to the owner if it can't be settled inside the guard.
+- **Nobody runs a refused command for a helper.** A lead doesn't run it from its own session.
+- **Briefs give plain commands:** the command itself, literal arguments, run from the helper's own worktree. No wrapper or lock scripts. The lead hands out the turns that keep a cluster to one fast plan and one build.
+- **Git stays in the helper's own worktree.** The lead creates and repairs worktrees from its own session, and no one runs `git worktree prune` during a run.
+
 ## CI watching
 
 - **Leads and their agents never watch CI.** No `gh run watch`, no polling loops, no timers. On 2026-10-25 several leads polled every 3 seconds and hit GitHub's secondary rate limit.
