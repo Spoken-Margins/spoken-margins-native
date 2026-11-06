@@ -11,7 +11,32 @@ import SessionKitAudio
 /// look-up, so nothing here reads the disk on the main thread.
 @MainActor
 enum WrittenMarginReadings {
-    private static let reader = WrittenMarginReader.shared
+    // MARK: Which voice reads (#3391)
+
+    private static weak var model: Gate1AppModel?
+    private static var onDeviceReader: (key: String, reader: WrittenMarginReader)?
+    private static let termsTextIsBundled = SpokenMarginsTerms.hasBundledText()
+
+    /// Called whenever the app builds its audio clients, so the reading follows the Terms and the voice chosen in Settings
+    /// as they are now. Until then, and whenever the choice says so, the iPhone voice reads.
+    static func bind(to model: Gate1AppModel) { Self.model = model }
+
+    /// What reads a friend's Margin now: the listener's chosen on-device voice once the Terms are accepted, else the
+    /// iPhone voice (`WrittenMarginVoiceChoice`). Asked on every use, so a Terms acceptance or a change of voice applies
+    /// to the next reading. Only in-memory facts are read here; nothing touches the disk.
+    private static var reader: WrittenMarginReader {
+        guard let model else { return .shared }
+        let selection = model.ttsVoiceSelection
+        let choice = WrittenMarginVoiceChoice.choose(
+            termsAccepted: model.hasAcceptedCurrentTerms && termsTextIsBundled,
+            candidate: WrittenMarginOnDeviceRendering.candidate(for: selection, model: model)
+        )
+        guard case .onDevice(let key) = choice else { return .shared }
+        if let onDeviceReader, onDeviceReader.key == key { return onDeviceReader.reader }
+        let made = WrittenMarginReader(onDevice: WrittenMarginOnDeviceRendering.stage(for: selection, key: key, model: model))
+        onDeviceReader = (key, made)
+        return made
+    }
     /// How long "Hear only the Margins" holds off for its readings before it starts anyway. The review's own lead-in
     /// gives a reading 20 more seconds, so a miss takes about half a minute of waiting in all.
     static let reviewHold: TimeInterval = 10
@@ -61,6 +86,7 @@ enum WrittenMarginReadings {
         let wasPending: Bool
         let task: Task<Void, Never>
         let itemId: String?
+        let reading: WrittenMarginReading
     }
     private static var tapWaits: [String: Wait] = [:]
     private static var holds: [String: Task<Void, Never>] = [:]
@@ -98,7 +124,7 @@ enum WrittenMarginReadings {
             }
             model.hangTelemetry.labels.scoped("writtenMarginListen") { model.listenToImportedCommentary(prompt) }
         }
-        tapWaits[prompt.id] = Wait(id: id, wasPending: wasPending, task: task, itemId: prompt.layer.itemId)
+        tapWaits[prompt.id] = Wait(id: id, wasPending: wasPending, task: task, itemId: prompt.layer.itemId, reading: reading)
     }
 
     // MARK: A review
@@ -163,9 +189,19 @@ enum WrittenMarginReadings {
     static func leftItemScreen(_ itemId: String) {
         for (key, wait) in tapWaits where wait.itemId == itemId {
             wait.task.cancel()
+            reader.cancelOnDevice(wait.reading) // a render nobody waits for any more stops at its next step (#3391)
             tapWaits[key] = nil
         }
         holds["review::\(itemId)"]?.cancel()
+    }
+
+    /// The listener dismissed the card of a written Margin whose reading is still being made: the wait ends and an on-device
+    /// render of it stops at its next step, with no iPhone render in its place (#3391).
+    static func skipped(_ prompt: ImportedCommentaryPrompt) {
+        guard let wait = tapWaits[prompt.id] else { return }
+        wait.task.cancel()
+        tapWaits[prompt.id] = nil
+        reader.cancelOnDevice(wait.reading)
     }
 
     /// Reviews being started after their hold, so the second call doesn't hold again.

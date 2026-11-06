@@ -35,6 +35,23 @@ final class WrittenMarginReadingRuntimeTests: XCTestCase {
         leveledPlayer.stop()
     }
 
+    /// #3391: an on-device voice that can't render (removed, hot, out of time) must leave a real iPhone-voice reading the
+    /// player opens, never silence. A real render, so it needs the speech service.
+    func testAnOnDeviceVoiceThatCannotRenderFallsBackToARealIPhoneReading() async throws {
+        executionTimeAllowance = 180
+        try await SystemVoiceRuntime.requireAnsweringVoice()
+        struct VoiceGone: Error {}
+        let directory = FileManager.default.temporaryDirectory.appending(path: "written-margin-ondevice-\(UUID().uuidString)", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let reader = WrittenMarginReader(directory: directory, onDevice: WrittenMarginOnDeviceStage(key: "test-voice") { _, _, _ in throw VoiceGone() })
+        let reading = WrittenMarginReading(intro: WrittenMarginReading.intro(senderName: "Cole"), text: "Lovely harbour. Hear the gulls near the end.")
+
+        let file = try await reader.rendered(reading)
+        XCTAssertTrue(reader.isReady(reading))
+        let player = try AVAudioPlayer(contentsOf: file)
+        XCTAssertGreaterThan(player.duration, 1, "the iPhone voice read the whole Margin after the on-device voice failed")
+    }
+
     /// The default English voice silently skips Japanese and Hindi, which left only "Cole wrote:" that was then marked heard.
     /// The render must use the note's own voice, so its file is longer than the intro's alone.
     func testANoteInAnotherScriptIsReadWholeNotJustTheIntro() async throws {

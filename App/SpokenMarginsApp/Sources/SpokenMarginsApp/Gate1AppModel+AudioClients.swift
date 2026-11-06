@@ -13,6 +13,7 @@ extension Gate1AppModel {
             return audioPlaybackClientOverride
         }
         sanitizeTTSMode()
+        WrittenMarginReadings.bind(to: self) // a friend's written Margin follows the Terms and the voice chosen here (#3391)
         let speech = try makeSpeechPlaybackClient()
         speechPlaybackClient = speech
         let routed = RoutedAudioPlaybackClient(
