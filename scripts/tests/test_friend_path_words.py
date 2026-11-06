@@ -108,6 +108,7 @@ SENDER_PATH_FILES = [
     APP / 'SharingExperience.swift',
     APP / 'ExperienceMarginsScreen.swift',
     APP / 'ShareLinkSender.swift',
+    APP / 'Build23SharingSeams.swift',
 ]
 
 # Case-sensitive. Each is a phrase a listener once read.

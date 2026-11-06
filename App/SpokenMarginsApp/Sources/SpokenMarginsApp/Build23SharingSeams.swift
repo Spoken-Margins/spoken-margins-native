@@ -665,7 +665,7 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
                   self.previewGeneration == generation else { return }
             guard let fileURL = builtURL,
                   self.model.sharingState.errorMessage == nil else {
-                self.previewState = .failed(self.model.sharingState.errorMessage ?? "The package could not be built.")
+                self.previewState = .failed(self.model.sharingState.errorMessage ?? "Go back and try again.")
                 self.stage = .review
                 return
             }
