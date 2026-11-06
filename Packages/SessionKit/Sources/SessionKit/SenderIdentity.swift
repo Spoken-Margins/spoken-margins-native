@@ -89,9 +89,38 @@ public struct SenderIDLedger: Codable, Equatable, Sendable {
     }
 }
 
-/// The senders this listener has hidden, on this device only (#2846). Hiding follows the sender's id, so it covers
-/// every item and every later import, and unhiding brings them all back: nothing is deleted.
+/// What this listener has hidden, on this device only (#2846): whole senders, and single Margins from a friend. Hiding a
+/// sender follows the sender's id, so it covers every item and every later import. Hiding one Margin follows that
+/// Margin's id on this phone, so a re-sent packet that carries it again does not bring it back. Showing again undoes
+/// either, and nothing is deleted. One value carries both so every loader that already takes the list hides both.
 public struct HiddenSenders: Codable, Equatable, Sendable {
+    /// One received Margin the listener hid on its own, with enough words kept for Settings to say which one it is.
+    public struct HiddenMargin: Codable, Equatable, Hashable, Sendable, Identifiable {
+        /// The Margin's id on this phone (`ImportedCommentaryInterjection.id`), never anything the sender chose.
+        public let marginId: String
+        /// The label the sender gave themselves, as the layer showed it when the listener hid the Margin.
+        public let senderLabel: String?
+        /// The first words of the Margin, so the list can name it. Kept on this phone only, in the same file as the senders.
+        public let snippet: String
+        public let hiddenAt: Date
+        public var id: String { marginId }
+
+        /// Longest snippet kept: enough to recognise a Margin, not a copy of it.
+        public static let snippetLimit = 80
+
+        public init(marginId: String, senderLabel: String?, snippet: String, hiddenAt: Date) {
+            self.marginId = marginId
+            self.senderLabel = senderLabel
+            self.snippet = HiddenMargin.trimmed(snippet)
+            self.hiddenAt = hiddenAt
+        }
+
+        static func trimmed(_ text: String) -> String {
+            let collapsed = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+            return collapsed.count <= snippetLimit ? collapsed : String(collapsed.prefix(snippetLimit)) + "…"
+        }
+    }
+
     public struct Entry: Codable, Equatable, Hashable, Sendable, Identifiable {
         public let senderId: String
         /// The label the sender gave themselves when the listener hid them, so Settings can say who it is.
@@ -107,18 +136,28 @@ public struct HiddenSenders: Codable, Equatable, Sendable {
     }
 
     public private(set) var entries: [Entry]
+    /// Single Margins hidden on their own. Empty in a file written before this existed, which reads as none hidden.
+    public private(set) var margins: [HiddenMargin]
 
-    public init(entries: [Entry] = []) {
+    public init(entries: [Entry] = [], margins: [HiddenMargin] = []) {
         var seen = Set<String>()
         self.entries = entries.filter { SenderID.isValid($0.senderId) && seen.insert($0.senderId).inserted }
+        var seenMargins = Set<String>()
+        self.margins = margins.filter { !$0.marginId.isEmpty && seenMargins.insert($0.marginId).inserted }
     }
 
-    // A saved file goes through the same checks as a new value.
-    private enum CodingKeys: String, CodingKey { case entries }
+    // A saved file goes through the same checks as a new value. The key for single Margins is optional, so a file from
+    // before it reads as before, and an older build reading a newer file ignores the key and shows those Margins again.
+    private enum CodingKeys: String, CodingKey { case entries, margins }
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
-        self.init(entries: try values.decode([Entry].self, forKey: .entries))
+        self.init(
+            entries: try values.decode([Entry].self, forKey: .entries),
+            margins: try values.decodeIfPresent([HiddenMargin].self, forKey: .margins) ?? [])
     }
+
+    /// Nothing is hidden, neither a sender nor a Margin.
+    public var isEmpty: Bool { entries.isEmpty && margins.isEmpty }
 
     /// Newest first, the order Settings lists them in.
     public var listed: [Entry] { entries.sorted { $0.hiddenAt > $1.hiddenAt } }
@@ -138,6 +177,34 @@ public struct HiddenSenders: Codable, Equatable, Sendable {
 
     public mutating func unhide(_ senderId: String) {
         entries.removeAll { $0.senderId == senderId }
+    }
+
+    /// Newest first, the order Settings lists them in.
+    public var listedMargins: [HiddenMargin] { margins.sorted { $0.hiddenAt > $1.hiddenAt } }
+
+    public func isMarginHidden(_ marginId: String) -> Bool {
+        margins.contains { $0.marginId == marginId }
+    }
+
+    /// Hides one received Margin; false (and no change) when `marginId` is empty.
+    @discardableResult
+    public mutating func hideMargin(_ marginId: String, senderLabel: String? = nil, text: String = "", at date: Date = Date()) -> Bool {
+        guard !marginId.isEmpty else { return false }
+        if !isMarginHidden(marginId) {
+            margins.append(HiddenMargin(marginId: marginId, senderLabel: senderLabel, snippet: text, hiddenAt: date))
+        }
+        return true
+    }
+
+    public mutating func unhideMargin(_ marginId: String) {
+        margins.removeAll { $0.marginId == marginId }
+    }
+
+    /// The Margins to show: those the listener has not hidden one by one. A layer from a hidden sender is already gone
+    /// before its Margins are read, so this only has to drop single Margins.
+    public func visible(_ interjections: [ImportedCommentaryInterjection]) -> [ImportedCommentaryInterjection] {
+        guard !margins.isEmpty else { return interjections }
+        return interjections.filter { !isMarginHidden($0.id) }
     }
 
     public func isHidden(_ layer: ImportedCommentaryLayer) -> Bool {

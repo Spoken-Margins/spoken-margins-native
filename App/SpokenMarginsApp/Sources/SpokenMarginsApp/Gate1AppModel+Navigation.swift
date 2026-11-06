@@ -37,10 +37,11 @@ extension Gate1AppModel {
         guard let store else { return }
         let revision = libraryPresentationRevision
         let read = navigationLibraryRead
+        let hidden = hiddenSenders.current
         navigationRefreshTask = Task { [weak self] in
             do {
                 try await Task.sleep(for: .milliseconds(350))
-                let data = try await read(store)
+                let data = try await read(store, hidden)
                 try Task.checkCancellation()
                 guard let self, self.screen == .home,
                       self.libraryPresentationRevision == revision else { return }
