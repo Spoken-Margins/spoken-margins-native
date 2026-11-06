@@ -2,8 +2,8 @@ import Foundation
 import SessionKit
 
 /// Reads the Margins list rows, all of them or one item's (#2505). Synchronous and made to be called inside
-/// `StoreReader.read`, so the main thread never waits on it. A hidden sender's layers are left out, so none of their
-/// Margins reach the Margins tab, the Now card or the skim stops (#2846); they stay in the store.
+/// `StoreReader.read`, so the main thread never waits on it. A hidden sender's layers and any Margin hidden on its own are left out, so none of
+/// them reach the Margins tab, the Now card or the skim stops (#2846); they stay in the store.
 public enum MarginRowsReading {
     /// Every item's rows: the Margins tab opening, pull to refresh.
     public static func all(store: SQLiteSessionStore, hiddenSenders: HiddenSenders = HiddenSenders()) throws -> MarginCollection.Entries {
@@ -13,7 +13,7 @@ public enum MarginRowsReading {
             loadMediaChapters: { (try? store.loadTranscriptTimelineChapters(itemId: $0)) ?? [] },
             loadInterjections: { try store.loadInterjections(sessionId: $0) },
             loadImportedLayers: { hiddenSenders.visible(try store.loadImportedCommentaryLayers()) },
-            loadImportedInterjections: { try store.loadImportedCommentaryInterjections(layerId: $0) })
+            loadImportedInterjections: { hiddenSenders.visible(try store.loadImportedCommentaryInterjections(layerId: $0)) })
     }
 
     /// One item's rows, the same rows `all` gives for it. An item that is trashed or gone has none, so applying
@@ -28,6 +28,6 @@ public enum MarginRowsReading {
             loadMediaChapters: { (try? store.loadTranscriptTimelineChapters(itemId: $0)) ?? [] },
             loadInterjections: { try store.loadInterjections(sessionId: $0) },
             loadImportedLayers: { hiddenSenders.visible(try store.loadImportedCommentaryLayers(itemId: itemId)) },
-            loadImportedInterjections: { try store.loadImportedCommentaryInterjections(layerId: $0) })
+            loadImportedInterjections: { hiddenSenders.visible(try store.loadImportedCommentaryInterjections(layerId: $0)) })
     }
 }

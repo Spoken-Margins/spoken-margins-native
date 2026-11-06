@@ -141,9 +141,17 @@ final class LiveSessionSpokenCapture: ObservableObject {
     private let files: LiveSessionFileWorker
     private var starting: Task<Void, Never>?
     private var watcher: Task<Void, Never>?
+    private var cardUpdate: Task<Void, Never>?
+    private var finishObserver: NSObjectProtocol?
 
     init(files: LiveSessionFileWorker = .shared) {
         self.files = files
+        // Finish on the Lock Screen card matters most when no screen is open, so it is heard here, not by a screen (#3499).
+        finishObserver = NotificationCenter.default.addObserver(
+            forName: LiveSessionFinishMargin.requested, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { _ = self?.stopAndFile() }
+        }
     }
 
     func isRecording(for id: String?) -> Bool { id != nil && sessionId == id }
@@ -158,6 +166,7 @@ final class LiveSessionSpokenCapture: ObservableObject {
                 try await LiveSessionPhoneRecorder.checkCanRecord()
                 try await recorder.start()
                 self?.watchRecorder(for: id)
+                self?.syncCard(for: id)
             } catch {
                 if self?.sessionId == id { self?.sessionId = nil }
                 self?.notice = ListenerErrorText.message(for: error)
@@ -176,6 +185,7 @@ final class LiveSessionSpokenCapture: ObservableObject {
         let started = starting
         return Task { [weak self, recorder, files] in
             await started?.value // a stop tapped while the start was still opening the microphone waits for it
+            self?.syncCard(for: id)
             do {
                 guard let recording = try await recorder.stop() else { return }
                 await Self.file(recording, into: id, files: files)
@@ -194,6 +204,16 @@ final class LiveSessionSpokenCapture: ObservableObject {
         Task { [recorder, starting] in
             await starting?.value
             await recorder.cancel()
+        }
+    }
+
+    /// The Lock Screen card says a spoken Margin records, with Finish, or goes back to Mark (#3499). One update at a
+    /// time, each following the recording as it is when written.
+    func syncCard(for id: String) {
+        let previous = cardUpdate
+        cardUpdate = Task { [weak self] in
+            await previous?.value
+            await LiveSessionActivities.showRecording(isRecording: { self?.sessionId == id }, sessionId: id)
         }
     }
 

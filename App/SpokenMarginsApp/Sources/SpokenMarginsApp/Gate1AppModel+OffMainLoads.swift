@@ -33,7 +33,7 @@ extension Gate1AppModel {
             let (generation, _) = backgroundRefresh.beginLibraryReload(mustPublish: true)
             let listsBefore = audioPreparationLists
             let revision = libraryPresentationRevision
-            let data = try await navigationLibraryRead(store)
+            let data = try await navigationLibraryRead(store, hiddenSenders.current)
             let current = backgroundRefresh.isCurrentLibrary(generation)
             if !current, backgroundRefresh.newerLibraryPublished(than: generation) { return true }
             // Main-thread row writes start no reload, so only the revision sees them, as in the background reload.

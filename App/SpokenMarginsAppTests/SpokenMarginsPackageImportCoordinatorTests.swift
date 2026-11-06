@@ -63,6 +63,24 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
         XCTAssertTrue(h.events.isEmpty)
     }
 
+    // The same packet, first opened from a file and later from a share link, can be reported from its link (#2846).
+    private static let reportableLinkId = "0123456789abcdef0123456789abcdef"
+
+    func testAPacketOpenedFromAFileThenFromALinkKeepsTheLinkToReport() async throws {
+        let h = try makeHarness()
+        let packet = try h.writePacket(named: "alpha", text: Self.alphaText)
+        assertStaged(await h.coordinator.stage(from: packet.url))
+        await h.confirmCurrentReview()
+        XCTAssertNil(try h.store.loadImportedCommentaryLayer(packageDigest: packet.digest)?.shareLinkId, "a file has no link")
+
+        assertStaged(await h.coordinator.stage(from: packet.url, shareLinkId: Self.reportableLinkId))
+        XCTAssertEqual(h.diagnostics["lastSpokenMarginsPackageImport"], "duplicate:\(packet.digest)")
+        XCTAssertEqual(try h.store.loadImportedCommentaryLayer(packageDigest: packet.digest)?.shareLinkId, Self.reportableLinkId)
+
+        assertStaged(await h.coordinator.stage(from: packet.url, shareLinkId: "ffffffffffffffffffffffffffffffff"))
+        XCTAssertEqual(try h.store.loadImportedCommentaryLayer(packageDigest: packet.digest)?.shareLinkId, Self.reportableLinkId, "the first link stays")
+    }
+
     // MARK: Listening Map packets (#1471)
 
     func testAMapPacketForAnArticleInTheLibraryIsMatchedAndAddsChaptersWithoutMargins() async throws {

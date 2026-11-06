@@ -33,6 +33,7 @@ final class LiveSessionController: ObservableObject {
     private let spokenCapture: LiveSessionSpokenCapture
     private var captureObservers: Set<AnyCancellable> = []
     private var diskObserver: NSObjectProtocol?
+    /// Finish tapped on the Lock Screen card while a spoken Margin records (#3499); lives only while one records.
 
     init(sessionId: String? = nil, files: LiveSessionFileWorker = .shared, spokenCapture: LiveSessionSpokenCapture = .shared) {
         requestedSessionId = sessionId
@@ -63,6 +64,8 @@ final class LiveSessionController: ObservableObject {
             // A session started or discarded while the file was read is newer than the file.
             if saveGeneration == generation { session = stored }
             didLoad = true
+            // A card left on "Recording" by an earlier screen or run goes back to Mark (#3499).
+            if let id = session?.id { spokenCapture.syncCard(for: id) }
             WatchMarginReceiver.shared.fileWaitingMarks()
             startPolling()
             observeDisk()

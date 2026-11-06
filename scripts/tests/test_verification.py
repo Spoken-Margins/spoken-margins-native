@@ -1692,6 +1692,43 @@ class VerificationTests(unittest.TestCase):
             self.assertEqual(step['errors'], [])
             self.assertEqual(step['test_evidence'], 'log+xcresult')
 
+    def unreadable_xcresult_run(self, command, expected, log):
+        with tempfile.TemporaryDirectory() as temporary:
+            run = verification.Run(Path(temporary) / 'run', 'app')
+            bundle = run.output / 'tests.xcresult'
+            bundle.mkdir()
+            unreadable = subprocess.CalledProcessError(64, 'xcresulttool', stderr='Could not read')
+            with patch.object(verification.subprocess, 'check_output', side_effect=unreadable):
+                try:
+                    run.command('xcode-tests', [sys.executable, '-c', command, '-resultBundlePath', str(bundle)],
+                                tests=True, expected=expected)
+                except RuntimeError:
+                    pass
+            return run.manifest['steps'][-1]
+
+    def test_an_unreadable_xcresult_falls_back_to_the_log_when_it_shows_every_test_passing(self):
+        # #3374: pr3348-r41882062194, all 49 and 223 tests passed but xcresulttool could not read the bundle.
+        log = "Test Case '-[App.ExportTests testIsolation]' passed (0.125 seconds)."
+        step = self.unreadable_xcresult_run(f'print({log!r})', {'App/ExportTests/testIsolation'}, log)
+        self.assertEqual(step['errors'], [])
+        self.assertEqual(step['test_evidence'], 'log (xcresult unreadable)')
+        self.assertIn('xcresulttool', step['xcresult_unreadable'])  # why, for the lane report
+        self.assertEqual(step['counts'], {'passed': 1, 'failed': 0, 'skipped': 0})
+
+    def test_an_unreadable_xcresult_still_fails_when_the_log_misses_a_test_fails_one_or_the_run_failed(self):
+        log = "Test Case '-[App.ExportTests testIsolation]' passed (0.125 seconds)."
+        expected = {'App/ExportTests/testIsolation', 'App/ExportTests/testOther'}
+        missing = self.unreadable_xcresult_run(f'print({log!r})', expected, log)
+        self.assertTrue(any('Could not reconcile xcresult' in e for e in missing['errors']))
+        self.assertNotIn('xcresult_unreadable', missing)
+        failed = "Test Case '-[App.ExportTests testIsolation]' failed (0.125 seconds)."
+        step = self.unreadable_xcresult_run(f'print({failed!r})', {'App/ExportTests/testIsolation'}, failed)
+        self.assertTrue(any('Could not reconcile xcresult' in e for e in step['errors']))
+        nonzero = self.unreadable_xcresult_run(f'print({log!r}); raise SystemExit(65)',
+                                               {'App/ExportTests/testIsolation'}, log)
+        self.assertTrue(any('Could not reconcile xcresult' in e for e in nonzero['errors']))
+        self.assertNotIn('xcresult_unreadable', nonzero)
+
     def test_failed_probation_exports_media_even_with_false_failure_flags(self):
         # #706: J1 failed but all nine attachments had isAssociatedWithFailure=false.
         identifier = 'App/ExportTests/testIsolation'
@@ -1883,7 +1920,9 @@ class VerificationTests(unittest.TestCase):
     def test_unreadable_or_unknown_result_bundle_does_not_fall_back_to_pass(self):
         identifier = 'App/ExportTests/testIsolation'
         log = "Test Case '-[App.ExportTests testIsolation]' passed (0.125 seconds)."
-        for output in ('not JSON', json.dumps(self.xcresult_payload('unknown'))):
+        # A bundle that reads as something else still fails (a tool that cannot read it at all is #3374's fallback,
+        # tested below).
+        for output in (json.dumps(self.xcresult_payload('unknown')), json.dumps({'testNodes': []})):
             with self.subTest(output=output), tempfile.TemporaryDirectory() as temporary:
                 run = verification.Run(Path(temporary) / 'run', 'app')
                 with patch.object(verification.subprocess, 'check_output', return_value=output):
