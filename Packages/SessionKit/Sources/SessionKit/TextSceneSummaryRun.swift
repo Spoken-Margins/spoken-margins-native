@@ -49,10 +49,23 @@ public enum TextSceneSummaryProgress {
 /// is host-tested (#3461). A run saves after every scene that gets a summary, so a cancel, a kill or a pause at scene N
 /// keeps the first N-1 summaries; the next run carries them over and starts at the first scene still undecided.
 public enum TextSceneSummaryRun {
+    /// What the model gave for one scene.
+    public enum SceneAnswer: Equatable, Sendable {
+        case label(ListeningMapSummaryValidator.SceneLabel)
+        /// The model answered and no try passed the grounding check. Asking again gets the same answer, so the scene is
+        /// settled without a summary rather than offered again for good.
+        case rejected
+        /// Every call threw (the model was busy or not ready). Nothing is known about the scene, so it stays waiting.
+        case modelFailed
+    }
+
     public enum Ending: Equatable, Sendable {
         case finished
         /// The device asked the run to stop (heat, Low Power Mode). The summaries so far are saved.
         case paused(EpisodeMapRunStop)
+        /// The model threw instead of answering. The run stops there, with what was decided saved, so the error is not
+        /// mistaken for a verdict on every remaining scene.
+        case modelFailed
         /// A friend's map arrived, or the chapters changed, while the run worked, so nothing more was saved.
         case otherMapAppeared
     }
@@ -87,7 +100,7 @@ public enum TextSceneSummaryRun {
     }
 
     /// Runs the drafts in order.
-    /// - `label`: the checked label for one scene's text, or nil when none passed.
+    /// - `label`: the model's answer for one scene's text.
     /// - `yieldReason`: nil to go on, or why the device wants the run to stop; asked before every scene.
     /// - `checkpoint`: saves the whole scene list so far; false means the item has another map now, which stays.
     ///   Called after each new summary, and once more at a pause or the end for what was decided without one.
@@ -98,7 +111,7 @@ public enum TextSceneSummaryRun {
         drafts: [TextSceneDraft],
         characters: [Character],
         saved: PortableListeningMapProposalArtifact?,
-        label: (TextSceneDraft) async -> ListeningMapSummaryValidator.SceneLabel?,
+        label: (TextSceneDraft) async -> SceneAnswer,
         yieldReason: @MainActor () -> EpisodeMapRunStop?,
         checkpoint: ([PortableListeningMapScene]) async throws -> Bool
     ) async throws -> Result {
@@ -123,7 +136,12 @@ public enum TextSceneSummaryRun {
                 throw CancellationError()
             }
             if let stop = await yieldReason() { return try await settle(.paused(stop)) }
-            let scene = TextSceneAssembly.scene(draft: draft, label: await label(draft), characters: characters)
+            let scene: PortableListeningMapScene
+            switch await label(draft) {
+            case .label(let checked): scene = TextSceneAssembly.scene(draft: draft, label: checked, characters: characters)
+            case .rejected: scene = TextSceneAssembly.scene(draft: draft, label: nil, characters: characters, rejectedByCheck: true)
+            case .modelFailed: return try await settle(.modelFailed)
+            }
             scenes[index] = scene
             unsaved = true
             if scene.summaryText?.isEmpty == false {

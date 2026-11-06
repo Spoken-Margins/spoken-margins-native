@@ -51,6 +51,12 @@ enum TextSceneSummaryOutcome: Equatable {
     case keptOtherMap
     /// The phone got warm or went into Low Power Mode, so the run stopped with the summaries so far saved (#3461).
     case paused(EpisodeMapRunStop, written: Int, total: Int)
+    /// Every scene is decided and saved, but the phone got warm while their audio was being made. Skim makes the audio
+    /// later, so there is nothing to continue.
+    case audioPaused(EpisodeMapRunStop)
+    /// The on-device model threw instead of answering (busy, or not ready). The summaries so far are saved, and it says
+    /// nothing about the scenes left, so they stay waiting.
+    case modelStopped(written: Int, total: Int)
     case cancelled
     case failed(String)
 
@@ -58,7 +64,7 @@ enum TextSceneSummaryOutcome: Equatable {
     /// fails every time must not keep the charging pass from the items behind it).
     var settlesBackgroundRun: Bool {
         switch self {
-        case .paused, .cancelled: false
+        case .paused, .audioPaused, .modelStopped, .cancelled: false
         case .summarised, .nothingToSummarise, .noSummaryAccepted, .keptOtherMap, .failed: true
         }
     }
@@ -66,8 +72,8 @@ enum TextSceneSummaryOutcome: Equatable {
     /// True when running again later could add summaries, so a background pass leaves the item for another time.
     var canBeContinued: Bool {
         switch self {
-        case .paused, .cancelled, .failed: true
-        case .summarised, .nothingToSummarise, .noSummaryAccepted, .keptOtherMap: false
+        case .paused, .modelStopped, .cancelled, .failed: true
+        case .summarised, .audioPaused, .nothingToSummarise, .noSummaryAccepted, .keptOtherMap: false
         }
     }
 
@@ -78,7 +84,11 @@ enum TextSceneSummaryOutcome: Equatable {
         case .noSummaryAccepted: "The on-device model's summaries didn't pass the check, so the chapters stay without summaries."
         case .keptOtherMap: "This item already has a Listening Map, so it was not replaced."
         case .paused(let stop, let written, let total):
-            "\(EpisodeMapRunGuard.pausedStatus(stop)). \(written) of \(total) scene summaries are saved; Tap Continue Scene Summaries to pick up there."
+            "\(EpisodeMapRunGuard.pausedStatus(stop)). \(written) of \(total) scene summaries are saved. Tap Continue Scene Summaries to pick up there."
+        case .audioPaused(let stop):
+            "\(EpisodeMapRunGuard.pausedStatus(stop)). The scene summaries are saved, and Skim makes their audio later."
+        case .modelStopped(let written, let total):
+            "The on-device model stopped answering. \(written) of \(total) scene summaries are saved. Tap Continue Scene Summaries to try again."
         case .cancelled: "Stopped writing scene summaries. The ones already written are kept."
         case .failed(let reason): "Couldn't write scene summaries. \(reason)"
         }
@@ -91,6 +101,8 @@ enum TextSceneSummaryOutcome: Equatable {
         case .noSummaryAccepted: "no_summary_accepted"
         case .keptOtherMap: "kept_other_map"
         case .paused(let stop, let written, let total): "\(stop.code) \(written) of \(total)"
+        case .audioPaused(let stop): "audio \(stop.code)"
+        case .modelStopped(let written, let total): "model_stopped \(written) of \(total)"
         case .cancelled: "cancelled"
         case .failed(let reason): "failed: \(reason)"
         }
@@ -193,7 +205,7 @@ final class TextSceneMapPreparer {
             drafts: drafts,
             characters: Array(loaded.text),
             saved: loaded.saved,
-            label: { await labeler.label(text: $0.modelText, chapterNumber: $0.order + 1) },
+            label: { await labeler.answer(text: $0.modelText, chapterNumber: $0.order + 1) },
             yieldReason: yieldReason,
             checkpoint: { scenes in
                 let proposal = TextSceneAssembly.proposal(safeItemComponent: safeItemComponent, scenes: scenes)
@@ -209,9 +221,13 @@ final class TextSceneMapPreparer {
                 }
             }
         )
+        // A cancel makes the model call throw, which the run reads as a model failure; it is a cancel.
+        try Task.checkCancellation()
         switch result.ending {
         case .otherMapAppeared:
             return .keptOtherMap
+        case .modelFailed:
+            return .modelStopped(written: result.summarisedScenes, total: result.scenes.count)
         case .paused(let stop):
             return .paused(stop, written: result.summarisedScenes, total: result.scenes.count)
         case .finished:
@@ -223,7 +239,7 @@ final class TextSceneMapPreparer {
         for scene in result.scenes where scene.summaryText?.isEmpty == false {
             try Task.checkCancellation()
             // Speaking the summaries is the hot part, so heat and Low Power Mode stop it too; Skim renders what is missing later.
-            if let stop = await yieldReason() { return .paused(stop, written: result.summarisedScenes, total: result.scenes.count) }
+            if let stop = await yieldReason() { return .audioPaused(stop) }
             do {
                 try await renderBridge(scene, proposalId)
             } catch is CancellationError {

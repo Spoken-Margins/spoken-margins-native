@@ -57,7 +57,7 @@ final class TextSceneSummaryRunTests: XCTestCase {
                 label: { draft in
                     asked.value += 1
                     if asked.value == 3 { withUnsafeCurrentTask { $0?.cancel() } } // the listener cancels while scene 3 is being read
-                    return sampleLabel(draft)
+                    return .label(sampleLabel(draft))
                 },
                 yieldReason: { nil },
                 checkpoint: { saves.save($0) }
@@ -83,7 +83,7 @@ final class TextSceneSummaryRunTests: XCTestCase {
                 label: { draft in
                     firstRunAsked.value += 1
                     if firstRunAsked.value == 2 { withUnsafeCurrentTask { $0?.cancel() } }
-                    return sampleLabel(draft)
+                    return .label(sampleLabel(draft))
                 },
                 yieldReason: { nil }, checkpoint: { saves.save($0) }
             )
@@ -94,7 +94,7 @@ final class TextSceneSummaryRunTests: XCTestCase {
         var askedAgain: [String] = []
         let second = try await TextSceneSummaryRun.run(
             drafts: drafts, characters: characters, saved: saves.latest,
-            label: { askedAgain.append($0.id); return sampleLabel($0) },
+            label: { askedAgain.append($0.id); return .label(sampleLabel($0)) },
             yieldReason: { nil }, checkpoint: { saves.save($0) }
         )
 
@@ -111,7 +111,7 @@ final class TextSceneSummaryRunTests: XCTestCase {
         var checks = 0
         let result = try await TextSceneSummaryRun.run(
             drafts: drafts, characters: characters, saved: nil,
-            label: { sampleLabel($0) },
+            label: { .label(sampleLabel($0)) },
             yieldReason: { checks += 1; return checks == 3 ? .heat(.serious) : nil },
             checkpoint: { saves.save($0) }
         )
@@ -134,7 +134,7 @@ final class TextSceneSummaryRunTests: XCTestCase {
         let saves = Saves()
         let result = try await TextSceneSummaryRun.run(
             drafts: drafts, characters: characters, saved: nil,
-            label: { _ in nil }, yieldReason: { nil }, checkpoint: { saves.save($0) }
+            label: { _ in .rejected }, yieldReason: { nil }, checkpoint: { saves.save($0) }
         )
 
         XCTAssertTrue(saves.proposals.isEmpty, "an item whose summaries all fail keeps exactly its chapters")
@@ -148,7 +148,7 @@ final class TextSceneSummaryRunTests: XCTestCase {
         var asked = 0
         let result = try await TextSceneSummaryRun.run(
             drafts: drafts, characters: characters, saved: nil,
-            label: { asked += 1; if asked == 2 { saves.accept = false }; return sampleLabel($0) },
+            label: { asked += 1; if asked == 2 { saves.accept = false }; return .label(sampleLabel($0)) },
             yieldReason: { nil }, checkpoint: { saves.save($0) }
         )
 
@@ -163,7 +163,7 @@ final class TextSceneSummaryRunTests: XCTestCase {
             title: "Front matter", description: "n/a", eligibility: .excluded, eligibilityReason: "Not editorial.")
         let first = try await TextSceneSummaryRun.run(
             drafts: drafts, characters: characters, saved: nil,
-            label: { $0.id == drafts[1].id ? skipped : sampleLabel($0) },
+            label: { .label($0.id == drafts[1].id ? skipped : sampleLabel($0)) },
             yieldReason: { nil }, checkpoint: { saves.save($0) }
         )
         XCTAssertEqual(first.ending, .finished)
@@ -172,7 +172,7 @@ final class TextSceneSummaryRunTests: XCTestCase {
         var asked = 0
         _ = try await TextSceneSummaryRun.run(
             drafts: drafts, characters: characters, saved: saves.latest,
-            label: { asked += 1; return sampleLabel($0) }, yieldReason: { nil }, checkpoint: { saves.save($0) }
+            label: { asked += 1; return .label(sampleLabel($0)) }, yieldReason: { nil }, checkpoint: { saves.save($0) }
         )
         XCTAssertEqual(asked, 0)
     }
@@ -184,7 +184,7 @@ final class TextSceneSummaryRunTests: XCTestCase {
             title: "Unclear", description: "n/a", eligibility: .unknown, eligibilityReason: nil)
         _ = try await TextSceneSummaryRun.run(
             drafts: drafts, characters: characters, saved: nil,
-            label: { $0.id == drafts[2].id ? unsure : sampleLabel($0) }, yieldReason: { nil }, checkpoint: { saves.save($0) }
+            label: { .label($0.id == drafts[2].id ? unsure : sampleLabel($0)) }, yieldReason: { nil }, checkpoint: { saves.save($0) }
         )
 
         XCTAssertEqual(TextSceneSummaryProgress.state(proposals: [saves.latest!]), .complete)
@@ -202,7 +202,7 @@ final class TextSceneSummaryRunTests: XCTestCase {
                 label: { draft in
                     asked.value += 1
                     if asked.value == 3 { withUnsafeCurrentTask { $0?.cancel() } }
-                    return asked.value == 1 ? sampleLabel(draft) : skipped
+                    return .label(asked.value == 1 ? sampleLabel(draft) : skipped)
                 },
                 yieldReason: { nil }, checkpoint: { saves.save($0) }
             )
@@ -212,6 +212,50 @@ final class TextSceneSummaryRunTests: XCTestCase {
         let latest = try XCTUnwrap(saves.latest)
         XCTAssertEqual(latest.scenes.filter(TextSceneSummaryProgress.isDecided).count, 3,
                        "scenes 2 and 3 were judged not editorial before the cancel and are not asked again")
+    }
+
+    func testAModelThatThrowsStopsTheRunWithTheEarlierScenesSavedAndNothingJudged() async throws {
+        let (drafts, characters) = drafts(paragraphs: 5)
+        let saves = Saves()
+        var asked = 0
+        let result = try await TextSceneSummaryRun.run(
+            drafts: drafts, characters: characters, saved: nil,
+            label: { draft in asked += 1; return asked <= 2 ? .label(sampleLabel(draft)) : .modelFailed },
+            yieldReason: { nil }, checkpoint: { saves.save($0) }
+        )
+
+        XCTAssertEqual(result.ending, .modelFailed)
+        XCTAssertEqual(asked, 3, "the run stops at the first thrown error instead of spending the charge on every scene")
+        XCTAssertEqual(summaries(saves.latest), drafts.prefix(2).map(\.id))
+        // The three scenes left are waiting, not judged, so a later run asks about them.
+        XCTAssertEqual(TextSceneSummaryProgress.state(proposals: [saves.latest!]), .partial(decided: 2, total: 5))
+    }
+
+    func testAModelThatThrowsFromTheStartSavesNothingAndTheItemStaysACandidate() async throws {
+        let (drafts, characters) = drafts(paragraphs: 3)
+        let saves = Saves()
+        let result = try await TextSceneSummaryRun.run(
+            drafts: drafts, characters: characters, saved: nil,
+            label: { _ in .modelFailed }, yieldReason: { nil }, checkpoint: { saves.save($0) }
+        )
+
+        XCTAssertEqual(result.ending, .modelFailed)
+        XCTAssertTrue(saves.proposals.isEmpty)
+        XCTAssertTrue(TextSceneSummaryProgress.state(proposals: []).offersRun)
+    }
+
+    func testASceneWhoseSummaryFailsTheCheckIsSettledSoContinueIsNotOfferedForever() async throws {
+        let (drafts, characters) = drafts(paragraphs: 3)
+        let saves = Saves()
+        _ = try await TextSceneSummaryRun.run(
+            drafts: drafts, characters: characters, saved: nil,
+            label: { $0.id == drafts[1].id ? .rejected : .label(sampleLabel($0)) },
+            yieldReason: { nil }, checkpoint: { saves.save($0) }
+        )
+
+        let latest = try XCTUnwrap(saves.latest)
+        XCTAssertEqual(latest.scenes[1].eligibility, .excluded)
+        XCTAssertEqual(TextSceneSummaryProgress.state(proposals: [latest]), .complete)
     }
 
     func testAProposalWrittenForOtherChaptersCarriesNothingOver() {

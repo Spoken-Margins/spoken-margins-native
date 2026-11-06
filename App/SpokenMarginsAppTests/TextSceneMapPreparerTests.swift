@@ -184,6 +184,43 @@ final class TextSceneMapPreparerTests: XCTestCase {
         XCTAssertEqual(try fixture.store.loadPortableListeningMapProposals(itemId: fixture.itemId).map(\.id), ["text-scene-map-friend"])
     }
 
+    /// The audit on 9b4f69b: a model that throws (busy, not ready) says nothing about the scenes, so the item must stay
+    /// open for the charging pass instead of being settled as "no summary passed".
+    func testAModelThatThrowsStopsTheRunAndLeavesTheItemOpenForTheChargingPass() async throws {
+        let fixture = try makeFixture()
+        let client = ScriptedLabelClient(label: LocalListeningMapLabel(title: "Crossing", description: "how the caravans crossed the dunes", eligibility: .eligible))
+        client.failure = LocalFoundationModelError.unavailable("busy")
+
+        let outcome = try await TextSceneMapPreparer.summarise(
+            itemId: fixture.itemId, safeItemComponent: "article", store: fixture.store, client: client,
+            renderBridge: { _, _ in XCTFail("no summary, no audio") }
+        )
+
+        XCTAssertEqual(outcome, .modelStopped(written: 0, total: 2))
+        XCTAssertFalse(outcome.settlesBackgroundRun)
+        XCTAssertTrue(outcome.canBeContinued)
+        XCTAssertEqual(try fixture.store.loadPortableListeningMapProposals(itemId: fixture.itemId), [])
+        XCTAssertEqual(client.texts.count, 2, "one scene, the two tries; the second scene is never asked")
+    }
+
+    func testHeatDuringTheAudioRendersDoesNotSendTheListenerToAContinueButton() async throws {
+        let fixture = try makeFixture()
+        let asked = CountBox()
+
+        let outcome = try await TextSceneMapPreparer.summarise(
+            itemId: fixture.itemId, safeItemComponent: "article", store: fixture.store,
+            client: ScriptedLabelClient(label: LocalListeningMapLabel(title: "Crossing", description: "how the caravans crossed the dunes", eligibility: .eligible)),
+            // Two asks before the scenes' model calls, then the first bridge render asks.
+            yieldReason: { asked.next() == 3 ? .heat(.serious) : nil },
+            renderBridge: { _, _ in XCTFail("paused before the first render") }
+        )
+
+        XCTAssertEqual(outcome, .audioPaused(.heat(.serious)))
+        XCTAssertFalse(outcome.message.contains("Continue"))
+        let saved = try XCTUnwrap(try fixture.store.loadPortableListeningMapProposals(itemId: fixture.itemId).first)
+        XCTAssertEqual(TextSceneSummaryProgress.state(proposals: [saved]), .complete)
+    }
+
     func testARunOnlyLooksAtTheListenersOwnText() async throws {
         // The planner and the model read the item's stored text; nothing is fetched, so a run works offline.
         let fixture = try makeFixture()
@@ -220,12 +257,15 @@ private final class ScriptedLabelClient: LocalFoundationModelClient, @unchecked 
     var texts: [String] { lock.withLock { seen } }
     /// Called on each model call, to let a test change the library while the run is working.
     var onLabel: (@Sendable () -> Void)?
+    /// When set, every model call throws it.
+    var failure: Error?
 
     func availability() -> LocalFoundationModelAvailability { .available }
     func summarizeInterjections(context: String) async throws -> String { throw LocalFoundationModelError.unavailable("test") }
     func labelListeningMapChapter(text: String, chapterNumber: Int) async throws -> LocalListeningMapLabel {
         lock.withLock { seen.append(text) }
         onLabel?()
+        if let failure { throw failure }
         return label
     }
     func summarizeListeningMap(labels: [LocalListeningMapLabel]) async throws -> String { throw LocalFoundationModelError.unavailable("test") }

@@ -27,7 +27,8 @@ public enum TextSceneAssembly {
     public static func scene(
         draft: TextSceneDraft,
         label: ListeningMapSummaryValidator.SceneLabel?,
-        characters: [Character]
+        characters: [Character],
+        rejectedByCheck: Bool = false
     ) -> PortableListeningMapScene {
         let stored = ListeningMapSummaryValidator.storedSummary(for: label)
         let title = label?.title ?? draft.fallbackTitle
@@ -36,7 +37,7 @@ public enum TextSceneAssembly {
         let settledAsTooShort = label == nil && !draft.isSummarizable
         // A label that came back "unknown" with no summary is an answer too: asking again would end the same way, and
         // the item would offer to continue for good.
-        let answeredUnknown = label != nil && label?.eligibility == .unknown && stored.text == nil
+        let answeredUnknown = rejectedByCheck || (label != nil && label?.eligibility == .unknown && stored.text == nil)
         return PortableListeningMapScene(
             id: draft.id,
             order: draft.order,
@@ -46,7 +47,7 @@ public enum TextSceneAssembly {
             summaryProvenance: stored.provenance,
             eligibility: answeredUnknown || settledAsTooShort ? .excluded : (label?.eligibility ?? .unknown),
             eligibilityReason: label?.eligibilityReason
-                ?? (settledAsTooShort ? "Too short to summarise." : (answeredUnknown ? "The model could not tell." : nil)),
+                ?? (settledAsTooShort ? "Too short to summarise." : (rejectedByCheck ? "No summary passed the check." : (answeredUnknown ? "The model could not tell." : nil))),
             startAnchor: startAnchor(draft, characters: characters, title: title),
             endAnchor: endAnchor(draft, characters: characters, title: title)
         )

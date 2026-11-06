@@ -11,7 +11,7 @@ extension Gate1AppModel: TextSceneMapPreparerHost {
         guard itemId == activeItemId else { return }
         // A paused or cancelled run saved the scenes it had written, so the screen and Skim read them now (#3461).
         switch outcome {
-        case .summarised, .paused, .cancelled, .keptOtherMap, .failed:
+        case .summarised, .paused, .audioPaused, .modelStopped, .cancelled, .keptOtherMap, .failed:
             refreshSelectedItemInBackground()
             updateSkimAvailability()
         case .nothingToSummarise, .noSummaryAccepted:
