@@ -99,7 +99,7 @@ enum TextSceneSummaryOutcome: Equatable {
             "\(EpisodeMapRunGuard.pausedStatus(stop)). \(written) of \(total) scene summaries are saved. Tap Continue Scene Summaries to pick up there."
         case .audioPaused(let stop):
             "\(EpisodeMapRunGuard.pausedStatus(stop)). The scene summaries are saved, and Skim makes their audio later."
-        case .modelStopped(let written, let total, _):
+        case .modelStopped(let written, let total):
             "The on-device model stopped answering. \(written) of \(total) scene summaries are saved. Tap Continue Scene Summaries to try again."
         case .cancelled: "Stopped writing scene summaries. The ones already written are kept."
         case .failed(let reason): "Couldn't write scene summaries. \(reason)"
@@ -114,7 +114,7 @@ enum TextSceneSummaryOutcome: Equatable {
         case .keptOtherMap: "kept_other_map"
         case .paused(let stop, let written, let total): "\(stop.code) \(written) of \(total)"
         case .audioPaused(let stop): "audio \(stop.code)"
-        case .modelStopped(let written, let total, _): "model_stopped \(written) of \(total)"
+        case .modelStopped(let written, let total): "model_stopped \(written) of \(total)"
         case .cancelled: "cancelled"
         case .failed(let reason): "failed: \(reason)"
         }
