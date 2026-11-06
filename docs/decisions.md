@@ -429,3 +429,13 @@ How it is used:
 - **Diagnostics may be public evidence only by allow-list (#3548; narrows 2026-10-21).** Asked to narrow the rule, with the option text "allow only the hang counts line, the build and plain counts, by allow-list", he said: "I am ok with this change". A code-only privacy pass (#3548) found the rest of the export unsafe: timestamps, item ids, tokens, playback events and error text stay off GitHub.
 - **Public privacy words: publish section A of the redlines (#2842).** Asked about the false lines on the privacy page and web Settings, he picked publishing section A of `docs/legal/public-wording-redlines-2842.md` and said: "great section a is great". Section B waits for the lawyer and shipped sealed sender; section C waits for the #2034 host check. Part of #2842.
 - **The web card after a friend saves an answer (#2168).** He approved the words "Your Margin is saved. Share sends it to {sender}. You pick which of your Margins go." with: "sounds good". Part of #2168.
+
+## Background moved out of the guide (2026-11-06)
+- **From the guide.** Explanations that stood next to rules in `AGENTS.md`, moved here to keep it under its 4,000-word cap (the rules themselves are unchanged):
+  - Verification layers: tests that pass while the app is broken usually fake the boundary that broke, such as audio sessions, players, file paths across containers and network responses.
+  - `scripts/setup-worktree.sh` links the main checkout's `.venv` and `node_modules`.
+  - `.build/dd` is a link into `~/Library/Caches/SpokenMarginsBuilds`.
+  - After switching branches, stale SessionKit modules in the shared DerivedData produce false "does not conform" errors; that is why a fresh `-derivedDataPath` is needed.
+  - The rolling phone build's plan is one walkthrough of several fixes, each step naming a real control.
+  - A warning that onnxruntime.framework has no dSYM during upload is expected and harmless.
+  - Current focus, Showcase: the solo app at its best.
