@@ -13,7 +13,7 @@
 //   for the layers, and a layer's label is its Margins' `author`.
 // - The app skips deleted or non-item Margins (Swift :36, :50); every web Margin is live and anchored in time.
 import type { Margin } from '../../shared/model.ts';
-import { senderName } from './arrival.ts';
+import { senderName, type MarginCue } from './arrival.ts';
 
 export interface ReplyBackOffer {
   /** The listener's replies to a friend's Margins: picked at the start. */
@@ -115,4 +115,18 @@ export function preselected(offer: ReplyBackOffer): Set<string> {
  */
 export function pickedMargins(offer: ReplyBackOffer, picked: ReadonlySet<string>): Margin[] {
   return offer.candidates.filter((m) => picked.has(m.id));
+}
+
+/**
+ * The card after the listener saves a Margin on an item a friend sent: what Share will do with it. The owner approved
+ * the words on 2026-11-06: "Your Margin is saved. Share sends it to {sender}. You pick which of your Margins go."
+ * It shows only where there is a reply-back offer (a friend's Margins and one of the listener's), so an item of the
+ * listener's own gets nothing. It takes the place of the countdown and of the "That was X's last Margin" card, until
+ * a friend's Margin plays (the screen clears it then); an episode that can't play keeps its own card. No button: Share is on the screen.
+ */
+export function savedMarginCard(margins: readonly Margin[], cue: MarginCue | undefined): { sentence: string } | undefined {
+  if (cue && (cue.kind === 'unplayable' || cue.kind === 'unplayable-done')) return undefined;
+  const offer = replyBackOffer(margins);
+  if (!offer) return undefined;
+  return { sentence: `Your Margin is saved. Share sends it to ${friendNames(offer.friendLabels)}. You pick which of your Margins go.` };
 }
