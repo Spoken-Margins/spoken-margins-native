@@ -7,6 +7,7 @@ extension Gate1AppModel {
     func stopStalledPodcastStart(itemID: String) {
         guard snapshot.itemId == itemID, snapshot.status == .starting,
               selectedPodcastDownloadState != nil else { return }
+        if hearFriendMarginsWithoutEpisode(itemId: itemID, startStalled: true) { return } // a friend's Margins don't need the episode (#3392)
         pause()
         // A saved file, even one that turns out broken, is what "Download Again" can replace.
         reportFailure(OfflinePlayability.episodeStalledMessage(
