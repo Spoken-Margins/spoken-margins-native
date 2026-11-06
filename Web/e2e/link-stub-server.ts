@@ -1,7 +1,7 @@
-// A local stand-in for the link server (research/B4, #805, PR #2994) for the share-link journeys (#3003). It serves
-// the Playwright build with link creation on (`dist-share-links/`, never hosted) at the app's root and at `/l/<id>`,
-// and the link routes the app calls: `GET /l/<id>/packet`, `GET /l/<id>/preview` and `POST /api/v1/links`.
-// Like the real server, it stores sealed bytes unread: an upload is checked only for the SMLINK header.
+// A local stand-in for the link server (research/B4, #805, PR #2994) for the link-opening journeys (#3003). It serves
+// the Playwright build (`dist-link-stub/`, never hosted) at the app's root and at `/l/<id>`, and the link routes the
+// app reads: `GET /l/<id>/packet` and `GET /l/<id>/preview`. It takes no uploads: the web app cannot make links
+// (owner, 2026-11-05, #3542), so any POST gets 405.
 //
 // Seeded links, all under the test vector's key (research/B4/contracts/fixtures/share-link-sealing-vector.json):
 //   AbCdEf123456   the vector's own sealed packet and preview, byte for byte (its packet is not a real packet)
@@ -10,15 +10,15 @@
 //   switchedoff1   answers 503 `disabled`, as the server does while links are switched off
 // Run: node e2e/link-stub-server.ts (Node 24 strips the types). Port 4174, or SM_LINK_STUB_PORT.
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { randomBytes } from 'node:crypto';
 import { readFileSync, statSync } from 'node:fs';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { keyFromFragment, sealPart, PART } from '../src/packet/share-link.ts';
+import { keyFromFragment, PART } from '../src/packet/share-link.ts';
+import { sealPart } from '../src/cli/link-sealing.ts';
 
 const web = fileURLToPath(new URL('../', import.meta.url));
 const repo = fileURLToPath(new URL('../../', import.meta.url));
-const dist = join(web, 'dist-share-links');
+const dist = join(web, 'dist-link-stub');
 const port = Number(process.env.SM_LINK_STUB_PORT ?? 4174);
 
 const vector = JSON.parse(readFileSync(join(repo, 'research/B4/contracts/fixtures/share-link-sealing-vector.json'), 'utf8'));
@@ -75,46 +75,9 @@ function json(res: ServerResponse, status: number, body: unknown): void {
   res.end(JSON.stringify(body));
 }
 
-function sealedAs(bytes: Uint8Array, part: number): boolean {
-  const header = [0x53, 0x4d, 0x4c, 0x49, 0x4e, 0x4b, 1, part];
-  return bytes.length >= header.length + 12 + 16 && header.every((byte, i) => bytes[i] === byte);
-}
-
-async function upload(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of req) chunks.push(chunk as Buffer);
-  const request = new Request(`http://127.0.0.1:${port}/api/v1/links`, {
-    method: 'POST',
-    headers: { 'content-type': req.headers['content-type'] ?? '' },
-    body: Buffer.concat(chunks),
-  });
-  let form: FormData;
-  try {
-    form = await request.formData();
-  } catch {
-    return json(res, 400, { error: 'bad_request' });
-  }
-  const part = async (name: string) => {
-    const value = form.get(name);
-    return value instanceof Blob ? new Uint8Array(await value.arrayBuffer()) : null;
-  };
-  const preview = await part('preview');
-  const packet = await part('packet');
-  if (!preview || !sealedAs(preview, 1)) return json(res, 400, { error: 'bad_preview' });
-  if (!packet || !sealedAs(packet, 2)) return json(res, 400, { error: 'bad_packet' });
-  const id = randomBytes(16).toString('hex');
-  links.set(id, { preview, packet });
-  const expiresAt = new Date(Date.now() + 30 * 86_400_000).toISOString();
-  json(res, 201, { id, path: `/l/${id}`, expiresAt });
-}
-
 createServer((req, res) => {
   const url = new URL(req.url ?? '/', `http://127.0.0.1:${port}`);
   const parts = /^\/l\/([A-Za-z0-9_-]{1,64})(?:\/(packet|preview))?\/?$/.exec(url.pathname);
-  if (req.method === 'POST' && url.pathname === '/api/v1/links') {
-    void upload(req, res);
-    return;
-  }
   if (req.method !== 'GET') return json(res, 405, { error: 'method' });
   if (parts && parts[2]) {
     if (parts[1] === GONE) return json(res, 410, { error: 'expired' });

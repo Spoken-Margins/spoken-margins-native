@@ -1260,21 +1260,6 @@ button:disabled {
 }
 
 .open-link input,
-.share-link-row input {
-  flex: 1;
-  min-width: 0;
-  min-height: 44px;
-  padding: 0 12px;
-  border-radius: 12px;
-  border: 1.5px solid var(--rule);
-  background: var(--surface);
-}
-
-.share-link-row {
-  display: grid;
-  gap: 6px;
-}
-
 /* Sharing an episode's Margins as a file. */
 .share-margins {
   display: grid;
