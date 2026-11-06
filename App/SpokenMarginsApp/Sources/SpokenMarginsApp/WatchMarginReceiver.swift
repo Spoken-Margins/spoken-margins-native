@@ -181,6 +181,10 @@ final class WatchMarginReceiver: NSObject {
     /// is out, so the fast lane answers in a second, not after speech recognition.
     @discardableResult
     func handle(_ envelope: WatchEnvelope, now: @escaping @Sendable () -> Date = { Date() }) -> Task<WatchPhoneReply, Never> {
+        // The Watch's own record (#3506) goes to a file for the Diagnostics export; it is small and not a session change.
+        if case .diagnostics(let report) = envelope.message, let file = WatchDiagnosticsStore.defaultFileURL {
+            WatchDiagnosticsStore.save(report, to: file)
+        }
         let previous = lastPass
         let files = files
         let work = Task { [weak self] () -> (WatchPhoneReply, [LiveSessionFileWorker.FiledMargin]) in
@@ -198,7 +202,7 @@ final class WatchMarginReceiver: NSObject {
             case .sessionStart, .sessionEnd, .sessionResume, .withdraw:
                 self.announceChange()
                 LiveSessionBoard.shared.refresh()
-            case .hello, .marginDetails:
+            case .hello, .marginDetails, .diagnostics:
                 break
             }
             return (reply, filed)

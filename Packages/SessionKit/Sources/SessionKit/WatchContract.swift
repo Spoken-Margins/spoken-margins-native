@@ -407,6 +407,9 @@ public enum WatchMessage: Codable, Equatable, Sendable {
     case marginDetails(WatchMarginTransfer)
     /// The listener deleted a waiting Margin on the Watch: a copy that arrives later is refused.
     case withdraw(id: String)
+    /// The Watch's record of launches, failures and unclean endings (#3506), for the phone's Diagnostics export. A
+    /// phone build before this one can't decode the case and drops the whole message, which is harmless.
+    case diagnostics(WatchDiagnosticsReport)
 }
 
 /// What travels: the message, the contract version, the Watch's clock at sending, and a counter that only rises.

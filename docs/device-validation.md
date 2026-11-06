@@ -75,6 +75,22 @@ Remaining native extension work:
 - Product-owner physical-device acceptance of the native Lock Screen path above.
 - Watch package rendering remains out of scope; a future Watch app or Smart Stack surface should dispatch the same compact-control commands instead of creating a second transport.
 
+## The Watch app closes at launch: reading its record (#3506)
+
+The Watch keeps a small record of launches, failures and unclean endings (no Margin text, titles, addresses or audio) in `WatchDiagnostics.json` in its own storage, and sends it to the phone whenever it can. It is under Diagnostics in the export as `watchDiagnostics`.
+
+**A launch that crashed, but a later launch worked.** Share Diagnostics from Settings on the phone and open the file. Under `watchDiagnostics`, look for:
+- `previousLaunchNeverBecameActive`: a launch ended before the app reached the front. This is the crash-at-launch line.
+- `previousRunEndedInFront`: the app was in front when it ended, so a crash or the system ending it.
+- `failure` lines (`transferFailed`, `activationFailed`, `recordingStartFailed`, `recordingNotSaved`) with an error domain and code.
+- `uncaughtException`: an Objective-C exception, by name. A Swift trap (a force unwrap, an index out of range) leaves no such line, only the two above.
+
+**A Watch that crashes at every launch can't send anything.** The record stays on the Watch, so read the crash report itself from the phone:
+1. On the iPhone, open Settings, Privacy & Security, Analytics & Improvements, then Analytics Data. (Share iPhone & Watch Analytics must be on in the same screen.)
+2. Find the newest entries whose name starts with `SpokenMarginsWatchApp`. Watch crash reports are copied to the phone here, sometimes after a few minutes.
+3. Open the newest one, tap the share button, and send the text to yourself. It holds the crash frames; a build from the rolling phone build or an upload keeps its dSYM, so the frames can be read.
+4. If the list is empty, the Watch has not synced yet: leave both devices on Wi-Fi and charged, then look again.
+
 ## Goal 4: Offline AI Deferral
 
 - Configure the phone to point at the laptop local AI endpoint.
