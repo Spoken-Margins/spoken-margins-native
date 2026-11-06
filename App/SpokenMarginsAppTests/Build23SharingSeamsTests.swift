@@ -110,9 +110,9 @@ final class Build23SharingSeamsTests: XCTestCase {
         XCTAssertEqual(coordinator.verifiedPreview?.margins.count, 2)
         let exported = try SpokenMarginsPackageArchive.read(from: url, extractingAssetsTo: root.appending(path: "verified-assets"))
         XCTAssertNil(exported.listeningMapProposals.first?.scenes.first?.summaryAssetId)
-        // The seeded sample is not a marked public source, so the model's words stay on the phone (#3449) while the scene
-        // start still goes; the local map below is untouched.
-        XCTAssertEqual(exported.listeningMapProposals.first?.scenes.count, 1)
+        // The seeded item is a local one with no public-source mark, so the model-written summary stays on the phone (#3449):
+        // the packet carries the scene start and nothing the model wrote. A marked-public source keeps its text; that is
+        // covered where the gate is (`ListeningMapExportTests`, `SharedMarginExportTests`).
         XCTAssertNil(exported.listeningMapProposals.first?.scenes.first?.summaryText)
         XCTAssertNil(exported.listeningMapProposals.first?.scenes.first?.title)
         XCTAssertEqual(try store.loadPortableListeningMapProposals(itemId: itemID).first, proposal, "Sharing must not mutate the local map or its usable Skim audio")
