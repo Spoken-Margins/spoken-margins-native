@@ -146,7 +146,7 @@ public enum SharedMarginReview {
         return "\(count) new Margin\(count == 1 ? "" : "s") from \(whose). Hear \(count == 1 ? "it" : "them") in place first, then carry on from where you were."
     }
 
-    private static func playsBefore(_ lhs: Entry, _ rhs: Entry) -> Bool {
+    static func playsBefore(_ lhs: Entry, _ rhs: Entry) -> Bool {
         if lhs.mediaTimeMs != rhs.mediaTimeMs { return lhs.mediaTimeMs < rhs.mediaTimeMs }
         let (left, right) = (lhs.senderLabel, rhs.senderLabel)
         if left.lowercased() != right.lowercased() { return left.lowercased() < right.lowercased() }

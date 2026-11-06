@@ -2,6 +2,7 @@ import AVFoundation
 import Foundation
 import SessionKit
 import SessionKitAudio
+import UIKit
 
 /// A friend's episode that can't play (a private feed, a removed episode): the voice reads each Margin's quote, or its
 /// place, and then the sender's Margin plays (owner, 2026-11-02, #3392). What is read, in what order, whether the
@@ -21,21 +22,59 @@ extension Gate1AppModel {
         )
     }
 
-    /// The one trigger, called from `snapshotDidChange` on every snapshot change: this attempt to start the open podcast
-    /// episode has just failed (`CantPlayListening.startFailed`), so a friend's new Margins are heard without it. The
-    /// first tap on a dead episode gets the quote and then the Margin, with no second tap and no screen needed. The
-    /// listening starts from here after the first words are rendered (at most `cantPlayRenderHold` seconds), unless the
-    /// listener has moved on by then. Nothing is ended or paused until then.
+    private func cantPlayAround(friendMargins: Int) -> CantPlayListening.Surroundings {
+        CantPlayListening.Surroundings(
+            selectedItemId: selectedItem.id, isPodcastEpisode: selectedPodcastDownloadState != nil,
+            hasPlayableFile: localEpisodeFile(for: selectedItem.id) != nil, friendMargins: friendMargins,
+            appIsActive: UIApplication.shared.applicationState == .active, onPlaybackScreen: screen == .playback
+        )
+    }
+
+    /// The open item's Margins for a dead episode, by `SharedMarginReview.entriesWithoutEpisode` (a podcast that never
+    /// downloaded has none placed). `asking`: the listener asked, so every layer counts; otherwise only auto-play ones.
+    private func cantPlayEntries(asking: Bool) -> [SharedMarginReview.Entry] {
+        SharedMarginReview.entriesWithoutEpisode(
+            layers: selectedItem.importedCommentaryLayers, records: selectedItem.importedCommentaryInterjections,
+            ownMargins: ownMargins(itemId: selectedItem.id), asking: asking
+        ).filter { WrittenMarginReadings.audio(for: $0.interjection, in: $0.layer, voiceFile: resolvedApplicationSupportAssetURL(for:)).file != nil }
+    }
+
+    /// While the open podcast episode is dead (its start failed, no file on the phone), the Margins Review can offer:
+    /// all of them, since a Review tap asks. Nil when it isn't dead, so every other item reads `entries` as before.
+    func deadEpisodeEntries(itemId: String) -> [SharedMarginReview.Entry]? {
+        guard snapshot.itemId == itemId, selectedItem.id == itemId,
+              CantPlayListening.isDeadEpisode(
+                  .init(itemId: snapshot.itemId, status: snapshot.status, lastFailure: snapshot.lastFailure), cantPlayAround(friendMargins: 0)
+              ) else { return nil }
+        return cantPlayEntries(asking: true)
+    }
+
+    /// A Review tap on a dead episode: the listener asked, so every Margin is heard. True when this took the call.
+    func reviewFriendMarginsOfDeadEpisode(itemId: String, entries: [SharedMarginReview.Entry]) -> Bool {
+        guard deadEpisodeEntries(itemId: itemId) != nil else { return false }
+        hearFriendMarginsWithoutEpisode(itemId: itemId, entries: entries, asking: true)
+        return true
+    }
+
+    /// The one trigger for a listening nobody asked for, called from `snapshotDidChange` on every snapshot change: this
+    /// attempt to start the open podcast episode has just failed (`CantPlayListening.startFailed`) with the app active
+    /// and the listener on the playback screen, so the friend's auto-play Margins are heard without it. The first tap
+    /// on a dead episode gets the quote and then the Margin, with no second tap. A Lock Screen or CarPlay Play gets the
+    /// ordinary failure, and Margins set not to play by themselves wait for a Review tap.
     func hearFriendMarginsIfStartFailed(from old: SessionSnapshot) {
-        let itemId = snapshot.itemId ?? ""
-        guard old.status == .starting, snapshot.status == .failed, snapshot.itemId == old.itemId, selectedItem.id == itemId else { return }
-        let entries = newSharedMargins(itemId: itemId)
+        guard old.status == .starting, snapshot.status == .failed, snapshot.itemId == old.itemId, selectedItem.id == snapshot.itemId else { return }
+        let entries = cantPlayEntries(asking: false)
         guard CantPlayListening.startFailed(
             from: .init(itemId: old.itemId, status: old.status, lastFailure: old.lastFailure),
             to: .init(itemId: snapshot.itemId, status: snapshot.status, lastFailure: snapshot.lastFailure),
-            selectedItemId: selectedItem.id, isPodcastEpisode: selectedPodcastDownloadState != nil,
-            hasPlayableFile: localEpisodeFile(for: itemId) != nil, friendMargins: entries.count
+            around: cantPlayAround(friendMargins: entries.count)
         ) else { return }
+        hearFriendMarginsWithoutEpisode(itemId: selectedItem.id, entries: entries, asking: false)
+    }
+
+    /// Reads the Margins' words and starts the listening after the first words are rendered (at most
+    /// `cantPlayRenderHold` seconds), unless the listener has moved on by then. Nothing is ended or paused until then.
+    private func hearFriendMarginsWithoutEpisode(itemId: String, entries: [SharedMarginReview.Entry], asking: Bool) {
         let beats = CantPlayListening.plan(
             entries: entries, episodeTitle: selectedItem.title, voiceFor: Self.installedVoice(forLanguage:), defaultVoice: Self.defaultInstalledVoice
         )
@@ -54,11 +93,11 @@ extension Gate1AppModel {
             await reader.waitUntilSettled(first, upTo: Self.cantPlayRenderHold)
             guard let self, CantPlayListening.stillWanted(itemId: itemId, began: began, now: self.cantPlayScene),
                   let sequence = CantPlayListening.sequence(for: beats, itemId: itemId, placeMs: place) else { return }
-            self.startCantPlayListening(sequence: sequence, beats: beats, files: files)
+            self.startCantPlayListening(sequence: sequence, beats: beats, files: files, asking: asking)
         }
     }
 
-    private func startCantPlayListening(sequence: MarginMomentSequence, beats: [CantPlayListening.Beat], files: [String: URL]) {
+    private func startCantPlayListening(sequence: MarginMomentSequence, beats: [CantPlayListening.Beat], files: [String: URL], asking: Bool) {
         // Only now that it will start does anything give way: a moment, an automatic prompt, a stalled start.
         endMarginMoment()
         importedCommentaryAutoPlayTask?.cancel()
@@ -72,8 +111,10 @@ extension Gate1AppModel {
         for beat in beats { heard[beat.marginId] = beat.entry.interjection }
         startMarginMoment(sequence: sequence, voiceURLs: files, title: "New Margins", isApproximate: false)
         guard let conductor = marginMomentConductor else { return }
-        // Only a real Margin is ever marked heard, and only when its voice starts: the words have their own ids.
-        conductor.onVoiceStarted = { [weak self] id in if let margin = heard[id] { self?.markSharedMarginHeard(margin) } }
+        // Default until the owner answers (#3392): nothing is marked heard. A start that timed out on a weak signal fails
+        // the same way a removed episode does, and a Margin marked heard is gone from the listener's new Margins for good.
+        // To mark Margins heard when their voice starts, set `conductor.onVoiceStarted` here to
+        // `{ [weak self] id in if let margin = heard[id] { self?.markSharedMarginHeard(margin) } }`.
         conductor.chimedMarginIds = Set(beats.filter { !$0.entry.layer.isMuted }.map(\.marginId))
         conductor.onChimeStarted = { [weak self] in self?.diagnostics["marginMoment.chime"] = "played:\($0)" }
         // Words that can't be read are passed over without a word: the Margin follows at once. A recording that can't
@@ -86,8 +127,8 @@ extension Gate1AppModel {
         // A written Margin whose reading fails says what a written Margin's failure says, never "set not to be read".
         WrittenMarginReadings.rewordUnavailable(on: conductor, entries: beats.map(\.entry), model: self)
         diagnostics["marginMoment"] = "started:cant_play;beats=\(beats.count)"
-        screen = .playback
-        conductor.playTargetNow(movingSource: false) // no episode to move: the words start now, and nothing seeks the dead player
+        if asking { screen = .playback } // a Review tap goes to the listening; a listening nobody asked for never moves the screen
+        conductor.playTargetNow() // no episode to move: the conductor doesn't seek a can't-play listening, so the words start now
     }
 
     // MARK: Voices installed on this iPhone (the same answer `WrittenMarginReader` gives at render time)

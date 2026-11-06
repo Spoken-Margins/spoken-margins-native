@@ -55,4 +55,54 @@ final class CantPlayQuotePacketTests: XCTestCase {
         XCTAssertNil(anchor.prefix)
         XCTAssertNil(CantPlayListening.readableQuote(of: anchor, voiceFor: { $0 }, defaultVoice: { "default" }))
     }
+
+    /// A podcast that never downloaded: its Margins import with no placement, so `entries` (which needs one) offers
+    /// none, and the listener would get the plain failure. The can't-play entries use the sender's time.
+    private func importedUnplaced() throws -> (layers: [ImportedCommentaryLayer], records: [String: [ImportedCommentaryInterjection]]) {
+        let item = SharedItemIdentity(itemType: .podcast, title: "A Useful Episode", durationMs: 3_600_000)
+        let revision = InterjectionShareRevision(
+            id: "revision", interjectionId: "private", itemId: "private-item", sessionId: "private-session",
+            createdAt: created, approvedTranscript: "A thought.", cleanedAudioPath: nil, cleanedAudioDurationMs: nil,
+            anchorBefore: "and that is why the harbour matters", anchorAfter: "", status: .senderApproved
+        )
+        let prepared = try SpokenMarginsPackageBuilder.prepare(
+            packageId: "package-unplaced", createdAt: created, item: item, itemTransportSelection: .reference,
+            selections: [.init(
+                packageScopedId: "margin-001", revision: revision,
+                anchor: .init(anchorType: .media, mediaTimeMs: 720_000), representation: .textOnly
+            )]
+        )
+        let url = root.appendingPathComponent("unplaced.spokenmargins")
+        try exportPacket(prepared, to: url)
+        let verified = try SpokenMarginsPackageArchive.read(from: url, extractingAssetsTo: root.appendingPathComponent("unplaced-assets"))
+        let repository = InMemorySessionRepository()
+        _ = try SpokenMarginsPackageImporter.importPackage(
+            verified, itemId: "recipient-item", importedAt: created, repository: repository,
+            makeLocalID: { kind, packageID in "recipient-\(kind)-\(packageID)" }
+        )
+        let layers = try repository.loadImportedCommentaryLayers(itemId: "recipient-item")
+        var records: [String: [ImportedCommentaryInterjection]] = [:]
+        for layer in layers { records[layer.id] = try repository.loadImportedCommentaryInterjections(layerId: layer.id) }
+        return (layers, records)
+    }
+
+    func testAnEpisodeNeverDownloadedStillOffersItsMarginsAtTheSendersTime() throws {
+        let (layers, records) = try importedUnplaced()
+        XCTAssertEqual(SharedMarginReview.entries(layers: layers, records: records), [], "the bug: nothing is placed, so the ordinary entries are empty")
+        let entries = SharedMarginReview.entriesWithoutEpisode(layers: layers, records: records, asking: false)
+        XCTAssertEqual(entries.map(\.mediaTimeMs), [720_000])
+        XCTAssertTrue(entries.allSatisfy(\.isApproximate), "the sender's time, not a placement")
+        let beats = CantPlayListening.plan(entries: entries, episodeTitle: "A Useful Episode")
+        XCTAssertEqual(beats.first?.context, .quote("and that is why the harbour matters"))
+    }
+
+    func testAMarginSetNotToPlayByItselfIsHeardOnlyWhenTheListenerAsks() throws {
+        var (layers, records) = try importedUnplaced()
+        XCTAssertEqual(layers.first?.revealMode, .guided, "a packet arrives set to play in place")
+        layers[0].revealMode = .companion
+        XCTAssertEqual(SharedMarginReview.entriesWithoutEpisode(layers: layers, records: records, asking: false), [], "auto-play off: a failed Play starts nothing")
+        XCTAssertEqual(SharedMarginReview.entriesWithoutEpisode(layers: layers, records: records, asking: true).count, 1, "a Review tap asks")
+        layers[0].revealMode = nil
+        XCTAssertEqual(SharedMarginReview.entriesWithoutEpisode(layers: layers, records: records, asking: false), [], "no mode is not auto-play")
+    }
 }

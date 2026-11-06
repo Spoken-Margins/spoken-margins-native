@@ -93,7 +93,8 @@ final class CantPlayListeningTests: XCTestCase {
         )
         var asked: [String] = []
         conductor.onVoiceUnavailable = { id, _ in asked.append(id) }
-        conductor.playTargetNow(movingSource: false)
+        conductor.start() // the app's start: no player to seek (the failed player throws and the app shows a banner)
+        conductor.playTargetNow()
         XCTAssertEqual(asked, CantPlayListening.anchors(for: beats, placeMs: 0).map(\.marginId), "words, Margin, words, Margin: in that order, none skipped")
         XCTAssertEqual(seeks, [], "there is no episode to seek")
         XCTAssertTrue(CantPlayListening.isCantPlayListening(conductor.sequence))
@@ -211,9 +212,12 @@ final class CantPlayListeningTests: XCTestCase {
     private func decide(
         from old: CantPlayListening.Start = CantPlayListening.Start(itemId: "item", status: .starting, lastFailure: nil),
         to new: CantPlayListening.Start = CantPlayListening.Start(itemId: "item", status: .failed, lastFailure: "playback_start_failed:timed out"),
-        selected: String = "item", podcast: Bool = true, file: Bool = false, margins: Int = 2
+        selected: String = "item", podcast: Bool = true, file: Bool = false, margins: Int = 2, active: Bool = true, onScreen: Bool = true
     ) -> Bool {
-        CantPlayListening.startFailed(from: old, to: new, selectedItemId: selected, isPodcastEpisode: podcast, hasPlayableFile: file, friendMargins: margins)
+        CantPlayListening.startFailed(from: old, to: new, around: .init(
+            selectedItemId: selected, isPodcastEpisode: podcast, hasPlayableFile: file, friendMargins: margins,
+            appIsActive: active, onPlaybackScreen: onScreen
+        ))
     }
 
     func testOnlyThisAttemptToStartAnEpisodeWithNoFileFailingTakesThisPath() {
@@ -229,6 +233,18 @@ final class CantPlayListeningTests: XCTestCase {
         XCTAssertFalse(decide(margins: 0), "no friend Margins: the ordinary message")
         XCTAssertFalse(decide(selected: "other"), "not the open item")
         XCTAssertFalse(decide(from: start(.starting, item: "other")), "the item changed under the attempt")
+        XCTAssertFalse(decide(active: false), "a Play from the Lock Screen or CarPlay, or after leaving the app: nobody is watching")
+        XCTAssertFalse(decide(onScreen: false), "the listener is not on the playback screen: a voice never starts on its own elsewhere")
+    }
+
+    func testAReviewTapOnADeadEpisodeNeedsTheFailureNotTheTransition() {
+        let around = CantPlayListening.Surroundings(
+            selectedItemId: "item", isPodcastEpisode: true, hasPlayableFile: false, friendMargins: 0, appIsActive: false, onPlaybackScreen: false
+        )
+        XCTAssertTrue(CantPlayListening.isDeadEpisode(start(.failed, failure: "playback_start_failed:x"), around), "dead, however long ago")
+        XCTAssertFalse(CantPlayListening.isDeadEpisode(start(.failed, failure: "playback_failed:x"), around))
+        XCTAssertFalse(CantPlayListening.isDeadEpisode(start(.starting, failure: "playback_start_failed:x"), around), "still trying: the ordinary Review")
+        XCTAssertFalse(CantPlayListening.isDeadEpisode(start(.failed, item: "other", failure: "playback_start_failed:x"), around))
     }
 
     /// The first tap on a dead episode, on the real engine's clock: the start is silent, the player recreates it once at
@@ -253,7 +269,10 @@ final class CantPlayListeningTests: XCTestCase {
         }
         func fires(_ old: SessionSnapshot, _ new: SessionSnapshot) -> Bool {
             CantPlayListening.startFailed(
-                from: read(old), to: read(new), selectedItemId: "item", isPodcastEpisode: true, hasPlayableFile: false, friendMargins: 1
+                from: read(old), to: read(new), around: .init(
+                    selectedItemId: "item", isPodcastEpisode: true, hasPlayableFile: false, friendMargins: 1,
+                    appIsActive: true, onPlaybackScreen: true
+                )
             )
         }
         let tapped = try engine.startSession(itemId: item.id)

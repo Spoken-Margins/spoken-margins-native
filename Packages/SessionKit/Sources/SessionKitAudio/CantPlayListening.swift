@@ -33,18 +33,51 @@ public enum CantPlayListening {
         }
     }
 
-    /// The one trigger: this attempt to start this episode just failed. It is the change from `.starting` to `.failed`
-    /// with a start failure, for the item that is open, so it can't fire on an old failure (a snapshot that was already
-    /// failed is not a change), on a mid-playback failure, or on an article (`isPodcastEpisode`). While the player is
-    /// still recovering the status stays `.starting`, so Review keeps its retry. A file on the phone (downloaded or
-    /// brought, `hasPlayableFile`) is never "can't play": a file that won't start keeps its own message.
-    public static func startFailed(
-        from old: Start, to new: Start, selectedItemId: String, isPodcastEpisode: Bool, hasPlayableFile: Bool, friendMargins: Int
-    ) -> Bool {
-        guard friendMargins > 0, isPodcastEpisode, !hasPlayableFile else { return false }
-        guard old.status == .starting, new.status == .failed else { return false }
-        guard old.itemId == new.itemId, new.itemId == selectedItemId else { return false }
-        return new.lastFailure?.hasPrefix("playback_start_failed:") == true
+    /// The player's start failed for good (`.failed` with a start failure).
+    public static func isStartFailure(_ start: Start) -> Bool {
+        start.status == .failed && start.lastFailure?.hasPrefix("playback_start_failed:") == true
+    }
+
+    /// What the app knows about the item and the moment, beside the player's own change.
+    public struct Surroundings: Equatable, Sendable {
+        public let selectedItemId: String
+        public let isPodcastEpisode: Bool
+        /// A downloaded or brought file is on the phone.
+        public let hasPlayableFile: Bool
+        public let friendMargins: Int
+        public let appIsActive: Bool
+        /// The listener is on the playback screen at this moment.
+        public let onPlaybackScreen: Bool
+
+        public init(
+            selectedItemId: String, isPodcastEpisode: Bool, hasPlayableFile: Bool, friendMargins: Int,
+            appIsActive: Bool, onPlaybackScreen: Bool
+        ) {
+            self.selectedItemId = selectedItemId
+            self.isPodcastEpisode = isPodcastEpisode
+            self.hasPlayableFile = hasPlayableFile
+            self.friendMargins = friendMargins
+            self.appIsActive = appIsActive
+            self.onPlaybackScreen = onPlaybackScreen
+        }
+    }
+
+    /// The episode is dead: its start failed, for the open podcast episode, and no file is on the phone to play instead.
+    /// A file on the phone (downloaded or brought) that won't start keeps its own message ("Download Again").
+    public static func isDeadEpisode(_ now: Start, _ around: Surroundings) -> Bool {
+        isStartFailure(now) && around.isPodcastEpisode && !around.hasPlayableFile && now.itemId == around.selectedItemId
+    }
+
+    /// The one trigger for a listening nobody asked for: this attempt to start this episode just failed. It is the
+    /// change from `.starting` to `.failed` with a start failure, so it can't fire on an old failure (a snapshot that
+    /// was already failed is not a change), a mid-playback failure or an article. While the player is still recovering
+    /// the status stays `.starting`, so Review keeps its retry. Nobody is made to listen: it needs the app active and
+    /// the listener already on the playback screen at that moment, so a Lock Screen or CarPlay Play on a dead episode
+    /// gets the ordinary failure.
+    public static func startFailed(from old: Start, to new: Start, around: Surroundings) -> Bool {
+        guard around.friendMargins > 0, around.appIsActive, around.onPlaybackScreen else { return false }
+        guard old.status == .starting, old.itemId == new.itemId else { return false }
+        return isDeadEpisode(new, around)
     }
 
     // MARK: Whether the world still wants it

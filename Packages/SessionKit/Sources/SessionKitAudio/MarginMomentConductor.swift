@@ -106,7 +106,7 @@ public final class MarginMomentConductor {
 
     /// Starts the lead-in: seeks the source to the sequence's start.
     public func start() {
-        source.seek(sequence.startMediaTimeMs)
+        if movesSource { source.seek(sequence.startMediaTimeMs) }
         // After the seek: the app tells `sourceMoved()` about every seek, which would clear this baseline (#1646).
         lastObservedMs = sequence.startMediaTimeMs
         onChange?()
@@ -132,12 +132,15 @@ public final class MarginMomentConductor {
         playVoice(for: margin)
     }
 
-    /// "Play it now" during the lead-in. `movingSource: false` leaves the source where it is: for a source that can't
-    /// play (a friend's episode that failed to start, #3392), where a seek would only wake the dead player.
-    public func playTargetNow(movingSource: Bool = true) {
+    /// A listening for an episode that can't play has nowhere to move a source to: a seek would only wake the dead
+    /// player and fail (#3392). The one rule for every way the machine moves the source at its start.
+    private var movesSource: Bool { !CantPlayListening.isCantPlayListening(sequence) }
+
+    /// "Play it now" during the lead-in.
+    public func playTargetNow() {
         guard let margin = sequence.jumpToTarget() else { return }
         source.pause()
-        if movingSource { source.seek(margin.mediaTimeMs) }
+        if movesSource { source.seek(margin.mediaTimeMs) }
         lastObservedMs = margin.mediaTimeMs
         playVoice(for: margin)
     }
