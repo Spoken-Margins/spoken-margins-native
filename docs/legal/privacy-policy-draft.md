@@ -118,7 +118,7 @@ You can move library items to Recently Deleted, permanently delete them in the a
 
 ### Contact
 
-Questions or privacy requests: resists.fabric-0o@icloud.com. **[[Add the copyright agent for takedowns once designated; see terms-draft.md 5C. Add links to "Report this link", the content policy and the intimate-image removal process (#2238, #2239).]]**
+Questions or privacy requests: cole@proximitytoprogress.com, or by mail to Proximity to Progress LLC, 3547 Dempster St, PMB 1021, Skokie, IL 60076. **[[Add the copyright agent for takedowns once designated; see terms-draft.md 5C. Add links to "Report this link", the content policy and the intimate-image removal process (#2238, #2239).]]**
 
 ### Changes
 
