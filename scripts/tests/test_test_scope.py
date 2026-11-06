@@ -612,12 +612,132 @@ class ReachedByNameTests(unittest.TestCase):
             '        }',
             '    }',
             '}'])]
-        self.assertEqual(names, ['Holder', 'shown', 'run'])
+        self.assertEqual(names, ['Holder', 'shown', None, 'run'])
 
     def test_a_url_in_a_string_does_not_hide_the_call_after_it(self):
-        lines = [scope.COMMENT.sub('', line) for line in ['open("https://example.com"); model.stopChoice(at: 1) // note']]
+        lines = scope.strip_comments('open("https://example.com"); model.stopChoice(at: 1) // note')
         self.assertIn('stopChoice', lines[0])
         self.assertNotIn('note', lines[0])
+
+    def test_comments_are_blanked_without_moving_a_line_and_strings_keep_their_slashes(self):
+        # #3467 audit of #3466: file:/// cut the line at its second slash, and /* */ was never stripped.
+        text = '\n'.join([
+            'let url = URL(string: "file:///tmp/a")!; model.stopChoice(at: 1) // note',    # 1
+            '/* start',                                                                     # 2
+            '   model.hidden(at: 2) /* nested */ still hidden',                             # 3
+            '*/ model.shown(at: 3)',                                                        # 4
+            'let raw = #"//not a comment"#; model.rawKept()',                               # 5
+            'let many = """',                                                               # 6
+            '   // not a comment either; model.inString()',                                 # 7
+            '"""; model.afterString() // gone',                                             # 8
+            'let escaped = "quote \\" // still in the string"; model.afterEscape()'])       # 9
+        lines = scope.strip_comments(text)
+        self.assertEqual(len(lines), 9)
+        self.assertIn('file:///tmp/a', lines[0])
+        self.assertIn('stopChoice', lines[0])
+        self.assertNotIn('note', lines[0])
+        self.assertNotIn('hidden', lines[2])
+        self.assertNotIn('nested', lines[2])
+        self.assertIn('shown', lines[3])
+        self.assertIn('//not a comment', lines[4])
+        self.assertIn('rawKept', lines[4])
+        self.assertIn('inString', lines[6])
+        self.assertIn('afterString', lines[7])
+        self.assertNotIn('gone', lines[7])
+        self.assertIn('afterEscape', lines[8])
+
+    def test_a_final_init_is_nameless_too(self):
+        names = [name for _, _, name in scope.member_declarations([
+            'final class Holder {',
+            '    func above() {}',
+            '    final init(model: Model) {',
+            '        model.stopChoice(at: 1)',
+            '    }',
+            '}'])]
+        self.assertEqual(names, ['Holder', 'above', None])
+
+    def test_a_mention_in_an_init_body_does_not_reach_a_test_that_only_names_the_member_above_it(self):
+        # #3467 carry-over from the #3466 audit: the init's body was credited to `above`, declared just before it.
+        self.write(APP + 'Holder.swift', (
+            'struct Holder {\n'
+            '    func above() {}\n'
+            '    init(model: Model) {\n'
+            '        let local = model.stopChoice(at: 1)\n'
+            '    }\n'
+            '}\n'))
+        self.tree({'AboveTests.swift': (
+            'final class AboveTests: XCTestCase {\n    func testAbove() { model.above() }\n}\n')})
+        result = self.classify(APP + 'Gate1AppModel+Stops.swift')
+        self.assertNotIn('AboveTests', result['app_tests'])
+
+    WIDE = (
+        'import Foundation\n'
+        '\n'
+        'extension Gate1AppModel {\n'
+        '    func alpha() -> Int { 1 }\n'
+        '    func beta() -> Int {\n'
+        '        let local = 2\n'
+        '        return local\n'
+        '    }\n'
+        '}\n')
+
+    def wide(self):
+        self.write(APP + 'Gate1AppModel+Wide.swift', self.WIDE)
+        self.write(self.tests + 'AlphaTests.swift', (
+            'final class AlphaTests: XCTestCase {\n    func testAlpha() { model.alpha() }\n}\n'))
+        self.write(self.tests + 'BetaTests.swift', (
+            'final class BetaTests: XCTestCase {\n    func testBeta() { model.beta() }\n}\n'))
+
+    def diff(self, *hunks):
+        return {APP + 'Gate1AppModel+Wide.swift': ''.join(h + '\n' for h in hunks)}
+
+    def test_a_one_line_change_starts_from_its_member_and_adds_fewer_classes_than_the_file_with_no_diff(self):
+        self.wide()
+        path = APP + 'Gate1AppModel+Wide.swift'
+        whole = scope.classify([path], None, root=self.root)
+        one_line = scope.classify([path], self.diff('@@ -6 +6 @@'), root=self.root)  # inside beta
+        self.assertEqual(whole['app_tests'], ['AlphaTests', 'BetaTests'])
+        self.assertEqual(one_line['app_tests'], ['BetaTests'])
+
+    def test_the_search_starts_from_every_member_when_the_diff_is_missing_or_cannot_be_placed(self):
+        self.wide()
+        path = APP + 'Gate1AppModel+Wide.swift'
+        both = ['AlphaTests', 'BetaTests']
+        for diffs in (None, {}, {path: ''}, {path: 'no hunks here\n'}, self.diff('@@ -1 +1 @@'),  # an import
+                      self.diff('@@ -4 +4 @@', '@@ -6 +6 @@')):  # both members
+            self.assertEqual(scope.classify([path], diffs, root=self.root)['app_tests'], both, diffs)
+
+    def test_a_hunk_of_added_blank_or_comment_lines_reaches_nothing_but_a_removal_counts(self):
+        self.wide()
+        path = APP + 'Gate1AppModel+Wide.swift'
+        # Line 2 is blank: only added there, nothing a test can reach changed.
+        self.assertEqual(scope.classify([path], self.diff('@@ -1,0 +2 @@'), root=self.root)['app_tests'], [])
+        # A call deleted from beta's body leaves a hunk with no new lines, after line 6.
+        self.assertEqual(scope.classify([path], self.diff('@@ -7 +6,0 @@'), root=self.root)['app_tests'], ['BetaTests'])
+        # A line of beta's replaced by a comment: the new line is blank once stripped, but code was removed.
+        self.write(path, self.WIDE.replace('        let local = 2\n', '        // let local = 2\n'))
+        self.assertEqual(scope.classify([path], self.diff('@@ -6 +6 @@'), root=self.root)['app_tests'], ['BetaTests'])
+        # The same hunk with nothing removed (a comment only added) reaches nothing.
+        self.assertEqual(scope.classify([path], self.diff('@@ -5,0 +6 @@'), root=self.root)['app_tests'], [])
+
+    def test_a_member_in_the_same_file_that_calls_the_changed_one_is_no_hop_away(self):
+        self.wide()
+        self.write(APP + 'Gate1AppModel+Wide.swift', self.WIDE.replace(
+            '    func alpha() -> Int { 1 }\n', '    func alpha() -> Int { 1 }\n    func gamma() -> Int { alpha() }\n'))
+        self.write(self.tests + 'GammaTests.swift', (
+            'final class GammaTests: XCTestCase {\n    func testGamma() { model.gamma() }\n}\n'))
+        path = APP + 'Gate1AppModel+Wide.swift'
+        result = scope.classify([path], self.diff('@@ -4 +4 @@'), root=self.root)  # alpha
+        self.assertEqual(result['app_tests'], ['AlphaTests', 'GammaTests'])
+
+    def test_the_numbered_change_to_skim_stops_still_reaches_the_audio_test_that_caught_it(self):
+        # #3412 changed one line of Gate1AppModel+SkimStops.swift and three LocalAudioListeningPackageTests failed on main.
+        # The real tree, and the line found by its text so that a later edit moves the hunk with it.
+        path = APP + 'Gate1AppModel+SkimStops.swift'
+        lines = (scope.ROOT / path).read_text().split('\n')
+        number = next(i for i, line in enumerate(lines, 1) if 'SharedMarginAudio.canOffer' in line)
+        result = scope.classify([path], {path: f'@@ -{number} +{number} @@\n'})
+        self.assertIn('LocalAudioListeningPackageTests', result['app_tests'])
 
     def test_modifiers_with_a_setter_scope_and_case_lists_declare_their_names(self):
         self.assertEqual(

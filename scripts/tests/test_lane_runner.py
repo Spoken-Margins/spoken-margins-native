@@ -2921,6 +2921,20 @@ class MergeTests(unittest.TestCase):
         self.assertEqual(lane.owner_tap_paths({'files': [{'path': p} for p in paths]}),
                          sorted(['.github/wörkflows/audit.yml', 'scripts/lane-runner.py', workflow]))
 
+    def test_an_app_source_change_comes_with_its_hunks_so_the_name_search_can_start_from_them(self):
+        # #3467: test-scope.py seeds the T3 name search from the members a diff touches; it needs the -U0 hunks of the
+        # app sources, as it already had those of SessionKit's.
+        app = 'App/SpokenMarginsApp/Sources/SpokenMarginsApp/Model.swift'
+        (self.origin / app).parent.mkdir(parents=True)
+        (self.tree / app).parent.mkdir(parents=True)
+        self.commit(self.origin, app, 'struct M {\n    func a() {}\n    func b() {}\n}\n')
+        subprocess.run(self.git + ['-C', str(self.tree), 'pull', '-q', 'origin', 'main'], check=True)
+        self.commit(self.tree, app, 'struct M {\n    func a() {}\n    func b() { print(1) }\n}\n')
+        lane.fetch_base(self.tree, 'main')
+        paths, diffs = lane.committed_changes(self.tree, 'main')
+        self.assertEqual(paths, [app])
+        self.assertIn('@@ -3 +3 @@', diffs[app])
+
     def test_a_diff_touching_the_app_model_suggests_its_whole_workflow_class(self):
         (self.origin / 'scripts').mkdir()
         self.commit(self.origin, 'scripts/test-scope.py', (SCRIPTS / 'test-scope.py').read_text())

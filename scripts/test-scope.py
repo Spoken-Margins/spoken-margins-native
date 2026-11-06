@@ -181,7 +181,7 @@ REACH_FANOUT = 9
 REACH_MAX_TESTS = 100
 REACH_LISTED = 5  # how many left-out classes the note names
 TEST_METHOD = re.compile(r'^\s*(?:@\w+\s+)*func test\w*\(')
-COMMENT = re.compile(r'(?<!:)//.*')  # not the // of https://
+HUNK = re.compile(r'^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@', re.M)
 WORD = re.compile(r'[A-Za-z_]\w*')
 MEMBER_DECL = re.compile(
     r'^(\s*)(?:@\w+(?:\([^)]*\))?\s+)*((?:(?:private|fileprivate|internal|public|open|static|final|override|mutating|'
@@ -189,25 +189,76 @@ MEMBER_DECL = re.compile(
     r'class|protocol|actor|typealias|case|extension)\s+`?(\w+)((?:\s*,\s*`?\w+)*)')
 # An init or subscript has no name to follow, but its body belongs to it, not to the member declared above it.
 NAMELESS_DECL = re.compile(r'^(\s*)(?:@\w+(?:\([^)]*\))?\s+)*(?:(?:private|fileprivate|internal|public|open|convenience|'
-                           r'required|override|nonisolated|static|class)(?:\(\w+\))?\s+)*(?:init[?!]?\s*[(<]|subscript\s*[(<])')
+                           r'required|override|nonisolated|static|class|final)(?:\(\w+\))?\s+)*(?:init[?!]?\s*[(<]|subscript\s*[(<])')
 TYPE_KINDS = {'struct', 'enum', 'class', 'protocol', 'actor', 'extension'}
 
 
+def strip_comments(text):
+    """The lines of Swift <text> with // and /* */ comments (which nest) blanked, one output line per input line so that
+    an index means the same line to git. A // inside a string literal is not a comment: file:///tmp, "https://x", a raw
+    string #"//"# and a multi-line string are kept whole."""
+    out, i, size, depth = [], 0, len(text), 0
+    while i < size:
+        char = text[i]
+        if depth:
+            if text.startswith('/*', i):
+                depth += 1
+                out.append('  ')
+                i += 2
+            elif text.startswith('*/', i):
+                depth -= 1
+                out.append('  ')
+                i += 2
+            else:
+                out.append(char if char == '\n' else ' ')
+                i += 1
+        elif text.startswith('//', i):
+            while i < size and text[i] != '\n':
+                i += 1
+        elif text.startswith('/*', i):
+            depth = 1
+            out.append('  ')
+            i += 2
+        elif char in '#"':
+            hashes = 0
+            while text.startswith('#', i + hashes):
+                hashes += 1
+            if not text.startswith('"', i + hashes):
+                out.append(text[i:i + hashes])
+                i += hashes
+                continue
+            multiline = text.startswith('"""', i + hashes)
+            quote = '"""' if multiline else '"'
+            end = quote + '#' * hashes
+            escape = '\\' + '#' * hashes
+            j = i + hashes + len(quote)
+            while j < size and not text.startswith(end, j) and (multiline or text[j] != '\n'):
+                j += len(escape) + 1 if text.startswith(escape, j) and j + len(escape) < size else 1
+            j = min(size, j + (len(end) if text.startswith(end, j) else 0))
+            out.append(text[i:j])
+            i = j
+        else:
+            out.append(char)
+            i += 1
+    return [line.rstrip('\r') for line in ''.join(out).split('\n')]
+
+
 def swift_sources(root, prefix):
-    """{path: lines without // comments} for every Swift file under <prefix>."""
+    """{path: lines without comments} for every Swift file under <prefix>."""
     found = {}
     for path in sorted((root / prefix).glob('**/*.swift')):
         try:
             text = path.read_text(errors='replace')
         except OSError:
             continue
-        found[str(path.relative_to(root))] = [COMMENT.sub('', line) for line in text.splitlines()]
+        found[str(path.relative_to(root))] = strip_comments(text)
     return found
 
 
 def member_declarations(lines):
     """(line index, indent, name) of each declaration that is a member of a type or a top-level one. A local let or
-    func inside a function body is not one: no other file can name it."""
+    func inside a function body is not one: no other file can name it. An init or subscript has no name to follow, but
+    its body belongs to it, not to the member declared above it: it is listed with the name None."""
     stack, found = [], []  # stack: (indent, kind) of the open declarations
     for index, line in enumerate(lines):
         nameless = NAMELESS_DECL.match(line)
@@ -215,6 +266,8 @@ def member_declarations(lines):
             indent = len(nameless.group(1))
             while stack and stack[-1][0] >= indent:
                 stack.pop()
+            if not stack or stack[-1][1] in TYPE_KINDS:
+                found.append((index, indent, None))
             stack.append((indent, 'init'))
             continue
         match = MEMBER_DECL.match(line)
@@ -232,6 +285,75 @@ def member_declarations(lines):
     return found
 
 
+def holder_at(holders, index, indent):
+    """The (index, indent, name) of the member that holds the line at <index>, indented by <indent>: the nearest
+    declaration at or above it with a smaller indent. None when there is none."""
+    held = None
+    for holder in holders:
+        if holder[0] == index or (holder[0] < index and holder[1] < indent):
+            held = holder
+    return held
+
+
+def touched_lines(diff_text):
+    """(new-file line index, whether code was removed there) for each line a -U0 diff touches; None when the diff has
+    no hunk to read. A hunk that only removes lines touches the line it follows."""
+    hunks = list(HUNK.finditer(diff_text))
+    if not hunks:
+        return None
+    touched = []
+    for hunk in hunks:
+        removed = int(hunk.group(1)) if hunk.group(1) is not None else 1
+        start = int(hunk.group(2))
+        count = int(hunk.group(3)) if hunk.group(3) is not None else 1
+        if count == 0:
+            touched.append((max(start, 1) - 1, True))
+        else:
+            touched.extend((start - 1 + offset, removed > 0) for offset in range(count))
+    return touched
+
+
+def changed_members(lines, holders, diff_text):
+    """The names of the members whose lines a -U0 diff touches (#3467). Every named member when there is no diff to
+    read, or a touched line sits where no named member holds it (an import, a top-level statement): the net stays
+    as wide as it was. A touched line that is blank or only a comment changes nothing a test can reach, unless the
+    hunk also removed code, and then it counts as the nearest code line above it."""
+    everything = {name for _, _, name in holders if name}
+    touched = touched_lines(diff_text)
+    if touched is None:
+        return everything
+    names = set()
+    for index, removes in touched:
+        if index >= len(lines):
+            return everything
+        if not lines[index].strip():
+            if not removes:
+                continue
+            while index > 0 and not lines[index].strip():
+                index -= 1
+            if not lines[index].strip():
+                return everything
+        held = holder_at(holders, index, len(lines[index]) - len(lines[index].lstrip()))
+        if held is not None and held[2] is None:  # an init has no name: the type around it stands for it
+            around = [h for h in holders if h[0] < held[0] and h[1] < held[1]]
+            held = around[-1] if around else None
+        if held is None or held[2] is None:
+            return everything
+        names.add(held[2])
+    # A member in the same file that calls a changed one sits in the same neighbourhood: it is no hop away. (The file's
+    # private members are seen from nowhere else, so a hop through the file's own callers is the only way out of it.)
+    grown = True
+    while grown:
+        grown = False
+        for index, line in enumerate(lines):
+            if names & set(WORD.findall(line)):
+                held = holder_at(holders, index, len(line) - len(line.lstrip()))
+                if held and held[2] and held[2] not in names:
+                    names.add(held[2])
+                    grown = True
+    return names
+
+
 def test_counts(tests):
     """{class name: number of test methods} for the XCTestCase classes in <tests> ({path: lines})."""
     counts, current = {}, None
@@ -246,10 +368,12 @@ def test_counts(tests):
     return counts
 
 
-def reaching_classes(root, changed, skip=()):
+def reaching_classes(root, changed, skip=(), diffs=None):
     """App test classes that reach the changed app source files, nearest first, within REACH_MAX_TESTS.
 
     <skip> are the classes already running by file name: they neither spend the budget nor count as left out.
+    <diffs> ({path: -U0 diff}) narrows the start to the members a diff touches; a file without one starts from every
+    member it declares (#3467).
 
     Returns ([class names to run], [(class name, test count) that did not fit]). Empty when the test or source folder
     is missing (a synthetic tree)."""
@@ -259,7 +383,8 @@ def reaching_classes(root, changed, skip=()):
         return [], []
     words = {path: set(WORD.findall('\n'.join(lines))) for path, lines in {**sources, **tests}.items()}
     members = {path: member_declarations(lines) for path, lines in sources.items()}
-    frontier = {name for path in changed for _, _, name in members[path]}
+    diffs = diffs or {}
+    frontier = set().union(*(changed_members(sources[path], members[path], diffs.get(path, '')) for path in changed))
     seen, classes = set(frontier), []
     for _ in range(REACH_HOPS):
         frontier = {name for name in frontier if sum(name in w for w in words.values()) <= REACH_FANOUT}
@@ -278,11 +403,10 @@ def reaching_classes(root, changed, skip=()):
             for index, line in enumerate(lines):
                 if not frontier & set(WORD.findall(line)):
                     continue
-                # The member that holds this line: the nearest declaration above it with a smaller indent.
-                indent = len(line) - len(line.lstrip())
-                held = [name for at, deep, name in holders if at == index or (at < index and deep < indent)]
-                if held:
-                    reached.add(held[-1])
+                # The member that holds this line. An init body belongs to the init, which has no name to follow.
+                held = holder_at(holders, index, len(line) - len(line.lstrip()))
+                if held and held[2]:
+                    reached.add(held[2])
         frontier = reached - seen
         seen |= reached
     counts, picked, left_out, total = test_counts(tests), [], [], 0
@@ -401,7 +525,8 @@ def classify(paths, diffs=None, root=ROOT):
         note = NOTES.get(finding.category)
         if note and note not in notes:
             notes.append(note)
-    reach, left_out = reaching_classes(root, [f.path for f in findings if f.path.endswith('.swift')], skip=app_tests)
+    reach, left_out = reaching_classes(root, [f.path for f in findings if f.path.endswith('.swift')], skip=app_tests,
+                                       diffs=diffs)
     extra = [name for name in reach if name not in app_tests]
     if extra:
         app_tests.extend(extra)
@@ -617,7 +742,7 @@ def changed_paths(base):
     paths |= set(git('ls-files', '--others', '--exclude-standard').split())
     diffs = {}
     current = None
-    for line in git('diff', '-U0', merge_base, '--', SESSIONKIT + 'Sources').splitlines():
+    for line in git('diff', '-U0', merge_base, '--', SESSIONKIT + 'Sources', APP_SOURCES).splitlines():
         if line.startswith('diff --git '):
             current = line.split(' b/', 1)[1]
             diffs[current] = ''

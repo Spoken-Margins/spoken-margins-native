@@ -805,8 +805,9 @@ def run_t2(evidence: Path, runner=None) -> tuple[str, str, list[str]]:
 # ---- Automerge ----------------------------------------------------------------------------------
 
 def committed_changes(tree: Path, base: str) -> tuple[list[str], dict[str, str]]:
-    """The PR's committed changes against origin/<base>: paths, and SessionKit source diffs (for the
-    public-API check). Nothing untracked in the runner's workspace counts."""
+    """The PR's committed changes against origin/<base>: paths, and -U0 diffs of SessionKit sources (for the
+    public-API check) and app sources (the members a change touches start the T3 name search, #3467). Nothing
+    untracked in the runner's workspace counts."""
     git = ['git', '-C', str(tree)]
     merge_base = subprocess.check_output(git + ['merge-base', 'HEAD', f'origin/{base}'], text=True).strip()
     # Both sides of a rename (a file moved out of .github/ is a change to .github/), and NUL-separated: git's default
@@ -815,8 +816,9 @@ def committed_changes(tree: Path, base: str) -> tuple[list[str], dict[str, str]]
                                     text=True).split('\0')
     paths = [path for path in paths if path]
     diffs, current = {}, None
-    for line in subprocess.check_output(git + ['diff', '-U0', merge_base, 'HEAD', '--', 'Packages/SessionKit/Sources'],
-                                        text=True).splitlines():
+    for line in subprocess.check_output(
+            git + ['diff', '-U0', merge_base, 'HEAD', '--', 'Packages/SessionKit/Sources', 'App/SpokenMarginsApp/Sources'],
+            text=True).splitlines():
         if line.startswith('diff --git '):
             current = line.split(' b/', 1)[1]
             diffs[current] = ''
