@@ -137,12 +137,6 @@ public struct InterjectionShareRevision: Codable, Equatable, Sendable, Identifia
         self.status = status
         self.sentReadAloud = sentReadAloud
     }
-
-    /// The choice the sender's newest text share of a Margin carried, or `nil` if none did (#3472).
-    public static func lastSentReadAloud(in revisions: [InterjectionShareRevision]) -> Bool? {
-        revisions.filter { $0.sentReadAloud != nil }
-            .max { ($0.createdAt, $0.id) < ($1.createdAt, $1.id) }?.sentReadAloud
-    }
 }
 
 public enum SharedItemType: String, Codable, Equatable, Sendable {

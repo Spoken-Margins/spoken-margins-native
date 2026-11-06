@@ -158,20 +158,6 @@ final class ReadAloudChoiceTests: XCTestCase {
         )
     }
 
-    func testTheNewestShareThatCarriedAChoiceIsTheOneRemembered() {
-        XCTAssertNil(InterjectionShareRevision.lastSentReadAloud(in: []))
-        XCTAssertNil(InterjectionShareRevision.lastSentReadAloud(in: [revision("a", at: 1, sent: nil)]))
-        XCTAssertEqual(InterjectionShareRevision.lastSentReadAloud(in: [
-            revision("a", at: 1, sent: true), revision("b", at: 2, sent: false),
-        ]), false, "the sender flipped it off")
-        XCTAssertEqual(InterjectionShareRevision.lastSentReadAloud(in: [
-            revision("b", at: 2, sent: false), revision("a", at: 1, sent: true), revision("c", at: 3, sent: true),
-        ]), true, "the order they are listed in doesn't matter")
-        XCTAssertEqual(InterjectionShareRevision.lastSentReadAloud(in: [
-            revision("a", at: 1, sent: false), revision("b", at: 2, sent: nil),
-        ]), false, "a later share as a recording leaves the choice where it was")
-    }
-
     func testARevisionSavedByAnEarlierBuildStillLoadsWithNoChoice() throws {
         let old = #"{"id":"r","interjectionId":"m","itemId":"item","sessionId":"s","createdAt":0,"cleanupPolicyVersion":"cleanup.v1","approvedTranscript":"Words.","decisions":[],"anchorBefore":"B","anchorAfter":"A","status":"sender_approved"}"#
         let decoded = try JSONDecoder().decode(InterjectionShareRevision.self, from: Data(old.utf8))
@@ -189,6 +175,8 @@ final class ReadAloudChoiceTests: XCTestCase {
         try store.saveInterjectionShareRevision(revision("b", margin: "one", at: 2, sent: true))
         try store.saveInterjectionShareRevision(revision("c", margin: "two", at: 1, sent: false))
         try store.saveInterjectionShareRevision(revision("d", margin: "three", at: 1, sent: nil))
+        // A later share as a recording carries no choice and leaves the earlier one where it was.
+        try store.saveInterjectionShareRevision(revision("e", margin: "two", at: 2, sent: nil))
         XCTAssertEqual(try store.loadLastSentReadAloud(itemId: "item"), ["one": true, "two": false])
         XCTAssertEqual(try store.loadLastSentReadAloud(itemId: "another item"), [:])
     }
