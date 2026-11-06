@@ -44,11 +44,16 @@ public enum TextSceneSummaryPlanner {
     public static let maximumSceneCharacters = 6_000
     /// A scene with fewer letters and digits than this, or no sentence at all, has nothing for the model to summarise.
     public static let minimumSummarizableCharacters = 40
+    /// The most scenes one text gets, kept below a packet's 200-scene limit (`ListeningMapPacket.maximumScenes`) so a
+    /// long PDF's map can still be shared (#3461). A text with more is cut into this many even groups of neighbouring
+    /// scenes; each group is one scene and the model reads the first part of it.
+    public static let maximumScenes = 190
 
     public static func plan(
         text: String,
         chapters: [Chapter],
-        maximumSceneCharacters: Int = TextSceneSummaryPlanner.maximumSceneCharacters
+        maximumSceneCharacters: Int = TextSceneSummaryPlanner.maximumSceneCharacters,
+        maximumScenes: Int = TextSceneSummaryPlanner.maximumScenes
     ) -> [TextSceneDraft] {
         let characters = Array(text)
         guard !characters.isEmpty, maximumSceneCharacters > 0 else { return [] }
@@ -74,7 +79,26 @@ public enum TextSceneSummaryPlanner {
                 ))
             }
         }
-        return drafts
+        return grouped(drafts, maximumScenes: maximumScenes, maximumSceneCharacters: maximumSceneCharacters)
+    }
+
+    /// At most `maximumScenes` drafts: more than that are merged, neighbours together, into even groups. A group keeps
+    /// its first scene's id and title and covers all of its characters. The model reads the group's first
+    /// `maximumSceneCharacters` of readable text, so a summary describes where the group begins.
+    static func grouped(_ drafts: [TextSceneDraft], maximumScenes: Int, maximumSceneCharacters: Int) -> [TextSceneDraft] {
+        guard maximumScenes > 0, drafts.count > maximumScenes else { return drafts }
+        let size = (drafts.count + maximumScenes - 1) / maximumScenes
+        return stride(from: 0, to: drafts.count, by: size).enumerated().map { order, from in
+            let group = drafts[from..<min(from + size, drafts.count)]
+            let first = group.first!
+            let readable = group.filter(\.isSummarizable).map(\.modelText).joined(separator: "\n\n")
+            return TextSceneDraft(
+                id: first.id, order: order, startChar: first.startChar, endChar: group.last!.endChar,
+                fallbackTitle: first.fallbackTitle,
+                modelText: String(readable.prefix(maximumSceneCharacters)),
+                isSummarizable: group.contains(where: \.isSummarizable)
+            )
+        }
     }
 
     /// Enough letters to say something, and prose rather than a list of headings: a sentence end somewhere, or one line

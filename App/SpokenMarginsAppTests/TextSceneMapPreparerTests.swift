@@ -116,6 +116,56 @@ final class TextSceneMapPreparerTests: XCTestCase {
         XCTAssertEqual(try fixture.store.loadPortableListeningMapProposals(itemId: fixture.itemId).map(\.id), ["shared-map"])
     }
 
+    /// #3461: heat stops the run between scenes, the first scene's summary is already saved, and the next run asks the
+    /// model only about the scene that is still missing.
+    func testARunPausedForHeatKeepsItsSummariesAndTheNextRunContinues() async throws {
+        let fixture = try makeFixture()
+        let label = LocalListeningMapLabel(title: "Crossing", description: "how the caravans crossed the dunes", eligibility: .eligible)
+        let asked = CountBox()
+
+        let paused = try await TextSceneMapPreparer.summarise(
+            itemId: fixture.itemId, safeItemComponent: "article", store: fixture.store,
+            client: ScriptedLabelClient(label: label),
+            yieldReason: { asked.next() == 2 ? .heat(.serious) : nil },
+            renderBridge: { _, _ in XCTFail("a paused run renders nothing") }
+        )
+
+        XCTAssertEqual(paused, .paused(.heat(.serious), written: 1, total: 2))
+        let saved = try XCTUnwrap(try fixture.store.loadPortableListeningMapProposals(itemId: fixture.itemId).first)
+        XCTAssertEqual(saved.scenes.filter { $0.summaryText?.isEmpty == false }.map(\.id), ["ch-generated-01"])
+
+        let second = ScriptedLabelClient(label: label)
+        let finished = try await TextSceneMapPreparer.summarise(
+            itemId: fixture.itemId, safeItemComponent: "article", store: fixture.store, client: second, renderBridge: { _, _ in }
+        )
+
+        XCTAssertEqual(finished, .summarised(scenes: 2, total: 2))
+        XCTAssertEqual(second.texts, [Self.section2.trimmingCharacters(in: .whitespaces)], "the scene already written is not asked again")
+        let done = try XCTUnwrap(try fixture.store.loadPortableListeningMapProposals(itemId: fixture.itemId).first)
+        XCTAssertEqual(TextSceneSummaryProgress.state(proposals: [done]), .complete)
+    }
+
+    /// #3461: an item that already has chapters and no scene summaries (made before #3450, or after "model unavailable")
+    /// gets them from the same step the first run uses.
+    func testAnItemThatAlreadyHasChaptersGetsItsSummariesFromAFreshRun() async throws {
+        let fixture = try makeFixture()
+        let detail = try ItemDetailLoader.load(
+            id: fixture.itemId, store: fixture.store, snapshotItemId: nil, snapshotSessionId: nil, placementPasses: SharedMarginPlacementPasses())
+        XCTAssertEqual(detail.textSceneSummaries, .notStarted)
+        XCTAssertEqual(detail.chapters.count, 2)
+
+        let outcome = try await TextSceneMapPreparer.summarise(
+            itemId: fixture.itemId, safeItemComponent: "article", store: fixture.store,
+            client: ScriptedLabelClient(label: LocalListeningMapLabel(title: "Crossing", description: "how the caravans crossed the dunes", eligibility: .eligible)),
+            renderBridge: { _, _ in }
+        )
+
+        XCTAssertEqual(outcome, .summarised(scenes: 2, total: 2))
+        let after = try ItemDetailLoader.load(
+            id: fixture.itemId, store: fixture.store, snapshotItemId: nil, snapshotSessionId: nil, placementPasses: SharedMarginPlacementPasses())
+        XCTAssertEqual(after.textSceneSummaries, .complete)
+    }
+
     func testARunOnlyLooksAtTheListenersOwnText() async throws {
         // The planner and the model read the item's stored text; nothing is fetched, so a run works offline.
         let fixture = try makeFixture()
@@ -127,6 +177,12 @@ final class TextSceneMapPreparerTests: XCTestCase {
 
         XCTAssertEqual(client.texts, [Self.section1.trimmingCharacters(in: .whitespaces), Self.section2.trimmingCharacters(in: .whitespaces)])
     }
+}
+
+private final class CountBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+    func next() -> Int { lock.withLock { count += 1; return count } }
 }
 
 private final class RenderedBox: @unchecked Sendable {
