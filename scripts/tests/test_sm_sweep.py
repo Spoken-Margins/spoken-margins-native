@@ -786,7 +786,7 @@ class Unlabelled(unittest.TestCase):
         return [a for a in actions if a['rule'] == 'unlabelled']
 
     def test_the_issue_that_sat_for_39_hours_is_named(self):
-        found = self.found(gql_issue(3391, milestone='Showcase', labels=['enhancement', 'area: sharing']))
+        found = self.found(gql_issue(3391, milestone='Showcase', labels=['enhancement', 'found-on-phone']))
         self.assertEqual(len(found), 1)
         self.assertIn('1 open issue(s)', found[0]['detail'])
         self.assertEqual(found[0]['issues'], [3391])
