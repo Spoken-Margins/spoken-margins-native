@@ -188,6 +188,37 @@ class AnalysisTests(unittest.TestCase):
         self.assertGreaterEqual(report['recurring'][0]['sound_between'], 0.5)
         self.assertEqual(loopback.verdict(report), [])
 
+    def test_a_replay_that_ends_the_audio_is_a_repeat_even_after_new_sound(self):
+        # Review of #1790: a passage, a Margin, the passage again, then playback stops. Silence after the
+        # second time shows nothing new, so it can't be a phrase the source says twice.
+        phrase = steady_voice(51, 1.5)
+        for seed in (70, 71, 72):
+            margin = steady_voice(seed, 2, rhythm=(0.2, 0.26, 0.17))
+            report = self.analyse(steady_voice(50, 2, rhythm=(0.22, 0.17, 0.2)) + phrase + margin + phrase
+                                  + silence(1.5))
+            self.assertTrue(report['repeats'], f'seed {seed}: {report["recurring"]}')
+            self.assertEqual(report['recurring'], [], f'seed {seed}')
+
+    def test_the_expected_words_decide_whether_a_recurring_match_is_a_replay(self):
+        # Sound alone can't tell a phrase the source says twice from a replay after a Margin: both have
+        # new sound between and new words after. The expected text can.
+        phrase = steady_voice(51, 1.5)
+        samples = (steady_voice(50, 2, rhythm=(0.22, 0.17, 0.2)) + phrase
+                   + steady_voice(70, 2, rhythm=(0.2, 0.26, 0.17)) + phrase
+                   + steady_voice(53, 2, rhythm=(0.24, 0.18)) + silence(0.5))
+        fresh = lambda: self.analyse(samples)  # noqa: E731
+        match = fresh()['recurring'][0]
+        heard = [{'word': w, 'start': at + i * 0.3} for at in (match['original_start'], match['start'])
+                 for i, w in enumerate(('the', 'harbour', 'master'))]
+        for expected, recurs in (('we met the harbour master and later the harbour master again', True),
+                                 ('we met the harbour master on the quay', False)):
+            report = fresh()
+            report['transcript'] = {'text': ' '.join(h['word'] for h in heard), 'words': heard}
+            loopback.explain_recurring(report, expected)
+            self.assertEqual(bool(report['recurring']), recurs, expected)
+            self.assertEqual(bool(loopback.verdict(report)), not recurs, report['repeats'])
+        self.assertEqual(report['repeats'][0]['words'], 'the harbour master')
+
     def test_a_seek_back_after_new_words_is_still_a_repeat(self):
         # Playback that jumps 2.3 s back keeps matching what it replays, so it never looks recurring.
         # (Not 3 s: this voice's rhythm repeats every 1.5 s, so loudness matches at that lag everywhere.)

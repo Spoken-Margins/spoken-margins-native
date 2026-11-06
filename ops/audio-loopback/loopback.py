@@ -208,17 +208,16 @@ def matched_stretch(env, start, end, lag, silence_db, max_diff_db, smooth=10):
 
 def diverges(env, b, lag, silence_db, max_diff_db, brightness=None, max_tilt_db=1.0, seconds=1.0, min_sound=0.2):
     """True when the second after frame b sounds different from the second after b - lag: the match ended
-    because new words followed, not because the recording or the candidate window did. False without
-    enough sound after b to tell."""
-    frames = [t for t in range(b, min(len(env), b + int(seconds / HOP)))
-              if env[t] > silence_db or env[t - lag] > silence_db]
+    because new words followed, not because the recording, the playback or the candidate window did.
+    False without enough sound after b itself to tell; silence after a replay shows nothing new."""
+    frames = [t for t in range(b, min(len(env), b + int(seconds / HOP))) if env[t] > silence_db]
     if len(frames) * HOP < min_sound:
         return False
-    loud = sum(abs(max(env[t], silence_db) - max(env[t - lag], silence_db)) for t in frames) / len(frames)
+    loud = sum(abs(env[t] - max(env[t - lag], silence_db)) for t in frames) / len(frames)
     if loud > max_diff_db:
         return True
     both = [abs(brightness[t] - brightness[t - lag]) for t in frames
-            if brightness is not None and env[t] > silence_db and env[t - lag] > silence_db]
+            if brightness is not None and env[t - lag] > silence_db]
     return bool(both) and sum(both) / len(both) > max_tilt_db
 
 
@@ -238,9 +237,10 @@ def repeats(env, silence_db, min_seconds=0.6, min_lag=0.3, max_lag=30.0, min_pea
 
     The source itself can say a phrase twice, and a voice renders it the same both times (desk run
     2026-10-18: two authors' "foundation for American innovation", 3.5 s apart). Each stretch is marked
-    `recurring` when at least `min_between` seconds of new sound come between the original and the replay
-    and the audio after them differs. A replay can't look like that: a restarted chunk (#1762) follows its
-    cut-off start with nothing new between, and a seek back keeps matching what it replays.
+    `recurring` when at least `min_between` seconds of new sound come between the original and the second
+    time, and the sound after them differs. A restarted chunk (#1762) has nothing new between and a seek
+    back keeps matching, so neither is marked. Sound alone can't tell the rest apart: playback that replays
+    a passage after a Margin or a blip looks the same. `explain_recurring` lets the expected words decide.
     """
     marks = peaks(env, silence_db + 6)
     lo, hi = int(min_lag / HOP), int(max_lag / HOP)
@@ -423,6 +423,31 @@ def score(transcript, expected):
             'repeated_phrases': repeated_phrases(hypothesis, reference),
             'missing': [r for op, r, _ in ops if op == 'del'][:50],
             'extra': [h for op, _, h in ops if op == 'ins'][:50]}
+
+
+def explain_recurring(report, expected, slack=0.15):
+    """Keep in `recurring` only the matches the expected text accounts for; move the rest to `repeats`.
+
+    A match is accounted for when the words heard during its second time also come at least that many
+    times in the expected text. No words heard there, or a phrase the text says fewer times than it was
+    heard, means sound came back that the source doesn't repeat: a replay."""
+    def times(sequence, phrase):
+        return sum(1 for i in range(len(sequence) - len(phrase) + 1) if sequence[i:i + len(phrase)] == phrase)
+
+    reference = words(expected)
+    heard_all = report['transcript'].get('words', [])
+    hypothesis = [w for item in heard_all for w in words(item.get('word', ''))]
+    kept = []
+    for match in report.get('recurring', []):
+        said = [w for item in heard_all if match['start'] - slack <= item.get('start', -1) < match['end']
+                for w in words(item.get('word', ''))]
+        if said and times(reference, said) >= max(2, times(hypothesis, said)):
+            kept.append({**match, 'words': ' '.join(said)})
+        else:
+            report['repeats'].append({**match, 'words': ' '.join(said),
+                                      'unexplained': 'the expected text does not say these words that often'})
+    report['recurring'] = kept
+    report['repeats'].sort(key=lambda r: r['start'])
 
 
 # --- The macOS tool ---------------------------------------------------------------------------------------
@@ -742,6 +767,7 @@ def check_recording(path, expected=None, transcribe_too=False, locale='en-US', s
             report['transcript_error'] = report['transcript'].get('empty_reason', 'the recogniser returned no words')
         elif expected is not None and 'transcript' in report:
             report['score'] = score(report['transcript']['text'], expected)
+            explain_recurring(report, expected)
     report['problems'] = verdict(report, max_stall, allow_repeats, max_wer, min_sound, allow_trailing)
     if expected is not None and 'transcript_error' in report:
         report['problems'].append('could not check the words: ' + report['transcript_error'])
