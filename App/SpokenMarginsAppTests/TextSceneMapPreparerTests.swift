@@ -189,7 +189,7 @@ final class TextSceneMapPreparerTests: XCTestCase {
     func testAModelThatThrowsStopsTheRunAndLeavesTheItemOpenForTheChargingPass() async throws {
         let fixture = try makeFixture()
         let client = ScriptedLabelClient(label: LocalListeningMapLabel(title: "Crossing", description: "how the caravans crossed the dunes", eligibility: .eligible))
-        client.failure = LocalFoundationModelError.unavailable("busy")
+        client.failure = { _ in LocalFoundationModelError.unavailable("busy") }
 
         let outcome = try await TextSceneMapPreparer.summarise(
             itemId: fixture.itemId, safeItemComponent: "article", store: fixture.store, client: client,
@@ -201,6 +201,41 @@ final class TextSceneMapPreparerTests: XCTestCase {
         XCTAssertTrue(outcome.canBeContinued)
         XCTAssertEqual(try fixture.store.loadPortableListeningMapProposals(itemId: fixture.itemId), [])
         XCTAssertEqual(client.texts.count, 2, "one scene, the two tries; the second scene is never asked")
+    }
+
+    /// The audit on ad5fbcd: an error the same text always causes (a guardrail refusal, an unreadable answer) is the
+    /// model's verdict on that scene, so the run goes on to the scenes after it instead of stopping there for good.
+    func testASceneTheModelAlwaysRefusesIsSettledAndTheRunGoesOn() async throws {
+        let fixture = try makeFixture()
+        let client = ScriptedLabelClient(label: LocalListeningMapLabel(title: "Crossing", description: "how the caravans crossed the dunes", eligibility: .eligible))
+        client.failure = { text in text.contains("oasis") ? LocalFoundationModelError.invalidStructuredResponse : nil }
+
+        let outcome = try await TextSceneMapPreparer.summarise(
+            itemId: fixture.itemId, safeItemComponent: "article", store: fixture.store, client: client, renderBridge: { _, _ in }
+        )
+
+        XCTAssertEqual(outcome, .summarised(scenes: 1, total: 2))
+        XCTAssertEqual(client.texts.count, 2, "the refused scene is asked once, not twice, and the next scene is still asked")
+        let saved = try XCTUnwrap(try fixture.store.loadPortableListeningMapProposals(itemId: fixture.itemId).first)
+        XCTAssertEqual(TextSceneSummaryProgress.state(proposals: [saved]), .complete)
+    }
+
+    func testWhichModelErrorsRepeatForTheSameText() {
+        XCTAssertTrue(SceneSummaryLabeler.repeatsForTheSameText(LocalFoundationModelError.emptyResponse))
+        XCTAssertTrue(SceneSummaryLabeler.repeatsForTheSameText(LocalFoundationModelError.invalidStructuredResponse))
+        XCTAssertTrue(SceneSummaryLabeler.repeatsForTheSameText(DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "x"))))
+        XCTAssertFalse(SceneSummaryLabeler.repeatsForTheSameText(LocalFoundationModelError.unavailable("busy")))
+        XCTAssertFalse(SceneSummaryLabeler.repeatsForTheSameText(CancellationError()))
+        XCTAssertFalse(SceneSummaryLabeler.repeatsForTheSameText(URLError(.notConnectedToInternet)), "an error nobody classified stays a fault of the moment")
+    }
+
+    func testThreeModelStopsInARowSettleAnItemForTheBackgroundPass() throws {
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "p3461-\(UUID().uuidString)"))
+        XCTAssertFalse(TextSceneBackgroundMemo.noteModelStop("a", defaults))
+        XCTAssertFalse(TextSceneBackgroundMemo.noteModelStop("b", defaults))
+        XCTAssertFalse(TextSceneBackgroundMemo.noteModelStop("a", defaults))
+        XCTAssertTrue(TextSceneBackgroundMemo.noteModelStop("a", defaults))
+        XCTAssertFalse(TextSceneBackgroundMemo.noteModelStop("b", defaults))
     }
 
     func testHeatDuringTheAudioRendersDoesNotSendTheListenerToAContinueButton() async throws {
@@ -257,15 +292,15 @@ private final class ScriptedLabelClient: LocalFoundationModelClient, @unchecked 
     var texts: [String] { lock.withLock { seen } }
     /// Called on each model call, to let a test change the library while the run is working.
     var onLabel: (@Sendable () -> Void)?
-    /// When set, every model call throws it.
-    var failure: Error?
+    /// When set, a model call throws what it returns for the scene's text (nil answers normally).
+    var failure: (@Sendable (String) -> Error?)?
 
     func availability() -> LocalFoundationModelAvailability { .available }
     func summarizeInterjections(context: String) async throws -> String { throw LocalFoundationModelError.unavailable("test") }
     func labelListeningMapChapter(text: String, chapterNumber: Int) async throws -> LocalListeningMapLabel {
         lock.withLock { seen.append(text) }
         onLabel?()
-        if let failure { throw failure }
+        if let error = failure?(text) { throw error }
         return label
     }
     func summarizeListeningMap(labels: [LocalListeningMapLabel]) async throws -> String { throw LocalFoundationModelError.unavailable("test") }

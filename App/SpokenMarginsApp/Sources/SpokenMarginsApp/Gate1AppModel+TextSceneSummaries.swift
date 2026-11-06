@@ -7,7 +7,15 @@ extension Gate1AppModel: TextSceneMapPreparerHost {
     func textSceneSummariesDidFinish(itemId: String, outcome: TextSceneSummaryOutcome, policy: PreparationJobPolicy) {
         diagnostics["textSceneSummaries:\(itemId)"] = outcome.diagnostic
         // The background pass settles an item once a run ended on it for good, so a charge isn't spent on it again.
-        if policy == .whileCharging, outcome.settlesBackgroundRun { TextSceneBackgroundMemo.settle(itemId) }
+        if policy == .whileCharging {
+            if outcome.settlesBackgroundRun {
+                TextSceneBackgroundMemo.settle(itemId)
+            } else if case .modelStopped = outcome, TextSceneBackgroundMemo.noteModelStop(itemId) {
+                // The model stopped on this item several passes in a row; an error that never clears must not hold the
+                // pass on one item while the ones behind it wait. The listener's tap still works.
+                TextSceneBackgroundMemo.settle(itemId)
+            }
+        }
         guard itemId == activeItemId else { return }
         // A paused or cancelled run saved the scenes it had written, so the screen and Skim read them now (#3461).
         switch outcome {
@@ -90,6 +98,18 @@ enum TextSceneBackgroundMemo {
 
     static func settled(_ defaults: UserDefaults = .standard) -> Set<String> {
         Set(defaults.stringArray(forKey: key) ?? [])
+    }
+
+    private static let stopsKey = "textSceneSummaries.backgroundModelStops"
+    /// How many model stops in a row, with no run that finished between, settle an item for the background pass.
+    static let modelStopLimit = 3
+
+    /// Counts a background run that the model stopped. True when this was the `modelStopLimit`th in a row.
+    static func noteModelStop(_ itemId: String, _ defaults: UserDefaults = .standard) -> Bool {
+        var stops = defaults.dictionary(forKey: stopsKey) as? [String: Int] ?? [:]
+        stops[itemId, default: 0] += 1
+        defaults.set(stops, forKey: stopsKey)
+        return stops[itemId, default: 0] >= modelStopLimit
     }
 
     static func settle(_ itemId: String, _ defaults: UserDefaults = .standard) {

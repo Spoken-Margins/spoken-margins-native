@@ -1,4 +1,5 @@
 import Foundation
+import FoundationModels
 import SessionKit
 
 /// The one step that turns a scene's text into a checked title and summary with the on-device model (#3450). A
@@ -26,10 +27,40 @@ struct SceneSummaryLabeler {
         guard isAvailable, !text.isEmpty else { return .modelFailed }
         var answered = false
         for _ in 0..<Self.attempts {
-            guard let candidate = try? await client.labelListeningMapChapter(text: text, chapterNumber: chapterNumber) else { continue }
+            let candidate: LocalListeningMapLabel
+            do {
+                candidate = try await client.labelListeningMapChapter(text: text, chapterNumber: chapterNumber)
+            } catch {
+                // The model decodes greedily, so an error this text always causes comes back on the next try too: it is
+                // the model's verdict on the scene, not a fault of the moment (#3461).
+                if Self.repeatsForTheSameText(error) { return .rejected }
+                continue
+            }
             answered = true
             if let label = try? ListeningMapSummaryValidator.validate(candidate, sourceText: text) { return .label(label) }
         }
         return answered ? .rejected : .modelFailed
+    }
+
+    /// True for an error the same text will cause every time: the model refused it (guardrails), answered with
+    /// something that can't be read as a label, or the text doesn't fit. Anything else (busy, not ready, rate limited,
+    /// cancelled, and any error not known here) is a fault of the moment, so the scene stays waiting.
+    static func repeatsForTheSameText(_ error: Error) -> Bool {
+        if error is CancellationError { return false }
+        if error is DecodingError { return true }
+        if let modelError = error as? LocalFoundationModelError {
+            switch modelError {
+            case .emptyResponse, .invalidStructuredResponse, .outputTooLong, .excessiveSourceQuotation: return true
+            case .unavailable, .sourceTextUnavailable, .invalidInterjectionSummary: return false
+            }
+        }
+        if AppleFoundationModelClient.isSafetyRejection(error) { return true }
+        if let generationError = error as? LanguageModelSession.GenerationError {
+            switch generationError {
+            case .exceededContextWindowSize, .decodingFailure, .unsupportedLanguageOrLocale: return true
+            default: return false
+            }
+        }
+        return false
     }
 }
