@@ -118,7 +118,9 @@ struct SpokenMarginsApp: App {
             Task { @MainActor in await model?.requireVoiceDownloads().resumePending() }
         }
         // Which notes this phone's voices can read, so the count of new Margins follows them (#3402).
-        WrittenMarginVoiceCoverage.shared.install { [weak model] in Task { @MainActor in model?.writtenMarginVoicesChanged() } }
+        WrittenMarginVoiceCoverage.shared.install { [weak model] in
+            Task { @MainActor in model?.hangTelemetry.labels.scoped("writtenMarginVoicesChanged") { model?.writtenMarginVoicesChanged() } }
+        }
         _model = StateObject(wrappedValue: model)
         _playbackStartCue = StateObject(wrappedValue: PlaybackStartCue(model: model, pinned: pinnedDiagnostics))
         _bridge = StateObject(wrappedValue: BridgeService(store: BridgeService.makeStore()))
