@@ -41,6 +41,16 @@ enum LiveSessionSpokenMargins {
         }
     }
 
+    /// The screen whose spoken Margin is recording on the phone, held weakly so a screen that goes away can't leave
+    /// the flag stuck on (#3492).
+    @MainActor private(set) static weak var recordingScreen: LiveSessionController?
+
+    /// True while a live session spoken Margin records on the phone. A play from the Lock Screen, headphones or the
+    /// Watch is ignored then (`LiveSessionTransportGuard`), because our player taking the audio session stops the recorder.
+    @MainActor static var isRecordingOnPhone: Bool { recordingScreen?.isRecordingSpoken == true }
+
+    @MainActor static func spokenMarginStarted(on screen: LiveSessionController) { recordingScreen = screen }
+
     /// True while a phone call (Teams, FaceTime, a carrier call) is going on. The call holds the phone's microphone,
     /// even muted, so a phone recording would capture nothing; the Watch's microphone still works.
     @MainActor

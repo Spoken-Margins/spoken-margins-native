@@ -256,6 +256,7 @@ final class LiveSessionController: ObservableObject {
     func startSpokenMargin() {
         guard isRunning, !isRecordingSpoken else { return }
         isRecordingSpoken = true
+        LiveSessionSpokenMargins.spokenMarginStarted(on: self)
         spokenStart = Task { [weak self, phoneRecorder] in
             do {
                 try await LiveSessionPhoneRecorder.checkCanRecord()
