@@ -2480,7 +2480,9 @@ class MainFlowTests(unittest.TestCase):
         # Every Mac job checks out the Git LFS models: --plan fast's contracts check reads them (#301). The third is
         # the release job a T3 PASS hands to a build runner (#1209). The lane job checks them out on the Mac, and on a
         # GitHub-hosted Mac fetches them from a cache instead (#1389 phase 2, test_lane_hosted_app.py).
-        self.assertEqual(workflow.count('lfs: true'), 2)  # the release job and the automerge-mac fallback (#2459)
+        self.assertEqual(workflow.count('lfs: true'), 1)  # the automerge-mac fallback (#2459)
+        # The release job takes them only on the build runner (#3501).
+        self.assertIn("lfs: ${{ !(vars.LANE_HOSTED_FAST == 'on' && vars.LANE_HOSTED_MAC_REST == 'on') }}", workflow)
         self.assertIn("lfs: ${{ runner.environment != 'github-hosted' }}", workflow)
         self.assertIn("lfs: ${{ !contains(fromJSON(needs.route.outputs.automerge || '[]'), 'ubuntu-latest') }}", workflow)
         # hosted routing plus the four Mac jobs (automerge-mac, #2459)

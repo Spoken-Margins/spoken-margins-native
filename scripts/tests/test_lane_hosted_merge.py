@@ -4,6 +4,7 @@ Before: every automerge job for a Mac diff queued for the build Mac (21 queued o
 minutes for the hosted pair, ran --plan fast-mac-rest for about 8 minutes, and a PR held for T3 then reported held.
 """
 from pathlib import Path
+import re
 import sys
 import tempfile
 import unittest
@@ -75,7 +76,7 @@ class RoutingTests(unittest.TestCase):
 
 class HostedRestChecksTests(unittest.TestCase):
     def wait(self, answers, alive=lambda: None, dispatch_result='', wait=3600, checks=None, newest_base=None,
-             seen=None):
+             seen=None, run_again=False):
         """hosted_rest_checks over a scripted sequence of (found, why) answers, on a fake clock."""
         answers, clock, dispatched = list(answers), Clock(), []
         def once(*args, **kwargs):
@@ -91,7 +92,7 @@ class HostedRestChecksTests(unittest.TestCase):
             result = lane.hosted_rest_checks(FakeGitHub(), Path('.'), 'main', HEAD, MERGE, alive=alive,
                                              dispatch=dispatch, env=ON, wait=wait, poll=30, clock=clock,
                                              sleep=clock.sleep, out=open('/dev/null', 'w'),
-                                             newest_base=newest_base,
+                                             newest_base=newest_base, run_again=run_again,
                                              **({} if checks is None else {'checks': checks}))
         return result, clock.now, dispatched
 
@@ -155,6 +156,41 @@ class HostedRestChecksTests(unittest.TestCase):
         self.assertIsNone(found)
         self.assertIn('HTTP 422', why)
         self.assertEqual(lane.hosted_checks_missing(why)[0], lane.NEEDS_MAC)
+
+    def test_with_no_mac_to_fall_back_on_a_cancelled_check_is_started_again(self):
+        # #3501: "ended cancelled" used to end the wait at once and queue for the Mac, asleep overnight.
+        cancelled = f'"hosted fast: Mac rest" ended cancelled on {HEAD[:7]}'
+        (found, why), _, dispatched = self.wait([(None, cancelled), (None, cancelled), (None, RUNNING), (STOOD, '')],
+                                                run_again=True)
+        self.assertEqual(found, STOOD)
+        self.assertEqual(dispatched, [0.0])  # one dispatch: the second answer was the cancelled run still newest
+
+    def test_with_no_mac_a_check_that_never_ran_is_started_after_the_grace(self):
+        (found, why), waited, dispatched = self.wait([(None, MISSING)] * 11 + [(None, RUNNING), (STOOD, '')],
+                                                     run_again=True)
+        self.assertEqual(found, STOOD)
+        self.assertEqual(len(dispatched), 1)
+        self.assertGreater(dispatched[0], lane.HOSTED_MISSING_GRACE - 60)
+
+    def test_with_no_mac_a_failed_check_is_still_the_pr_s_fail_and_is_not_run_again(self):
+        (found, why), waited, dispatched = self.wait([(None, FAILED)], run_again=True)
+        self.assertEqual((found, waited, dispatched), (None, 0, []))
+        self.assertEqual(lane.hosted_checks_missing(why, 'INCONCLUSIVE')[0], 'FAIL')
+
+    def test_with_no_mac_a_check_that_never_comes_back_ends_the_wait(self):
+        cancelled = f'"hosted fast: Mac rest" ended cancelled on {HEAD[:7]}'
+        (found, why), waited, dispatched = self.wait([(None, cancelled)], run_again=True)
+        self.assertIsNone(found)
+        self.assertEqual(len(dispatched), 1)
+        self.assertLess(waited, lane.HOSTED_MISSING_GRACE + 60)
+        self.assertIn('has not shown up', why)
+
+    def test_the_wait_fits_inside_the_merge_jobs_timeouts(self):
+        # A job killed by its timeout can't say why, so the wait has to end first, with room to report and merge.
+        workflow = (Path(__file__).resolve().parents[2] / '.github/workflows/lane.yml').read_text()
+        for job in ('automerge', 'release'):
+            minutes = int(re.search(r'timeout-minutes: (\d+)', workflow.split(f'\n  {job}:\n')[1]).group(1))
+            self.assertLessEqual(lane.HOSTED_REST_WAIT + 15 * 60, minutes * 60, job)
 
     def test_a_missing_check_is_waited_for_only_a_few_minutes(self):
         (found, why), waited, _ = self.wait([(None, MISSING)])
@@ -310,9 +346,18 @@ class HostedRunAutoTests(unittest.TestCase):
         self.assertEqual(verdict, 'INCONCLUSIVE')
         self.assertTrue(any('does not merge cleanly' in line for line in details), details)
 
-    def test_checks_it_cannot_get_hand_the_run_to_the_mac_fallback(self):
-        (verdict, *_), github, wait, push = self.run_auto(found=(None, MISSING))
+    def test_checks_it_cannot_get_are_reported_and_never_queue_for_the_mac(self):
+        # #3501: the Mac fallback waited 735 minutes for #3481 on 2026-11-05 with the Mac asleep.
+        (verdict, where, ran, details), github, wait, push = self.run_auto(found=(None, MISSING))
+        self.assertEqual(verdict, 'INCONCLUSIVE')
+        self.assertIs(wait.call_args.kwargs['run_again'], True)
+        self.assertTrue(any('Remove and re-add automerge' in line for line in details), details)
+        push.assert_not_called()
+
+    def test_with_mac_rest_off_checks_it_cannot_get_still_go_to_the_mac(self):
+        (verdict, *_), github, wait, push = self.run_auto(found=(None, MISSING), env=PAIR_ONLY)
         self.assertEqual(verdict, lane.NEEDS_MAC)
+        self.assertIs(wait.call_args.kwargs['run_again'], False)
         push.assert_not_called()
         self.assertEqual(github.posted, [])
 
