@@ -622,7 +622,13 @@ public struct ImportedCommentaryInterjection: Codable, Equatable, Sendable, Iden
     /// What the sender chose for a written Margin: false when they asked that it not be read aloud. Nil when the packet
     /// said nothing (every packet from a build without the setting), which reads aloud (2026-11-05, #3427).
     /// Optional in local JSON; Build 29 and 32 ignore the key.
-    public let senderReadAloud: Bool?
+    /// A friend who sends the Margin again with the choice flipped changes it, unless the listener has made their own
+    /// (#3452); `senderReadAloudAt` says when this value arrived.
+    public var senderReadAloud: Bool?
+    /// When the packet that gave `senderReadAloud` its latest value was imported, so a copy loaded before a re-send
+    /// can't undo the flip when it is saved (#3452). Nil until a re-send changes the choice. Local only; older builds
+    /// ignore the key.
+    public var senderReadAloudAt: Date?
     /// The listener's own choice, which beats the sender's. Local only: packets never carry it, and an older build
     /// ignores the key when it reads the record (#3427).
     public var listenerReadAloud: Bool?
@@ -643,7 +649,8 @@ public struct ImportedCommentaryInterjection: Codable, Equatable, Sendable, Iden
         alsoSharedAs: [MarginPacketIdentity]? = nil,
         shareProvenance: String? = nil,
         senderReadAloud: Bool? = nil,
-        listenerReadAloud: Bool? = nil
+        listenerReadAloud: Bool? = nil,
+        senderReadAloudAt: Date? = nil
     ) {
         self.id = id
         self.layerId = layerId
@@ -661,6 +668,15 @@ public struct ImportedCommentaryInterjection: Codable, Equatable, Sendable, Iden
         self.shareProvenance = shareProvenance
         self.senderReadAloud = senderReadAloud
         self.listenerReadAloud = listenerReadAloud
+        self.senderReadAloudAt = senderReadAloudAt
+    }
+
+    /// Keeps the sender's choice from a later packet that is already stored when this copy was loaded before it
+    /// arrived (#3452). The same idea as the listener's choice and the aliases: a stale save mustn't undo newer state.
+    public mutating func keepNewerSenderReadAloud(from stored: ImportedCommentaryInterjection?) {
+        guard let storedAt = stored?.senderReadAloudAt, storedAt > (senderReadAloudAt ?? .distantPast) else { return }
+        senderReadAloud = stored?.senderReadAloud
+        senderReadAloudAt = storedAt
     }
 
     /// Whether the phone's voice reads this Margin out loud: it is a written Margin, and the listener's choice, else the
