@@ -153,3 +153,33 @@ final class WatchSessionModelNowPlayingTests: XCTestCase {
         XCTAssertEqual(round, saved)
     }
 }
+
+final class WatchMarginNewsTests: XCTestCase {
+    private let t0 = Date(timeIntervalSince1970: 1_800_000_000)
+
+    private func held(_ id: String = "m1") -> WatchMarginLedger {
+        var ledger = WatchMarginLedger()
+        ledger.record(WatchMarginTransfer(id: id, wallStart: t0, durationMs: 1_000), fileName: "\(id).m4a", now: t0)
+        return ledger
+    }
+
+    func testAHeldMarginIsNewsHoweverLongItWaits() {
+        XCTAssertTrue(held().isNews("m1", now: t0.addingTimeInterval(3_600)), "waiting is never hidden below the fold")
+    }
+
+    func testFiledWordsAreNewsForThirtySecondsThenGiveTheLineBack() {
+        var ledger = held()
+        let answer = WatchMarginAnswer(
+            receipt: WatchMarginReceipt(captureId: "m1", sha256: "", status: .stored), outcome: .filed, filedIn: "this episode"
+        )
+        _ = ledger.apply(answer, now: t0)
+        XCTAssertTrue(ledger.isNews("m1", now: t0))
+        XCTAssertTrue(ledger.isNews("m1", now: t0.addingTimeInterval(WatchContract.filedIsNewsFor)))
+        XCTAssertFalse(ledger.isNews("m1", now: t0.addingTimeInterval(WatchContract.filedIsNewsFor + 1)))
+        XCTAssertEqual(ledger.display("m1", now: t0.addingTimeInterval(600))?.words, "Filed in this episode", "the words are still there")
+    }
+
+    func testAMarginTheWatchNeverHeldIsNotNews() {
+        XCTAssertFalse(WatchMarginLedger().isNews("nobody", now: t0))
+    }
+}

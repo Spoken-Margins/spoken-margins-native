@@ -78,21 +78,26 @@ struct WatchHomeView: View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
             let now = context.date
             let home = link.home(now: now)
+            let playing = recorder.isRecording ? nil : link.nowPlaying(now: now)
+            // The screen the owner chose must fit a 41 mm Watch with no scrolling, so its lines stay short (#3494).
+            let compact = playing != nil || (recorder.isRecording && recorder.choiceWasShown)
             ScrollView {
-                VStack(spacing: 8) {
-                    stateLine(home, now: now)
+                VStack(spacing: compact ? 4 : 8) {
+                    stateLine(home, now: now, lines: compact ? 1 : 2)
                     if recorder.isRecording {
                         recordingScreen(home, now: now)
+                        statusLine(home, now: now)
+                    } else if let playing {
+                        episodeHeader(playing, now: now)
+                        episodeButtons(home)
+                        transportRow(playing)
+                        // "Filed in…" stays within reach of the crown once it has left the top.
+                        if case .idle = recorder.state, !lastMarginIsNews(now: now) { statusLine(home, now: now) }
                     } else {
-                        if let playing = link.nowPlaying(now: now) {
-                            episodeButtons(playing, home)
-                            transportRow(playing)
-                        } else {
-                            recordButton(.session)
-                                .frame(height: 120)
-                        }
+                        recordButton(.session)
+                            .frame(height: 120)
+                        statusLine(home, now: now)
                     }
-                    statusLine(home, now: now)
                     below(home, now: now)
                 }
                 .padding(.horizontal, 4)
@@ -100,10 +105,10 @@ struct WatchHomeView: View {
         }
     }
 
-    private func stateLine(_ home: WatchSessionModel.Home, now: Date) -> some View {
+    private func stateLine(_ home: WatchSessionModel.Home, now: Date, lines: Int) -> some View {
         Label(home.line(now: now), systemImage: home.symbol)
             .font(.footnote)
-            .lineLimit(2)
+            .lineLimit(lines)
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityLabel(home.line(now: now))
     }
@@ -135,16 +140,38 @@ struct WatchHomeView: View {
         .accessibilityLabel("Record a spoken Margin")
     }
 
+    private func lastMarginIsNews(now: Date) -> Bool {
+        guard let id = link.lastMarginId else { return false }
+        return link.ledger.isNews(id, now: now)
+    }
+
+    /// The line above the buttons: why the recording failed, else where the last Margin went while that is news, else the
+    /// item's title. "Filed in…" is how the listener knows the target was right, so it never waits below the fold (#3494).
+    @ViewBuilder
+    private func episodeHeader(_ playing: WatchNowPlaying, now: Date) -> some View {
+        if case .failed(let message) = recorder.state {
+            Label(message, systemImage: "exclamationmark.triangle")
+                .font(.footnote)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        } else if lastMarginIsNews(now: now), let id = link.lastMarginId, let display = link.ledger.display(id, now: now) {
+            Label(display.words, systemImage: display.symbol)
+                .font(.footnote)
+                .lineLimit(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            Text(playing.title)
+                .font(.footnote)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
     /// "On this episode" is the big one; "On the session" is smaller and only there while a session runs.
     @ViewBuilder
-    private func episodeButtons(_ playing: WatchNowPlaying, _ home: WatchSessionModel.Home) -> some View {
-        Text(playing.title)
-            .font(.footnote)
-            .lineLimit(2)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        targetButton(.episode, size: 90)
+    private func episodeButtons(_ home: WatchSessionModel.Home) -> some View {
+        targetButton(.episode, size: home.session == nil ? 90 : 60)
         if home.session != nil {
-            targetButton(.session, size: 50)
+            targetButton(.session, size: 38)
         }
     }
 
@@ -153,7 +180,7 @@ struct WatchHomeView: View {
             recorder.toggle(target: target)
         } label: {
             Label(target.words, systemImage: "mic.fill")
-                .font(size > 60 ? .headline : .footnote.weight(.semibold))
+                .font(size >= 60 ? .headline : .footnote.weight(.semibold))
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(height: size)
@@ -170,6 +197,7 @@ struct WatchHomeView: View {
             )
             transportButton(.skipForward, symbol: "goforward", label: "Forward")
         }
+        .frame(height: 38)
         .disabled(!link.isReachable)
         .opacity(link.isReachable ? 1 : 0.4)
     }
@@ -179,7 +207,7 @@ struct WatchHomeView: View {
             link.sendTransport(transport)
         } label: {
             Image(systemName: symbol)
-                .frame(maxWidth: .infinity)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .accessibilityLabel(label)
     }
@@ -195,6 +223,7 @@ struct WatchHomeView: View {
                 .font(.title3.weight(.bold))
                 .foregroundStyle(tint(target))
                 .multilineTextAlignment(.center)
+                .minimumScaleFactor(0.8)
                 .frame(maxWidth: .infinity)
                 .accessibilityLabel("Recording \(target.words.lowercased())")
         }
@@ -226,7 +255,7 @@ struct WatchHomeView: View {
             }
             .accessibilityLabel("Discard this recording")
         }
-        .frame(height: 100)
+        .frame(height: withTarget ? 84 : 100)
         .confirmationDialog("Discard this Margin?", isPresented: $asksToDiscard) {
             Button("Discard", role: .destructive) { recorder.discardRecording() }
             Button("Keep recording", role: .cancel) {}

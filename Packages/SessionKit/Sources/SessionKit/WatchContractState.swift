@@ -223,6 +223,14 @@ public struct WatchMarginLedger: Codable, Equatable, Sendable {
 
     // MARK: Showing it
 
+    /// Whether this Margin's state is still news, so the first screen says it at the top: the Watch still holds it, or the
+    /// phone filed it within `WatchContract.filedIsNewsFor`.
+    public func isNews(_ id: String, now: Date) -> Bool {
+        if held(id) != nil { return true }
+        guard let done = filed.last(where: { $0.id == id }) else { return false }
+        return now.timeIntervalSince(done.filedAt) <= WatchContract.filedIsNewsFor
+    }
+
     public func display(_ id: String, now: Date) -> Display? {
         if let item = held(id) {
             switch item.status {

@@ -44,6 +44,8 @@ public enum WatchContract {
     }
     /// A transport command older than this, by the phone's clock, is dropped (#3494).
     public static let transportMaxAge: TimeInterval = 10
+    /// How long a filed Margin's "Filed in…" takes the top of the first screen, in place of the item's title (#3494).
+    public static let filedIsNewsFor: TimeInterval = 30
     /// With the phone out of reach, a now-playing line older than this is not shown (#3494).
     public static let nowPlayingStaleAfter: TimeInterval = 60
     /// A named session nobody ends closes itself this long after its start (DESIGN section 2 point 8).
