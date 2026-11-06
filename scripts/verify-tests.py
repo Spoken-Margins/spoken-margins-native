@@ -1756,7 +1756,22 @@ class Run:
                     (self.output / f'{name}-xcresult.json').write_text(json.dumps(payload, indent=2) + '\n')
                     entry['test_evidence'] = 'log+xcresult'
                 except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError) as error:
-                    errors.append(f'Could not reconcile xcresult individual tests: {error}')
+                    # Only a bundle the tool could not read: a bundle that read as something else (no individual
+                    # tests, a result of "unknown") is not this and still fails.
+                    unreadable = isinstance(error, (OSError, subprocess.SubprocessError, json.JSONDecodeError))
+                    if (unreadable and not result and not entry.get('interrupted') and expected is not None
+                            and not reconcile(expected, records, allowed_skips, probation or ())):
+                        # #3374: xcresulttool could not read the bundle on an overloaded runner ("Could not reconcile
+                        # xcresult individual tests", exit 64) although xcodebuild exited 0 and the log alone shows
+                        # every expected test, and nothing else, finishing and passing. The log's count stands; the
+                        # step records why, and the lane report says it. A run that was cut short, exited non-zero,
+                        # or whose log misses a test still fails below, as before.
+                        entry['xcresult_unreadable'] = str(error)[:300]
+                        entry['test_evidence'] = 'log (xcresult unreadable)'
+                        print(f'warning: {name}: the xcresult could not be read ({str(error)[:200]}); '
+                              f'using the {len(records)} test results in the log', flush=True)
+                    else:
+                        errors.append(f'Could not reconcile xcresult individual tests: {error}')
                 entry['attachments'] = export_failed_attachments(
                     bundle, records, payload, self.output / f'{name}-attachments')
             entry['tests'] = records
