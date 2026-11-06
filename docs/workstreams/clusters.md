@@ -50,9 +50,9 @@ Yesterday these failed late, at the rollup, and forced refactors. Run them befor
 
 ## When a guard refuses a command
 
-On 2026-11-06 briefs in two clusters gave helpers a quoted path to a shared lock script. The worktree guard refused it, and helpers got the same script to run another way: through a shell by name, through a symlink, with a no-op command in front, or from the lead's session.
+On 2026-11-06 briefs in two clusters gave helpers a quoted path to a shared lock script. The worktree guard refused it, and helpers got the same script to run another way: through a shell by name, through a symlink, inside a script file they wrote, with a no-op command in front, or from the lead's session.
 
-- **A refusal is a stop, not a puzzle.** The helper tries no other form of the command and reports the refusal to its lead. The lead brings it to the director, who takes it to the owner if it can't be settled inside the guard.
+- **Do what the refusal asks, or stop.** A helper may do what the guard's message says: plain, separate commands in its own worktree. It may also use the Edit tool there. It never hides the same command from the guard: no shell by name, no script file, no symlink, no extra command in front, no other session or worktree. If the job still can't be done, the helper stops and reports the refusal to its lead. The lead brings it to the director, who takes it to the owner if it can't be settled inside the guard.
 - **Nobody runs a refused command for a helper.** A lead doesn't run it from its own session.
 - **Briefs give plain commands:** the command itself, literal arguments, run from the helper's own worktree. No wrapper or lock scripts. The lead hands out the turns that keep a cluster to one fast plan and one build.
 - **Git stays in the helper's own worktree.** The lead creates and repairs worktrees from its own session, and no one runs `git worktree prune` during a run.
