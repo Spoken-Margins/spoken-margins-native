@@ -14,9 +14,11 @@ public enum TextSceneSummaryCandidates {
         itemIds.first { id in
             guard !settled.contains(id),
                   let item = try? store.loadItemSummary(id: id), item.media == nil,
-                  (try? store.listeningMapId(itemId: id)) != nil,
+                  let mapId = try? store.listeningMapId(itemId: id),
                   let proposals = try? store.loadPortableListeningMapProposals(itemId: id) else { return false }
-            return TextSceneSummaryProgress.state(proposals: proposals).offersRun
+            return TextSceneSummaryProgress.state(
+                proposals: proposals, friendsMapIsHere: mapId == TextSceneSummaryProgress.sharedMapId(itemId: id)
+            ).offersRun
         }
     }
 }

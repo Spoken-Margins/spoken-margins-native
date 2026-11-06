@@ -172,11 +172,14 @@ final class TextSceneMapPreparer {
     ) async throws -> TextSceneSummaryOutcome {
         let loaded: LoadedText = try await Gate1AppModel.offMain {
             let item = try store.loadItem(id: itemId)
-            let chapters = try store.loadListeningMap(itemId: itemId)?.chapters ?? []
+            let map = try store.loadListeningMap(itemId: itemId)
+            let chapters = map?.chapters ?? []
             let proposals = try store.loadPortableListeningMapProposals(itemId: itemId)
             return LoadedText(
                 text: item.text ?? "", chapters: chapters,
-                hasOtherMap: proposals.contains { !TextSceneAssembly.isModelProposal($0) },
+                // A friend's map stays whatever generator its proposal carries (an older build kept the sender's).
+                hasOtherMap: map?.id == TextSceneSummaryProgress.sharedMapId(itemId: itemId)
+                    || proposals.contains { !TextSceneAssembly.isModelProposal($0) },
                 saved: proposals.first(where: TextSceneAssembly.isModelProposal)
             )
         }

@@ -166,6 +166,24 @@ final class TextSceneMapPreparerTests: XCTestCase {
         XCTAssertEqual(after.textSceneSummaries, .complete)
     }
 
+    /// An older build saved a friend's proposal under this device's generator; beside their Listening Map it is theirs.
+    func testAFriendsProposalFromAnOlderBuildUnderTheDevicesGeneratorIsNotContinuedOrWrittenOver() async throws {
+        let fixture = try makeFixture()
+        try fixture.store.saveListeningMap(ListeningMap(id: "shared-map-article", itemId: "article", overview: "", chapters: [
+            Chapter(id: "theirs-1", title: "Theirs", startChar: 0, endChar: fixture.text.count, percent: 0)
+        ]))
+        try fixture.store.savePortableListeningMapProposal(TextSceneAssembly.proposal(safeItemComponent: "friend", scenes: []), itemId: "article")
+
+        let outcome = try await TextSceneMapPreparer.summarise(
+            itemId: fixture.itemId, safeItemComponent: "article", store: fixture.store,
+            client: ScriptedLabelClient(label: LocalListeningMapLabel(title: "Crossing", description: "how the caravans crossed the dunes", eligibility: .eligible)),
+            renderBridge: { _, _ in XCTFail("nothing to render") }
+        )
+
+        XCTAssertEqual(outcome, .keptOtherMap)
+        XCTAssertEqual(try fixture.store.loadPortableListeningMapProposals(itemId: fixture.itemId).map(\.id), ["text-scene-map-friend"])
+    }
+
     func testARunOnlyLooksAtTheListenersOwnText() async throws {
         // The planner and the model read the item's stored text; nothing is fetched, so a run works offline.
         let fixture = try makeFixture()

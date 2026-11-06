@@ -112,7 +112,8 @@ public struct ItemDetailLoader {
                 proposalIds: committed.map(\.id), hasTimelineChapters: !mediaChapters.isEmpty))
         // An article or PDF has no media; its scene summaries are what the Item screen may offer to write (#3461).
         let textSceneSummaries: TextSceneSummaryProgress.State = item.media == nil
-            ? TextSceneSummaryProgress.state(proposals: committed)
+            ? TextSceneSummaryProgress.state(
+                proposals: committed, friendsMapIsHere: map?.id == TextSceneSummaryProgress.sharedMapId(itemId: id))
             : .notApplicable
         return ItemDetailState(
             id: item.id,

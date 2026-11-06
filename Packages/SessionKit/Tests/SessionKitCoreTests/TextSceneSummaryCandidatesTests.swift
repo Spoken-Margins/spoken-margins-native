@@ -74,6 +74,19 @@ final class TextSceneSummaryCandidatesTests: XCTestCase {
         XCTAssertNil(TextSceneSummaryCandidates.next(itemIds: ["shared"], settled: [], store: store))
     }
 
+    /// An older build kept a friend's proposal under this device's own generator; beside the friend's Listening Map it is theirs.
+    func testAProposalBesideAFriendsMapIsTheirsEvenUnderTheDevicesOwnGenerator() throws {
+        try article("older")
+        try store.saveListeningMap(ListeningMap(id: "shared-map-older", itemId: "older", overview: "", chapters: [
+            Chapter(id: "theirs", title: "Theirs", startChar: 0, endChar: body.count, percent: 0)
+        ]))
+        try saveModelProposal("older", [scene("s1", summary: "Theirs.", eligibility: .eligible), scene("s2", summary: nil, eligibility: .unknown)])
+
+        XCTAssertNil(TextSceneSummaryCandidates.next(itemIds: ["older"], settled: [], store: store))
+        let detail = try ItemDetailLoader.load(id: "older", store: store, snapshotItemId: nil, snapshotSessionId: nil, placementPasses: SharedMarginPlacementPasses())
+        XCTAssertEqual(detail.textSceneSummaries, .otherMap)
+    }
+
     func testTheItemScreenIsToldWhereTheSummariesStand() throws {
         try article("fresh")
         try article("half")

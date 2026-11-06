@@ -32,8 +32,13 @@ public enum TextSceneSummaryProgress {
         return scene.eligibility != .unknown
     }
 
-    public static func state(proposals: [PortableListeningMapProposalArtifact]) -> State {
-        if proposals.contains(where: { !TextSceneAssembly.isModelProposal($0) }) { return .otherMap }
+    /// The id of the Listening Map a friend's text map is saved under (`SharedTextListeningMapImporter`).
+    public static func sharedMapId(itemId: String) -> String { "shared-map-" + itemId }
+
+    /// `friendsMapIsHere` is true when the item's Listening Map is a friend's. A proposal beside it is always theirs, even
+    /// one an older build saved under this device's own generator, so it is never continued or written over.
+    public static func state(proposals: [PortableListeningMapProposalArtifact], friendsMapIsHere: Bool = false) -> State {
+        if friendsMapIsHere || proposals.contains(where: { !TextSceneAssembly.isModelProposal($0) }) { return .otherMap }
         guard let proposal = proposals.first(where: TextSceneAssembly.isModelProposal) else { return .notStarted }
         let decided = proposal.scenes.filter(isDecided).count
         return decided == proposal.scenes.count ? .complete : .partial(decided: decided, total: proposal.scenes.count)
