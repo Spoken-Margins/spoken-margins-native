@@ -19,13 +19,16 @@ public enum WatchNowPlayingFeed {
         case .idle, .failed: return nil
         }
         let title = (snapshot.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        // Text read aloud has no media time: its position never moves on the Watch's clock, so it is sent with rate 0
+        // and the Watch neither counts it up nor needs a new board every few seconds to correct it.
+        let hasMediaTime = snapshot.currentMediaTimeMs != nil
         return WatchNowPlaying(
             itemId: itemId,
             title: title.isEmpty ? untitled : String(title.prefix(maxTitleLength)),
             isPlaying: snapshot.status.isPlaybackActive,
             positionMs: max(0, snapshot.currentMediaTimeMs ?? 0),
             positionAt: now,
-            rate: snapshot.playbackRate.isFinite && snapshot.playbackRate > 0 ? snapshot.playbackRate : 1
+            rate: hasMediaTime ? (snapshot.playbackRate.isFinite && snapshot.playbackRate > 0 ? snapshot.playbackRate : 1) : 0
         )
     }
 

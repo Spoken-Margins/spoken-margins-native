@@ -40,6 +40,7 @@ final class WatchNowPlayingFeedTests: XCTestCase {
         let missing = try XCTUnwrap(WatchNowPlayingFeed.nowPlaying(from: snapshot(title: nil, mediaMs: nil), at: t0))
         XCTAssertEqual(missing.title, WatchNowPlayingFeed.untitled)
         XCTAssertEqual(missing.positionMs, 0, "an article read aloud has no media time")
+        XCTAssertEqual(missing.rate, 0, "so its position does not move on")
         let negative = try XCTUnwrap(WatchNowPlayingFeed.nowPlaying(from: snapshot(mediaMs: -5), at: t0))
         XCTAssertEqual(negative.positionMs, 0)
         let long = try XCTUnwrap(WatchNowPlayingFeed.nowPlaying(from: snapshot(title: String(repeating: "é", count: 500)), at: t0))
@@ -61,6 +62,19 @@ final class WatchNowPlayingFeedTests: XCTestCase {
             ))
             XCTAssertFalse(WatchNowPlayingFeed.shouldPublish(previous: first, next: next), "after \(seconds) s")
         }
+    }
+
+    /// The audit of #3524: narrated text has no media time, and its position used to be predicted forward from 0 while the
+    /// real value stayed 0, so the board was sent again about every 5 s for as long as it played.
+    func testNarratedTextWithNoMediaTimeNeverPublishesAgain() throws {
+        let first = try XCTUnwrap(WatchNowPlayingFeed.nowPlaying(from: snapshot(mediaMs: nil), at: t0))
+        for seconds in stride(from: 1, through: 600, by: 3) {
+            let next = try XCTUnwrap(WatchNowPlayingFeed.nowPlaying(from: snapshot(mediaMs: nil), at: t0.addingTimeInterval(TimeInterval(seconds))))
+            XCTAssertFalse(WatchNowPlayingFeed.shouldPublish(previous: first, next: next), "after \(seconds) s")
+        }
+        XCTAssertEqual(first.position(at: t0.addingTimeInterval(600)), 0, "the Watch does not count it up from 0")
+        let paused = try XCTUnwrap(WatchNowPlayingFeed.nowPlaying(from: snapshot(status: .paused, mediaMs: nil), at: t0.addingTimeInterval(5)))
+        XCTAssertTrue(WatchNowPlayingFeed.shouldPublish(previous: first, next: paused), "a pause is still news")
     }
 
     func testAtTwiceTheRateTheWatchPredictsAtTwiceTheRate() throws {
