@@ -34,6 +34,8 @@ It looks for eleven things:
      revert (#3310 was reverted by #3320 and re-landed by #3323 with nothing on #460)
   11. an open issue whose newest trusted comment holds it on a PR that has merged since, or waits on `next`, which
      is frozen (#1612's newest note held it on #1154, merged into `next` on 2026-10-20)
+  12. an open issue with a milestone other than Later and no state label (#3521: rule 7 reads only no-milestone, and
+     threads take only `ready`, so #3391 sat unseen for 39 hours); triage gives it a state, and only a person picks `ready`
   Silent `in-progress` claims (#3247, #1507) are rule 3.
 
 --apply also closes those (rule 8), commenting once and removing only `ready` and `in-progress`. Every other label,
@@ -52,7 +54,7 @@ Anything it can't read is reported as unreadable and never turned into a release
 
 Exit codes: 0 the sweep ran (actions or none), 2 GitHub unreachable or unreadable (nothing partial is printed as
 "nothing to do"). Needs GH_TOKEN or GITHUB_TOKEN (or `gh auth token`); --apply needs write access to issues.
-About 40 to 80 GitHub calls a run, none of them model tokens. Rules 9 to 11 add about 6: GraphQL pages of the open
+About 40 to 80 GitHub calls a run, none of them model tokens. Rules 9 to 12 add about 6: GraphQL pages of the open
 issues with their last three comments (100 a page), one page of PRs merged into `next`, one GraphQL lookup of the PRs
 a hold names, and at most DRIFT_READ_CAP issue-comment reads for reverts; what the cap leaves out is printed.
 """
@@ -88,6 +90,10 @@ SKIP_LABELS = {'in-progress', 'needs-owner', 'deferred', 'blocked'}
 OUTSIDE_LABEL = 'needs-triage-review'          # an issue by an untrusted author; only a collaborator can make it `ready`
 HOLD_LABELS = {'blocked', 'needs-owner', 'deferred', 'validate-by-use', 'agent-verify',
                'status: needs-human-validation'}   # a released claim isn't made `ready` with one of these
+STATE_LABELS = {'ready', 'in-progress', 'needs-owner', 'deferred', 'blocked', 'parked', 'later', 'tracker',
+                'validate-by-use', 'agent-verify', 'needs-human-validation', 'status: needs-human-validation',
+                'type: research', OUTSIDE_LABEL}   # rule 12: any of these says what happens to the issue next
+PARKED_MILESTONE = 'Later'                     # rule 12: the milestone itself is the state
 DEAD = ('mac-tick-stale',)
 MERGED_PR_PAGES = 3                            # the newest 300 closed PRs into the trunk are as far back as a fix is looked for
 FROZEN_BASE = 'next'                           # frozen since 2026-10-20 (#1492); its merged PRs never closed an issue
@@ -300,7 +306,7 @@ def merged_fixes(pulls, ready, ctx):
     return found
 
 
-# ---- Drift between GitHub and the code (rules 9 to 11, report only) --------------------------------------------
+# ---- Drift between GitHub and the code (rules 9 to 12, report only) --------------------------------------------
 
 OPEN_ISSUES = """query($owner: String!, $name: String!, $after: String) {
   repository(owner: $owner, name: $name) {
@@ -308,6 +314,7 @@ OPEN_ISSUES = """query($owner: String!, $name: String!, $after: String) {
       pageInfo { hasNextPage endCursor }
       nodes {
         number title
+        milestone { title }
         labels(first: 30) { nodes { name } }
         timelineItems(last: 1, itemTypes: [REOPENED_EVENT]) { nodes { ... on ReopenedEvent { createdAt } } }
         comments(last: 3) { nodes { createdAt body authorAssociation author { __typename login } } }
@@ -331,6 +338,7 @@ def open_issues(api):
             reopened = [n.get('createdAt') for n in node['timelineItems']['nodes'] if n.get('createdAt')]
             rows.append({'number': node['number'], 'title': node.get('title') or '',
                          'labels': sorted(l['name'] for l in node['labels']['nodes']),
+                         'milestone': (node.get('milestone') or {}).get('title'),
                          'reopened_at': max(reopened) if reopened else None,
                          'comments': sorted(node['comments']['nodes'], key=lambda c: c['createdAt'])})
         if not page['pageInfo']['hasNextPage']:
@@ -455,14 +463,22 @@ def stale_holds(api, issues, pulls):
     return found
 
 
+def unlabelled(issues):
+    """Rule 12: what triage's no-milestone query can't see. Oldest first, as the scan reads them."""
+    return [row for row in issues
+            if row['milestone'] and row['milestone'] != PARKED_MILESTONE and not STATE_LABELS.intersection(row['labels'])]
+
+
 def drift(api, now, pulls, skip=()):
-    """Rules 9 to 11. Each part is None when its read failed, so a failure reads as unreadable, never as clean."""
-    out = {'merged_open': None, 'reverts': None, 'reverts_unchecked': [], 'holds': None, 'errors': []}
+    """Rules 9 to 12. Each part is None when its read failed, so a failure reads as unreadable, never as clean."""
+    out = {'merged_open': None, 'reverts': None, 'reverts_unchecked': [], 'holds': None, 'unlabelled': None, 'errors': []}
     try:
         issues = open_issues(api)
     except (sm_status.GitHubError, KeyError, TypeError) as error:
         issues = None
         out['errors'].append(f'open issues: {error}')
+    if issues is not None:
+        out['unlabelled'] = unlabelled(issues)
     if issues is not None and pulls is not None:
         out['merged_open'] = merged_but_open(pulls, issues, skip)
     if pulls is not None:
@@ -678,8 +694,13 @@ def decide(facts, window=STALE_AFTER):
         act('hold-lifted', LOOK, f'#{row["number"]} {row["title"][:60]}: its newest note ({row["said_at"][:10]}) {why}; '
             'check the code and close it or say what it waits on now', issues=[row['number']],
             prs=[row['pr']] if row['pr'] else [])
+    bare = gone.get('unlabelled') or []
+    if bare:
+        act('unlabelled', LOOK, f'{len(bare)} open issue(s) have a milestone and no state label (oldest #{bare[0]["number"]} '
+            f'{bare[0]["title"][:60]}), so no thread will take them: give each `ready`, `needs-owner`, `deferred` or '
+            '`tracker`, or close it (#3521)', issues=[row['number'] for row in bare[:10]])
     if gone.get('errors'):
-        act('drift-unreadable', LOOK, 'rules 9 to 11 could not read everything, so missing findings are not a clean '
+        act('drift-unreadable', LOOK, 'rules 9 to 12 could not read everything, so missing findings are not a clean '
             'bill: ' + '; '.join(gone['errors']))
 
     for claim in claims:
