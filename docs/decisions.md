@@ -429,6 +429,13 @@ How it is used:
 - **Diagnostics may be public evidence only by allow-list (#3548; narrows 2026-10-21).** Asked to narrow the rule, with the option text "allow only the hang counts line, the build and plain counts, by allow-list", he said: "I am ok with this change". A code-only privacy pass (#3548) found the rest of the export unsafe: timestamps, item ids, tokens, playback events and error text stay off GitHub.
 - **Public privacy words: publish section A of the redlines (#2842).** Asked about the false lines on the privacy page and web Settings, he picked publishing section A of `docs/legal/public-wording-redlines-2842.md` and said: "great section a is great". Section B waits for the lawyer and shipped sealed sender; section C waits for the #2034 host check. Part of #2842.
 - **The web card after a friend saves an answer (#2168).** He approved the words "Your Margin is saved. Share sends it to {sender}. You pick which of your Margins go." with: "sounds good". Part of #2168.
+- **Six sharing-loop calls from run #3519.** Each was put to him with a pick, and he answered: "sounds good for all".
+  - The shared-Margins race, where a mute during a packet repair can put a friend's layer back on the old item, is recorded as an accepted finding and fixed later.
+  - When a friend's episode can't play, the app reads their Margins and marks none heard (#3392). A slow signal can look like a dead episode, and this keeps them from being used up. A Margin may read again on the next Review.
+  - #3392's words: "The episode says:", "At 12 minutes, in <title>" and "Loading Cole's Margin", with the sender's name in place of Cole.
+  - #3247's words: "From Cole" replaces "Shared by", "N Listening Map suggestions" replaces "N listening map proposals", and the last-Margin card says "To answer Cole, add a Margin of your own". Same placeholder, no pronoun.
+  - Silent notes show as new until opened, while the offer and arrival leave them out (#3402).
+  - A friend's written Margin sounds different on the phone after the Terms, and that stays (#3391).
 
 ## Background moved out of the guide (2026-11-06)
 - **From the guide.** Explanations that stood next to rules in `AGENTS.md`, moved here to keep it under its 4,000-word cap (the rules themselves are unchanged):
