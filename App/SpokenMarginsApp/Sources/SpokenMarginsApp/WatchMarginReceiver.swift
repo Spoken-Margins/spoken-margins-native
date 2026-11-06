@@ -183,7 +183,8 @@ final class WatchMarginReceiver: NSObject {
     func handle(_ envelope: WatchEnvelope, now: @escaping @Sendable () -> Date = { Date() }) -> Task<WatchPhoneReply, Never> {
         // The Watch's own record (#3506) goes to a file for the Diagnostics export; it is small and not a session change.
         if case .diagnostics(let report) = envelope.message, let file = WatchDiagnosticsStore.defaultFileURL {
-            WatchDiagnosticsStore.save(report, to: file)
+            // A small file write, off the main thread; an older copy arriving late never replaces a newer one.
+            Task.detached(priority: .utility) { WatchDiagnosticsStore.save(report, to: file) }
         }
         let previous = lastPass
         let files = files

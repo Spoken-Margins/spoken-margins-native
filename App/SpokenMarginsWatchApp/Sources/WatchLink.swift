@@ -245,8 +245,15 @@ final class WatchLink: NSObject, ObservableObject {
     /// The Watch's own record of launches and failures (#3506), whenever it holds something the phone hasn't seen.
     /// Sent on the sure lane and the fast lane like every message; the phone keeps only the latest.
     private func sendDiagnosticsIfDue() {
-        guard WCSession.isSupported(), WCSession.default.activationState == .activated,
-              let report = WatchDiagnostics.reportIfDue() else { return }
+        guard WCSession.isSupported(), WCSession.default.activationState == .activated else { return }
+        Task { [weak self] in
+            // The file is read off the main thread; two calls close together may both send, and the phone keeps the latest.
+            guard let report = await WatchDiagnostics.reportIfDue() else { return }
+            self?.sendDiagnostics(report)
+        }
+    }
+
+    private func sendDiagnostics(_ report: WatchDiagnosticsReport) {
         send(.diagnostics(report))
         WatchDiagnostics.didSend(report)
     }

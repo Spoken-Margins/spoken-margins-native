@@ -43,12 +43,13 @@ enum WatchDiagnostics {
     }
 
     /// The report to hand to the phone, or nil when it holds nothing new. Call `didSend(_:)` with it once handed over.
-    @MainActor
-    static func reportIfDue() -> WatchDiagnosticsReport? {
+    /// Not main-actor and async, so the file read runs off the main thread (the main-thread reads guard).
+    static func reportIfDue() async -> WatchDiagnosticsReport? {
         let log = recorder.load()
         guard log.hasUnsent else { return nil }
         let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
-        let os = WKInterfaceDevice.current().systemVersion
+        let version = ProcessInfo.processInfo.operatingSystemVersion
+        let os = "\(version.majorVersion).\(version.minorVersion).\(version.patchVersion)"
         return log.report(build: build, osVersion: os, at: Date())
     }
 
