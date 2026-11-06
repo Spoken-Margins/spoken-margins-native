@@ -325,3 +325,25 @@ func TestLinkInstallURLValidation(t *testing.T) {
 		}
 	}
 }
+
+// The install link reads "Get Spoken Margins" on the landing and unavailable pages (owner, 2026-11-06): the old
+// words named the App Store before there is a listing. Only the words changed; the link still goes to the
+// configured install URL.
+func TestInstallLinkSaysGetSpokenMargins(t *testing.T) {
+	var landing, gone bytes.Buffer
+	if err := Render(&landing, strings.Repeat("a", 32), install, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := RenderUnavailable(&gone, UnavailableGone, install); err != nil {
+		t.Fatal(err)
+	}
+	want := `<a href="` + install + `" rel="noreferrer noopener">Get Spoken Margins</a>`
+	for name, html := range map[string]string{"landing": landing.String(), "unavailable": gone.String()} {
+		if !strings.Contains(html, want) {
+			t.Errorf("%s page: missing %q", name, want)
+		}
+		if strings.Contains(html, "App Store") {
+			t.Errorf("%s page still names the App Store", name)
+		}
+	}
+}
