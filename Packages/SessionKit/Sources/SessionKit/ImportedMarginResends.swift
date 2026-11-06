@@ -106,11 +106,16 @@ public enum ImportedMarginResends {
     public static func rememberShareLink(
         _ linkId: String?, onLayerWithDigest packageDigest: String, repository: ListeningSessionRepository
     ) throws {
-        guard let linkId = linkId.flatMap(ShareLinkReport.validLinkId),
-              var held = try repository.loadImportedCommentaryLayer(packageDigest: packageDigest),
-              held.deletedAt == nil, held.shareLinkId == nil else { return }
-        held.shareLinkId = linkId
-        try repository.saveImportedCommentaryLayer(held)
+        guard let linkId = linkId.flatMap(ShareLinkReport.validLinkId) else { return }
+        // The read and the write are one transaction: the layer is read again under the write lock, so a Margin saved
+        // or a repair finished between them is not overwritten with an older copy of the layer (#3409).
+        let remember = {
+            guard var held = try repository.loadImportedCommentaryLayer(packageDigest: packageDigest),
+                  held.deletedAt == nil, held.shareLinkId == nil else { return }
+            held.shareLinkId = linkId
+            try repository.saveImportedCommentaryLayer(held)
+        }
+        if let store = repository as? any SessionRepositoryTransaction { try store.withSessionTransaction(remember) } else { try remember() }
     }
 
     /// Artifact-only layers still need the app's podcast placement pass after commentary deduplication.

@@ -83,17 +83,77 @@ final class ImportedLayerRepairTransactionTests: XCTestCase {
         XCTAssertEqual(try snapshot(), before, "no deadlock joining it, and nothing of the repair survives")
     }
 
-    func testAWriteFromAnotherThreadWaitsForTheRepairAndThenSucceeds() throws {
+    /// A real overlap, forced: another writer holds the write lock and changes the layer while the repair's thread
+    /// is already waiting with a copy of the layer read before the change. The repair reads again under the lock, so
+    /// the change survives (a repair that saved its early copy would un-mute the layer).
+    func testARepairThatWaitsOnAnotherWriterKeepsThatWritersChange() throws {
         try seedLayerWithTwoMargins()
+        let stale = try XCTUnwrap(store.loadImportedCommentaryLayer(id: "layer"))
+        let store = try XCTUnwrap(self.store)
+        let contents = makeContents()
+        let localItem = identity
+        try overlapOtherWriterMutingTheLayer {
+            try SpokenMarginsPackageImporter.repairAssociation(
+                existing: stale, contents: contents, itemId: "new-item", localItem: localItem,
+                itemText: nil, repository: store)
+        }
+
+        let layer = try XCTUnwrap(store.loadImportedCommentaryLayer(id: "layer"))
+        XCTAssertTrue(layer.isMuted, "the other writer's change was not overwritten")
+        XCTAssertEqual(layer.itemId, "new-item", "and the repair still happened")
+    }
+
+    /// The same forced overlap for the link back-fill: its load and save are one transaction.
+    func testRememberingAShareLinkThatWaitsOnAnotherWriterKeepsThatWritersChange() throws {
+        try seedLayerWithTwoMargins()
+        let link = "0123456789abcdef0123456789abcdef"
+        let store = try XCTUnwrap(self.store)
+        try overlapOtherWriterMutingTheLayer {
+            try ImportedMarginResends.rememberShareLink(link, onLayerWithDigest: "packet-digest", repository: store)
+        }
+
+        let layer = try XCTUnwrap(store.loadImportedCommentaryLayer(id: "layer"))
+        XCTAssertTrue(layer.isMuted, "the other writer's change was not overwritten")
+        XCTAssertEqual(layer.shareLinkId, link)
+    }
+
+    func testRememberingAShareLinkInsideAnotherTransactionRollsBackWithIt() throws {
+        try seedLayerWithTwoMargins()
+        struct Abandon: Error {}
+        let before = try snapshot()
+
+        XCTAssertThrowsError(try store.withSessionTransaction {
+            try ImportedMarginResends.rememberShareLink("0123456789abcdef0123456789abcdef", onLayerWithDigest: "packet-digest", repository: store)
+            throw Abandon()
+        })
+
+        XCTAssertEqual(try snapshot(), before)
+    }
+
+    /// Runs `work` on a second thread while this thread holds the write lock, then mutes the layer under the lock and
+    /// commits. `work` therefore starts, reads the layer as it was, and can only write after the change.
+    private func overlapOtherWriterMutingTheLayer(_ work: @escaping () throws -> Void) throws {
+        final class Job: @unchecked Sendable {
+            let work: () throws -> Void
+            init(_ work: @escaping () throws -> Void) { self.work = work }
+        }
+        let job = Job(work)
+        let started = DispatchSemaphore(value: 0)
         let finished = DispatchSemaphore(value: 0)
         let failure = Failure()
-        DispatchQueue.global().async { [store] in
-            do { try store?.saveItem(Item(id: "other", title: "Other", mediaType: "text", text: "x", externalReference: nil, status: "ready")) }
-            catch { failure.error = error }
-            finished.signal()
+        try store.withSessionTransaction {
+            DispatchQueue.global().async {
+                started.signal()
+                do { try job.work() } catch { failure.error = error }
+                finished.signal()
+            }
+            XCTAssertEqual(started.wait(timeout: .now() + 10), .success)
+            Thread.sleep(forTimeInterval: 0.3)
+            var layer = try XCTUnwrap(store.loadImportedCommentaryLayer(id: "layer"))
+            layer.isMuted = true
+            try store.saveImportedCommentaryLayer(layer)
         }
-        try repair()
-        XCTAssertEqual(finished.wait(timeout: .now() + 10), .success, "a writer on another thread is never left waiting")
+        XCTAssertEqual(finished.wait(timeout: .now() + 10), .success, "the waiting writer finishes once the lock is free")
         XCTAssertNil(failure.error)
     }
 
