@@ -1053,6 +1053,38 @@ class ScriptedJourneyOutcomeTests(unittest.TestCase):
         self.assertNotIn('phone candidate', report)
         self.assertEqual(ops.diagnosed_journeys, (JOURNEY,))
 
+    def boot_failed(self):
+        """What verify-tests.py writes when the simulator boot stops on a crash report: no journey ran (#3519)."""
+        boot = {'name': 'simulator-boot', 'exit_code': 1, 'errors': ['assetsd-x.ips while booting']}
+        return {'status': 'failed_or_incomplete', 'steps': [boot], 'error': 'simulator-boot: assetsd-x.ips while booting'}
+
+    def test_journeys_that_never_booted_are_inconclusive_not_a_fail(self):
+        ops, verdict = self.tick([manifest({TEST: 'passed'}), self.boot_failed(), self.boot_failed()])
+        self.assertEqual(verdict, 'INCONCLUSIVE')
+        self.assertEqual([c[1] for c in ops.calls if c[0] == 'test_plan'], ['app', 'journeys', 'journeys-retry'])
+        report = ops.posted[0]
+        self.assertIn('— INCONCLUSIVE', report)
+        self.assertIn('journeys not run: simulator boot failed', report)
+        self.assertNotIn('failing:', report)
+        self.assertNotIn('phone candidate', report)
+        self.assertEqual((ops.comments, ops.diagnosed), ([], []))
+
+    def test_a_journeys_boot_fault_that_clears_on_the_retry_is_judged_by_the_journeys(self):
+        ops, verdict = self.tick([manifest({TEST: 'passed'}), self.boot_failed(), self.journeys('passed', 'passed'),
+                                  tour_manifest()])
+        self.assertEqual(verdict, 'PASS')
+        self.assertIn('— PASS', ops.posted[0])
+        ops, verdict = self.tick([manifest({TEST: 'passed'}), self.boot_failed(), self.journeys('failed', 'passed')])
+        self.assertEqual(verdict, 'FAIL')
+        self.assertIn(f'failing: {JOURNEY}', ops.posted[0])
+
+    def test_a_boot_fault_does_not_hide_a_confirmed_app_failure(self):
+        plans = [manifest({TEST: 'failed'}), manifest({TEST: 'failed'}), manifest({TEST: 'failed'}),
+                 self.boot_failed(), self.boot_failed()]
+        ops, verdict = self.tick(plans)
+        self.assertEqual(verdict, 'FAIL')
+        self.assertIn(f'failing: {TEST}', ops.posted[0])
+
     def test_a_probation_journey_that_fails_is_named_and_not_verdict_input(self):
         ops, verdict = self.tick([manifest({TEST: 'passed'}), self.journeys('passed', 'failed')])
         self.assertEqual(verdict, 'PASS')

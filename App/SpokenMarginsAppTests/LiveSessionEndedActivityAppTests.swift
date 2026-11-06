@@ -36,4 +36,33 @@ final class LiveSessionEndedActivityAppTests: XCTestCase {
         let data = try JSONEncoder().encode(state)
         XCTAssertEqual(try JSONDecoder().decode(LiveSessionActivityAttributes.ContentState.self, from: data), state)
     }
+
+    // MARK: Recording on the card (#3499)
+
+    func testACardFromAnEarlierBuildDoesNotReadAsRecording() throws {
+        let old = #"{"markCount":2,"lastMarkAt":null}"#
+        let state = try JSONDecoder().decode(LiveSessionActivityAttributes.ContentState.self, from: Data(old.utf8))
+        XCTAssertNil(state.isRecordingMargin)
+        XCTAssertFalse(state.isRecordingNow)
+    }
+
+    func testTheRecordingFlagRoundTripsAndDrivesTheCard() throws {
+        let state = LiveSessionActivityAttributes.ContentState(markCount: 1, sessionId: "s", isRecordingMargin: true)
+        let data = try JSONEncoder().encode(state)
+        let back = try JSONDecoder().decode(LiveSessionActivityAttributes.ContentState.self, from: data)
+        XCTAssertEqual(back, state)
+        XCTAssertTrue(back.isRecordingNow)
+    }
+
+    func testAnEndedCardNeverReadsAsRecording() throws {
+        var live = LiveSession(id: "s", kind: .meeting, startedAt: start)
+        live.endedAt = start.addingTimeInterval(45 * 60)
+        live.endTappedAt = start.addingTimeInterval(60 * 60)
+        var running = LiveSessionActivities.runningState(for: live, markCount: 1, lastMarkAt: nil, now: start)
+        running.isRecordingMargin = true
+        let plan = try XCTUnwrap(LiveSessionEndedActivity.plan(for: live, now: start.addingTimeInterval(61 * 60)))
+        let ended = LiveSessionActivities.endedState(from: running, plan: plan)
+        XCTAssertFalse(ended.isRecordingNow)
+        XCTAssertNil(ended.isRecordingMargin)
+    }
 }
