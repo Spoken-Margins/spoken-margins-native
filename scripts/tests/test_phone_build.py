@@ -354,6 +354,23 @@ class InstallerTests(unittest.TestCase):
         self.assertIn(f'open {folder.resolve()}/test-plan.md', calls)
         self.assertFalse(any('uninstall' in c for c in calls))
 
+    def test_a_watch_app_whose_build_cannot_be_read_leaves_the_watch_alone(self):
+        folder = self.make_build()
+        bundle = self.add_watch_app(folder)
+        (bundle / 'Info.plist').write_text('not a plist')
+        done, calls = self.run_installer([iphone('PHONE-1'), watch()])
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn("couldn't read the Watch app's build number", done.stdout)
+        self.assertEqual(len([c for c in calls if 'install app' in c]), 1)
+
+    def test_the_watch_step_comes_after_the_test_plan_is_opened(self):
+        folder = self.make_build()
+        self.add_watch_app(folder)
+        done, calls = self.run_installer([iphone('PHONE-1'), watch()], FAKE_WATCH_APPS=self.watch_apps('36'))
+        opened = calls.index(f'open {folder.resolve()}/test-plan.md')
+        watch_install = next(i for i, c in enumerate(calls) if 'install app --device WATCH-1' in c)
+        self.assertLess(opened, watch_install, 'a slow Watch must not delay the plan')
+
     def test_no_paired_watch_is_one_plain_line(self):
         folder = self.make_build()
         self.add_watch_app(folder)

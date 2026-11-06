@@ -332,21 +332,24 @@ PY
     return 0
   fi
   print -r -- "Apple Watch: installing the Watch app on $wname (keep the Watch awake and the phone nearby)..."
-  if ! xcrun devicectl device install app --device "$wid" "$watch_app" >"$work/watch-install.log" 2>&1; then
+  # A Watch that is asleep or out of reach can leave devicectl waiting, so the install gets two minutes.
+  if ! /usr/bin/perl -e 'alarm shift; exec @ARGV' 120 xcrun devicectl device install app --device "$wid" "$watch_app" \
+      >"$work/watch-install.log" 2>&1; then
     print -r -- "Apple Watch: $wname was not updated, so it still runs its old build. The phone is done."
-    print -r -- "  devicectl said: $(tail -1 "$work/watch-install.log")"
+    print -r -- "  devicectl said: $(grep . "$work/watch-install.log" | tail -1) (no answer within two minutes shows as nothing)"
     print -r -- "  Wake the Watch, keep the phone near it, and run this again, or run: xcrun devicectl device install app --device $wid \"$watch_app\""
     return 0
   fi
   local seen
-  xcrun devicectl device info apps --device "$wid" --bundle-id "$bundle_id" --json-output "$work/watch-apps.json" \
+  /usr/bin/perl -e 'alarm shift; exec @ARGV' 30 xcrun devicectl device info apps --device "$wid" --bundle-id "$bundle_id" \
+      --json-output "$work/watch-apps.json" \
       >"$work/watch-apps.log" 2>&1 || true
   seen=$(/usr/bin/python3 - "$work/watch-apps.json" "$bundle_id" <<'PY' 2>/dev/null
 import json, sys
 apps = json.load(open(sys.argv[1])).get('result', {}).get('apps', [])
 for app in apps:
     if app.get('bundleIdentifier') == sys.argv[2]:
-        print(app.get('bundleVersion') or app.get('version') or '')
+        print(app.get('bundleVersion') or '')
         break
 PY
 )
@@ -377,8 +380,6 @@ fi
 print -r -- "$sha $(date '+%Y-%m-%dT%H:%M:%S') $name" > "$phone_dir/installed.txt"
 print -r -- ""
 print -r -- "Done: $name now runs commit ${sha[1,7]}. In the app, Settings shows the version ending in · ${sha[1,7]}."
-install_watch
-print -r -- ""
 print -r -- "Opening the test plan."
 
 # The phone reads the plan from iCloud Drive (Files app > iCloud Drive > Spoken Margins test plans).
@@ -393,3 +394,7 @@ else
   print -r -- "(I couldn't copy the test plan to iCloud Drive, so it's only on this Mac.)"
 fi
 open "$latest/test-plan.md"
+
+# Last, so a Watch that is slow to answer never delays the test plan (#3530).
+print -r -- ""
+install_watch
