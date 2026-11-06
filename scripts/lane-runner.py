@@ -3806,6 +3806,12 @@ def main(argv=None) -> int:
     head = pull['head']['sha']
     labels = {label['name'] for label in pull.get('labels', [])}
     automerge = AUTOMERGE in labels
+    # The hosted audit's dispatch after a clean audit (#2170). The automerge job's `if` checks these for a pull_request.
+    if args.mode == 'auto' and os.environ.get('GITHUB_EVENT_NAME') == 'workflow_dispatch' and (
+            ((pull.get('head') or {}).get('repo') or {}).get('full_name') != repo
+            or (pull.get('base') or {}).get('ref', args.base) != args.base):
+        print(f'PR #{args.pr} is not a branch of this repository into {args.base}; nothing to run.')
+        return 0
     if head != args.event_head:
         print(f'The PR moved on to {head[:7]} since this run was queued; the newer run tests it.')
         return 0

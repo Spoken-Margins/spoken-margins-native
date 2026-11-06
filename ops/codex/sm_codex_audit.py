@@ -35,6 +35,10 @@ A clean audit is never repeated because the description changed.
 Small PRs are batched: one Claude call per batch, one comment per PR. The comment opens
 `**Claude audit on `<sha7>`**`, the heading the lane runner counts as an audit.
 
+Where it runs: .github/workflows/claude-audit.yml on hosted Linux (#2170), or, by hand, the owner's Mac. In a
+workflow the token comes from CLAUDE_CODE_OAUTH_TOKEN, a PR from a fork is never read, and because a label change made
+with the workflow's own token starts no run, the re-arm and the tap check also dispatch the workflow they need.
+
 Re-arm: the runner merges an audio, persistence or packet PR only on a run
 after a clean audit, and nothing starts that run. So after each audit batch,
 and again at the end of every run, the script removes and re-adds `automerge`
@@ -656,14 +660,15 @@ def gh_json_lines(path: str) -> list[dict]:
 
 
 def fetch_open_prs(only: int | None) -> list[dict]:
-    fields = "number,title,body,isDraft,headRefOid,baseRefName,closingIssuesReferences,url,labels"
+    """Open PRs from this repository. A fork's PR is never audited: the job holds a Claude token (#2170)."""
+    fields = "number,title,body,isDraft,headRefOid,baseRefName,closingIssuesReferences,url,labels,isCrossRepository"
     if only is not None:
         res = run(["gh", "pr", "view", str(only), "--repo", REPO, "--json", fields + ",state"], cwd=REPO_ROOT)
         pr = json.loads(res.stdout)
-        return [pr] if pr.get("state") == "OPEN" else []
+        return [pr] if pr.get("state") == "OPEN" and pr.get("isCrossRepository") is False else []
     res = run(["gh", "pr", "list", "--repo", REPO, "--base", BASE_BRANCH, "--state", "open",
                "--limit", "200", "--json", fields], cwd=REPO_ROOT)
-    return json.loads(res.stdout)
+    return [pr for pr in json.loads(res.stdout) if pr.get("isCrossRepository") is False]
 
 
 def fetch_comments(number: int) -> list[dict]:
@@ -723,6 +728,18 @@ def inherited_text(comments: list[dict], holds: list[dict], lookup_error: str | 
 REARMED: set[int] = set()  # PRs this process re-armed, so the end-of-run pass skips them
 
 
+def in_a_workflow() -> bool:
+    return os.environ.get("GITHUB_ACTIONS") == "true"
+
+
+def start_merge_run(number: int, head: str) -> str:
+    """Dispatch lane.yml's merge run for this PR, and return '' or why not. In a workflow the re-arm's label change
+    starts no run, but a dispatch does. The label change stays: its event is what stops a second re-arm."""
+    res = run(["gh", "workflow", "run", "lane.yml", "--repo", REPO, "--ref", BASE_BRANCH,
+               "-f", f"pr={number}", "-f", f"head={head}", "-f", "auto=true"], cwd=REPO_ROOT, check=False)
+    return "" if res.returncode == 0 else res.stderr.strip()[:160]
+
+
 def rearm_pass(prs: list[dict], dry_run: bool) -> None:
     """Remove and re-add automerge where rearm_decision says so (see the module docstring).
 
@@ -766,6 +783,11 @@ def rearm_pass(prs: list[dict], dry_run: bool) -> None:
                     break
                 time.sleep(5)
             REARMED.add(n)  # the label was removed, so don't touch this PR again this run
+            if added.returncode == 0 and in_a_workflow():
+                problem = start_merge_run(n, pr['headRefOid'])
+                if problem:
+                    log(f"re-arm #{n} failed: couldn't dispatch the merge run: {problem}")
+                    continue
             if added.returncode == 0:
                 log(f"re-armed #{n} on {pr['headRefOid'][:7]}: removed and re-added {AUTOMERGE} ({why})")
             else:
@@ -881,6 +903,12 @@ def clear_failure(number: int) -> None:
 
 
 def claude_token() -> str | None:
+    """The workflow's secret, else the Mac's Keychain."""
+    token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "").strip()
+    if token:
+        return token
+    if in_a_workflow():
+        return None
     res = run(["/usr/bin/security", "find-generic-password", "-s", KEYCHAIN_SERVICE, "-w"],
               cwd=REPO_ROOT, check=False, timeout=30)
     token = res.stdout.strip() if res.returncode == 0 else ""
@@ -888,11 +916,11 @@ def claude_token() -> str | None:
 
 
 def check_claude() -> tuple[bool, str]:
-    """Whether a Claude call can start: the CLI is installed and the Keychain holds the token."""
+    """Whether a Claude call can start: the CLI is installed and the token is there."""
     if not CLAUDE.exists():
         return False, f"{CLAUDE} is missing"
     if not claude_token():
-        return False, f"no Claude token in the Keychain (service {KEYCHAIN_SERVICE})"
+        return False, f"no Claude token (CLAUDE_CODE_OAUTH_TOKEN, or the Keychain's service {KEYCHAIN_SERVICE})"
     return True, f"claude {CLAUDE_MODEL} {CLAUDE_EFFORT}"
 
 
@@ -1079,7 +1107,12 @@ def touches_owner_tap(files: list[dict] | None) -> bool:
 
 
 def request_tap_check(number: int) -> str:
-    """Re-add owner-tap-check so a fresh `labeled` event starts the alert check; a failure is only logged."""
+    """Re-add owner-tap-check so a fresh `labeled` event starts the alert check; a failure is only logged. In a workflow
+    a label change starts no run, so it dispatches the alert check instead."""
+    if in_a_workflow():
+        res = run(["gh", "workflow", "run", "owner-tap-alert.yml", "--repo", REPO, "--ref", BASE_BRANCH,
+                   "-f", f"pr={number}"], cwd=REPO_ROOT, check=False)
+        return "tap check requested" if res.returncode == 0 else f"tap check request failed: {res.stderr.strip()[:80]}"
     run(["gh", "api", "-X", "DELETE", f"repos/{REPO}/issues/{number}/labels/{OWNER_TAP_LABEL}"],
         cwd=REPO_ROOT, check=False)  # a PR without the label answers 404, which is fine
     res = run(["gh", "api", "-X", "POST", f"repos/{REPO}/issues/{number}/labels", "-f", f"labels[]={OWNER_TAP_LABEL}"],
@@ -1156,17 +1189,23 @@ def export_head_files(worktree: Path, number: int, head: str, files: list[dict])
     return rel
 
 
+def carries_token(text: str) -> bool:
+    token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "").strip()
+    return bool(token) and token in text
+
+
 def run_claude(worktree: Path, out_file: Path, prompt: str, transcript: Path) -> tuple[bool, str]:
     """One headless, read-only Claude call. The prompt goes in on stdin; the JSON result is kept as the
     transcript (the usage ledger reads it) and its `result` text is the answer."""
     token = claude_token()
     if not token or not CLAUDE.exists():
-        return False, "no Claude token in the Keychain" if not token else f"{CLAUDE} is missing"
+        return False, "no Claude token" if not token else f"{CLAUDE} is missing"
     cmd = [str(CLAUDE), "-p", "-", "--output-format", "json", "--model", CLAUDE_MODEL,
            "--effort", CLAUDE_EFFORT, "--permission-mode", "dontAsk", "--tools", CLAUDE_TOOLS,
            "--strict-mcp-config", "--setting-sources", "project", "--no-session-persistence",
            "--max-budget-usd", CLAUDE_BUDGET_USD]
-    env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+    # Claude gets no GitHub token: it only reads, and anything it can see could reach a public comment (#2170).
+    env = {k: v for k, v in os.environ.items() if k not in ("ANTHROPIC_API_KEY", "GH_TOKEN", "GITHUB_TOKEN")}
     env["CLAUDE_CODE_OAUTH_TOKEN"] = token
     with open(transcript, "wb") as tfh:
         proc = subprocess.Popen(cmd, cwd=worktree, env=env, stdin=subprocess.PIPE, stdout=tfh,
@@ -1279,10 +1318,15 @@ def audit_batch(batch: list[dict]) -> None:
                 target['post_missing_reason'] = 'audited by someone else meanwhile'
                 results.append(f"#{n} audited by someone else meanwhile, nothing posted")
                 continue
+            body = build_comment(n, head, sections[n], live_nums,
+                                 input_hash=audit_input_hash(c.get("title"), c.get("body")))
+            if carries_token(body):  # the repository is public: never post it, and never say what it was
+                target['post_missing_reason'] = 'the answer contained the Claude token'
+                record_failure(n, failure_key(c))
+                results.append(f"#{n} the answer contained the Claude token, nothing posted")
+                continue
             body_file = tmp / f"comment-{n}.md"
-            body_file.write_text(build_comment(
-                n, head, sections[n], live_nums, input_hash=audit_input_hash(c.get("title"), c.get("body"))),
-                encoding="utf-8")
+            body_file.write_text(body, encoding="utf-8")
             res = run(["gh", "pr", "comment", str(n), "--repo", REPO, "--body-file", str(body_file)],
                       cwd=REPO_ROOT, check=False)
             match = re.search(r'https://\S+#issuecomment-\d+', res.stdout or '')
