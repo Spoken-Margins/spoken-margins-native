@@ -12,7 +12,34 @@ final class Gate1FlowUITests: XCTestCase {
             "-libraryOfflineStateFilter", "all", "-librarySort", "recently_added",
             "-libraryUnfinishedDefaultApplied", "YES"]
         app.launchEnvironment["SPOKEN_MARGINS_UI_TESTING"] = "1"
-        app.launch()
+        launchAllowingOneStalledFirstLaunch()
+    }
+
+    /// #3479 (and #2806): the first launch of a run on a fresh simulator sometimes stalls for about 200 seconds and
+    /// fails with "Timed out while launching application via Xcode", "Simulator device failed to launch ... No such
+    /// process" or "does not have a process ID". Every later launch in the same run, about 20 of them, goes through, and
+    /// xcodebuild's retry then passed the test each time (3 retry-passes in 7 days on this test alone). The test is
+    /// only the first by name: Gate1FlowUITests sorts before the J* classes. The launch itself is the flake, so the
+    /// first launch of the process may fail in those three ways, once; the launch is then tried again as a real
+    /// launch. Any other failure, and any failure of a later launch, still fails the test.
+    nonisolated(unsafe) private static var firstLaunchOfTheRunIsDone = false
+
+    private func launchAllowingOneStalledFirstLaunch() {
+        guard !Self.firstLaunchOfTheRunIsDone else { return app.launch() }
+        Self.firstLaunchOfTheRunIsDone = true
+        let options = XCTExpectedFailure.Options()
+        options.isStrict = false
+        options.issueMatcher = { issue in
+            ["Timed out while launching", "Failed to launch", "Failed to get launch progress", "does not have a process ID"]
+                .contains { issue.compactDescription.contains($0) }
+        }
+        let keepGoing = continueAfterFailure
+        continueAfterFailure = true
+        XCTExpectFailure("The first launch of a run can stall on a fresh simulator (#3479)", options: options) {
+            app.launch()
+        }
+        continueAfterFailure = keepGoing
+        if app.state != .runningForeground { app.launch() }
     }
 
     func testListeningEditionPreviewShowsSuppliedScenesBeforeImport() throws {
