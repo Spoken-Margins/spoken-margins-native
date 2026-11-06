@@ -753,7 +753,9 @@ RUNNER_TEST_READERS = ('test_filled_button_contrast', 'test_filled_button_labels
                        # The map-text gate scan reads App/ and SessionKit Swift files (#3449).
                        'test_map_text_gate',
                        # The public-source caller scan reads App/ and SessionKit Swift files (#3449).
-                       'test_public_source_check_callers')
+                       'test_public_source_check_callers',
+                       # The server-contact guard scans App/ and SessionKit Swift files (#2842).
+                       'test_server_contact_consent')
 RUNNER_TEST_INPUTS = ('App/', 'Packages/', 'Contracts/', 'TestPlans/', 'validation/', 'research/', 'project.yml',
                       'docs/sharing-test-kit/', 'docs/task-cost-map.json', 'BUILDING.md', 'README.md', 'package.json', '.gitattributes',
                       # test_third_party_notices reads the dependency manifests and its own list (#1823).
