@@ -189,15 +189,16 @@ public enum ImportedMarginResends {
 }
 
 extension ImportedCommentaryInterjection {
-    /// A re-sent Margin can turn the sender's "don't read aloud" on (#3452): the held copy follows an explicit `false` in
-    /// the newest packet. A packet with no choice does not turn it back on, because the sender's app sends no key for
-    /// "read aloud" and starts every draft at the default, so a re-share that merely repeats an earlier Margin looks the
-    /// same as "turned back on" and must not cancel the earlier choice (audit on 084da4b). Turning it back on needs the
-    /// sender's app to remember each Margin's choice first. The listener's own choice always wins and is left alone, and
-    /// a Margin with a recording has no choice to change. The words, place and share provenance, not the choice, say it is
-    /// the same Margin (`Fingerprint`), so a flip never makes a second copy.
+    /// A re-sent Margin can change the sender's read-aloud choice (#3452, #3472): the held copy follows an explicit choice in
+    /// the newest packet, "off" or "on". A packet with no choice changes nothing, because the sender's app writes no key
+    /// for the default, so a re-share that merely repeats an earlier Margin must not cancel the earlier choice (audit on
+    /// 084da4b). The sender's app now remembers each Margin's last-sent choice and writes an explicit "on" only when that
+    /// was "off", so an explicit "on" really is the sender turning it back on. The listener's own choice always wins and is
+    /// left alone, and a Margin with a recording has no choice to change. The words, place and share provenance, not the
+    /// choice, say it is the same Margin (`Fingerprint`), so a flip never makes a second copy.
     mutating func followSenderReadAloud(of incoming: ImportedCommentaryInterjection, arrivedAt: Date) {
-        guard listenerReadAloud == nil, isWritten, incoming.senderReadAloud == false, senderReadAloud != false else { return }
+        guard listenerReadAloud == nil, isWritten, let choice = incoming.senderReadAloud,
+              choice != (senderReadAloud ?? true) else { return }
         senderReadAloud = incoming.senderReadAloud
         senderReadAloudAt = arrivedAt
     }
