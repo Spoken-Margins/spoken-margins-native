@@ -165,6 +165,9 @@ public struct LiveSessionMargin: Codable, Equatable, Sendable, Identifiable {
     /// How its time was corrected, when worth saying: "Watch clock 2.4 s ahead, corrected" or "Watch clock, not
     /// checked". Evidence for the listener and the export; never used to place it.
     public var clockNote: String?
+    /// A photo of the page this Margin is about (#2708), kept on this phone only. Optional, so a session saved by an
+    /// earlier build still reads; it is never written into a packet or a share link.
+    public var photo: LiveSessionPhoto?
 
     public init(
         id: String, text: String, markedAt: Date, sessionOffsetMs: Int = 0, whereNote: String? = nil, isBlindMark: Bool = false,
