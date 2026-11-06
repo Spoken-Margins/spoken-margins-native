@@ -50,8 +50,8 @@ public enum SharedMarginAudio: Equatable, Sendable {
         }
     }
 
-    /// Whether a Margin is worth offering to play at all: it has a recording, or words the voice can read and will read
-    /// (the sender and the listener have not turned reading off, #3427). Answered from the Margin alone (no disk), so a
+    /// Whether a Margin is worth offering to play at all: it has a recording, or words a voice on this phone can read and
+    /// will read (the sender and the listener have not turned reading off, #3427). Answered from the Margin alone (no disk), so a
     /// screen can use it to enable a Play button, and Skim, the cards and the review use it to decide what they stop
     /// at. A recording that has gone missing still counts here; `resolve` is what finds that out when the listener taps.
     public static func canOffer(_ margin: ImportedCommentaryInterjection) -> Bool {
@@ -63,7 +63,10 @@ public enum SharedMarginAudio: Equatable, Sendable {
     public static func unavailableWords(for margin: ImportedCommentaryInterjection) -> String {
         if margin.audioPath != nil { return "That Margin's recording couldn't play." }
         // Words the voice can read, kept silent by a choice: say whose, so the listener knows the way back.
-        if margin.isWritten { return "This Margin is set not to be read aloud. Turn reading on for it to hear it." }
-        return "This Margin can't be read aloud on this iPhone."
+        if margin.isWritten, !margin.readAloudChoice { return "This Margin is set not to be read aloud. Turn reading on for it to hear it." }
+        return noVoiceWords
     }
+
+    /// Said of a note the voice has nothing to say for, or that no voice on this phone can read.
+    public static let noVoiceWords = "This Margin can't be read aloud on this iPhone."
 }

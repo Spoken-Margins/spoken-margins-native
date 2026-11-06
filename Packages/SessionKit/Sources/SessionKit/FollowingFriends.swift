@@ -58,7 +58,7 @@ public enum FollowingFriends {
             var item = group.items[itemId] ?? (entry.itemTitle, date, [], [], entry.layer.itemIdentity.itemType)
             item.newest = max(item.newest, date)
             item.marginIds.insert(entry.id)
-            if entry.interjection.isNewToListener {
+            if entry.interjection.showsAsNew {
                 group.newIds.insert(entry.id)
                 item.newIds.insert(entry.id)
             }
