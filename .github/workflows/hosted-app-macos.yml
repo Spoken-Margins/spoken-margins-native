@@ -6,8 +6,9 @@
 # That is App/, Packages/, project.yml, the generated project, and the Contracts and Site files project.yml
 # bundles into the app (scripts/verify-bundle.py checks them). It skips Packages/SessionKit/Tests and
 # Packages/SessionKitTools: the app links only SessionKit's library products, so a diff there cannot change the
-# build. *.md is not excluded, because App/SpokenMarginsApp/Resources bundles .md files. This is not a required
-# check, so path filters are enough. scripts/tests/test_hosted_app_paths.py keeps the lists in step with project.yml.
+# build. *.md is not excluded, because App/SpokenMarginsApp/Resources bundles .md files. The runner waits for this
+# check only on diffs under App/ (test-scope.py app_build_required, #3539), which the path filters always start. It is
+# no required check in GitHub's sense. scripts/tests/test_hosted_app_paths.py keeps the lists in step with project.yml.
 # `LANE_HOSTED_APP` (lane routing) is
 # separate: it stays off until hosted T3 passes.
 # T3 is started by hand (workflow_dispatch) until it passes on the hosted image (#2365).

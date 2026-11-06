@@ -5,6 +5,7 @@ touched no Swift input and spent 23% of the Mac minutes, with a queue p90 of abo
 sent the runner to the build Mac after its 5-minute grace.
 """
 import ast
+import json
 from pathlib import Path
 import re
 import subprocess
@@ -132,6 +133,51 @@ def mac_only_reach():
     return {str(p): by for p, by in reached.items() if str(p).startswith('scripts/')}
 
 
+class AppBuildRecordTests(unittest.TestCase):
+    """#3539: the app build writes no `lane-hosted-tested` notice, so green on the head is what stands."""
+    NAME = next(iter(lane.HOSTED_APP_CHECK))
+
+    def github(self, **run):
+        fake = mock.Mock(repo='o/r')
+        runs = [{'id': 1, 'status': 'completed', 'conclusion': 'success', 'started_at': 't', 'html_url': 'u',
+                 'app': {'slug': 'github-actions'}, **run}]
+        fake.api = mock.Mock(side_effect=lambda path: json.dumps({'check_runs': runs}))
+        return fake
+
+    def test_green_on_the_head_stands_with_no_notice_and_no_merge_tree(self):
+        github = self.github()
+        found, why = lane.hosted_fast_records(github, HEAD, checks=lane.HOSTED_APP_CHECK)
+        self.assertEqual((set(found), why), ({self.NAME}, ''))
+        self.assertEqual(github.api.call_count, 1, 'it must not read annotations')
+        with mock.patch.object(lane, 'merged_tree') as merged:
+            stood, why = lane._fast_checks_stand(github, Path('.'), 'main', HEAD, MERGE,
+                                                 lane.hosted_fast_records, lane.HOSTED_APP_CHECK)
+        self.assertEqual((set(stood), why), ({self.NAME}, ''))
+        merged.assert_not_called()
+
+    def test_red_cancelled_and_unfinished_do_not_stand(self):
+        for run, words in (({'conclusion': 'failure'}, 'ended failure'), ({'conclusion': 'cancelled'}, 'ended cancelled'),
+                           ({'conclusion': 'skipped'}, 'ended skipped'),
+                           ({'status': 'in_progress', 'conclusion': None}, lane.NOT_FINISHED)):
+            with self.subTest(run=run):
+                found, why = lane.hosted_fast_records(self.github(**run), HEAD, checks=lane.HOSTED_APP_CHECK)
+                self.assertIsNone(found)
+                self.assertIn(words, why)
+        self.assertTrue(lane.HOSTED_FAILED.search(f'"{self.NAME}" ended failure on abc1234'))
+
+    def test_the_report_says_the_app_build_passed_beside_the_merge_records(self):
+        tree = 'c' * 40
+        found = {'hosted fast: portable': {'plan': 'fast-portable', 'tree': tree, 'base': MERGE, 'head': HEAD, 'url': 'p'},
+                 'hosted fast: Mac rest': {'plan': 'x', 'tree': tree, 'base': MERGE, 'head': HEAD, 'url': 'r'},
+                 self.NAME: {'head': HEAD, 'url': 'a'}}
+        ran = lane.hosted_fast_ran(found)
+        self.assertIn('none on the Mac', ran)
+        self.assertIn('the app build passed on this head', ran)
+        lines = lane.hosted_fast_lines(found)
+        self.assertEqual(len(lines), 3)
+        self.assertIn(f'check "{self.NAME}": PASS on this head. a', lines[2])
+
+
 class MacOnlyReachTests(unittest.TestCase):
     def test_every_script_only_the_mac_jobs_exercise_needs_the_mac_checks(self):
         missed = {path: by for path, by in mac_only_reach().items() if not scope.mac_checks_required([path])[0]}
@@ -164,6 +210,40 @@ class HostedCheckSetTests(unittest.TestCase):
 
     def test_a_swift_diff_still_requires_all_three(self):
         self.assertEqual(self.check_set(['Packages/SessionKit/Sources/SessionKit/X.swift']), (self.FULL, None))
+
+    def test_a_diff_under_app_also_waits_for_the_app_build(self):
+        with_app = {**self.FULL, **lane.HOSTED_APP_CHECK}
+        self.assertEqual(self.check_set(['App/SpokenMarginsApp/Sources/SpokenMarginsApp/X.swift']), (with_app, None))
+        self.assertEqual(self.check_set(['App/SpokenMarginsAppTests/XTests.swift', 'docs/y.md']), (with_app, None))
+
+    def test_a_diff_outside_app_does_not_wait_for_the_app_build(self):
+        self.assertEqual(self.check_set(['project.yml'])[0], self.FULL)
+        self.assertEqual(self.check_set(['docs/App/y.md'])[0], lane.HOSTED_PORTABLE_CHECK)
+
+    def test_the_app_build_is_still_required_when_the_mac_checks_are_not(self):
+        policy = mock.Mock(mac_checks_required=lambda paths: (False, 'not needed'), app_build_required=scope.app_build_required)
+        checks, why = self.check_set(['App/x.swift'], policy=policy)
+        self.assertEqual(checks, {**lane.HOSTED_PORTABLE_CHECK, **lane.HOSTED_APP_CHECK})
+        self.assertEqual(why, 'not needed')
+
+    def test_a_base_without_the_app_build_rule_keeps_the_checks_it_had(self):
+        policy = mock.Mock(spec=['mac_checks_required'], mac_checks_required=scope.mac_checks_required)
+        self.assertEqual(self.check_set(['App/x.swift'], policy=policy), (self.FULL, None))
+
+    def test_the_app_build_check_is_the_one_the_workflow_names(self):
+        workflow = (ROOT / '.github/workflows/hosted-app-macos.yml').read_text()
+        for name in lane.HOSTED_APP_CHECK:
+            self.assertIn(f'name: {name}\n', workflow)
+        self.assertIn("      - 'App/**'\n", workflow)
+
+    def test_an_app_diff_on_the_build_mac_fallback_is_not_merged_with_no_compile(self):
+        name = next(iter(lane.HOSTED_APP_CHECK))
+        for why in (f'"{name}" ended cancelled on abc1234', f'no "{name}" check ran on abc1234',
+                    f'"{name}" {lane.NOT_FINISHED} on abc1234 (waited 60m)'):
+            with self.subTest(why=why):
+                self.assertEqual(lane.hosted_checks_missing(why)[0], 'INCONCLUSIVE')
+        self.assertEqual(lane.hosted_checks_missing('"hosted fast: portable" ended cancelled on abc1234')[0], lane.NEEDS_MAC)
+        self.assertEqual(lane.hosted_checks_missing(f'"{name}" ended failure on abc1234')[0], 'FAIL')
 
     def test_a_workflow_only_diff_to_the_mac_jobs_own_workflow_requires_all_three(self):
         self.assertEqual(self.check_set(['.github/workflows/hosted-portable.yml']), (self.FULL, None))
