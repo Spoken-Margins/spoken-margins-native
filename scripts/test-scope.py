@@ -184,12 +184,13 @@ TEST_METHOD = re.compile(r'^\s*(?:@\w+\s+)*func test\w*\(')
 HUNK = re.compile(r'^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@', re.M)
 WORD = re.compile(r'[A-Za-z_]\w*')
 MEMBER_DECL = re.compile(
-    r'^(\s*)(?:@\w+(?:\([^)]*\))?\s+)*((?:(?:private|fileprivate|internal|public|open|static|final|override|mutating|'
-    r'nonisolated|lazy|weak|unowned|indirect|convenience|required|class)(?:\(\w+\))?\s+)*)(func|var|let|struct|enum|'
+    r'^(\s*)(?:@\w+(?:\([^)]*\))?\s+)*((?:(?:private|fileprivate|internal|public|open|package|static|final|override|mutating|'
+    r'nonisolated|lazy|weak|unowned|indirect|convenience|required|dynamic|class)(?:\(\w+\))?\s+)*)(func|var|let|struct|enum|'
     r'class|protocol|actor|typealias|case|extension)\s+`?(\w+)((?:\s*,\s*`?\w+)*)')
 # An init or subscript has no name to follow, but its body belongs to it, not to the member declared above it.
 NAMELESS_DECL = re.compile(r'^(\s*)(?:@\w+(?:\([^)]*\))?\s+)*(?:(?:private|fileprivate|internal|public|open|convenience|'
-                           r'required|override|nonisolated|static|class|final)(?:\(\w+\))?\s+)*(?:init[?!]?\s*[(<]|subscript\s*[(<])')
+                           r'required|override|nonisolated|static|class|final|package)(?:\(\w+\))?\s+)*(?:init[?!]?\s*[(<]|subscript\s*[(<]|'
+                           r'deinit\b)')
 TYPE_KINDS = {'struct', 'enum', 'class', 'protocol', 'actor', 'extension'}
 
 
@@ -295,6 +296,12 @@ def holder_at(holders, index, indent):
     return held
 
 
+def holder_at_before(holders, holder):
+    """The member that holds <holder>'s own declaration line (its parent), or None."""
+    around = [other for other in holders if other[0] < holder[0] and other[1] < holder[1]]
+    return around[-1] if around else None
+
+
 def touched_lines(diff_text):
     """(new-file line index, whether code was removed there) for each line a -U0 diff touches; None when the diff has
     no hunk to read. A hunk that only removes lines touches the line it follows."""
@@ -315,9 +322,10 @@ def touched_lines(diff_text):
 
 def changed_members(lines, holders, diff_text):
     """The names of the members whose lines a -U0 diff touches (#3467). Every named member when there is no diff to
-    read, or a touched line sits where no named member holds it (an import, a top-level statement): the net stays
-    as wide as it was. A touched line that is blank or only a comment changes nothing a test can reach, unless the
-    hunk also removed code, and then it counts as the nearest code line above it."""
+    read, or a touched line sits where no named member holds it (an import, a top-level statement), in an init or
+    deinit (no name to start from), or at the members' own indent (an attribute, a signature tail, a closing brace:
+    the type holds it): the net stays as wide as it was. A touched line that is blank or only a comment changes
+    nothing a test can reach, unless the hunk also removed code, and then it counts as the nearest code line above it."""
     everything = {name for _, _, name in holders if name}
     touched = touched_lines(diff_text)
     if touched is None:
@@ -333,12 +341,13 @@ def changed_members(lines, holders, diff_text):
                 index -= 1
             if not lines[index].strip():
                 return everything
-        held = holder_at(holders, index, len(lines[index]) - len(lines[index].lstrip()))
-        if held is not None and held[2] is None:  # an init has no name: the type around it stands for it
-            around = [h for h in holders if h[0] < held[0] and h[1] < held[1]]
-            held = around[-1] if around else None
-        if held is None or held[2] is None:
+        indent = len(lines[index]) - len(lines[index].lstrip())
+        held = holder_at(holders, index, indent)
+        if held is None or held[2] is None:  # outside any member, or in an init, which has no name to start from
             return everything
+        if held[0] != index and any(other[1] == indent and other[0] > held[0] and holder_at_before(holders, other) == held
+                                    for other in holders):
+            return everything  # an attribute line, a signature tail or a closing brace at the members' own indent
         names.add(held[2])
     # A member in the same file that calls a changed one sits in the same neighbourhood: it is no hop away. (The file's
     # private members are seen from nowhere else, so a hop through the file's own callers is the only way out of it.)

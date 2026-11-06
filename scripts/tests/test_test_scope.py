@@ -730,6 +730,40 @@ class ReachedByNameTests(unittest.TestCase):
         result = scope.classify([path], self.diff('@@ -4 +4 @@'), root=self.root)  # alpha
         self.assertEqual(result['app_tests'], ['AlphaTests', 'GammaTests'])
 
+    STRUCT = [
+        'struct S {',                    # 1
+        '    @Published',                # 2
+        '    var a = 1',                 # 3
+        '    func foo(',                 # 4
+        '        x: Int',                # 5
+        '    ) -> Int {',                # 6
+        '        return x',              # 7
+        '    }',                         # 8
+        '    init() {',                  # 9
+        '        setup()',               # 10
+        '    }',                         # 11
+        '    deinit {',                  # 12
+        '        cleanup()',             # 13
+        '    }',                         # 14
+        '}']                             # 15
+
+    def changed(self, hunk):
+        holders = scope.member_declarations(self.STRUCT)
+        return scope.changed_members(self.STRUCT, holders, hunk + '\n')
+
+    def test_a_line_at_the_members_own_indent_or_in_an_init_starts_from_every_member(self):
+        # Review of #3467: such a line is held by the type, whose name is often too common to follow, so the search
+        # would start from nothing and lose the tests the whole file used to reach.
+        everything = {'S', 'a', 'foo'}
+        for hunk in ('@@ -2 +2 @@',   # the attribute line before a
+                     '@@ -6 +6 @@',   # the tail of foo's signature
+                     '@@ -8 +8 @@',   # foo's closing brace
+                     '@@ -10 +10 @@',  # inside the init
+                     '@@ -13 +13 @@'):  # inside the deinit, which is not foo's either
+            self.assertEqual(self.changed(hunk), everything, hunk)
+        self.assertEqual(self.changed('@@ -7 +7 @@'), {'foo'})   # a body line
+        self.assertEqual(self.changed('@@ -3 +3 @@'), {'a'})     # a declaration line
+
     def test_the_numbered_change_to_skim_stops_still_reaches_the_audio_test_that_caught_it(self):
         # #3412 changed one line of Gate1AppModel+SkimStops.swift and three LocalAudioListeningPackageTests failed on main.
         # The real tree, and the line found by its text so that a later edit moves the hunk with it.
