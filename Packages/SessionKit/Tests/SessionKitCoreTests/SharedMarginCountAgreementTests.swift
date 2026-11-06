@@ -52,6 +52,7 @@ final class SharedMarginCountAgreementTests: XCTestCase {
     private var table: [(margin: ImportedCommentaryInterjection, showsNew: Bool, offered: Bool, why: String)] {
         [
             (margin("voice", words: "Spoken words.", audio: "ImportedCommentary/voice.m4a"), true, true, "a recording"),
+            (margin("voicePlaceholder", words: "Voice Margin at 12:34", audio: "ImportedCommentary/voicePlaceholder.m4a"), true, true, "a recording with stand-in words"),
             (margin("plain", words: "Great point."), true, true, "a note a voice can read"),
             (margin("emoji", words: "🎧🎧"), false, false, "only emoji"),
             (margin("link", words: "https://example.com/page"), false, false, "only a link"),
@@ -146,13 +147,35 @@ final class SharedMarginCountAgreementTests: XCTestCase {
         }
     }
 
+    // A heard note left the new count in the tally, so the note check must not subtract it again. The unheard plain note is
+    // what makes the note check run at all; the two heard ones are what it must leave out.
     func testAHeardNoteIsLeftOutOfTheNoteCheck() throws {
         noVoiceForOtherScripts()
         try withStore { store, _ in
-            _ = try store.importCommentaryLayer(layer(), interjections: [margin("heard", words: "Great point."), margin("hindi", words: "यह बहुत अच्छा है")])
-            _ = try store.markImportedCommentaryInterjectionHeard(id: "heard", at: imported)
-            _ = try store.markImportedCommentaryInterjectionHeard(id: "hindi", at: imported)
-            XCTAssertEqual(try store.loadSharedMarginTallies()["a"], SharedMarginTally(total: 2, new: 0), "already heard: nothing is subtracted below zero")
+            _ = try store.importCommentaryLayer(layer(), interjections: [
+                margin("plain", words: "Great point."), margin("heardEmoji", words: "🎧"), margin("heardHindi", words: "यह बहुत अच्छा है"),
+            ])
+            _ = try store.markImportedCommentaryInterjectionHeard(id: "heardEmoji", at: imported)
+            _ = try store.markImportedCommentaryInterjectionHeard(id: "heardHindi", at: imported)
+            XCTAssertEqual(try store.loadSharedMarginTallies()["a"], SharedMarginTally(total: 3, new: 1))
+        }
+    }
+
+    // A recording is heard, whatever its words say, so the note check must leave recordings out. The plain note with no
+    // recording is what makes the note check run at all.
+    func testARecordingIsLeftOutOfTheNoteCheckWhateverItsWords() throws {
+        noVoiceForOtherScripts()
+        try withStore { store, _ in
+            let recordings = [
+                margin("placeholder", words: "Voice Margin at 12:34", audio: "ImportedCommentary/placeholder.m4a"),
+                margin("emoji", words: "🎧", audio: "ImportedCommentary/emoji.m4a"),
+                margin("hindi", words: "यह बहुत अच्छा है", audio: "ImportedCommentary/hindi.m4a"),
+            ]
+            _ = try store.importCommentaryLayer(layer(), interjections: [margin("plain", words: "Great point.")] + recordings)
+            XCTAssertEqual(try store.loadSharedMarginTallies()["a"], SharedMarginTally(total: 4, new: 4))
+            for stored in try store.loadImportedCommentaryInterjections(layerId: "cole") {
+                XCTAssertTrue(stored.showsAsNew, "the row agrees: \(stored.id)")
+            }
         }
     }
 
