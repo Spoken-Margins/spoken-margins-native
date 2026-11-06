@@ -216,7 +216,13 @@ final class SpokenMarginsPackageImportCoordinator {
             let duplicate = try await lookUpDuplicate(digest: digest, store: store)
             let duplicateCheck = duplicate.check
             if case .alreadyImported(let itemId) = duplicateCheck {
-                // The item's screen is the answer; nothing more is said (#3291).
+                // The item's screen is the answer; nothing more is said (#3291). A link this arrived through is still
+                // kept, so a packet first opened from a file can be reported from its link (#2846).
+                if let shareLinkId {
+                    _ = try? await StoreReader(store).read { store in
+                        try ImportedMarginResends.rememberShareLink(shareLinkId, onLayerWithDigest: digest, repository: store)
+                    }
+                }
                 environment.openItem(itemId)
                 releaseSource?()
                 if let item = duplicate.item, item.mediaType == "audiobook" {
@@ -434,6 +440,8 @@ final class SpokenMarginsPackageImportCoordinator {
                         itemText: itemText,
                         repository: store
                     )
+                    // After the repair, which saves its own copy of the layer (#2846).
+                    try ImportedMarginResends.rememberShareLink(review.shareLinkId, onLayerWithDigest: digest, repository: store)
                     return (.duplicate(existingLayerId: existing.id), existing.id)
                 }
                 return (try SpokenMarginsPackageImporter.importPackage(

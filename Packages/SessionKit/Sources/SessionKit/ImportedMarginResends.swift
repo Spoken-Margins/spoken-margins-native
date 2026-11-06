@@ -99,6 +99,20 @@ public enum ImportedMarginResends {
         return plan
     }
 
+    /// A packet already held arrives again through a share link (the same file opened from a link, or a link opened
+    /// after the file): the held layer keeps the link, so Report this link shows on it (#2846). A layer that has a
+    /// link keeps its first one, a deleted layer is left alone, and a value that is not a link id changes nothing.
+    /// Call it after any other change to the layer, which would otherwise save an older copy over this one.
+    public static func rememberShareLink(
+        _ linkId: String?, onLayerWithDigest packageDigest: String, repository: ListeningSessionRepository
+    ) throws {
+        guard let linkId = linkId.flatMap(ShareLinkReport.validLinkId),
+              var held = try repository.loadImportedCommentaryLayer(packageDigest: packageDigest),
+              held.deletedAt == nil, held.shareLinkId == nil else { return }
+        held.shareLinkId = linkId
+        try repository.saveImportedCommentaryLayer(held)
+    }
+
     /// Artifact-only layers still need the app's podcast placement pass after commentary deduplication.
     public static func hasLayerArtifacts(_ layer: ImportedCommentaryLayer) -> Bool {
         !(layer.listeningMapProposals ?? []).isEmpty
@@ -138,13 +152,23 @@ public enum ImportedMarginResends {
         }
         // A sender whose earlier packet carried no id (an older build) now has one. Give it to the layers holding
         // the Margins this packet repeats, so hiding that sender hides those too, and still works when the packet
-        // brings nothing new (#2846).
-        if let senderId = SenderID.valid(layer.senderId) {
-            let matchedLayerIds = Set(held.filter { plan.identitiesByHeldMargin[$0.margin.id] != nil }.map(\.layerId))
-            for var heldLayer in layers where heldLayer.senderId == nil && matchedLayerIds.contains(heldLayer.id) {
+        // brings nothing new (#2846). The same goes for the share link this packet came through: a layer first
+        // imported from a file, or through an older link, gets a Report this link action too (#2846). One loop and
+        // one save per layer, so neither back-fill saves a stale copy over the other.
+        let matchedLayerIds = Set(held.filter { plan.identitiesByHeldMargin[$0.margin.id] != nil }.map(\.layerId))
+        let senderId = SenderID.valid(layer.senderId)
+        let linkId = layer.shareLinkId.flatMap(ShareLinkReport.validLinkId)
+        for var heldLayer in layers where matchedLayerIds.contains(heldLayer.id) {
+            var changed = false
+            if let senderId, heldLayer.senderId == nil {
                 heldLayer.senderId = senderId
-                try repository.saveImportedCommentaryLayer(heldLayer)
+                changed = true
             }
+            if let linkId, heldLayer.shareLinkId == nil {
+                heldLayer.shareLinkId = linkId
+                changed = true
+            }
+            if changed { try repository.saveImportedCommentaryLayer(heldLayer) }
         }
         // Record the identities first. If the import below then fails, the held Margins merely know a
         // packet name they would have been given anyway; the other order could leave a reply orphaned.
