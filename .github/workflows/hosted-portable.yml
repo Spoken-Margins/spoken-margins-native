@@ -2,7 +2,8 @@
 # so the Mac doesn't spend a slot on them. `scripts/verify-tests.py --plan fast-portable` runs the runner tests
 # (without the ones that drive Apple tools), the ops tests (without ops/disk), the contract and surface
 # validators, the test inventory, the browser-extraction and share-link suites, and the research suites. It
-# prints each step it leaves out and a host test fails if a fast-plan step is in neither list.
+# prints each step it leaves out and a host test fails if a fast-plan step is in neither list. The same job builds
+# SessionKit's Linux targets and runs SessionKitCoreTests in the swift image (#3529), so a red test frees the Mac early.
 # The second job, `sessionkit`, runs `--plan fast-hosted-sessionkit` on a GitHub-hosted Mac: SessionKit's build and
 # SessionKitCoreTests. The third, `mac-rest` (#2459), runs `--plan fast-mac-rest` on another GitHub-hosted Mac with
 # the BlackHole virtual audio output installed: what neither of the others runs (SessionKitTests and
@@ -141,27 +142,34 @@ jobs:
           npm ci
       - name: Portable fast plan
         run: .venv/bin/python scripts/verify-tests.py --plan fast-portable
-      # #2681: SessionKit also builds on Linux (the daily Substack canary runs on it, and hosted-sessionkit-linux.yml
-      # runs only by hand), but no per-PR check compiled it there, so #2671's Foundation-only `.bySentences` broke the
-      # Linux build on main unnoticed. This builds SessionKit's Linux targets and SessionKitCoreTests in the same
-      # swift image, with the same dependency cache, as hosted-sessionkit-linux.yml; it runs no tests (the Mac jobs
-      # run SessionKitCoreTests). A red build fails this check, which the lane reads, so it blocks the merge.
-      # Cost and catch: about 2 to 4 free hosted Linux minutes per PR, in parallel with the longer Mac jobs, so no
-      # added merge wait; no tokens or owner clicks. It would have caught #2681. Waste signal: three months with no
-      # Linux-only compile failure while the step's time grows past 5 minutes.
+      # #2681: SessionKit also builds on Linux (the daily Substack canary runs on it), but no per-PR check compiled it
+      # there, so #2671's Foundation-only `.bySentences` broke the Linux build on main unnoticed. #3529: and it runs
+      # SessionKitCoreTests here, in the same swift image and dependency cache as hosted-sessionkit-linux.yml, so a red
+      # test fails this check, which the lane reads, and stop-macs-on-red frees the PR's hosted-Mac slot. The Mac jobs
+      # keep their own run of these tests. scripts/linux_core_tests.py reruns a failed run once (owner, 2026-10-24).
+      # After the portable plan, not before: the two fail about equally often (17 and 17 of the last 60 failed runs on
+      # 2026-11-06), and the plan's tree-walking checks then never see the root-owned build folder.
+      # Cost and catch: the build was already here; the tests add 2 to 3 free hosted Linux minutes per PR, which a PR
+      # that needs no Mac also waits for. It would have caught #2681, and, ahead of the Mac, #3490's SharedMarginAudioGuardTests failure.
+      # What it can cost: a test that fails only on Linux now blocks a merge. Waste signal: three months in which no
+      # PR's first red is here, or the tests pass 5 minutes.
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: .build-linux
           key: sessionkit-linux-swift6.2.4-${{ hashFiles('Packages/SessionKit/Package.swift', 'Packages/SessionKit/Package.resolved') }}
           restore-keys: sessionkit-linux-swift6.2.4-
-      - name: SessionKit builds on Linux
-        run: |
-          # On Linux SwiftPM rewrites Package.resolved (swift-crypto in, onnxruntime out), as
-          # scripts/run-sessionkit-linux-tests.sh notes; restore it so later steps see the Mac's copy.
-          cp Packages/SessionKit/Package.resolved "$RUNNER_TEMP/Package.resolved"
-          docker run --rm -v "$PWD:/w" -w /w/Packages/SessionKit swift:6.2.4 bash -c \
-            'apt-get update -qq && apt-get install -y -qq libsqlite3-dev >/dev/null && swift build --build-tests --scratch-path /w/.build-linux'
-          cp "$RUNNER_TEMP/Package.resolved" Packages/SessionKit/Package.resolved
+      - name: SessionKitCoreTests on Linux
+        run: .venv/bin/python scripts/linux_core_tests.py run
+      # What this job ran, by name, to set beside the Mac's list: scripts/linux_core_tests.py compare (#3529). The
+      # Mac's run keeps its result file the same way, because its parallel run prints no line for a passing test.
+      - name: Keep the Linux test list
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: linux-core-tests
+          path: artifacts/test-runs/linux-core/
+          if-no-files-found: ignore
+          retention-days: 14
       # The machine is gone after the job: keep the per-step logs so a red run names its failing tests.
       - name: Keep the step logs
         if: failure()
@@ -372,6 +380,14 @@ jobs:
         run: |
           swift --version
           .venv/bin/python scripts/verify-tests.py --plan fast-hosted-sessionkit
+      - name: Keep the Mac test list
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: mac-core-tests
+          path: artifacts/test-runs/*/package-core.xunit.xml
+          if-no-files-found: ignore
+          retention-days: 14
       # Hosted Macs have no audio hardware, and AVPlayer's clock does not move without a running output (#909).
       # BlackHole gives Core Audio one. brew refuses to run as root; the cask's installer asks for sudo itself,
       # which is passwordless on hosted runners. verify-tests.py checks the output starts before the audio tests.
