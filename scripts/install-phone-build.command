@@ -18,6 +18,10 @@
 # Any copy of this file (the Desktop's) runs ~/SpokenMargins-phone/install-phone-build.command when that differs:
 # scripts/phone-build keeps it equal to main's, so the Desktop copy never goes stale.
 #
+# The Watch app inside the build follows the phone install (#3530): the installer finds the paired Watch, installs
+# the embedded Watch app on it, reads the Watch's build back and says which build the Watch now has. A Watch that
+# is asleep, out of reach or missing gets one plain line and never fails the phone install. It never uninstalls.
+#
 # Tests: SM_PHONE_DIR replaces ~/SpokenMargins-phone, SM_PHONE_ICLOUD the iCloud Drive folder,
 # SM_PHONE_NOW the clock; scripts/tests put a fake xcrun on PATH.
 set -u
@@ -278,6 +282,84 @@ name=$(print -r -- "$phones" | cut -f2)
 pairing=$(print -r -- "$phones" | cut -f3)
 [[ "$pairing" == "paired" ]] || stop "$name isn't paired with this Mac yet. Unlock it, tap Trust on the phone, and double-click this again."
 
+# The Watch app that travels inside the phone build (#3530). Everything here ends in a plain line and returns 0:
+# a Watch that is asleep, out of reach or unpaired never fails the phone install, and nothing is ever uninstalled.
+install_watch() {
+  local watch_app="$app/Watch/SpokenMarginsWatchApp.app"
+  if [[ ! -d "$watch_app" ]]; then
+    print -r -- "Apple Watch: this build has no Watch app inside it, so the Watch was left alone."
+    return 0
+  fi
+  local expected bundle_id build
+  expected=$(/usr/bin/python3 - "$watch_app/Info.plist" <<'PY' 2>/dev/null
+import plistlib, sys
+with open(sys.argv[1], 'rb') as handle:
+    info = plistlib.load(handle)
+print(info['CFBundleIdentifier'], info['CFBundleVersion'])
+PY
+)
+  bundle_id=${expected%% *}
+  build=${expected#* }
+  if [[ -z "$expected" ]]; then
+    print -r -- "Apple Watch: couldn't read the Watch app's build number, so the Watch was left alone."
+    return 0
+  fi
+  local watches wcount
+  watches=$(/usr/bin/python3 - "$work/devices.json" <<'PY'
+import json, sys
+for d in json.load(open(sys.argv[1])).get('result', {}).get('devices', []):
+    hw, conn, props = d.get('hardwareProperties', {}), d.get('connectionProperties', {}), d.get('deviceProperties', {})
+    kind = str(hw.get('deviceType') or hw.get('productType', '')).lower()
+    if hw.get('platform') == 'watchOS' or kind in ('watch', 'applewatch') or kind.startswith('watch'):
+        print('\t'.join([d.get('identifier', ''), props.get('name', 'Apple Watch'), conn.get('pairingState', 'unknown')]))
+PY
+)
+  wcount=$(print -r -- "$watches" | grep -c .)
+  if (( wcount == 0 )); then
+    print -r -- "Apple Watch: no Watch is paired with this Mac, so only the phone was updated."
+    return 0
+  elif (( wcount > 1 )); then
+    print -r -- "Apple Watch: more than one Watch is listed, so the Watch was left alone:"
+    print -r -- "$(print -r -- "$watches" | cut -f2 | sed 's/^/  - /')"
+    return 0
+  fi
+  local wid wname wpairing
+  wid=$(print -r -- "$watches" | cut -f1)
+  wname=$(print -r -- "$watches" | cut -f2)
+  wpairing=$(print -r -- "$watches" | cut -f3)
+  if [[ "$wpairing" != paired ]]; then
+    print -r -- "Apple Watch: $wname isn't paired with this Mac, so only the phone was updated."
+    return 0
+  fi
+  print -r -- "Apple Watch: installing the Watch app on $wname (keep the Watch awake and the phone nearby)..."
+  if ! xcrun devicectl device install app --device "$wid" "$watch_app" >"$work/watch-install.log" 2>&1; then
+    print -r -- "Apple Watch: $wname was not updated, so it still runs its old build. The phone is done."
+    print -r -- "  devicectl said: $(tail -1 "$work/watch-install.log")"
+    print -r -- "  Wake the Watch, keep the phone near it, and run this again, or run: xcrun devicectl device install app --device $wid \"$watch_app\""
+    return 0
+  fi
+  local seen
+  xcrun devicectl device info apps --device "$wid" --bundle-id "$bundle_id" --json-output "$work/watch-apps.json" \
+      >"$work/watch-apps.log" 2>&1 || true
+  seen=$(/usr/bin/python3 - "$work/watch-apps.json" "$bundle_id" <<'PY' 2>/dev/null
+import json, sys
+apps = json.load(open(sys.argv[1])).get('result', {}).get('apps', [])
+for app in apps:
+    if app.get('bundleIdentifier') == sys.argv[2]:
+        print(app.get('bundleVersion') or app.get('version') or '')
+        break
+PY
+)
+  if [[ -z "$seen" ]]; then
+    print -r -- "Apple Watch: $wname took the install, but I couldn't read its build back. Expected build $build."
+  elif [[ "$seen" == "$build" ]]; then
+    print -r -- "Apple Watch: $wname now runs the Watch app from this build (build $build)."
+  else
+    print -r -- "Apple Watch: $wname says it runs build $seen, but this build's Watch app is build $build. Wake the Watch and run this again."
+  fi
+  return 0
+}
+
 print -r -- "Installing on $name over the existing app (your Library stays)..."
 if ! xcrun devicectl device install app --device "$device" "$app" >"$work/install.log" 2>&1; then
   details=$(tail -5 "$work/install.log")
@@ -295,6 +377,8 @@ fi
 print -r -- "$sha $(date '+%Y-%m-%dT%H:%M:%S') $name" > "$phone_dir/installed.txt"
 print -r -- ""
 print -r -- "Done: $name now runs commit ${sha[1,7]}. In the app, Settings shows the version ending in · ${sha[1,7]}."
+install_watch
+print -r -- ""
 print -r -- "Opening the test plan."
 
 # The phone reads the plan from iCloud Drive (Files app > iCloud Drive > Spoken Margins test plans).
