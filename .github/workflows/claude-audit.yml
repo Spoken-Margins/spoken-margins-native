@@ -42,7 +42,7 @@ permissions:
 
 jobs:
   audit:
-    # A lane run whose jobs were all skipped posted no report, so it can't have made a PR ready: 167 of 1,400 lane runs
+    # A lane run whose jobs were all skipped posted no report, so it can't have made a PR ready: 141 of 1,272 lane runs
     # in the week to 2026-11-07. Skipped here, before the concurrency group below, so it can't replace a waiting run.
     if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion != 'skipped'
     # One run at a time, with one waiting: GitHub replaces an older waiting run, and the newest reads every PR anyway.

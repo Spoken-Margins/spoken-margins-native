@@ -918,8 +918,50 @@ class HostedAudit(unittest.TestCase):
                 self.assertEqual(len(said), 1)
                 self.assertIn("add it back", said[0][said[0].index("--body") + 1])
 
+    def audit_prs_with(self, env, *, decisions=(), cands=(), claude=(True, "ok"), comments=(), dry_run=False):
+        """audit_prs over one listed PR, returning its exit code and the notes it posted."""
+        answers = []
+
+        def run(cmd, **kwargs):
+            answers.append(cmd)
+            return SimpleNamespace(returncode=0, stderr="", stdout="")
+        with patch.dict(os.environ, env), patch.object(A, "load_failures", return_value={}), \
+                patch.object(A, "find_candidates", return_value=(list(cands), {}, list(decisions))), \
+                patch.object(A, "fetch_comments", return_value=list(comments)), \
+                patch.object(A, "check_claude", return_value=claude), patch.object(A, "audit_batch"), \
+                patch.object(A, "rearm_pass"), patch.object(A, "log"), patch.object(A, "run", run):
+            code = A.audit_prs([pr(number=7, headRefOid=HEAD)], dry_run, "", 0.0)
+        return code, self.said(answers)
+
+    def test_an_audit_job_that_can_t_call_claude_says_so_on_the_prs_waiting_and_goes_red(self):
+        # #3501 audit: merge-stall.yml fires only when nothing merges at all, and PRs with no audit need keep merging.
+        cand = {**pr(number=7, headRefOid=HEAD), "lines": 3, "reason": "risky", "comments": []}
+        code, said = self.audit_prs_with(self.WORKFLOW, cands=[cand], claude=(False, "no Claude token"))
+        self.assertEqual(code, 1)
+        self.assertEqual(len(said), 1)
+        body = said[0][said[0].index("--body") + 1]
+        self.assertIn("no Claude token", body)
+        self.assertFalse(A.asks_for_audit(body))
+        _, again = self.audit_prs_with(self.WORKFLOW, cands=[{**cand, "comments": [{"body": body}]}],
+                                       claude=(False, "no Claude token"))
+        self.assertEqual(again, [])
+
+    def test_a_head_whose_audit_failed_twice_is_said_once_on_the_pr(self):
+        # An expired token passes check_claude: each call fails, and after two the head is left alone (no blind retries).
+        decisions = [(7, A.AUDIT_FAILED_TWICE), (8, "not risky, no request")]
+        _, said = self.audit_prs_with(self.WORKFLOW, decisions=decisions)
+        self.assertEqual(len(said), 1)
+        self.assertEqual(said[0][3], "7")
+        body = said[0][said[0].index("--body") + 1]
+        self.assertIn(HEAD[:7], body)
+        self.assertFalse(A.asks_for_audit(body))
+        _, again = self.audit_prs_with(self.WORKFLOW, decisions=decisions, comments=[{"body": body}])
+        self.assertEqual(again, [])
+        _, dry = self.audit_prs_with(self.WORKFLOW, decisions=decisions, dry_run=True)
+        self.assertEqual(dry, [])
+
     def test_a_skipped_lane_run_starts_no_audit_and_can_t_replace_a_waiting_one(self):
-        # 167 of 1,400 lane runs in the week to 2026-11-07 skipped every job and posted no report.
+        # 141 of 1,272 lane runs in the week to 2026-11-07 skipped every job and posted no report.
         job = self.workflow().split("\njobs:\n")[1]
         self.assertIn("github.event.workflow_run.conclusion != 'skipped'", job)
         self.assertIn("concurrency:", job)

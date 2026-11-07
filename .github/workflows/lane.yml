@@ -659,7 +659,7 @@ jobs:
       # checks would show nothing red anywhere on the PR. A verdict that is not a pass or a hold, or a run that stopped
       # before reporting, is a failing status on the head; a pass or a hold clears an earlier one on the same head. It
       # never fails this job, whose check sits on the trunk's tip. A run that never starts posts nothing here: the
-      # hand-off note says when it counts as lost, and merge-stall.yml alarms.
+      # hand-off note says when it counts as lost.
       - name: Put the verdict on the PR's head
         if: always()
         shell: bash

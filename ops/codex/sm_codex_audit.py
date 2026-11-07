@@ -118,6 +118,7 @@ CLAUDE_BUDGET_USD = "10"  # per call; a small batch costs well under $1
 CLAUDE_TIMEOUT_S = 30 * 60
 
 MAX_FAILED_AUDITS = 2  # a head whose audit call or post failed this many times is left alone (no blind retries)
+AUDIT_FAILED_TWICE = "audit failed twice on this head"
 MAX_DESCRIPTION_REAUDITS = 2  # audits of one head triggered by a changed title or description, beyond the first
 FAILURES_PATH = OPS_DIR / "codex-audit-failures.json"
 
@@ -887,7 +888,7 @@ def find_candidates(prs: list[dict], force: bool = False) -> tuple[list[dict], d
                     ok, why, plan = evaluate(pr, comments, files, issue_comments, force=force,
                                              tap_checks_done=tap_checks_done)
                 if ok and failed_count(FAILURES, n, plan["key"] if plan else pr["headRefOid"]) >= MAX_FAILED_AUDITS:
-                    ok, why = False, "audit failed twice on this head"
+                    ok, why = False, AUDIT_FAILED_TWICE
                 if ok:
                     rep = newest_lane_report(comments)
                     cands.append({
@@ -909,7 +910,7 @@ def find_candidates(prs: list[dict], force: bool = False) -> tuple[list[dict], d
                 "no lane report": "no lane report",
                 "newest lane report on the head is FAIL": "lane FAIL",
                 "not risky, no request": "not risky",
-                "audit failed twice on this head": "audit failed twice",
+                AUDIT_FAILED_TWICE: "audit failed twice",
             }.get(why, "lane report not on head" if why.startswith("newest lane report is on") else why)
             skips[key] = skips.get(key, 0) + 1
     cands.sort(key=lambda c: (c["ready_at"], c["number"]))  # oldest ready first
@@ -1449,6 +1450,21 @@ def main(argv: list[str] | None = None) -> int:
         rearm_pass(prs, args.dry_run)
 
 
+def say_which_heads_are_left_alone(prs: list[dict], decisions: list[tuple[int, str]]) -> None:
+    """A head whose audit failed twice is never tried again (no blind retries), so the PR would wait with nothing said.
+    An expired token ends here: it passes check_claude, and every call fails (#3501 audit)."""
+    heads = {p["number"]: p["headRefOid"] for p in prs}
+    for n, why in decisions:
+        if why != AUDIT_FAILED_TWICE or n not in heads:
+            continue
+        try:
+            say_on_pr(n, f"The audit of `{heads[n][:7]}` failed twice, so the audit job won't try this head again. A new "
+                         "commit tries again, and so does running the audit workflow with this PR's number. The job's "
+                         "log says why it failed.", fetch_comments(n), f"<!-- audit-note: failed {heads[n]} -->")
+        except Exception as exc:  # noqa: BLE001 - a note is never a reason to skip the audits
+            log(f"note on #{n}: error: {exc}")
+
+
 def audit_prs(prs: list[dict], dry_run: bool, tag: str, t0: float, force: bool = False) -> int:
     FAILURES.clear()
     FAILURES.update(load_failures())
@@ -1462,6 +1478,8 @@ def audit_prs(prs: list[dict], dry_run: bool, tag: str, t0: float, force: bool =
         print("Per-PR decisions:")
         for n, why in decisions:
             print(f"  #{n}: {why}")
+    else:
+        say_which_heads_are_left_alone(prs, decisions)
 
     if not cands:
         skip_s = "; ".join(f"{k}: {v}" for k, v in sorted(skips.items()))
@@ -1478,7 +1496,13 @@ def audit_prs(prs: list[dict], dry_run: bool, tag: str, t0: float, force: bool =
     ok, why = check_claude()
     if not ok:
         log(f"paused: {why}; candidates {cand_s} not audited")
-        return 0
+        if not in_a_workflow():
+            return 0
+        # Nobody reads this job's log, and merge-stall.yml fires only when nothing merges at all (#3501 audit).
+        for c in cands:
+            say_on_pr(c["number"], f"This PR waits for its Claude audit of `{c['headRefOid'][:7]}`, and the audit job can't "
+                                   f"run: {why}.", c.get("comments"), f"<!-- audit-note: paused {c['headRefOid']} -->")
+        return 1
     log(f"run: {why}; candidates {cand_s}; batches {batch_s}")
 
     by_num = {c["number"]: c for c in cands}
