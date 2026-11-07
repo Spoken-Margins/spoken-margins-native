@@ -10,9 +10,14 @@ import SessionKitSharing
 ///
 /// The coordinator reaches the app only through `Environment`, so its tests run with a real SQLite store and real
 /// packet files but without a `Gate1AppModel`.
-/// - Success keeps `SpokenMargins/IncomingPackages/<uuid>/assets` for good. The folder is removed only by
-///   `cancel`, a failed stage, duplicate staging and the model's restore-audio task, and by the launch sweep for a
-///   folder an app kill left behind that no imported Margin uses (#2154).
+/// - Success keeps `SpokenMargins/IncomingPackages/<uuid>/assets` while any imported layer or Margin names it. The
+///   folder is removed by `cancel`, a failed stage, duplicate staging, a Listening Map import, and the end of a
+///   confirm that saved nothing naming it, such as a resend or repair with nothing new (#3409); by permanent delete,
+///   for the folders the deleted item's rows named (#3406); and by the launch sweep for a folder an app kill left
+///   behind (#2154). Every one of them goes through `IncomingPackageSweep`, so none removes a folder an imported layer
+///   or Margin still names, and none removes a folder a review, restore or stage owns. The one removal outside the
+///   sweep is the restore-audio task's own (`Gate1AppModel+PackageImport`): its folder is a private extraction no row
+///   names, removed when the restore ends. The launch sweep reclaims it if the app is killed first.
 /// - One review shows at a time (#2122). A packet opened while one is showing, or importing, waits behind it in
 ///   `PacketReviewQueue` and comes up when that one is imported or cancelled; it is never replaced or dropped.
 /// - The file a packet was opened from is released (the Share inbox copy deleted) only when the packet is imported,
@@ -177,12 +182,6 @@ final class SpokenMarginsPackageImportCoordinator {
         }.value
     }
 
-    /// Removes a staging folder on a background thread and returns when it is gone, so a rejected or duplicate packet
-    /// leaves nothing behind by the time `stage` reports (#2510). It holds the same order as the main-thread delete did.
-    nonisolated private static func removeFolder(_ url: URL) async {
-        await Task.detached(priority: .utility) { try? FileManager.default.removeItem(at: url) }.value
-    }
-
     /// Copies the packet into its own folder under Application Support, verifies it and either opens an item it
     /// already belongs to or shows it for review. `releaseSource` runs once the packet no longer needs the file it
     /// came from: now for a packet already in the library, otherwise when its review is imported or cancelled. A
@@ -233,7 +232,7 @@ final class SpokenMarginsPackageImportCoordinator {
                     environment.resolvePodcastCommentary(itemId, localURL)
                 }
                 environment.recordDiagnostic("lastSpokenMarginsPackageImport", "duplicate:\(digest)")
-                await Self.removeFolder(root) // the duplicate's copy and extracted assets, off the main actor (#2510)
+                await removeFolderIfNothingNamesIt(root) // the duplicate's copy and extracted assets (#2510)
                 return .staged
             }
             var staged = try await makeReview(packageURL: copiedPackage, extractionDirectory: root, contents: contents,
@@ -252,7 +251,7 @@ final class SpokenMarginsPackageImportCoordinator {
                 duplicateCheck == .review(isRepair: true) ? "repair_previewed:\(digest)" : "previewed:\(digest)")
             return .staged
         } catch {
-            if let workingDirectory { await Self.removeFolder(workingDirectory) } // off the main actor (#2510)
+            if let workingDirectory { await removeFolderIfNothingNamesIt(workingDirectory) } // (#2510)
             // The caller went away while the Library was searched (a replaced share link): nothing to tell the listener.
             if error is CancellationError { return .rejected(needsNewerApp: false) }
             environment.recordDiagnostic("lastSpokenMarginsPackageImport", "rejected:\(SharedMarginsImportMessage.diagnosticDetail(error))")
@@ -329,14 +328,36 @@ final class SpokenMarginsPackageImportCoordinator {
         }
     }
 
+    /// Once an import has finished, removes its working folder if no imported layer or Margin names it (#3409): a
+    /// resend or repair with nothing new saves nothing that points at the fresh copy it extracted. The review has left
+    /// the queue by now, so `foldersInUse` no longer holds it, and the check reads the Library after the import's rows
+    /// are saved, so a folder any row names stays. The read and the removal run off the main actor. A failure keeps the
+    /// folder; the next launch's sweep tries again.
+    private func removeFolderIfNothingNamesIt(_ folder: URL) async {
+        // No Library, no way to check: keep the folder. The next launch's sweep tries again.
+        guard let store = try? environment.requireStore() else { return }
+        let name = folder.lastPathComponent
+        // The caller is the folder's owner and is done with it, so its own registration must not keep it.
+        let keeping = foldersInUse.subtracting([name])
+        let incoming = folder.deletingLastPathComponent()
+        _ = try? await Gate1AppModel.offMain {
+            FriendPacketFolders.removeIfUnused(folder: name, directory: incoming, keeping: keeping, store: store)
+        }
+    }
+
     // MARK: Cancel and re-match
 
-    func cancel() {
-        guard !isImporting, let review else { return }
+    /// Closes the review at once and releases its source file; the folder goes after, off the main actor, and only
+    /// if no imported Margin names it (a failed confirm can leave rows that do). The returned task ends when the
+    /// folder check is done; callers may ignore it.
+    @discardableResult
+    func cancel() -> Task<Void, Never>? {
+        guard !isImporting, let review else { return nil }
         queue.finish(review.id)
         importError = nil
-        try? FileManager.default.removeItem(at: review.extractionDirectory)
         review.releaseSource?()
+        let folder = review.extractionDirectory
+        return Task { [weak self] in await self?.removeFolderIfNothingNamesIt(folder) }
     }
 
     /// Reconciles a pending recipient-supplied package after Add Source returns. The search runs off the main
@@ -493,6 +514,7 @@ final class SpokenMarginsPackageImportCoordinator {
             ) {
                 environment.reportConfirmation(announcement)
             }
+            await removeFolderIfNothingNamesIt(review.extractionDirectory)
         } catch {
             isImporting = false
             if queue.isShowing(review.id) { importError = SharedMarginsImportMessage.userFacing(error) }
@@ -795,8 +817,8 @@ final class SpokenMarginsPackageImportCoordinator {
         // carries no assets, so its working copy can go now.
         queue.finish(review.id)
         isImporting = false
-        try? FileManager.default.removeItem(at: review.extractionDirectory)
         review.releaseSource?()
+        await removeFolderIfNothingNamesIt(review.extractionDirectory)
         environment.reportConfirmation(outcome.message)
         do {
             try presentImportedItem(itemId, store: store)
