@@ -41,13 +41,13 @@ enum Build23RecipientPresentation {
     /// gone (#3247); a map still says it, because it changes the item's chapters.
     static func notice(for snapshot: Build23RecipientImportSnapshot) -> String? {
         guard snapshot.isListeningMap else { return nil }
-        let base = "Adding a map never starts playback. It sets this item's chapters and keeps each chapter's summary. Your own Margins stay as they are."
-        return snapshot.replacesExistingMap ? "This item already has a shared map. Adding this one replaces it. " + base : base
+        let base = "Adding a map never starts playback. It sets the chapters and keeps each chapter's summary. Your own Margins stay as they are."
+        return snapshot.replacesExistingMap ? "This already has a shared map. Adding this one replaces it. " + base : base
     }
 
     static func confirmHint(for snapshot: Build23RecipientImportSnapshot) -> String {
         snapshot.isListeningMap
-            ? "Sets the item's chapters from this map without starting playback"
+            ? "Sets the chapters from this map without starting playback"
             : "Opens the Margins on the episode without starting playback"
     }
 }
@@ -204,8 +204,8 @@ struct Build23RecipientSharingExperience: View {
                     )
                 } else {
                     Text(snapshot.isListeningMap
-                        ? "This map stays ready while you add your copy of the item. It can't be added until the item is in your Library."
-                        : "These Margins stay ready while you add the same item. You can add them once it is in your Library.")
+                        ? "This map stays ready while you add your copy. It can’t be added until that is in your Library."
+                        : "These Margins stay ready while you add the same one. You can add them once it is in your Library.")
                         .font(.subheadline)
                         .foregroundStyle(AppColors.secondaryText)
                         .fixedSize(horizontal: false, vertical: true)
