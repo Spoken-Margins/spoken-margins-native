@@ -28,7 +28,7 @@ struct PinnedMarginCardView: View {
     }
 
     /// At the accessibility text sizes the headline and the buttons wrap and stack instead of clipping (#1933).
-    private var isLargeText: Bool { dynamicTypeSize.isAccessibilitySize }
+    private var isLargeText: Bool { dynamicTypeSize >= .xLarge }
 
     private func content(_ card: PinnedMarginCard) -> some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -39,7 +39,10 @@ struct PinnedMarginCardView: View {
                 Text(card.headline)
                     .font(.headline)
                     .foregroundStyle(.white)
-                    .lineLimit(isLargeText ? nil : 2)
+                    // One line at regular sizes, shrunk before it is cut, so a long name does not make the card taller
+                    // when a lead-in becomes a voice. It wraps at the larger sizes (#3597).
+                    .lineLimit(isLargeText ? nil : 1)
+                    .minimumScaleFactor(isLargeText ? 1 : 0.8)
                     .fixedSize(horizontal: false, vertical: true)
                     .numericTextTransition()
                     .accessibilityIdentifier(headlineIdentifier(card))
@@ -54,7 +57,8 @@ struct PinnedMarginCardView: View {
             Text(detail(card))
                 .font(.footnote)
                 .foregroundStyle(.white.opacity(0.85))
-                .lineLimit(isLargeText ? nil : 2)
+                // The transcript of a Margin waiting for a tap is capped at every size, so Listen and Dismiss stay on the screen.
+                .lineLimit(card.stage == .waitingForTap ? (isLargeText ? 4 : 2) : (isLargeText ? nil : 2))
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
                 .accessibilityIdentifier("marginCard.detail")
@@ -93,8 +97,11 @@ struct PinnedMarginCardView: View {
     /// The one line under the headline: what is wrong with the Margin first (being placed, an approximate place), then
     /// what a reply answers, then what the stage means.
     private func detail(_ card: PinnedMarginCard) -> String {
-        // A Margin waiting for a tap shows what it says, so the listener can choose.
-        if card.stage == .waitingForTap, let said = model.pendingImportedCommentary?.interjection.approvedTranscript, !said.isEmpty {
+        // A Margin waiting for a tap shows what it says, so the listener can choose. One that plays by itself after a beat
+        // keeps the card's own line: it would change the card's height for 420 ms.
+        if card.stage == .waitingForTap, let pending = model.pendingImportedCommentary,
+           let said = PinnedMarginCard.waitingTranscript(
+               pending.interjection.approvedTranscript, playsByItself: pending.layer.revealMode == .guided) {
             return said
         }
         guard let moment, model.playingImportedCommentary == nil, model.pendingImportedCommentary == nil else { return card.detail }
@@ -126,10 +133,10 @@ struct PinnedMarginCardView: View {
         Group {
             switch action.prominence {
             case .primary:
-                Button { perform(action.job) } label: { wide(action.title, symbol(action.job)) }
+                Button { perform(action.job) } label: { wide(action.title, symbol(action.job), shares: action.job != .retry) }
                     .buttonStyle(PrimaryButtonStyle())
             case .secondary:
-                Button { perform(action.job) } label: { wide(action.title, symbol(action.job)) }
+                Button { perform(action.job) } label: { wide(action.title, symbol(action.job), shares: action.job != .retry) }
                     .buttonStyle(SecondaryButtonStyle())
             case .quiet:
                 Button(action.title) { perform(action.job) }
@@ -144,11 +151,13 @@ struct PinnedMarginCardView: View {
         .accessibilityIdentifier(identifier(action.job))
     }
 
-    private func wide(_ title: String, _ systemImage: String) -> some View {
+    /// Retry keeps the room its word needs; the other button takes the rest of the row, so "Skip this Margin" fits.
+    private func wide(_ title: String, _ systemImage: String, shares: Bool = true) -> some View {
         Label(title, systemImage: systemImage)
             .lineLimit(isLargeText ? nil : 1)
             .minimumScaleFactor(isLargeText ? 1 : 0.8)
-            .frame(maxWidth: .infinity)
+            .frame(maxWidth: shares ? .infinity : nil)
+            .layoutPriority(shares ? 0 : 1)
     }
 
     private func perform(_ job: PinnedMarginCard.Action.Job) {
@@ -157,7 +166,7 @@ struct PinnedMarginCardView: View {
         case .skipThisMargin: skip()
         case .retry: model.retryImportedCommentary()
         case .playMomentNow: model.playMarginMomentNow()
-        case .backToSource, .stopPlayingMine: model.endMarginMoment()
+        case .keepListening, .stopReview, .stopPlayingMine: model.endMarginMoment()
         case .listen: model.listenToPendingImportedCommentary()
         case .dismiss: model.dismissPendingImportedCommentary()
         }
@@ -170,7 +179,7 @@ struct PinnedMarginCardView: View {
         case .skipThisMargin: "marginMoment.skip"
         case .retry: "importedCommentary.retry"
         case .playMomentNow: "marginMoment.playNow"
-        case .backToSource, .stopPlayingMine: "marginMoment.end"
+        case .keepListening, .stopReview, .stopPlayingMine: "marginMoment.end"
         case .listen: "importedCommentary.listen"
         case .dismiss: "importedCommentary.dismiss"
         }
@@ -182,7 +191,7 @@ struct PinnedMarginCardView: View {
         case .skipThisMargin: "forward.end.fill"
         case .retry: "arrow.clockwise"
         case .playMomentNow, .listen: "play.fill"
-        case .backToSource, .stopPlayingMine, .dismiss: "xmark"
+        case .keepListening, .stopReview, .stopPlayingMine, .dismiss: "xmark"
         }
     }
 

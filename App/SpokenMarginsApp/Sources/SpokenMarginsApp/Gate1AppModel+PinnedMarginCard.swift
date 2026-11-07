@@ -53,22 +53,24 @@ extension Gate1AppModel {
         }
         if let moment = marginMoment {
             let current = moment.playing ?? moment.target
+            let run: PinnedMarginCard.Run = moment.isReview ? .review : .moment
             let subject: PinnedMarginCard.Subject = current.isYours || !moment.isReview && current.label == nil
-                ? .yours : .friend(SharedPacketArrival.senderName(current.label))
+                ? .yours : .friend(current.label) // `Subject` drops every stand-in, "a friend" included
             let position = CantPlayListening.cardPosition(in: moment) // a review counts its Margins; one Margin is never "1 of 1"
             if moment.isPlayingMargin {
                 // The episode's words before a Margin (#3392) are not the friend's: the card never says they wrote or spoke them.
                 let sounding: PinnedMarginCard.Stage = CantPlayListening.isWordsStep(moment) ? .loading : (current.isReadAloud ? .reading : .speaking)
                 return PinnedMarginCard(
                     subject: subject, stage: marginMomentVoiceIsPaused ? .voicePaused : sounding, position: position,
-                    voiceTime: playingVoiceTime, noun: sourceNoun, nextPress: nextMarginPress)
+                    voiceTime: playingVoiceTime, noun: sourceNoun, nextPress: nextMarginPress, run: run)
             }
             // A plain moment that has played its Margin keeps listening for the others: the slot stays, saying so.
             if !moment.isReview, moment.phase == .listening {
-                return PinnedMarginCard(subject: .yours, stage: .upNext(msRemaining: nil, arrival: .playsByItself), position: nil, noun: sourceNoun)
+                return PinnedMarginCard(subject: .yours, stage: .upNext(msRemaining: nil, arrival: .playsByItself), position: nil, noun: sourceNoun, run: run)
             }
             let remaining = moment.msUntilTarget(currentMediaTimeMs: moment.review == nil ? (marginMomentPositionMs ?? moment.startMediaTimeMs) : snapshot.currentMediaTimeMs)
-            return PinnedMarginCard(subject: subject, stage: .comingUp(msRemaining: remaining), position: position, noun: sourceNoun)
+            return PinnedMarginCard(subject: subject, stage: .comingUp(msRemaining: remaining), position: position, noun: sourceNoun,
+                nextPress: nextMarginPress, run: run)
         }
         if let saved = friendAnswerSavedCard { return saved }
         // Auto-play off still holds the slot: Next Margin is reachable between Margins and the title never moves.
@@ -112,7 +114,11 @@ extension Gate1AppModel {
     /// What happens when the episode reaches `prompt`, from that Margin's own layer and the offer queue's memory, the
     /// same facts the offer uses, so the card and Next Margin never promise what the offer will not do.
     private func sharedMarginArrival(_ prompt: ImportedCommentaryPrompt) -> PinnedMarginCard.Arrival {
-        .forMargin(announced: sharedMarginOffers.announcedIDs.contains(prompt.id), revealMode: prompt.layer.revealMode)
+        // Announced is not heard: the tone sounded or the card was dismissed, and the voice may never have played. Only
+        // `firstHeardAt` says the listener heard it.
+        .forMargin(
+            announced: sharedMarginOffers.announcedIDs.contains(prompt.id), heard: !prompt.interjection.isNewToListener,
+            revealMode: prompt.layer.revealMode)
     }
 
     private var nextMarginContext: NextMarginPress.Context? {
