@@ -190,7 +190,7 @@ final class ManifestBoundTests: XCTestCase {
     private func markedPublicItem() -> Item {
         var item = Item(id: "item-public", title: "Public", mediaType: "text", text: nil,
                         externalReference: "https://example.com/post", status: "ready", externalReferenceType: "url")
-        item.publicSourceMark = PublicSourceMark(url: "https://example.com/post", checkedAt: Date(timeIntervalSince1970: 1_800_000_000))
+        item.publicSourceMark = PublicSourceMark(url: "https://example.com/post", checkedAt: Date())
         return item
     }
 

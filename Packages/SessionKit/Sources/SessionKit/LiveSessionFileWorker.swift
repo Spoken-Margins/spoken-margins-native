@@ -40,6 +40,8 @@ public actor LiveSessionFileWorker {
         /// A Watch recording still waiting in the landing folder and the inbox: nothing is cleared until the Margin is
         /// somewhere the listener can see it (`completePlacement`), so an app that ends in between loses nothing (#2542).
         public var pending: PendingWatchCapture?
+        /// The listener chose "On this episode" on the Watch (#3494): the answer says so.
+        public var aimedAtItem: Bool = false
     }
 
     /// What a deferred Watch Margin needs to be answered and cleared once it is placed.
@@ -393,7 +395,10 @@ public actor LiveSessionFileWorker {
         try? fileManager.removeItem(atPath: pending.landedStem + ".m4a")
         try? fileManager.removeItem(atPath: pending.landedStem + ".json")
         guard let session else {
-            return WatchMarginAnswer(receipt: pending.receipt, outcome: .filed, filedIn: "what was playing", positionMs: placement.positionMs)
+            return WatchMarginAnswer(
+                receipt: pending.receipt, outcome: .filed, filedIn: placement.aimedAtItem ? "this episode" : "what was playing",
+                positionMs: placement.positionMs
+            )
         }
         return WatchMarginAnswer(
             receipt: pending.receipt, outcome: .filed, sessionId: session.id, filedIn: Self.name(of: session),
@@ -434,7 +439,10 @@ public actor LiveSessionFileWorker {
         let corrected = LiveSessionWatchSessions.phoneTime(transfer.wallStart, clock: transfer.clock)
         let offset = transfer.clock.flatMap { $0.isFresh(at: transfer.wallStart) ? $0.offset : nil }
         let decision = LiveSessionFiling.decide(
-            .init(marginId: transfer.marginId, markedAt: transfer.wallStart, clockOffset: offset, sessionId: transfer.sessionId),
+            .init(
+                marginId: transfer.marginId, markedAt: transfer.wallStart, clockOffset: offset, sessionId: transfer.sessionId,
+                itemTarget: transfer.itemTarget
+            ),
             sessions: candidates(), deletions: deletions, playerRuns: playerRuns, now: now
         )
         switch decision {
@@ -464,7 +472,8 @@ public actor LiveSessionFileWorker {
             pass.placements.append(PlayerPlacement(
                 marginId: transfer.marginId, itemId: itemId, positionMs: positionMs, markedAt: corrected.time,
                 audioPath: transfer.audioPath, durationMs: transfer.durationMs, spokenOn: "watch",
-                pending: PendingWatchCapture(captureId: captureId, receipt: receipt, landedStem: audioURL.deletingPathExtension().path)
+                pending: PendingWatchCapture(captureId: captureId, receipt: receipt, landedStem: audioURL.deletingPathExtension().path),
+                aimedAtItem: transfer.itemTarget != nil
             ))
             return nil
         }

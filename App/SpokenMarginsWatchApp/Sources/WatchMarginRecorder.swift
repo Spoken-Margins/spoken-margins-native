@@ -51,6 +51,7 @@ final class WatchMarginRecorder: ObservableObject {
             currentId = id
             state = .recording(since: Date())
         } catch {
+            WatchDiagnostics.failed("recordingStartFailed", error: error)
             state = .failed(ListenerErrorText.line(prefix: "Couldn't start recording:", error: error))
         }
     }
@@ -60,6 +61,7 @@ final class WatchMarginRecorder: ObservableObject {
         currentId = nil
         state = .idle
         guard let finished = await capture.stop() else {
+            WatchDiagnostics.failed("recordingNotSaved")
             state = .failed("The recording didn't save.")
             return
         }
