@@ -80,8 +80,15 @@ enum WrittenMarginReadings {
         model.importedCommentaryAutoPlayTask = nil
         model.reportConfirmation("Getting that Margin ready to read aloud.")
         let id = UUID()
+        // Asked here, not from the task: the reader counts the reading as waited on before this returns (#3619's T3).
+        let (answer, give) = AsyncStream.makeStream(of: Bool.self, bufferingPolicy: .bufferingNewest(1))
+        reader.render(reading) { result in
+            give.yield((try? result.get()) != nil)
+            give.finish()
+        }
         let task = Task { @MainActor [weak model] in
-            let rendered = (try? await reader.rendered(reading)) != nil
+            var rendered = false
+            for await value in answer { rendered = value }
             if tapWaits[prompt.id]?.id == id { tapWaits[prompt.id] = nil }
             guard !Task.isCancelled, let model else { return }
             guard model.selectedItem.id == prompt.layer.itemId, !model.recordingNavigationIsLocked else { return } // the listener left
@@ -136,7 +143,7 @@ enum WrittenMarginReadings {
         let from = listenerPlace(model)
         model.reportConfirmation("Getting your new Margins ready.")
         let settled = Flag()
-        Task { await reader.waitUntilSettled(readings, upTo: reviewHold); settled.set() }
+        reader.whenRendered(readings, upTo: reviewHold) { settled.set() } // asked now, as a tap's wait is
         holds[key] = Task { @MainActor [weak model] in
             defer { holds[key] = nil }
             while !settled.isSet {

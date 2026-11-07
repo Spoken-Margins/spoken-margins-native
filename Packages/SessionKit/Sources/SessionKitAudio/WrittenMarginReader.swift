@@ -296,8 +296,15 @@ public final class WrittenMarginReader: @unchecked Sendable {
     /// `RenderError.timedOut` when the render outlasts its limit.
     public func rendered(_ reading: WrittenMarginReading) async throws -> URL {
         try await withCheckedThrowingContinuation { continuation in
-            ensureRendered(reading) { continuation.resume(with: $0) }
+            render(reading) { continuation.resume(with: $0) }
         }
+    }
+
+    /// `rendered`, asked before this returns: the reading is waited on at once, so `whenSettled` and `settle` see it from
+    /// the caller's next line. A caller that awaits `rendered` from a task of its own asks only once that task runs, and
+    /// a reading's file removed in between makes the render start real speech (#3619's T3: a test's clean-up did that).
+    public func render(_ reading: WrittenMarginReading, then completion: @escaping @Sendable (Result<URL, Error>) -> Void) {
+        ensureRendered(reading, completion: completion)
     }
 
     /// Returns when every reading is on disk or has failed, or after `limit` seconds, whichever is first. Starts any
@@ -305,13 +312,20 @@ public final class WrittenMarginReader: @unchecked Sendable {
     public func waitUntilSettled(_ readings: [WrittenMarginReading], upTo limit: TimeInterval) async {
         guard !readings.isEmpty else { return }
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            let once = Once { continuation.resume() }
-            let remaining = Counter(readings.count)
-            for reading in readings {
-                ensureRendered(reading) { _ in if remaining.decrement() == 0 { once.fire() } }
-            }
-            DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + limit) { once.fire() }
+            whenRendered(readings, upTo: limit) { continuation.resume() }
         }
+    }
+
+    /// `waitUntilSettled`, asked before this returns, for the same reason as `render(_:then:)`. `then` runs once: when
+    /// every reading is on disk or has failed, or after `limit` seconds. With no readings it runs at once.
+    public func whenRendered(_ readings: [WrittenMarginReading], upTo limit: TimeInterval, then: @escaping @Sendable () -> Void) {
+        guard !readings.isEmpty else { return then() }
+        let once = Once(then)
+        let remaining = Counter(readings.count)
+        for reading in readings {
+            ensureRendered(reading) { _ in if remaining.decrement() == 0 { once.fire() } }
+        }
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + limit) { once.fire() }
     }
 
     private final class Once: @unchecked Sendable {

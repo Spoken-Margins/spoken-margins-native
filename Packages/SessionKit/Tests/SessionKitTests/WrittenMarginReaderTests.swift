@@ -180,6 +180,43 @@ final class WrittenMarginReaderTests: XCTestCase {
         XCTAssertTrue(ran.value, "with no render of these words, it runs at once")
     }
 
+    /// #3619's T3: a tap's wait asked the reader from a task of its own, so for a moment after the tap nobody was waiting
+    /// on the reading, and a clean-up that removed the file then made the render start real speech. The callback forms
+    /// ask before they return: the reading is waited on from the caller's next line, and `whenSettled` waits for it.
+    func testTheCallbackAsksAreWaitedOnBeforeTheyReturn() async throws {
+        let release = DispatchSemaphore(value: 0)
+        defer { release.signal(); release.signal() }
+        let reader = WrittenMarginReader(directory: directory, renderAudio: { text, scratch in
+            release.wait()
+            let file = scratch.appending(path: "speech.caf")
+            try Data(text.utf8).write(to: file)
+            return file
+        })
+        let tapped = WrittenMarginReading(intro: "Cole wrote:", text: "Tapped words.")
+        let answered = Flag()
+        reader.render(tapped) { if case .success = $0 { answered.set() } }
+        XCTAssertEqual(reader.activity.waiting, 1, "the tap's reading is waited on before render returns")
+        let removed = Flag()
+        reader.whenSettled(tapped) { removed.set() }
+        XCTAssertFalse(removed.value, "a removal asked for now waits for the render")
+
+        let held = WrittenMarginReading(intro: "Cole wrote:", text: "Held words.")
+        let settled = Flag()
+        reader.whenRendered([held], upTo: 30) { settled.set() }
+        XCTAssertEqual(reader.activity.waiting, 2, "the hold's reading is waited on before whenRendered returns")
+
+        release.signal()
+        release.signal()
+        let done = await reader.settle(upTo: 5)
+        XCTAssertTrue(done.isIdle, "\(done)")
+        XCTAssertTrue(answered.value, "render's answer came")
+        XCTAssertTrue(removed.value, "the removal ran after the render")
+        XCTAssertTrue(settled.value, "whenRendered ran once its reading was on disk")
+        let none = Flag()
+        reader.whenRendered([], upTo: 30) { none.set() }
+        XCTAssertTrue(none.value, "with no readings it runs at once")
+    }
+
     func testSettleEndsAtTheLimitAndShowsARenderThatIsStillBlocked() async throws {
         let stuck = DispatchSemaphore(value: 0)
         defer { stuck.signal() }
