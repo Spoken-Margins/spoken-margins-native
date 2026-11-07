@@ -101,6 +101,7 @@ final class PinnedMarginCardTests: XCTestCase {
     func testEveryStageHasAnExplanationSoTheCardKeepsOneShape() {
         let stages: [PinnedMarginCard.Stage] = [
             .speaking, .voicePaused, .loading, .failed(canMoveOn: true), .comingUp(msRemaining: 1_000), .waitingForTap, .upNext(msRemaining: nil, arrival: .toneThenTap),
+            .answerSaved(atMs: nil, sentTo: "Cole"), .lastMargin(senders: 1), .lastMargin(senders: 2),
         ]
         for stage in stages {
             let card = PinnedMarginCard(subject: cole, stage: stage)

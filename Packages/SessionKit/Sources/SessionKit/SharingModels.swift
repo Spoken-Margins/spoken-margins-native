@@ -686,10 +686,10 @@ public struct ImportedCommentaryInterjection: Codable, Equatable, Sendable, Iden
     }
 
     /// Whether the phone's voice reads this Margin out loud: it is a written Margin, and the listener's choice, else the
-    /// sender's, else the default (read aloud) says so (owner, 2026-11-05, #3427). A Margin with a recording is not
-    /// read by the voice at all, whatever either of them chose.
+    /// sender's, else the default (read aloud) says so (owner, 2026-11-05, #3427), and this phone has a voice that can
+    /// read it (#3402). A Margin with a recording is not read by the voice at all, whatever either of them chose.
     public var readsAloud: Bool {
-        isWritten && (listenerReadAloud ?? senderReadAloud ?? true)
+        isWritten && readAloudChoice && WrittenMarginSpeech.hasVoice(for: approvedTranscript)
     }
 
     /// What the listener sees on the control for this Margin: the state it is in now, and whether it differs from

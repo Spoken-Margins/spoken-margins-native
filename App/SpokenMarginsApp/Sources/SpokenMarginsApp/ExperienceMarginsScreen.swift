@@ -605,6 +605,7 @@ struct SharedMarginDetailView: View {
             .navigationTitle("Shared Margin")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { Button("Done") { dismiss() } }
+            .modifier(SheetFeedbackPresentation()) // "Hear what it answers" can report a line, and the root's banner is behind this sheet
             .confirmationDialog("Hide this Margin?", isPresented: $confirmingHide, titleVisibility: .visible) {
                 Button("Hide this Margin", role: .destructive) {
                     model.hideMargin(layer: current.layer, margin: current.interjection)
@@ -615,9 +616,10 @@ struct SharedMarginDetailView: View {
                 Text(FriendArrivalWords.hideMarginMessage)
             }
             .onAppear {
-                // A written Margin that will not be read aloud is only ever met here, so seeing its words is meeting it (#3427).
+                // A written Margin reading was turned off for is only ever met here, so seeing its words is meeting it (#3427).
+                // One with no voice on this phone isn't marked (#3402): a voice downloaded later still has it to read.
                 let margin = current.interjection
-                if margin.isWritten, margin.isNewToListener, !SharedMarginAudio.canOffer(margin) { model.markSharedMarginHeard(margin) }
+                if margin.isWritten, margin.isNewToListener, !margin.readAloudChoice { model.markSharedMarginHeard(margin) }
             }
             .onDisappear {
                 if shouldOpenItem, let itemID = row.layer.itemId { model.openItemFromTap(id: itemID) }

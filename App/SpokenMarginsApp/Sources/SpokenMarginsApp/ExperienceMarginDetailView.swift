@@ -9,7 +9,6 @@ struct ExperienceMarginDetailView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var pendingNavigation: NavigationIntent?
     @State private var showsManagement = false
-    @State private var actionFeedback: UserFeedbackEvent?
     @State private var markdownFileURL: URL?
     @State private var isPreparingMarkdown = false
     let row: MarginRow
@@ -173,10 +172,7 @@ struct ExperienceMarginDetailView: View {
             }
             .buttonStyle(MarginDetailActionButtonStyle())
             .fileShareSheet($markdownFileURL)
-            .overlay(alignment: .top) {
-                if let actionFeedback { UserFeedbackBanner(feedback: actionFeedback).padding(.horizontal, 16) }
-            }
-            .onChange(of: model.feedbackEvent) { _, event in actionFeedback = event }
+            .modifier(SheetFeedbackPresentation())
             .onDisappear {
                 // Having been opened is what clears the mark (#1976); it stays while the note is on screen.
                 guard CutShortMargins.shared.clear(sessionId: row.interjection.sessionId, interjectionId: row.interjection.id) else { return }
