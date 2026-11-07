@@ -15,7 +15,9 @@ import (
 // A link reported to the CyberTipline is held for one year instead of expiring in 30 days (#2235,
 // 18 U.S.C. 2258A(h)). The held copy lives in a sibling directory of the links directory, mode 0700, so
 // the serving paths in this package, which only look inside the links directory, can never reach it.
-// Nobody opens held content: the package has no read call for it, only Hold, SweepHeld and ReleaseHeld.
+// Nobody opens held content: the package has no read call for the packet or preview, only Hold, SweepHeld and
+// ReleaseHeld. The one thing the owner can read back is the reported links (ReportedLinks), because the
+// CyberTipline report needs the full link, and each read is logged.
 //
 // What is held is what the server already has: the sealed packet and sealed preview, as stored, and the
 // full link (key included) that an abuse-material report sent, as received. The full link is never parsed
@@ -527,6 +529,40 @@ func singleLine(text string) string {
 		out = out[:200]
 	}
 	return string(out)
+}
+
+// ReportedLinks returns the reported full links kept for a held item, in the order they were kept, so the
+// owner can put them in the CyberTipline report without opening the content (#3120). It reads only the
+// reported-link files: never the packet, the preview or hold.json. The read is logged before the links are
+// returned, so a read always has its record, and a log that cannot be written means no links are returned.
+// A held item whose hold kept no link returns none.
+func (s *Store) ReportedLinks(id string, now time.Time) ([][]byte, error) {
+	if !ValidID(id) {
+		return nil, ErrNotFound
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	dir := filepath.Join(s.heldDir(), id)
+	if _, err := os.Stat(dir); errors.Is(err, os.ErrNotExist) {
+		return nil, ErrNotHeld
+	} else if err != nil {
+		return nil, err
+	}
+	var found [][]byte
+	for n := 1; n <= ownerMaxReportedLinks; n++ {
+		data, err := os.ReadFile(filepath.Join(dir, reportedLinkName(n)))
+		if errors.Is(err, os.ErrNotExist) {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		found = append(found, data)
+	}
+	if err := s.logAccess("show-reported-link", id, fmt.Sprintf("%d links", len(found)), now); err != nil {
+		return nil, err
+	}
+	return found, nil
 }
 
 // HeldIDs lists the ids currently held, for the owner's runbook check. It reads names only.

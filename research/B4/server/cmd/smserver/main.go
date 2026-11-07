@@ -9,6 +9,7 @@
 //	smserver publish-manifest -public DIR FILE   the only way the manifest should change
 //	smserver takedown-map -state DIR EPISODEKEY   delete a listening map at once and keep it down
 //	smserver hold    -state DIR -report REPORTID [-link-file FILE|-] ID   hold a CyberTipline-reported link for a year
+//	smserver show-reported-link -state DIR ID   print the reported links of a held link, never its content
 //	smserver release-hold -state DIR -reason TEXT ID   end a hold early and delete the held copy
 //	smserver make-test-ca DIR            a fake Apple CA for local testing
 //
@@ -80,6 +81,8 @@ func main() {
 		err = takedownMap(args)
 	case "hold":
 		err = holdLink(args)
+	case "show-reported-link":
+		err = showReportedLink(args, os.Stdout, time.Now())
 	case "release-hold":
 		err = releaseHold(args)
 	case "reports":
@@ -94,7 +97,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: smserver serve|block|unblock|switch|purge|validate-manifest|publish-manifest|make-test-ca|takedown|takedown-map|hold|release-hold|reports [flags]")
+	fmt.Fprintln(os.Stderr, "usage: smserver serve|block|unblock|switch|purge|validate-manifest|publish-manifest|make-test-ca|takedown|takedown-map|hold|show-reported-link|release-hold|reports [flags]")
 	os.Exit(2)
 }
 
@@ -563,6 +566,36 @@ func holdLink(args []string) error {
 		return err
 	}
 	fmt.Println("link taken down and held for one year")
+	return nil
+}
+
+// showReportedLink prints the reported full links kept for a held link, one per line, so the owner can
+// forward them in the CyberTipline report without opening the content (#3120). It reads only the reported-link
+// files, never the packet, the preview or hold.json, and writes a line to links-held/access.log. A reported
+// link is a stranger's text: control characters are dropped, so it cannot move the cursor or fake a line.
+func showReportedLink(args []string, out io.Writer, now time.Time) error {
+	fs := flag.NewFlagSet("show-reported-link", flag.ContinueOnError)
+	state := fs.String("state", "state", "state directory")
+	fs.SetOutput(io.Discard)
+	if err := fs.Parse(args); err != nil || fs.NArg() != 1 {
+		return errors.New("usage: smserver show-reported-link -state DIR ID")
+	}
+	st, err := links.OpenStore(filepath.Join(*state, "links"))
+	if err != nil {
+		return err
+	}
+	found, err := st.ReportedLinks(fs.Arg(0), now)
+	if err != nil {
+		return err
+	}
+	if len(found) == 0 {
+		fmt.Fprintln(out, "no reported link was kept for this hold; the report did not send one, or it was dropped")
+		return nil
+	}
+	for i, link := range found {
+		fmt.Fprintf(out, "%d: %s\n", i+1, oneLine(string(link)))
+	}
+	fmt.Fprintf(out, "%d reported link(s). Open none of them; forward them to the CyberTipline as they are.\n", len(found))
 	return nil
 }
 

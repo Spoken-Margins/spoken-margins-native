@@ -122,6 +122,7 @@ A link reported to the CyberTipline is the one exception to the 30 days (#2235):
 moves its packet, preview and the reported full link into `links-held` beside the
 links folder (0700, no read call in the server), and the daily sweep deletes it one
 year later, logging each event without content in `links-held/access.log`.
+`smserver show-reported-link -state DIR ID` prints only the reported links of a held link (never the packet or preview) and logs the read (#3120).
 `smserver release-hold -state DIR -reason TEXT ID` ends a hold early. The owner's
 steps are in `docs/legal/cybertipline-runbook.md`.
 

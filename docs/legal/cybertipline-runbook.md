@@ -18,7 +18,13 @@ B. Register as an electronic service provider with the NCMEC CyberTipline and no
 ## When a report arrives
 
 1. The abuse-material report form sends the link id and the full link. Do not open the link.
-2. File the CyberTipline report as the tipline asks, forwarding the full link unread. Note the report id it gives you.
+2. File the CyberTipline report as the tipline asks, forwarding the full link unread. If the form held the link and you do not have the reported link in the email or the form's notification, read it back without opening the content (#3120):
+
+   ```
+   runuser -u smserver -- smserver show-reported-link -state /var/lib/smserver LINKID
+   ```
+
+   It prints only the reported links the hold kept, one per line (more than one when someone posted a junk link beside the real one; forward them all), and never the packet or the preview. It writes a `show-reported-link` line with the link id to `/var/lib/smserver/links-held/access.log`, never the link or its key. If the log cannot be written it prints nothing and says why. Note the report id the tipline gives you.
 3. The form has already held the link, so the full link is in the held folder; skip to step 4 unless the report came by email or the form held no link (an empty or wrong link field is dropped). In that case put the full link in a file readable by the `smserver` user only, then hold the link. Replace `REPORTID` and `LINKID`:
 
    ```
