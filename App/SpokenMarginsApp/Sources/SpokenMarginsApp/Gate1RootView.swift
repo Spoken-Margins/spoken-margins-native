@@ -575,14 +575,12 @@ enum AppColors {
     static let evergreen = dynamicColor(AppSemanticColorRGB.evergreen)
     static let onEvergreen = dynamicColor(AppSemanticColorRGB.onEvergreen)
     static let ochre = dynamicColor(AppSemanticColorRGB.ochre)
-    static let ochreText = dynamicColor(AppSemanticColorRGB.ochreText)
-    static let warningText = dynamicColor(AppSemanticColorRGB.warningText)
     static let coral = dynamicColor(AppSemanticColorRGB.coral)
     static let plum = dynamicColor(AppSemanticColorRGB.plum)
     static let star = dynamicColor(AppSemanticColorRGB.star)
     static let watchDanger = dynamicColor(AppSemanticColorRGB.watchDanger)
 
-    private static func dynamicColor(_ colors: AppDynamicRGB) -> Color {
+    static func dynamicColor(_ colors: AppDynamicRGB) -> Color {
         #if canImport(UIKit)
         return Color(UIColor { traits in
             let value = traits.userInterfaceStyle == .dark ? colors.dark : colors.light
