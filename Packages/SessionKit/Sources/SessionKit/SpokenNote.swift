@@ -189,6 +189,18 @@ public struct SpokenNoteStore: Sendable {
         return SpokenNote(id: noteId)
     }
 
+    /// The note as saved, read-only: nil when `note.json` is missing, unreadable or from a newer build. Unlike `load()`,
+    /// it never moves an unreadable file aside, so a caller that only reads (Export, #3660) can't change the note.
+    public func peek() -> SpokenNote? {
+        guard let data = try? Data(contentsOf: fileURL) else { return nil }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        guard let note = try? decoder.decode(SpokenNote.self, from: data), note.schemaVersion <= SpokenNote.currentSchemaVersion else {
+            return nil
+        }
+        return SpokenNote(id: note.id, takes: note.takes)
+    }
+
     public func save(_ note: SpokenNote) throws {
         try FileManager.default.createDirectory(at: folderURL, withIntermediateDirectories: true)
         let encoder = JSONEncoder()

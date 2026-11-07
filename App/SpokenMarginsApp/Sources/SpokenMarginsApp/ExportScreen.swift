@@ -218,6 +218,50 @@ extension View {
     }
 }
 
+extension View {
+    /// The share sheet for a spoken note's exported files while `files` is set (#3660). Setting `files` to nil, which the
+    /// sheet does when it closes, removes the folder the files were made in (`SpokenNoteExportModel`).
+    func spokenNoteExportSheet(_ files: Binding<SpokenNoteExportFiles?>) -> some View {
+        sheet(isPresented: Binding(get: { files.wrappedValue != nil }, set: { if !$0 { files.wrappedValue = nil } })) {
+            if let exported = files.wrappedValue {
+                SessionActivityView(activityItems: exported.shareURLs, onSuccessfulCompletion: {})
+            }
+        }
+    }
+}
+
+extension View {
+    /// Everything a spoken note's Export shows (#3660): the share sheet when the files are ready, a question first when
+    /// they hold less than the whole note, and a plain alert when it fails.
+    func spokenNoteExportFlow(_ export: SpokenNoteExportModel) -> some View {
+        spokenNoteExportSheet(Binding(get: { export.files }, set: { export.files = $0 }))
+            .alert(
+                "Part of this note can't be exported",
+                isPresented: Binding(get: { export.partial != nil }, set: { if !$0 { export.resolvePartial(share: false) } })
+            ) {
+                Button("Export what's there") { export.resolvePartial(share: true) }
+                Button("Cancel", role: .cancel) { export.resolvePartial(share: false) }
+            } message: {
+                Text(export.partial.map(SpokenNoteExportModel.partialMessage) ?? "")
+            }
+            .alert("Couldn't export", isPresented: Binding(get: { export.message != nil }, set: { if !$0 { export.message = nil } })) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(export.message ?? "")
+            }
+    }
+}
+
+/// Shown over the Library while a note's files are being made (a long note takes a moment to join).
+struct SpokenNoteExportProgress: View {
+    var body: some View {
+        ProgressView("Preparing export…")
+            .padding(20)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .accessibilityIdentifier("spokenNote.exportProgress")
+    }
+}
+
 private struct SessionActivityView: UIViewControllerRepresentable {
     @Environment(\.dismiss) private var dismiss
     let activityItems: [Any]

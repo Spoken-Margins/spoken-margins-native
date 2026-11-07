@@ -22,6 +22,8 @@ struct ExperienceLibraryScreen: View {
     @State private var collectionItem: LibraryItemRow?
     /// A spoken note opened from its row: it has its own screen, not the text item screen (#3108).
     @State private var openedNote: SpokenNoteOpening?
+    /// Export of a spoken note from its row: the audio and transcript, through the share sheet (#3660).
+    @StateObject private var noteExport = SpokenNoteExportModel()
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.isEdgeSwipePreview) private var isEdgeSwipePreview
     /// A copied link on offer at the top of the Library (#1379).
@@ -114,6 +116,10 @@ struct ExperienceLibraryScreen: View {
         .onAppear { model.loadPlayQueue() }
         .fullScreenCover(item: $openedNote) { opening in
             SpokenNoteRecordingView(opening: opening).environmentObject(model)
+        }
+        .spokenNoteExportFlow(noteExport)
+        .overlay {
+            if noteExport.isPreparing { SpokenNoteExportProgress() }
         }
         .sheet(item: $collectionItem) { item in
             ItemCollectionSheet(item: item)
@@ -475,6 +481,9 @@ struct ExperienceLibraryScreen: View {
                     onPlayNext: { model.queuePlayNext(itemId: row.id) },
                     onAddToQueue: { model.queueAppend(itemId: row.id) },
                     onAddToCollection: { collectionItem = row },
+                    onExport: row.spokenNoteId.map { noteId -> () -> Void in
+                        { noteExport.export(noteId: noteId, title: row.title, applicationSupport: try? model.applicationSupportDirectory()) }
+                    },
                     onDelete: { model.moveItemToTrash(id: row.id) }
                 )
                 .libraryRowLayout(horizontalSizeClass: horizontalSizeClass)
@@ -540,6 +549,8 @@ private struct ExperienceLibraryCompactRow: View {
     let onPlayNext: () -> Void
     let onAddToQueue: () -> Void
     let onAddToCollection: () -> Void
+    /// A spoken note's Export (#3660); nil for every other row.
+    var onExport: (() -> Void)?
     let onDelete: () -> Void
 
     /// At accessibility sizes the title gets its own full-width line, with the icon and the play button together on a line
@@ -653,6 +664,10 @@ private struct ExperienceLibraryCompactRow: View {
                 .accessibilityIdentifier("library.addToQueue.\(row.id)")
             Button("Add to Collection…", systemImage: "folder.badge.plus", action: onAddToCollection)
                 .accessibilityIdentifier("library.addToCollection.\(row.id)")
+            if let onExport {
+                Button("Export…", systemImage: "square.and.arrow.up", action: onExport)
+                    .accessibilityIdentifier("library.export.\(row.id)")
+            }
             if row.canDelete {
                 Button("Move to Recently Deleted", systemImage: "trash", role: .destructive, action: onDelete)
             }
@@ -673,6 +688,11 @@ private struct ExperienceLibraryCompactRow: View {
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
             if row.canDelete {
                 Button(role: .destructive, action: onDelete) { Label("Delete", systemImage: "trash") }
+            }
+            if let onExport {
+                Button(action: onExport) { Label("Export", systemImage: "square.and.arrow.up") }
+                    .tint(AppColors.evergreen)
+                    .accessibilityIdentifier("library.exportSwipe.\(row.id)")
             }
             if row.offlineState != .readyOffline {
                 Button(action: onPrepareOffline) { Label("Offline", systemImage: "arrow.down.circle") }
@@ -695,6 +715,9 @@ private struct ExperienceLibraryCompactRow: View {
                 Button("Prepare Offline", action: onPrepareOffline)
             }
             Button("Add to Collection", action: onAddToCollection)
+            if let onExport {
+                Button("Export", action: onExport)
+            }
             if row.canDelete {
                 Button("Move to Recently Deleted", action: onDelete)
             }
