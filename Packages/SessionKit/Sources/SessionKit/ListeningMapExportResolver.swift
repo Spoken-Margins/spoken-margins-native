@@ -14,8 +14,9 @@ import Foundation
 public enum ListeningMapExportResolver {
     /// `durationMs` is the transcript's length, used when the item doesn't know its own, as the Timeline does.
     public static func resolve(item: Item, repository: SessionRepository, durationMs: Int?) throws -> ListeningMap? {
-        let legacy = try repository.loadListeningMap(itemId: item.id)
-            ?? (try? repository.loadCanonicalSource(itemId: item.id))?.derivedListeningMap()
+        let legacy = (try repository.loadListeningMap(itemId: item.id)
+            ?? (try? repository.loadCanonicalSource(itemId: item.id))?.derivedListeningMap())
+            .map { MapTextDisclosure.listeningMap($0, for: item) }
         let projection = try repository.loadResolvedListeningMapProjection(itemId: item.id)
         // A scene title is the model's words unless the source is marked public (#3449): without the mark the scene
         // still places a chapter, with no title.
