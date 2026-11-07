@@ -140,7 +140,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native
         CODE_SIGN_ENTITLEMENTS: App/SpokenMarginsApp/SpokenMarginsApp.entitlements
         CODE_SIGN_STYLE: Automatic
-        CURRENT_PROJECT_VERSION: "36"
+        CURRENT_PROJECT_VERSION: "37"
         INFOPLIST_FILE: App/SpokenMarginsApp/Info.plist
         INFOPLIST_KEY_CFBundleDisplayName: Spoken Margins
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
@@ -237,7 +237,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native.watchkitapp
         CODE_SIGN_STYLE: Automatic
-        CURRENT_PROJECT_VERSION: "36"
+        CURRENT_PROJECT_VERSION: "37"
         MARKETING_VERSION: "0.1"
         SWIFT_VERSION: "6.0"
         TARGETED_DEVICE_FAMILY: "4"
@@ -269,7 +269,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native.gate2widget
         CODE_SIGN_ENTITLEMENTS: App/SpokenMarginsGate2Widget/SpokenMarginsGate2Widget.entitlements
         CODE_SIGN_STYLE: Automatic
-        CURRENT_PROJECT_VERSION: "36"
+        CURRENT_PROJECT_VERSION: "37"
         ENABLE_DEBUG_DYLIB: NO
         MARKETING_VERSION: "0.1"
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) $(SM_PHONE_BUILD_CONDITIONS_$(SM_PHONE_BUILD))
@@ -302,7 +302,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native.browsertext
         CODE_SIGN_ENTITLEMENTS: App/SpokenMarginsBrowserTextExtension/SpokenMarginsBrowserTextExtension.entitlements
         CODE_SIGN_STYLE: Automatic
-        CURRENT_PROJECT_VERSION: "36"
+        CURRENT_PROJECT_VERSION: "37"
         ENABLE_DEBUG_DYLIB: NO
         INFOPLIST_FILE: App/SpokenMarginsBrowserTextExtension/Info.plist
         MARKETING_VERSION: "0.1"
@@ -335,7 +335,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native.share
         CODE_SIGN_ENTITLEMENTS: App/SpokenMarginsShareExtension/SpokenMarginsShareExtension.entitlements
         CODE_SIGN_STYLE: Automatic
-        CURRENT_PROJECT_VERSION: "36"
+        CURRENT_PROJECT_VERSION: "37"
         ENABLE_DEBUG_DYLIB: NO
         INFOPLIST_FILE: App/SpokenMarginsShareExtension/Info.plist
         MARKETING_VERSION: "0.1"
