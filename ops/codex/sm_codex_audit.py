@@ -732,12 +732,43 @@ def in_a_workflow() -> bool:
     return os.environ.get("GITHUB_ACTIONS") == "true"
 
 
+def dispatch_workflow(workflow: str, *fields: str) -> str:
+    """`gh workflow run` on the trunk, tried 3 times as the label add is. Returns '' or why not."""
+    problem = ""
+    for attempt in range(3):
+        if attempt:
+            time.sleep(5)
+        try:
+            res = run(["gh", "workflow", "run", workflow, "--repo", REPO, "--ref", BASE_BRANCH,
+                       *[arg for field in fields for arg in ("-f", field)]], cwd=REPO_ROOT, check=False)
+        except (OSError, subprocess.SubprocessError) as exc:
+            problem = str(exc)[:160]
+            continue
+        if res.returncode == 0:
+            return ""
+        problem = res.stderr.strip()[:160]
+    return problem
+
+
 def start_merge_run(number: int, head: str) -> str:
     """Dispatch lane.yml's merge run for this PR, and return '' or why not. In a workflow the re-arm's label change
-    starts no run, but a dispatch does. The label change stays: its event is what stops a second re-arm."""
-    res = run(["gh", "workflow", "run", "lane.yml", "--repo", REPO, "--ref", BASE_BRANCH,
-               "-f", f"pr={number}", "-f", f"head={head}", "-f", "auto=true"], cwd=REPO_ROOT, check=False)
-    return "" if res.returncode == 0 else res.stderr.strip()[:160]
+    starts no run, but a dispatch does. The label change comes after it and stays: its event is what stops a second
+    re-arm, so it must not exist unless the run was started."""
+    return dispatch_workflow("lane.yml", f"pr={number}", f"head={head}", "auto=true")
+
+
+def say_on_pr(number: int, text: str, comments: list[dict] | None = None, marker: str = "") -> None:
+    """Post a note on the PR for what would otherwise wait with only a line in this job's log, at most once per marker
+    among <comments>. Opens with neither `**` nor "Lane": it is not an audit or a lane report. A failure is only logged."""
+    if marker and any(marker in comment_body(c) for c in comments or []):
+        return
+    body = f"{text}\n{marker}".rstrip() if marker else text
+    if carries_token(body):  # the repository is public: never post it, and never say what it was
+        log(f"note on #{number}: not posted, it contained the Claude token")
+        return
+    res = run(["gh", "pr", "comment", str(number), "--repo", REPO, "--body", body], cwd=REPO_ROOT, check=False)
+    if res.returncode != 0:
+        log(f"note on #{number}: not posted: {res.stderr.strip()[:160]}")
 
 
 def rearm_pass(prs: list[dict], dry_run: bool) -> None:
@@ -772,6 +803,20 @@ def rearm_pass(prs: list[dict], dry_run: bool) -> None:
             if dry_run:
                 log(f"dry-run: would re-arm #{n} on {pr['headRefOid'][:7]} ({why})")
                 continue
+            head7 = pr['headRefOid'][:7]
+            if in_a_workflow():
+                # Before the label change: its event stops every later re-arm, so with the label changed first a
+                # dispatch that failed could never be tried again (#3501 audit). The run takes far longer to start
+                # than the label takes to come back, so it never reads the PR without it.
+                problem = start_merge_run(n, pr['headRefOid'])
+                if problem:
+                    REARMED.add(n)  # the next run of this job tries again, not the next pass of this one
+                    log(f"re-arm #{n} failed: couldn't dispatch the merge run: {problem}")
+                    say_on_pr(n, f"The audit of `{head7}` is clean, but its merge run could not be started ({problem}). "
+                                 "The audit job tries again on its next run, within about 15 minutes. "
+                                 "Nobody needs to push or re-label.",
+                              comments, f"<!-- rearm-note: dispatch {pr['headRefOid']} -->")
+                    continue
             edit = ["gh", "pr", "edit", str(n), "--repo", REPO]
             removed = run(edit + ["--remove-label", AUTOMERGE], cwd=REPO_ROOT, check=False)
             if removed.returncode != 0:
@@ -783,16 +828,17 @@ def rearm_pass(prs: list[dict], dry_run: bool) -> None:
                     break
                 time.sleep(5)
             REARMED.add(n)  # the label was removed, so don't touch this PR again this run
-            if added.returncode == 0 and in_a_workflow():
-                problem = start_merge_run(n, pr['headRefOid'])
-                if problem:
-                    log(f"re-arm #{n} failed: couldn't dispatch the merge run: {problem}")
-                    continue
             if added.returncode == 0:
-                log(f"re-armed #{n} on {pr['headRefOid'][:7]}: removed and re-added {AUTOMERGE} ({why})")
+                log(f"re-armed #{n} on {head7}: removed and re-added {AUTOMERGE} ({why})")
             else:
+                problem = added.stderr.strip()[:160]
                 log(f"re-arm #{n} FAILED: {AUTOMERGE} removed but not re-added after 3 tries; "
-                    f"add it back by hand: {added.stderr.strip()[:160]}")
+                    f"add it back by hand: {problem}")
+                # Without the label no run merges this PR and no re-arm looks at it again.
+                say_on_pr(n, f"The audit of `{head7}` is clean, but the `{AUTOMERGE}` label was removed to start its merge "
+                             f"run and could not be put back ({problem}). Nothing will merge this PR until someone "
+                             "adds it back: add it back by hand.",
+                          comments, f"<!-- rearm-note: label {pr['headRefOid']} -->")
         except Exception as exc:  # log and move on to the next PR
             log(f"re-arm #{n}: error: {exc}")
 
@@ -1110,9 +1156,13 @@ def request_tap_check(number: int) -> str:
     """Re-add owner-tap-check so a fresh `labeled` event starts the alert check; a failure is only logged. In a workflow
     a label change starts no run, so it dispatches the alert check instead."""
     if in_a_workflow():
-        res = run(["gh", "workflow", "run", "owner-tap-alert.yml", "--repo", REPO, "--ref", BASE_BRANCH,
-                   "-f", f"pr={number}"], cwd=REPO_ROOT, check=False)
-        return "tap check requested" if res.returncode == 0 else f"tap check request failed: {res.stderr.strip()[:80]}"
+        problem = dispatch_workflow("owner-tap-alert.yml", f"pr={number}")
+        if not problem:
+            return "tap check requested"
+        # This audit asks only once: nothing else asks again until one of the head's checks finishes (#3501 audit).
+        say_on_pr(number, f"This PR may now wait only for the owner's merge tap, but the alert after its audit could not "
+                          f"be sent ({problem}).")
+        return f"tap check request failed: {problem[:80]}"
     run(["gh", "api", "-X", "DELETE", f"repos/{REPO}/issues/{number}/labels/{OWNER_TAP_LABEL}"],
         cwd=REPO_ROOT, check=False)  # a PR without the label answers 404, which is fine
     res = run(["gh", "api", "-X", "POST", f"repos/{REPO}/issues/{number}/labels", "-f", f"labels[]={OWNER_TAP_LABEL}"],

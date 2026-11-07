@@ -844,31 +844,86 @@ class HostedAudit(unittest.TestCase):
         with patch.dict(os.environ, {"CLAUDE_CODE_OAUTH_TOKEN": ""}):
             self.assertFalse(A.carries_token("anything"))
 
-    def rearm(self, env, dispatch_code=0):
+    def rearm(self, env, dispatch_code=0, codes=None, add_label_code=0, extra_comments=()):
         armed = pr(**Rearm.ARMED)
         answers = []
+        codes = iter(codes or [])
 
         def run(cmd, **kwargs):
             answers.append(cmd)
-            return SimpleNamespace(returncode=dispatch_code if cmd[:3] == ["gh", "workflow", "run"] else 0, stderr="x")
+            if cmd[:3] == ["gh", "workflow", "run"]:
+                return SimpleNamespace(returncode=next(codes, dispatch_code), stderr="HTTP 502")
+            return SimpleNamespace(returncode=add_label_code if "--add-label" in cmd else 0, stderr="HTTP 502")
         with patch.dict(os.environ, env), patch.object(A, "head_holds", return_value=([], None)), \
                 patch.object(A, "fetch_open_prs", return_value=[armed]), \
-                patch.object(A, "fetch_comments", return_value=[Rearm.LANE, Rearm.CLEAN]), \
+                patch.object(A, "fetch_comments", return_value=[Rearm.LANE, Rearm.CLEAN, *extra_comments]), \
                 patch.object(A, "fetch_label_events", return_value=[]), patch.object(A, "REARMED", set()), \
                 patch.object(A, "automerge_holds_a_slot", return_value=False), patch.object(A, "log") as log, \
-                patch.object(A, "run", run):
+                patch.object(A.time, "sleep"), patch.object(A, "run", run):
             A.rearm_pass([armed], False)
         return answers, log
 
-    def test_in_a_workflow_the_re_arm_also_dispatches_the_merge_run(self):
+    @staticmethod
+    def said(answers):
+        return [cmd for cmd in answers if cmd[:3] == ["gh", "pr", "comment"]]
+
+    @staticmethod
+    def dispatches(answers):
+        return [cmd for cmd in answers if cmd[:3] == ["gh", "workflow", "run"]]
+
+    def test_in_a_workflow_the_re_arm_dispatches_the_merge_run_and_then_changes_the_label(self):
         answers, _ = self.rearm(self.WORKFLOW)
-        self.assertTrue(any("--remove-label" in cmd for cmd in answers))
-        self.assertTrue(any("--add-label" in cmd for cmd in answers))  # the event that stops a second re-arm
-        dispatch = answers[-1]
+        dispatch = answers[0]  # first: the label's event stops a second re-arm, so it must not outlive a failed dispatch
         self.assertEqual(dispatch[:4], ["gh", "workflow", "run", "lane.yml"])
         self.assertEqual(dispatch[dispatch.index("--ref") + 1], A.BASE_BRANCH)
         for field in ("pr=366", f"head={HEAD}", "auto=true"):
             self.assertIn(field, dispatch)
+        self.assertTrue(any("--remove-label" in cmd for cmd in answers))
+        self.assertTrue(any("--add-label" in cmd for cmd in answers))
+        self.assertEqual(self.said(answers), [])
+
+    def test_a_dispatch_that_fails_once_is_tried_again_and_the_re_arm_goes_on(self):
+        answers, _ = self.rearm(self.WORKFLOW, codes=[1, 0])
+        self.assertEqual(len(self.dispatches(answers)), 2)
+        self.assertTrue(any("--add-label" in cmd for cmd in answers))
+        self.assertEqual(self.said(answers), [])
+
+    def test_a_dispatch_that_keeps_failing_changes_no_label_and_says_so_on_the_pr(self):
+        # #3501 audit: the label's event used to outlive the failed dispatch, so no later run tried, and nothing said so.
+        answers, _ = self.rearm(self.WORKFLOW, dispatch_code=1)
+        self.assertEqual(len(self.dispatches(answers)), 3)
+        self.assertFalse(any("--remove-label" in cmd for cmd in answers))  # so rearm_decision says yes again next run
+        said = self.said(answers)
+        self.assertEqual(len(said), 1)
+        body = said[0][said[0].index("--body") + 1]
+        self.assertIn("HTTP 502", body)
+        self.assertIn(HEAD[:7], body)
+
+    def test_the_note_on_the_pr_is_not_read_as_a_report_or_an_audit_and_is_said_once_per_head(self):
+        answers, _ = self.rearm(self.WORKFLOW, dispatch_code=1)
+        body = self.said(answers)[0][self.said(answers)[0].index("--body") + 1]
+        note = {"body": body, "createdAt": "2030-01-01T00:00:00Z", "created_at": "2030-01-01T00:00:00Z"}
+        self.assertIsNone(A.newest_lane_comment([note]))
+        self.assertIsNone(A.head_audit([note], HEAD))
+        again, _ = self.rearm(self.WORKFLOW, dispatch_code=1, extra_comments=[note])
+        self.assertEqual(self.said(again), [])
+        self.assertEqual(len(self.dispatches(again)), 3)  # it still tries
+
+    def test_a_label_that_could_not_be_added_back_is_said_on_the_pr(self):
+        for env in (self.WORKFLOW, {}):
+            with self.subTest(env=env), patch.dict(os.environ):
+                os.environ.pop("GITHUB_ACTIONS", None)
+                answers, _ = self.rearm(env, add_label_code=1)
+                said = self.said(answers)
+                self.assertEqual(len(said), 1)
+                self.assertIn("add it back", said[0][said[0].index("--body") + 1])
+
+    def test_a_skipped_lane_run_starts_no_audit_and_can_t_replace_a_waiting_one(self):
+        # 167 of 1,400 lane runs in the week to 2026-11-07 skipped every job and posted no report.
+        job = self.workflow().split("\njobs:\n")[1]
+        self.assertIn("github.event.workflow_run.conclusion != 'skipped'", job)
+        self.assertIn("concurrency:", job)
+        self.assertNotIn("concurrency:", self.workflow().split("\njobs:\n")[0])
 
     def test_on_the_mac_the_label_event_starts_it_and_nothing_is_dispatched(self):
         with patch.dict(os.environ):
@@ -889,6 +944,20 @@ class HostedAudit(unittest.TestCase):
         self.assertEqual(command[:4], ["gh", "workflow", "run", "owner-tap-alert.yml"])
         self.assertIn("pr=7", command)
         self.assertEqual(run.call_count, 1)  # no label change: it would start nothing
+
+    def test_a_tap_alert_that_can_t_be_dispatched_is_tried_again_and_said_on_the_pr(self):
+        # Nothing asks again for this audit, so the PR would wait for a tap nobody was told about.
+        answers = []
+
+        def run(cmd, **kwargs):
+            answers.append(cmd)
+            return SimpleNamespace(returncode=1 if cmd[:3] == ["gh", "workflow", "run"] else 0, stderr="HTTP 502")
+        with patch.dict(os.environ, self.WORKFLOW), patch.object(A.time, "sleep"), patch.object(A, "run", run):
+            self.assertIn("tap check request failed", A.request_tap_check(7))
+        self.assertEqual(len(self.dispatches(answers)), 3)
+        said = self.said(answers)
+        self.assertEqual(len(said), 1)
+        self.assertIn("merge tap", said[0][said[0].index("--body") + 1])
 
     def workflow(self):
         return (Path(__file__).resolve().parents[2] / ".github/workflows/claude-audit.yml").read_text()
