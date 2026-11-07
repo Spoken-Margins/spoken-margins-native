@@ -421,3 +421,143 @@ func TestServeRefusesBadLinkOrigins(t *testing.T) {
 		}
 	}
 }
+
+// The owner's `show-reported-link` command (#3120): the CyberTipline report needs the full reported link, and
+// the owner must never have to open the held content to get it. It prints only the reported links, never the
+// packet or preview, and every read is logged without the link or its key.
+func TestShowReportedLinkPrintsOnlyTheReportedLinksAndLogsTheRead(t *testing.T) {
+	dir := t.TempDir()
+	st, err := links.OpenStore(filepath.Join(dir, "links"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const body = "twelve-nonce opaque ciphertext sixteen-byte-tag"
+	sealed := func(part byte) []byte {
+		return append([]byte{'S', 'M', 'L', 'I', 'N', 'K', 1, part}, []byte(body)...)
+	}
+	id, _, err := st.Put(sealed(links.PartPacket), sealed(links.PartPreview), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := "https://share.example/l/" + id + "#k=REALKEY"
+	second := "https://share.example/l/" + id + "#k=JUNKKEY\x1b[2J\nfake line"
+	for _, link := range []string{first, second} {
+		file := filepath.Join(t.TempDir(), "reported-link.txt")
+		if err := os.WriteFile(file, []byte(link), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := holdLink([]string{"-state", dir, "-report", "NCMEC-1", "-link-file", file, id}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var out bytes.Buffer
+	if err := showReportedLink([]string{"-state", dir, id}, &out, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	printed := out.String()
+	if !strings.Contains(printed, "1: "+first+"\n") {
+		t.Fatalf("the reported link is not printed whole:\n%s", printed)
+	}
+	if !strings.Contains(printed, "2: https://share.example/l/"+id+"#k=JUNKKEY [2J fake line   [altered: control or invisible characters shown as spaces]\n") {
+		t.Fatalf("the second link is not printed with its control characters dropped:\n%s", printed)
+	}
+	if strings.Contains(strings.SplitN(printed, "\n", 2)[0], "altered") {
+		t.Fatalf("a clean link was marked altered:\n%s", printed)
+	}
+	if strings.ContainsAny(printed, "\x1b\r") || strings.Count(printed, "\n") != 3 {
+		t.Fatalf("a reported link moved the cursor or faked a line:\n%q", printed)
+	}
+	if strings.Contains(printed, body) || strings.Contains(printed, "SMLINK") {
+		t.Fatal("the command printed held content")
+	}
+
+	log, err := os.ReadFile(filepath.Join(dir, "links-held", "access.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(log), `"event":"show-reported-link"`) || !strings.Contains(string(log), id) {
+		t.Fatalf("the read has no line in the access log:\n%s", log)
+	}
+	if strings.Contains(string(log), "REALKEY") || strings.Contains(string(log), "JUNKKEY") {
+		t.Fatal("the access log carries a key")
+	}
+
+	if err := showReportedLink([]string{"-state", dir}, &out, time.Now()); err == nil {
+		t.Fatal("a call without an id must be refused")
+	}
+	if err := showReportedLink([]string{"-state", dir, "../" + id}, &out, time.Now()); err == nil {
+		t.Fatal("a path must not be accepted as an id")
+	}
+}
+
+// A link that is not held has nothing to show, and the owner's note of what happened must not be a silent empty line.
+func TestShowReportedLinkRefusesALinkThatIsNotHeldAndSaysWhenNoLinkWasKept(t *testing.T) {
+	dir := t.TempDir()
+	st, err := links.OpenStore(filepath.Join(dir, "links"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed := func(part byte) []byte {
+		return append([]byte{'S', 'M', 'L', 'I', 'N', 'K', 1, part}, []byte("twelve-nonce opaque ciphertext sixteen-byte-tag")...)
+	}
+	id, _, err := st.Put(sealed(links.PartPacket), sealed(links.PartPreview), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := showReportedLink([]string{"-state", dir, id}, &out, time.Now()); !errors.Is(err, links.ErrNotHeld) {
+		t.Fatalf("an unheld link: got %v, want ErrNotHeld", err)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("an unheld link printed %q", out.String())
+	}
+
+	if err := holdLink([]string{"-state", dir, "-report", "NCMEC-2", id}); err != nil { // held by hand, no link given
+		t.Fatal(err)
+	}
+	if err := showReportedLink([]string{"-state", dir, id}, &out, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "no reported link was kept") {
+		t.Fatalf("a hold with no link says nothing useful: %q", out.String())
+	}
+}
+
+// A link in a held folder that is not a plain file (a symlink to the packet, say) is never followed, and an
+// unheld id leaves no line in the log.
+func TestShowReportedLinkNeverFollowsASymlinkAndLogsNothingForAnUnheldId(t *testing.T) {
+	dir := t.TempDir()
+	st, err := links.OpenStore(filepath.Join(dir, "links"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed := func(part byte) []byte {
+		return append([]byte{'S', 'M', 'L', 'I', 'N', 'K', 1, part}, []byte("twelve-nonce opaque ciphertext sixteen-byte-tag")...)
+	}
+	id, _, err := st.Put(sealed(links.PartPacket), sealed(links.PartPreview), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := showReportedLink([]string{"-state", dir, id}, &out, time.Now()); err == nil {
+		t.Fatal("an unheld link was shown")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "links-held", "access.log")); err == nil {
+		t.Fatal("an unheld id wrote to the access log")
+	}
+	if err := holdLink([]string{"-state", dir, "-report", "NCMEC-3", id}); err != nil {
+		t.Fatal(err)
+	}
+	held := filepath.Join(dir, "links-held", id)
+	if err := os.Symlink(filepath.Join(held, "packet"), filepath.Join(held, "reported-link")); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if err := showReportedLink([]string{"-state", dir, id}, &out, time.Now()); err == nil {
+		t.Fatal("a symlinked reported-link was followed")
+	}
+	if strings.Contains(out.String(), "opaque ciphertext") || strings.Contains(out.String(), "SMLINK") {
+		t.Fatal("held content was printed through a symlink")
+	}
+}

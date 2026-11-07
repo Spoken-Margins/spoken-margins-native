@@ -7,7 +7,7 @@ For #2235 and D18 in [attorney-questions.md](attorney-questions.md). Nothing in 
 1. Taking a link down at once, blind, is #2239's job. **Hold comes before takedown:** a plain takedown deletes the ciphertext, and a `hold` run after it can keep only the reported link. The report form does this itself: an abuse-material report runs the hold, with the full link the form sent, and then takes the link down. The hold's report id in the access log is `form-` and the reporter's reference number; a later `hold` run never changes it, so note the CyberTipline's own id on the issue. You still run `smserver takedown` yourself for anything the form did not catch, and `hold` first if the report came some other way.
 2. A link is held when an abuse-material report comes through the form, or when you run the `hold` command below. Until then the normal 30-day expiry applies.
 3. A held link is moved out of the serving folder (`/var/lib/smserver/links`) into `/var/lib/smserver/links-held`, a folder only the `smserver` user can open (mode 0700). The server has no call that reads it back.
-4. The daily sweep deletes each held link one year after the hold began and writes a line to `/var/lib/smserver/links-held/access.log`. The log has event names, link ids, report ids and dates. It never has content, keys or client addresses.
+4. The daily sweep deletes each held link one year after the hold began and writes a line to `/var/lib/smserver/links-held/access.log`. The log has event names, link ids, report ids and dates, and a line for each `show-reported-link` read. It never has content, keys or client addresses.
 5. Packets and previews are already encrypted on the sender's phone. The reported full link, which carries the key, is the sensitive file, so the disk under `/var/lib/smserver` must be encrypted at rest (step A below).
 
 ## One-time steps
@@ -18,7 +18,13 @@ B. Register as an electronic service provider with the NCMEC CyberTipline and no
 ## When a report arrives
 
 1. The abuse-material report form sends the link id and the full link. Do not open the link.
-2. File the CyberTipline report as the tipline asks, forwarding the full link unread. Note the report id it gives you.
+2. File the CyberTipline report as the tipline asks, forwarding the full link unread. If the form held the link (if the command says `not held`, do step 3 first) and you do not have the reported link in the email or the form's notification, read it back without opening the content (#3120):
+
+   ```
+   runuser -u smserver -- smserver show-reported-link -state /var/lib/smserver LINKID
+   ```
+
+   It prints only the reported links the hold kept, one per line (more than one when someone posted a junk link beside the real one; forward them all), and never the packet or the preview. A link with control or invisible characters in it prints with spaces in their place and a note saying so; the held file is unchanged. The link includes its key, so it also lands in your terminal's scrollback: clear it when you are done. It writes a `show-reported-link` line with the link id to `/var/lib/smserver/links-held/access.log`, never the link or its key. If the log cannot be written it prints nothing and says why. Note the report id the tipline gives you.
 3. The form has already held the link, so the full link is in the held folder; skip to step 4 unless the report came by email or the form held no link (an empty or wrong link field is dropped). In that case put the full link in a file readable by the `smserver` user only, then hold the link. Replace `REPORTID` and `LINKID`:
 
    ```
@@ -29,7 +35,7 @@ B. Register as an electronic service provider with the NCMEC CyberTipline and no
    It prints `link taken down and held for one year`. Running it again for the same link is harmless: it never restarts the year or changes the report id, and it adds each reported link it has not seen before. The link file must hold between 1 byte and 64 KB.
 
    The form can be posted by anyone who knows a link id, so a held link keeps up to five different reported links, in the files `reported-link` and `reported-link-2` to `reported-link-5`, and a junk link posted first cannot push out the real one. A sixth different link is not kept and the access log gets a `link-dropped` line with the link id. Your own `hold` run is not limited to five.
-4. Check the hold: `ls /var/lib/smserver/links-held` lists the link id. Do not open the files inside.
+4. Check the hold: `ls /var/lib/smserver/links-held` lists the link id. Do not open the files inside; `show-reported-link` is the only way to read any of them.
 
 ## When the hold cap is reached
 
