@@ -74,6 +74,8 @@ final class SharedMarginAudioGuardTests: XCTestCase {
                    reason: "the listener's own live-session recordings"),
             Excuse(file: app + "LiveSessionSpokenMargins.swift", line: "guard let text = await transcribe(audioPath: margin.audioPath) else { continue }",
                    reason: "the listener's own live-session recordings"),
+            Excuse(file: app + "LiveSessionMarginDetailView.swift", line: "guard let path = margin.audioPath else { return }",
+                   reason: "playing the listener's own live-session recording (`LiveSessionMargin`, never a friend's)"),
             Excuse(file: app + "PlayerRunController.swift", line: "if let audioPath = placement.audioPath {", reason: fromWatch + " on a run"),
             Excuse(file: app + "PlayerRunController.swift", line: "let audioPath = WatchMarginTransfer(id: id, wallStart: Date(timeIntervalSince1970: 1), durationMs: 0).audioPath",
                    reason: fromWatch + " on a run"),
