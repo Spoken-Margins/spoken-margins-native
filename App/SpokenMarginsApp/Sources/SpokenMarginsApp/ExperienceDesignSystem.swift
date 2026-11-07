@@ -322,3 +322,11 @@ extension View {
             .increasedContrastEdge(cornerRadius: 8)
     }
 }
+
+extension AppColors {
+    /// Ochre for text, icons and control tints (#1920); `ochre` stays the fill. Lives here, not in Gate1RootView,
+    /// which may not grow (hot-file ratchet).
+    static let ochreText = dynamicColor(AppSemanticColorRGB.ochreText)
+    /// Warning copy and its icon, in place of the system orange (#1920).
+    static let warningText = dynamicColor(AppSemanticColorRGB.warningText)
+}
