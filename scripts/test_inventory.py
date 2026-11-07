@@ -64,9 +64,9 @@ def plan_tests(root, name):
 
 
 def scripted_journey_errors(root):
-    """TestPlans/scripted-journeys.json: which UI test scripts the integration run runs (#445).
+    """TestPlans/scripted-journeys.json: which UI test scripts the journeys run runs (#445).
 
-    Only `gating` scripts can turn the integration run red; `probation` scripts run and are reported.
+    Only `gating` scripts can turn a journeys run red; `probation` scripts run and are reported.
     Each entry names an existing SpokenMarginsAppUITests class or method and the journey it covers.
     A probation entry may carry `"batch": N` (default 1): the journeys plan runs probation one step per batch, lowest
     first, so a time cap cuts the newest batch and never the older scripts (#3342). A new addition takes a new batch.
@@ -119,9 +119,10 @@ def scripted_journeys(root=ROOT):
             for status in ('gating', 'probation')}
 
 
-# The plans the integration run on `main` runs besides the scripted journeys: ops/testdesk/sm_integration_run.py
-# runs `--plan app` (AppBehavior: app tests only), `--plan journeys` (scripted-journeys.json) and `--plan tour`
-# (ScreenTour). The retired plans (UISeams, Smoke, Release) are run by no job, so they don't count here (#3342).
+# The plans a job runs besides the scripted journeys: ops/testdesk/sm_integration_run.py runs `--plan app`
+# (AppBehavior: app tests only) and `--plan tour` (ScreenTour) on each tip of `main`, and `--plan journeys`
+# (scripted-journeys.json) when a phone build is cut or the owner says upload (#3669). The retired plans (UISeams,
+# Smoke, Release) are run by no job, so they don't count here (#3342).
 INTEGRATION_UI_PLANS = ('ScreenTour',)
 
 
