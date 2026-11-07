@@ -1018,6 +1018,42 @@ class HostedPhoneBuildTests(unittest.TestCase):
         self.assertIn('latest is already the hosted build', done.stdout)
         self.assertEqual(self.log.read_text().count('run download'), before)
 
+    def point_latest_at_a_build_by_hand(self, sha):
+        folder = self.phone / f'20990101-000000-{sha[:7]}'
+        folder.mkdir()
+        (folder / 'build.json').write_text(json.dumps({'sha': sha, 'built_on': 'this mac'}))
+        (self.phone / 'latest').unlink()
+        (self.phone / 'latest').symlink_to(folder.name)
+        return folder
+
+    def test_the_job_leaves_a_build_made_by_hand_in_place(self):
+        """#3527: the job took the same hosted build again and put the installer back on an older commit."""
+        self.git('update-ref', 'refs/remotes/origin/main', self.tip)
+        self.assertEqual(self.run_trunk('--if-changed').returncode, 0)
+        folder = self.point_latest_at_a_build_by_hand('a' * 40)
+        before = self.log.read_text().count('run download')
+        done = self.run_trunk('--if-changed')
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn('already took the hosted build', done.stdout)
+        self.assertEqual(self.log.read_text().count('run download'), before)
+        self.assertEqual((self.phone / 'latest').resolve(), folder.resolve())
+
+    def test_a_hosted_build_of_a_new_commit_still_replaces_a_build_made_by_hand(self):
+        self.git('update-ref', 'refs/remotes/origin/main', self.tip)
+        self.assertEqual(self.run_trunk('--if-changed').returncode, 0)
+        self.point_latest_at_a_build_by_hand('a' * 40)
+        (self.phone / 'hosted-taken.json').write_text(json.dumps({'sha': 'b' * 40}))
+        done = self.run_trunk('--if-changed')
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual(json.loads((self.phone / 'latest' / 'build.json').read_text())['sha'], self.tip)
+
+    def test_the_first_look_with_no_record_still_takes_the_hosted_build(self):
+        self.git('update-ref', 'refs/remotes/origin/main', self.tip)
+        done = self.run_trunk('--if-changed')
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual(json.loads((self.phone / 'latest' / 'build.json').read_text())['sha'], self.tip)
+        self.assertEqual(json.loads((self.phone / 'hosted-taken.json').read_text())['sha'], self.tip)
+
     def run_trunk(self, *args, **extra):
         """As the launchd job runs it: no --commit, so it follows origin/main."""
         env = {**os.environ, **self.env, 'SM_TRUNK': 'main', **extra}
