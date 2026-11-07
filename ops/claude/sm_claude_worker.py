@@ -945,6 +945,22 @@ class Ops:
             told = one_line(res.stderr or res.stdout or 'no output')
         return f'exit {res.returncode}: {told}'
 
+    def ready_guard_sync(self) -> str:
+        """Take `ready` off issues whose only work left is the owner's check (#3666). Never raises. No model."""
+        script = self.own_root / 'scripts' / 'ready_owner_only.py'
+        if not script.exists():
+            return 'skipped: scripts/ready_owner_only.py is not on this checkout'
+        try:
+            res = self.run([sys.executable, str(script), '--apply'], cwd=self.repo_root, timeout=BOARD_TIMEOUT_S)
+        except Exception as exc:
+            return f'error: {exc}'
+        try:
+            report = json.loads(res.stdout or '')
+            told = f"{len(report.get('flagged', []))} flagged, {len(report.get('unknown', []))} unknown"
+        except (ValueError, AttributeError, TypeError):
+            told = one_line(res.stderr or res.stdout or 'no output')
+        return f'exit {res.returncode}: {told}'
+
     def label(self, number: int, add: Optional[str] = None, remove: Optional[str] = None) -> None:
         cmd = ['gh', 'issue', 'edit', str(number), '-R', REPO]
         if add:
@@ -981,6 +997,7 @@ def board_pass(ops: Ops, now: dt.datetime) -> Optional[str]:
     result = ops.area_sync(ledger=LANE_STATE if LANE_STATE.is_dir() else None)
     ops.log(f'area labels (hourly, #3636): {result}')
     ops.log(f'PR issue links (hourly, #2167): {ops.pr_link_sync()}')
+    ops.log(f'ready with only the owner\'s check left (hourly, #3666): {ops.ready_guard_sync()}')
     return result
 
 
