@@ -270,7 +270,7 @@ struct ExperienceMarginsScreen: View {
                     ForEach(group.rows) { row in
                       HStack(alignment: .center, spacing: 0) {
                         // The row plays the Margin's moment; the chevron beside it opens details (#1866).
-                        Button { _ = model.playMarginMoment(row) } label: {
+                        Button { MarginMomentTap.start(row, model: model) } label: {
                             HStack(alignment: .top, spacing: 12) {
                                 Image(systemName: row.interjection.isStarredForSharing == true ? "star.fill" : (row.needsAttention ? "exclamationmark.bubble.fill" : (row.isWritten ? "square.and.pencil" : "quote.bubble")))
                                     .foregroundStyle(row.needsAttention ? AppColors.coral : AppColors.evergreen)
@@ -343,7 +343,7 @@ struct ExperienceMarginsScreen: View {
 
     @ViewBuilder
     private func ownMarginActions(_ row: MarginRow) -> some View {
-        Button("Play this moment", systemImage: "play.fill") { _ = model.playMarginMoment(row) }
+        Button("Play this moment", systemImage: "play.fill") { MarginMomentTap.start(row, model: model) }
         Button("Copy with Context", systemImage: "doc.on.doc") { model.copyInterjectionWithContext(row.interjection) }
         Button(row.interjection.isStarredForSharing == true ? "Unstar" : "Star", systemImage: "star") {
             model.setInterjectionStarredForSharing(row.interjection.id, sessionId: row.interjection.sessionId, starred: row.interjection.isStarredForSharing != true)

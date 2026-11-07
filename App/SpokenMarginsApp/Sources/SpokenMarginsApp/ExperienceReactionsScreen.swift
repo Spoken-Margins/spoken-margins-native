@@ -183,7 +183,7 @@ struct ReactionsPlayTarget: Equatable {
             else { return }
             model.playSharedMarginMoment(SharedMarginRow(interjection: margin, layer: layer, itemTitle: item.title))
         } else if let margin = item.interjections.first(where: { $0.id == marginId }) {
-            _ = model.playMarginMoment(MarginRow(interjection: margin, itemTitle: item.title, sessionDate: nil))
+            MarginMomentTap.start(MarginRow(interjection: margin, itemTitle: item.title, sessionDate: nil), model: model)
         }
     }
 }
