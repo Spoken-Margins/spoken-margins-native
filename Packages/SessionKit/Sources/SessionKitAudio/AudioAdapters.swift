@@ -3708,6 +3708,14 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
             // callback reads the freed recorder and the app crashes (#3633, in-app record over AirPlay).
             recorder.stop()
             try? fileManager.removeItem(at: url)
+            #if os(iOS)
+            // Why `record()` said no is not known (#3633). Keep the route and category as they stood at the refusal,
+            // since the cleanup after a failed start changes them before anything reads them.
+            let refused = AVAudioSession.sharedInstance()
+            sessionSwitchFields["recordRefusedOutputs"] = refused.currentRoute.outputs.map(\.portType.rawValue).joined(separator: "+")
+            sessionSwitchFields["recordRefusedInputs"] = refused.currentRoute.inputs.map(\.portType.rawValue).joined(separator: "+")
+            sessionSwitchFields["recordRefusedCategory"] = "\(refused.category.rawValue)/\(refused.mode.rawValue)/\(refused.categoryOptions.rawValue)"
+            #endif
             throw SessionKitError.persistenceFailed("recording_failed")
         }
         recorderDelegate = delegate
@@ -4159,7 +4167,7 @@ extension SystemRecordingClient: RecordingSessionPreparing {
         }
         sessionPreparation.prepare(
             readContext: { Self.readRecordingContext(AVAudioSession.sharedInstance()) },
-            apply: { context in Self.applyRecordingSession(for: context.inputChoice) },
+            applyReportingFailure: { context in Self.applyRecordingSession(for: context.inputChoice) },
             then: then
         )
         #else
@@ -4180,14 +4188,17 @@ extension SystemRecordingClient: RecordingSessionPreparing {
     }
 
     #if canImport(AVFoundation) && os(iOS)
+    /// `.allowAirPlay` is on for both: `playAndRecord` drops AirPlay outputs without it, so an in-app record over a
+    /// HomePod moved playback to the phone speaker and the recorder start failed (#3633). Whether the start now
+    /// succeeds over AirPlay only the owner's phone shows; the options themselves are pinned by a test.
     static func recordingOptions(for choice: RecordingInputChoice) -> AVAudioSession.CategoryOptions {
         switch choice {
         case .phoneMicrophoneKeepingA2DP:
             // No hands-free profile in the options: the Bluetooth microphone isn't an input, so iOS leaves
             // the headphones on A2DP and records from the phone (#1506).
-            return [.defaultToSpeaker, .allowBluetoothA2DP]
+            return [.defaultToSpeaker, .allowBluetoothA2DP, .allowAirPlay]
         case .headsetMicrophoneAllowed:
-            return [.defaultToSpeaker, .allowBluetoothHFP]
+            return [.defaultToSpeaker, .allowBluetoothHFP, .allowAirPlay]
         }
     }
 
@@ -4214,7 +4225,7 @@ extension SystemRecordingClient: RecordingSessionPreparing {
 
     /// Runs on the preparation queue. True when it left the session in the recording configuration, which is
     /// what an abandon has to let go of.
-    static func applyRecordingSession(for choice: RecordingInputChoice) -> Bool {
+    static func applyRecordingSession(for choice: RecordingInputChoice) -> RecordingSessionPreparation<PreparedRecordingSession>.Outcome {
         let session = AVAudioSession.sharedInstance()
         var changed = false
         do {
@@ -4223,9 +4234,10 @@ extension SystemRecordingClient: RecordingSessionPreparing {
                 changed = true
             }
             try session.setActive(true)
-            return true
+            return .init(applied: true)
         } catch {
-            return changed
+            // `beginRecording` redoes the switch, so the start may go on; the reason must not vanish (#3633).
+            return .init(applied: changed, failure: SafeErrorText.describe(error))
         }
     }
 
@@ -4233,6 +4245,7 @@ extension SystemRecordingClient: RecordingSessionPreparing {
         guard let claim else { return ["sessionPreparedOffMain": "none"] }
         var fields = ["sessionPreparedOffMain": claim.applied ? "applied" : "failed"]
         if let elapsedMs = claim.elapsedMs { fields["sessionPreparedOffMainMs"] = String(elapsedMs) }
+        if let failure = claim.failure { fields["sessionPrepareError"] = failure }
         return fields
     }
     #endif

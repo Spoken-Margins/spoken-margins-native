@@ -1,5 +1,7 @@
+import AVFoundation
 import SessionKit
 import XCTest
+@testable import SessionKitAudio
 @testable import SpokenMarginsApp
 
 /// #2511: a Margin's tap switches the audio session for recording off the main thread before the recorder starts.
@@ -94,5 +96,16 @@ final class RecordingSessionPreparationAppTests: XCTestCase {
         XCTAssertFalse(recorder.log.contains("prepare"))
         XCTAssertEqual(recorder.log, ["begin"])
         XCTAssertTrue(model.snapshot.isRecording)
+    }
+
+    /// #3633: `playAndRecord` drops AirPlay outputs unless it allows them, which moved a HomePod's playback to the phone
+    /// speaker when the owner tapped record in the app. Both microphone choices keep AirPlay.
+    func testRecordingSessionAllowsAirPlayForEveryMicrophoneChoice() {
+        for choice in [RecordingInputChoice.headsetMicrophoneAllowed, .phoneMicrophoneKeepingA2DP] {
+            XCTAssertTrue(SystemRecordingClient.recordingOptions(for: choice).contains(.allowAirPlay), "\(choice)")
+        }
+        XCTAssertTrue(SystemRecordingClient.recordingOptions(for: .headsetMicrophoneAllowed).contains(.allowBluetoothHFP))
+        XCTAssertFalse(SystemRecordingClient.recordingOptions(for: .phoneMicrophoneKeepingA2DP).contains(.allowBluetoothHFP),
+                       "the A2DP choice must keep leaving the hands-free profile out (#1506)")
     }
 }
