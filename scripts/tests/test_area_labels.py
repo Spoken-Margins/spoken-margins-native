@@ -76,6 +76,11 @@ class Reconcile(unittest.TestCase):
         self.assertEqual((report['cleared'], report['flagged'], report['unchanged']), ([1], [], 1))
         self.assertEqual(api.writes, [('DELETE', 'issues/1/labels/needs-area')])
 
+    def test_housekeeping_is_an_area_and_clears_needs_area(self):
+        api = FakeApi([issue(1, 'area: housekeeping', 'needs-area'), issue(2, 'area: housekeeping')])
+        report = al.reconcile(api, apply=True)
+        self.assertEqual((report['cleared'], report['flagged'], report['unchanged']), ([1], [], 1))
+
     def test_a_look_alike_label_is_not_an_area(self):
         api = FakeApi([issue(1, 'area:groundwork'), issue(2, 'Area: Groundwork')])
         self.assertEqual([f['issue'] for f in al.reconcile(api)['flagged']], [1, 2])
@@ -86,7 +91,7 @@ class Reconcile(unittest.TestCase):
         self.assertEqual(api.writes, [])
         self.assertEqual(report['labels_created'], [*al.AREAS, al.NEEDS])
         al.reconcile(api, apply=True)
-        self.assertEqual(sum(1 for w in api.writes if w[1] == 'labels'), 6)
+        self.assertEqual(sum(1 for w in api.writes if w[1] == 'labels'), len(al.AREAS) + 1)
 
     def test_the_board_copy_fills_only_issues_with_no_area(self):
         api = FakeApi([issue(1), issue(2, 'area: pass it on'), issue(3), issue(4)])

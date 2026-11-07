@@ -1,5 +1,5 @@
-"""The old `area:` labels stay retired (#2173). Since 2026-11-07 (#3636) the five areas of docs/areas.md are
-labels again (`area: get it in` ... `area: groundwork`, scripts/area_labels.py), but the earlier names were
+"""The old `area:` labels stay retired (#2173). Since 2026-11-07 (#3636) the six areas of docs/areas.md are
+labels again (`area: get it in` ... `area: housekeeping`, scripts/area_labels.py), but the earlier names were
 deleted from GitHub, so a script, routine or doc that reads or adds one would quietly find nothing or fail to
 file an issue. This fails on any tracked tooling or doc that names one of those.
 """
@@ -37,11 +37,11 @@ class NoAreaLabels(unittest.TestCase):
                       'Area: Rights'):
             self.assertTrue(RETIRED.search(label), label)
         for text in ('Area field', 'risky area: audio', 'textarea:', 'area: sharingkit', 'area: groundwork',
-                     'area: hear it well'):
+                     'area: housekeeping', 'area: hear it well'):
             self.assertFalse(RETIRED.search(text), text)
 
     def test_nothing_tracked_names_a_retired_label(self):
-        self.assertEqual(offenders(), [], 'use one of the five area labels in docs/areas.md')
+        self.assertEqual(offenders(), [], 'use one of the six area labels in docs/areas.md')
 
 
 if __name__ == '__main__':
