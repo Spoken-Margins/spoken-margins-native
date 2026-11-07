@@ -580,7 +580,7 @@ enum AppColors {
     static let star = dynamicColor(AppSemanticColorRGB.star)
     static let watchDanger = dynamicColor(AppSemanticColorRGB.watchDanger)
 
-    private static func dynamicColor(_ colors: AppDynamicRGB) -> Color {
+    static func dynamicColor(_ colors: AppDynamicRGB) -> Color {
         #if canImport(UIKit)
         return Color(UIColor { traits in
             let value = traits.userInterfaceStyle == .dark ? colors.dark : colors.light

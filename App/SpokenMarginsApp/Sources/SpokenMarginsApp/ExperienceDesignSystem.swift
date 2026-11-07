@@ -256,7 +256,7 @@ struct SMExperienceTypeCover: View {
     private var foreground: Color {
         switch stableSeed {
         case 0: AppColors.evergreen
-        case 1: AppColors.ochre
+        case 1: AppColors.ochreText
         default: AppColors.plum
         }
     }
@@ -321,4 +321,12 @@ extension View {
             .background(AppColors.inputBackground)
             .increasedContrastEdge(cornerRadius: 8)
     }
+}
+
+extension AppColors {
+    /// Ochre for text, icons and control tints (#1920); `ochre` stays the fill. Lives here, not in Gate1RootView,
+    /// which may not grow (hot-file ratchet).
+    static let ochreText = dynamicColor(AppSemanticColorRGB.ochreText)
+    /// Warning copy and its icon, in place of the system orange (#1920).
+    static let warningText = dynamicColor(AppSemanticColorRGB.warningText)
 }
