@@ -11,7 +11,7 @@ struct LiveSessionRecordingView: View {
     /// Called after the recording has been thrown away, when the listener chose to write instead.
     let onWriteInstead: () -> Void
 
-    private var state: MarginRecordingScreenState {
+    var state: MarginRecordingScreenState {
         let subtitle = anchorSubtitle()
         return MarginRecordingScreenState(
             phase: capture.isStarting ? .starting : .recording,
@@ -30,7 +30,7 @@ struct LiveSessionRecordingView: View {
         )
     }
 
-    private var actions: MarginRecordingScreenActions {
+    var actions: MarginRecordingScreenActions {
         MarginRecordingScreenActions(
             finish: { capture.stopAndFile() },
             cancel: { capture.cancel(sessionId: sessionId) },
