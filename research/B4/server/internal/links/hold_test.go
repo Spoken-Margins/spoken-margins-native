@@ -536,3 +536,25 @@ func TestDisableLateGivesAFullLifetimeAndAParkedKeyReachesTheHold(t *testing.T) 
 		t.Fatalf("ParkLink of an unknown id = %v", err)
 	}
 }
+
+// A read of the reported links is logged before the links are returned, so a read always has its record: when
+// the log cannot be written, the owner gets no links (#3120).
+func TestReportedLinksReturnNothingWhenTheReadCannotBeLogged(t *testing.T) {
+	s, id, _, _ := putLink(t)
+	if err := s.Hold(id, "R1", []byte("https://share.example/l/x#k=KEY"), holdNow); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.ReportedLinks(id, holdNow); err != nil || len(got) != 1 || string(got[0]) != "https://share.example/l/x#k=KEY" {
+		t.Fatalf("a held link's reported link: %q, %v", got, err)
+	}
+	logPath := filepath.Join(s.heldDir(), accessLog)
+	if err := os.Remove(logPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(logPath, 0o700); err != nil { // the log can no longer be opened for append
+		t.Fatal(err)
+	}
+	if got, err := s.ReportedLinks(id, holdNow); err == nil || len(got) != 0 {
+		t.Fatalf("a read that could not be logged returned %q, %v", got, err)
+	}
+}
