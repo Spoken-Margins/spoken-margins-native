@@ -168,7 +168,7 @@ private struct VoiceRow: View {
             VStack(alignment: .leading, spacing: 4) {
                 Label(message, systemImage: "exclamationmark.triangle.fill")
                     .font(.caption)
-                    .foregroundStyle(AppColors.ochre)
+                    .foregroundStyle(AppColors.ochreText)
                 actions
             }
         case .idle:

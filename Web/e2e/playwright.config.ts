@@ -75,7 +75,7 @@ export default defineConfig({
   webServer: [
     {
       // Its own build in `dist-e2e/` (git-ignored, never deployed), with a relay origin only the tests' routes
-      // answer, so the consent journey can count relay calls. Link creation is off here, as in every hosted build.
+      // answer, so the consent journey can count relay calls.
       command: `npx vite build --outDir dist-e2e --emptyOutDir --logLevel warn && npx vite preview --outDir dist-e2e --host 127.0.0.1 --port ${port} --strictPort`,
       env: { VITE_RELAY_ORIGIN: 'https://relay.test', VITE_E2E_SILENT: '1' },
       cwd: '..',
@@ -84,10 +84,10 @@ export default defineConfig({
       timeout: 120_000,
     },
     {
-      // The share-link journeys (#3003): the only build with link creation on (`--mode share-links-test`, into the
-      // git-ignored `dist-share-links/`, never deployed), served with a stub link server on 4174.
+      // The link-opening journeys: the same build as above, into the git-ignored `dist-link-stub/` (never deployed),
+      // served with a stub link server on 4174 that only serves links, as the web app can only open them (#3542).
       command:
-        'npx vite build --mode share-links-test --outDir dist-share-links --emptyOutDir --logLevel warn && node e2e/link-stub-server.ts',
+        'npx vite build --outDir dist-link-stub --emptyOutDir --logLevel warn && node e2e/link-stub-server.ts',
       env: { VITE_RELAY_ORIGIN: 'http://127.0.0.1:4174', VITE_E2E_SILENT: '1' },
       cwd: '..',
       url: 'http://127.0.0.1:4174/',

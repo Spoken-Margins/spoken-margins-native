@@ -55,7 +55,7 @@ grep -q '^{$' <(head -1 "${work}/c1") || die "global block not first"
 # strip, so deleting one is noticed even where Caddy isn't installed.
 global_block="$(sed -n '1,/^}$/p' "${work}/c1" | sed 's/^[[:space:]]*//')"
 for filter_line in \
-  'log default {' 'format filter {' 'wrap json' \
+  'log default {' 'level INFO' 'format filter {' 'wrap json' \
   'request>remote_ip delete' 'request>remote_port delete' 'request>client_ip delete' \
   'request>headers delete' 'request>tls delete' \
   'request>uri regexp (^/api/v1/maps/|^/l/|[?]).* $1*'; do

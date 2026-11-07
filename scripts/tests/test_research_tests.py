@@ -44,6 +44,8 @@ class ResearchRunnerTests(unittest.TestCase):
     def test_every_suite_points_at_something_that_exists(self):
         self.assertTrue((ROOT / 'research/B4/server/go.mod').is_file())
         self.assertTrue((ROOT / 'research/B4/deploy/test-edit-caddyfile.sh').is_file())
+        for script in research_tests.COUNTED_SHELL_SUITES:
+            self.assertTrue((ROOT / script).is_file(), script)
         for label, folder, arguments in research_tests.PYTHON_SUITES:
             self.assertTrue((ROOT / folder).is_dir(), label)
 

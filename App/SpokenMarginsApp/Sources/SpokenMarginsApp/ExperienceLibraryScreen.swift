@@ -160,7 +160,7 @@ struct ExperienceLibraryScreen: View {
                 HStack(spacing: 12) {
                     Image(systemName: model.audioPreparationQueue.isEmpty ? "checkmark.circle.fill" : "waveform.badge.magnifyingglass")
                         .font(.title3)
-                        .foregroundStyle(AppColors.ochre)
+                        .foregroundStyle(AppColors.ochreText)
                         .frame(width: 40, height: 40)
                         .background(AppColors.ochre.opacity(0.12), in: Circle())
                         .accessibilityHidden(true)
@@ -195,7 +195,7 @@ struct ExperienceLibraryScreen: View {
 
     private var onboardingIcon: some View {
         Image(systemName: "sparkles")
-            .foregroundStyle(AppColors.ochre)
+            .foregroundStyle(AppColors.ochreText)
             .frame(width: 36, height: 36)
             .background(AppColors.ochre.opacity(0.12), in: Circle())
             .accessibilityHidden(true)
@@ -666,7 +666,7 @@ private struct ExperienceLibraryCompactRow: View {
                     .accessibilityIdentifier("library.complete.\(row.id)")
             } else if row.canMarkUnfinished {
                 Button(action: onMarkUnfinished) { Label("Unfinished", systemImage: "arrow.uturn.backward.circle.fill") }
-                    .tint(AppColors.ochre)
+                    .tint(AppColors.ochreText)
                     .accessibilityIdentifier("library.unfinished.\(row.id)")
             }
         }
@@ -676,7 +676,7 @@ private struct ExperienceLibraryCompactRow: View {
             }
             if row.offlineState != .readyOffline {
                 Button(action: onPrepareOffline) { Label("Offline", systemImage: "arrow.down.circle") }
-                    .tint(AppColors.ochre)
+                    .tint(AppColors.ochreText)
             }
         }
         .accessibilityAction(named: playActionTitle, onPlay)
