@@ -42,7 +42,7 @@ extension Gate1AppModel {
     /// While the open podcast episode is dead (its start failed, no file on the phone), the Margins Review can offer:
     /// all of them, since a Review tap asks. Nil when it isn't dead, so every other item reads `entries` as before.
     func deadEpisodeEntries(itemId: String) -> [SharedMarginReview.Entry]? {
-        guard snapshot.status == .failed, snapshot.itemId == itemId, selectedItem.id == itemId,
+        guard snapshot.itemId == itemId, selectedItem.id == itemId,
               CantPlayListening.isDeadEpisode(
                   .init(itemId: snapshot.itemId, status: snapshot.status, lastFailure: snapshot.lastFailure), cantPlayAround(friendMargins: 0)
               ) else { return nil }

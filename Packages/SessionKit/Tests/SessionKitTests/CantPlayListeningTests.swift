@@ -247,6 +247,113 @@ final class CantPlayListeningTests: XCTestCase {
         XCTAssertFalse(CantPlayListening.isDeadEpisode(start(.failed, item: "other", failure: "playback_start_failed:x"), around))
     }
 
+    /// A real engine whose start failed for good, the way a dead stream does: silent, recreated once, then given up on.
+    private func deadEpisodeEngine(_ audio: RecordingAudioClient) throws -> SessionEngine {
+        audio.startStatus = .pending
+        var clock = Date(timeIntervalSince1970: 100)
+        let item = Item(
+            id: "item", title: "Dead", mediaType: "audio", text: nil, externalReference: nil, status: "ready",
+            media: ItemMedia(sourceType: .remoteStream, url: "https://example.com/gone.mp3")
+        )
+        let engine = SessionEngine(
+            profile: RuntimeCapabilityProfile(
+                id: "phone", displayName: "Phone", capabilities: ["sync": ["canonical_persistence"], "playback": ["native_media"]]
+            ),
+            repository: InMemorySessionRepository(items: [item.id: item]), audio: audio, playbackStartTimeout: 10, now: { clock }
+        )
+        _ = try engine.startSession(itemId: item.id)
+        for _ in 0..<2 {
+            clock = clock.addingTimeInterval(11)
+            _ = try engine.syncPlaybackProgress()
+        }
+        XCTAssertEqual(engine.snapshot.status, .failed)
+        return engine
+    }
+
+    private func isDead(_ engine: SessionEngine) -> Bool {
+        CantPlayListening.isDeadEpisode(
+            start(engine.snapshot.status, failure: engine.snapshot.lastFailure),
+            .init(selectedItemId: "item", isPodcastEpisode: true, hasPlayableFile: false, friendMargins: 0, appIsActive: true, onPlaybackScreen: true)
+        )
+    }
+
+    /// PR #3606's audit: the listening's own pause turned the real engine's `.failed` into `.paused`, so the episode no
+    /// longer read as dead and the next Review tap found no Margins. Every way the machine reaches the source, on the real
+    /// engine: playing through (`playTargetNow`, then each step's end), a progress tick (`observe`), and Stop (`stopReview`).
+    @MainActor
+    func testACantPlayListeningNeverTouchesTheSourceSoTheEpisodeStillReadsAsDeadAfterIt() throws {
+        let audio = RecordingAudioClient()
+        let engine = try deadEpisodeEngine(audio)
+        let beats = plan([entry("a", prefix: "One."), entry("b", prefix: "Two.")])
+        var touched: [String] = []
+        var played: [String] = []
+        func listening(placeMs: Int) throws -> MarginMomentConductor {
+            let conductor = MarginMomentConductor(
+                sequence: try XCTUnwrap(CantPlayListening.sequence(for: beats, itemId: "item", placeMs: placeMs)),
+                source: .init(
+                    pause: { touched.append("pause"); _ = try? engine.pause() },
+                    resume: { touched.append("resume"); _ = try? engine.resumePlayback() },
+                    seek: { touched.append("seek \($0)"); _ = try? engine.seekMedia(toMediaTimeMs: $0) }
+                ),
+                voiceURL: { _ in URL(fileURLWithPath: "/nonexistent/voice.m4a") }
+            )
+            conductor.onVoiceUnavailable = { id, _ in played.append(id) }
+            return conductor
+        }
+
+        let throughToTheEnd = try listening(placeMs: 5_000)
+        throughToTheEnd.start()
+        throughToTheEnd.playTargetNow()
+        XCTAssertEqual(played.count, 4, "words, Margin, words, Margin")
+        XCTAssertEqual(touched, [], "played through")
+        XCTAssertEqual(engine.snapshot.status, .failed, "played through")
+        XCTAssertTrue(isDead(engine), "the next Review tap still finds the Margins")
+
+        played = []
+        let onATick = try listening(placeMs: 5_000)
+        onATick.startListening(atMediaTimeMs: 4_900)
+        onATick.observe(mediaTimeMs: 5_100)
+        XCTAssertEqual(played.first, beats[0].contextId, "a progress tick that crosses the place")
+        XCTAssertEqual(touched, [], "a progress tick")
+
+        let stopped = try listening(placeMs: 5_000)
+        stopped.stopReview()
+        XCTAssertEqual(touched, [], "Stop on the card")
+        XCTAssertEqual(engine.snapshot.status, .failed, "Stop on the card")
+        XCTAssertTrue(isDead(engine), "after Stop")
+    }
+
+    /// The class behind that audit: being dead read a live status that any pause overwrites. An ordinary review that was
+    /// running when the start failed gives its place back through a pause first, so does a recording, and they must not
+    /// make the episode forget it can't play. A start that confirms does.
+    func testAnEpisodeStaysDeadWhenSomethingPausesItUntilAStartConfirms() throws {
+        let around = CantPlayListening.Surroundings(
+            selectedItemId: "item", isPodcastEpisode: true, hasPlayableFile: false, friendMargins: 1, appIsActive: true, onPlaybackScreen: true
+        )
+        let failure = "playback_start_failed:x"
+        XCTAssertTrue(CantPlayListening.isDeadEpisode(start(.paused, failure: failure), around), "paused after the failure")
+        XCTAssertFalse(CantPlayListening.isDeadEpisode(start(.paused), around), "an ordinary pause")
+        XCTAssertFalse(CantPlayListening.isDeadEpisode(start(.paused, failure: "playback_failed:x"), around), "it played, then failed")
+        XCTAssertFalse(CantPlayListening.isDeadEpisode(start(.playing, failure: failure), around))
+        XCTAssertFalse(
+            CantPlayListening.startFailed(from: start(.starting, failure: failure), to: start(.paused, failure: failure), around: around),
+            "a listener's pause on a retry is no new failure: nothing starts by itself"
+        )
+
+        let audio = RecordingAudioClient()
+        let engine = try deadEpisodeEngine(audio)
+        XCTAssertTrue(isDead(engine))
+        _ = try engine.pause()
+        XCTAssertEqual(engine.snapshot.status, .paused, "the engine's own pause, as the review's give-back reaches it")
+        XCTAssertTrue(isDead(engine), "paused, and still dead")
+
+        audio.startStatus = .confirmed
+        _ = try engine.resumePlayback()
+        XCTAssertEqual(engine.snapshot.status, .playing)
+        _ = try engine.pause()
+        XCTAssertFalse(isDead(engine), "it played: a pause now is only a pause")
+    }
+
     /// The first tap on a dead episode, on the real engine's clock: the start is silent, the player recreates it once at
     /// 10 seconds (the status stays `.starting`, so Review keeps its retry), and fails it for good at about 20. That one
     /// change is the trigger; nothing before it and no later reading of the same failure is.
