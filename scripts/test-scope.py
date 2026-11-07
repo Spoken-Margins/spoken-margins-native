@@ -647,6 +647,13 @@ def mac_checks_required(paths):
     return False, 'Mac checks not required: no Swift inputs'
 
 
+def app_build_required(paths):
+    """True when the runner waits for hosted-app-macos.yml's build before merging (#3539). Every path here is on that
+    workflow's `paths` list, so the build is sure to start. Packages/ and project.yml also start it, but the runner
+    doesn't wait for it on those diffs: the need here is App/ diffs leaving the Mac checks (#3540)."""
+    return any(path.startswith('App/') for path in paths)
+
+
 # Ops folders whose tests skip themselves on Linux (ops/power's amph is AppleScript): a pass there proves nothing.
 MAC_ONLY_OPS = ('ops/power/',)
 
