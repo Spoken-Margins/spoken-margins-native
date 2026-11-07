@@ -7,6 +7,6 @@ extension Gate1AppModel {
     /// share sheet. The player keeps playing under the sheet. The long Export screen is for a session export and
     /// stays under More.
     func openPlaybackShare() {
-        openMarginItemExport(itemID: selectedItem.id, entry: .reviewDefaults)
+        openPlaybackShareStartingWithFriendAnswers() // a friend's item with the listener's answers opens on them (#3247)
     }
 }

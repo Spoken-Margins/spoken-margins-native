@@ -63,9 +63,11 @@ extension SQLiteSessionStore {
 /// Staging a packet extracts it to `IncomingPackages/<uuid>/`. Import keeps that folder for good, because the
 /// imported Margins play from it; Cancel and a failed stage remove it. An app killed while a review shows is
 /// neither, and the packet reopens on the next launch into a fresh folder, so each kill left one more copy.
-/// This runs at launch, before anything is staged, and removes only a folder that is not in `keeping` (a review
-/// that is showing or waiting, a restore in flight) and that no imported layer or Margin names. It is never a
-/// sweep by age: a folder a Margin uses stays however old it is.
+/// The launch sweep runs before anything is staged. `FriendPacketFolders` runs the same sweep, limited to named
+/// folders, at a permanent delete (#3406) and at the end of an import that saved nothing naming its folder (#3409).
+/// Every run removes only a folder that is not in `keeping` (a review that is showing or waiting, a restore or a
+/// stage in flight) and that no imported layer or Margin names. It is never a sweep by age: a folder a Margin
+/// uses stays however old it is.
 public enum IncomingPackageSweep {
     public struct Outcome: Equatable, Sendable {
         public var removed: [String] = []

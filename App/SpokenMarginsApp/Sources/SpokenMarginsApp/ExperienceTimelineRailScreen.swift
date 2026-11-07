@@ -317,7 +317,7 @@ struct ExperienceTimelineRailScreen: View {
                     id: "shared.\(row.id)", position: position, rank: 1,
                     provenance: .sharedMargin,
                     title: TimelineTextPresentation.excerpt(margin.approvedTranscript, characterLimit: TimelineTextPresentation.marginCharacterLimit),
-                    detail: "Shared by \(row.collectionLabel) · \(row.positionDescription)",
+                    detail: "From \(row.collectionLabel) · \(row.positionDescription)",
                     action: .sharedMargin(row),
                     isNew: row.isNew,
                     precisePosition: TimelineRailSortKey.percent(position: margin.resolution.localMediaTimeMs ?? row.placementStatus.previousMediaTimeMs, length: knownDuration),
