@@ -407,7 +407,7 @@ extension SpokenMarginsPackageImportCoordinator.Environment {
             publishReview: { [weak model] in model?.spokenMarginsPackageImportReview = $0 },
             publishIsImporting: { [weak model] in model?.isImportingSpokenMarginsPackage = $0 },
             publishError: { [weak model] in model?.spokenMarginsPackageImportError = $0 },
-            attachListeningMap: { [weak model] map in try model?.attachSharedTextListeningMap(map) },
+            attachListeningMap: { [weak model] map in if let model { try await SharedTextMapAttach.attach(map, model: model) } },
             navigationIsLocked: { [weak model] in model?.recordingNavigationIsLocked ?? false },
             refreshImportedLibrary: { [weak model] store in
                 guard let model else { return }

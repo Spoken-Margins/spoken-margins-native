@@ -62,7 +62,7 @@ final class SpokenMarginsPackageImportCoordinator {
         var publishIsImporting: @MainActor (Bool) -> Void
         var publishError: @MainActor (String?) -> Void
         /// Saves a shared Listening Map for a text item and tells a running session about it. Nil saves straight to the store.
-        var attachListeningMap: (@MainActor (ListeningMap) throws -> Void)? = nil
+        var attachListeningMap: (@MainActor (ListeningMap) async throws -> Void)? = nil
         /// True while a Margin is being recorded or written: the listener's position is held (`recordingNavigationIsLocked`).
         var navigationIsLocked: @MainActor () -> Bool = { false }
         /// Brings the Library rows up to date with an item an import added, without opening it.
@@ -802,7 +802,7 @@ final class SpokenMarginsPackageImportCoordinator {
         let outcome: SharedTextListeningMapImporter.Outcome
         if let map = SharedTextListeningMapImporter.mapToAttach(plan, to: item, senderLabel: senderLabel) {
             if let hook = environment.attachListeningMap {
-                try hook(map)
+                try await hook(map)
                 outcome = try await StoreReader(store).read { try SharedTextListeningMapImporter.saveProposal(plan, to: item, repository: $0) }
             } else {
                 outcome = try await StoreReader(store).read {
