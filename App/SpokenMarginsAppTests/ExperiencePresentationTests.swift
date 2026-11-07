@@ -27,7 +27,7 @@ final class ExperiencePresentationTests: XCTestCase {
         XCTAssertEqual(Set(entries.map(\.id)).count, entries.count, "Imported and own IDs may collide")
         let shared = try XCTUnwrap(entries.first { $0.provenance == .sharedMargin })
         XCTAssertEqual(shared.position, 30)
-        XCTAssertTrue(shared.detail.hasPrefix("Shared by "))
+        XCTAssertTrue(shared.detail.hasPrefix("From "))
         guard case .sharedMargin(let row) = shared.action else { return XCTFail("Must open shared context, not seek a chapter") }
         XCTAssertEqual(row.interjection.approvedTranscript, "Someone else's thought")
     }
