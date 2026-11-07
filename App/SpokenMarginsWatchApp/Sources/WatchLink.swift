@@ -257,17 +257,17 @@ final class WatchLink: NSObject, ObservableObject {
         guard WCSession.default.activationState == .activated, WCSession.default.isReachable else { return }
         let sentAt = wrapped.sentAt
         let isTransport = if case .transport = wrapped.message { true } else { false }
-        // A command that never arrived leaves the button drawn wrong and sends no board, so ask the phone what is true.
-        let onError: (@Sendable (any Error) -> Void)? = isTransport ? { @Sendable [weak self] _ in
-            Task { @MainActor in self?.sayHello() }
-        } : nil
-        // WatchConnectivity calls this on its own background queue. Without @Sendable the closure takes on this class's
+        // WatchConnectivity calls these on its own background queue. Without @Sendable the closure takes on this class's
         // main-actor isolation, and Swift's check at its top stops the app whenever the phone answers (#2964).
         WCSession.default.sendMessage(wrapped.dictionary, replyHandler: { @Sendable [weak self] dictionary in
             let receivedAt = Date()
             guard let reply = WatchPhoneReply(dictionary: dictionary) else { return }
             Task { @MainActor in self?.apply(reply, sentAt: sentAt, receivedAt: receivedAt, helloHolding: holding, isTransport: isTransport) }
-        }, errorHandler: onError)
+        }, errorHandler: { @Sendable [weak self] _ in
+            // A command that never arrived leaves the button drawn wrong and sends no board, so ask the phone what is true.
+            guard isTransport else { return }
+            Task { @MainActor in self?.sayHello() }
+        })
     }
 
     /// The Watch's own record of launches and failures (#3506), whenever it holds something the phone hasn't seen.
