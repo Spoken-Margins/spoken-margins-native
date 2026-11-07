@@ -2008,6 +2008,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(saved.itemId, "item-pill")
         XCTAssertEqual(saved.sessionId, aSessionID)
         XCTAssertTrue(try store.loadInterjections(sessionId: bSession.id).isEmpty)
+        await model.settleItemReload() // so a late item reload that leaked A's Margin into B would show here (#2505)
         XCTAssertEqual(model.selectedItem.id, b.id)
         XCTAssertTrue(model.selectedItem.interjections.isEmpty, "B's open detail never receives A's Margin")
         XCTAssertEqual(model.selectedItem.sessionRows.map(\.interjectionCount), [0])
@@ -4049,6 +4050,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.dispatchGate2CompactCommand(.beginInterjection)
         model.dispatchGate2CompactCommand(.finishInterjection)
         await model.settleSummaryRecords()
+        await model.settleItemReload() // the item detail reloads off the main thread after the save (#2505)
 
         XCTAssertTrue(model.canSummarizeInterjections)
         XCTAssertFalse(model.isSummarizingInterjections)

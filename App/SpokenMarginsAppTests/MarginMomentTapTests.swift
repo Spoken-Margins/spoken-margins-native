@@ -77,11 +77,11 @@ final class MarginMomentTapTests: XCTestCase {
         let (model, row) = try fixture()
         defer { model.endMarginMoment(); model.pause() }
         MarginMomentTap.start(row, model: model)
+        // A tab change leaves `screen` at .home and moves the tab instead, so the tap's own screen check can't see it.
         model.showSettingsTab()
-        let after = model.screen
-        XCTAssertNotEqual(after, .home, "the listener really went to another screen")
+        XCTAssertEqual(model.requestedExperienceRoot, .settings, "the listener really went to another tab")
         await model.settleItemOpen()
-        XCTAssertEqual(model.screen, after, "a late result must not cover the screen the listener chose")
+        XCTAssertEqual(model.screen, .home, "a late result must not cover the tab the listener chose")
         XCTAssertNil(model.marginMoment)
     }
 

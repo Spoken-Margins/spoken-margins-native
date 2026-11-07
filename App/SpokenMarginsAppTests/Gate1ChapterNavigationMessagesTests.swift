@@ -73,7 +73,7 @@ final class Gate1ChapterNavigationMessagesTests: XCTestCase {
 
     /// #2620: the injected client says the model is absent, so the test does not depend on which
     /// simulator or phone it runs on. The local map is deterministic and must not need the model.
-    func testMapGenerationOnADeviceWithoutTheOnDeviceModelSaysGeneratedListeningMap() {
+    func testMapGenerationOnADeviceWithoutTheOnDeviceModelSaysGeneratedListeningMap() async {
         let model = Gate1AppModel(
             audioPlaybackClient: NoopAudioPlaybackClient(),
             localFoundationModelClient: NoModelFoundationModelClient()
@@ -91,6 +91,7 @@ final class Gate1ChapterNavigationMessagesTests: XCTestCase {
             "Generated Listening Map. Scene summaries need the on-device model, so the chapters have no summaries. No on-device model in this test."
         )
         XCTAssertEqual(model.diagnostics["lastListeningMapMode"], "local_deterministic")
+        await model.settleItemReload() // the item detail reloads off the main thread after the map is saved (#2505)
         XCTAssertFalse(model.selectedItem.chapters.isEmpty)
     }
 
