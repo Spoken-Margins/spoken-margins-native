@@ -58,6 +58,11 @@ public enum SharedMarginAudio: Equatable, Sendable {
         margin.audioPath != nil || margin.readsAloud
     }
 
+    /// Whether a Margin is a recording rather than words. Says nothing about whether the file is still there; `resolve` does.
+    public static func isRecording(_ margin: ImportedCommentaryInterjection) -> Bool {
+        margin.audioPath != nil
+    }
+
     /// What the listener is told when `resolve` says `cannotBeRead`. The words follow what the Margin is: a recording
     /// that is gone never "can't be read aloud", and a note the voice can't read never "couldn't play".
     public static func unavailableWords(for margin: ImportedCommentaryInterjection) -> String {

@@ -1,6 +1,7 @@
 import AVFoundation
 import Foundation
 import SessionKit
+import SessionKitAudio
 
 /// What the pinned Margin card on the Now screen shows and does (#3220). The words are `PinnedMarginCard` and the
 /// two-press rule is `NextMarginPress`, both in SessionKit; this reads the model's state into them and carries out
@@ -53,10 +54,12 @@ extension Gate1AppModel {
             let current = moment.playing ?? moment.target
             let subject: PinnedMarginCard.Subject = current.isYours || !moment.isReview && current.label == nil
                 ? .yours : .friend(SharedPacketArrival.senderName(current.label))
-            let position = moment.review.map { "\(moment.reviewNumber ?? 1) of \($0.count)" } // a review always counts, even one Margin
+            let position = moment.review.map { CantPlayListening.position(in: moment) ?? "\(moment.reviewNumber ?? 1) of \($0.count)" } // a review always counts, even one Margin
             if moment.isPlayingMargin {
+                // The episode's words before a Margin (#3392) are not the friend's: the card never says they wrote or spoke them.
+                let sounding: PinnedMarginCard.Stage = CantPlayListening.isWordsStep(moment) ? .loading : (current.isReadAloud ? .reading : .speaking)
                 return PinnedMarginCard(
-                    subject: subject, stage: marginMomentVoiceIsPaused ? .voicePaused : (current.isReadAloud ? .reading : .speaking), position: position,
+                    subject: subject, stage: marginMomentVoiceIsPaused ? .voicePaused : sounding, position: position,
                     voiceTime: playingVoiceTime)
             }
             // A plain moment that has played its Margin keeps listening for the others: the slot stays, saying so.
