@@ -27,10 +27,17 @@ public enum TextSceneAssembly {
     public static func scene(
         draft: TextSceneDraft,
         label: ListeningMapSummaryValidator.SceneLabel?,
-        characters: [Character]
+        characters: [Character],
+        rejectedByCheck: Bool = false
     ) -> PortableListeningMapScene {
         let stored = ListeningMapSummaryValidator.storedSummary(for: label)
         let title = label?.title ?? draft.fallbackTitle
+        // A scene too short to summarise is settled, not waiting: otherwise a finished item would always offer to run
+        // again (#3461). A scene the model failed to label stays unknown, so the next run asks again.
+        let settledAsTooShort = label == nil && !draft.isSummarizable
+        // A label that came back "unknown" with no summary is an answer too: asking again would end the same way, and
+        // the item would offer to continue for good.
+        let answeredUnknown = rejectedByCheck || (label != nil && label?.eligibility == .unknown && stored.text == nil)
         return PortableListeningMapScene(
             id: draft.id,
             order: draft.order,
@@ -38,8 +45,9 @@ public enum TextSceneAssembly {
             summaryText: stored.text,
             summaryAssetId: nil,
             summaryProvenance: stored.provenance,
-            eligibility: label?.eligibility ?? .unknown,
-            eligibilityReason: label?.eligibilityReason,
+            eligibility: answeredUnknown || settledAsTooShort ? .excluded : (label?.eligibility ?? .unknown),
+            eligibilityReason: label?.eligibilityReason
+                ?? (settledAsTooShort ? "Too short to summarise." : (rejectedByCheck ? "No summary passed the check." : (answeredUnknown ? "The model could not tell." : nil))),
             startAnchor: startAnchor(draft, characters: characters, title: title),
             endAnchor: endAnchor(draft, characters: characters, title: title)
         )
