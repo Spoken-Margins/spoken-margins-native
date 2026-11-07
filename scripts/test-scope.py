@@ -189,11 +189,13 @@ TEST_METHOD = re.compile(r'^\s*(?:@\w+\s+)*func test\w*\(')
 WORD = re.compile(r'[A-Za-z_]\w*')
 MEMBER_DECL = re.compile(
     r'^(\s*)(?:@\w+(?:\([^)]*\))?\s+)*((?:(?:private|fileprivate|internal|public|open|package|static|final|override|mutating|'
-    r'nonisolated|lazy|weak|unowned|indirect|convenience|required|dynamic|class)(?:\(\w+\))?\s+)*)(func|var|let|struct|enum|'
+    r'nonisolated|nonmutating|consuming|borrowing|distributed|isolated|lazy|weak|unowned|indirect|convenience|required|'
+    r'dynamic|class)(?:\(\w+\))?\s+)*)(func|var|let|struct|enum|'
     r'class|protocol|actor|typealias|case|extension)\s+`?(\w+)((?:\s*,\s*`?\w+)*)')
 # An init or subscript has no name to follow, but its body belongs to it, not to the member declared above it.
 NAMELESS_DECL = re.compile(r'^(\s*)(?:@\w+(?:\([^)]*\))?\s+)*(?:(?:private|fileprivate|internal|public|open|convenience|'
-                           r'required|override|nonisolated|static|class|final|package)(?:\(\w+\))?\s+)*(?:init[?!]?\s*[(<]|subscript\s*[(<]|'
+                           r'required|override|nonisolated|isolated|static|class|final|package)(?:\(\w+\))?\s+)*(?:init[?!]?\s*[(<]|'
+                           r'subscript\s*[(<]|'
                            r'deinit\b)')
 TYPE_KINDS = {'struct', 'enum', 'class', 'protocol', 'actor', 'extension'}
 
@@ -264,6 +266,10 @@ def strip_comments(text):
             depth = 1
             out.append('  ')
             i += 2
+        elif text.startswith('#/', i) and text.find('/#', i + 2) >= 0:  # an extended regex literal #/ ... /#
+            end = text.find('/#', i + 2) + 2
+            out.append(text[i:end])
+            i = end
         elif char in '#"' and string_end(text, i) is not None:
             end = string_end(text, i)
             out.append(text[i:end])
@@ -286,10 +292,12 @@ def swift_sources(root, prefix):
     return found
 
 
-def member_declarations(lines):
+def member_declarations(lines, extensions=None):
     """(line index, indent, name) of each declaration that is a member of a type or a top-level one. A local let or
     func inside a function body is not one: no other file can name it. An init or subscript has no name to follow, but
-    its body belongs to it, not to the member declared above it: it is listed with the name None."""
+    its body belongs to it, not to the member declared above it: it is listed with the name None. When <extensions> is a
+    list, each extension is appended to it as (line index, indent, the extended type's name, the last part of a dotted
+    one): not a member, but the type a nameless member inside it stands for."""
     stack, found = [], []  # stack: (indent, kind) of the open declarations
     for index, line in enumerate(lines):
         nameless = NAMELESS_DECL.match(line)
@@ -312,6 +320,8 @@ def member_declarations(lines):
             # An extension names the type it extends: that type is not a thing the change declares.
             if kind != 'extension':
                 found.extend((index, indent, each) for each in [name] + more)
+            elif extensions is not None:
+                extensions.append((index, indent, re.search(r'extension\s+([\w.]+)', line).group(1).split('.')[-1]))
         stack.append((indent, kind))
     return found
 
@@ -330,6 +340,15 @@ def holder_at_before(holders, holder):
     """The member that holds <holder>'s own declaration line (its parent), or None."""
     around = [other for other in holders if other[0] < holder[0] and other[1] < holder[1]]
     return around[-1] if around else None
+
+
+def type_around(holders, extensions, holder):
+    """The name of the type around a nameless <holder> (an init): the nearest named member or extension that holds it."""
+    around = holder_at_before(holders, holder)
+    outer = [other for other in extensions if other[0] < holder[0] and other[1] < holder[1]]
+    if outer and (around is None or around[0] < outer[-1][0]):
+        return outer[-1][2]
+    return around[2] if around else None
 
 
 def test_counts(tests):
@@ -359,7 +378,8 @@ def reaching_classes(root, changed, skip=()):
         return [], []
     audio_diff = any(APP_AUDIO.search(Path(path).name) for path in changed)
     words = {path: set(WORD.findall('\n'.join(lines))) for path, lines in {**sources, **tests}.items()}
-    members = {path: member_declarations(lines) for path, lines in sources.items()}
+    extended = {path: [] for path in sources}
+    members = {path: member_declarations(lines, extended[path]) for path, lines in sources.items()}
 
     def fanout(name):
         return sum(name in w for w in words.values())
@@ -389,10 +409,11 @@ def reaching_classes(root, changed, skip=()):
                 # The member that holds this line. An init body belongs to the init, which has no name to follow: the
                 # type around it stands for it (not the member declared above it).
                 held = holder_at(holders, index, len(line) - len(line.lstrip()))
-                if held and held[2] is None:
-                    held = holder_at_before(holders, held)
-                if held and held[2]:
-                    reached.add(held[2])
+                name = held[2] if held else None
+                if held and name is None:
+                    name = type_around(holders, extended[path], held)
+                if name:
+                    reached.add(name)
         frontier = reached - seen
         seen |= reached
     counts, picked, left_out, total = test_counts(tests), [], [], 0

@@ -437,6 +437,8 @@ How it is used:
   - Silent notes show as new until opened, while the offer and arrival leave them out (#3402).
   - A friend's written Margin sounds different on the phone after the Terms, and that stays (#3391).
 
+- **Split the test-scope carry-over fixes out of the narrowing, and drop the narrowing (#3467, #3485).** Asked "Merge PR 3485 as it is, split out its fixes, or close it?", he picked "Split out the fixes": "split out the carry-over fixes and drop the narrowing." #3485's audit had blocked four times on one class (a search that starts from the changed members loses a test the whole file reached), and the measured gain was small (mean extra tests 92.8 to 89.8 over 39 merges). #3467's Done when is the carry-overs only (init, subscript and deinit bodies, `final init`, comments and strings in `scripts/test-scope.py`); the narrowing and the ledger-minutes item are dropped and are not to be retried unless a design cannot lose a test. The fixes are #3564.
+
 ## Background moved out of the guide (2026-11-06)
 - **From the guide.** Explanations that stood next to rules in `AGENTS.md`, moved here to keep it under its 4,000-word cap (the rules themselves are unchanged):
   - Verification layers: tests that pass while the app is broken usually fake the boundary that broke, such as audio sessions, players, file paths across containers and network responses.

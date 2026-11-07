@@ -664,6 +664,44 @@ class ReachedByNameTests(unittest.TestCase):
         self.assertNotIn('gone', lines[7])
         self.assertIn('afterEscape', lines[8])
 
+    def test_a_mention_in_an_init_inside_an_extension_reaches_a_test_that_names_the_extended_type(self):
+        # Audit of #3564: extensions are not members, so the init had no type around it and the search stopped.
+        self.write(APP + 'Holder+Make.swift', (
+            'extension Outer.Holder {\n'
+            '    func above() {}\n'
+            '    init(model: Model) {\n'
+            '        let local = model.stopChoice(at: 1)\n'
+            '    }\n'
+            '}\n'))
+        self.tree({'MakeTests.swift': (
+            'final class MakeTests: XCTestCase {\n    func testMake() { Holder(model: model) }\n}\n'),
+            'AboveOnlyTests.swift': (
+            'final class AboveOnlyTests: XCTestCase {\n    func testAbove() { model.above() }\n}\n')})
+        result = self.classify(APP + 'Gate1AppModel+Stops.swift')
+        self.assertIn('MakeTests', result['app_tests'])
+        self.assertNotIn('AboveOnlyTests', result['app_tests'])
+
+    def test_extensions_are_listed_for_a_nameless_member_but_are_not_members(self):
+        lines = ['extension FirstLaunch.Place {', '    init(_ model: Model) {', '    }', '}']
+        extensions = []
+        self.assertEqual(scope.member_declarations(lines, extensions), [(1, 4, None)])
+        self.assertEqual(extensions, [(0, 0, 'Place')])
+
+    def test_less_common_modifiers_and_extended_regex_literals_are_read(self):
+        names = [name for _, _, name in scope.member_declarations([
+            'final class Holder {',
+            '    nonmutating func a() {}',
+            '    consuming func b() {}',
+            '    isolated deinit {',
+            '        cleanup()',
+            '    }',
+            '}'])]
+        self.assertEqual(names, ['Holder', 'a', 'b', None])
+        line = scope.strip_comments('let r = #/https://x/#; model.afterRegex() // gone')[0]
+        self.assertIn('https://x', line)
+        self.assertIn('afterRegex', line)
+        self.assertNotIn('gone', line)
+
     def test_a_final_init_is_nameless_too(self):
         names = [name for _, _, name in scope.member_declarations([
             'final class Holder {',
