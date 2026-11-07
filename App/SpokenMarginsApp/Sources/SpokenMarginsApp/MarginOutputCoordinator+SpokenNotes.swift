@@ -44,8 +44,12 @@ extension MarginOutputCoordinator {
         }
         defer { prepared.discard() }
         let writer: SpokenNoteFolderWriter
-        do { writer = SpokenNoteFolderWriter(journalURL: try spokenNoteJournalURL()) } catch {
-            return .delivered([], leftOut: "Couldn't open the record of what was saved. Nothing was changed.")
+        if let existing = spokenNoteWriter {
+            writer = existing
+        } else {
+            guard let url = try? spokenNoteJournalURL() else { return .journalUnavailable }
+            writer = SpokenNoteFolderWriter(journalURL: url)
+            spokenNoteWriter = writer
         }
         var deliveries: [SpokenNoteFolderDelivery] = []
         var seenFolders: Set<String> = []
@@ -63,12 +67,15 @@ extension MarginOutputCoordinator {
                 let result = try await writer.deliver(
                     prepared.files, noteId: noteId, to: folder, destinationID: current.id,
                     destinationName: current.name, audioSignature: prepared.audioSignature)
-                deliveries.append(.init(folderName: current.name, state: !result.written.isEmpty ? .saved : (result.keptEdits.isEmpty ? .upToDate : .keptEdits)))
+                // A file the listener changed is said so, even when another one was written.
+                deliveries.append(.init(folderName: current.name, state: !result.keptEdits.isEmpty ? .keptEdits : (result.written.isEmpty ? .upToDate : .saved)))
             } catch {
                 deliveries.append(.init(folderName: current.name, state: .failed(ListenerErrorText.message(for: error))))
             }
         }
         if let url = try? spokenNoteJournalURL() { await spokenNotes.reload(journalURL: url) }
+        // Every destination was paused or removed while the files were made.
+        guard !deliveries.isEmpty else { return .folderPaused }
         return .delivered(deliveries, leftOut: prepared.leftOut)
     }
 }

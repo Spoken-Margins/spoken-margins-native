@@ -40,7 +40,7 @@ struct SpokenNoteFolderExporter {
             } catch SpokenNoteExportError.nothingToExport {
                 return .failure(.nothingToExport)
             } catch {
-                return .failure(.delivered([], leftOut: "Couldn't make the files to save. Nothing was changed in your note."))
+                return .failure(.couldNotPrepare)
             }
         }.value
     }

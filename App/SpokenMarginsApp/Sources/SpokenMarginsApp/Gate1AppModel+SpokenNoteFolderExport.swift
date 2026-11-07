@@ -25,19 +25,25 @@ extension Gate1AppModel {
     private func presentSpokenNoteFolderOutcome(_ outcome: SpokenNoteFolderOutcome, title: String) {
         let line = outcome.line(title: title)
         recordDeveloperDiagnostic("spokenNote.folderExport", ["problem": String(outcome.isProblem)])
+        // Saved: no banner. It would replace the Undo that marking complete just offered; the row says "Exported".
         guard outcome.isProblem else {
-            reportConfirmation(line)
+            reportSuccess(line)
             return
         }
-        // Stays until the listener closes it (an error banner does), with the way to the folder when that is the fix.
-        let choose = outcome.needsFolderChoice
-            ? UserFeedbackEvent.Action(
-                title: "Choose Folder", accessibilityLabel: "Choose an export folder in Settings",
+        let action = outcome.settingsActionTitle.map { title in
+            UserFeedbackEvent.Action(
+                title: title, accessibilityLabel: "\(title) in Settings",
                 identifier: "spokenNote.chooseFolder.button", perform: { [weak self] in self?.openSettings() })
-            : nil
+        }
+        if outcome.isMissingFolderOnly {
+            // No folder yet is the listener's choice to make, not a failure: a warning, with the way to Settings.
+            reportWarning(line, action: action)
+            return
+        }
+        // A real failure stays until the listener closes it, with the way to the folder when that is the fix.
         statusMessage = "Error"
         lastError = line
-        presentFeedback(UserFeedbackEvent(kind: .error, message: line, action: choose))
+        presentFeedback(UserFeedbackEvent(kind: .error, message: line, action: action))
         diagnostics["recentFailure"] = line
     }
 }

@@ -91,6 +91,8 @@ final class MarginOutputCoordinator: ObservableObject {
     private var isDelivering = false
     private var passRequestedDuringPass = false
     private var writer: AutomaticMarginWriter?
+    /// One writer for spoken notes, so two saves at once take turns instead of both reading the same journal (#3661).
+    var spokenNoteWriter: SpokenNoteFolderWriter?
     /// What each destination's last finished pass left to do next time (#1192).
     private var planners: [String: MarginNotePassPlanner] = [:]
     private var folderNames: [String: String] = [:]

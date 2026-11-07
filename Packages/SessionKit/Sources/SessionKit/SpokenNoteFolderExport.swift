@@ -63,12 +63,14 @@ public actor SpokenNoteFolderWriter {
         defer { if granted { AutomaticMarginWriter.endAccess(to: folder) } }
 
         var entry: SpokenNoteFolderEntry
-        if var known = journal[key] {
-            known.folderName = destinationName
+        Self.sweepStalePartials(in: folder)
+        if let known = journal[key] {
             entry = known
         } else {
             let wanted = (files.audioURL ?? files.transcriptURL)?.deletingPathExtension().lastPathComponent ?? SpokenNoteItem.defaultTitle
-            let extensions = [files.audioURL?.pathExtension, files.transcriptURL == nil ? nil : "txt"].compactMap { $0 }
+            // Both are reserved whatever exists today: a note with audio only now may have words later, and those must
+            // not meet a file of the listener's under the same name.
+            let extensions = [files.audioURL?.pathExtension ?? "m4a", "txt"]
             // Reserved before anything is written, so a copy cut short is never mistaken for a file of the listener's.
             entry = SpokenNoteFolderEntry(
                 baseName: Self.freeBaseName(wanted, extensions: extensions, in: folder, fileManager: fileManager),
@@ -87,7 +89,10 @@ public actor SpokenNoteFolderWriter {
             let existingBytes = Self.byteCount(of: destination)
             enum Action { case write, upToDate, keep }
             let action: Action
-            if existingBytes == nil {
+            if Self.isTaken(destination) && existingBytes == nil {
+                // Something that isn't a plain file (a link), or an iCloud placeholder for a file not downloaded: not ours.
+                action = .keep
+            } else if existingBytes == nil {
                 action = .write
             } else if entry.audioSignature == audioSignature, existingBytes == entry.audioBytes {
                 action = .upToDate
@@ -119,9 +124,9 @@ public actor SpokenNoteFolderWriter {
             let destination = folder.appendingPathComponent(name)
             let text = (try? String(contentsOf: source, encoding: .utf8)) ?? ""
             let newDigest = ListeningEdition.digest(text)
-            let existing = fileManager.fileExists(atPath: destination.path)
+            let existing = Self.byteCount(of: destination) != nil
                 ? (try? String(contentsOf: destination, encoding: .utf8)).map(ListeningEdition.digest) : nil
-            if fileManager.fileExists(atPath: destination.path), existing == nil {
+            if Self.isTaken(destination), existing == nil {
                 // Present but unreadable as text: not ours to replace.
                 entry.transcriptFileName = name
                 result.keptEdits.append(name)
@@ -141,19 +146,46 @@ public actor SpokenNoteFolderWriter {
             try SpokenNoteFolderJournal.save(journal, to: journalURL)
         }
 
+        if !result.written.isEmpty || !result.upToDate.isEmpty {
+            entry.folderName = destinationName
+            journal[key] = entry
+            try SpokenNoteFolderJournal.save(journal, to: journalURL)
+        }
         if !failures.isEmpty { throw WriteError.couldNotWrite(failures.joined(separator: "; ")) }
         return result
     }
 
     /// "<wanted>", or "<wanted> 2", "<wanted> 3"... — the first name for which no file of any kind exists yet.
-    static func freeBaseName(_ wanted: String, extensions: [String], in folder: URL, fileManager: FileManager) -> String {
+    static func freeBaseName(_ wanted: String, extensions: [String], in folder: URL, fileManager: FileManager = .default) -> String {
         func isFree(_ base: String) -> Bool {
-            !extensions.contains { fileManager.fileExists(atPath: folder.appendingPathComponent("\(base).\($0)").path) }
+            !extensions.contains { isTaken(folder.appendingPathComponent("\(base).\($0)")) }
         }
         if isFree(wanted) { return wanted }
         var number = 2
         while !isFree("\(wanted) \(number)") { number += 1 }
         return "\(wanted) \(number)"
+    }
+
+    /// Whether anything is at this name: a file, a folder, a link (even a dangling one), or the placeholder iCloud keeps
+    /// (`.<name>.icloud`) for a file that is not downloaded. `lstat` does not follow links.
+    static func isTaken(_ url: URL) -> Bool {
+        func exists(_ path: String) -> Bool { var info = stat(); return lstat(path, &info) == 0 }
+        let placeholder = url.deletingLastPathComponent().appendingPathComponent(".\(url.lastPathComponent).icloud").path
+        return exists(url.path) || exists(placeholder)
+    }
+
+    /// Removes this writer's own half-made copies (`.<name>.<uuid>.partial`) that an hour has passed on: an app ended
+    /// mid-copy leaves one. Nothing else in the folder is looked at.
+    private static func sweepStalePartials(in folder: URL, now: Date = Date()) {
+        let fileManager = FileManager.default
+        for name in (try? fileManager.contentsOfDirectory(atPath: folder.path)) ?? [] where name.hasPrefix(".") && name.hasSuffix(".partial") {
+            let parts = name.dropLast(".partial".count).split(separator: ".")
+            guard let last = parts.last, UUID(uuidString: String(last)) != nil else { continue }
+            let url = folder.appendingPathComponent(name)
+            if let modified = (try? fileManager.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date, now.timeIntervalSince(modified) > 3600 {
+                try? fileManager.removeItem(at: url)
+            }
+        }
     }
 
     private static func byteCount(of url: URL) -> Int? {
@@ -175,8 +207,17 @@ public actor SpokenNoteFolderWriter {
                 try fileManager.copyItem(at: source, to: temporary)
                 // rename(2) puts the finished file under its name in one step, replacing an older copy of ours if there is
                 // one. (`replaceItemAt` is not reliable in the Linux Foundation the host tests run on.)
-                guard rename(temporary.path, coordinated.path) == 0 else {
-                    throw CocoaError(.fileWriteUnknown, userInfo: [NSLocalizedDescriptionKey: String(cString: strerror(errno))])
+                if isTaken(coordinated) {
+                    guard rename(temporary.path, coordinated.path) == 0 else {
+                        throw CocoaError(.fileWriteUnknown, userInfo: [NSLocalizedDescriptionKey: String(cString: strerror(errno))])
+                    }
+                } else {
+                    // A new file is linked into place, which fails if anything appeared at the name meanwhile (a sync tool,
+                    // the listener), instead of replacing it the way rename would.
+                    guard link(temporary.path, coordinated.path) == 0 else {
+                        throw CocoaError(.fileWriteFileExists, userInfo: [NSLocalizedDescriptionKey: String(cString: strerror(errno))])
+                    }
+                    try? fileManager.removeItem(at: temporary)
                 }
             } catch {
                 try? fileManager.removeItem(at: temporary)
@@ -212,7 +253,7 @@ public enum SpokenNoteFolderJournal {
     public static func savedFolders(from url: URL) -> [String: [String]] {
         guard let journal = try? load(from: url) else { return [:] }
         var names: [String: [String]] = [:]
-        for (key, entry) in journal where entry.audioFileName != nil || entry.transcriptFileName != nil {
+        for (key, entry) in journal where entry.audioSignature != nil || entry.transcriptDigest != nil {
             guard let separator = key.firstIndex(of: ":") else { continue }
             names[String(key[key.index(after: separator)...]), default: []].append(entry.folderName)
         }
@@ -261,6 +302,9 @@ public enum SpokenNoteFolderOutcome: Equatable, Sendable, Error {
     case notOnThisPhone
     /// `note.json` can't be read right now; nothing was changed.
     case unreadableNote
+    /// The files could not be made, or the record of what was saved could not be opened; nothing was changed.
+    case couldNotPrepare
+    case journalUnavailable
     /// `leftOut` says what the files leave out (a take with no words yet), or is empty.
     case delivered([SpokenNoteFolderDelivery], leftOut: String)
 
@@ -269,9 +313,22 @@ public enum SpokenNoteFolderOutcome: Equatable, Sendable, Error {
         switch self {
         case .noFolder, .folderPaused: return true
         case .delivered(let deliveries, _): return deliveries.contains { $0.state == .folderUnavailable }
-        case .nothingToExport, .notOnThisPhone, .unreadableNote: return false
+        case .nothingToExport, .notOnThisPhone, .unreadableNote, .couldNotPrepare, .journalUnavailable: return false
         }
     }
+
+    /// What the button beside the line says, or nil when there is none.
+    public var settingsActionTitle: String? {
+        switch self {
+        case .folderPaused: return "Open Settings"
+        case .noFolder: return "Choose Folder"
+        case .delivered: return needsFolderChoice ? "Choose Folder" : nil
+        default: return nil
+        }
+    }
+
+    /// Whether this is only a note that the listener has no folder yet, which is not a failure to scold them for.
+    public var isMissingFolderOnly: Bool { self == .noFolder || self == .folderPaused }
 
     /// Whether the note failed to reach a folder it should have reached.
     public var isProblem: Bool {
@@ -293,6 +350,10 @@ public enum SpokenNoteFolderOutcome: Equatable, Sendable, Error {
             return "\(name) has no audio or words to save yet."
         case .notOnThisPhone:
             return "\(name)'s recordings aren't on this phone, so it wasn't saved to your folder."
+        case .couldNotPrepare:
+            return "Couldn't make the files for \(name). Nothing was changed in your note."
+        case .journalUnavailable:
+            return "Couldn't open the record of what was saved, so \(name) wasn't saved to your folder. Nothing was changed."
         case .unreadableNote:
             return "\(name) can't be read right now, so it wasn't saved to your folder. Nothing was changed."
         case .delivered(let deliveries, let leftOut):

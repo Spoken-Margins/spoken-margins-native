@@ -156,6 +156,52 @@ final class SpokenNoteFolderExportTests: XCTestCase {
         XCTAssertFalse(try listing().contains { $0.hasSuffix(".partial") })
     }
 
+    func testWordsThatArriveLaterNeverMeetAFileOfTheListenersWithTheSameName() async throws {
+        // First tap: audio only (the words are still being written down). The listener already keeps "Trip ideas.txt".
+        try Data("Mine.".utf8).write(to: folder.appendingPathComponent("Trip ideas.txt"))
+        let first = try await deliver(try prepared("Trip ideas", text: nil))
+        XCTAssertEqual(first.baseName, "Trip ideas 2", "both names are reserved, so the words have a place of their own")
+        let later = try await deliver(try prepared("Trip ideas", text: "Words, at last."))
+        XCTAssertEqual(try read("Trip ideas 2.txt"), "Words, at last.")
+        XCTAssertEqual(try read("Trip ideas.txt"), "Mine.")
+        XCTAssertEqual(later.written, ["Trip ideas 2.txt"])
+    }
+
+    func testALinkAtTheNameIsNeverReplaced() async throws {
+        let elsewhere = root.appendingPathComponent("elsewhere.txt")
+        try Data("Not ours.".utf8).write(to: elsewhere)
+        try FileManager.default.createSymbolicLink(at: folder.appendingPathComponent("Trip ideas.txt"), withDestinationURL: elsewhere)
+        let result = try await deliver(try prepared("Trip ideas"))
+        XCTAssertEqual(try String(contentsOf: elsewhere, encoding: .utf8), "Not ours.")
+        XCTAssertEqual(result.baseName, "Trip ideas 2")
+    }
+
+    func testAnICloudPlaceholderCountsAsTaken() async throws {
+        try Data().write(to: folder.appendingPathComponent(".Trip ideas.m4a.icloud"))
+        let result = try await deliver(try prepared("Trip ideas"))
+        XCTAssertEqual(result.baseName, "Trip ideas 2")
+    }
+
+    func testTwoSavesAtOnceTakeTurnsAndAddNoCopy() async throws {
+        let writer = SpokenNoteFolderWriter(journalURL: journalURL)
+        let folder = folder!
+        let (filesA, filesB) = (try prepared("Trip ideas"), try prepared("Trip ideas"))
+        async let a = writer.deliver(filesA, noteId: "n", to: folder, destinationID: "d", destinationName: "Vault", audioSignature: "t1")
+        async let b = writer.deliver(filesB, noteId: "n", to: folder, destinationID: "d", destinationName: "Vault", audioSignature: "t1")
+        _ = try await (a, b)
+        XCTAssertEqual(try listing(), ["Trip ideas.m4a", "Trip ideas.txt"])
+    }
+
+    func testAFileLeftAsTheListenerEditedItIsNotCountedAsExported() async throws {
+        try Data("Mine.".utf8).write(to: folder.appendingPathComponent("Trip ideas.txt"))
+        // Same name, same journal key can't happen for a new note (it moves to "Trip ideas 2"); an edit of ours can:
+        _ = try await deliver(try prepared("Trip ideas 2", text: "A."), noteId: "other")
+        try Data("Edited.".utf8).write(to: folder.appendingPathComponent("Trip ideas 2.txt"))
+        let result = try await deliver(try prepared("Trip ideas 2", text: "A, longer."), noteId: "other")
+        XCTAssertEqual(result.keptEdits, ["Trip ideas 2.txt"])
+        XCTAssertEqual(SpokenNoteFolderJournal.savedFolderNames(from: journalURL, noteIds: ["other"]), ["other": ["Vault"]], "the audio was written")
+    }
+
     // MARK: wording
 
     func testTheLineSaysPlainlyWhatHappened() {
@@ -173,5 +219,10 @@ final class SpokenNoteFolderExportTests: XCTestCase {
         XCTAssertTrue(gone.line(title: "T").contains("safe in your Library"))
         let partial = SpokenNoteFolderOutcome.delivered([.init(folderName: "Vault", state: .upToDate)], leftOut: "1 take has no words written down yet.")
         XCTAssertTrue(partial.line(title: "T").hasSuffix("1 take has no words written down yet."))
+        XCTAssertEqual(SpokenNoteFolderOutcome.noFolder.settingsActionTitle, "Choose Folder")
+        XCTAssertEqual(SpokenNoteFolderOutcome.folderPaused.settingsActionTitle, "Open Settings")
+        XCTAssertTrue(SpokenNoteFolderOutcome.couldNotPrepare.isProblem, "a failure to make the files is never a green line")
+        XCTAssertTrue(SpokenNoteFolderOutcome.journalUnavailable.isProblem)
+        XCTAssertFalse(SpokenNoteFolderOutcome.couldNotPrepare.isMissingFolderOnly)
     }
 }
