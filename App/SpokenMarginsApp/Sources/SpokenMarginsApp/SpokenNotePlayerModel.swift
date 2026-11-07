@@ -10,9 +10,9 @@ actor SpokenNoteSentenceAudio {
 
     /// Hands the session back to other apps. Fails harmlessly while something else of ours is still using it.
     private let deactivate: @Sendable () -> Void
-    /// The player this actor started and has not yet stopped. The actor stops it itself, in `end`, so the hand-back
-    /// can never run while it is still playing (#3649).
-    private var current: AVAudioPlayer?
+    /// The player this actor started and has not yet stopped, with the model's generation it was asked for. The actor
+    /// stops it itself, in `end`, so the hand-back can never run while it is still playing (#3649).
+    private var current: (player: AVAudioPlayer, generation: Int)?
 
     init(deactivate: @escaping @Sendable () -> Void = {
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
@@ -25,24 +25,31 @@ actor SpokenNoteSentenceAudio {
         let player: AVAudioPlayer
     }
 
-    func start(url: URL, startMs: Int) throws -> Started {
+    func start(url: URL, startMs: Int, generation: Int = 0) throws -> Started {
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.playback, mode: .spokenAudio)
         try session.setActive(true)
-        current?.stop()
+        current?.player.stop()
         current = nil
         let player = try AVAudioPlayer(contentsOf: url)
         player.currentTime = Double(startMs) / 1_000
         guard player.prepareToPlay(), player.play() else { throw CocoaError(.fileReadUnknown) }
-        current = player
+        current = (player, generation)
         return Started(player: player)
     }
 
     /// Stops the player, then hands the session back. The actor is serial, so a start still in flight finishes first
     /// and its player is stopped here too. Deactivating while a player runs fails, and the session would stay active
     /// as `.playback` with other apps' audio unable to resume.
-    func end() {
-        current?.stop()
+    ///
+    /// `generation` is the model's generation at the stop. A player started for that generation or a later one belongs
+    /// to a sentence the listener tapped after this stop, and a stop whose task reached the actor late must not kill
+    /// it, so it is left playing and the session stays with it.
+    func end(generation: Int = .max) {
+        if let current {
+            guard current.generation < generation else { return }
+            current.player.stop()
+        }
         current = nil
         deactivate()
     }
@@ -85,7 +92,7 @@ final class SpokenNotePlayerModel: ObservableObject {
         playing = ref // shows at once; the audio follows
         starting = Task { [weak self] in
             do {
-                let started = try await SpokenNoteSentenceAudio.shared.start(url: url, startMs: span.startMs)
+                let started = try await SpokenNoteSentenceAudio.shared.start(url: url, startMs: span.startMs, generation: mine)
                 self?.begin(started.player, span: span, generation: mine)
             } catch {
                 self?.failed(generation: mine)
@@ -94,18 +101,18 @@ final class SpokenNotePlayerModel: ObservableObject {
     }
 
     func stop() {
-        if tearDown() { Task { await SpokenNoteSentenceAudio.shared.end() } }
+        if let stopped = tearDown() { Task { await SpokenNoteSentenceAudio.shared.end(generation: stopped) } }
     }
 
     /// Stops, and when a sentence had the audio session, waits until it has been handed back. The audio actor is
     /// serial, so a sentence still starting finishes first. Recording starts only after this, so the hand-back can't
     /// land on the recorder's session.
     func stopAndWait() async {
-        if tearDown() { await SpokenNoteSentenceAudio.shared.end() }
+        if let stopped = tearDown() { await SpokenNoteSentenceAudio.shared.end(generation: stopped) }
     }
 
-    /// Everything that is ours to stop on the main thread. Returns whether the audio session must be handed back.
-    private func tearDown() -> Bool {
+    /// Everything that is ours to stop on the main thread. Returns the new generation when the audio session must be handed back.
+    private func tearDown() -> Int? {
         generation += 1
         starting?.cancel()
         starting = nil
@@ -119,7 +126,7 @@ final class SpokenNotePlayerModel: ObservableObject {
             self.interruptionObserver = nil
         }
         defer { holdsSession = false }
-        return holdsSession
+        return holdsSession ? generation : nil
     }
 
     private func begin(_ player: AVAudioPlayer, span: SpokenNotePlayback, generation started: Int) {

@@ -58,6 +58,35 @@ final class SpokenNoteSentenceAudioTests: XCTestCase {
         XCTAssertFalse(started.player.isPlaying, "the player is stopped")
     }
 
+    /// A stop whose task reached the actor after the next sentence had started (the model raises its generation at the stop,
+    /// and the sentence tapped next is started for that same generation).
+    func testALateEndDoesNotStopASentenceStartedAfterIt() async throws {
+        let url = try writeSilence()
+        let log = HandBackLog()
+        let audio = SpokenNoteSentenceAudio(deactivate: { log.record() })
+        let started = try await audio.start(url: url, startMs: 0, generation: 2)
+
+        await audio.end(generation: 2)  // the stop that preceded the tap which started generation 2
+
+        XCTAssertTrue(started.player.isPlaying, "the newer sentence keeps playing")
+        XCTAssertEqual(log.entries, [], "the session stays with the sentence that is playing")
+        await audio.end()
+        XCTAssertFalse(started.player.isPlaying)
+    }
+
+    func testEndForALaterGenerationStopsAnOlderSentence() async throws {
+        let url = try writeSilence()
+        let log = HandBackLog()
+        let audio = SpokenNoteSentenceAudio(deactivate: { log.record() })
+        let started = try await audio.start(url: url, startMs: 0, generation: 1)
+        log.player = started.player
+
+        await audio.end(generation: 2)
+
+        XCTAssertFalse(started.player.isPlaying)
+        XCTAssertEqual(log.entries, [false])
+    }
+
     func testEndWithNothingStartedStillHandsTheSessionBack() async {
         let log = HandBackLog()
         let audio = SpokenNoteSentenceAudio(deactivate: { log.record() })
