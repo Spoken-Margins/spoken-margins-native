@@ -98,12 +98,14 @@ public enum PendingHandoffOutcome: Equatable, Sendable {
     case deletedInvalidPayload
     case missing
 
-    /// The value written to diagnostics under `pendingSourceLinkPayload:<id>`.
+    /// The value written to diagnostics under `pendingSourceLinkPayload:<id>`. The reason is readable text for the
+    /// listener's failed inbox and can name a page or a file, so the export carries only which kind of stop it was (#3548).
     public var diagnosticValue: String {
         switch self {
         case .imported: return "imported"
         case .waitingForNetwork: return "waiting_for_network"
-        case .quarantined(let reason), .notPlayable(let reason): return "quarantined:\(reason)"
+        case .quarantined: return "quarantined:import_failed"
+        case .notPlayable: return "quarantined:link_not_playable"
         case .deletedInvalidPayload: return "deleted_invalid_payload"
         case .missing: return "missing"
         }

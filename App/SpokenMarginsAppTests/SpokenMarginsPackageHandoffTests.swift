@@ -491,7 +491,8 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
             XCTAssertEqual(SharedMarginsImportMessage.userFacing(error), SharedMarginsImportMessage.unreadablePackageMessage)
             let detail = SharedMarginsImportMessage.diagnosticDetail(error)
             XCTAssertTrue(detail.hasPrefix("decoding:representations.0.kind:"), detail)
-            XCTAssertTrue(detail.contains("forwarded_audio_and_text"), detail)
+            XCTAssertTrue(detail.hasSuffix(":dataCorrupted"), detail)
+            XCTAssertFalse(detail.contains("forwarded_audio_and_text"), "the packet's value stays out of the export: \(detail)")
         }
     }
 

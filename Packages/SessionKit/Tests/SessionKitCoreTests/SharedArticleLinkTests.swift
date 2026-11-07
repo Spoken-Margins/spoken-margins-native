@@ -49,7 +49,7 @@ final class SharedArticleLinkTests: XCTestCase {
             XCTAssertTrue(error.localizedDescription.contains("HTTP 404"), error.localizedDescription)
         }
         XCTAssertEqual(extractor.requested, [URL(string: Self.postURL)!])
-        XCTAssertEqual(recorded, ["failed:The site answered with HTTP 404 instead of the article."])
+        XCTAssertEqual(recorded, ["failed:other#1"])
     }
 
     @MainActor
@@ -163,7 +163,7 @@ final class SharedArticleLinkTests: XCTestCase {
             XCTAssertTrue(error.extractorError is StubExtractor.Failure, "the extractor's own error is kept so the app can offer Safari (#145)")
             XCTAssertTrue(error.localizedDescription.contains("No readable article text was found."), error.localizedDescription)
         }
-        XCTAssertEqual(recorded, ["failed:No readable article text was found."])
+        XCTAssertEqual(recorded, ["failed:other#1"])
     }
 
     @MainActor

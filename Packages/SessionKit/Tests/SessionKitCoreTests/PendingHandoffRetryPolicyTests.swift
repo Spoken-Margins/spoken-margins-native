@@ -71,7 +71,7 @@ final class PendingHandoffRetryPolicyTests: XCTestCase {
         XCTAssertEqual(PendingHandoffRetryPolicy.outcome(for: URLError(.notConnectedToInternet)).diagnosticValue, "waiting_for_network")
         XCTAssertEqual(
             PendingHandoffRetryPolicy.outcome(for: BadPDF()).diagnosticValue,
-            "quarantined:The shared link did not return a readable PDF."
+            "quarantined:import_failed"
         )
         XCTAssertNil(PendingHandoffRetryPolicy.waitingLine(count: 0))
         XCTAssertEqual(PendingHandoffRetryPolicy.waitingLine(count: 1), "1 link waiting for a connection")
@@ -135,7 +135,7 @@ final class PendingHandoffRetryPolicyTests: XCTestCase {
         XCTAssertEqual(report.quarantinedCount, 2)
         XCTAssertEqual(report.announcedFailures, ["The shared link did not return a readable PDF."])
         XCTAssertEqual(store.quarantined["spotify"], message)
-        XCTAssertEqual(report.outcomes.first?.outcome.diagnosticValue, "quarantined:\(message)")
+        XCTAssertEqual(report.outcomes.first?.outcome.diagnosticValue, "quarantined:link_not_playable")
         XCTAssertTrue(store.pending.isEmpty)
     }
 

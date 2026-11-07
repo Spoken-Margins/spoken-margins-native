@@ -417,7 +417,7 @@ final class BackgroundRefreshGateTests: XCTestCase {
         let margin = try XCTUnwrap(model.selectedItem.interjections.first)
         model.selectedItem.interjections = []
 
-        model.recordFailedRetry(of: margin, failure: "no speech")
+        model.recordFailedRetry(of: margin, failure: "no speech", diagnostic: "no_speech")
         XCTAssertTrue(model.selectedItem.interjections.isEmpty, "the job's end must not read the item before it returns")
 
         await model.settleItemReload()

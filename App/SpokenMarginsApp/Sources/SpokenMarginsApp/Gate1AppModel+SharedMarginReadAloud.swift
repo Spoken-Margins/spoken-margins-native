@@ -50,7 +50,7 @@ extension Gate1AppModel {
     }
 
     private func sharedMarginReadAloudFailed(_ marginId: String, _ error: Error) {
-        diagnostics["sharedMarginReadAloud:\(marginId)"] = "failed:\(error.localizedDescription)"
+        diagnostics["sharedMarginReadAloud:\(marginId)"] = "failed:\(SafeErrorText.describe(error))"
         reportWarning("That choice couldn't be saved.")
         refreshSelectedItemInBackground()
         refreshMarginRowsInBackground()

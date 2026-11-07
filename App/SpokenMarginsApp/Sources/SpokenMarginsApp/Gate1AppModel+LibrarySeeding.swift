@@ -138,7 +138,7 @@ extension Gate1AppModel {
             startForegroundAudioPreparationIfNeeded()
         } catch {
             libraryAccessError = "This build could not open your existing library. This attempt did not reset it. Do not use Reset Library or delete the app; install a compatible build and try again. Details: \(error.localizedDescription)"
-            diagnostics["libraryBootstrap"] = "failed_without_reset:\(error.localizedDescription)"
+            diagnostics["libraryBootstrap"] = "failed_without_reset:\(SafeErrorText.describe(error))"
             reportFailure(error, context: "Library bootstrap failed")
         }
     }
