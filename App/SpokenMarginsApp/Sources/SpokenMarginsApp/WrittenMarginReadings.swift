@@ -82,7 +82,7 @@ enum WrittenMarginReadings {
         let id = UUID()
         // Asked here, not from the task: the reader counts the reading as waited on before this returns (#3619's T3).
         let (answer, give) = AsyncStream.makeStream(of: Bool.self, bufferingPolicy: .bufferingNewest(1))
-        reader.render(reading) { result in
+        reader.requestRender(reading) { result in
             give.yield((try? result.get()) != nil)
             give.finish()
         }

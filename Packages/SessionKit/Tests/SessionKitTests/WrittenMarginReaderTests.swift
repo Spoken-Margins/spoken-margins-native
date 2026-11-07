@@ -194,8 +194,8 @@ final class WrittenMarginReaderTests: XCTestCase {
         })
         let tapped = WrittenMarginReading(intro: "Cole wrote:", text: "Tapped words.")
         let answered = Flag()
-        reader.render(tapped) { if case .success = $0 { answered.set() } }
-        XCTAssertEqual(reader.activity.waiting, 1, "the tap's reading is waited on before render returns")
+        reader.requestRender(tapped) { if case .success = $0 { answered.set() } }
+        XCTAssertEqual(reader.activity.waiting, 1, "the tap's reading is waited on before requestRender returns")
         let removed = Flag()
         reader.whenSettled(tapped) { removed.set() }
         XCTAssertFalse(removed.value, "a removal asked for now waits for the render")
