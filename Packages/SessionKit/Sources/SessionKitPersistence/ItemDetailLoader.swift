@@ -110,6 +110,11 @@ public struct ItemDetailLoader {
             layers: importedLayers,
             listenerHasMap: SharedListeningMapPlacement.listenerHasMap(
                 proposalIds: committed.map(\.id), hasTimelineChapters: !mediaChapters.isEmpty))
+        // An article or PDF has no media; its scene summaries are what the Item screen may offer to write (#3461).
+        let textSceneSummaries: TextSceneSummaryProgress.State = item.media == nil
+            ? TextSceneSummaryProgress.state(
+                proposals: committed, friendsMapIsHere: map?.id == TextSceneSummaryProgress.sharedMapId(itemId: id))
+            : .notApplicable
         return ItemDetailState(
             id: item.id,
             title: item.title,
@@ -136,6 +141,7 @@ public struct ItemDetailLoader {
             importedCommentaryInterjections: importedInterjections,
             sharedMarginPlacement: placementPasses.pass(itemId: item.id),
             sharedMapRefusalReason: sharedMapRefusalReason,
+            textSceneSummaries: textSceneSummaries,
             turns: turns
         ).includingTimelineSource(
             try? store.loadStructuredDocument(itemId: id),

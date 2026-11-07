@@ -753,6 +753,7 @@ struct ExperienceItemDetailScreen: View {
                 }
                 if model.canGenerateListeningMap {
                     Button(model.episodeMapPreparationStatus == "Preparing" ? "Preparing Listening Map…" : "Prepare Listening Map", systemImage: "sparkles") {
+                        model.startPublicSourceCheck(itemId: model.activeItemId) // the tap itself, not the shared function a finished transcript also calls (#3449)
                         model.generateListeningMap()
                     }
                     .disabled(model.isGeneratingListeningMap || model.episodeMapPreparationStatus == "Preparing")
@@ -763,6 +764,8 @@ struct ExperienceItemDetailScreen: View {
                             .foregroundStyle(AppColors.secondaryText)
                             .accessibilityIdentifier("item.episodeMap.status")
                     }
+                } else if model.selectedItem.textSceneSummaries.offersRun, !model.selectedItem.chapters.isEmpty {
+                    sceneSummariesControl
                 } else {
                     Text(model.listeningMapGenerationAvailabilityDescription)
                         .font(.caption)
@@ -775,6 +778,34 @@ struct ExperienceItemDetailScreen: View {
         .padding(16)
         .background(AppColors.panel, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay { RoundedRectangle(cornerRadius: 18).stroke(AppColors.border) }
+    }
+
+    /// An article or PDF that has chapters but not all of its scene summaries: write them, or pick up where a run that
+    /// failed, was cancelled or paused stopped (#3461). The scenes already written are kept.
+    private var sceneSummariesControl: some View {
+        let state = model.selectedItem.textSceneSummaries
+        let writing = model.isWritingSceneSummaries
+        return VStack(alignment: .leading, spacing: 6) {
+            Button(writing ? "Writing Scene Summaries…" : (state == .notStarted ? "Write Scene Summaries" : "Continue Scene Summaries"),
+                   systemImage: "sparkles") {
+                model.writeSceneSummaries()
+            }
+            .disabled(writing)
+            .accessibilityIdentifier("item.writeSceneSummaries.button")
+            Text(sceneSummariesCaption(state))
+                .font(.caption)
+                .foregroundStyle(AppColors.secondaryText)
+                .accessibilityIdentifier("item.writeSceneSummaries.caption")
+        }
+    }
+
+    private func sceneSummariesCaption(_ state: TextSceneSummaryProgress.State) -> String {
+        switch state {
+        case .partial(let decided, let total):
+            return "\(decided) of \(total) scenes are done. Scenes already written are kept, and nothing leaves this device."
+        default:
+            return "The on-device model writes a short summary for each scene, for Skim. Nothing leaves this device."
+        }
     }
 
     /// `!itemMargins.isEmpty` without building and sorting the rows, for the checks `body` makes on every render.

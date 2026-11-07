@@ -69,6 +69,8 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
                 after: after.progressToken
             )
         }
+        // Article and PDF scene summaries take their turn once no podcast map or audio job is waiting (#3461).
+        if !hasAudioWork, let textResult = await performBackgroundTextSceneSummaryPass() { return textResult }
         let audioHasMore = await performBackgroundAudioPreparationPass()
         let plannerHasMore = backgroundPreparationPlanner.afterAudioPass(
             audioHasMore: audioHasMore, hadAudioWork: hasAudioWork, hadEpisodeJobs: !episodeJobs.isEmpty

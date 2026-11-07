@@ -18,11 +18,29 @@ import SessionKitPersistence
 enum PlayerRunController {
     private static var recorder = PlayerRunRecorder()
     private static weak var model: Gate1AppModel?
+    /// What the Watch was last told the player has loaded (#3494).
+    private static var publishedNowPlaying: WatchNowPlaying?
 
     /// Notes what the player reports now. Cheap: a few comparisons.
     static func note(_ snapshot: SessionSnapshot, in model: Gate1AppModel, at time: Date = Date()) {
         self.model = model
         recorder.observe(observation(of: snapshot), at: time)
+        // The Watch moves the position on by itself, so only a change it could not predict is sent (#3494).
+        let next = WatchNowPlayingFeed.nowPlaying(from: snapshot, at: time)
+        if WatchNowPlayingFeed.shouldPublish(previous: publishedNowPlaying, next: next) {
+            publishedNowPlaying = next
+            WatchMarginReceiver.shared.nowPlayingChanged(next)
+        }
+    }
+
+    /// Runs a Watch transport command on the player, through the same compact command path as the Lock Screen (#3494).
+    /// Nothing runs with no item loaded, or while a Margin records on the phone, which a skip or a play would end.
+    static func runWatchTransport(_ transport: WatchTransport) {
+        guard let model, WatchNowPlayingFeed.nowPlaying(from: model.snapshot, at: Date()) != nil, !model.snapshot.isRecording else {
+            self.model?.recordDeveloperDiagnostic("transport.watch_ignored", ["command": transport.rawValue])
+            return
+        }
+        model.dispatchGate2CompactCommand(transport.compactCommand, origin: "watch")
     }
 
     static func observation(of snapshot: SessionSnapshot) -> PlayerRunRecorder.Observation {
