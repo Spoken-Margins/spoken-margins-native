@@ -34,6 +34,16 @@ public struct ReviewReturnPlace: Codable, Equatable, Sendable {
     }
 }
 
+extension ReviewReturnPlace {
+    /// Whether the place is still owed once the Margin at `marginMediaTimeMs` has the floor. The episode plays on after a
+    /// Margin (#3596), so from then on the source is where the listener's own listening has it, and a relaunch must not
+    /// send them back to the place they started from. The one exception is a listener whose place was ahead of the Margin
+    /// (the review pulled them back to catch up). It is the rule `MarginMomentSequence.placeToReturnToWhenStopped` gives Stop.
+    public func isOwed(onceMarginAt marginMediaTimeMs: Int) -> Bool {
+        returnToMediaTimeMs > marginMediaTimeMs
+    }
+}
+
 /// The places owed to the listener, kept across launches (UserDefaults only: nothing in the database changes).
 /// One per item, since only one review runs at a time.
 public struct ReviewReturnPlaces {

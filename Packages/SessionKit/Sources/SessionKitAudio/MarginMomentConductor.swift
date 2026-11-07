@@ -10,7 +10,8 @@ import SessionKit
 /// starts unannounced (#932).
 ///
 /// A review of new shared Margins (#474) runs through here too: when a voice ends, the sequence says whether the
-/// source hops to the next lead-in, plays the next Margin straight away, or goes back to where the listener left off.
+/// source plays on, plays the next Margin straight away, or (after the last one, for a listener who was further on)
+/// goes back to where the listener left off. It never hops ahead by itself.
 ///
 /// The app owns the source transport and supplies it as closures; this type owns only the Margin voice.
 @MainActor
@@ -160,12 +161,14 @@ public final class MarginMomentConductor {
         onChange = nil
     }
 
-    /// The listener stopped a review: the voice stops and the source goes back to where they left off, paused.
+    /// The listener stopped a review: the voice stops and the source stays paused. It goes back to where they left off
+    /// only to undo the review's own hop, or to bring back a listener who was further on (`placeToReturnToWhenStopped`).
     public func stopReview() {
-        guard let review = sequence.review else { return cancel() }
+        guard sequence.review != nil else { return cancel() }
         stopVoice()
         source.pause()
-        if let returnTo = review.returnToMediaTimeMs { moveSource(to: returnTo) }
+        let at = lastObservedMs ?? sequence.playing?.mediaTimeMs ?? sequence.target.mediaTimeMs
+        if let place = sequence.placeToReturnToWhenStopped(sourceAtMediaTimeMs: at) { moveSource(to: place) }
         onChange = nil
     }
 
@@ -266,9 +269,6 @@ public final class MarginMomentConductor {
         onChange?()
         switch advance {
         case .continueSource:
-            source.resume()
-        case .seek(let mediaTimeMs):
-            moveSource(to: mediaTimeMs)
             source.resume()
         case .playNow(let margin):
             playVoice(for: margin)

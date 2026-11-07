@@ -465,6 +465,41 @@ public final class WrittenMarginReader: @unchecked Sendable {
         leaveAll()
     }
 
+    /// `rendered`, asked before this returns: the reading is waited on at once, so `whenSettled` and `settle` see it from
+    /// the caller's next line. A caller that awaits `rendered` from a task of its own asks only once that task runs, and
+    /// a reading's file removed in between makes the render start real speech (#3619's T3: a test's clean-up did that).
+    /// Returns the way to stop waiting, as a cancelled `rendered` does: call it when the listener leaves, and an on-device
+    /// try nobody else waits for stops (#3391). `completion` then gets `CancellationError`. Calling it after the answer
+    /// came does nothing.
+    @discardableResult
+    public func requestRender(_ reading: WrittenMarginReading, onDevice stage: WrittenMarginOnDeviceStage? = nil, then completion: @escaping @Sendable (Result<URL, Error>) -> Void) -> @Sendable () -> Void {
+        let id = UUID()
+        ensureRendered(reading, onDevice: stage, waiter: id, completion: completion)
+        return { [self] in leave(id) }
+    }
+
+    /// `waitUntilSettled`, asked before this returns, for the same reason as `requestRender`. `then` runs once: when every
+    /// reading is on disk or has failed, after `limit` seconds, or when the returned way to stop waiting is called. When it
+    /// has run, the waits are let go as `waitUntilSettled` lets them go (#3391). With no readings it runs at once.
+    @discardableResult
+    public func whenRendered(_ readings: [WrittenMarginReading], upTo limit: TimeInterval, onDevice stage: WrittenMarginOnDeviceStage? = nil, then: @escaping @Sendable () -> Void) -> @Sendable () -> Void {
+        guard !readings.isEmpty else { then(); return {} }
+        let ids = readings.map { _ in UUID() }
+        let leaveAll: @Sendable () -> Void = { [self] in ids.forEach { leave($0) } }
+        let once = Once { then(); leaveAll() }
+        let remaining = Counter(readings.count)
+        for (reading, id) in zip(readings, ids) {
+            let applies = effective(stage, for: reading)
+            if playbackState(for: reading, onDevice: applies).isReady {
+                if remaining.decrement() == 0 { once.fire() }
+                continue
+            }
+            ensureRendered(reading, onDevice: applies, waiter: id) { _ in if remaining.decrement() == 0 { once.fire() } }
+        }
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + limit) { once.fire() }
+        return leaveAll
+    }
+
     private final class Once: @unchecked Sendable {
         private let lock = NSLock()
         private var fired = false

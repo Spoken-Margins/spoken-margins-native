@@ -111,12 +111,31 @@ final class PinnedMarginCardTests: XCTestCase {
     }
 
     func testReviewNextMarginGoesFromLeadInStraightToTheMarginAndFromAVoiceToTheNextLeadIn() {
-        XCTAssertEqual(NextMarginPress.press(.momentLeadIn(isReview: true)), .playMarginNow)
+        XCTAssertEqual(NextMarginPress.press(.momentLeadIn(isReview: true)), .playMarginNow, "no positions known: straight to the Margin")
         XCTAssertEqual(NextMarginPress.press(.momentVoice(isReview: true, isLastMargin: false)), .skipVoice)
         XCTAssertEqual(NextMarginPress.press(.momentVoice(isReview: true, isLastMargin: true)), .unavailable,
                        "after the last Margin Skip to the item is the only way on")
         XCTAssertEqual(NextMarginPress.press(.momentLeadIn(isReview: false)), .unavailable, "Play it now covers a single moment")
         XCTAssertEqual(NextMarginPress.press(.momentVoice(isReview: false, isLastMargin: false)), .unavailable)
+    }
+
+    /// Owner, 2026-11-06: between Margins the episode plays on and "you have to click a button to skim forward to the next
+    /// person's Margins' lead-in". The first press hops to the lead-in; the second plays the Margin.
+    func testReviewNextMarginBetweenMarginsIsTwoPressesAndNeverHopsByItself() {
+        let marginAt = 2_312_900
+        let leadIn = marginAt - MarginMomentSequence.reviewLeadInMs
+        func press(at position: Int?) -> NextMarginPress {
+            NextMarginPress.press(.momentLeadIn(isReview: true, positionMs: position, targetMs: marginAt))
+        }
+        XCTAssertEqual(press(at: 60_000), .seekToLeadIn(mediaTimeMs: leadIn), "far off: the first press goes to the lead-in")
+        XCTAssertEqual(press(at: leadIn - 1_001), .seekToLeadIn(mediaTimeMs: leadIn))
+        XCTAssertEqual(press(at: leadIn - 1), .playMarginNow, "the review's own seek can land a millisecond short: that is the lead-in")
+        XCTAssertEqual(press(at: leadIn), .playMarginNow, "in the lead-in: the second press plays the Margin")
+        XCTAssertEqual(press(at: marginAt - 500), .playMarginNow)
+        XCTAssertEqual(press(at: nil), .playMarginNow)
+        XCTAssertEqual(NextMarginPress.press(.momentLeadIn(isReview: true, positionMs: 1_000, targetMs: 5_000)), .playMarginNow,
+                       "a Margin near the start has its lead-in clamped at 0, so there is nowhere to hop")
+        XCTAssertEqual(NextMarginPress.press(.momentLeadIn(isReview: false, positionMs: 60_000, targetMs: marginAt)), .unavailable)
     }
 
     func testNextMarginInPlainPlaybackIsTwoPresses() {

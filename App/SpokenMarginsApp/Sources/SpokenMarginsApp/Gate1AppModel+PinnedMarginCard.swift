@@ -112,7 +112,7 @@ extension Gate1AppModel {
         if let moment = marginMoment {
             return moment.isPlayingMargin
                 ? .momentVoice(isReview: moment.isReview, isLastMargin: moment.unplayed.isEmpty)
-                : .momentLeadIn(isReview: moment.isReview)
+                : .momentLeadIn(isReview: moment.isReview, positionMs: snapshot.currentMediaTimeMs, targetMs: moment.target.mediaTimeMs)
         }
         guard let next = nextSharedMargin else { return nil }
         guard let ms = next.mediaTimeMs else { return nil }
@@ -142,6 +142,11 @@ extension Gate1AppModel {
             if marginMoment != nil { playMarginMomentNow() } else if let next = nextSharedMargin { playSharedMarginNow(next.prompt) }
         case .skipVoice:
             skipMarginMomentVoice()
+        case .seekToLeadIn(let ms) where marginMoment != nil:
+            // A review's episode plays on between Margins and nothing hops ahead by itself: this tap is the hop. The
+            // review's own Margin plays when the episode reaches it, so nothing is marked or dismissed here.
+            marginMomentConductor?.sourceMoved()
+            seekMedia(toMediaTimeMs: ms)
         case .seekToLeadIn(let ms):
             // An announced Margin is not offered when the episode crosses it again, so give it back first: the lead-in
             // the press goes to must end with the Margin playing (#460).
