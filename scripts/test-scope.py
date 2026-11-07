@@ -113,7 +113,7 @@ NOTES = {
              '(SupertonicClientHarness, #353).',
     'app-ui': 'If a listener would notice this change, the milestone needs a T4 journey.',
     'guard': 'After changing the guard, run scripts/install-lane-guard.py so new sessions use it.',
-    'ui-tests': 'Scripted journeys run only in the integration run on next\'s tip, never per PR. Name the '
+    'ui-tests': 'Scripted journeys run when a phone build is cut and before an upload, never per PR or on a tip. Name the '
                 'journey the script covers in the PR, and add a new script to TestPlans/scripted-journeys.json '
                 'under probation (docs/journeys.md, Scripted journeys).',
 }

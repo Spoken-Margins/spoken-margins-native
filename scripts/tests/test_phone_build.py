@@ -1817,7 +1817,8 @@ class VerdictTests(unittest.TestCase):
         quiet = {'body': self.MIXED['body'].replace(
             '  scripted journeys (probation, not verdict input): J1Tests/testOpen failed, J4Tests/testPlay passed\n', '')}
         _, got = self.outcomes([quiet])
-        self.assertIn('**not run** (the integration report lists no scripted journeys)', got['Scripted journeys'])
+        self.assertIn('**not run** (asked for when this build was cut; no scripted-journeys report for this commit yet)',
+                      got['Scripted journeys'])
         _, got = self.outcomes([{'body': self.MIXED['body'].replace('J1Tests/testOpen failed, J4Tests/testPlay passed',
                                                                     'J1Tests/testOpen not_run')}])
         self.assertIn('**not run**', got['Scripted journeys'])
@@ -1852,7 +1853,44 @@ class VerdictTests(unittest.TestCase):
     def test_an_inconclusive_run_proves_no_scripted_journey(self):
         _, got = self.outcomes([self.report_with('', verdict='INCONCLUSIVE')])
         self.assertIn('**not run (inconclusive)**', got['App tests'])
-        self.assertIn('**not run** (the integration run did not finish)', got['Scripted journeys'])
+        self.assertIn('**not run** (asked for when this build was cut; no scripted-journeys report for this commit yet)',
+                      got['Scripted journeys'])  # an old-format list in an unfinished run proves nothing
+
+    def scripted_report(self, verdict, body_lines):
+        """A `Lane report scripted-journeys-<sha7>` as sm_integration_run.journeys_report_text writes it (#3669)."""
+        sha7 = self.MIXED['body'].split('integration-')[1][:7]
+        lines = [f'Lane report scripted-journeys-{sha7} \u2014 {verdict}', f'commit {sha7}', 'run by: integration script', *body_lines]
+        return {'body': '```text\n' + '\n'.join(lines) + '\n```'}
+
+    def test_the_scripted_journeys_report_for_the_commit_is_the_record_of_the_journeys(self):
+        quiet = {'body': self.MIXED['body'].replace(
+            '  scripted journeys (probation, not verdict input): J1Tests/testOpen failed, J4Tests/testPlay passed\n', '')}
+        passed = self.scripted_report('PASS', ['  scripted journeys (only those on gating are verdict input): '
+                                               'J1Tests/testOpen passed, J4Tests/testPlay passed'])
+        plan, got = self.outcomes([quiet, passed])
+        self.assertIn('**pass** (J1Tests/testOpen passed, J4Tests/testPlay passed)', got['Scripted journeys'])
+        self.assertIn('**pass**', got['App tests'])      # the integration report still decides the app tests
+        failed = self.scripted_report('FAIL', ['  scripted journeys (only those on gating are verdict input): '
+                                               'J1Tests/testOpen failed', 'failing: J1Tests/testOpen',
+                                               'merges since the last scripted-journeys PASS (abc1234): #12, #11. '
+                                               'Any of them can be the cause; no revert is opened for a journey.'])
+        plan, got = self.outcomes([quiet, failed])
+        self.assertIn('**fail** (J1Tests/testOpen failed)', got['Scripted journeys'])
+        self.assertIn('- failing: J1Tests/testOpen', plan)
+        self.assertIn('- merges since the last scripted-journeys PASS (abc1234): #12, #11.', plan)  # the whole range, not a guess
+        inconclusive = self.scripted_report('INCONCLUSIVE', ['why inconclusive: journeys not run: simulator boot failed'])
+        _, got = self.outcomes([quiet, inconclusive])
+        self.assertIn('**not run**', got['Scripted journeys'])
+        self.assertIn('proves nothing either way', got['Scripted journeys'])
+
+    def test_a_scripted_journeys_report_for_another_commit_says_nothing_about_this_one(self):
+        quiet = {'body': self.MIXED['body'].replace(
+            '  scripted journeys (probation, not verdict input): J1Tests/testOpen failed, J4Tests/testPlay passed\n', '')}
+        other = self.scripted_report('PASS', ['  scripted journeys (only those on gating are verdict input): J1Tests/testOpen passed'])
+        other['body'] = other['body'].replace('scripted-journeys-' + self.MIXED['body'].split('integration-')[1][:7],
+                                              'scripted-journeys-0000000')
+        _, got = self.outcomes([quiet, other])
+        self.assertIn('**not run** (asked for when this build was cut', got['Scripted journeys'])
 
     def test_flakes_and_crashes_reach_the_plan_but_empty_lines_do_not(self):
         body = self.MIXED['body'].replace('flaky: none this run', 'flaky: AppTests/testSlow').replace(
