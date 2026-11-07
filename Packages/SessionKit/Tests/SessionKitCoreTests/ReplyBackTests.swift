@@ -254,6 +254,49 @@ final class ReplyBackTests: XCTestCase {
         XCTAssertFalse(steps[0].anchor.isApproximate)
     }
 
+    func testAMovedReplyStaysInPlayingOrderWithTheOtherMargins() throws {
+        // The friend's clock puts the reply last (785 s) but its parent sits at 754 s, behind an exact Margin at 760 s.
+        let margins = [own("m1", madeAt: 10, atMs: 754_000, sharedAs: [mine])]
+        let early = SharedMarginReview.entries(
+            layers: [layer("ben")],
+            records: ["ben": [
+                friendMargin("exact", in: "ben", at: 760_000),
+                friendMargin("reply", in: "ben", at: 785_000, replyingTo: mine, evidence: .timestampFallback)
+            ]],
+            ownMargins: margins
+        )
+        let steps = SharedMarginReview.playlist(for: early, ownMargins: margins)
+        XCTAssertEqual(steps.map { $0.entry?.interjection.id ?? "parent" }, ["parent", "reply", "exact"])
+        XCTAssertEqual(steps.map(\.anchor.mediaTimeMs), [754_000, 754_000, 760_000])
+        // A clock before the parent, ahead of a later exact Margin.
+        let late = SharedMarginReview.entries(
+            layers: [layer("ben")],
+            records: ["ben": [
+                friendMargin("reply", in: "ben", at: 700_000, replyingTo: mine, evidence: .timestampFallback),
+                friendMargin("exact", in: "ben", at: 730_000)
+            ]],
+            ownMargins: margins
+        )
+        XCTAssertEqual(SharedMarginReview.playlist(for: late, ownMargins: margins).map { $0.entry?.interjection.id ?? "parent" },
+                       ["exact", "parent", "reply"])
+    }
+
+    func testASecondGuessedReplyFollowsWhereTheParentWasAlreadyPlaced() {
+        // The first reply resolved exactly at 760 s, so the parent plays there; a guessed second reply goes with it.
+        let margins = [own("m1", madeAt: 10, atMs: 754_000, sharedAs: [mine])]
+        let entries = SharedMarginReview.entries(
+            layers: [layer("ben")],
+            records: ["ben": [
+                friendMargin("r1", in: "ben", at: 760_000, replyingTo: mine),
+                friendMargin("r2", in: "ben", at: 785_000, replyingTo: mine, evidence: .timestampFallback)
+            ]],
+            ownMargins: margins
+        )
+        let steps = SharedMarginReview.playlist(for: entries, ownMargins: margins)
+        XCTAssertEqual(steps.map { $0.entry?.interjection.id ?? "parent" }, ["parent", "r1", "r2"])
+        XCTAssertEqual(steps.map(\.anchor.mediaTimeMs), [760_000, 760_000, 760_000])
+    }
+
     func testAWrittenOrMissingParentIsLeftOutOfThePlaylist() {
         let written = own("m1", madeAt: 10, atMs: 754_000, voice: false, written: true, sharedAs: [mine])
         let entries = SharedMarginReview.entries(

@@ -125,33 +125,41 @@ extension SharedMarginReview {
     /// approximate: how far after the parent the friend spoke isn't known).
     public static func playlist(for entries: [Entry], ownMargins: [Interjection]) -> [Step] {
         let own = Dictionary(ownMargins.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        var played = Set<String>()
+        var parentPlaces: [String: Int] = [:]  // where each played parent's step sits, for its later replies
         var steps: [Step] = []
         for entry in entries {
             var replyAnchor = entry.anchor
             if case .yours(let id, let ms)? = entry.replyContext?.parent, let parent = own[id], parent.isSpokenItemMargin {
-                // The parent's own place on this copy; only trusted over the reply's when the reply is a guess.
-                let ownPlace = entry.isApproximate ? parent.anchor.mediaTimeMs : nil
-                if played.insert(id).inserted {
+                // A guessed reply goes where its parent plays: the parent's own place on this copy, or where an earlier
+                // reply already put the parent's step.
+                let place = parentPlaces[id] ?? (entry.isApproximate ? parent.anchor.mediaTimeMs : nil)
+                if parentPlaces[id] == nil {
                     let caption = "Your Margin" + (ms.map { " at \(ReplyContext.clock($0))" } ?? "")
+                    let at = place ?? entry.mediaTimeMs
+                    parentPlaces[id] = at
                     steps.append(Step(
                         anchor: MarginMomentAnchor(
-                            marginId: parentMarginId(id), mediaTimeMs: ownPlace ?? entry.mediaTimeMs,
-                            isApproximate: ownPlace == nil && entry.isApproximate, caption: caption, isYours: true
+                            marginId: parentMarginId(id), mediaTimeMs: at,
+                            isApproximate: place == nil && entry.isApproximate, caption: caption, isYours: true
                         ),
                         entry: nil, ownParent: parent
                     ))
                 }
-                if let ownPlace {
+                if entry.isApproximate, let place = parentPlaces[id] {
                     replyAnchor = MarginMomentAnchor(
-                        marginId: entry.marginId, mediaTimeMs: ownPlace, label: entry.senderLabel, isApproximate: true,
+                        marginId: entry.marginId, mediaTimeMs: place, label: entry.senderLabel, isApproximate: true,
                         caption: entry.replyContext?.caption, isReadAloud: entry.interjection.isWritten
                     )
                 }
             }
             steps.append(Step(anchor: replyAnchor, entry: entry, ownParent: nil))
         }
-        return steps
+        // `entries` are in the friends' clock order; a step moved to its parent's place may now be out of order, and
+        // the sequence plays a step that isn't ahead of the last one at once, with no lead-in. Stable, so a parent
+        // stays directly before its reply.
+        return steps.enumerated()
+            .sorted { ($0.element.anchor.mediaTimeMs, $0.offset) < ($1.element.anchor.mediaTimeMs, $1.offset) }
+            .map(\.element)
     }
 
     /// The Margins whose arrival is announced with the chime: the first Margin of each stretch the listener hears,
