@@ -372,7 +372,7 @@ struct PlaybackScreen: View {
         }
         .fixedSize(horizontal: true, vertical: false)
         .accessibilityLabel("Share Margins")
-        .accessibilityHint("Opens the review of this item's Margins with Share ready")
+        .accessibilityHint("Opens the review of the Margins here, with Share ready")
         .accessibilityIdentifier("playback.shareMargins.button")
     }
 
@@ -452,7 +452,7 @@ struct PlaybackScreen: View {
                 Image(systemName: "doc.text")
                     .frame(width: 48, height: 48)
             }
-            .accessibilityLabel("Item")
+            .accessibilityLabel("Details")
             .accessibilityIdentifier("playback.item.button")
 
             Button(action: openTimeline) {

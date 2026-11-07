@@ -377,8 +377,8 @@ final class SpokenMarginsPackageImportCoordinator {
             queue.replaceShowing(with: refreshed)
             if refreshed.matchingItemId == nil {
                 importError = refreshed.isListeningMap
-                    ? "That source does not match the item this map was made for yet. Add the same item or cancel."
-                    : "That source does not match the item described by this package yet. Add the same item or cancel the import."
+                    ? "That source does not match what this map was made for yet. Add the same one or cancel."
+                    : "That source does not match what this package describes yet. Add the same one or cancel the import."
             } else {
                 importError = nil
                 environment.reportConfirmation(refreshed.isListeningMap
@@ -399,7 +399,7 @@ final class SpokenMarginsPackageImportCoordinator {
     func beginConfirmation() -> SpokenMarginsPackageImportReview? {
         guard let review, !isImporting else { return nil }
         guard !review.requiresRecipientItem else {
-            importError = "This package does not include the item. Add the matching source, then return to this pending import."
+            importError = "This package does not include the source. Add the matching source, then return to this pending import."
             return nil
         }
         isImporting = true
@@ -571,7 +571,7 @@ final class SpokenMarginsPackageImportCoordinator {
             try environment.showImportedItem(itemId, store)
             environment.recordDiagnostic("lastSpokenMarginsPackageOpen", "opened_after_margin:\(itemId)")
         } catch {
-            environment.reportFailure(error, "Opening the item after the Margin was saved failed")
+            environment.reportFailure(error, "Opening it after the Margin was saved failed")
         }
     }
 
@@ -829,7 +829,7 @@ final class SpokenMarginsPackageImportCoordinator {
         do {
             try presentImportedItem(itemId, store: store)
         } catch {
-            environment.reportFailure(error, "Opening the item after adding a Listening Map failed")
+            environment.reportFailure(error, "Opening it after adding a Listening Map failed")
         }
     }
 }

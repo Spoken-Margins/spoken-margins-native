@@ -26,7 +26,7 @@ struct ExportScreen: View {
                         VStack(alignment: .leading, spacing: 10) {
                             Text("Share Margins")
                                 .font(.headline)
-                            Text("Review the words, voice version, item transport, and where each Margin sits in the source that will leave your device.")
+                            Text("Review the words, voice version, what is included, and where each Margin sits in the source that will leave your device.")
                                 .font(.callout)
                                 .foregroundStyle(AppColors.secondaryText)
                             Button(action: model.prepareExportShareInterjections) {
@@ -131,7 +131,7 @@ struct ExportScreen: View {
                             .buttonStyle(SecondaryButtonStyle())
                             .disabled(model.exportPreview.isEmpty)
                             .accessibilityIdentifier("export.copyPlainText.button")
-                        Button("Item", action: { model.openItemFromTap(id: model.selectedItem.id) })
+                        Button("Details", action: { model.openItemFromTap(id: model.selectedItem.id) })
                             .buttonStyle(SecondaryButtonStyle())
                             .accessibilityIdentifier("export.item.button")
                     }

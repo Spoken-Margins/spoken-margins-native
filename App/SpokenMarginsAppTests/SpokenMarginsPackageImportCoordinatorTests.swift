@@ -641,7 +641,7 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
         XCTAssertFalse(h.coordinator.isImporting)
         XCTAssertEqual(
             h.coordinator.importError,
-            "This package does not include the item. Add the matching source, then return to this pending import."
+            "This package does not include the source. Add the matching source, then return to this pending import."
         )
 
         let before = try XCTUnwrap(h.coordinator.review)
@@ -650,7 +650,7 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
         XCTAssertEqual(h.coordinator.review?.extractionDirectory, before.extractionDirectory)
         XCTAssertEqual(
             h.coordinator.importError,
-            "That source does not match the item described by this package yet. Add the same item or cancel the import."
+            "That source does not match what this package describes yet. Add the same one or cancel the import."
         )
     }
 

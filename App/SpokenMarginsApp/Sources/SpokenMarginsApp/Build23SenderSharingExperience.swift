@@ -263,7 +263,7 @@ struct Build23SenderSharingExperience: View {
     private func senderDetails(_ snapshot: Build23SharingSnapshot) -> some View {
         ExperienceSurface {
             VStack(alignment: .leading, spacing: 14) {
-                Text("Item being shared")
+                Text("What you’re sharing")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(AppColors.secondaryText)
                 Text(snapshot.itemTitle)
@@ -312,7 +312,7 @@ struct Build23SenderSharingExperience: View {
                             set: { coordinator.send(.setPrivateSharingRightsConfirmed($0)) }
                         )
                     )
-                    .accessibilityHint("When disabled, Margins can still be sent without embedding the item; the recipient supplies the source")
+                    .accessibilityHint("When disabled, Margins can still be sent without including it; the recipient supplies the source")
                     .accessibilityIdentifier("build23.sender.confirm-rights")
                 }
             }

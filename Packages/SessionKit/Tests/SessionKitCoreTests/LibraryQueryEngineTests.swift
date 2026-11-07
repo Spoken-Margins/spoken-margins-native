@@ -60,7 +60,7 @@ final class LibraryQueryEngineTests: XCTestCase {
         XCTAssertEqual(ids(rows, .init(listeningState: .all, sharedMargins: .newToMe)), ["done-new", "new"])
         XCTAssertEqual(ids(rows, .init(listeningState: .unfinished, sharedMargins: .newToMe)), ["new"], "combines with the other filters")
         XCTAssertEqual(LibraryQueryEngine.libraryFilterDescription(query: .init(listeningState: .all, sharedMargins: .newToMe)), "New shared Margins")
-        XCTAssertEqual(LibraryQueryEngine.libraryFilterDescription(query: .init(listeningState: .all)), "All items")
+        XCTAssertEqual(LibraryQueryEngine.libraryFilterDescription(query: .init(listeningState: .all)), "Everything")
     }
 
     func testAFilteredLibraryIsNotCaughtUp() {
@@ -168,7 +168,7 @@ final class LibraryQueryEngineTests: XCTestCase {
     }
 
     func testCaptionsAndPersistedSpellings() throws {
-        XCTAssertEqual(LibraryQueryEngine.libraryFilterDescription(query: .init(listeningState: .all)), "All items")
+        XCTAssertEqual(LibraryQueryEngine.libraryFilterDescription(query: .init(listeningState: .all)), "Everything")
         XCTAssertEqual(LibraryQueryEngine.libraryFilterDescription(query: .init(contentType: .pdf, listeningState: .unplayed)), "PDF · Unplayed")
         XCTAssertEqual(LibraryQueryEngine.libraryFilterDescription(query: .init(contentType: .epub, listeningState: .inProgress, offlineState: .readyOffline)), "EPUB · In Progress · Ready Offline")
         XCTAssertEqual(LibraryQueryEngine.librarySortDescription(query: .init(sort: .recentlyListened)), "Recently Listened")
