@@ -42,10 +42,10 @@ PINNED_FOOTNOTE = {
     'Build23RecipientSharingExperience.swift': ['Deleting this import removes your local copy only.'],
     'Build23SenderSharingComponents.swift': ['These excerpts help place the Margin for the recipient.'],
     'SharingExperience.swift': [
-        'The recipient will reconstruct the item from this reference.',
+        'The recipient will rebuild it from this link.',
         'This Spoken Margins sample is app-authored',
         'The full listened-to text will be included so the recipient',
-        'The item itself cannot be included.',
+        'This cannot be included.',
     ],
     'Gate1RootView.swift': ['This note helps you choose what to send.'],
     'ExportScreen.swift': ['Native audio exports include only bounded listening context'],
