@@ -136,7 +136,7 @@ extension Gate1AppModel {
             failedStartupAudioPreparationItemIds.insert(itemId)
             updateLibraryStartupAudioState(itemId: itemId, state: .failed)
             startupAudioPreparationCooldown.recordFailure(Self.startupAudioCooldownKey(itemId, voice))
-            diagnostics["startupAudioPreparation:\(itemId)"] = "enqueue_failed:\(error.localizedDescription)"
+            diagnostics["startupAudioPreparation:\(itemId)"] = "enqueue_failed:\(SafeErrorText.describe(error))"
         }
     }
 
@@ -213,7 +213,7 @@ extension Gate1AppModel {
             if let voice = ttsVoiceSelection.supertonicVoice {
                 startupAudioPreparationCooldown.recordFailure(Self.startupAudioCooldownKey(itemId, voice))
             }
-            diagnostics["startupAudioPreparation:\(itemId)"] = "failed:\(error.localizedDescription)"
+            diagnostics["startupAudioPreparation:\(itemId)"] = "failed:\(SafeErrorText.describe(error))"
         }
     }
 
@@ -522,7 +522,7 @@ extension Gate1AppModel {
         } catch PreparedAudioEnqueue.Rejection.staleSource {
             diagnostics["explicitAudioPreparation:\(item.id)"] = "retired_source"
         } catch {
-            diagnostics["explicitAudioPreparation:\(item.id)"] = "failed:\(error.localizedDescription)"
+            diagnostics["explicitAudioPreparation:\(item.id)"] = "failed:\(SafeErrorText.describe(error))"
             reportFailure(error, context: "Preparing audio failed to start")
         }
     }
@@ -575,7 +575,7 @@ extension Gate1AppModel {
             await refreshAudioPreparationPresentation()
             diagnostics["automaticAudioPreparationQueue"] = "queued"
         } catch {
-            diagnostics["automaticAudioPreparationQueue"] = "failed:\(error.localizedDescription)"
+            diagnostics["automaticAudioPreparationQueue"] = "failed:\(SafeErrorText.describe(error))"
         }
     }
 

@@ -72,7 +72,7 @@ enum PlayerRunController {
                 )
             }
         } catch {
-            model.diagnostics["playerItemMargin"] = "filed as quick: \(String(describing: error))"
+            model.diagnostics["playerItemMargin"] = "filed as quick: \(SafeErrorText.describe(error))"
             return false
         }
         model.diagnostics["playerItemMargin"] = "placed \(saved.id)"

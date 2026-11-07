@@ -56,7 +56,7 @@ final class InterruptionResumeRetrierTests: XCTestCase {
         XCTAssertEqual(attempts, 3, "one attempt per delay and no more")
         guard case .gaveUp(let count, let why)? = outcomes.last else { return XCTFail("\(outcomes)") }
         XCTAssertEqual(count, 3)
-        XCTAssertTrue(why.hasPrefix("Session activation failed ("), why)
+        XCTAssertEqual(why, "other#1", "domain and code only")
         XCTAssertEqual(outcomes.count, 3, "two failed retries reported, then the give-up")
     }
 
@@ -141,7 +141,7 @@ final class InterruptionResumeRetrierTests: XCTestCase {
     func testTheDescriptionCarriesTheDomainAndCode() {
         let error = NSError(domain: "com.apple.coreaudio.avfaudio", code: 561_015_905, userInfo: [NSLocalizedDescriptionKey: "Session activation failed"])
 
-        XCTAssertEqual(InterruptionResumeRetrier.describe(error), "Session activation failed (com.apple.coreaudio.avfaudio 561015905)")
+        XCTAssertEqual(InterruptionResumeRetrier.describe(error), "com.apple.coreaudio.avfaudio#561015905")
     }
 
     private final class Clock: @unchecked Sendable {

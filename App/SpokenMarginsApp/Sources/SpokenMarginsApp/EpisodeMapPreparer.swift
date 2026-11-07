@@ -449,12 +449,12 @@ final class EpisodeMapPreparer {
                 self.status = EpisodeMapRunGuard.pausedStatus(stop)
                 host.recordEpisodeMapDiagnostic("episodeMapPreparation:\(item.id)", diagnostic)
             } catch {
-                job.lastFailureCode = String(describing: error)
+                job.lastFailureCode = SafeErrorText.describe(error)
                 try? await self.saveJob(job, store: host.store)
                 self.status = "Failed"
                 host.recordEpisodeMapDiagnostic(
                     "episodeMapPreparation:\(item.id)",
-                    EpisodeMapRunGuard.failedDiagnostic(error.localizedDescription, stage: job.stage, at: Date())
+                    EpisodeMapRunGuard.failedDiagnostic(SafeErrorText.describe(error), stage: job.stage, at: Date())
                 )
                 host.episodeMapPreparationDidFail(itemId: item.id, error: error)
             }

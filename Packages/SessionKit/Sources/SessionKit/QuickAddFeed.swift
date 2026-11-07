@@ -196,7 +196,7 @@ public enum QuickAccessFolderScanner {
                 errorDescription: nil
             )
         } catch {
-            return QuickAccessFolderScan(files: [], errorDescription: String(describing: error))
+            return QuickAccessFolderScan(files: [], errorDescription: SafeErrorText.describe(error))
         }
     }
 }

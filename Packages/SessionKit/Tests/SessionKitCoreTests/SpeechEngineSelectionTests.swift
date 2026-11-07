@@ -111,7 +111,7 @@ final class SpeechEngineSelectionTests: XCTestCase {
     func testEveryGenerationStopSaysWhyAndAnAssemblyFailureKeepsItsError() {
         struct DiskFull: Error {}
         let reason = SpeechGenerationStopReason.assemblyFailed(DiskFull())
-        XCTAssertEqual(reason, "prepared_audio_assembly_failed: DiskFull()")
+        XCTAssertEqual(reason, "prepared_audio_assembly_failed: other#1")
 
         let assembly = SpeechGenerationStopReason.listenerExplanation(stopReason: reason, fallbackReason: nil)
         XCTAssertTrue(assembly.contains("Couldn't save the finished audio"), assembly)

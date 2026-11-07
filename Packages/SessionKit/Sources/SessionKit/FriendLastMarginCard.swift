@@ -2,8 +2,8 @@ import Foundation
 
 /// The card after a friend's last Margin has played (#3247). The owner's words (2026-11-02): "That was Cole's last Margin.
 /// To answer him, add a Margin of your own." No new buttons; the card holds the pinned slot, and the answer is made with
-/// the player's own button. "Him" would be wrong for some senders, so the second line names the sender again, or says
-/// "your friend" / "your friends" when it has no name to use.
+/// the player's own button. "Him" would be wrong for some senders, so the second line names the sender again. With no
+/// name it says "That was the last Margin" and never invents "your friend" (#3597); only several senders say "your friends".
 extension PinnedMarginCard {
     /// The card for an item that holds friends' Margins, once one has been heard and none is ahead. Nil on the listener's
     /// own items (no live friend layer), before any Margin was heard, and while `answerSaved` holds the slot: the news that

@@ -1034,7 +1034,7 @@ final class Gate2LiveActivityController: Gate2LiveActivityControlling {
             let requestedId = try system.request(sessionId, state, staleDate)
             return (requestedId, "started")
         } catch {
-            return (nil, "failed:\(error.localizedDescription)")
+            return (nil, "failed:\(SafeErrorText.describe(error))")
         }
     }
 
@@ -1374,7 +1374,7 @@ private final class Gate2LiveSpeechNowPlayingController {
                 try session.setActive(true)
                 failure = nil
             } catch {
-                failure = error.localizedDescription
+                failure = SafeErrorText.describe(error)
             }
             Task { @MainActor [weak self] in self?.noteAudioSessionActivation(failure: failure) }
         }

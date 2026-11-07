@@ -53,7 +53,7 @@ public final class WrittenMarginDraftSaver {
         pending = nil
         guard let journal else { return }
         writer.async { [weak self] in
-            do { try journal.remove(id: captureId) } catch { self?.failed("remove:\(error.localizedDescription)") }
+            do { try journal.remove(id: captureId) } catch { self?.failed("remove:\(SafeErrorText.describe(error))") }
         }
     }
 
@@ -61,7 +61,7 @@ public final class WrittenMarginDraftSaver {
         guard let journal else { return }
         let record = WrittenMarginDraftRecord(capture: capture, text: text, updatedAt: now())
         writer.async { [weak self] in
-            do { try journal.write(record) } catch { self?.failed("write:\(error.localizedDescription)") }
+            do { try journal.write(record) } catch { self?.failed("write:\(SafeErrorText.describe(error))") }
         }
     }
 
