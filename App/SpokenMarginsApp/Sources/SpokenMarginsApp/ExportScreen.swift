@@ -218,6 +218,18 @@ extension View {
     }
 }
 
+extension View {
+    /// The share sheet for a spoken note's exported files while `files` is set (#3660). Setting `files` to nil, which the
+    /// sheet does when it closes, removes the folder the files were made in (`SpokenNoteExportModel`).
+    func spokenNoteExportSheet(_ files: Binding<SpokenNoteExportFiles?>) -> some View {
+        sheet(isPresented: Binding(get: { files.wrappedValue != nil }, set: { if !$0 { files.wrappedValue = nil } })) {
+            if let exported = files.wrappedValue {
+                SessionActivityView(activityItems: exported.shareURLs, onSuccessfulCompletion: {})
+            }
+        }
+    }
+}
+
 private struct SessionActivityView: UIViewControllerRepresentable {
     @Environment(\.dismiss) private var dismiss
     let activityItems: [Any]

@@ -11,6 +11,8 @@ struct SpokenNoteRecordingView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var recorder = SpokenNoteRecorderModel()
     @StateObject private var player = SpokenNotePlayerModel()
+    /// Export: the note's audio and transcript, through the share sheet (#3660).
+    @StateObject private var noteExport = SpokenNoteExportModel()
 
     private var takes: [SpokenNoteTake] { recorder.snapshot?.note.takes ?? [] }
     private var hasTranscript: Bool { takes.contains { $0.hasTranscript } }
@@ -38,6 +40,18 @@ struct SpokenNoteRecordingView: View {
             .navigationTitle("Spoken Note")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button {
+                        guard let note = recorder.snapshot?.note, let folder = recorder.noteFolder else { return }
+                        noteExport.export(note: note, noteFolder: folder, title: opening?.title ?? SpokenNoteItem.defaultTitle)
+                    } label: {
+                        Label("Export", systemImage: "square.and.arrow.up")
+                    }
+                    // Nothing to export before the first take, and no export while a take is being made or saved.
+                    .disabled(takes.isEmpty || recorder.phase != .idle || noteExport.isPreparing)
+                    .accessibilityHint("Shares this note's audio and words")
+                    .accessibilityIdentifier("spokenNote.export")
+                }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") {
                         Task {
@@ -58,6 +72,12 @@ struct SpokenNoteRecordingView: View {
             player.stop()
             let recorder = recorder
             Task { @MainActor in await recorder.finish() }
+        }
+        .spokenNoteExportSheet($noteExport.files)
+        .alert("Couldn't export", isPresented: Binding(get: { noteExport.message != nil }, set: { if !$0 { noteExport.message = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(noteExport.message ?? "")
         }
         .accessibilityIdentifier("spokenNote.screen")
     }
