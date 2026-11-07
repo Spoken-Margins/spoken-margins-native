@@ -81,6 +81,9 @@ jobs:
       (github.event.pull_request.head.repo.full_name == github.repository && vars.LANE_HOSTED_FAST == 'on')
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    outputs:
+      # The SessionKitCoreTests that passed only on their Linux rerun, for linux-retry-tally (#2176).
+      retried: ${{ steps.core.outputs.retried }}
     steps:
       - name: Start the clock
         run: echo "STARTED=$(date +%s)" >> "$GITHUB_ENV"
@@ -159,6 +162,7 @@ jobs:
           key: sessionkit-linux-swift6.2.4-${{ hashFiles('Packages/SessionKit/Package.swift', 'Packages/SessionKit/Package.resolved') }}
           restore-keys: sessionkit-linux-swift6.2.4-
       - name: SessionKitCoreTests on Linux
+        id: core
         run: .venv/bin/python scripts/linux_core_tests.py run
       # What this job ran, by name, to set beside the Mac's list: scripts/linux_core_tests.py compare (#3529). The
       # Mac's run keeps its result file the same way, because its parallel run prints no line for a passing test.
@@ -458,6 +462,48 @@ jobs:
           RUN: ${{ github.run_id }}
         run: gh run cancel "$RUN" || true
 
+  linux-retry-tally:
+    # #3529: a SessionKitCoreTests test that fails on Linux and passes on its rerun counts as a pass (owner,
+    # 2026-10-24), and each such retry-pass is tallied on #2176, so three in 7 days open its own `Flaky:` issue. The
+    # portable job's token is read-only, so it hands the names over as its `retried` output and this job posts them.
+    # Only when there is one: on every other run it is skipped. scripts/linux_core_tally.py comes from the PR's base
+    # (main on a dispatch) with no credentials kept, never from the PR; the names arrive through env, and the script
+    # keeps only SessionKitCoreTests names. Its token may write issues and nothing else.
+    # Cost and catch: one free Linux minute on a run with a retry-pass, none otherwise. It catches a Linux flake hidden
+    # behind the rerun, which no tally saw before this job. Waste signal: no Linux tally on #2176 in three months.
+    name: linux-retry-tally
+    needs: portable
+    if: always() && needs.portable.result == 'success' && needs.portable.outputs.retried != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.pull_request.base.sha || 'main' }}
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/linux_core_tally.py
+            scripts/flake_tally.py
+            scripts/flake_tally_report.py
+            scripts/comment_trust.py
+          sparse-checkout-cone-mode: false
+      - name: Tally the Linux retry-passes on #2176
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RETRIED: ${{ needs.portable.outputs.retried }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          if [ ! -f scripts/linux_core_tally.py ]; then
+            echo "The base has no scripts/linux_core_tally.py yet; nothing to tally. Retried: $RETRIED"
+            exit 0
+          fi
+          python3 scripts/linux_core_tally.py
+
   owner-tap-alert:
     # When the jobs above finish, tell the owner's phone if this PR now waits only for his merge tap (#2047, #2442):
     # scripts/owner_tap_alert.py posts one github-actions[bot] comment that @mentions him, once per head, when the
@@ -465,10 +511,11 @@ jobs:
     # whose one VPS runner held it in a queue for an hour or more. With LANE_HOSTED_FAST off the two jobs above are
     # skipped and this runs at once; another workflow's alert job or the owner-tap-check label then decides. It runs
     # on its own GitHub-hosted machine, apart from the jobs that run PR code. The script comes from the PR's base with
-    # no credentials kept, never from the PR, and this is the only job here whose token may comment. A base that
-    # doesn't have the script yet skips quietly. Pull requests from this repository only.
+    # no credentials kept, never from the PR; it and linux-retry-tally are the only jobs here whose token may comment. A
+    # base that doesn't have the script yet skips quietly. Pull requests from this repository only. It waits for
+    # linux-retry-tally too, so that job is never an unfinished head check while the alert reads them.
     name: owner-tap-alert
-    needs: [portable, scope, sessionkit, mac-rest]
+    needs: [portable, scope, sessionkit, mac-rest, linux-retry-tally]
     if: always() && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 5

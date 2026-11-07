@@ -32,7 +32,9 @@ RESOLVED = Path('Packages/SessionKit/Package.resolved')
 SWIFT = ('apt-get update -qq && apt-get install -y -qq libsqlite3-dev >/dev/null && '
          f'swift test --scratch-path /w/{SCRATCH}')
 RESULT = re.compile(r"Test Case '(\w+)\.(\w+)' (passed|failed|skipped)")
+STARTED = re.compile(r"Test Case '(\w+)\.(\w+)' started")
 WORST = ('failed', 'skipped', 'passed')
+WHOLE_RUN = 'SessionKitCoreTests'  # the tally's name for a retry-pass whose first run named no test
 
 
 def docker_command(root: Path = ROOT) -> list[str]:
@@ -46,6 +48,12 @@ def linux_results(text: str) -> dict[str, str]:
         key = f'{suite}/{test}'
         results[key] = next(s for s in WORST if s in (status, results.get(key, status)))
     return results
+
+
+def unfinished(text: str) -> list[str]:
+    """Tests that started and never printed a result: the one a crash (a signal or a fatalError) stopped in."""
+    finished = linux_results(text)
+    return sorted({f'{suite}/{test}' for suite, test in STARTED.findall(text)} - set(finished))
 
 
 def attempt(command: list[str], log: Path) -> tuple[int, str]:
@@ -70,13 +78,19 @@ def say_failed(results: dict[str, str]) -> list[str]:
 
 
 def note_retry(names: list[str], first_code: int, ran: int, environ=None) -> None:
+    """Name the retry-pass in a warning and the step summary, and hand it to the job's `retried` output, which the
+    linux-retry-tally job posts on #2176 (owner, 2026-10-24): comma-separated, the whole run when no test was named."""
     environ = os.environ if environ is None else environ
-    line = (f'passed on retry: {", ".join(f"SessionKitCoreTests/{name}" for name in names)}' if names else
+    full = [f'SessionKitCoreTests/{name}' for name in names]
+    line = (f'passed on retry: {", ".join(full)}' if full else
             f'passed on retry: the first run stopped with exit {first_code} after {ran} tests and named no failure')
     print(f'::warning title=linux-core-retry::{line}\n{line}', flush=True)
     if environ.get('GITHUB_STEP_SUMMARY'):
         with open(environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
             summary.write(line + '\n')
+    if environ.get('GITHUB_OUTPUT'):
+        with open(environ['GITHUB_OUTPUT'], 'a') as output:
+            output.write(f'retried={",".join(full) or WHOLE_RUN}\n')
 
 
 def run_tests(command: list[str], log: Path, resolved: Path | None = None, environ=None) -> int:
@@ -88,13 +102,15 @@ def run_tests(command: list[str], log: Path, resolved: Path | None = None, envir
         shutil.copyfile(resolved, backup)
     try:
         code, text = attempt(command, log)
-        first = linux_results(text)
-        if not first:
+        first, stopped = linux_results(text), unfinished(text)
+        if not first and not stopped:
             print(f'SessionKitCoreTests ran no tests on Linux (exit {code}): a build failure or a broken step.', flush=True)
             return code or 1
-        if not code:
+        if not code and first:
             return 0
         failed = say_failed(first)
+        for test in stopped:
+            print(f'Stopped in: SessionKitCoreTests/{test}', flush=True)
         print('SessionKitCoreTests: the Linux run failed, so it runs once more (owner, 2026-10-24).', flush=True)
         log.replace(log.with_name('first-' + log.name))  # both runs' logs stay for the upload; the last is what stands
         retry_code, retry_text = attempt(command, log)
@@ -102,7 +118,7 @@ def run_tests(command: list[str], log: Path, resolved: Path | None = None, envir
         if retry_code or not second:
             say_failed(second)
             return retry_code or 1
-        note_retry(failed, code, len(first), environ)
+        note_retry(sorted({*failed, *stopped}), code, len(first), environ)
         return 0
     finally:
         if backup:

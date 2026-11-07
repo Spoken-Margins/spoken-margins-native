@@ -1,6 +1,7 @@
 """#3529: SessionKitCoreTests on Linux in the portable job, so a red PR frees its hosted-Mac slot."""
 import contextlib
 import io
+import re
 from pathlib import Path
 import stat
 import sys
@@ -66,10 +67,16 @@ class RunningThem(unittest.TestCase):
 
     def run_it(self, *attempts):
         out = io.StringIO()
+        self.output = self.dir / 'output.txt'
         with contextlib.redirect_stdout(out):
             code = core.run_tests(self.script(*attempts), self.log, self.resolved,
-                                  environ={'GITHUB_STEP_SUMMARY': str(self.summary)})
+                                  environ={'GITHUB_STEP_SUMMARY': str(self.summary), 'GITHUB_OUTPUT': str(self.output)})
         return code, out.getvalue()
+
+    def retried_output(self):
+        """What the step hands the tally job (#2176), or None when it hands nothing."""
+        lines = self.output.read_text().splitlines() if self.output.exists() else []
+        return next((line.partition('=')[2] for line in lines if line.startswith('retried=')), None)
 
     def attempts_made(self):
         return int((self.dir / 'count').read_text())
@@ -95,11 +102,36 @@ class RunningThem(unittest.TestCase):
         self.assertEqual(core.linux_results(self.log.read_text()), {'ASuite/testOne': 'passed'})
         self.assertEqual(core.linux_results(self.log.with_name('first-linux-core.log').read_text()),
                          {'ASuite/testOne': 'failed'})
+        self.assertEqual(self.retried_output(), 'SessionKitCoreTests/ASuite/testOne')
+
+    def test_a_pass_or_a_red_run_hands_the_tally_nothing(self):
+        for attempts in ((f'echo "{PASS}"; exit 0',), (f'echo "{FAIL}"; exit 1', f'echo "{FAIL}"; exit 1')):
+            with self.subTest(attempts=attempts):
+                (self.dir / 'count').unlink(missing_ok=True)
+                (self.dir / 'output.txt').unlink(missing_ok=True)
+                self.run_it(*attempts)
+                self.assertIsNone(self.retried_output())
 
     def test_a_crash_with_no_failed_test_reruns_and_says_it_stopped(self):
         code, out = self.run_it(f'echo "{PASS}"; exit 139', f'echo "{PASS}"; exit 0')
         self.assertEqual((code, self.attempts_made()), (0, 2))
         self.assertIn('the first run stopped with exit 139 after 1 tests', out)
+        self.assertEqual(self.retried_output(), 'SessionKitCoreTests')
+
+    def test_a_crash_inside_the_very_first_test_reruns_and_names_that_test(self):
+        started = "Test Case 'ASuite.testOne' started at 2026-11-07 13:00:00.000"
+        code, out = self.run_it(f'echo "{started}"; exit 139', f'echo "{PASS}"; exit 0')
+        self.assertEqual((code, self.attempts_made()), (0, 2))
+        self.assertNotIn('ran no tests', out)
+        self.assertIn('Stopped in: SessionKitCoreTests/ASuite/testOne', out)
+        self.assertIn('passed on retry: SessionKitCoreTests/ASuite/testOne', out)
+        self.assertEqual(self.retried_output(), 'SessionKitCoreTests/ASuite/testOne')
+
+    def test_a_crash_in_a_later_test_names_both_the_red_one_and_the_one_it_stopped_in(self):
+        started = "Test Case 'BSuite.testTwo' started at 2026-11-07 13:00:00.000"
+        code, out = self.run_it(f'echo "{FAIL}"; echo "{started}"; exit 139', f'echo "{PASS}"; exit 0')
+        self.assertEqual(code, 0)
+        self.assertEqual(self.retried_output(), 'SessionKitCoreTests/ASuite/testOne,SessionKitCoreTests/BSuite/testTwo')
 
     def test_a_build_failure_does_not_rerun(self):
         code, out = self.run_it('echo "error: no such module"; exit 1', f'echo "{PASS}"; exit 0')
@@ -186,6 +218,38 @@ class TheWorkflow(unittest.TestCase):
             step = next(s for s in self.steps(job) if s.get('with', {}).get('name') == name)
             self.assertEqual(step['if'], 'always()')
             self.assertEqual(step['with']['path'], path)
+
+    def test_a_linux_retry_pass_reaches_the_tally_job_from_the_step_that_names_it(self):
+        step = next(s for s in self.steps('portable') if 'scripts/linux_core_tests.py run' in s.get('run', ''))
+        self.assertEqual(self.jobs['portable']['outputs']['retried'], f"${{{{ steps.{step['id']}.outputs.retried }}}}")
+        job = self.jobs['linux-retry-tally']
+        self.assertEqual(job['needs'], 'portable')
+        self.assertIn("needs.portable.result == 'success'", job['if'])
+        self.assertIn("needs.portable.outputs.retried != ''", job['if'])
+        run = next(s for s in job['steps'] if 'linux_core_tally.py' in s.get('run', ''))
+        self.assertEqual(run['env']['RETRIED'], '${{ needs.portable.outputs.retried }}')
+        self.assertNotIn('${{', run['run'], 'the names arrive through env, never pasted into the script')
+        self.assertIn('linux-retry-tally', self.jobs['owner-tap-alert']['needs'])
+
+    def test_the_tally_job_runs_the_bases_scripts_with_a_token_that_writes_issues_only(self):
+        job = self.jobs['linux-retry-tally']
+        self.assertEqual(job['permissions'], {'contents': 'read', 'issues': 'write'})
+        checkout = job['steps'][0]
+        self.assertTrue(checkout['uses'].startswith('actions/checkout@'))
+        self.assertIn('github.event.pull_request.base.sha', checkout['with']['ref'])
+        self.assertIs(checkout['with']['persist-credentials'], False)
+        sparse = set(checkout['with']['sparse-checkout'].split())
+        # Every module the script imports from scripts/, all the way down, is in the sparse checkout.
+        wanted, seen = ['linux_core_tally'], set()
+        while wanted:
+            module = wanted.pop()
+            if module in seen:
+                continue
+            seen.add(module)
+            for name in re.findall(r'^import (\w+)', (ROOT / 'scripts' / f'{module}.py').read_text(), re.M):
+                if (ROOT / 'scripts' / f'{name}.py').exists():
+                    wanted.append(name)
+        self.assertEqual(sparse, {f'scripts/{module}.py' for module in seen})
 
     def test_every_copy_of_the_swift_image_agrees(self):
         self.assertIn(f'sessionkit-linux-swift{core.IMAGE.partition(":")[2]}-', str(self.steps('portable')))
