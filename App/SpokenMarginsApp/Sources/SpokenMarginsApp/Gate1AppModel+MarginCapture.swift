@@ -32,10 +32,13 @@ extension Gate1AppModel {
             holdRecorder: { [weak self] in self?.engine?.pauseRecordingForReadyCue() },
             releaseRecorder: { [weak self] seconds in self?.engine?.resumeRecordingAfterReadyCue(after: seconds) }
         )
+        gate2CompactControls.remoteCommandArrivalHandler = { [weak self] name in self?.noteRemoteCommandArrival(name) }
+        headphoneEndGestureMonitor.begin()
     }
 
     func endCaptureWatch() {
         MarginOutcomeCuePlayer.shared.stop() // a dead microphone's repeating cue ends with the recording (#1977)
+        headphoneEndGestureMonitor.stop()
         captureWatcher.stop()
         recordingCaptureHealth = .capturing
         gate2CompactControls.setMicrophone(.capturing)
