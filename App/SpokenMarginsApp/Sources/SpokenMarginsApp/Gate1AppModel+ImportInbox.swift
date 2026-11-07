@@ -35,7 +35,7 @@ extension Gate1AppModel {
                 ))
             }
         } catch {
-            diagnostics["sourceLinkImportInbox"] = "unavailable:\(error.localizedDescription)"
+            diagnostics["sourceLinkImportInbox"] = "unavailable:\(SafeErrorText.describe(error))"
         }
         do {
             for failed in try resolvedBrowserTextHandoffStore().failedHandoffs() {
@@ -49,7 +49,7 @@ extension Gate1AppModel {
                 ))
             }
         } catch {
-            diagnostics["browserTextImportInbox"] = "unavailable:\(error.localizedDescription)"
+            diagnostics["browserTextImportInbox"] = "unavailable:\(SafeErrorText.describe(error))"
         }
         importInbox = entries
     }
@@ -155,7 +155,7 @@ extension Gate1AppModel {
                 from: SpokenMarginsPackageHandoffStore.appGroup()
             )
         } catch {
-            diagnostics["pendingSpokenMarginsPackageImport"] = "unavailable:\(error.localizedDescription)"
+            diagnostics["pendingSpokenMarginsPackageImport"] = "unavailable:\(SafeErrorText.describe(error))"
         }
         var addedItemIds: [String] = []
         var failedSharedArticles = 0
@@ -184,7 +184,7 @@ extension Gate1AppModel {
             )
             noteSourceLinkDrain(report)
         } catch {
-            diagnostics["pendingSourceLinkImport"] = "unavailable:\(error.localizedDescription)"
+            diagnostics["pendingSourceLinkImport"] = "unavailable:\(SafeErrorText.describe(error))"
         }
 
         do {
@@ -211,15 +211,15 @@ extension Gate1AppModel {
                     // pending, and announcing it would repeat the banner on every drain with nothing behind "See why".
                     do {
                         try await Self.offMain { try handoffStore.quarantine(payloadID: payloadID, reason: error.localizedDescription) }
-                        diagnostics["pendingBrowserTextPayload:\(payloadID)"] = "quarantined:\(error.localizedDescription)"
+                        diagnostics["pendingBrowserTextPayload:\(payloadID)"] = "quarantined:\(SafeErrorText.describe(error))"
                         failedSharedArticles += 1
                     } catch {
-                        diagnostics["pendingBrowserTextPayload:\(payloadID)"] = "quarantine_failed:\(error.localizedDescription)"
+                        diagnostics["pendingBrowserTextPayload:\(payloadID)"] = "quarantine_failed:\(SafeErrorText.describe(error))"
                     }
                 }
             }
         } catch {
-            diagnostics["pendingBrowserTextImport"] = "unavailable:\(error.localizedDescription)"
+            diagnostics["pendingBrowserTextImport"] = "unavailable:\(SafeErrorText.describe(error))"
         }
     }
 

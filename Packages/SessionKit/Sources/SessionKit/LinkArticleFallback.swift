@@ -65,7 +65,7 @@ public enum LinkArticleFallback {
             record(extractor.lastExtractor ?? "extracted")
             return handoff
         } catch {
-            record("failed:\(error.localizedDescription)")
+            record("failed:\(SafeErrorText.describe(error))")
             throw LinkArticleFallbackError(extractorFailure: error.localizedDescription, extractorError: error)
         }
     }

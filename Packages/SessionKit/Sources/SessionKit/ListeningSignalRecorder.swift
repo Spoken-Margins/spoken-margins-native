@@ -200,7 +200,7 @@ public final class ListeningSignalRecorder: @unchecked Sendable {
             lastWriteError = nil
         } catch {
             // Keep the rows for the next flush; bound the buffer if the disk stays unwritable.
-            lastWriteError = String(describing: error)
+            lastWriteError = SafeErrorText.describe(error)
             if pending.count > 10_000 { pending.removeFirst(pending.count - 10_000) }
         }
     }

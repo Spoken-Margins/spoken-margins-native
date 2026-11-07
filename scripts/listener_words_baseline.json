@@ -532,12 +532,6 @@
   },
   {
    "kind": "words",
-   "text": "Skip to the item",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
    "text": "Some Skim summaries are not ready. Reopen the item to retry, or reimport the package to restore its supplied voices.",
    "count": 1,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."

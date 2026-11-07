@@ -476,7 +476,10 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         let message = try XCTUnwrap(model.spokenMarginsPackageImportError)
         XCTAssertEqual(message, SharedMarginsImportMessage.userFacing(SessionKitError.persistenceFailed("shared_podcast_item_is_ambiguous")))
         XCTAssertFalse(message.contains("_"), message)
-        XCTAssertEqual(model.diagnostics["lastSpokenMarginsPackageImport"], "failed:persistence_failed:shared_podcast_item_is_ambiguous")
+        // The export carries the error's domain, code and case name, never the payload (#3548).
+        XCTAssertEqual(model.diagnostics["lastSpokenMarginsPackageImport"],
+                       "failed:\(SafeErrorText.describe(SessionKitError.persistenceFailed("shared_podcast_item_is_ambiguous")))")
+        XCTAssertFalse(try XCTUnwrap(model.diagnostics["lastSpokenMarginsPackageImport"]).contains("ambiguous"))
     }
 
     func testUnreadablePacketSaysWhichVersionAndLogsTheFailingField() throws {
@@ -491,7 +494,8 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
             XCTAssertEqual(SharedMarginsImportMessage.userFacing(error), SharedMarginsImportMessage.unreadablePackageMessage)
             let detail = SharedMarginsImportMessage.diagnosticDetail(error)
             XCTAssertTrue(detail.hasPrefix("decoding:representations.0.kind:"), detail)
-            XCTAssertTrue(detail.contains("forwarded_audio_and_text"), detail)
+            XCTAssertTrue(detail.hasSuffix(":dataCorrupted"), detail)
+            XCTAssertFalse(detail.contains("forwarded_audio_and_text"), "the packet's value stays out of the export: \(detail)")
         }
     }
 

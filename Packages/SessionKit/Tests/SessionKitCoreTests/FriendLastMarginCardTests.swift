@@ -37,11 +37,11 @@ final class FriendLastMarginCardTests: XCTestCase {
         XCTAssertEqual(card.detail, "To answer Cole, add a Margin of your own.")
     }
 
-    func testAnUnnamedSenderIsYourFriendNeverAStandIn() throws {
+    func testAnUnnamedSenderIsNeitherAStandInNorAnInventedFriend() throws {
         for label in ["", " ", "Unsigned sender", "Imported collection"] {
             let card = try XCTUnwrap(last(layers: [layer("a", label: label)]))
-            XCTAssertEqual(card.headline, "That was your friend's last Margin", label)
-            XCTAssertEqual(card.detail, "To answer your friend, add a Margin of your own.", label)
+            XCTAssertEqual(card.headline, "That was the last Margin", label)
+            XCTAssertEqual(card.detail, "To answer, add a Margin of your own.", label)
         }
     }
 

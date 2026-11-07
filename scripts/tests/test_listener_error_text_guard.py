@@ -32,13 +32,7 @@ ALLOWED = {
     ('Gate1AppModel+LibrarySeeding.swift', 'libraryAccessError = "This build could not open your existing library. This attempt did not reset it. Do not use Reset Library or delete the app; install a compatible build and try again. Details: \\(error.localizedDescription)"'):
         'deliberate: the Details are what a bug report needs when the library will not open (the line says do not reset); the owner has not been asked to drop them',
     ('SharedMarginsImportMessage.swift', 'let description = ((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)'): 'checked by ListenerErrorText.looksLikeCodeOrDump on the next line; its own generic sentence replaces a dump',
-    ('SharedMarginsImportMessage.swift', 'guard let decoding = error as? DecodingError else { return error.localizedDescription }'): 'the import failure\'s Diagnostics detail',
-    ('SharedMarginsImportMessage.swift', 'return "decoding:\\(error.localizedDescription)"'): 'the same Diagnostics detail',
-    ('Gate1AppModel+SourceWindowContext.swift', 'failure = error.localizedDescription'): 'read only by the sourceWindowTranscription diagnostic; the listener sees a fixed sentence',
     ('ReadLaterModel.swift', 'let message = (error as? EditionError)?.localizedDescription'): 'our own EditionError text, read by the connection tracker',
-    ('Gate2CompactControlController.swift', 'failure = error.localizedDescription'): 'audio-session failure, read by noteAudioSessionActivation into Diagnostics',
-    ('Gate1AppModel.swift', 'lastFailure = "\\(link.type):\\(error.localizedDescription)"'): 'a link-check log line',
-    ('EpisodeMapPreparer.swift', 'EpisodeMapRunGuard.failedDiagnostic(error.localizedDescription, stage: job.stage, at: Date())'): 'a map-run diagnostic',
     ('Gate1AppModel+RemoteProvider.swift', 'let presentation = LocalSummaryFailurePresentation(errorDescription: error.localizedDescription)'): 'the presentation type does its own plain-text step',
     ('PodcastDownloadCoordinator.swift', 'self.fail(updated, reason: error.localizedDescription)'): 'failureReason is read only by Diagnostics',
     ('PodcastDownloadCoordinator.swift', 'fail(recordsByItemId[attempt.itemId] ?? record, reason: error.localizedDescription)'): 'failureReason is read only by Diagnostics',

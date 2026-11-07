@@ -46,7 +46,9 @@ final class SourceWindowReferenceEvidenceTests: XCTestCase {
         )
 
         XCTAssertEqual(outcome.evidence, [])
-        XCTAssertEqual(outcome.failure, "folder_unavailable")
+        // The failure goes to Diagnostics as the error's domain and code, never its message (#3548).
+        XCTAssertEqual(outcome.failure, SafeErrorText.describe(FolderUnavailable()))
+        XCTAssertFalse(outcome.failure?.contains("folder_unavailable") ?? true, "the message must not reach the export")
         XCTAssertFalse(FileManager.default.fileExists(atPath: folder.path), "the exported window is deleted even when signing fails")
     }
 

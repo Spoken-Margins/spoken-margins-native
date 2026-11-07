@@ -56,14 +56,8 @@ enum SharedMarginsImportMessage {
     /// Diagnostics detail for an import failure. A decoding error's own message ("isn't in the correct format")
     /// hides which field failed, so record the coding path and the value's problem instead.
     static func diagnosticDetail(_ error: Error) -> String {
-        guard let decoding = error as? DecodingError else { return error.localizedDescription }
-        switch decoding {
-        case .dataCorrupted(let context), .keyNotFound(_, let context), .typeMismatch(_, let context), .valueNotFound(_, let context):
-            let path = context.codingPath.map { $0.intValue.map(String.init) ?? $0.stringValue }.joined(separator: ".")
-            return "decoding:\(path):\(context.debugDescription.prefix(160))"
-        @unknown default:
-            return "decoding:\(error.localizedDescription)"
-        }
+        guard let decoding = error as? DecodingError else { return SafeErrorText.describe(error) }
+        return SafeErrorText.decodingDetail(decoding)
     }
 
     static let genericMessage = "Couldn’t import these Margins. Try again, or add the item to your Library first."
