@@ -1244,6 +1244,7 @@ HOSTED_MERGED_CHECKS = {**HOSTED_PORTABLE_CHECK, **HOSTED_REST_CHECK}
 # `lane-hosted-tested` notice and is not re-run when main moves, so its newest run on the PR's head being green is what
 # stands. The integration run on main's tip builds the merged app. 7 of 58 PRs merged with this build unfinished before.
 HOSTED_APP_CHECK = {'app build (T2, tests only when asked)': None}
+HOSTED_APP_WORKFLOW = 'hosted-app-macos.yml'
 HOSTED_TESTED_TITLE = 'lane-hosted-tested'
 HOSTED_TESTED = re.compile(r'^plan=(\S+) tree=([0-9a-f]{40}) parents=([0-9a-f]{40}) ([0-9a-f]{40})\s*$')
 
@@ -1302,6 +1303,14 @@ def hosted_fast_records(github, head: str, checks: dict = HOSTED_FAST_CHECKS) ->
                                      f'{urllib.parse.quote(name, safe="")}&filter=latest&per_page=50'))
         # Only GitHub Actions' own runs: another app could post a check run with the same name.
         runs = [run for run in runs.get('check_runs', []) if (run.get('app') or {}).get('slug') == 'github-actions']
+        if plan is None and runs:
+            # The app build: hosted-app-macos.yml gives hand-started (workflow_dispatch) runs the same job name, and
+            # one started on the PR's branch sits on this head. Only the PR's own build counts (audit on 7812c37).
+            # That workflow's runs only: every label change adds lane runs on the head, which could page it out.
+            suites = json.loads(github.api(f'repos/{github.repo}/actions/workflows/{HOSTED_APP_WORKFLOW}/runs?'
+                                           f'head_sha={head}&event=pull_request&per_page=100'))
+            suites = {wf.get('check_suite_id') for wf in suites.get('workflow_runs', [])}
+            runs = [run for run in runs if (run.get('check_suite') or {}).get('id') in suites]
         if not runs:
             return None, f'no "{name}" check ran on {head[:7]}'
         run = max(runs, key=lambda run: (run.get('started_at') or '', run.get('id') or 0))
@@ -1534,8 +1543,11 @@ def hosted_checks_missing(why: str, fallback: str = NEEDS_MAC) -> tuple[str, str
             f'not merged: {why}. Its log is in the PR\'s checks; fix it and push.']
     if any(f'"{name}"' in why for name in HOSTED_APP_CHECK):
         # The build Mac runs host tests and builds no app, so handing this to it would merge with no compile (#3539).
+        # With no run on the head there is nothing to re-run: only a new pull_request event starts one.
+        start = ('Push a commit, or close and reopen the PR, to start the app build' if why.startswith('no "')
+                 else 'Re-run the app build')
         return 'INCONCLUSIVE', 'hosted Linux runner', 'nothing', [
-            f'not merged: {why}. Re-run the app build, then remove and re-add automerge.']
+            f'not merged: {why}. {start}, then remove and re-add automerge.']
     return fallback, 'hosted Linux runner', 'nothing', [f'the hosted checks do not stand: {why}']
 
 

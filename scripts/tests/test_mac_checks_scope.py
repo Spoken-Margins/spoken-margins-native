@@ -137,23 +137,52 @@ class AppBuildRecordTests(unittest.TestCase):
     """#3539: the app build writes no `lane-hosted-tested` notice, so green on the head is what stands."""
     NAME = next(iter(lane.HOSTED_APP_CHECK))
 
-    def github(self, **run):
+    def github(self, *more, **run):
+        """A fake GitHub: one check run (suite 7, from a pull_request workflow run) plus <more> runs, each with its
+        own suite and an `event` saying what started the workflow run that owns it."""
         fake = mock.Mock(repo='o/r')
         runs = [{'id': 1, 'status': 'completed', 'conclusion': 'success', 'started_at': 't', 'html_url': 'u',
-                 'app': {'slug': 'github-actions'}, **run}]
-        fake.api = mock.Mock(side_effect=lambda path: json.dumps({'check_runs': runs}))
+                 'app': {'slug': 'github-actions'}, 'check_suite': {'id': 7}, 'event': 'pull_request', **run}, *more]
+
+        def api(path):
+            if f'/actions/workflows/{lane.HOSTED_APP_WORKFLOW}/runs?' in path:
+                event = re.search(r'event=([a-z_]+)', path).group(1)
+                return json.dumps({'workflow_runs': [{'check_suite_id': r['check_suite']['id']} for r in runs
+                                                     if r['event'] == event]})
+            return json.dumps({'check_runs': runs})
+        fake.api = mock.Mock(side_effect=api)
         return fake
 
     def test_green_on_the_head_stands_with_no_notice_and_no_merge_tree(self):
         github = self.github()
         found, why = lane.hosted_fast_records(github, HEAD, checks=lane.HOSTED_APP_CHECK)
         self.assertEqual((set(found), why), ({self.NAME}, ''))
-        self.assertEqual(github.api.call_count, 1, 'it must not read annotations')
+        self.assertFalse([c for c in github.api.call_args_list if 'annotations' in c.args[0]],
+                         'it must not read annotations')
         with mock.patch.object(lane, 'merged_tree') as merged:
             stood, why = lane._fast_checks_stand(github, Path('.'), 'main', HEAD, MERGE,
                                                  lane.hosted_fast_records, lane.HOSTED_APP_CHECK)
         self.assertEqual((set(stood), why), ({self.NAME}, ''))
         merged.assert_not_called()
+
+    def test_a_newer_hand_started_run_does_not_replace_the_prs_own_build(self):
+        # Audit on 7812c37: hosted-app-macos.yml gives workflow_dispatch runs the same job name, and one started on
+        # the PR's branch sits on the same head. A red one (missing runtime, misspelled test) must not FAIL the PR,
+        # and a green one with device_build off must not stand for the PR's build.
+        def dispatched(**run):
+            return {'id': 2, 'status': 'completed', 'conclusion': 'failure', 'started_at': 'u', 'html_url': 'd',
+                    'app': {'slug': 'github-actions'}, 'check_suite': {'id': 8}, 'event': 'workflow_dispatch', **run}
+        found, why = lane.hosted_fast_records(self.github(dispatched()), HEAD, checks=lane.HOSTED_APP_CHECK)
+        self.assertEqual((found, why), ({self.NAME: {'head': HEAD, 'url': 'u'}}, ''))
+        found, why = lane.hosted_fast_records(self.github(dispatched(conclusion='success'), conclusion='failure'),
+                                              HEAD, checks=lane.HOSTED_APP_CHECK)
+        self.assertIsNone(found)
+        self.assertIn('ended failure', why)
+
+    def test_only_a_hand_started_run_on_the_head_is_no_app_build(self):
+        found, why = lane.hosted_fast_records(self.github(event='workflow_dispatch'), HEAD, checks=lane.HOSTED_APP_CHECK)
+        self.assertIsNone(found)
+        self.assertIn(f'no "{self.NAME}" check ran', why)
 
     def test_red_cancelled_and_unfinished_do_not_stand(self):
         for run, words in (({'conclusion': 'failure'}, 'ended failure'), ({'conclusion': 'cancelled'}, 'ended cancelled'),
@@ -234,6 +263,8 @@ class HostedCheckSetTests(unittest.TestCase):
         workflow = (ROOT / '.github/workflows/hosted-app-macos.yml').read_text()
         for name in lane.HOSTED_APP_CHECK:
             self.assertIn(f'name: {name}\n', workflow)
+        self.assertTrue((ROOT / '.github/workflows' / lane.HOSTED_APP_WORKFLOW).samefile(
+            ROOT / '.github/workflows/hosted-app-macos.yml'))
         self.assertIn("      - 'App/**'\n", workflow)
 
     def test_an_app_diff_on_the_build_mac_fallback_is_not_merged_with_no_compile(self):
@@ -244,6 +275,13 @@ class HostedCheckSetTests(unittest.TestCase):
                 self.assertEqual(lane.hosted_checks_missing(why)[0], 'INCONCLUSIVE')
         self.assertEqual(lane.hosted_checks_missing('"hosted fast: portable" ended cancelled on abc1234')[0], lane.NEEDS_MAC)
         self.assertEqual(lane.hosted_checks_missing(f'"{name}" ended failure on abc1234')[0], 'FAIL')
+
+    def test_with_no_app_build_on_the_head_the_advice_is_to_start_one_not_re_run_it(self):
+        name = next(iter(lane.HOSTED_APP_CHECK))
+        note = lane.hosted_checks_missing(f'no "{name}" check ran on abc1234')[3][0]
+        self.assertNotIn('Re-run', note)
+        self.assertIn('close and reopen the PR', note)
+        self.assertIn('Re-run the app build', lane.hosted_checks_missing(f'"{name}" ended cancelled on abc1234')[3][0])
 
     def test_a_workflow_only_diff_to_the_mac_jobs_own_workflow_requires_all_three(self):
         self.assertEqual(self.check_set(['.github/workflows/hosted-portable.yml']), (self.FULL, None))
