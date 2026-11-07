@@ -16,6 +16,10 @@ struct SpokenNoteRecordingView: View {
 
     private var takes: [SpokenNoteTake] { recorder.snapshot?.note.takes ?? [] }
     private var hasTranscript: Bool { takes.contains { $0.hasTranscript } }
+    private var exportWouldLeaveATakeOut: Bool {
+        guard let snapshot = recorder.snapshot else { return false }
+        return snapshot.hasUnsavedTake || !snapshot.transcribingTakeIds.isEmpty
+    }
 
     var body: some View {
         NavigationStack {
@@ -47,9 +51,10 @@ struct SpokenNoteRecordingView: View {
                     } label: {
                         Label("Export", systemImage: "square.and.arrow.up")
                     }
-                    // Nothing to export before the first take, and no export while a take is being made or saved.
-                    .disabled(takes.isEmpty || recorder.phase != .idle || noteExport.isPreparing)
-                    .accessibilityHint("Shares this note's audio and words")
+                    // Nothing to export before the first take, none while a take is being made or saved, and none while a take
+                    // is not yet in the note or its words are still being written down: those would leave it out.
+                    .disabled(takes.isEmpty || recorder.phase != .idle || noteExport.isPreparing || exportWouldLeaveATakeOut)
+                    .accessibilityHint("Exports this note's audio and words, to save or send")
                     .accessibilityIdentifier("spokenNote.export")
                 }
                 ToolbarItem(placement: .confirmationAction) {
@@ -70,15 +75,11 @@ struct SpokenNoteRecordingView: View {
         // Anything other than Done that removes this screen still closes a take that is running, so it is saved.
         .onDisappear {
             player.stop()
+            noteExport.abandon()
             let recorder = recorder
             Task { @MainActor in await recorder.finish() }
         }
-        .spokenNoteExportSheet($noteExport.files)
-        .alert("Couldn't export", isPresented: Binding(get: { noteExport.message != nil }, set: { if !$0 { noteExport.message = nil } })) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(noteExport.message ?? "")
-        }
+        .spokenNoteExportFlow(noteExport)
         .accessibilityIdentifier("spokenNote.screen")
     }
 

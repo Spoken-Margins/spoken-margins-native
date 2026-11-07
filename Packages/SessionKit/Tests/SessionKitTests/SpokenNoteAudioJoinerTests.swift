@@ -30,21 +30,37 @@ final class SpokenNoteAudioJoinerTests: XCTestCase {
         let before = try sources.map { try Data(contentsOf: $0) }
         let destination = root.appendingPathComponent("joined.m4a")
 
-        try await SpokenNoteAudioJoiner().join(sources, to: destination)
+        let skipped = try await SpokenNoteAudioJoiner().join(sources, to: destination)
 
+        XCTAssertEqual(skipped, 0)
         let duration = try await AVURLAsset(url: destination).load(.duration).seconds
         XCTAssertEqual(duration, 6, accuracy: 0.3, "2 + 3 + 1 seconds, end to end")
         XCTAssertEqual(try sources.map { try Data(contentsOf: $0) }, before, "the takes are read, never changed")
     }
 
-    func testAnUnreadableTakeFailsTheJoinInsteadOfLeavingAGap() async throws {
-        let good = try take("a.m4a", seconds: 1, seed: 1)
+    func testAnUnreadableTakeIsLeftOutAndCountedAndTheRestJoin() async throws {
+        let first = try take("a.m4a", seconds: 2, seed: 1)
+        let bad = root.appendingPathComponent("b.m4a")
+        try Data("not audio".utf8).write(to: bad)
+        let last = try take("c.m4a", seconds: 2, seed: 3)
+        let destination = root.appendingPathComponent("joined.m4a")
+
+        let skipped = try await SpokenNoteAudioJoiner().join([first, bad, last], to: destination)
+
+        XCTAssertEqual(skipped, 1)
+        let duration = try await AVURLAsset(url: destination).load(.duration).seconds
+        XCTAssertEqual(duration, 4, accuracy: 0.3, "the two readable takes, with no gap where the bad one was")
+    }
+
+    func testWhenNoTakeIsReadableTheJoinFails() async throws {
         let bad = root.appendingPathComponent("b.m4a")
         try Data("not audio".utf8).write(to: bad)
         do {
-            try await SpokenNoteAudioJoiner().join([good, bad], to: root.appendingPathComponent("joined.m4a"))
-            XCTFail("a take that can't be opened must fail the join")
-        } catch {}
+            _ = try await SpokenNoteAudioJoiner().join([bad, bad], to: root.appendingPathComponent("joined.m4a"))
+            XCTFail("nothing readable to join")
+        } catch let error as SpokenNoteAudioJoiner.JoinError {
+            XCTAssertEqual(error, .noAudio)
+        }
     }
 
     func testTheWholeExportWithRealAudio() async throws {

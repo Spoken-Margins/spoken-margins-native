@@ -117,11 +117,9 @@ struct ExperienceLibraryScreen: View {
         .fullScreenCover(item: $openedNote) { opening in
             SpokenNoteRecordingView(opening: opening).environmentObject(model)
         }
-        .spokenNoteExportSheet($noteExport.files)
-        .alert("Couldn't export", isPresented: Binding(get: { noteExport.message != nil }, set: { if !$0 { noteExport.message = nil } })) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(noteExport.message ?? "")
+        .spokenNoteExportFlow(noteExport)
+        .overlay {
+            if noteExport.isPreparing { SpokenNoteExportProgress() }
         }
         .sheet(item: $collectionItem) { item in
             ItemCollectionSheet(item: item)

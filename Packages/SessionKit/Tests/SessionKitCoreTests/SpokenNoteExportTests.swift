@@ -19,16 +19,18 @@ final class SpokenNoteExportTests: XCTestCase {
     private struct RecordingJoiner: SpokenNoteAudioJoining {
         let joined = Box()
         final class Box: @unchecked Sendable { var sources: [[URL]] = [] }
-        func join(_ sources: [URL], to destination: URL) async throws {
+        var skipping = 0
+        func join(_ sources: [URL], to destination: URL) async throws -> Int {
             joined.sources.append(sources)
             try Data("joined:\(sources.map(\.lastPathComponent).joined(separator: ","))".utf8).write(to: destination)
+            return skipping
         }
     }
 
     private struct FailingJoiner: SpokenNoteAudioJoining {
-        func join(_ sources: [URL], to destination: URL) async throws {
+        func join(_ sources: [URL], to destination: URL) async throws -> Int {
             try Data("half".utf8).write(to: destination)
-            throw SpokenNoteExportError.nothingToExport
+            throw CocoaError(.fileWriteUnknown)
         }
     }
 
@@ -83,6 +85,15 @@ final class SpokenNoteExportTests: XCTestCase {
             XCTAssertEqual(SpokenNoteExport.fileBaseName(forTitle: title), expected, "title: \(title.debugDescription)")
         }
         XCTAssertEqual(SpokenNoteExport.fileBaseName(forTitle: "", fallback: "???"), "Spoken note", "an unusable fallback still gives a name")
+    }
+
+    func testAFileNameStemFitsTheByteLimitWhateverTheCharacters() {
+        for unit in ["é", "会", "😀", "👨‍👩‍👧‍👦", "e\u{301}\u{302}\u{303}\u{304}\u{305}\u{306}\u{307}\u{308}"] {
+            let stem = SpokenNoteExport.fileBaseName(forTitle: String(repeating: unit, count: 500))
+            XCTAssertLessThanOrEqual(stem.utf8.count, SpokenNoteExport.maxBaseNameBytes, "unit \(unit)")
+            XCTAssertFalse(stem.isEmpty)
+            XCTAssertNotNil(String(data: Data(stem.utf8), encoding: .utf8))
+        }
     }
 
     func testAVeryLongTitleMakesAShortFileNameStem() {
@@ -162,17 +173,118 @@ final class SpokenNoteExportTests: XCTestCase {
         }
     }
 
-    func testAFailedJoinLeavesNoHalfMadeFolder() async throws {
+    func testAFailedJoinWithNoWordsLeavesNoHalfMadeFolder() async throws {
         let folder = try noteFolder()
         var note = SpokenNote(id: "n")
         note.appendTake(try take("a", in: folder))
         note.appendTake(try take("b", in: folder))
         do {
             _ = try await SpokenNoteExport.prepare(note: note, title: "N", noteFolder: folder, into: exports, joiner: FailingJoiner())
-            XCTFail("the join failed")
+            XCTFail("the join failed and there are no words to offer instead")
         } catch {}
-        let left = (try? FileManager.default.contentsOfDirectory(atPath: exports.path)) ?? []
-        XCTAssertEqual(left, [], "the folder made for this export is removed")
+        XCTAssertEqual((try? FileManager.default.contentsOfDirectory(atPath: exports.path)) ?? [], [], "the folder made for this export is removed")
+    }
+
+    func testAFailedJoinStillOffersTheWordsAndSaysTheAudioIsMissing() async throws {
+        let folder = try noteFolder()
+        var note = SpokenNote(id: "n")
+        note.appendTake(try take("a", sentences: ["One."], in: folder))
+        note.appendTake(try take("b", sentences: ["Two."], in: folder))
+        let files = try await SpokenNoteExport.prepare(note: note, title: "N", noteFolder: folder, into: exports, joiner: FailingJoiner())
+        XCTAssertNil(files.audioURL)
+        XCTAssertEqual(files.shareURLs.map(\.lastPathComponent), ["N.txt"])
+        XCTAssertEqual(files.missingAudioTakeCount, 2)
+        XCTAssertTrue(files.isPartial)
+        XCTAssertEqual((try FileManager.default.contentsOfDirectory(atPath: files.folderURL.path)).sorted(), ["N.txt"], "no half-written audio is left")
+    }
+
+    func testTakesTheJoinerLeftOutAreCounted() async throws {
+        let folder = try noteFolder()
+        var note = SpokenNote(id: "n")
+        for id in ["a", "b", "c"] { note.appendTake(try take(id, sentences: ["Take \(id)."], in: folder)) }
+        var joiner = RecordingJoiner()
+        joiner.skipping = 1
+        let files = try await SpokenNoteExport.prepare(note: note, title: "N", noteFolder: folder, into: exports, joiner: joiner)
+        XCTAssertEqual(files.missingAudioTakeCount, 1)
+        XCTAssertTrue(files.isPartial)
+    }
+
+    func testAWholeNoteIsNotPartialAndTakesWithoutWordsMakeItPartial() async throws {
+        let folder = try noteFolder()
+        var whole = SpokenNote(id: "n")
+        whole.appendTake(try take("a", sentences: ["One."], in: folder))
+        let files = try await SpokenNoteExport.prepare(note: whole, title: "N", noteFolder: folder, into: exports, joiner: RecordingJoiner())
+        XCTAssertFalse(files.isPartial)
+        var partial = whole
+        partial.appendTake(try take("b", sentences: [], in: folder))
+        let second = try await SpokenNoteExport.prepare(note: partial, title: "N", noteFolder: folder, into: exports, joiner: RecordingJoiner())
+        XCTAssertEqual(second.takesWithoutTranscriptCount, 1)
+        XCTAssertTrue(second.isPartial)
+    }
+
+    func testATakeNamingAFileOutsideTheNoteIsNeverRead() async throws {
+        let folder = try noteFolder()
+        try Data("secret".utf8).write(to: root.appendingPathComponent("outside.m4a"))
+        var note = SpokenNote(id: "n")
+        for name in ["../outside.m4a", "/etc/hosts", "a/../../outside.m4a", "note.json", ".."] {
+            note.appendTake(SpokenNoteTake(id: name, audioFileName: name, durationMs: 1000, createdAt: Date(timeIntervalSince1970: 0),
+                                           sentences: [SpokenNoteSentence(text: "Words.", startMs: 0, endMs: 500)]))
+        }
+        try Data("{}".utf8).write(to: folder.appendingPathComponent("note.json"))
+        let joiner = RecordingJoiner()
+        let files = try await SpokenNoteExport.prepare(note: note, title: "N", noteFolder: folder, into: exports, joiner: joiner)
+        XCTAssertNil(files.audioURL)
+        XCTAssertTrue(joiner.joined.sources.isEmpty)
+        XCTAssertEqual(files.missingAudioTakeCount, 5)
+    }
+
+    func testADirectoryNamedLikeATakeIsNotAudio() async throws {
+        let folder = try noteFolder()
+        try FileManager.default.createDirectory(at: folder.appendingPathComponent("a.m4a"), withIntermediateDirectories: true)
+        var note = SpokenNote(id: "n")
+        note.appendTake(SpokenNoteTake(id: "a", audioFileName: "a.m4a", durationMs: 1000, createdAt: Date(timeIntervalSince1970: 0),
+                                       sentences: [SpokenNoteSentence(text: "Words.", startMs: 0, endMs: 500)]))
+        let files = try await SpokenNoteExport.prepare(note: note, title: "N", noteFolder: folder, into: exports, joiner: RecordingJoiner())
+        XCTAssertNil(files.audioURL)
+        XCTAssertEqual(files.shareURLs.map(\.lastPathComponent), ["N.txt"])
+    }
+
+    // MARK: stale export folders
+
+    func testSweepRemovesOnlyOldExportFolders() throws {
+        let fileManager = FileManager.default
+        try fileManager.createDirectory(at: exports, withIntermediateDirectories: true)
+        let old = exports.appendingPathComponent("SpokenNoteExport-old", isDirectory: true)
+        let fresh = exports.appendingPathComponent("SpokenNoteExport-fresh", isDirectory: true)
+        let other = exports.appendingPathComponent("SomeoneElses-old", isDirectory: true)
+        for url in [old, fresh, other] { try fileManager.createDirectory(at: url, withIntermediateDirectories: true) }
+        let now = Date()
+        try fileManager.setAttributes([.modificationDate: now.addingTimeInterval(-7200)], ofItemAtPath: old.path)
+        try fileManager.setAttributes([.modificationDate: now.addingTimeInterval(-7200)], ofItemAtPath: other.path)
+        XCTAssertEqual(SpokenNoteExport.sweepStaleExports(in: exports, olderThan: 3600, now: now), 1)
+        XCTAssertFalse(fileManager.fileExists(atPath: old.path))
+        XCTAssertTrue(fileManager.fileExists(atPath: fresh.path), "an export that may still be in a share sheet stays")
+        XCTAssertTrue(fileManager.fileExists(atPath: other.path), "only this feature's folders are touched")
+        XCTAssertEqual(SpokenNoteExport.sweepStaleExports(in: root.appendingPathComponent("missing")), 0)
+    }
+
+    // MARK: reading a note without changing it
+
+    func testPeekNeverMovesAnUnreadableNoteFile() throws {
+        let folder = try noteFolder()
+        let store = SpokenNoteStore(folderURL: folder, noteId: "n")
+        XCTAssertNil(store.peek(), "no file")
+        try Data("not json".utf8).write(to: store.fileURL)
+        XCTAssertNil(store.peek())
+        XCTAssertEqual(try Data(contentsOf: store.fileURL), Data("not json".utf8), "the damaged file is still where it was")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: store.setAsideURL.path))
+        try Data(#"{"id":"n","schemaVersion":99,"takes":[]}"#.utf8).write(to: store.fileURL)
+        XCTAssertNil(store.peek(), "a newer build's note is not read")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: store.fileURL.path))
+        var note = SpokenNote(id: "n")
+        note.appendTake(try take("a", sentences: ["Hi."], in: folder))
+        try store.save(note)
+        XCTAssertEqual(store.peek(), note)
     }
 
     func testExportNeverTouchesTheNotesOwnFiles() async throws {

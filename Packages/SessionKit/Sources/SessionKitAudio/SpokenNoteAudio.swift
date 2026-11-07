@@ -159,23 +159,31 @@ public struct SpokenNoteAudioJoiner: SpokenNoteAudioJoining {
 
     public init() {}
 
-    public func join(_ sources: [URL], to destination: URL) async throws {
+    public func join(_ sources: [URL], to destination: URL) async throws -> Int {
         let composition = AVMutableComposition()
         guard let track = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else {
             throw JoinError.exportFailed
         }
         var cursor = CMTime.zero
+        var skipped = 0
         for source in sources {
+            // A take that can't be opened (cut short by a system stop, say) is left out and counted; the rest still join.
             let asset = AVURLAsset(url: source)
-            guard let sourceTrack = try await asset.loadTracks(withMediaType: .audio).first else { throw JoinError.noAudio }
-            let duration = try await asset.load(.duration)
-            try track.insertTimeRange(CMTimeRange(start: .zero, duration: duration), of: sourceTrack, at: cursor)
+            guard let sourceTrack = try? await asset.loadTracks(withMediaType: .audio).first,
+                  let duration = try? await asset.load(.duration),
+                  (try? track.insertTimeRange(CMTimeRange(start: .zero, duration: duration), of: sourceTrack, at: cursor)) != nil
+            else {
+                skipped += 1
+                continue
+            }
             cursor = CMTimeAdd(cursor, duration)
         }
+        guard skipped < sources.count else { throw JoinError.noAudio }
         guard let exporter = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetAppleM4A) else {
             throw JoinError.exportFailed
         }
         try await exporter.export(to: destination, as: .m4a)
+        return skipped
     }
 }
 #endif
