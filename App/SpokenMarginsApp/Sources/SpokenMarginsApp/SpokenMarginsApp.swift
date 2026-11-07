@@ -150,6 +150,7 @@ struct SpokenMarginsApp: App {
     }
 
     private func open(_ url: URL) {
+        let url = UITestingHooks.handedOffShareLink(url) ?? url
         if LiveSessionLinkRouter.shared.handle(url) { return }
         // A friend's file comes before the first-run drawer (#3291).
         if ShareLinkURL.isOnShareHost(url)
