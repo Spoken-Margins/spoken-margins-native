@@ -28,9 +28,20 @@ public enum SharedMarginExport {
     public static func mapProposals(
         _ proposals: [PortableListeningMapProposalArtifact], currentProposalID: String?, for item: Item
     ) -> [PortableListeningMapProposalArtifact] {
-        let current = proposals.first { $0.id == currentProposalID }
+        mapProposals(currentProposal(in: proposals, currentProposalID: currentProposalID).map { [$0] } ?? [], for: item)
+    }
+
+    /// How many scenes of the map a packet would carry stay on this phone because the source is not marked public, for the
+    /// share review's note (#3449). Counts exactly what `mapProposals(_:currentProposalID:for:)` strips.
+    public static func withheldSceneCount(
+        _ proposals: [PortableListeningMapProposalArtifact], currentProposalID: String?, for item: Item
+    ) -> Int {
+        MapTextDisclosure.withheldSceneCount(currentProposal(in: proposals, currentProposalID: currentProposalID).map { [$0] } ?? [], for: item)
+    }
+
+    private static func currentProposal(in proposals: [PortableListeningMapProposalArtifact], currentProposalID: String?) -> PortableListeningMapProposalArtifact? {
+        proposals.first { $0.id == currentProposalID }
             ?? proposals.max { ($0.createdAt, $0.id) < ($1.createdAt, $1.id) }
-        return mapProposals(current.map { [$0] } ?? [], for: item)
     }
 
     public static func mapProposals(_ proposals: [PortableListeningMapProposalArtifact], for item: Item) -> [PortableListeningMapProposalArtifact] {

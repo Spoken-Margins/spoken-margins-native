@@ -50,7 +50,7 @@ extension Gate1AppModel {
         guard !link.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return .stopped(nil) }
         return await perform { [weak self] coordinator in
             let candidates = try await coordinator.discover(urlString: link)
-            self?.diagnostics["followedSourceNetworkHosts"] = await coordinator.contactedHosts.sorted().joined(separator: ",")
+            self?.diagnostics["followedSourceNetworkHosts"] = DiagnosticsHostRedaction.hostCount(await coordinator.contactedHosts)
             guard candidates.count == 1, let candidate = candidates.first, !candidate.needsConfirmation else {
                 self?.followedSourceCandidates = candidates
                 return nil

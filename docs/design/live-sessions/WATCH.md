@@ -355,6 +355,15 @@ Each carries `v` (contract version), `sentAt` (Watch wall time) and `seq` (a cou
 5. **Every Margin is visible in exactly one place on each device**: on the Watch in the tally until filed, and on the phone in its session from the moment it is filed.
 6. **Packets and the database.** None of this changes the `.spokenmargins` packet. Live sessions are stored in their own files today; new fields are additions, so the last shipped build still reads them. Standing call: keep packets and databases backward compatible.
 
+### 3.7 Playing item: now-playing, transport and the item target (#3494)
+
+All of it is optional in the contract, so each build keeps working with the one before it.
+
+1. **Now playing.** The board carries `nowPlaying` (item id, title, playing or paused, position and when it was read, rate) while the phone has an item loaded. An older Watch ignores it. The Watch shows the transport row and "On this episode" only while the board is fresh, or the phone is reachable.
+2. **Transport.** `WatchMessage.transport` carries play, pause, skip back or skip forward, and the phone runs it through the same compact command path as the Lock Screen. It goes on the fast lane only and is dropped when older than `WatchContract.transportMaxAge` by the phone's clock: a skip that reached the phone minutes late would be a surprise, so it is never queued on the sure lane.
+3. **Item target.** A Margin recorded with "On this episode" carries `itemTarget` (item id, and the position the Watch saw when the item was paused). The filing rule puts it on that item at the position in the player's own record of playing it, else the position the Watch saw, whatever session is running (`LiveSessionFiling`, step 1a). If neither says where, it is filed by the rest of the rule but never onto a different item. A Margin with no target is filed as before, so "On the session" and an older Watch behave as they always did.
+4. **The phone's side (slice 2).** `PlayerRunController.note` builds the item from each player snapshot (`WatchNowPlayingFeed`) and sends a new board only when something changed that the Watch can't predict: another item, title, play state or rate, or a position more than 5 s off where the Watch's own clock puts it. Steady playback sends nothing. The receiver puts the item on every board and every fast-lane reply, runs a fresh transport command the moment it arrives (before any filing pass), and ignores it with no item loaded or while a Margin records on the phone. A Margin aimed at the item is answered "Filed in this episode".
+
 ---
 
 ## 4. Slices, in the order I'd build them

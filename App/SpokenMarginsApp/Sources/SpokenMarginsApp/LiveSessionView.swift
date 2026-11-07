@@ -83,6 +83,17 @@ struct LiveSessionView: View {
                 }
             }
             .scrollDismissesKeyboard(.interactively)
+            // Start Session sits above the keyboard, so one tap reaches it with the keyboard up (#3547).
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if controller.session == nil {
+                    startButton
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 10)
+                        .frame(maxWidth: 720)
+                        .frame(maxWidth: .infinity)
+                        .background(AppColors.bone)
+                }
+            }
             .background(AppColors.bone)
             .miniPlayerKeepOut()
             .navigationTitle("Live session")
@@ -90,10 +101,13 @@ struct LiveSessionView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) { Button("Close") { dismiss() } }
                 // Return is a new line in a Margin, so Add Margin is on the keyboard itself, not below it (#2963).
+                // Done closes the keyboard whichever field has it: the setup, details and end fields are not tied to
+                // `marginFieldFocused`, so it resigns the first responder directly too (#3547).
                 ToolbarItemGroup(placement: .keyboard) {
+                    Button("Done") { dismissKeyboard() }
+                        .accessibilityIdentifier("liveSession.keyboard.done")
+                    Spacer()
                     if marginFieldFocused {
-                        Button("Done") { marginFieldFocused = false }
-                        Spacer()
                         Button("Add Margin", action: submitMargin)
                             .fontWeight(.semibold)
                             .disabled(marginText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -154,6 +168,11 @@ struct LiveSessionView: View {
         }
     }
 
+    private func dismissKeyboard() {
+        marginFieldFocused = false
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+    }
+
     private func unregisterRunningScreen() {
         guard isRegisteredRunning else { return }
         isRegisteredRunning = false
@@ -173,6 +192,7 @@ struct LiveSessionView: View {
             .pickerStyle(.segmented)
             TextField(kind == .meeting ? "Meeting name" : "Title", text: $title)
                 .textFieldStyle(.roundedBorder)
+                .accessibilityIdentifier("liveSession.setup.title")
             if kind != .paper {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Where are you now?").font(.headline)
@@ -187,21 +207,25 @@ struct LiveSessionView: View {
                 prompt: kind == .paper ? "Page, chapter or percent" : "Page, chapter or percent (optional)",
                 defaultUnit: LiveSessionPlace.defaultUnit(for: kind), text: $startWhere
             )
-            Button {
-                let read = LiveSessionWhere.interpret(clockText: startPosition, whereText: startWhere, kind: kind)
-                controller.start(
-                    kind: kind, title: title,
-                    startPositionMs: read.positionMs, // blank stays unknown, never a guessed 0:00 (#3241)
-                    startWhere: read.text, startPlace: read.place
-                )
-            } label: {
-                Label("Start Session", systemImage: "record.circle").frame(maxWidth: .infinity, minHeight: 44)
-            }
-            .filledActionButton()
-            .accessibilityIdentifier("liveSession.start")
         }
         .padding(16)
         .background(AppColors.panel, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    /// Pinned under the setup card, above the keyboard (#3547).
+    private var startButton: some View {
+        Button {
+            let read = LiveSessionWhere.interpret(clockText: startPosition, whereText: startWhere, kind: kind)
+            controller.start(
+                kind: kind, title: title,
+                startPositionMs: read.positionMs, // blank stays unknown, never a guessed 0:00 (#3241)
+                startWhere: read.text, startPlace: read.place
+            )
+        } label: {
+            Label("Start Session", systemImage: "record.circle").frame(maxWidth: .infinity, minHeight: 44)
+        }
+        .filledActionButton()
+        .accessibilityIdentifier("liveSession.start")
     }
 
     // MARK: Running

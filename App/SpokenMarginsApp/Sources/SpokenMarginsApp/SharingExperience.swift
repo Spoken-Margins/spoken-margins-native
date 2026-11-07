@@ -35,6 +35,8 @@ struct InterjectionSharingState {
     var drafts: [ShareInterjectionDraft] = []
     var senderDisplayLabel = UserDefaults.standard.string(forKey: "sharingSenderDisplayLabel") ?? ""
     var includesAcousticEvidence = true
+    /// Model-written scene summaries the packet leaves out because the source is not marked public (#3449). Zero shows no note.
+    var withheldMapSceneCount = 0
     var itemReferenceURL: String?
     var canEmbedLinklessItem = false
     var isAppAuthoredItem = false
@@ -262,6 +264,13 @@ struct InterjectionSharingView: View {
 
                             itemTransportReview
 
+                            if let note = MapTextDisclosure.withheldNote(sceneCount: model.sharingState.withheldMapSceneCount) {
+                                Text(note)
+                                    .font(.callout)
+                                    .foregroundStyle(AppColors.secondaryText)
+                                    .accessibilityIdentifier("share.review.mapSummariesStayHome")
+                            }
+
                             Toggle("Include high-reliability podcast anchor evidence", isOn: $model.sharingState.includesAcousticEvidence)
                             Text("Recommended. These ShazamKit signatures help a recipient find the same spoken passage when their download contains different ads. They are not playable podcast audio.")
                                 .font(.caption)
@@ -313,6 +322,7 @@ struct InterjectionSharingView: View {
             }
         }
         .onDisappear(perform: model.cancelBulkSharePreparation)
+        .task { await model.refreshWithheldMapNote() }
         .onPreferenceChange(MarginTranscriptFullHeightKey.self) {
             transcriptFullHeights.merge($0, uniquingKeysWith: { _, new in new })
         }
