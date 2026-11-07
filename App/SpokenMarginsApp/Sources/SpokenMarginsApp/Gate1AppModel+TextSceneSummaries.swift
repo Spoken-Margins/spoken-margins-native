@@ -47,7 +47,7 @@ extension Gate1AppModel {
             if let store {
                 libraryItems = try loadLibraryRows(store: store)
             }
-            refreshSelectedItem()
+            refreshSelectedItemInBackground()
             diagnostics["lastGeneratedMapItem"] = activeItemId
             diagnostics["lastListeningMapMode"] = "local_deterministic"
             schedulePrewarmAfterPreparedTextChange(itemId: activeItemId)

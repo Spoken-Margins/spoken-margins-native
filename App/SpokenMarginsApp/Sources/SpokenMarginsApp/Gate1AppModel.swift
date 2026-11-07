@@ -1096,20 +1096,14 @@ final class Gate1AppModel: ObservableObject {
     }
 
     @discardableResult
-    func playMarginMoment(_ row: MarginRow) -> Bool {
+    func playMarginMoment(_ row: MarginRow, loaded: MarginMomentLoad? = nil) -> Bool {
         guard !rejectNavigationOrSessionMutationWhileRecording("play_margin_moment") else { return false }
         let previousItemID = snapshot.itemId
         do {
             let store = try requireStore()
-            guard let session = try store.loadSession(id: row.interjection.sessionId),
-                  session.itemId == row.interjection.itemId,
-                  let interjection = try store.loadInterjections(sessionId: session.id).first(where: {
-                      $0.id == row.interjection.id && $0.sessionId == session.id
-                          && $0.itemId == session.itemId && $0.status == "active"
-                  }) else {
-                throw SessionKitError.invalidCommandForState("This Margin's listening session is unavailable.")
-            }
-            let detail = try loadItemDetail(id: session.itemId, store: store)
+            // A tap passes what it read off the main thread (MarginMomentTap); other callers read here (#2505).
+            let load = try loaded ?? MarginMomentLoad.read(row: row, store: store) { try loadItemDetail(id: $0, store: store) }
+            let (session, interjection, detail) = (load.target.session, load.target.interjection, load.detail)
             if engine == nil { installEngine(try makeEngine(store: store)) }
             guard let engine else { return false }
             if blockOfflineEpisodeStart(itemId: session.itemId) { return false }
@@ -1842,7 +1836,7 @@ final class Gate1AppModel: ObservableObject {
         clearPendingAutoPlayTurns()
         run { engine in
             snapshot = try engine.jumpToTurnChapter(turnId: turn.id, chapterId: chapter.id)
-            refreshSelectedItem()
+            refreshSelectedItemInBackground()
             screen = .playback
             if fromTimeline {
                 recordTimelineReviewCompleted()
@@ -1862,7 +1856,7 @@ final class Gate1AppModel: ObservableObject {
             clearPendingAutoPlayTurns()
         }
         snapshot = try engine.playTurn(turnId: turnId)
-        refreshSelectedItem()
+        refreshSelectedItemInBackground()
         screen = .playback
     }
 
@@ -2272,7 +2266,7 @@ final class Gate1AppModel: ObservableObject {
                     UserDefaults.standard.set(speechRate, forKey: "speechRate")
                 }
             }
-            if command == .finishInterjection { refreshSelectedItem() } else { refreshSelectedItemAfterTransport() } // a saved Margin shows at once
+            if command == .finishInterjection { refreshSelectedItemInBackground() } else { refreshSelectedItemAfterTransport() } // a saved Margin shows at once
             if command == .finishInterjection {
                 recordSavedInterjectionForOnboarding()
             }
