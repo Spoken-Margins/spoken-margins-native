@@ -149,7 +149,8 @@ jobs:
       # there, so #2671's Foundation-only `.bySentences` broke the Linux build on main unnoticed. #3529: and it runs
       # SessionKitCoreTests here, in the same swift image and dependency cache as hosted-sessionkit-linux.yml, so a red
       # test fails this check, which the lane reads, and stop-macs-on-red frees the PR's hosted-Mac slot. The Mac jobs
-      # keep their own run of these tests. scripts/linux_core_tests.py reruns a failed run once (owner, 2026-10-24).
+      # keep their own run of these tests. scripts/linux_core_tests.py reruns a failed run once (owner, 2026-10-24),
+      # and the linux-retry-tally job below tallies a pass on the rerun on #2176.
       # After the portable plan, not before: the two fail about equally often (17 and 17 of the last 60 failed runs on
       # 2026-11-06), and the plan's tree-walking checks then never see the root-owned build folder.
       # Cost and catch: the build was already here; the tests add 2 to 3 free hosted Linux minutes per PR, which a PR
