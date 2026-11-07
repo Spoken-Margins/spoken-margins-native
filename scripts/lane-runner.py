@@ -1426,14 +1426,21 @@ HOSTED_REST_WAIT = 2 * 60 * 60
 # A check run GitHub hasn't created yet looks like a check that never ran. Right after a push the hosted checks can
 # be a few seconds behind the automerge job, so a missing one is waited for this long before the job gives up on it.
 HOSTED_MISSING_GRACE = 5 * 60
+# Each poll of that wait is about 4 requests (the PR, the portable check and its notice, the Mac check), and every
+# workflow in the repository shares GITHUB_TOKEN's 1,000 an hour. So a wait this long polls gently: a merge comes up to
+# 2 minutes after its checks finish, and a waiting job takes about 120 requests an hour, not 480 (#3501 audit).
+HOSTED_REST_POLL = 120
 HOSTED_FAILED = re.compile(r'" ended (failure|timed_out) on ')
 HOSTED_MISSING = re.compile(r'^no ".+" check ran on ')
+HOSTED_SKIPPED = re.compile(r'" ended skipped on ')
+HOSTED_UNREADABLE = 'could not read the fast checks'  # says nothing about the checks themselves
+HOSTED_SCOPE_CLASH = 'a fresh run skipped it too'  # hosted_checks_missing advises on this reason
 # What _fast_checks_stand says when a check passed on an older next whose commits since can matter.
 # A check that passed but wrote no `lane-hosted-tested` notice (a dispatch without the `base` input, or an older
 # workflow file) is run again the same way: it cannot be matched to a tree, and a fresh run on the newest base can.
 HOSTED_STALE = re.compile(r'" tested (a tree that is not|it on .+ and .+ since: )|" on .+ did not record that it tested ')
 HOSTED_WORKFLOW = 'hosted-portable.yml'
-HOSTED_REDISPATCHES = 3  # fresh runs per job when next keeps moving under them; then the Mac fallback takes it
+HOSTED_REDISPATCHES = 3  # fresh runs per job when next keeps moving under them; then the job reports, or the Mac takes it
 NEEDS_MAC = 'NEEDS_MAC'  # the hosted automerge job's cue to hand the run to lane.yml's automerge-mac job
 MOVED_ON = 'stopped waiting for the hosted checks: '
 
@@ -1455,7 +1462,7 @@ def pr_moved_on(github, head: str) -> str | None:
 
 
 def hosted_rest_checks(github, tree: Path, base: str, head: str, base_sha: str, alive, dispatch, env=None,
-                       records=hosted_fast_records, wait: float | None = None, poll: float = HOSTED_FAST_POLL,
+                       records=hosted_fast_records, wait: float | None = None, poll: float = HOSTED_REST_POLL,
                        grace: float = HOSTED_MISSING_GRACE, clock=time.monotonic, sleep=time.sleep,
                        out=sys.stdout, checks: dict | None = None, newest_base=None,
                        run_again: bool = False) -> tuple[dict | None, str]:
@@ -1469,8 +1476,10 @@ def hosted_rest_checks(github, tree: Path, base: str, head: str, base_sha: str, 
     newest_base: a callable that fetches and returns the base branch's tip. Each poll compares the checks with it, not
     with the tip this job started on, because a fresh run is merged onto the newest tip and main moves while the job
     waits (#2596). The caller reads back the tip the last poll used.
-    run_again: there is no Mac to fall back on (#3501), so a check that can't be had (cancelled, skipped, never ran,
-    or a read that failed) is started again as a stale one is, within the same limits, rather than given up on."""
+    run_again: there is no Mac to fall back on (#3501), so a check that can't be had (cancelled, skipped, never ran) is
+    started again as a stale one is, within the same limits, rather than given up on. A read that failed says nothing
+    about the checks, so it is only waited out. A check a fresh run skips as well won't change with more runs: the
+    scope job that skips it is the branch's own, so the wait ends there and says what clears it."""
     env = os.environ if env is None else env
     if wait is None:
         wait = HOSTED_REST_WAIT if env.get('GITHUB_ACTIONS') == 'true' else 0
@@ -1492,6 +1501,11 @@ def hosted_rest_checks(github, tree: Path, base: str, head: str, base_sha: str, 
             return found, why
         if NOT_FINISHED in why:
             running_seen = True
+        elif run_again and HOSTED_UNREADABLE in why:
+            pass  # the next poll reads them again; a job that never can ends at the deadline, and reports
+        elif run_again and HOSTED_SKIPPED.search(why) and dispatches \
+                and (running_seen or clock() - dispatched_at > grace):
+            return None, f'{why}, and {HOSTED_SCOPE_CLASH}: this branch\'s scope job calls the diff Mac-free, and {base}\'s rule does not'
         elif HOSTED_STALE.search(why) or (run_again and not (HOSTED_MISSING.search(why)
                                                              and clock() - started < grace)):
             # First time, or the run started again finished and next had moved again meanwhile.
@@ -1520,7 +1534,10 @@ def hosted_checks_missing(why: str, fallback: str = NEEDS_MAC) -> tuple[str, str
         return 'FAIL', 'hosted checks', 'hosted fast checks: failed', [
             f'not merged: {why}. Its log is in the PR\'s checks; fix it and push.']
     details = [f'the hosted checks do not stand: {why}']
-    if fallback != NEEDS_MAC:
+    if HOSTED_SCOPE_CLASH in why:  # re-adding the label would only ask the same scope job again
+        details.append('Merge the base branch into the branch and push: the scope job then reads the base\'s rule, '
+                       'as this run does.')
+    elif fallback != NEEDS_MAC:
         details.append('Remove and re-add automerge to run it again.')
     return fallback, 'hosted Linux runner', 'nothing', details
 
