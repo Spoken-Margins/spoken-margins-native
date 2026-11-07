@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read the retry-pass tally on #2176 and say which tests are due a `ready` Showcase issue (owner, 2026-10-24).
+"""Read the retry-pass tally on #2176 and say which tests are due a `ready` groundwork issue (no milestone; #3636) (owner, 2026-10-24).
 
 The hosted integration run and the lane runner each tally a retry-pass as a comment on #2176 and open an issue when
 the test they just tallied crosses 3 in 7 days. A test whose retry-passes come from both, or whose issue was closed
@@ -7,7 +7,7 @@ and then flaked again, is only seen by a reader of the whole tally. This is that
 is closed, only its retry-passes from after the close count, so a fixed test doesn't get a second issue.
 
     scripts/flake_tally_report.py                 dry run: counts per test and the tests due an issue
-    scripts/flake_tally_report.py --file-issues   open one `ready` Showcase issue per due test
+    scripts/flake_tally_report.py --file-issues   open one `ready` groundwork issue (no milestone; #3636) per due test
 
 Only comments from the owner, collaborators and `github-actions[bot]` count (`scripts/comment_trust.py`, #1822), so
 a stranger's look-alike line can't open an issue. A test with an open issue carrying its marker is skipped.
@@ -50,7 +50,7 @@ def fetch_closed_issues(repo: str, since: dt.datetime) -> list[dict]:
 
 def open_issue(repo: str, title: str, body: str) -> str:
     done = subprocess.run(['gh', 'issue', 'create', '-R', repo, '--title', title, '--body', body,
-                           '--label', 'ready', '--milestone', 'Showcase'], capture_output=True, text=True)
+                           '--label', 'ready', '--label', 'area: groundwork'], capture_output=True, text=True)
     if done.returncode:
         raise RuntimeError(done.stderr.strip()[:300])
     return done.stdout.strip()

@@ -108,7 +108,7 @@ final class J12SharingLoopJourneyUITests: XCTestCase {
         }
 
         XCTContext.runActivity(named: "J12 step 5: The Margins tab lists the friend's Margin") { _ in
-            waitUntil("The review card did not go away after the Margin", timeout: 40) { !self.element("review.progress").exists }
+            waitUntil("The review card did not go away after the Margin", timeout: 40) { !self.element("review.playing").exists }
             let tab = element("playback.margins.button")
             XCTAssertTrue(tab.waitForExistence(timeout: 8), "The Margins tab button is missing")
             tab.tap() // checking, not listening: not counted

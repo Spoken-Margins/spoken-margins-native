@@ -212,7 +212,7 @@ final class ScreenTourTests: XCTestCase {
                            "Now tab during the review's lead-in, the pinned card above the title (#3220)")
         captureWhenPresent(element("review.playing"), timeout: 25, "27-now-review-sam",
                            "Now tab while Sam's Margin plays in the review, the pinned card above the title (#3220)")
-        _ = waitForDisappearance(element("review.progress"), timeout: 25)
+        _ = waitForDisappearance(element("review.playing"), timeout: 25)
 
         // Normal playback just before 5:00, where Sam's Margin sits: the same pinned card, with Next Margin (#3220). The
         // review marked his Margin heard, so the card says it is up next rather than playing it by itself.

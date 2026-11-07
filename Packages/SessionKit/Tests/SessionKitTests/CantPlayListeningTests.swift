@@ -66,6 +66,26 @@ final class CantPlayListeningTests: XCTestCase {
         XCTAssertNil(CantPlayListening.position(in: ordinary))
     }
 
+    /// #3597: one Margin is never "1 of 1", in a can't-play listening or an ordinary review, and the can't-play count
+    /// never falls back to counting the words steps ("1 of 2" for one Margin).
+    func testOneMarginIsNeverCountedOnTheCard() throws {
+        let one = plan([entry("a", prefix: "One.")])
+        var cantPlay = try XCTUnwrap(CantPlayListening.sequence(for: one, itemId: "item", placeMs: 0))
+        _ = cantPlay.jumpToTarget()
+        XCTAssertNil(CantPlayListening.cardPosition(in: cantPlay))
+        cantPlay.marginFinished()
+        XCTAssertNil(CantPlayListening.cardPosition(in: cantPlay))
+        let two = plan([entry("a", prefix: "One."), entry("b", prefix: "Two.")])
+        var many = try XCTUnwrap(CantPlayListening.sequence(for: two, itemId: "item", placeMs: 0))
+        _ = many.jumpToTarget()
+        XCTAssertEqual(CantPlayListening.cardPosition(in: many), "1 of 2")
+        let anchors = [MarginMomentAnchor(marginId: "m1", mediaTimeMs: 60_000)]
+        let review = try XCTUnwrap(MarginMomentSequence(itemId: "item", reviewing: anchors))
+        XCTAssertNil(CantPlayListening.cardPosition(in: review), "an ordinary review of one Margin")
+        let reviewOfTwo = try XCTUnwrap(MarginMomentSequence(itemId: "item", reviewing: anchors + [MarginMomentAnchor(marginId: "m2", mediaTimeMs: 90_000)]))
+        XCTAssertEqual(CantPlayListening.cardPosition(in: reviewOfTwo), "1 of 2")
+    }
+
     func testTheMachinePlaysWordsThenMarginThenNextWordsWithoutAHop() throws {
         let beats = plan([entry("a", at: 60_000, prefix: "One."), entry("b", at: 900_000, prefix: "Two.")])
         let anchors = CantPlayListening.anchors(for: beats, placeMs: 0)
