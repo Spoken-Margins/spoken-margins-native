@@ -283,7 +283,7 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
                     windowRole: .preInterjection
                 )))
             } catch {
-                resultHandler(.failed(request: request, reason: "buffered_pre_interjection_signature_failed:\(error.localizedDescription)"))
+                resultHandler(.failed(request: request, reason: "buffered_pre_interjection_signature_failed:\(SafeErrorText.describe(error))"))
             }
         }
         return true
@@ -492,7 +492,7 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
                         accumulators[id] = nil
                     }
                 } catch {
-                    failed.append((accumulator, "signature_append_failed:\(error.localizedDescription)"))
+                    failed.append((accumulator, "signature_append_failed:\(SafeErrorText.describe(error))"))
                     accumulators[id] = nil
                 }
             }

@@ -103,7 +103,7 @@ final class ContinuedAudioPreparationController {
             note("requested")
         } catch {
             // The run still goes on while the app is on screen, and the queue keeps its jobs.
-            note("request_failed:\(error.localizedDescription)")
+            note("request_failed:\(SafeErrorText.describe(error))")
             let queued = await hooks.jobs([])
             hooks.deferRemaining(OfflinePreparationRun.openExplicitRequests(queued))
         }

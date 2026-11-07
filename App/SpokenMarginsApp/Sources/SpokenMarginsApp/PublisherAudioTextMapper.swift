@@ -74,7 +74,7 @@ enum PublisherAudioTextMapper {
                     running.remove(audio.itemId)
                     return report("waiting_for_network")
                 }
-                updated = audio.recordingTextMapFailure("failed: \(String(describing: error))")
+                updated = audio.recordingTextMapFailure("failed: \(SafeErrorText.describe(error))")
             }
             do {
                 // The item may have been deleted meanwhile; its record went with it. A reimport may have replaced
@@ -103,7 +103,7 @@ enum PublisherAudioTextMapper {
                 }
             } catch {
                 running.remove(audio.itemId)
-                report("save failed: \(String(describing: error))")
+                report("save failed: \(SafeErrorText.describe(error))")
             }
         }
     }

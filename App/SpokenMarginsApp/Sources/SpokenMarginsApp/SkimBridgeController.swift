@@ -459,7 +459,7 @@ final class SkimBridgeController {
                     itemId: request.itemId, proposalId: request.proposalId, scene: request.scene)
                 if !prepared { detail = "nothing_saved" }
             } catch {
-                detail = String(describing: error)
+                detail = SafeErrorText.describe(error)
             }
             guard let self, self.summaryPreparation?.id == id else { return } // replaced or timed out: already logged
             // The new asset is in the store, not in what was loaded. The preparation stays registered while that is read,

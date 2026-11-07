@@ -43,7 +43,7 @@ extension Gate1AppModel {
                 refreshSelectedItemInBackground()
                 diagnostics["mediaPlaybackInterruption"] = "paused"
             } catch {
-                diagnostics["mediaPlaybackInterruption"] = "pause_failed:\(error.localizedDescription)"
+                diagnostics["mediaPlaybackInterruption"] = "pause_failed:\(SafeErrorText.describe(error))"
                 reportWarning("Playback could not be paused cleanly after the audio route changed.")
             }
         case .endedResumeRequested:
@@ -115,7 +115,7 @@ extension Gate1AppModel {
                 refreshSelectedItemInBackground()
                 diagnostics["speechPlaybackInterruption"] = "paused"
             } catch {
-                diagnostics["speechPlaybackInterruption"] = "pause_failed:\(error.localizedDescription)"
+                diagnostics["speechPlaybackInterruption"] = "pause_failed:\(SafeErrorText.describe(error))"
                 reportWarning("Playback could not be paused cleanly after the audio route changed.")
             }
         case .endedResumeRequested:
@@ -128,7 +128,7 @@ extension Gate1AppModel {
                 refreshSelectedItemInBackground()
                 noteSpeechInterruptionResumeReturned()
             } catch {
-                noteSpeechInterruptionResume(.failed(reason: error.localizedDescription))
+                noteSpeechInterruptionResume(.failed(reason: SafeErrorText.describe(error)))
                 reportWarning("Playback paused after the interruption. Tap Play to resume.")
             }
         }
