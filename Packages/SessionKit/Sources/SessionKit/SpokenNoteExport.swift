@@ -79,8 +79,15 @@ public enum SpokenNoteExport {
     /// An empty result (a blank title, only punctuation) falls back to `fallback`. Unicode letters are kept as they are.
     public static func fileBaseName(forTitle title: String, fallback: String = SpokenNoteItem.defaultTitle) -> String {
         func cleaned(_ text: String) -> String {
-            let forbidden = CharacterSet(charactersIn: "/\\:*?\"<>|\u{7F}").union(.controlCharacters).union(.newlines)
-            let scalars = text.unicodeScalars.map { forbidden.contains($0) ? " " : Character($0) }
+            // What a file name can't hold: path and wildcard characters, control characters (Cc only: the joiners in emoji
+            // and in Persian or Indic words are format characters, Cf, and stay) and the bidi overrides that make a name
+            // read backwards in a Files list.
+            func isForbidden(_ scalar: Unicode.Scalar) -> Bool {
+                if "/\\:*?\"<>|\u{7F}".unicodeScalars.contains(scalar) { return true }
+                if scalar.properties.generalCategory == .control { return true }
+                return (0x202A...0x202E).contains(scalar.value) || (0x2066...0x2069).contains(scalar.value)
+            }
+            let scalars = text.unicodeScalars.map { isForbidden($0) ? " " : Character($0) }
             // A word of only dots ("..") and the dots that start the name would make a hidden or parent-folder name.
             var words = String(scalars).split(whereSeparator: \.isWhitespace).filter { !$0.allSatisfy { $0 == "." } }
             if let first = words.first { words[0] = Substring(first.drop(while: { $0 == "." })) }
@@ -111,9 +118,9 @@ public enum SpokenNoteExport {
         // and a regular file, never a path that leaves the note's folder.
         let present = note.takes.filter { take in
             guard SpokenNoteIntake.isPlainFileName(take.audioFileName) else { return false }
-            var isDirectory: ObjCBool = false
-            return fileManager.fileExists(atPath: noteFolder.appendingPathComponent(take.audioFileName).path, isDirectory: &isDirectory)
-                && !isDirectory.boolValue
+            // `attributesOfItem` does not follow a symbolic link, so only a regular file counts, as for every other reader.
+            let attributes = try? fileManager.attributesOfItem(atPath: noteFolder.appendingPathComponent(take.audioFileName).path)
+            return (attributes?[.type] as? FileAttributeType) == .typeRegular
         }
         let text = transcriptText(of: note)
         guard !present.isEmpty || !text.isEmpty else { throw SpokenNoteExportError.nothingToExport }

@@ -74,6 +74,12 @@ final class SpokenNoteExportTests: XCTestCase {
             (".hidden", "hidden"),
             ("Café ☕️ 会議メモ", "Café ☕️ 会議メモ"),
             ("e\u{301}tude", "e\u{301}tude"),
+            ("Family 👨\u{200D}👩\u{200D}👧 trip", "Family 👨\u{200D}👩\u{200D}👧 trip"),
+            ("می\u{200C}خواهم", "می\u{200C}خواهم"),
+            ("soft\u{00AD}hyphen word\u{2060}joiner", "soft\u{00AD}hyphen word\u{2060}joiner"),
+            ("flag 🏴\u{E0067}\u{E0062}\u{E0073}\u{E0063}\u{E0074}\u{E007F}", "flag 🏴\u{E0067}\u{E0062}\u{E0073}\u{E0063}\u{E0074}\u{E007F}"),
+            ("gnp\u{202E}fdp.m4a", "gnp fdp.m4a"),
+            ("iso\u{2066}late\u{2069}d", "iso late d"),
             ("", "Spoken note"),
             ("   ", "Spoken note"),
             ("???", "Spoken note"),
@@ -236,6 +242,19 @@ final class SpokenNoteExportTests: XCTestCase {
         XCTAssertNil(files.audioURL)
         XCTAssertTrue(joiner.joined.sources.isEmpty)
         XCTAssertEqual(files.missingAudioTakeCount, 5)
+    }
+
+    func testASymbolicLinkNamedLikeATakeIsNotAudio() async throws {
+        let folder = try noteFolder()
+        let target = root.appendingPathComponent("outside.m4a")
+        try Data("secret".utf8).write(to: target)
+        try FileManager.default.createSymbolicLink(at: folder.appendingPathComponent("a.m4a"), withDestinationURL: target)
+        var note = SpokenNote(id: "n")
+        note.appendTake(SpokenNoteTake(id: "a", audioFileName: "a.m4a", durationMs: 1000, createdAt: Date(timeIntervalSince1970: 0),
+                                       sentences: [SpokenNoteSentence(text: "Words.", startMs: 0, endMs: 500)]))
+        let files = try await SpokenNoteExport.prepare(note: note, title: "N", noteFolder: folder, into: exports, joiner: RecordingJoiner())
+        XCTAssertNil(files.audioURL, "a link to a file outside the note is never copied")
+        XCTAssertEqual(files.missingAudioTakeCount, 1)
     }
 
     func testADirectoryNamedLikeATakeIsNotAudio() async throws {
