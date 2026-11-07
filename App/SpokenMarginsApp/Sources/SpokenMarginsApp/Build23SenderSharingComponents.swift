@@ -97,9 +97,9 @@ enum Build23SenderPresentation {
     static func transportConsequence(_ transport: Build23RecipientTransport) -> String {
         switch transport {
         case .reference:
-            "The package points back to the source. The recipient may need source access, and no embedding-rights assertion is required."
+            "The file points back to the source. The recipient may need source access, and no embedding-rights assertion is required."
         case .embeddedText:
-            "Reviewed source text travels inside the package. Declining embedding rights still allows Margin export with recipient-supplied transport."
+            "Reviewed source text travels inside the file. Declining embedding rights still allows Margin export with recipient-supplied transport."
         case .recipientSupplied:
             "Margins still export without embedded source material. The recipient supplies the source before imported Margins are positioned."
         }
@@ -258,7 +258,7 @@ struct Build23TransportConsequenceCard: View {
     }
 }
 
-/// The recipient preview's share actions: back to the selection, "Share verified package", and under them what else
+/// The recipient preview's share actions: back to the selection, "Share your Margins", and under them what else
 /// the build offers to send ("Share as link", #487). One view, so a test can render the real buttons in each state.
 struct Build23VerifiedShareActions<LinkRow: View>: View {
     let isFileShareEnabled: Bool
@@ -275,10 +275,10 @@ struct Build23VerifiedShareActions<LinkRow: View>: View {
 
                 Spacer()
 
-                Button("Share verified package", systemImage: "square.and.arrow.up", action: onShareFile)
+                Button("Share your Margins", systemImage: "square.and.arrow.up", action: onShareFile)
                     .filledActionButton()
                     .disabled(!isFileShareEnabled)
-                    .accessibilityHint("Opens the system share sheet with the verified package file")
+                    .accessibilityHint("Opens the system share sheet with your Margins")
                     .accessibilityIdentifier("build23.sender.share.present")
             }
 
@@ -347,7 +347,7 @@ struct Build23MarginSelectionRow: View {
                 )
                 .font(.caption.weight(.semibold))
                 .fixedSize(horizontal: true, vertical: false)
-                .accessibilityLabel("Include this Margin in the package")
+                .accessibilityLabel("Include this Margin")
                 .accessibilityValue(margin.isLeftOutForMissingText ? "Included, but left out: no transcript yet" : (margin.isIncluded ? "Included" : "Not included"))
                 .accessibilityIdentifier("build23.sender.margin.include.\(margin.id)")
                 .disabled(!isEnabled)
@@ -742,7 +742,7 @@ struct Build23VerifiedRecipientPreviewPanel: View {
         VStack(alignment: .leading, spacing: 16) {
             ExperienceSurface(tint: AppColors.softGreen) {
                 VStack(alignment: .leading, spacing: 10) {
-                    Label("Verified from the written package", systemImage: "checkmark.seal.fill")
+                    Label("This is what your friend gets", systemImage: "checkmark.seal.fill")
                         .font(.headline)
                         .foregroundStyle(AppColors.evergreen)
                     Text(preview.itemTitle)
@@ -791,10 +791,10 @@ struct Build23VerifiedRecipientPreviewPanel: View {
 
             ExperienceSurface {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Package contents")
+                    Text("What is included")
                         .font(.headline)
-                    Build23StatusLabel(icon: "waveform", title: "\(preview.voiceAssetCount) voice assets")
-                    Build23StatusLabel(icon: "waveform.path.ecg", title: "\(preview.acousticEvidenceCount) acoustic evidence records")
+                    Build23StatusLabel(icon: "waveform", title: "\(preview.voiceAssetCount) voice recordings")
+                    Build23StatusLabel(icon: "waveform.path.ecg", title: "\(preview.acousticEvidenceCount) podcast matching signatures")
                     Build23StatusLabel(
                         icon: "map",
                         title: preview.listeningMapProposalCount > 0
