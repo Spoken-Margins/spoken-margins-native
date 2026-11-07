@@ -5,13 +5,14 @@
 #
 # Run it on a Release build or an archive's app (`.xcarchive/Products/Applications/*.app`). A Debug
 # build carries the hooks on purpose, so it is expected to fail. It scans every file in the bundle,
-# frameworks included, for the launch argument and the environment-value prefix.
+# frameworks included, for the launch argument, the environment-value prefix and the share-link
+# hand-off host (`ShareLinkUITestHandoff`, #1842).
 set -euo pipefail
 
 APP="${1:?usage: check-release-test-hooks.sh path/to/App.app}"
 [ -d "$APP" ] || { echo "not an app bundle: $APP" >&2; exit 2; }
 
-hits="$(grep -rlaE -e '--ui-testing' -e 'SPOKEN_MARGINS_UI_TEST' "$APP" || true)"
+hits="$(grep -rlaE -e '--ui-testing' -e 'SPOKEN_MARGINS_UI_TEST' -e 'ui-test-share-link' "$APP" || true)"
 if [ -n "$hits" ]; then
     echo "UI-test hooks found in:" >&2
     echo "$hits" >&2
