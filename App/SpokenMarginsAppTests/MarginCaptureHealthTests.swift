@@ -432,7 +432,7 @@ final class MarginCaptureHealthTests: XCTestCase {
         XCTAssertEqual(harness.model.selectedItem.interjections.count, 0)
     }
 
-    func testFinishingARecordingWithSpeechFromTheLiveActivitySavesIt() {
+    func testFinishingARecordingWithSpeechFromTheLiveActivitySavesIt() async {
         let recorder = ScriptedRecordingClient(capturedMs: 0)
         recorder.growsWithTime = true
         let harness = Harness(recorder: recorder, startFromLiveActivity: true)
@@ -443,6 +443,8 @@ final class MarginCaptureHealthTests: XCTestCase {
         XCTAssertFalse(harness.model.snapshot.isRecording)
         XCTAssertEqual(recorder.finishCount, 1)
         XCTAssertEqual(recorder.cancelCount, 0)
+        XCTAssertEqual(harness.model.selectedItem.interjections.count, 0, "the reload reads off the main thread, so the screen shows the saved Margin a moment later")
+        await harness.model.settleItemReload() // the item detail reloads off the main thread after the save (#2505)
         XCTAssertEqual(harness.model.selectedItem.interjections.count, 1)
     }
 

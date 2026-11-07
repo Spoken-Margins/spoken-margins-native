@@ -129,7 +129,7 @@ extension Gate1AppModel {
                try store.listeningMapId(itemId: item.id) == nil, // whether there is one, not the map (#2506)
                let summary = feedEntry.summary,
                let chapters = TimestampedDescriptionChapterParser.parse(summary) {
-                _ = try engine.attachPublisherChapters(itemId: item.id, collection: chapters)
+                try await PublisherChaptersAttach.attach(chapters, itemId: item.id, engine: engine, model: self) // store work off main (#2509)
             }
             diagnostics["sourceEntryImport:\(feedEntry.id)"] = "item:\(item.id),subscription:\(feedEntry.subscriptionId),title:feed_entry"
         }

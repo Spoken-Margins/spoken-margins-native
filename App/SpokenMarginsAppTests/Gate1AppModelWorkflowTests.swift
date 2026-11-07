@@ -1810,7 +1810,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
     /// #1043 APM-10: the practice-Margin step was checked once, before any tap. It must stay open through Add
     /// Margin (button and compact control), through Cancel, and through a Finish whose save fails; only a saved
     /// Margin completes it.
-    func testGuidedOnboardingAdvancesOnlyFromCompletedProductActions() throws {
+    func testGuidedOnboardingAdvancesOnlyFromCompletedProductActions() async throws {
         let priorTermsVersion = UserDefaults.standard.object(forKey: SpokenMarginsTerms.acceptanceVersionKey)
         let priorTermsDate = UserDefaults.standard.object(forKey: SpokenMarginsTerms.acceptanceDateKey)
         defer {
@@ -1872,6 +1872,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
 
         XCTAssertTrue(model.isOnboardingStepComplete(.firstInterjection))
         XCTAssertEqual(model.guidedOnboardingStage, .reviewTimeline)
+        await model.settleItemReload() // the item detail reloads off the main thread after the save (#2505)
         let interjection = try XCTUnwrap(model.selectedItem.interjections.first)
 
         model.recordTimelineInterjectionViewed(interjectionId: interjection.id)
@@ -2007,6 +2008,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(saved.itemId, "item-pill")
         XCTAssertEqual(saved.sessionId, aSessionID)
         XCTAssertTrue(try store.loadInterjections(sessionId: bSession.id).isEmpty)
+        await model.settleItemReload() // so a late item reload that leaked A's Margin into B would show here (#2505)
         XCTAssertEqual(model.selectedItem.id, b.id)
         XCTAssertTrue(model.selectedItem.interjections.isEmpty, "B's open detail never receives A's Margin")
         XCTAssertEqual(model.selectedItem.sessionRows.map(\.interjectionCount), [0])
@@ -2063,7 +2065,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.dispatchGate2CompactCommand(.cancelInterjection)
     }
 
-    func testFinishAndCancelAreTheOnlyRecordingExits() throws {
+    func testFinishAndCancelAreTheOnlyRecordingExits() async throws {
         let restoreTerms = acceptTerms()
         defer { restoreTerms() }
         let recorder = try CountingToneRecordingClient()
@@ -2084,6 +2086,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.dispatchGate2CompactCommand(.finishInterjection)
         XCTAssertEqual(recorder.finishCount, 1)
         XCTAssertEqual(recorder.cancelCount, 0)
+        await model.settleItemReload() // the item detail reloads off the main thread after the save (#2505)
         XCTAssertEqual(model.selectedItem.interjections.first?.audioPath, recorder.savedPaths.first)
 
         XCTAssertFalse(model.recordingNavigationIsLocked)
@@ -3950,6 +3953,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.startItem(id: "item-pill")
         model.dispatchGate2CompactCommand(.beginInterjection)
         model.dispatchGate2CompactCommand(.finishInterjection)
+        await model.settleItemReload() // the item detail reloads off the main thread after the save (#2505)
         XCTAssertEqual(model.selectedItem.interjections.count, 1)
         XCTAssertTrue(model.canSummarizeInterjections)
 
@@ -4046,6 +4050,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.dispatchGate2CompactCommand(.beginInterjection)
         model.dispatchGate2CompactCommand(.finishInterjection)
         await model.settleSummaryRecords()
+        await model.settleItemReload() // the item detail reloads off the main thread after the save (#2505)
 
         XCTAssertTrue(model.canSummarizeInterjections)
         XCTAssertFalse(model.isSummarizingInterjections)
