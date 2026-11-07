@@ -61,6 +61,8 @@ final class MarginOutputCoordinator: ObservableObject {
     @Published private(set) var accessLost: Set<String> = []
     /// Something that isn't about one destination: the saved list couldn't be read or written.
     @Published private(set) var notice: MarginOutputStatus?
+    /// Which spoken notes were saved to which folders (#3661).
+    let spokenNotes = SpokenNoteFolderLedger()
 
     var rows: [Row] {
         destinations.map { destination in
@@ -78,7 +80,7 @@ final class MarginOutputCoordinator: ObservableObject {
     /// Skips a pass while a Margin is being recorded; the save at the end of the recording asks for one.
     private let isRecording: @MainActor () -> Bool
     private let recordGather: @MainActor (_ ms: Int, _ sessions: Int, _ notes: Int) -> Void
-    private let journalURL: () throws -> URL
+    let journalURL: () throws -> URL
     private let destinationStore: MarginOutputDestinationStore
     private let folders: FolderAccess
     /// False when the saved list exists but couldn't be read: it is left alone rather than replaced by a guess.
@@ -127,6 +129,7 @@ final class MarginOutputCoordinator: ObservableObject {
             canSave = false
             notice = MarginOutputStatus.failure("Your Margin Output destinations couldn't be read, so none are shown and none can be changed. Your Margins remain safely in the Library.")
         }
+        loadSpokenNoteLedger()
     }
 
     nonisolated static func defaultJournalURL() throws -> URL {
@@ -288,11 +291,11 @@ final class MarginOutputCoordinator: ObservableObject {
 
     // MARK: - The folder behind a destination
 
-    private struct NeedsFolderAccess: Error {}
+    struct NeedsFolderAccess: Error {}
 
     /// The destination's folder. A stale bookmark that still resolves is refreshed and saved. One that doesn't, or a
     /// folder that is gone, marks only this destination "Needs folder access" and throws `NeedsFolderAccess`.
-    private func resolveFolder(of destination: MarginOutputDestination) throws -> URL {
+    func resolveFolder(of destination: MarginOutputDestination) throws -> URL {
         let url: URL
         do {
             let resolved = try folders.resolve(destination.bookmark)
