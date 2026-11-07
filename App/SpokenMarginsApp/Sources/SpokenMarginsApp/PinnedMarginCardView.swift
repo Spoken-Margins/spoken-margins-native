@@ -3,10 +3,11 @@ import SessionKit
 
 /// The card for a friend's Margin (or a review of new Margins) that sits in a fixed slot above the title on the Now
 /// screen (#3220). It is pinned in a safe-area inset, not a child of the scroll view, so it never scrolls away. Every
-/// stage has the same three rows (headline, one line of explanation, buttons), so the slot keeps its height and the
-/// title below never moves when a Margin starts or ends. The words are `PinnedMarginCard`; this only draws them.
+/// stage has the same three parts (headline, one line of explanation, one row of buttons), and the card is as tall as
+/// its words: no blank row (#3597). The words and the buttons are `PinnedMarginCard`; this only draws them.
 struct PinnedMarginCardView: View {
     @EnvironmentObject private var model: Gate1AppModel
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var playbackTick = 0 // bumped by each progress tick: the countdown follows the playhead (#2074)
 
     private var moment: MarginMomentSequence? { model.marginMoment }
@@ -26,6 +27,9 @@ struct PinnedMarginCardView: View {
         .followsPlaybackClock(model.playbackClock, tick: $playbackTick)
     }
 
+    /// At the accessibility text sizes the headline and the buttons wrap and stack instead of clipping (#1933).
+    private var isLargeText: Bool { dynamicTypeSize.isAccessibilitySize }
+
     private func content(_ card: PinnedMarginCard) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -35,8 +39,8 @@ struct PinnedMarginCardView: View {
                 Text(card.headline)
                     .font(.headline)
                     .foregroundStyle(.white)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
+                    .lineLimit(isLargeText ? nil : 2)
+                    .fixedSize(horizontal: false, vertical: true)
                     .numericTextTransition()
                     .accessibilityIdentifier(headlineIdentifier(card))
                 Spacer(minLength: 8)
@@ -50,14 +54,11 @@ struct PinnedMarginCardView: View {
             Text(detail(card))
                 .font(.footnote)
                 .foregroundStyle(.white.opacity(0.85))
-                .lineLimit(2)
-                .frame(maxWidth: .infinity, minHeight: 34, alignment: .topLeading)
+                .lineLimit(isLargeText ? nil : 2)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
                 .accessibilityIdentifier("marginCard.detail")
-            // Always the same two rows, whichever stage the card is in, so its height never changes within a listen.
-            HStack(spacing: 8) { actionButtons(card) }
-                .frame(minHeight: 44)
-            HStack(spacing: 8) { endButton(card) }
-                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            buttons(card)
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -108,72 +109,84 @@ struct PinnedMarginCardView: View {
         return card.detail
     }
 
+    /// One row, one button per job; a stage with nowhere to go draws no row at all.
     @ViewBuilder
-    private func actionButtons(_ card: PinnedMarginCard) -> some View {
-        switch card.stage {
-        case .comingUp:
-            Button(action: model.playMarginMomentNow) { wide("Play it now", "play.fill") }
-                .buttonStyle(PrimaryButtonStyle())
-                .accessibilityIdentifier("marginMoment.playNow")
-        case .speaking, .reading, .voicePaused, .loading:
-            Button(action: skip) { wide(skipTitle, "forward.end.fill") }
-                .buttonStyle(SecondaryButtonStyle())
-                .accessibilityIdentifier("marginMoment.skip")
-        case .waitingForTap:
-            Button(action: model.listenToPendingImportedCommentary) { wide("Listen", "play.fill") }
-                .buttonStyle(PrimaryButtonStyle())
-                .accessibilityIdentifier("importedCommentary.listen")
-        case .failed:
-            Button(action: model.retryImportedCommentary) { wide("Retry", "arrow.clockwise") }
-                .buttonStyle(SecondaryButtonStyle())
-                .accessibilityIdentifier("importedCommentary.retry")
-        case .upNext, .answerSaved, .lastMargin:
-            EmptyView()
+    private func buttons(_ card: PinnedMarginCard) -> some View {
+        let actions = card.actions
+        if !actions.isEmpty {
+            let row = isLargeText ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8)) : AnyLayout(HStackLayout(spacing: 8))
+            row { ForEach(actions, id: \.job) { button($0) } }
         }
-        // Between a friend's Margins the button is alone on its row, so it has room for the longer words (#3247).
-        let words: NextMarginWords? = card.stage.isUpNext ? model.nextMarginWords : nil
-        Button(action: model.goToNextMargin) { wide(words?.title ?? "Next Margin", "forward.end.alt.fill") }
-            .buttonStyle(SecondaryButtonStyle())
-            .disabled(!model.canGoToNextMargin)
-            .accessibilityHint(words?.hint ?? "")
-            .accessibilityIdentifier("marginCard.next")
+    }
+
+    @ViewBuilder
+    private func button(_ action: PinnedMarginCard.Action) -> some View {
+        // Held for a moment while a Margin is being recorded: dimmed, not hidden, and `SecondaryButtonStyle` has no disabled look.
+        let held = action.job.followsNavigationLock && model.recordingNavigationIsLocked
+        Group {
+            switch action.prominence {
+            case .primary:
+                Button { perform(action.job) } label: { wide(action.title, symbol(action.job)) }
+                    .buttonStyle(PrimaryButtonStyle())
+            case .secondary:
+                Button { perform(action.job) } label: { wide(action.title, symbol(action.job)) }
+                    .buttonStyle(SecondaryButtonStyle())
+            case .quiet:
+                Button(action.title) { perform(action.job) }
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.85))
+                    .frame(minHeight: 44)
+            }
+        }
+        .disabled(held)
+        .opacity(held ? 0.45 : 1)
+        .accessibilityHint(action.hint)
+        .accessibilityIdentifier(identifier(action.job))
     }
 
     private func wide(_ title: String, _ systemImage: String) -> some View {
         Label(title, systemImage: systemImage)
-            .lineLimit(1)
-            .minimumScaleFactor(0.8)
+            .lineLimit(isLargeText ? nil : 1)
+            .minimumScaleFactor(isLargeText ? 1 : 0.8)
             .frame(maxWidth: .infinity)
     }
 
-    @ViewBuilder
-    private func endButton(_ card: PinnedMarginCard) -> some View {
-        if card.stage == .waitingForTap {
-            Button("Dismiss", action: model.dismissPendingImportedCommentary)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.white.opacity(0.85))
-                .frame(minHeight: 44)
-                .accessibilityIdentifier("importedCommentary.dismiss")
-        } else if model.playingImportedCommentary == nil, let moment, isReview || !moment.isPlayingMargin {
-            Button(isReview ? "Stop review" : (moment.phase == .leadIn ? "Cancel" : "Stop playing my Margins"), action: model.endMarginMoment)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.white.opacity(0.85))
-                .frame(minHeight: 44)
-                .accessibilityIdentifier("marginMoment.end")
+    private func perform(_ job: PinnedMarginCard.Action.Job) {
+        switch job {
+        case .goToNextMargin: model.goToNextMargin()
+        case .skipThisMargin: skip()
+        case .retry: model.retryImportedCommentary()
+        case .playMomentNow: model.playMarginMomentNow()
+        case .backToSource, .stopPlayingMine: model.endMarginMoment()
+        case .listen: model.listenToPendingImportedCommentary()
+        case .dismiss: model.dismissPendingImportedCommentary()
         }
     }
 
-    /// "Skip Margin" in a review that has more to come, else "Skip to the item", as the old cards said.
-    private var skipTitle: String {
-        if let moment, moment.isReview, !moment.unplayed.isEmpty { return "Skip Margin" }
-        return "Skip to the item"
+    /// The identifiers the UI tests already look for, kept on the same jobs.
+    private func identifier(_ job: PinnedMarginCard.Action.Job) -> String {
+        switch job {
+        case .goToNextMargin: "marginCard.next"
+        case .skipThisMargin: "marginMoment.skip"
+        case .retry: "importedCommentary.retry"
+        case .playMomentNow: "marginMoment.playNow"
+        case .backToSource, .stopPlayingMine: "marginMoment.end"
+        case .listen: "importedCommentary.listen"
+        case .dismiss: "importedCommentary.dismiss"
+        }
+    }
+
+    private func symbol(_ job: PinnedMarginCard.Action.Job) -> String {
+        switch job {
+        case .goToNextMargin: "forward.end.alt.fill"
+        case .skipThisMargin: "forward.end.fill"
+        case .retry: "arrow.clockwise"
+        case .playMomentNow, .listen: "play.fill"
+        case .backToSource, .stopPlayingMine, .dismiss: "xmark"
+        }
     }
 
     private func skip() {
         if model.playingImportedCommentary != nil { model.returnToSourceFromImportedCommentary() } else { model.skipMarginMomentVoice() }
     }
-}
-
-private extension PinnedMarginCard.Stage {
-    var isUpNext: Bool { if case .upNext = self { true } else { false } }
 }
