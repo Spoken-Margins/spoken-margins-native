@@ -70,6 +70,7 @@ public final class SystemSpokenNoteTakeRecorder: NSObject, SpokenNoteTakeRecordi
         let recorder = try AVAudioRecorder(url: url, settings: settings)
         recorder.delegate = self
         guard recorder.prepareToRecord(), recorder.record() else {
+            recorder.stop() // a prepared recorder's audio queue is running; freed unstopped, it crashes (#3633)
             // The empty file this call just made holds nothing; the session goes back to other apps.
             try? FileManager.default.removeItem(at: url)
             try? session.setActive(false, options: .notifyOthersOnDeactivation)
