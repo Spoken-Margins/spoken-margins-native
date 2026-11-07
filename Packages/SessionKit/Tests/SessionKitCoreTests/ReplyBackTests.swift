@@ -34,13 +34,14 @@ final class ReplyBackTests: XCTestCase {
     }
 
     private func friendMargin(
-        _ id: String, in layerId: String, at ms: Int = 60_000, replyingTo parent: MarginPacketIdentity? = nil, createdAt: Double = 120
+        _ id: String, in layerId: String, at ms: Int = 60_000, replyingTo parent: MarginPacketIdentity? = nil, createdAt: Double = 120,
+        evidence: AnchorResolutionEvidenceClass = .exactEdition
     ) -> ImportedCommentaryInterjection {
         ImportedCommentaryInterjection(
             id: id, layerId: layerId, packageScopedId: id, createdAt: date(createdAt),
             anchorEvidence: PortableAnchorEvidence(anchorType: .media), approvedTranscript: "Words",
             audioPath: "ImportedCommentary/\(id).m4a", audioDurationMs: 4_000,
-            resolution: ImportedAnchorResolution(evidenceClass: .exactEdition, localMediaTimeMs: ms, confidence: 1),
+            resolution: ImportedAnchorResolution(evidenceClass: evidence, localMediaTimeMs: ms, confidence: 1),
             replyLinks: parent.map {
                 [MarginReplyLink(conversationId: "conversation", parentPackageDigest: $0.packageDigest, parentPackageScopedId: $0.packageScopedId)]
             }
@@ -201,6 +202,56 @@ final class ReplyBackTests: XCTestCase {
         XCTAssertEqual(parent.anchor.mediaTimeMs, 755_000, "the parent sits at its reply's place, so the review makes no extra hop")
         XCTAssertEqual(parent.anchor.caption, "Your Margin at 12:34")
         XCTAssertEqual(Set(steps.map(\.anchor.marginId)).count, steps.count, "every step has its own identity")
+    }
+
+    func testAClockOnlyReplyKeepsTheParentAtItsOwnExactPlaceAndTheReplyFollowsIt() throws {
+        // #3611: Ben's copy has a 30 s pre-roll, so his clock reads 785 s where Ana's Margin sits at 754 s on hers.
+        let margins = [own("m1", madeAt: 10, atMs: 754_000, sharedAs: [mine])]
+        let entries = SharedMarginReview.entries(
+            layers: [layer("ben")],
+            records: ["ben": [friendMargin("reply", in: "ben", at: 785_000, replyingTo: mine, evidence: .timestampFallback)]],
+            ownMargins: margins
+        )
+        XCTAssertEqual(entries.first?.isApproximate, true)
+        let steps = SharedMarginReview.playlist(for: entries, ownMargins: margins)
+        XCTAssertEqual(steps.count, 2)
+        let parent = try XCTUnwrap(steps.first)
+        XCTAssertEqual(parent.anchor.mediaTimeMs, 754_000, "the lead-in and the parent play from the Margin's own place")
+        XCTAssertFalse(parent.anchor.isApproximate)
+        XCTAssertEqual(parent.anchor.caption, "Your Margin at 12:34")
+        let reply = steps[1]
+        XCTAssertEqual(reply.anchor.mediaTimeMs, 754_000, "the reply follows its parent, not the friend's clock")
+        XCTAssertTrue(reply.anchor.isApproximate, "how long after the parent the friend spoke is still a guess")
+        XCTAssertEqual(reply.anchor.marginId, entries[0].marginId)
+        XCTAssertEqual(reply.anchor.caption, "Reply to your Margin at 12:34")
+        let sequence = try XCTUnwrap(MarginMomentSequence(itemId: "item", reviewing: steps.map(\.anchor)))
+        XCTAssertLessThan(sequence.startMediaTimeMs, 754_000)
+    }
+
+    func testAClockOnlyReplyToAnAlreadyPlayedParentStillSitsAtTheParentsPlace() {
+        let margins = [own("m1", madeAt: 10, atMs: 754_000, sharedAs: [mine])]
+        let entries = SharedMarginReview.entries(
+            layers: [layer("ben")],
+            records: ["ben": [
+                friendMargin("r1", in: "ben", at: 785_000, replyingTo: mine, evidence: .timestampFallback),
+                friendMargin("r2", in: "ben", at: 790_000, replyingTo: mine, evidence: .mapInterpolated)
+            ]],
+            ownMargins: margins
+        )
+        let steps = SharedMarginReview.playlist(for: entries, ownMargins: margins)
+        XCTAssertEqual(steps.map(\.anchor.mediaTimeMs), [754_000, 754_000, 754_000])
+        XCTAssertEqual(steps.filter { $0.ownParent != nil }.count, 1)
+    }
+
+    func testAnExactReplyStillMovesTheParentToTheRepliesPlace() throws {
+        // The existing rule for a resolved reply is unchanged: no extra hop.
+        let margins = [own("m1", madeAt: 10, atMs: 754_000, sharedAs: [mine])]
+        let entries = SharedMarginReview.entries(
+            layers: [layer("ben")], records: ["ben": [friendMargin("r1", in: "ben", at: 760_000, replyingTo: mine)]], ownMargins: margins
+        )
+        let steps = SharedMarginReview.playlist(for: entries, ownMargins: margins)
+        XCTAssertEqual(steps.map(\.anchor.mediaTimeMs), [760_000, 760_000])
+        XCTAssertFalse(steps[0].anchor.isApproximate)
     }
 
     func testAWrittenOrMissingParentIsLeftOutOfThePlaylist() {
