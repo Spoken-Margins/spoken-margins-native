@@ -249,12 +249,12 @@ final class SharedMarginReviewTests: XCTestCase {
 
     func testAStandInNeverReachesTheCardOrAReplyCaption() {
         for raw in ["Unsigned sender", "Imported collection", " imported collection "] {
-            XCTAssertEqual(PinnedMarginCard.Subject.friend(raw).possessive, "A friend's Margin", raw)
-            XCTAssertEqual(PinnedMarginCard.Subject.friend(raw).speaker, "A friend is", raw)
+            XCTAssertEqual(PinnedMarginCard.Subject.friend(raw).title, "Shared Margin", raw)
+            XCTAssertEqual(PinnedMarginCard.Subject.friend(raw).loadingTitle, "Loading this Margin", raw)
             XCTAssertEqual(SharedMarginReview.ReplyContext(parent: .shared(marginId: "m", label: raw, mediaTimeMs: nil)).caption,
                            "Reply to a friend's Margin", raw)
         }
-        XCTAssertEqual(PinnedMarginCard.Subject.friend("Ana").possessive, "Ana's Margin")
+        XCTAssertEqual(PinnedMarginCard.Subject.friend("Ana").title, "Margin from Ana")
         XCTAssertEqual(SharedMarginReview.ReplyContext(parent: .shared(marginId: "m", label: "Ana", mediaTimeMs: nil)).caption,
                        "Reply to Ana's Margin")
     }

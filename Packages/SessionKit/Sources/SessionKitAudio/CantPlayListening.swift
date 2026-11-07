@@ -215,10 +215,19 @@ public enum CantPlayListening {
         return Set(left.map(\.marginId).filter { !isContextId($0) })
     }
 
-    /// "2 of 3" counting Margins, not their words. Nil outside a can't-play listening.
+    /// "2 of 3" counting Margins, not their words. Nil outside a can't-play listening, and for one Margin: the card
+    /// never says "1 of 1" (#3597), so the caller must not fall back to counting a single Margin either.
     public static func position(in sequence: MarginMomentSequence) -> String? {
         guard isCantPlayListening(sequence), let review = sequence.review, let number = sequence.reviewNumber else { return nil }
-        return "\((number + 1) / 2) of \(review.count / 2)"
+        return PinnedMarginCard.position((number + 1) / 2, of: review.count / 2)
+    }
+
+    /// The count on the pinned Margin card for any moment: Margins, not their words, in a can't-play listening; Margins
+    /// of the review otherwise; nothing for a plain moment. One Margin is never counted (#3597).
+    public static func cardPosition(in sequence: MarginMomentSequence) -> String? {
+        if isCantPlayListening(sequence) { return position(in: sequence) }
+        guard let review = sequence.review else { return nil }
+        return PinnedMarginCard.position(sequence.reviewNumber ?? 1, of: review.count)
     }
 
     // MARK: The words
