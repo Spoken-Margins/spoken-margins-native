@@ -429,7 +429,7 @@ struct LiveSessionView: View {
             ForEach(session.margins) { margin in
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(alignment: .firstTextBaseline) {
-                        Text(positionText(for: margin, in: session))
+                        Text(LiveSessionMarginsList.positionLabel(for: margin, in: session))
                             .font(.caption.monospacedDigit())
                             .foregroundStyle(AppColors.secondaryText)
                         Spacer()
@@ -462,22 +462,6 @@ struct LiveSessionView: View {
                 .padding(.vertical, 4)
             }
         }
-    }
-
-    /// Where a Margin is, in the unit the session uses: a page, percent or chapter is never shown as a time (#2707).
-    private func positionText(for margin: LiveSessionMargin, in session: LiveSession) -> String {
-        var text: String
-        if let label = LiveSessionPlaceMap.label(for: margin, in: session) {
-            text = label
-        } else if session.usesPlaces {
-            text = "\(LiveSessionPositionMap.clock(margin.sessionOffsetMs)) in"
-        } else {
-            text = LiveSessionPositionMap.position(of: margin, in: session).map { $0.isListenerSet ? "you set \(LiveSessionPositionMap.clock($0.ms))" : $0.label }
-                ?? "\(LiveSessionPositionMap.clock(margin.sessionOffsetMs)) in"
-        }
-        // A place in another unit than the session's is kept beside it, not converted.
-        if let place = margin.place, !text.hasSuffix(place.label) { text += " · \(place.label)" }
-        return text
     }
 
     /// A page, percent or chapter said in the Margin, offered as a checkpoint: one tap to keep it, never automatic.
