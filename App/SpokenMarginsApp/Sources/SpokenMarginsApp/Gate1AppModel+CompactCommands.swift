@@ -26,6 +26,14 @@ extension Gate1AppModel {
         playbackRate: Double? = nil,
         origin: String = "app_ui"
     ) {
+        // Every Now Playing command that reaches here while a Margin records, before a guard below can drop it, so
+        // the export tells "never arrived" from "arrived and ignored" (#3650).
+        if snapshot.isRecording, origin.hasPrefix("now_playing") {
+            recordDeveloperDiagnostic("transport.dispatch_during_recording", [
+                "command": command.rawValue, "origin": origin, "recordingMs": String(captureWatcher.elapsedMs),
+                "finishing": String(isFinishingInterjection),
+            ])
+        }
         // A play from the Lock Screen, headphones or the Watch while a live session spoken Margin records would start
         // our player, which takes the audio session and stops the recorder. Ignored, and logged (#3492).
         if LiveSessionTransportGuard.ignores(
