@@ -2138,6 +2138,9 @@ class BuildFailed(Exception):
     pass
 
 
+HOSTED_TAKEN = 'hosted-taken.json'
+
+
 def take_hosted(commit: str | None, if_changed: bool, tip: str = '') -> int:
     """--source hosted: no xcodebuild here. Take the newest hosted build (of `commit`, when one is named)."""
     hosted, problem = hosted_build(commit)
@@ -2156,6 +2159,10 @@ def take_hosted(commit: str | None, if_changed: bool, tip: str = '') -> int:
     if latest_build().get('sha') == sha and (if_changed or not commit):
         say(f'latest is already the hosted build of {sha[:7]}; nothing to do')
         return 0
+    # Each hosted build is taken once: a build made by hand since then stays latest until main has a newer one.
+    if not commit and latest_build() and read_json(phone_dir() / HOSTED_TAKEN).get('sha') == sha:
+        say(f'already took the hosted build of {sha[:7]}; latest stays {latest_build().get("sha", "")[:7]}, made since')
+        return 0
     attempt = read_json(phone_dir() / 'last-attempt.json')
     if if_changed and attempt.get('sha') == sha and str(attempt.get('result', '')).startswith('failed'):
         say(f'{sha[:7]} already failed ({attempt["result"]}); waiting for a newer hosted build')
@@ -2165,7 +2172,10 @@ def take_hosted(commit: str | None, if_changed: bool, tip: str = '') -> int:
         say(f'skipped: free disk is {free:.1f} GB; taking a phone build needs {needed} GB')
         return EXIT_SKIPPED
     clear_work()
-    return fetch_hosted(hosted)
+    result = fetch_hosted(hosted)
+    if result == 0:
+        (phone_dir() / HOSTED_TAKEN).write_text(json.dumps({'sha': sha}) + '\n')
+    return result
 
 
 def main(argv) -> int:
