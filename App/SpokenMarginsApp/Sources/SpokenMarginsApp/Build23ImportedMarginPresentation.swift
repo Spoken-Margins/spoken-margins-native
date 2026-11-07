@@ -112,7 +112,7 @@ private struct Build23ImportedLayerList: View, Equatable {
                             .foregroundStyle(AppColors.secondaryText)
                             .fixedSize(horizontal: false, vertical: true)
                         layerStateControls(layer)
-                        // A file with no Listening Map proposals says nothing: "0 listening map proposals" is engineering words
+                        // A file with no Listening Map proposals says nothing: "0 Listening Map suggestions" is engineering words
                         // to a friend whose file never held one (#3247, "what passes silently stays silent").
                         if layer.listeningMapProposalCount > 0 {
                             Label(proposalCountLabel(layer.listeningMapProposalCount), systemImage: "point.3.connected.trianglepath.dotted")
@@ -347,9 +347,9 @@ private struct Build23ImportedLayerList: View, Equatable {
 
     private func proposalCountLabel(_ count: Int) -> String {
         if count == 1 {
-            return "1 listening map proposal"
+            return "1 Listening Map suggestion"
         }
-        return "\(count) listening map proposals"
+        return "\(count) Listening Map suggestions"
     }
 
     private var emptyState: some View {
