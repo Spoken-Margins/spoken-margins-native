@@ -845,7 +845,7 @@ class Ops:
 
     def open_flake_issue(self, title: str, body: str) -> str:
         res = self.must(['gh', 'issue', 'create', '-R', REPO, '--title', title, '--body', body,
-                         '--label', 'ready', '--milestone', 'Showcase'])
+                         '--label', 'ready', '--label', 'area: groundwork'])
         return (res.stdout or '').strip()
 
     def post_report(self, body: str, evidence: Path) -> str:

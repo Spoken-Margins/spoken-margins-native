@@ -687,7 +687,7 @@ def tally_counts(comments: list[dict], now: datetime.datetime) -> dict[str, list
 
 
 def log_retry_passes(evidence: Path, repo: str, head: str, run_id: str, tally, now=None) -> list[str]:
-    """One comment per retry-pass on #2176, then a `ready` Showcase issue for any test with 3 or more retry-passes in
+    """One comment per retry-pass on #2176, then a `ready` groundwork issue (no milestone; #3636) for any test with 3 or more retry-passes in
     7 days (owner, 2026-10-24; #2596). `tally` offers post(body), comments(), open_markers() and open_issue(title, body).
 
     Best effort like log_recovered_stalls: the report is already posted, and nothing here can change the verdict.
@@ -743,7 +743,7 @@ class RepoTally:
 
     def open_issue(self, title: str, body: str) -> str:
         done = subprocess.run(['gh', 'issue', 'create', '-R', self.repo, '--title', title, '--body', body,
-                               '--label', 'ready', '--milestone', 'Showcase'], capture_output=True, text=True)
+                               '--label', 'ready', '--label', 'area: groundwork'], capture_output=True, text=True)
         if done.returncode:
             raise RuntimeError(done.stderr.strip()[:200])
         return done.stdout.strip()
