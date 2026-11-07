@@ -6,7 +6,8 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { keyFromFragment, sealPart, PART } from '../../src/packet/share-link.ts';
+import { keyFromFragment, PART } from '../../src/packet/share-link.ts';
+import { sealPart } from '../../src/cli/link-sealing.ts';
 
 const repo = fileURLToPath(new URL('../../../', import.meta.url));
 const port = Number(process.env.SM_LANDING_PORT ?? 8899);

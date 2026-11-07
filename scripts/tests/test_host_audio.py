@@ -85,6 +85,24 @@ class HostAudioTests(unittest.TestCase):
         self.assertNotIn('stuck', state)
         self.assertEqual(played, [])
 
+    def test_a_virtual_default_output_with_the_lid_closed_is_probed_and_found_stuck(self):
+        # #3585, 2026-11-06: BlackHole 2ch was the default with the lid closed. The lid-closed answer returned before the
+        # probe, so the hang was found 14 minutes into the package step, as a timeout, not as a named lane fault.
+        probed = []
+        state = host_audio.audio_output(
+            reader(LID_CLOSED, BUILT_IN_ONLY, audio('BlackHole 2ch', 'Virtual')),
+            starts=lambda: probed.append(1) or {'starts': False, 'why': 'afplay still waiting after 30 s'})
+        self.assertEqual(probed, [1])
+        self.assertTrue(state['stuck'])
+        self.assertIn('(BlackHole 2ch) does not start', state['why'])
+
+    def test_a_virtual_default_output_with_the_lid_closed_that_starts_is_not_a_fault(self):
+        # A healthy Mac, even under load, must never be flagged: only a player still waiting at the limit counts.
+        state = host_audio.audio_output(reader(LID_CLOSED, BUILT_IN_ONLY, audio('ZoomAudioDevice', 'Virtual')),
+                                        starts=started)
+        self.assertFalse(state['usable'])
+        self.assertNotIn('stuck', state)
+
     def test_only_a_player_still_waiting_at_the_limit_counts_as_not_starting(self):
         def runner(outcome):
             def run(command, **kw):

@@ -361,23 +361,29 @@ extension Gate1AppModel {
         ) { [weak self] command, mediaTimeMs, playbackRate in
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                self.hangTelemetry.labels.scoped("nowPlayingCommand") {
-                    self.syncPlaybackProgressForLifecycle()
-                    self.dispatchGate2CompactCommand(
-                        command,
-                        mediaTimeMs: mediaTimeMs,
-                        playbackRate: playbackRate,
-                        origin: "now_playing"
-                    )
+                let labels = self.hangTelemetry.labels
+                labels.scoped("nowPlayingCommand") {
+                    labels.scoped("nowPlaying.sync") { self.syncPlaybackProgressForLifecycle() }
+                    labels.scoped("nowPlaying.dispatch") {
+                        self.dispatchGate2CompactCommand(
+                            command,
+                            mediaTimeMs: mediaTimeMs,
+                            playbackRate: playbackRate,
+                            origin: "now_playing"
+                        )
+                    }
                 }
             }
         }
         client.nextTrackHandler = { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                self.hangTelemetry.labels.scoped("nowPlayingCommand") {
-                    self.syncPlaybackProgressForLifecycle()
-                    self.dispatchGate2CompactCommand(.skipForward, origin: "now_playing" + HeadphoneRemoteSignal.nextTrackOriginSuffix)
+                let labels = self.hangTelemetry.labels
+                labels.scoped("nowPlayingCommand") {
+                    labels.scoped("nowPlaying.sync") { self.syncPlaybackProgressForLifecycle() }
+                    labels.scoped("nowPlaying.dispatch") {
+                        self.dispatchGate2CompactCommand(.skipForward, origin: "now_playing" + HeadphoneRemoteSignal.nextTrackOriginSuffix)
+                    }
                 }
             }
         }

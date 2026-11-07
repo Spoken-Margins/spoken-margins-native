@@ -37,6 +37,8 @@ func (s *Server) linkCORS(next http.HandlerFunc) http.HandlerFunc {
 			h.Add("Vary", "Origin")
 			if origin := r.Header.Get("Origin"); weborigin.Allowed(s.LinkOrigins, origin) {
 				h.Set("Access-Control-Allow-Origin", origin)
+				// A cross-origin page reads only safelisted headers unless told otherwise (#2168).
+				h.Set("Access-Control-Expose-Headers", LinkExpiresHeader)
 			}
 		}
 		next(w, r)

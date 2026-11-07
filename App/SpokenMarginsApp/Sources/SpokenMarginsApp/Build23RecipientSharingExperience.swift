@@ -205,7 +205,7 @@ struct Build23RecipientSharingExperience: View {
                 } else {
                     Text(snapshot.isListeningMap
                         ? "This map stays ready while you add your copy of the item. It can't be added until the item is in your Library."
-                        : "This verified package stays ready while you add the matching source. Import remains unavailable until the source is resolved.")
+                        : "These Margins stay ready while you add the same item. You can add them once it is in your Library.")
                         .font(.subheadline)
                         .foregroundStyle(AppColors.secondaryText)
                         .fixedSize(horizontal: false, vertical: true)
@@ -217,7 +217,7 @@ struct Build23RecipientSharingExperience: View {
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)
-                    .accessibilityHint("Opens Add to Library and keeps this package ready to resume")
+                    .accessibilityHint("Opens Add to Library and keeps these Margins ready to resume")
                 } else {
                     Button(action: requestMissingSource) {
                         Label("Add to Library", systemImage: "plus")
@@ -225,7 +225,7 @@ struct Build23RecipientSharingExperience: View {
                     }
                     .filledActionButton()
                     .accessibilityIdentifier("build23.recipient.addToLibrary")
-                    .accessibilityHint("Opens Add to Library and keeps this package ready to resume")
+                    .accessibilityHint("Opens Add to Library and keeps these Margins ready to resume")
                 }
             }
         }
@@ -283,10 +283,10 @@ struct Build23RecipientSharingExperience: View {
     private var unavailablePreview: some View {
         ExperienceSurface {
             VStack(alignment: .leading, spacing: 8) {
-                Label("No package ready for review", systemImage: "tray")
+                Label("No Margins ready to look at", systemImage: "tray")
                     .font(.headline)
                     .foregroundStyle(AppColors.text)
-                Text("Open a verified shared package to preview it before importing.")
+                Text("Open a file of Margins to look at them before adding them.")
                     .font(.subheadline)
                     .foregroundStyle(AppColors.secondaryText)
             }

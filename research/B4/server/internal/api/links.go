@@ -266,17 +266,23 @@ func (s *Server) getLinkScript(w http.ResponseWriter, r *http.Request) {
 	w.Write(data)
 }
 
+// LinkExpiresHeader carries the packet's expiry day, e.g. 2026-12-06.
+const LinkExpiresHeader = "X-SM-Link-Expires"
+
 func (s *Server) getLinkPacket(w http.ResponseWriter, r *http.Request) {
 	linkHeaders(w)
 	if !s.linksOn(w) {
 		return
 	}
-	f, err := s.Links.Packet(r.PathValue("id"), s.Now())
+	f, expires, err := s.Links.PacketUntil(r.PathValue("id"), s.Now())
 	if err != nil {
 		linkFailure(w, err)
 		return
 	}
 	defer f.Close()
+	// The day the link stops working, UTC, and nothing finer: the page words it for the friend (#2168). No
+	// creation time (Lifetime is fixed) and no key; a held link is 410 above and never reaches here.
+	w.Header().Set(LinkExpiresHeader, expires.UTC().Format("2006-01-02"))
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", `attachment; filename="shared.spokenmargins"`)
 	http.ServeContent(w, r, "", time.Time{}, f)

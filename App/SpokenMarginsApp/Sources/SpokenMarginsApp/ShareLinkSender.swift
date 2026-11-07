@@ -117,7 +117,7 @@ final class ShareLinkSender: ObservableObject {
     }
 }
 
-/// The "Share as link" button beside "Share verified package", with its one-line fallback. Hidden while the cached
+/// The "Share as link" button beside "Share your Margins", with its one-line fallback. Hidden while the cached
 /// server config says links are off.
 struct ShareLinkSendControl: View {
     let packageURL: URL?
@@ -180,7 +180,7 @@ struct ShareLinkSendRow: View {
             }
             .buttonStyle(.bordered)
             .disabled(state == .making)
-            .accessibilityHint("Uploads the verified package, sealed so only the link can open it, and opens the share sheet with the link")
+            .accessibilityHint("Uploads your Margins, sealed so only the link can open it, and opens the share sheet with the link")
             .accessibilityIdentifier("build23.sender.share.link")
 
             if let companionNote {

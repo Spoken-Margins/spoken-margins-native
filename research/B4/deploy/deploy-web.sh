@@ -12,9 +12,8 @@
 # are compared by content; new files land together at the end (--delay-updates) and old ones are
 # removed after that, so a page mid-load never finds half a build.
 #
-# Share-link creation stays off in this build: `npm run build` is Vite's production mode, and only
-# `--mode share-links-test` turns it on (Web/vite.config.ts). The script also refuses a build that
-# carries a test relay origin.
+# The web app can't create share links: that code is removed from Web/, not switched off (#3542). The
+# script also refuses a build that carries a test relay origin.
 #
 # Environment: SM_SSH_KEY, SM_RELAY_ORIGIN (default https://spokenmargins.com).
 set -euo pipefail

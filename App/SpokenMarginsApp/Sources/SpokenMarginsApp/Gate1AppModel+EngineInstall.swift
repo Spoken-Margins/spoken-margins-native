@@ -95,10 +95,13 @@ extension Gate1AppModel {
     }
 
     private func liveActivitySharedMarginNavigationEntries() -> [Gate2LiveActivityNavigationEntry] {
+        // Every snapshot change lands here. Counting the text walks all of it, so only a shared Margin pays for it (#2256).
+        let prompts = importedCommentaryPrompts(includeAnnounced: false)
+        guard !prompts.isEmpty else { return [] }
         let currentPercent = snapshot.sourceProgressPercent
         let mediaDurationMs = snapshot.currentPlaybackDurationMs ?? selectedItem.mediaDurationMs
         let textLength = selectedItem.text.count
-        return importedCommentaryPrompts(includeAnnounced: false).compactMap { prompt in
+        return prompts.compactMap { prompt in
             let positionPercent = SharedMarginPosition.percent(
                 mediaTimeMs: prompt.interjection.resolution.localMediaTimeMs,
                 mediaDurationMs: mediaDurationMs,

@@ -18,9 +18,9 @@ export default defineConfig({
   projects: [{ name: 'iphone-webkit', use: { ...devices['iPhone 15 Pro'] } }],
   webServer: [
     {
-      // The web player, as the share-link journeys serve it (see e2e/playwright.config.ts).
+      // The web player, as the link-opening journeys serve it (see e2e/playwright.config.ts).
       command:
-        'npx vite build --mode share-links-test --outDir dist-share-links --emptyOutDir --logLevel warn && node e2e/link-stub-server.ts',
+        'npx vite build --outDir dist-link-stub --emptyOutDir --logLevel warn && node e2e/link-stub-server.ts',
       env: { VITE_RELAY_ORIGIN: 'http://127.0.0.1:4174', VITE_E2E_SILENT: '1' },
       cwd: '../..',
       url: 'http://127.0.0.1:4174/',

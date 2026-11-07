@@ -849,7 +849,7 @@ struct ExperienceItemDetailScreen: View {
     private var readinessColor: Color {
         switch model.selectedPodcastDownloadState {
         case .failed, .evicted: AppColors.coral
-        case .downloading, .waitingForWiFi: AppColors.ochre
+        case .downloading, .waitingForWiFi: AppColors.ochreText
         case .availableOffline, .streamingOnly, .none: AppColors.evergreen
         }
     }
