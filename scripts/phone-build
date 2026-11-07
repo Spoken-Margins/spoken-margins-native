@@ -162,7 +162,15 @@ FIRST_ON_PHONE = {'found-on-phone', 'regression'}
 # Co-op Experience "is never held": the 13515da plan (2026-11-04) still led with Solid Ground and held #460, a
 # priority sharing fix, as "waits for Co-op Experience". A test reads AGENTS.md's "Order of work" line and fails
 # when these drift from it again (#3216).
-CURRENT_MILESTONE = 'Showcase'
+# Milestones are releases named by app version since 2026-11-07 (#3636); Showcase is 0.2 until it is renamed.
+CURRENT_MILESTONE = '0.2'
+RELEASE_ALIASES = {'Showcase': '0.2'}
+
+
+def is_current(title) -> bool:
+    return bool(title) and RELEASE_ALIASES.get(title, title) == CURRENT_MILESTONE
+
+
 HELD_MILESTONES = frozenset({'Later', 'Public beta'})
 NOT_LISTENER_LABELS = {'stream:A1'}  # the test lane: its SessionKit edits are compile guards, not behaviour
 # Acceptance belongs to the change, not necessarily its issue. The owner confirmed #1482's Build 30
@@ -689,7 +697,7 @@ def lead_tier(issue: dict, in_current: bool) -> int:
 def leads(issues: list[dict]) -> bool:
     """A change or fix that leads the owner's checks: one of its issues is in the current milestone and marked
     `priority` or found on his phone (2026-10-16: #1708 and #1337 never reached his plans)."""
-    return any(lead_tier(issue, (issue.get('milestone') or {}).get('title') == CURRENT_MILESTONE) <= 1
+    return any(lead_tier(issue, is_current((issue.get('milestone') or {}).get('title'))) <= 1
                for issue in issues)
 
 
@@ -713,7 +721,7 @@ def waiting_fixes(issues: list[dict], built: set[int], shown: set[int], named_in
     """
     def build_number(issue):
         milestone = issue.get('milestone') or {}
-        if milestone.get('title') == CURRENT_MILESTONE:
+        if is_current(milestone.get('title')):
             return 0
         found = re.fullmatch(r'Build (\d+)', milestone.get('title') or '')
         return int(found.group(1)) if found and milestone.get('state', 'OPEN') == 'OPEN' else None
