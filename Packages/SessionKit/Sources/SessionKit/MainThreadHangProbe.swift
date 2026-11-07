@@ -63,11 +63,29 @@ public final class MainThreadHangProbe: @unchecked Sendable {
         public let durationMs: Int
         /// `MainThreadOperationLabels.current` as seen while the main thread was stuck; empty if no label was set.
         public let operation: String
+        /// Where the stall's samples fell, by innermost label in the order first seen: `operation` names only the
+        /// work the stall ended in, and a long stall can spend most of its time before that (#2256). Empty when the
+        /// stall was all one label. `none` counts samples that found no label at all.
+        public let samples: [Sample]
 
-        public init(durationMs: Int, operation: String) {
+        public struct Sample: Sendable, Equatable {
+            public let label: String
+            public let count: Int
+
+            public init(label: String, count: Int) {
+                self.label = label
+                self.count = count
+            }
+        }
+
+        public init(durationMs: Int, operation: String, samples: [Sample] = []) {
             self.durationMs = durationMs
             self.operation = operation
+            self.samples = samples
         }
+
+        /// `label=count` pairs joined by `;`, for the hang's Diagnostics record. Empty when `samples` is.
+        public var samplesField: String { samples.map { "\($0.label)=\($0.count)" }.joined(separator: ";") }
     }
 
     public let thresholdMs: Int
@@ -84,6 +102,7 @@ public final class MainThreadHangProbe: @unchecked Sendable {
     private var epoch: UInt64 = 0
     private var pendingSince: TimeInterval?
     private var stalledOperation = ""
+    private var stalledSamples = StallSamples()
     private var lastTick: TimeInterval?
     private var lastAnsweredSent: TimeInterval?
 
@@ -122,6 +141,7 @@ public final class MainThreadHangProbe: @unchecked Sendable {
         epoch &+= 1
         pendingSince = nil
         stalledOperation = ""
+        stalledSamples = StallSamples()
         lastTick = nil
         lastAnsweredSent = nil
         self.intervalMs = interval
@@ -140,6 +160,7 @@ public final class MainThreadHangProbe: @unchecked Sendable {
         epoch &+= 1
         pendingSince = nil
         stalledOperation = ""
+        stalledSamples = StallSamples()
         lastTick = nil
         lastAnsweredSent = nil
     }
@@ -173,6 +194,7 @@ public final class MainThreadHangProbe: @unchecked Sendable {
             epoch &+= 1
             pendingSince = nil
             stalledOperation = ""
+            stalledSamples = StallSamples()
             lastAnsweredSent = nil
         }
         lastTick = now
@@ -181,6 +203,7 @@ public final class MainThreadHangProbe: @unchecked Sendable {
             // non-empty sample wins, so a long stall made of several operations names the one it ended in.
             let sample = labels.current
             if !sample.isEmpty { stalledOperation = sample }
+            stalledSamples.note(stack: sample)
             lock.unlock()
             return
         }
@@ -199,17 +222,44 @@ public final class MainThreadHangProbe: @unchecked Sendable {
         // suspended with this block in flight, and the wait is the suspension.
         if let last = lastTick, (now - last) * 1000 > frozenGapMs {
             stalledOperation = ""
+            stalledSamples = StallSamples()
             lastAnsweredSent = nil
             lock.unlock()
             return
         }
         var operation = stalledOperation
         stalledOperation = ""
+        let samples = stalledSamples.reported
+        stalledSamples = StallSamples()
         let estimate = estimateMs(now: now, sent: sent, previousSent: lastAnsweredSent)
         lastAnsweredSent = sent
         lock.unlock()
         guard estimate >= Double(thresholdMs) else { return }
         if operation.isEmpty { operation = labels.current }
-        onHang(Hang(durationMs: Int(estimate.rounded()), operation: operation))
+        onHang(Hang(durationMs: Int(estimate.rounded()), operation: operation, samples: samples))
+    }
+}
+
+/// What the probe's ticks saw during one stall. It holds fixed names only, and a few of them.
+private struct StallSamples {
+    private static let maxLabels = 8
+    private var counts: [(label: String, count: Int)] = []
+
+    mutating func note(stack: String) {
+        let innermost = stack.split(separator: ">").last.map(String.init) ?? "none"
+        if let index = counts.firstIndex(where: { $0.label == innermost }) {
+            counts[index].count += 1
+        } else if counts.count < Self.maxLabels {
+            counts.append((innermost, 1))
+        } else if let index = counts.firstIndex(where: { $0.label == "other" }) {
+            counts[index].count += 1
+        } else {
+            counts[counts.count - 1] = ("other", counts[counts.count - 1].count + 1)
+        }
+    }
+
+    /// Nothing when one label saw the whole stall: `operation` already says it.
+    var reported: [MainThreadHangProbe.Hang.Sample] {
+        counts.count > 1 ? counts.map { .init(label: $0.label, count: $0.count) } : []
     }
 }
