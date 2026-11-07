@@ -583,14 +583,38 @@ public enum SpokenMarginsPackageImporter {
         guard resolution.status != .wrongSource else {
             throw SessionKitError.persistenceFailed("shared_package_repair_source_did_not_match")
         }
-        var layer = existing
-        layer.itemId = itemId
-        layer.sourceResolutionStatus = resolution.status
-        try repository.saveImportedCommentaryLayer(layer)
-        for var interjection in try repository.loadImportedCommentaryInterjections(layerId: layer.id) {
-            interjection.resolution = resolution.anchorsByPackageScopedId[interjection.packageScopedId]
-                ?? ImportedAnchorResolution(evidenceClass: .unresolved)
-            try repository.saveImportedCommentaryInterjection(interjection)
+        // One transaction: a permanent delete of the old item, or a crash, between the layer's save and a Margin's
+        // would otherwise leave the layer on the new item with Margins half re-resolved, or take the Margin rows the
+        // repair is about to write back (#3409). The work inside is rows only (no files, no network, no waiting on
+        // another lock), so it cannot deadlock. The one write lock is held while every Margin is saved: about 0 ms for
+        // an ordinary layer, but measured at 177 ms for 50 Margins and 6.5 s for 200 with large synthetic layers,
+        // because each Margin save loads the whole layer (`saveImportedCommentaryInterjection`). Other writers wait that
+        // long; reads do not. A caller already in a transaction joins it (the lock is recursive and SQLite can't nest),
+        // so the repair then commits or rolls back with it.
+        let repair = {
+            // Read again under the write lock: a delete that landed first has taken the layer, and saving the copy
+            // read earlier would bring back a layer with none of its Margins.
+            guard var layer = try repository.loadImportedCommentaryLayer(id: existing.id) else {
+                throw SessionKitError.persistenceFailed("shared_package_repair_layer_is_gone")
+            }
+            // And the item the listener chose: a delete of it that landed first would leave the layer on a row that no
+            // longer exists, where nothing shows it.
+            guard (try? repository.loadItem(id: itemId)) != nil else {
+                throw SessionKitError.persistenceFailed("shared_package_repair_item_is_unavailable")
+            }
+            layer.itemId = itemId
+            layer.sourceResolutionStatus = resolution.status
+            try repository.saveImportedCommentaryLayer(layer)
+            for var interjection in try repository.loadImportedCommentaryInterjections(layerId: layer.id) {
+                interjection.resolution = resolution.anchorsByPackageScopedId[interjection.packageScopedId]
+                    ?? ImportedAnchorResolution(evidenceClass: .unresolved)
+                try repository.saveImportedCommentaryInterjection(interjection)
+            }
+        }
+        if let store = repository as? any SessionRepositoryTransaction {
+            try store.withSessionTransaction(repair)
+        } else {
+            try repair()
         }
     }
 

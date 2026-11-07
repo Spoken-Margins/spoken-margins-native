@@ -1147,8 +1147,8 @@ final class Gate1AppModel: ObservableObject {
             reportFailure("This shared Margin has no position in the episode.")
             return
         }
-        // A recording, or a written Margin's reading: asked of `SharedMarginAudio` like every other way to play one (#3412).
-        let audio = WrittenMarginReadings.audio(for: row.interjection, in: row.layer, voiceFile: resolvedApplicationSupportAssetURL(for:))
+        let audio = WrittenMarginReadings.audio(for: row.interjection, in: row.layer, voiceFile: resolvedApplicationSupportAssetURL(for:)) // a recording or a written Margin's reading, as every way to play one asks (#3412)
+        if WrittenMarginReadings.waitsThenPlays(audio, row: row, model: self) { return } // the chosen voice's reading isn't made yet
         guard let voiceURL = WrittenMarginReadings.startingRender(audio) else { return reportFailure(SharedMarginAudio.unavailableWords(for: row.interjection)) }
         endMarginMoment(); stopInterjectionAudioPlayback() // one Margin voice at a time: a paused one of yours mustn't take the resume below (#1672)
         if snapshot.itemId != itemID || !hasActiveSession { startItem(id: itemID) }

@@ -907,7 +907,7 @@ final class Gate2LiveActivityController: Gate2LiveActivityControlling {
             isRecording: snapshot.isRecording,
             microphone: snapshot.isRecording ? microphone : .capturing,
             availableCommands: Gate2LiveActivityPolicy.availableCommands(from: snapshot).map(\.rawValue),
-            sharedMarginSenderLabel: sharedMarginPrompt?.senderLabel,
+            sharedMarginSenderLabel: sharedMarginPrompt.map { FriendArrivalWords.liveActivitySender(senderLabel: $0.senderLabel) },
             skimForwardDestinationMs: snapshot.skimForwardDestinationMs,
             skimBackwardDestinationMs: snapshot.skimBackwardDestinationMs
         )

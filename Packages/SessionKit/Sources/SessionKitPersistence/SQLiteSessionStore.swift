@@ -2387,9 +2387,13 @@ extension SQLiteSessionStore: StructuredDocumentRepository {
     /// (layers x Margins JSON parses on each Library read). A broken payload gives NULL, which matches nothing.
     /// It joins on the layer's `item_id`, not the Margin's, which can still be NULL for a Margin imported
     /// before its layer found its item.
+    ///
+    /// The last column counts the new Margins with no recording. Only those can be notes nobody can meet, which SQL can't
+    /// tell (#3402), so a Library with none of them reads nothing more; see `newNotesNobodyCanMeet`.
     static let sharedMarginTalliesSQL = """
         SELECT layer.item_id, COUNT(note.id),
-               SUM(CASE WHEN json_extract(note.payload, '$.firstHeardAt') IS NULL THEN 1 ELSE 0 END)
+               SUM(CASE WHEN json_extract(note.payload, '$.firstHeardAt') IS NULL THEN 1 ELSE 0 END),
+               SUM(CASE WHEN json_extract(note.payload, '$.firstHeardAt') IS NULL AND json_extract(note.payload, '$.audioPath') IS NULL THEN 1 ELSE 0 END)
         FROM records AS note
         JOIN records AS layer
           ON layer.kind = ?2
@@ -2399,12 +2403,31 @@ extension SQLiteSessionStore: StructuredDocumentRepository {
         GROUP BY layer.item_id;
         """
 
+    /// The narrow read behind that last column: the same rows, with only what `SharedMarginHearing.noteCanBeMet` needs.
+    /// No Margin is decoded. The CASE keeps a broken payload from failing the read: it gives no match, as above.
+    static let newNotesSQL = """
+        SELECT layer.item_id, json_extract(note.payload, '$.approvedTranscript'),
+               COALESCE(json_extract(note.payload, '$.listenerReadAloud'), json_extract(note.payload, '$.senderReadAloud'), 1)
+        FROM records AS note
+        JOIN records AS layer
+          ON layer.kind = ?2
+         AND layer.id = CASE WHEN json_valid(note.payload) THEN json_extract(note.payload, '$.layerId') END
+        WHERE note.kind = ?1 AND layer.item_id IS NOT NULL
+          AND CASE WHEN json_valid(note.payload) THEN json_extract(note.payload, '$.firstHeardAt') IS NULL AND json_extract(note.payload, '$.audioPath') IS NULL ELSE 0 END
+          AND CASE WHEN json_valid(layer.payload) THEN json_extract(layer.payload, '$.deletedAt') IS NULL ELSE 0 END;
+        """
+
     /// The same SQL with the listener's hidden senders and hidden Margins left out (#3469): the layers of a hidden
     /// sender and any Margin hidden on its own are not counted, so the Library row, its New badge and the Shared
     /// Margins filter agree with every other screen. The ids are bound, never spliced into the text. With nothing
     /// hidden this is `sharedMarginTalliesSQL` itself.
     static func sharedMarginTalliesSQL(hidden: HiddenSenders) -> (sql: String, bindings: [String]) {
-        guard !hidden.isEmpty else { return (sharedMarginTalliesSQL, []) }
+        hidingFromSharedMarginSQL(sharedMarginTalliesSQL, before: "GROUP BY layer.item_id;", hidden: hidden)
+    }
+
+    /// Adds the hidden-list conditions to one of the two reads above, at the end of its WHERE clause.
+    private static func hidingFromSharedMarginSQL(_ base: String, before tail: String, hidden: HiddenSenders) -> (sql: String, bindings: [String]) {
+        guard !hidden.isEmpty else { return (base, []) }
         let senderIds = hidden.entries.map(\.senderId), marginIds = hidden.margins.map(\.marginId)
         var conditions = ""
         var next = 3
@@ -2415,9 +2438,8 @@ extension SQLiteSessionStore: StructuredDocumentRepository {
         // A layer with no sender id is always counted, as the screens show it: NULL is kept.
         if !senderIds.isEmpty { conditions += "\n          AND COALESCE(json_extract(layer.payload, '$.senderId'), '') NOT IN (\(placeholders(senderIds.count)))" }
         if !marginIds.isEmpty { conditions += "\n          AND note.id NOT IN (\(placeholders(marginIds.count)))" }
-        let sql = sharedMarginTalliesSQL.replacingOccurrences(
-            of: "GROUP BY layer.item_id;", with: conditions + "\nGROUP BY layer.item_id;")
-        precondition(sql != sharedMarginTalliesSQL, "the hidden-list conditions found nowhere to go")
+        let sql = base.replacingOccurrences(of: tail, with: conditions + "\n" + tail)
+        precondition(sql != base, "the hidden-list conditions found nowhere to go")
         return (sql, senderIds + marginIds)
     }
 
@@ -2435,17 +2457,43 @@ extension SQLiteSessionStore: StructuredDocumentRepository {
             bind(statement, index: 1, value: "imported_commentary_interjection")
             bind(statement, index: 2, value: "imported_commentary_layer")
             for (offset, value) in bindings.enumerated() { bind(statement, index: Int32(3 + offset), value: value) }
-            var tallies: [String: SharedMarginTally] = [:]
+            var counts: [String: (total: Int, new: Int)] = [:]
+            var anyNewNote = false
             while sqlite3_step(statement) == SQLITE_ROW {
                 guard let raw = sqlite3_column_text(statement, 0) else { continue }
                 rowCount += 1
-                tallies[String(cString: raw)] = SharedMarginTally(
-                    total: Int(sqlite3_column_int64(statement, 1)),
-                    new: Int(sqlite3_column_int64(statement, 2))
-                )
+                counts[String(cString: raw)] = (Int(sqlite3_column_int64(statement, 1)), Int(sqlite3_column_int64(statement, 2)))
+                anyNewNote = anyNewNote || sqlite3_column_int64(statement, 3) > 0
             }
-            return tallies
+            let unmet = anyNewNote ? try newNotesNobodyCanMeet(connection, hidden: hidden) : [:]
+            return counts.reduce(into: [:]) { tallies, entry in
+                tallies[entry.key] = SharedMarginTally(total: entry.value.total, new: entry.value.new - (unmet[entry.key] ?? 0))
+            }
         }
+    }
+
+    /// Per item, the new Margins with no recording that this listener has no way to meet (#3402). The check is Swift, so
+    /// it runs here over `newNotesSQL` and nothing is stored: the database and the packets are as they were, and the
+    /// answer follows the phone's voices. Runs on whichever thread reads the Library, and `noteCanBeMet` answers from memory.
+    private func newNotesNobodyCanMeet(_ connection: OpaquePointer?, hidden: HiddenSenders) throws -> [String: Int] {
+        let (sql, bindings) = Self.hidingFromSharedMarginSQL(Self.newNotesSQL, before: ";", hidden: hidden)
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(connection, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw SessionKitError.persistenceFailed("prepare_new_notes")
+        }
+        defer { sqlite3_finalize(statement) }
+        bind(statement, index: 1, value: "imported_commentary_interjection")
+        bind(statement, index: 2, value: "imported_commentary_layer")
+        for (offset, value) in bindings.enumerated() { bind(statement, index: Int32(3 + offset), value: value) }
+        var unmet: [String: Int] = [:]
+        while sqlite3_step(statement) == SQLITE_ROW {
+            guard let item = sqlite3_column_text(statement, 0) else { continue }
+            let words = sqlite3_column_text(statement, 1).map { String(cString: $0) } ?? ""
+            if !SharedMarginHearing.noteCanBeMet(words: words, readAloudChoice: sqlite3_column_int64(statement, 2) != 0) {
+                unmet[String(cString: item), default: 0] += 1
+            }
+        }
+        return unmet
     }
 
     /// SQLite's plan for `loadSharedMarginTallies`, one line per step, so a test can tell a primary-key

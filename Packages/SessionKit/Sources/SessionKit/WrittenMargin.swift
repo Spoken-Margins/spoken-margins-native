@@ -28,10 +28,7 @@ extension ImportedCommentaryInterjection {
     /// reading never says "Cole wrote: Voice Margin at 12:34". Words the voice has nothing to say for (only emoji, say)
     /// are not written either: the listener would hear "Cole wrote:" and silence, and the Margin would count as heard.
     public var isWritten: Bool {
-        audioPath == nil
-            && !approvedTranscript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && !SharedMarginPlaceholderWords.matches(approvedTranscript)
-            && WrittenMarginSpeech.isReadable(approvedTranscript)
+        audioPath == nil && WrittenMarginSpeech.isNote(approvedTranscript)
     }
 }
 
@@ -39,7 +36,7 @@ extension ImportedCommentaryInterjection {
 /// words, not an article, so it does not go through the article cleaning (`SpeechTextNormalizer.projectForSystemSpeech`),
 /// which drops the combining marks Hindi and Thai are written with and reads "Great point.Totally agree" as a web
 /// address. Only links and emoji are removed; every other script, mark and punctuation mark stays. A note is readable
-/// when words remain. Whether the phone has a voice for its language is `WrittenMarginReader`'s answer at render time.
+/// when words remain. Whether the phone has a voice for its language is `hasVoice`, and `WrittenMarginReader`'s at render time.
 public enum WrittenMarginSpeech {
     /// How much of a note is looked at when deciding whether it is readable, so the cost stays flat for a sender's
     /// 50,000-character note that the main thread would otherwise scan every time a card is built.
@@ -71,6 +68,29 @@ public enum WrittenMarginSpeech {
         let answer = speakable(sample).contains { $0.isLetter || $0.isNumber }
         answers.setObject(NSNumber(value: answer), forKey: key)
         return answer
+    }
+
+    /// Whether the words of a Margin with no recording are a note the sender typed, with something in them to say.
+    /// `isWritten` and the count of new Margins (#3402), which has only the words, both ask here.
+    public static func isNote(_ words: String) -> Bool {
+        !words.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !SharedMarginPlaceholderWords.matches(words)
+            && isReadable(words)
+    }
+
+    private static let voiceCheckLock = NSLock()
+    nonisolated(unsafe) private static var voiceCheck: (@Sendable (String) -> Bool)?
+
+    /// Installs this phone's answer to `hasVoice` (`WrittenMarginVoiceCoverage`, SessionKitAudio, which this package's
+    /// core can't see). The answer must come from memory: rows ask it on the main thread as they draw. Nil removes it.
+    public static func useVoiceCheck(_ check: (@Sendable (String) -> Bool)?) {
+        voiceCheckLock.withLock { voiceCheck = check }
+    }
+
+    /// Whether this phone has a voice that can read a note (#3402). With nothing installed, or before the phone's voices
+    /// are known, the answer is yes: the note is offered, and the render's own gate has the last word, as it always had.
+    public static func hasVoice(for words: String) -> Bool {
+        voiceCheckLock.withLock { voiceCheck }?(words) ?? true
     }
 }
 
@@ -128,6 +148,8 @@ extension SharedMarginReview.Entry {
 public enum ReadAloudWords {
     /// The line under the control. `senderName` is the sender's name, or nil when the file names nobody.
     public static func footer(for margin: ImportedCommentaryInterjection, senderName: String?) -> String {
+        // No voice on this phone can read it, whatever either of them chose (#3402): the same line a tap on it gets.
+        if !WrittenMarginSpeech.hasVoice(for: margin.approvedTranscript) { return SharedMarginAudio.noVoiceWords }
         let who = senderName ?? "Your friend"
         switch (margin.readAloudChoice, margin.senderReadAloud == false, margin.listenerReadAloud != nil) {
         case (true, false, _):
