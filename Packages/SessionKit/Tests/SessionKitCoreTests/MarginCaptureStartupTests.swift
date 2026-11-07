@@ -37,6 +37,24 @@ final class MarginCaptureStartupTests: XCTestCase {
         _ = try engine.cancelInterjection()
     }
 
+    /// The start of a Margin runs on the main thread straight after the audio session switched. It needs the input
+    /// route, not the full diagnostics, which read every session property and stat the file (#2256).
+    func testStartingAMarginAsksForTheInputRouteAloneNotTheFullDiagnostics() throws {
+        let item = Item(id: "article", title: "Article", mediaType: "text", text: "First sentence.",
+                        externalReference: nil, status: "ready")
+        let recorder = StartupRecorder()
+        let engine = SessionEngine(profile: profile,
+                                   repository: InMemorySessionRepository(items: [item.id: item], sessions: [:], interjections: [:]),
+                                   audio: StartupPlayer(), recorder: recorder)
+        _ = try engine.startSession(itemId: item.id)
+        _ = try engine.beginInterjection(request: MarginCaptureRequest())
+        XCTAssertEqual(recorder.fullDiagnosticsReads, 0)
+        recorder.inputRoute = "changed after the start"
+        XCTAssertEqual(engine.recordingCaptureDiagnostics()["recorderInputRoute"], "BluetoothHFP",
+                       "the field still holds the route at the recorder's start")
+        _ = try engine.cancelInterjection()
+    }
+
     func testATapNotedEarlierCountsFromThatTapNotFromTheEngineCall() {
         let tap = Date(timeIntervalSince1970: 1_000)
         let request = MarginCaptureRequest.tapped(at: tap, now: tap.addingTimeInterval(0.75), uptimeNow: 500)
@@ -61,7 +79,10 @@ private final class StartupRecorder: RecordingClient {
     func cancelRecording() throws { started = false }
     func finishRecording(audioRef: String?) throws -> String { started = false; return "interjections/test.m4a" }
     func captureReading() -> RecordingCaptureReading? { reading }
-    func captureDiagnostics() -> [String: String] { ["inputs": "BluetoothHFP"] }
+    var inputRoute = "BluetoothHFP"
+    private(set) var fullDiagnosticsReads = 0
+    func captureInputRoute() -> String? { inputRoute }
+    func captureDiagnostics() -> [String: String] { fullDiagnosticsReads += 1; return ["inputs": inputRoute] }
 }
 
 private final class StartupPlayer: AudioPlaybackClient {

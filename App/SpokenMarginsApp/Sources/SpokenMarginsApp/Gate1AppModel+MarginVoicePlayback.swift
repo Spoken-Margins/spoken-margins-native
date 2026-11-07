@@ -94,7 +94,8 @@ extension Gate1AppModel {
     }
 
     func dismissPendingImportedCommentary() {
-        guard pendingImportedCommentary != nil else { return }
+        guard let dismissed = pendingImportedCommentary else { return }
+        WrittenMarginReadings.skipped(dismissed) // a reading still being made for it stops (#3391)
         importedCommentaryAutoPlayTask?.cancel()
         importedCommentaryAutoPlayTask = nil
         pendingImportedCommentary = nil
@@ -217,7 +218,7 @@ extension Gate1AppModel {
     }
 
     private func sharedMarginHeardFailed(_ marginId: String, _ error: Error) {
-        diagnostics["sharedMarginHeard:\(marginId)"] = "failed:\(error.localizedDescription)"
+        diagnostics["sharedMarginHeard:\(marginId)"] = "failed:\(SafeErrorText.describe(error))"
         refreshSelectedItemInBackground()
         refreshMarginRowsInBackground()
     }
@@ -373,7 +374,7 @@ extension Gate1AppModel {
     private func playImportedCommentaryCue() {
         #if canImport(AVFoundation)
         do { try marginVoicePlayer.playCue() } catch {
-            diagnostics["importedCommentaryCue"] = "failed:\(error.localizedDescription)"
+            diagnostics["importedCommentaryCue"] = "failed:\(SafeErrorText.describe(error))"
         }
         #endif
     }

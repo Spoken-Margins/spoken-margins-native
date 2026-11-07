@@ -187,9 +187,25 @@ struct UserFeedbackBanner: View {
     private var iconColor: Color {
         switch feedback.kind {
         case .success: .green
-        case .warning: .orange
+        case .warning: AppColors.warningText
         case .error: AppColors.dangerText // octagon, not triangle: must differ from warnings by shape (#308)
         }
+    }
+}
+
+/// The banner again, on a sheet. The model's line goes to the root's banner, which a sheet covers, so a control on the
+/// sheet that reports one looks like it did nothing (#3402). A sheet whose controls can report one uses this. It only
+/// mirrors: the root still announces the line and times it out, and when the model drops the event this copy goes too.
+struct SheetFeedbackPresentation: ViewModifier {
+    @EnvironmentObject private var model: Gate1AppModel
+    @State private var feedback: UserFeedbackEvent?
+
+    func body(content: Content) -> some View {
+        content
+            .overlay(alignment: .top) {
+                if let feedback { UserFeedbackBanner(feedback: feedback).padding(.horizontal, 16) }
+            }
+            .onChange(of: model.feedbackEvent) { _, event in feedback = event }
     }
 }
 

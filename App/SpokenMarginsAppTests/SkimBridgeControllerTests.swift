@@ -1,6 +1,7 @@
 import XCTest
 @testable import SessionKit
 import SessionKitPersistence
+import SessionKitSharing
 @testable import SpokenMarginsApp
 
 /// #954: the Skim bridge's order of effects, its availability guard and its destination notifications, against a
@@ -439,6 +440,110 @@ final class SkimBridgeControllerTests: XCTestCase {
         makeController(host).complete()
         XCTAssertEqual(host.log, ["state:completing", "state:nil", "pause", "confirmed:Finished the final scene summary.", "finished"],
                        "there is no later place in the text to move to")
+    }
+
+    // MARK: a friend's map packet, from the file to Skim (#1471)
+
+    private static let friendsHarbourParagraphs = [
+        "The town woke slowly that morning, with the fishing boats rocking against their ropes in the harbour and the gulls arguing over scraps on the quay.",
+        "Marta carried her father's ledger down to the customs shed, where a clerk with ink on his cuffs promised to read every line before noon.",
+        "By midday the wind had turned, and the captains began to say that the barometer was falling faster than anyone had seen since the great storm.",
+        "Nobody believed the old signalman until the lamps along the breakwater began to swing, and then the whole street went quiet at once.",
+        "Evening brought the first rain, a thin grey curtain that blurred the lights of the ferry and sent the children running for the arcade."
+    ]
+
+    /// The listener's side of a friend's map packet with nothing faked but the player: a real packet file written and
+    /// read back, the real importer, and a real store that already holds the listener's own copy. `link` is the
+    /// sender's link for an article; a PDF the sender holds as a file has none.
+    private func listenerWithAFriendsMap(
+        _ directory: URL, itemType: SharedItemType, mediaType: String, listenersText: String, link: String?
+    ) throws -> (host: ScriptedSkimHost, store: SQLiteSessionStore, itemsBefore: [String]) {
+        let senderText = Self.friendsHarbourParagraphs.joined(separator: "\n\n")
+        let created = Date(timeIntervalSince1970: 1_777_000_000)
+        let proposal = try ListeningMapPacketBuilder.proposal(
+            id: "friends-map", generator: "test", languageCode: "en", createdAt: created,
+            scenes: ListeningEdition.blocks(in: senderText).enumerated().map { index, block in
+                ListeningMapPacketBuilder.Scene(
+                    title: "Part \(index + 1)", summary: "Summary \(index + 1) of the harbour story.",
+                    startChar: block.startChar, endChar: block.endChar)
+            },
+            text: senderText)
+        let prepared = try ListeningMapPacketBuilder.prepare(
+            packageId: "package-friends-map", createdAt: created,
+            item: ListeningMapPacketBuilder.identity(itemType: itemType, title: "The Harbour Town", canonicalURL: link, text: senderText),
+            proposal: proposal, senderDisplayLabel: "A Friend")
+        let packetURL = directory.appending(path: "friends-map.spokenmargins")
+        _ = try SpokenMarginsPackageArchive.write(prepared, to: packetURL)
+        let contents = try SpokenMarginsPackageArchive.read(from: packetURL, extractingAssetsTo: directory.appending(path: "packet-assets"))
+
+        let store = try SQLiteSessionStore(path: directory.appending(path: "store.sqlite").path)
+        let item = Item(id: "mine", title: "The Harbour Town", mediaType: mediaType, text: listenersText,
+                        externalReference: link ?? "harbour.pdf", status: "ready", externalReferenceType: "url")
+        try store.seed(item: item)
+        let itemsBefore = try store.listItems().map(\.id)
+        let outcome = try SharedTextListeningMapImporter.importMap(contents, into: item, senderLabel: "A Friend", repository: store)
+        guard case .added = outcome else {
+            XCTFail("the map was not added: \(outcome)")
+            throw ScriptedSkimHost.ScriptedFailure()
+        }
+
+        let host = ScriptedSkimHost()
+        host.store = store
+        host.source = SkimSource(itemId: item.id, durationMs: nil, usesTextPositions: true)
+        host.textPositions = true
+        host.currentPosition = 10
+        return (host, store, itemsBefore)
+    }
+
+    /// The first chapter's summary plays before the reader moves on, and the reader lands at the second chapter's start
+    /// in the listener's own text (#1471's verify pass: no duplicate item, Skim summary-first).
+    private func assertAFriendsMapSkimsSummaryFirst(
+        itemType: SharedItemType, mediaType: String, listenersText: String, link: String?
+    ) async throws {
+        let (host, store, itemsBefore) = try listenerWithAFriendsMap(
+            try temporaryDirectory(), itemType: itemType, mediaType: mediaType, listenersText: listenersText, link: link)
+        XCTAssertEqual(itemsBefore, ["mine"])
+        XCTAssertEqual(try store.listItems().map(\.id), ["mine"], "the map went onto the listener's own item; no second item was made")
+        let map = try XCTUnwrap(store.loadListeningMap(itemId: "mine"))
+        XCTAssertGreaterThanOrEqual(map.chapters.count, 3, "at least half the chapters were found in the listener's copy")
+        let proposal = try XCTUnwrap(store.loadPortableListeningMapProposals(itemId: "mine").first)
+
+        let controller = makeController(host)
+        controller.updateAvailability()
+        await controller.settleResources()
+        XCTAssertTrue(controller.itemHasMap)
+        XCTAssertTrue(host.available.forward, "Skim forward is offered on the imported map")
+        XCTAssertEqual(controller.forwardDestinationMs, map.chapters[1].startChar)
+
+        guard case .needsSummaryAudio(let request) = controller.resolve(direction: .forward, at: 10) else {
+            return XCTFail("the first chapter has a summary and no audio yet, so the press prepares it before moving on")
+        }
+        XCTAssertEqual(request.itemId, "mine")
+        XCTAssertEqual(request.scene.id, proposal.scenes[0].id, "the summary of the chapter being left")
+        XCTAssertEqual(request.scene.summaryText, "Summary 1 of the harbour story.")
+        XCTAssertEqual(request.destinationMediaTimeMs, map.chapters[1].startChar, "then the reader lands at the next chapter")
+
+        controller.perform(direction: .forward)
+        try await waitForRecords(host, count: 2)
+        XCTAssertEqual(host.prepared.count, 1)
+        XCTAssertEqual(host.prepared.first?.hasSuffix("/\(proposal.scenes[0].id)"), true)
+        XCTAssertEqual(host.records.first?["outcome"], "preparing_summary")
+    }
+
+    func testAFriendsMapPacketForAnArticleAttachesToTheListenersCopyAndSkimsSummaryFirst() async throws {
+        try await assertAFriendsMapSkimsSummaryFirst(
+            itemType: .text, mediaType: "text",
+            listenersText: Self.friendsHarbourParagraphs.joined(separator: "\n\n"), link: "https://example.com/harbour")
+    }
+
+    func testAFriendsMapPacketForAPDFAttachesToTheListenersExtractionAndSkimsSummaryFirst() async throws {
+        // The listener's PDF reads "harbor" where the sender's text had "harbour", so the edition no longer matches
+        // and the chapters are placed by where their quotations land, not by the sender's offsets. "harbour" sits in
+        // the middle of the first paragraph, away from the words its chapter is anchored by, so all five still place.
+        try await assertAFriendsMapSkimsSummaryFirst(
+            itemType: .pdf, mediaType: "pdf",
+            listenersText: Self.friendsHarbourParagraphs.joined(separator: "\n\n").replacingOccurrences(of: "harbour", with: "harbor"),
+            link: nil)
     }
 
     // MARK: completion order

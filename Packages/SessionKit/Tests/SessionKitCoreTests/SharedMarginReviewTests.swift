@@ -249,12 +249,12 @@ final class SharedMarginReviewTests: XCTestCase {
 
     func testAStandInNeverReachesTheCardOrAReplyCaption() {
         for raw in ["Unsigned sender", "Imported collection", " imported collection "] {
-            XCTAssertEqual(PinnedMarginCard.Subject.friend(raw).possessive, "A friend's Margin", raw)
-            XCTAssertEqual(PinnedMarginCard.Subject.friend(raw).speaker, "A friend is", raw)
+            XCTAssertEqual(PinnedMarginCard.Subject.friend(raw).title, "Shared Margin", raw)
+            XCTAssertEqual(PinnedMarginCard.Subject.friend(raw).loadingTitle, "Loading this Margin", raw)
             XCTAssertEqual(SharedMarginReview.ReplyContext(parent: .shared(marginId: "m", label: raw, mediaTimeMs: nil)).caption,
                            "Reply to a friend's Margin", raw)
         }
-        XCTAssertEqual(PinnedMarginCard.Subject.friend("Ana").possessive, "Ana's Margin")
+        XCTAssertEqual(PinnedMarginCard.Subject.friend("Ana").title, "Margin from Ana")
         XCTAssertEqual(SharedMarginReview.ReplyContext(parent: .shared(marginId: "m", label: "Ana", mediaTimeMs: nil)).caption,
                        "Reply to Ana's Margin")
     }
@@ -402,11 +402,10 @@ final class SharedMarginReviewTests: XCTestCase {
         XCTAssertEqual(sequence.phase, .listening)
     }
 
-    /// Reports the playing voice as finished the way the conductor does, following a hop or the next Margin.
+    /// Reports the playing voice as finished the way the conductor does, following the next Margin that sits at the same place.
     private func finish(_ sequence: inout MarginMomentSequence, at position: Int, heard: inout [String]) -> Int {
         while true {
             switch sequence.marginFinished(sourceAtMediaTimeMs: position) {
-            case .seek(let ms): return ms
             case .continueSource, .reviewDone: return position
             case .playNow(let margin): heard.append(margin.label ?? "?")
             }

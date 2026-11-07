@@ -35,6 +35,8 @@ struct InterjectionSharingState {
     var drafts: [ShareInterjectionDraft] = []
     var senderDisplayLabel = UserDefaults.standard.string(forKey: "sharingSenderDisplayLabel") ?? ""
     var includesAcousticEvidence = true
+    /// Model-written scene summaries the packet leaves out because the source is not marked public (#3449). Zero shows no note.
+    var withheldMapSceneCount = 0
     var itemReferenceURL: String?
     var canEmbedLinklessItem = false
     var isAppAuthoredItem = false
@@ -158,7 +160,7 @@ struct SpokenMarginsPackageImportView: View {
                                 .font(.title3.weight(.semibold))
                             Text(review.senderLabel)
                                 .font(.headline)
-                            Text("Integrity checked · Sender identity is not verified")
+                            Text("We can't prove who sent this.")
                                 .font(.caption)
                                 .foregroundStyle(AppColors.secondaryText)
                             Text("\(review.marginCount) shared Margin\(review.marginCount == 1 ? "" : "s")")
@@ -168,10 +170,10 @@ struct SpokenMarginsPackageImportView: View {
                     Text(importExplanation)
                         .font(.callout)
 
-                    DisclosureGroup("Package contents") {
+                    DisclosureGroup("What is included") {
                         VStack(alignment: .leading, spacing: 5) {
-                            Text("Voice files: \(review.contents.manifest.assets.filter { [SpokenMarginsAssetRole.originalVoice, SpokenMarginsAssetRole.cleanedVoice].contains($0.role) }.count)")
-                            Text("Acoustic anchor signatures: \(review.contents.manifest.assets.filter { $0.role == SpokenMarginsAssetRole.acousticSignature }.count)")
+                            Text("Voice recordings: \(review.contents.manifest.assets.filter { [SpokenMarginsAssetRole.originalVoice, SpokenMarginsAssetRole.cleanedVoice].contains($0.role) }.count)")
+                            Text("Podcast matching signatures: \(review.contents.manifest.assets.filter { $0.role == SpokenMarginsAssetRole.acousticSignature }.count)")
                             Text("Listening Map proposals: \(review.contents.listeningMapProposals.count) (stored as proposals; not activated)")
                             Text(review.includesEmbeddedItem ? "Full listened-to item: included" : "Full listened-to item: not included")
                             Text("Podcast audio: not included")
@@ -251,7 +253,7 @@ struct InterjectionSharingView: View {
                                 VStack(alignment: .leading, spacing: 8) {
                                     Text("Review what you are sending")
                                         .font(.headline)
-                                    Text("The package includes only selected Margins, the reviewed text and voice version shown below, the words around each Margin, item identity, and optional acoustic signatures. It never includes the podcast audio, raw diagnostics, or unrelated sessions.")
+                                    Text("Only the Margins you picked go: their text and voice, the words around each one, and which item they belong to. The podcast audio and the rest of your phone stay put.")
                                         .font(.callout)
                                         .foregroundStyle(AppColors.secondaryText)
                                 }
@@ -261,6 +263,13 @@ struct InterjectionSharingView: View {
                                 .textFieldStyle(.roundedBorder)
 
                             itemTransportReview
+
+                            if let note = MapTextDisclosure.withheldNote(sceneCount: model.sharingState.withheldMapSceneCount) {
+                                Text(note)
+                                    .font(.callout)
+                                    .foregroundStyle(AppColors.secondaryText)
+                                    .accessibilityIdentifier("share.review.mapSummariesStayHome")
+                            }
 
                             Toggle("Include high-reliability podcast anchor evidence", isOn: $model.sharingState.includesAcousticEvidence)
                             Text("Recommended. These ShazamKit signatures help a recipient find the same spoken passage when their download contains different ads. They are not playable podcast audio.")
@@ -313,6 +322,7 @@ struct InterjectionSharingView: View {
             }
         }
         .onDisappear(perform: model.cancelBulkSharePreparation)
+        .task { await model.refreshWithheldMapNote() }
         .onPreferenceChange(MarginTranscriptFullHeightKey.self) {
             transcriptFullHeights.merge($0, uniquingKeysWith: { _, new in new })
         }
@@ -399,7 +409,7 @@ struct InterjectionSharingView: View {
                         .foregroundStyle(
                             model.sharingState.bulkPreparationFailureCount == 0
                                 ? AppColors.secondaryText
-                                : .orange
+                                : AppColors.warningText
                         )
                     }
                 }
@@ -445,12 +455,16 @@ struct InterjectionSharingView: View {
                             systemImage: "person.crop.circle.badge.exclamationmark"
                         )
                         .font(.caption)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(AppColors.warningText)
                     }
                 } else {
-                    Text("The item itself cannot be included. Make sure the recipient already has the same item.")
-                        .font(.footnote)
-                        .foregroundStyle(.orange)
+                    Label {
+                        Text("The item itself cannot be included. Make sure the recipient already has the same item.")
+                            .font(.footnote)
+                    } icon: {
+                        Image(systemName: "exclamationmark.triangle")
+                    }
+                    .foregroundStyle(AppColors.warningText)
                 }
             }
         }
@@ -480,7 +494,7 @@ struct InterjectionSharingView: View {
                             .foregroundStyle(AppColors.secondaryText)
                         Text(note)
                             .font(.callout)
-                        Text("Only you can see this note; it is not included in the package.")
+                        Text("Only you can see this note; it is not sent.")
                             .font(.footnote)
                             .foregroundStyle(AppColors.secondaryText)
                     }
@@ -672,12 +686,12 @@ struct InterjectionSharingView: View {
                 if let warning = draft.warning {
                     Label(warning, systemImage: "exclamationmark.triangle")
                         .font(.caption)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(AppColors.warningText)
                 }
                 if let message = draft.preparationMessage {
                     Label(message, systemImage: "exclamationmark.circle")
                         .font(.caption)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(AppColors.warningText)
                 }
 
                 DisclosureGroup("Words around the Margin") {
@@ -915,7 +929,7 @@ struct SharedSpokenMarginsPackageReadyView: View {
             VStack(alignment: .leading, spacing: 18) {
                 ProductPanel {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("Package ready")
+                        Text("Your Margins are ready")
                             .font(.headline)
                         Text(packageURL.lastPathComponent)
                             .font(.caption)

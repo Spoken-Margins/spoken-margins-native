@@ -1,5 +1,9 @@
 import os
 os.environ.pop('SM_TRUNK', None)  # fixtures are written for the default trunk; the lane and the Mac export SM_TRUNK (#1492)
+# A dispatched hosted run (hosted-portable.yml, workflow_dispatch) runs these tests inside a real Actions job, so the real
+# event name would reach lane-runner.py's `--mode auto` branch on it and fail every test that drives main() (#3645).
+# The lane test modules import this one first; a test sets the event itself with mock.patch.dict when it needs one.
+os.environ.pop('GITHUB_EVENT_NAME', None)
 import contextlib
 import datetime
 import importlib.util
@@ -2480,7 +2484,9 @@ class MainFlowTests(unittest.TestCase):
         # Every Mac job checks out the Git LFS models: --plan fast's contracts check reads them (#301). The third is
         # the release job a T3 PASS hands to a build runner (#1209). The lane job checks them out on the Mac, and on a
         # GitHub-hosted Mac fetches them from a cache instead (#1389 phase 2, test_lane_hosted_app.py).
-        self.assertEqual(workflow.count('lfs: true'), 2)  # the release job and the automerge-mac fallback (#2459)
+        self.assertEqual(workflow.count('lfs: true'), 1)  # the automerge-mac fallback (#2459)
+        # The release job takes them only on the build runner (#3501).
+        self.assertIn("lfs: ${{ !(vars.LANE_HOSTED_FAST == 'on' && vars.LANE_HOSTED_MAC_REST == 'on') }}", workflow)
         self.assertIn("lfs: ${{ runner.environment != 'github-hosted' }}", workflow)
         self.assertIn("lfs: ${{ !contains(fromJSON(needs.route.outputs.automerge || '[]'), 'ubuntu-latest') }}", workflow)
         # hosted routing plus the four Mac jobs (automerge-mac, #2459)
@@ -4060,6 +4066,17 @@ class TrustedCommentTests(unittest.TestCase):
         self.assertEqual(lane.pending_requests(kept), (None, False))
         printed.assert_not_called()
 
+
+
+class DispatchedHostedRunTests(unittest.TestCase):
+    """#3645: the lane tests pass inside a dispatched hosted run, where GITHUB_EVENT_NAME is workflow_dispatch and
+    GITHUB_ACTIONS is true. Runs a lane test module that drives main() in a child with that environment."""
+
+    def test_a_lane_module_that_drives_main_passes_under_a_dispatched_hosted_run(self):
+        env = {**os.environ, 'GITHUB_EVENT_NAME': 'workflow_dispatch', 'GITHUB_ACTIONS': 'true'}
+        done = subprocess.run([sys.executable, '-m', 'unittest', 'test_lane_beside_simulator'],
+                              cwd=Path(__file__).resolve().parent, env=env, capture_output=True, text=True, timeout=120)
+        self.assertEqual(done.returncode, 0, done.stderr[-2000:])
 
 if __name__ == '__main__':
     unittest.main()

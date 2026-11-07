@@ -1,3 +1,4 @@
+import ast
 import json
 import os
 from pathlib import Path
@@ -74,6 +75,26 @@ class LaneGuardTests(unittest.TestCase):
                         'scripts/lane-sim-boot 31A5C797-9CE5-409F-9C65-4A8D4C339D44'):
             with self.subTest(command=command):
                 self.assertIsNone(self.decide(bash(command), self.desk))
+
+    def test_host_only_split_plans_pass_the_guard(self):
+        # #3567: hosted-portable.yml runs fast-portable on Linux; it boots no simulator, so a session may run it.
+        for plan in ('fast-portable', 'fast-hosted-sessionkit', 'fast-mac-rest'):
+            for flag in (f'--plan {plan}', f'--plan={plan}'):
+                command = f'.venv/bin/python scripts/verify-tests.py {flag}'
+                self.assertEqual(guard.classify_command(command), [], command)
+                self.assertEqual(self.decide(bash(command)), None, command)
+        # A plan that is not a host plan still counts as a simulator plan, split-looking names included.
+        self.assertTrue(guard.classify_command('python3 scripts/verify-tests.py --plan fast-portable-app'))
+
+    def test_every_fast_split_plan_in_verify_tests_is_classified_as_a_host_plan(self):
+        tree = ast.parse((SCRIPTS / 'verify-tests.py').read_text())
+        plans = None
+        for node in tree.body:
+            if isinstance(node, ast.Assign) and any(getattr(t, 'id', '') == 'FAST_SPLIT_PLANS' for t in node.targets):
+                plans = ast.literal_eval(node.value)
+        self.assertTrue(plans, 'verify-tests.py no longer defines FAST_SPLIT_PLANS as a literal; update this test')
+        for plan in plans:
+            self.assertIn(plan, guard.HOST_PLANS, f'{plan} is a host-only split but the lane guard would block it')
 
     def test_host_work_and_read_only_queries_pass(self):
         for command in ('xcrun simctl list devices available',

@@ -19,7 +19,7 @@ extension InterruptionBackgroundHold.OtherAudioWatch {
                     try AVAudioSession.sharedInstance().setActive(true)
                     return nil
                 } catch {
-                    return "\(error.localizedDescription) (\((error as NSError).code))"
+                    return SafeErrorText.describe(error)
                 }
             }
         )

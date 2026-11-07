@@ -117,6 +117,56 @@ final class LiveSessionFileWorkerTests: XCTestCase {
         XCTAssertEqual(afterRemove?.margins.map(\.id), ["typed"])
     }
 
+    /// #3489: a phone spoken Margin used to be filed by the screen, so a screen that closed (or an End tapped while
+    /// recording) dropped it. The worker files it into the stored session by id, ended or not, and a screen save
+    /// that hasn't seen it keeps it.
+    func testAPhoneSpokenMarginFilesIntoItsSessionEvenAfterEndAndSurvivesAStaleScreenSave() async throws {
+        let worker = LiveSessionFileWorker(root: root)
+        var screen = LiveSession(id: "live", startedAt: t0, margins: [LiveSessionMargin(id: "typed", text: "hi", markedAt: t0)])
+        try await worker.save(screen, generation: 1)
+        screen.endedAt = t0.addingTimeInterval(600) // End tapped while the Margin was still recording
+        try await worker.save(screen, generation: 2)
+
+        let filed = await worker.attachSpokenMargin(
+            sessionId: "live", marginId: "phone-1", audioPath: "interjections/a.m4a",
+            markedAt: t0.addingTimeInterval(300), durationMs: 360_000, spokenOn: "phone"
+        )
+        XCTAssertEqual(filed?.margins.map(\.id), ["typed", "phone-1"])
+
+        try await worker.save(screen, generation: 3) // the screen's copy, without the spoken Margin
+        let stored = await worker.session(id: "live")
+        XCTAssertEqual(stored?.margins.map(\.id), ["typed", "phone-1"])
+        XCTAssertEqual(stored?.margins.last?.audioPath, "interjections/a.m4a")
+        XCTAssertEqual(stored?.margins.last?.spokenOn, "phone")
+        XCTAssertNotNil(stored?.endedAt)
+    }
+
+    func testAPhoneSpokenMarginForADiscardedSessionIsRefused() async throws {
+        let worker = LiveSessionFileWorker(root: root)
+        try await worker.save(LiveSession(id: "live", startedAt: t0), generation: 1)
+        await worker.discard(sessionId: "live", generation: 2)
+        let filed = await worker.attachSpokenMargin(
+            sessionId: "live", marginId: "phone-1", audioPath: "interjections/a.m4a",
+            markedAt: t0.addingTimeInterval(5), durationMs: 1_000, spokenOn: "phone"
+        )
+        XCTAssertNil(filed)
+        let stored = await worker.session(id: "live")
+        XCTAssertNil(stored)
+    }
+
+    func testAPhoneSpokenMarginIsFiledOnce() async throws {
+        let worker = LiveSessionFileWorker(root: root)
+        try await worker.save(LiveSession(id: "live", startedAt: t0), generation: 1)
+        for _ in 0..<2 {
+            await worker.attachSpokenMargin(
+                sessionId: "live", marginId: "phone-1", audioPath: "interjections/a.m4a",
+                markedAt: t0.addingTimeInterval(5), durationMs: 1_000, spokenOn: "phone"
+            )
+        }
+        let stored = await worker.session(id: "live")
+        XCTAssertEqual(stored?.margins.map(\.id), ["phone-1"])
+    }
+
     /// Build dbaa231: with any stored session, even an ended one, every Watch Margin went into it. Slice 1a check 4: an
     /// hour after the meeting ended, a Watch Margin makes a new quick session, not the meeting.
     func testAWatchMarginAnHourAfterTheMeetingEndedDoesNotGoIntoIt() async throws {
@@ -172,6 +222,25 @@ final class LiveSessionFileWorkerTests: XCTestCase {
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: landing.path), [])
         let repeatPass = await worker.fileWatchInbox(playerRuns: [run], now: t0.addingTimeInterval(210))
         XCTAssertEqual(repeatPass.placements, [], "a repeat is not placed twice")
+    }
+
+    func testAMarginAimedAtTheEpisodeIsAnsweredAsFiledOnThisEpisode() async throws {
+        let worker = LiveSessionFileWorker(root: root)
+        let transfer = WatchMarginTransfer(
+            id: "aimed", wallStart: t0.addingTimeInterval(100), durationMs: 2_000, itemTarget: WatchItemTarget(itemId: "ep", positionMs: 7_000)
+        )
+        let received = root.appending(path: "received-aimed.m4a")
+        try Data("audio-aimed".utf8).write(to: received)
+        try worker.storeIncoming(fileAt: received, transfer: transfer)
+
+        let pass = await worker.fileWatchInbox(playerRuns: [], now: t0.addingTimeInterval(105))
+        let placement = try XCTUnwrap(pass.placements.first)
+        XCTAssertEqual(placement.itemId, "ep")
+        XCTAssertEqual(placement.positionMs, 7_000, "the position the Watch saw, with no run of the item")
+        let answer = await worker.completePlacement(placement)
+
+        XCTAssertEqual(answer?.filedIn, "this episode")
+        XCTAssertEqual(answer?.positionMs, 7_000)
     }
 
     func testAnAppThatEndedBeforeTheItemTookTheMarginFilesItOnTheNextPass() async throws {

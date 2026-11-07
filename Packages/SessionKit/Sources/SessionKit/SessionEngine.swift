@@ -75,6 +75,10 @@ public final class SessionEngine {
     /// The file the recorder closed for a Margin that isn't saved yet. The recorder forgets it once finished and
     /// Save passes no path, so a Save that failed once could never be tried again (#911).
     private var closedRecordingRef: String?
+    /// Checks a source's public copy before an export that carries the Listening Map, so a public source's scene text
+    /// goes out with it and any other source's stays on the phone (#3449). Nil makes no request: every source is then
+    /// treated as unmarked unless it already holds a mark.
+    public var publicSourceMarker: PublicSourceMarker?
     /// Where unsaved recordings are noted so a launch after a kill can find them (#951). Nil keeps no notes.
     public var recordingDraftJournal: RecordingDraftJournal?
     /// Why the last note could not be written or removed. A failed note never stops a recording.
@@ -174,12 +178,14 @@ public final class SessionEngine {
         playbackRequestedAt = now(); defer { playbackRequestedAt = nil } // time to first audio counts from here (#357)
         try require("startSession", category: "sync", capabilities: ["canonical_persistence", "receive_prepared_packages", "browser_session_handoff"])
         forgetFailure(unlessItemIs: itemId)
-        var item = try repository.loadItem(id: itemId)
-        item = try discardUnavailableGeneratedTextAudio(from: item)
-        item = adoptingPublisherAudio(for: item)
+        let labels = MainThreadOperationLabels.shared // so a slow start names its step (#2256)
+        var item = try labels.scoped("start.loadItem") {
+            let loaded = try discardUnavailableGeneratedTextAudio(from: repository.loadItem(id: itemId))
+            return adoptingPublisherAudio(for: loaded)
+        }
         currentItem = item
-        currentMap = try repository.loadListeningMap(itemId: itemId)
-        item = try prepareGeneratedTextAudioIfAvailable(for: item)
+        currentMap = try labels.scoped("start.loadMap") { try repository.loadListeningMap(itemId: itemId) }
+        item = try labels.scoped("start.prepareAudio") { try prepareGeneratedTextAudioIfAvailable(for: item) }
         currentItem = item
         let targetType = playbackTargetType(for: item)
         let startedAt = now()
@@ -198,9 +204,9 @@ public final class SessionEngine {
             playbackRate: 1
         )
         currentSession = session
-        try persistSession(session)
-        try playCurrentTarget(session)
-        publishPlaybackStart(for: session, phase: .itemPlayback)
+        try labels.scoped("start.persist") { try persistSession(session) }
+        try labels.scoped("start.play") { try playCurrentTarget(session) }
+        labels.scoped("start.publish") { publishPlaybackStart(for: session, phase: .itemPlayback) }
         return snapshot
     }
 
@@ -1196,13 +1202,25 @@ public final class SessionEngine {
 
     @discardableResult
     public func attachListeningMap(_ map: ListeningMap) throws -> SessionSnapshot {
+        try attachListeningMap(try listeningMapPersister().persist(map))
+    }
+
+    /// The store half of `attachListeningMap`, for a caller that runs it off the main thread (#2509): the item may
+    /// hold megabytes of text, which this half loads and the status flip writes back. It holds the repository and no
+    /// engine state, so it is safe to run anywhere; `attachListeningMap(_ persisted:)` is the engine half, on the main thread.
+    public func listeningMapPersister() throws -> ListeningMapPersister {
         try require("attachListeningMap", category: "sync", capabilities: ["canonical_persistence"])
-        var item = try repository.loadItem(id: map.itemId)
-        try repository.saveListeningMap(map)
-        if item.status == "needs_listening_map" {
-            item.status = "ready"
-            try saveItem(item)
-        }
+        return ListeningMapPersister(repository: repository)
+    }
+
+    /// The engine half of `attachListeningMap`: updates what the engine has open to match what was just saved.
+    /// It reads the engine's state as it is now, so an item the listener opened or moved off in between is judged
+    /// by where they are, not where they were when the save began.
+    @discardableResult
+    public func attachListeningMap(_ persisted: PersistedListeningMap) throws -> SessionSnapshot {
+        try require("attachListeningMap", category: "sync", capabilities: ["canonical_persistence"])
+        let map = persisted.map
+        let item = persisted.item
         guard currentItem?.id == map.itemId || currentSession?.itemId == map.itemId else {
             return snapshot
         }
@@ -1577,6 +1595,7 @@ public final class SessionEngine {
             throw SessionKitError.invalidCommandForState("beginInterjection")
         }
         guard var session = currentSession else { throw SessionKitError.invalidCommandForState("beginInterjection") }
+        let labels = MainThreadOperationLabels.shared // so a slow start names its step (#2256)
         // Left in place until the steps that can throw have passed, so a failure here still leaves the app
         // something to put back (`isSourcePausedOnTap`).
         let pendingPause = captureResume.tapPause
@@ -1607,23 +1626,23 @@ public final class SessionEngine {
         }
         marginCaptureTiming?.sourcePaused(at: ProcessInfo.processInfo.systemUptime)
         currentSession = session
-        try persistSession(session)
+        try labels.scoped("begin.persist") { try persistSession(session) }
         captureResume.sourcePaused(in: session.phase)
         let target = currentInterjectionTarget(for: session)
         recordingTargetType = target.type
         recordingTargetId = target.id
         recordingReplyTo = request.replyTo
-        recordingAnchor = buildAnchor(for: session, targetType: target.type, targetId: target.id)
+        recordingAnchor = labels.scoped("begin.anchor") { buildAnchor(for: session, targetType: target.type, targetId: target.id) }
         closedRecordingRef = nil
         storedMarginFinish = nil
         marginCaptureTiming?.anchorReady(at: ProcessInfo.processInfo.systemUptime)
         captureResume.takeOverTapPause() // from here a failure puts the source back itself, below
         do {
             marginCaptureTiming?.recorderRequested(at: ProcessInfo.processInfo.systemUptime)
-            try recorder.beginRecording()
+            try labels.scoped("begin.recorder") { try recorder.beginRecording() }
             marginCaptureTiming?.recorderStarted(at: ProcessInfo.processInfo.systemUptime,
-                                                inputRoute: recorder.captureDiagnostics()["inputs"])
-            noteRecordingDraft(session: session, targetType: target.type, targetId: target.id)
+                                                inputRoute: labels.scoped("begin.inputRoute") { recorder.captureInputRoute() })
+            labels.scoped("begin.draftNote") { noteRecordingDraft(session: session, targetType: target.type, targetId: target.id) }
         } catch {
             try? recorder.cancelRecording() // let go of whatever the failed start grabbed, such as the audio session
             abandonInterjectionStart(session, wasPlaying: wasPlaying)
@@ -1632,7 +1651,7 @@ public final class SessionEngine {
         session.phase = .recordingInterjection
         currentSession = session
         snapshot.recordingTargetId = target.id
-        publish(status: .recording, phase: .recordingInterjection)
+        labels.scoped("begin.publish") { publish(status: .recording, phase: .recordingInterjection) }
         return snapshot
     }
 
@@ -1757,21 +1776,21 @@ public final class SessionEngine {
         )
         activeRecordingDraft = draft
         recordingDraftFailure = nil
-        do { try journal.write(draft) } catch { recordingDraftFailure = "write:\(error.localizedDescription)" }
+        do { try journal.write(draft) } catch { recordingDraftFailure = "write:\(SafeErrorText.describe(error))" }
     }
 
     private func updateRecordingDraft(_ change: (inout RecordingDraft) -> Void) {
         guard let journal = recordingDraftJournal, var draft = activeRecordingDraft else { return }
         change(&draft)
         activeRecordingDraft = draft
-        do { try journal.write(draft) } catch { recordingDraftFailure = "write:\(error.localizedDescription)" }
+        do { try journal.write(draft) } catch { recordingDraftFailure = "write:\(SafeErrorText.describe(error))" }
     }
 
     /// The Margin is stored, or the listener cancelled: the note has done its job.
     private func removeRecordingDraft() {
         guard let draft = activeRecordingDraft else { return }
         activeRecordingDraft = nil
-        do { try recordingDraftJournal?.remove(id: draft.id) } catch { recordingDraftFailure = "remove:\(error.localizedDescription)" }
+        do { try recordingDraftJournal?.remove(id: draft.id) } catch { recordingDraftFailure = "remove:\(SafeErrorText.describe(error))" }
     }
 
     public func recordingCaptureDiagnostics() -> [String: String] {
@@ -3259,6 +3278,13 @@ public final class SessionEngine {
         guard let sessionId = options.sessionId else { return try buildExport(options: options) }
         let repository = repository
         let includeFullText = options.includeFullText, includeListeningMap = options.includeListeningMap
+        // The export tap (the Export screen or a batch share): the Listening Map's model-written text goes only for a source
+        // marked public, so look at the source's public copy first. A short wait; the export carries no such text if the
+        // check finds nothing (#3449).
+        if includeListeningMap, let marker = publicSourceMarker {
+            let itemId = await Task.detached(priority: .userInitiated) { try? repository.loadSession(id: sessionId)?.itemId }.value
+            if let itemId { await marker.ensureMark(itemId: itemId, repository: repository, timeout: .seconds(6)) }
+        }
         // Named type, not `Self`: capturing the dynamic `Self` in a detached closure makes Swift 6.2.4 on Linux fail with
         // "pattern that the region based isolation checker does not understand"; macOS accepts both.
         let inputs = try await Task.detached(priority: .userInitiated) {

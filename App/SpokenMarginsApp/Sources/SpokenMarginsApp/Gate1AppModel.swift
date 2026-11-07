@@ -216,7 +216,7 @@ final class Gate1AppModel: ObservableObject {
     /// `hideSender` and `showSender` in `Gate1AppModel+HiddenSenders.swift`.
     let hiddenSenders = HiddenSendersController(directory: HiddenSendersController.defaultDirectory())
     @Published var libraryAccessError: String?
-    @Published var recentlyDeletedItems: [LibraryItemRow] = []
+    @Published var recentlyDeletedItems: [LibraryItemRow] = [] { didSet { libraryPresentationRevision += 1 } } // a row leaving this list stales a read begun before it (#2505)
     @Published var trashUndo: TrashUndoState?
     @Published var selectedItem = ItemDetailState() {
         didSet {
@@ -931,7 +931,7 @@ final class Gate1AppModel: ObservableObject {
                 self.closeCompletedSessionIfReady()
             }
         } catch {
-            self.diagnostics["playbackProgressSyncError"] = String(describing: error)
+            self.diagnostics["playbackProgressSyncError"] = SafeErrorText.describe(error)
         }
     }
 
@@ -966,7 +966,7 @@ final class Gate1AppModel: ObservableObject {
             if completedCurrentAudio { refreshSelectedItem() } else if refreshingItem { refreshSelectedItemInBackground() } // a finished session is read by the next tap (#2505)
             diagnostics["playbackLifecycleSync"] = "saved"
         } catch {
-            diagnostics["playbackLifecycleSyncError"] = String(describing: error)
+            diagnostics["playbackLifecycleSyncError"] = SafeErrorText.describe(error)
         }
     }
 
@@ -1147,8 +1147,8 @@ final class Gate1AppModel: ObservableObject {
             reportFailure("This shared Margin has no position in the episode.")
             return
         }
-        // A recording, or a written Margin's reading: asked of `SharedMarginAudio` like every other way to play one (#3412).
-        let audio = WrittenMarginReadings.audio(for: row.interjection, in: row.layer, voiceFile: resolvedApplicationSupportAssetURL(for:))
+        let audio = WrittenMarginReadings.audio(for: row.interjection, in: row.layer, voiceFile: resolvedApplicationSupportAssetURL(for:)) // a recording or a written Margin's reading, as every way to play one asks (#3412)
+        if WrittenMarginReadings.waitsThenPlays(audio, row: row, model: self) { return } // the chosen voice's reading isn't made yet
         guard let voiceURL = WrittenMarginReadings.startingRender(audio) else { return reportFailure(SharedMarginAudio.unavailableWords(for: row.interjection)) }
         endMarginMoment(); stopInterjectionAudioPlayback() // one Margin voice at a time: a paused one of yours mustn't take the resume below (#1672)
         if snapshot.itemId != itemID || !hasActiveSession { startItem(id: itemID) }
@@ -1357,23 +1357,23 @@ final class Gate1AppModel: ObservableObject {
     func start() {
         guard !blockOfflineEpisodeStart(itemId: activeItemId) else { return }
         guard !requireTermsDecisionBeforePlayback(.startCurrentItem) else { return }
-        if !hasActiveSession {
-            resetMixWithOtherAudioForNewSession()
+        hangTelemetry.labels.scoped("start.clearTheWay") {
+            if !hasActiveSession { resetMixWithOtherAudioForNewSession() }
+            stopSpeechPreviews()
+            streamingSpeechQueue.stopAndClear()
+            let playsRecording = prewarmTextAudioForPlayStart(itemId: activeItemId)
+            narrationStartupProtection.protectUpcomingStart(eligible: narrationRendersOnDevice(itemId: activeItemId, playsRecording: playsRecording))
         }
-        stopSpeechPreviews()
-        streamingSpeechQueue.stopAndClear()
-        let playsRecording = prewarmTextAudioForPlayStart(itemId: activeItemId)
-        narrationStartupProtection.protectUpcomingStart(eligible: narrationRendersOnDevice(itemId: activeItemId, playsRecording: playsRecording))
         run { engine in
-            try prepareSourceMediaPlayback(itemId: activeItemId)
+            try hangTelemetry.labels.scoped("start.prepareSource") { try prepareSourceMediaPlayback(itemId: activeItemId) }
             let started = try engine.startSession(itemId: activeItemId)
-            snapshot = try applyPreferredPlaybackRate(to: started, engine: engine)
+            snapshot = try hangTelemetry.labels.scoped("start.playbackRate") { try applyPreferredPlaybackRate(to: started, engine: engine) }
             if let store, let sessionId = snapshot.sessionId {
                 try seedUITestingSummaryInterjectionIfNeeded(sessionId: sessionId, engine: engine, store: store)
                 try seedUITestingGeneratedTimelineIfNeeded(sessionId: sessionId, engine: engine, store: store)
             }
             if let store {
-                selectedItem = try loadItemDetail(id: activeItemId, store: store)
+                selectedItem = try hangTelemetry.labels.scoped("start.itemDetail") { try loadItemDetail(id: activeItemId, store: store) }
                 refreshLibraryRowsInBackground(mustPublish: true) // #2505
             }
             reflectTextAudioPrewarmStatusIfActive(itemId: activeItemId)
@@ -1582,8 +1582,8 @@ final class Gate1AppModel: ObservableObject {
             }
             item.status = "ready"
             try store.saveItem(item)
-            libraryItems = try loadLibraryRows(store: store)
-            selectedItem = try loadItemDetail(id: activeItemId, store: store)
+            refreshLibraryRowsInBackground(mustPublish: true) // #2505
+            refreshSelectedItemInBackground()
             diagnostics["lastAppliedMap"] = map.id
             diagnostics["lastAppliedMapChapters"] = "\(map.chapters.count)"
             schedulePrewarmAfterPreparedTextChange(itemId: activeItemId)
@@ -2311,7 +2311,7 @@ final class Gate1AppModel: ObservableObject {
             diagnostics["streamingPresentationOffset"] = "\(presentationOffset)"
             diagnostics["streamingRecoveryOffset"] = "\(streamingSpeechQueue.currentRecoveryOffset ?? presentationOffset)"
         } catch {
-            diagnostics["streamingAnchorSyncError"] = String(describing: error)
+            diagnostics["streamingAnchorSyncError"] = SafeErrorText.describe(error)
         }
     }
 
@@ -2331,7 +2331,7 @@ final class Gate1AppModel: ObservableObject {
                 diagnostics["streamingSpeechFailure:\(observation.turnId)"] = "offset:\(observation.charOffset)"
             }
         } catch {
-            diagnostics["streamingSpeechObservationError"] = String(describing: error)
+            diagnostics["streamingSpeechObservationError"] = SafeErrorText.describe(error)
         }
     }
 
@@ -2379,15 +2379,10 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func activateListeningEditionAudio(itemId: String, timeline: TranscriptTimeline) {
-        guard let edition = try? ListeningEditionStore.application().load(itemID: itemId), let store else { return }
-        do {
-            let (proposal, projection) = try edition.audioMap(timeline: timeline)
-            try store.savePortableListeningMapProposal(proposal, itemId: itemId)
-            try store.saveResolvedListeningMapProjection(projection)
-            if selectedItem.id == itemId { refreshSelectedItemInBackground() }
-            prepareImportedLocalAudioBridges(itemId: itemId)
-            Task { await ListeningReadyNotifications.notify(itemID: itemId, title: edition.title, revision: edition.revision) }
-        } catch { diagnostics["listeningEditionAudio"] = "not_ready" }
+        Task { [weak self] in // the map is written off main (#2509)
+            guard let self, let edition = await self.saveListeningEditionAudioMap(itemId: itemId, timeline: timeline) else { return }
+            self.hangTelemetry.labels.scoped("listeningEdition.activateAudio") { self.finishListeningEditionAudio(itemId: itemId, edition: edition) }
+        }
     }
 
     // MARK: Portable listening editions and personal knowledge output
@@ -2563,7 +2558,7 @@ final class Gate1AppModel: ObservableObject {
         let loadedProfile = try loadProfile(id: selectedProfileId)
         let profile = loadedProfile.limitedToOnDeviceAI(foundationModelAvailable: localFoundationModelAvailable)
         let provider: AIProviderClient = AppleFoundationAIProvider()
-        return SessionEngine(
+        return PublicSourceChecks.attached(to: SessionEngine(
             profile: profile,
             repository: store,
             audio: try makeAudioPlaybackClient(),
@@ -2571,7 +2566,7 @@ final class Gate1AppModel: ObservableObject {
             aiProvider: provider,
             linkResolver: sourceLinkResolver ?? PublicPodcastLinkResolver(),
             textAudio: try makeTextAudioPreparationClient()
-        )
+        ))
     }
 
     private func makeTextAudioPreparationClient() throws -> TextAudioPreparationClient? {
@@ -2634,11 +2629,11 @@ final class Gate1AppModel: ObservableObject {
                     }
                     self.attachPreparedTextAudio(prepared, itemId: itemId, preparedStatus: "ready", diagnosticStatus: "ready")
                 case .failure(let error):
-                    self.finishTextAudioPrewarm(itemId: itemId, status: "failed", diagnostic: "full_failed:\(error.localizedDescription)")
+                    self.finishTextAudioPrewarm(itemId: itemId, status: "failed", diagnostic: "full_failed:\(SafeErrorText.describe(error))")
                 }
             }
         } catch {
-            diagnostics["textAudioPrewarm:\(itemId)"] = "failed:\(error.localizedDescription)"
+            diagnostics["textAudioPrewarm:\(itemId)"] = "failed:\(SafeErrorText.describe(error))"
             preparedTextAudioStatus = "failed"
             snapshot.preparedTextAudioStatus = "failed"
         }
@@ -2676,7 +2671,7 @@ final class Gate1AppModel: ObservableObject {
             snapshot.preparedTextAudioStatus = preparedStatus
             return true
         } catch {
-            diagnostics["textAudioPrewarm:\(itemId)"] = "attach_failed:\(error.localizedDescription)"
+            diagnostics["textAudioPrewarm:\(itemId)"] = "attach_failed:\(SafeErrorText.describe(error))"
             preparedTextAudioStatus = "failed"
             snapshot.preparedTextAudioStatus = "failed"
             return false
@@ -2785,7 +2780,7 @@ final class Gate1AppModel: ObservableObject {
                     }
                     lastFailure = "empty:\(link.type)"
                 } catch {
-                    lastFailure = "\(link.type):\(error.localizedDescription)"
+                    lastFailure = "\(link.type):\(SafeErrorText.describe(error))"
                 }
             }
             await MainActor.run {
@@ -2934,7 +2929,7 @@ final class Gate1AppModel: ObservableObject {
                 layer.revealMode = enabled ? .guided : .companion
                 try store.saveImportedCommentaryLayer(layer)
             }
-            refreshSelectedItem()
+            refreshSelectedItemInBackground() // #2505
             reportConfirmation(enabled
                 ? "Shared Margins will play automatically after their cue."
                 : "A tone will mark each shared Margin and the episode will play on. Tap Listen to hear it.")
@@ -2952,7 +2947,7 @@ final class Gate1AppModel: ObservableObject {
             guard var layer = try store.loadImportedCommentaryLayer(id: layerID) else { return }
             mutation(&layer)
             try store.saveImportedCommentaryLayer(layer)
-            refreshSelectedItem()
+            refreshSelectedItemInBackground() // #2505
         } catch {
             reportFailure(error, context: "Shared Margin settings could not be saved")
         }
@@ -3026,7 +3021,7 @@ final class Gate1AppModel: ObservableObject {
         do {
             return try setting.resolvedURL()
         } catch {
-            diagnostics["\(setting.bookmarkKey)Error"] = String(describing: error)
+            diagnostics["\(setting.bookmarkKey)Error"] = SafeErrorText.describe(error)
             return nil
         }
     }

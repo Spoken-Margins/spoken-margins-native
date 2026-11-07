@@ -158,9 +158,12 @@ def peaks(env, floor_db, radius=4):
     return found
 
 
-def similarity(env, a, b, length):
-    """(correlation, mean absolute dB difference) of env[a:a+length] against env[b:b+length]."""
-    x, y = env[a:a + length], env[b:b + length]
+def similarity(env, a, b, length, floor=FLOOR_DB):
+    """(correlation, mean absolute dB difference) of env[a:a+length] against env[b:b+length], each level
+    raised to `floor`. Below the silence line a level means nothing; unclamped, a few frames of digital
+    silence (-100 dB) at one edge sink the correlation of an exact replay (0.81 on a desk recording)."""
+    x = [max(v, floor) for v in env[a:a + length]]
+    y = [max(v, floor) for v in env[b:b + length]]
     n = min(len(x), len(y))
     if n < 10:
         return 0.0, 99.0
@@ -203,8 +206,23 @@ def matched_stretch(env, start, end, lag, silence_db, max_diff_db, smooth=10):
     return (a, b) if b > a else None
 
 
+def diverges(env, b, lag, silence_db, max_diff_db, brightness=None, max_tilt_db=1.0, seconds=1.0, min_sound=0.2):
+    """True when the second after frame b sounds different from the second after b - lag: the match ended
+    because new words followed, not because the recording, the playback or the candidate window did.
+    False without enough sound after b itself to tell; silence after a replay shows nothing new."""
+    frames = [t for t in range(b, min(len(env), b + int(seconds / HOP))) if env[t] > silence_db]
+    if len(frames) * HOP < min_sound:
+        return False
+    loud = sum(abs(env[t] - max(env[t - lag], silence_db)) for t in frames) / len(frames)
+    if loud > max_diff_db:
+        return True
+    both = [abs(brightness[t] - brightness[t - lag]) for t in frames
+            if brightness is not None and env[t - lag] > silence_db]
+    return bool(both) and sum(both) / len(both) > max_tilt_db
+
+
 def repeats(env, silence_db, min_seconds=0.6, min_lag=0.3, max_lag=30.0, min_peaks=4,
-            min_corr=0.9, max_diff_db=4.0, brightness=None, max_tilt_db=1.0):
+            min_corr=0.9, max_diff_db=4.0, brightness=None, max_tilt_db=1.0, min_between=0.5):
     """Stretches of audio that replay an earlier stretch nearly exactly.
 
     Syllable peaks vote for the lag between them; a lag that many nearby peaks agree on is a candidate,
@@ -216,6 +234,13 @@ def repeats(env, silence_db, min_seconds=0.6, min_lag=0.3, max_lag=30.0, min_pea
     nearly the same envelope (desk run 2026-10-18, #1790). So when `brightness` (see `tilt`) is given, the
     two stretches must also match in brightness, which differs from vowel to vowel and is identical in a
     true replay.
+
+    The source itself can say a phrase twice, and a voice renders it the same both times (desk run
+    2026-10-18: two authors' "foundation for American innovation", 3.5 s apart). Each stretch is marked
+    `recurring` when at least `min_between` seconds of new sound come between the original and the second
+    time, and the sound after them differs. A restarted chunk (#1762) has nothing new between and a seek
+    back keeps matching, so neither is marked. Sound alone can't tell the rest apart: playback that replays
+    a passage after a Margin or a blip looks the same. `explain_recurring` lets the expected words decide.
     """
     marks = peaks(env, silence_db + 6)
     lo, hi = int(min_lag / HOP), int(max_lag / HOP)
@@ -242,33 +267,46 @@ def repeats(env, silence_db, min_seconds=0.6, min_lag=0.3, max_lag=30.0, min_pea
             if j is not None:
                 run = [j]
     found = []
-    for lag, first, last in candidates:
-        start, end = max(lag + 2, first - 30), min(len(env), last + 30)
-        # The peaks vote to the nearest frame and a run can reach past the replay, so try the lags around
-        # the vote and keep the longest stretch where the two envelopes stay together.
-        best = None
-        for k in range(lag - 2, lag + 3):
-            stretch = matched_stretch(env, start, end, k, silence_db, max_diff_db)
-            if stretch and (best is None or stretch[1] - stretch[0] > best[1] - best[0]):
-                best = (*stretch, k)
-        if not best:
-            continue
-        a, b, k = best
-        corr, diff = similarity(env, a - k, a, b - a)
+    def replay(a, b, k):
+        """(correlation, dB difference) when env[a:b] replays env[a-k:b-k] closely enough; else None."""
+        corr, diff = similarity(env, a - k, a, b - a, floor=silence_db)
         if corr < min_corr or diff > max_diff_db or (b - a) * HOP < min_seconds:
-            continue
-        voiced = sum(1 for t in range(a, b) if env[t] > silence_db) / (b - a)
-        if voiced < 0.5:
-            continue
+            return None
+        if sum(1 for t in range(a, b) if env[t] > silence_db) / (b - a) < 0.5:
+            return None
         if brightness is not None:
             both = [abs(brightness[t] - brightness[t - k]) for t in range(a, b)
                     if env[t] > silence_db and env[t - k] > silence_db]
             if both and sum(both) / len(both) > max_tilt_db:
+                return None
+        return corr, diff
+
+    for lag, first, last in candidates:
+        start, end = max(lag + 2, first - 30), min(len(env), last + 30)
+        # The peaks vote to the nearest frame and a run can reach past the replay, so try the lags around
+        # the vote and keep the stretch whose two envelopes are closest; it alone must pass every check.
+        # A lag one frame off often holds the loose loudness match just as long, then fails on brightness:
+        # keeping the longest stretch lost exact replays in real recordings (#1790, spliced desk audio).
+        best = None
+        for k in range(lag - 2, lag + 3):
+            stretch = matched_stretch(env, start, end, k, silence_db, max_diff_db)
+            if not stretch or (stretch[1] - stretch[0]) * HOP < min_seconds:
                 continue
+            diff = similarity(env, stretch[0] - k, stretch[0], stretch[1] - stretch[0], floor=silence_db)[1]
+            if best is None or diff < best[3]:
+                best = (*stretch, k, diff)
+        scores = best and replay(*best[:3])
+        if not scores:
+            continue
+        best = (*best[:3], *scores)
+        a, b, k, corr, diff = best
+        between = sum(1 for t in range(b - k, a) if env[t] > silence_db) * HOP
         found.append({'start': round(a * HOP, 2), 'end': round(b * HOP, 2),
                       'original_start': round((a - k) * HOP, 2), 'lag': round(k * HOP, 2),
                       'seconds': round((b - a) * HOP, 2), 'correlation': round(corr, 3),
-                      'mean_db_difference': round(diff, 2)})
+                      'mean_db_difference': round(diff, 2), 'sound_between': round(between, 2),
+                      'recurring': between >= min_between and diverges(env, b, k, silence_db, max_diff_db,
+                                                                       brightness, max_tilt_db)})
     # One report per replay: drop candidates that overlap a stronger one at about the same lag.
     found.sort(key=lambda r: (-r['correlation'], r['start']))
     kept = []
@@ -287,6 +325,7 @@ def analyse(path, silence_db=-45.0, stall=2.0, min_gap=0.25, min_sound=0.05, win
     env = envelope(rate, samples)
     brightness = tilt(rate, samples)
     found = segments(env, silence_db, min_gap, min_sound)
+    matches = repeats(env, silence_db, brightness=brightness)
     sound = sum(b - a for a, b in found) * HOP
     loud = [s for a, b in found for s in samples[int(a * HOP * rate):int(b * HOP * rate)]]
     peak = max((abs(s) for s in samples), default=0.0)
@@ -309,7 +348,9 @@ def analyse(path, silence_db=-45.0, stall=2.0, min_gap=0.25, min_sound=0.05, win
         'first_sound': round(found[0][0] * HOP, 2) if found else None,
         'last_sound': round(found[-1][1] * HOP, 2) if found else None,
         'stalls': gaps,
-        'repeats': repeats(env, silence_db, brightness=brightness),
+        'repeats': [{k: v for k, v in r.items() if k != 'recurring'} for r in matches if not r['recurring']],
+        # The same audio again after new words: the source says it twice. Reported, never a failure.
+        'recurring': [{k: v for k, v in r.items() if k != 'recurring'} for r in matches if r['recurring']],
         'settings': {'silence_db': silence_db, 'stall_seconds': stall, 'min_gap': min_gap},
     }
     if peak == 0.0:
@@ -382,6 +423,39 @@ def score(transcript, expected):
             'repeated_phrases': repeated_phrases(hypothesis, reference),
             'missing': [r for op, r, _ in ops if op == 'del'][:50],
             'extra': [h for op, _, h in ops if op == 'ins'][:50]}
+
+
+def explain_recurring(report, expected, slack=0.15):
+    """Keep in `recurring` only the matches the expected text accounts for; move the rest to `repeats`.
+
+    A match is accounted for when two or more words are heard during its second time, the transcript has
+    them at least twice, and the expected text has them at least as often as the transcript. A replay adds
+    a hearing the text doesn't have, so even a common word ("the") fails it. One word is too little to
+    vouch for a source repeat, and a transcript that heard the phrase only once has dropped a hearing, so
+    the count can't be trusted: both fail. No words heard there means sound came back that the transcript
+    can't place: a replay. A misheard word makes a true source repeat fail too: strict, never a false pass."""
+    def times(sequence, phrase):
+        return sum(1 for i in range(len(sequence) - len(phrase) + 1) if sequence[i:i + len(phrase)] == phrase)
+
+    # The recogniser can return several words as one item ("short term memory"); spread them over its time.
+    heard = []
+    for item in report['transcript'].get('words', []):
+        parts = words(item.get('word', ''))
+        start, duration = item.get('start', -1), item.get('duration', 0) or 0
+        heard += [(start + i * duration / len(parts), w) for i, w in enumerate(parts)]
+    reference = words(expected)
+    hypothesis = [w for _, w in heard]
+    kept = []
+    for match in report.get('recurring', []):
+        said = [w for at, w in heard if match['start'] - slack <= at < match['end']]
+        heard_times = times(hypothesis, said)
+        if len(said) >= 2 and heard_times >= 2 and times(reference, said) >= heard_times:
+            kept.append({**match, 'words': ' '.join(said)})
+        else:
+            report['repeats'].append({**match, 'words': ' '.join(said),
+                                      'unexplained': 'the expected text does not say these words that often'})
+    report['recurring'] = kept
+    report['repeats'].sort(key=lambda r: r['start'])
 
 
 # --- The macOS tool ---------------------------------------------------------------------------------------
@@ -701,6 +775,7 @@ def check_recording(path, expected=None, transcribe_too=False, locale='en-US', s
             report['transcript_error'] = report['transcript'].get('empty_reason', 'the recogniser returned no words')
         elif expected is not None and 'transcript' in report:
             report['score'] = score(report['transcript']['text'], expected)
+            explain_recurring(report, expected)
     report['problems'] = verdict(report, max_stall, allow_repeats, max_wer, min_sound, allow_trailing)
     if expected is not None and 'transcript_error' in report:
         report['problems'].append('could not check the words: ' + report['transcript_error'])

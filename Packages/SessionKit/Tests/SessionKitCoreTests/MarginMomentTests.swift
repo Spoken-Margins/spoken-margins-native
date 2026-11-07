@@ -161,7 +161,9 @@ final class MarginMomentTests: XCTestCase {
         XCTAssertEqual(sequence.review?.count, 2)
     }
 
-    func testAReviewPlaysEachMarginWithItsOwnLeadInAndSkipsTheStretchesBetween() throws {
+    /// Owner, 2026-11-06: "you're not just getting teleported around." Between Margins the episode plays on from where the
+    /// Margin was; nothing hops ahead by itself.
+    func testAReviewPlaysOnFromEachMarginAndNeverHopsAheadByItself() throws {
         var sequence = try review([anchor("a", 60_000), anchor("b", 120_000), anchor("c", 300_000)], returnTo: 1_500_000)
         XCTAssertTrue(sequence.isReview)
         XCTAssertEqual(sequence.startMediaTimeMs, 40_000, "the first lead-in starts twenty seconds before the first Margin")
@@ -170,15 +172,15 @@ final class MarginMomentTests: XCTestCase {
 
         XCTAssertEqual(sequence.progressed(from: 59_800, to: 60_300)?.marginId, "a")
         XCTAssertEqual(sequence.reviewNumber, 1)
-        XCTAssertEqual(sequence.marginFinished(sourceAtMediaTimeMs: 60_300), .seek(toMediaTimeMs: 100_000),
-                       "the stretch between a and b is skipped")
+        XCTAssertEqual(sequence.marginFinished(sourceAtMediaTimeMs: 60_300), .continueSource,
+                       "the episode plays on toward b; the listener skips ahead with a button")
         XCTAssertEqual(sequence.phase, .leadIn)
         XCTAssertEqual(sequence.target.marginId, "b")
         XCTAssertEqual(sequence.reviewNumber, 2)
-        XCTAssertNil(sequence.progressed(from: 100_000, to: 104_000), "still leading in")
+        XCTAssertNil(sequence.progressed(from: 60_300, to: 60_800), "still on the way to b")
 
         XCTAssertEqual(sequence.progressed(from: 119_800, to: 120_100)?.marginId, "b")
-        XCTAssertEqual(sequence.marginFinished(sourceAtMediaTimeMs: 120_100), .seek(toMediaTimeMs: 280_000))
+        XCTAssertEqual(sequence.marginFinished(sourceAtMediaTimeMs: 120_100), .continueSource)
         XCTAssertEqual(sequence.progressed(from: 299_800, to: 300_200)?.marginId, "c")
         XCTAssertEqual(sequence.reviewNumber, 3)
         XCTAssertEqual(
@@ -198,8 +200,8 @@ final class MarginMomentTests: XCTestCase {
         XCTAssertEqual(sequence.progressed(from: 65_800, to: 66_300)?.marginId, "b")
         XCTAssertEqual(sequence.marginFinished(sourceAtMediaTimeMs: 66_300), .continueSource, "c is ten seconds on, inside the twenty-second lead-in")
         XCTAssertEqual(sequence.progressed(from: 75_800, to: 76_300)?.marginId, "c")
-        XCTAssertEqual(sequence.marginFinished(sourceAtMediaTimeMs: 76_300), .seek(toMediaTimeMs: 80_000),
-                       "d is twenty-four seconds on, so its lead-in is a hop of its own")
+        XCTAssertEqual(sequence.marginFinished(sourceAtMediaTimeMs: 76_300), .continueSource,
+                       "d is twenty-four seconds on: the episode plays toward it, with no hop")
     }
 
     func testTwoMarginsAtTheSamePlaceBothPlayInTheOrderGiven() throws {
@@ -210,7 +212,7 @@ final class MarginMomentTests: XCTestCase {
         XCTAssertEqual(sequence.marginFinished(sourceAtMediaTimeMs: 60_400), .playNow(anchor("second", 60_000, "Ben")))
         XCTAssertEqual(sequence.phase, .playingMargin("second"))
         XCTAssertEqual(sequence.playing?.marginId, "second")
-        XCTAssertEqual(sequence.marginFinished(sourceAtMediaTimeMs: 60_400), .seek(toMediaTimeMs: 180_000))
+        XCTAssertEqual(sequence.marginFinished(sourceAtMediaTimeMs: 60_400), .continueSource)
     }
 
     func testAMarginTheTickAlreadyPassedPlaysRightAfterTheOneBeforeIt() throws {
@@ -241,7 +243,7 @@ final class MarginMomentTests: XCTestCase {
         var sequence = try review([anchor("a", 60_000), anchor("b", 200_000)])
         _ = sequence.jumpToTarget()
         // The conductor reports a skip the same way as a finished voice.
-        XCTAssertEqual(sequence.marginFinished(sourceAtMediaTimeMs: 60_000), .seek(toMediaTimeMs: 180_000))
+        XCTAssertEqual(sequence.marginFinished(sourceAtMediaTimeMs: 60_000), .continueSource)
         XCTAssertEqual(sequence.marginFinished(sourceAtMediaTimeMs: 190_000), .continueSource, "nothing is playing, so nothing moves")
     }
 
@@ -253,7 +255,51 @@ final class MarginMomentTests: XCTestCase {
 
         var fresh = try review([anchor("a", 60_000)])
         _ = fresh.jumpToTarget()
-        XCTAssertEqual(fresh.marginFinished(), .reviewDone(returnToMediaTimeMs: nil, resumes: false))
+        XCTAssertEqual(fresh.marginFinished(), .reviewDone(returnToMediaTimeMs: nil, resumes: true),
+                       "no place to go back to: the episode plays on from the Margin")
+    }
+
+    /// Owner, 2026-11-06: after the Margin "I would like the podcast to just play." The listener opened the episode at
+    /// 0:02 and the Margin is at 38:32. Going "back to where they were" put them at the start of the episode.
+    func testAReviewOfAMarginAheadOfTheListenerPlaysOnFromTheMarginNotBackToTheStart() throws {
+        var sequence = try review([anchor("web", 2_312_900)], returnTo: 2_881)
+        _ = sequence.jumpToTarget()
+        XCTAssertEqual(sequence.marginFinished(sourceAtMediaTimeMs: 2_312_900), .reviewDone(returnToMediaTimeMs: nil, resumes: true))
+        XCTAssertEqual(sequence.phase, .listening)
+    }
+
+    /// Where the listener's own place sits against the last Margin decides the ending.
+    func testTheEndingDependsOnWhereTheListenersPlaceSitsAgainstTheLastMargin() throws {
+        func ending(place: Int?, resumes: Bool = false) throws -> MarginMomentSequence.Advance {
+            var sequence = try review([anchor("a", 100_000)], returnTo: place, resumes: resumes)
+            _ = sequence.jumpToTarget()
+            return sequence.marginFinished(sourceAtMediaTimeMs: 100_000)
+        }
+        XCTAssertEqual(try ending(place: 900_000), .reviewDone(returnToMediaTimeMs: 900_000, resumes: false), "caught up on Margins behind them: back to their place")
+        XCTAssertEqual(try ending(place: 900_000, resumes: true), .reviewDone(returnToMediaTimeMs: 900_000, resumes: true))
+        XCTAssertEqual(try ending(place: 100_001), .reviewDone(returnToMediaTimeMs: 100_001, resumes: false), "a millisecond past the Margin is still past it")
+        XCTAssertEqual(try ending(place: 100_000), .reviewDone(returnToMediaTimeMs: nil, resumes: true), "at the Margin is not past it")
+        XCTAssertEqual(try ending(place: 99_999), .reviewDone(returnToMediaTimeMs: nil, resumes: true))
+        XCTAssertEqual(try ending(place: 0), .reviewDone(returnToMediaTimeMs: nil, resumes: true), "an episode not begun")
+        XCTAssertEqual(try ending(place: nil), .reviewDone(returnToMediaTimeMs: nil, resumes: true))
+    }
+
+    /// Stop undoes the hop when nothing has played, and otherwise leaves the listener where they are.
+    func testStoppingAReviewOnlyGoesBackToUndoTheHopOrToBringBackAListenerWhoWasFurtherOn() throws {
+        var sequence = try review([anchor("a", 60_000), anchor("b", 200_000)], returnTo: 2_881)
+        XCTAssertFalse(sequence.hasReachedAMargin)
+        XCTAssertEqual(sequence.placeToReturnToWhenStopped(sourceAtMediaTimeMs: 40_000), 2_881, "stopped in the first lead-in: undo the hop")
+        _ = sequence.progressed(from: 59_800, to: 60_300)
+        XCTAssertTrue(sequence.hasReachedAMargin)
+        XCTAssertNil(sequence.placeToReturnToWhenStopped(sourceAtMediaTimeMs: 60_300), "Stop while the Margin speaks leaves them there")
+        _ = sequence.marginFinished(sourceAtMediaTimeMs: 60_300)
+        XCTAssertNil(sequence.placeToReturnToWhenStopped(sourceAtMediaTimeMs: 90_000), "or on the way to the next one")
+
+        var catchUp = try review([anchor("a", 60_000), anchor("b", 200_000)], returnTo: 900_000)
+        _ = catchUp.progressed(from: 59_800, to: 60_300)
+        XCTAssertEqual(catchUp.placeToReturnToWhenStopped(sourceAtMediaTimeMs: 60_300), 900_000, "they were further on: bring them back")
+        XCTAssertNil(try review([anchor("a", 60_000)]).placeToReturnToWhenStopped(sourceAtMediaTimeMs: 40_000), "no place was kept")
+        XCTAssertNil(MarginMomentSequence(itemId: "ep", target: target, otherMargins: []).placeToReturnToWhenStopped(sourceAtMediaTimeMs: 1_000), "not a review")
     }
 
     /// A review that ends in the middle (another item, a Timeline jump, Stop) owes the listener the way back; one that
@@ -264,7 +310,7 @@ final class MarginMomentTests: XCTestCase {
         _ = sequence.progressed(from: 59_800, to: 60_300)
         XCTAssertTrue(sequence.isUnfinishedReview, "while the first Margin plays")
         _ = sequence.marginFinished(sourceAtMediaTimeMs: 60_300)
-        XCTAssertTrue(sequence.isUnfinishedReview, "between the Margins, with the source hopping ahead")
+        XCTAssertTrue(sequence.isUnfinishedReview, "between the Margins, with the episode playing on")
         _ = sequence.progressed(from: 199_800, to: 200_300)
         XCTAssertTrue(sequence.isUnfinishedReview, "while the last Margin plays")
         _ = sequence.marginFinished(sourceAtMediaTimeMs: 200_300)

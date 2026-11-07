@@ -144,7 +144,7 @@ final class ImportedPodcastPlacementCoordinator {
                 self.admission[itemId] = nil
                 try? await self.deps.purgeTransientCaches(itemId)
                 self.deps.recordDiagnostic(
-                    "recipientAlignmentTranscript:\(itemId)", "failed_and_deleted:\(error.localizedDescription)")
+                    "recipientAlignmentTranscript:\(itemId)", "failed_and_deleted:\(SafeErrorText.describe(error))")
             }
         }
         return true
@@ -359,7 +359,7 @@ final class ImportedPodcastPlacementCoordinator {
                         self.deps.recordDiagnostic("importedPodcastAnchorResolution:\(itemId)", "complete:\(resolvedCount)/\(livingWork.count) \(SharedMarginPlacementSummary(livingWork.map { ($0.0, $0.1) }).diagnosticValue)")
                         return recipientTranscript == nil ? store : nil
                     } catch {
-                        self.deps.recordDiagnostic("importedPodcastAnchorResolution:\(itemId)", "persistence_failed:\(error.localizedDescription)")
+                        self.deps.recordDiagnostic("importedPodcastAnchorResolution:\(itemId)", "persistence_failed:\(SafeErrorText.describe(error))")
                         return nil
                     }
                 }
@@ -375,7 +375,7 @@ final class ImportedPodcastPlacementCoordinator {
                 await MainActor.run {
                     guard !Task.isCancelled, self?.matching.isCurrent(context) == true else { return }
                     self?.passes.end(.matching, itemId: itemId)
-                    self?.deps.recordDiagnostic("importedPodcastAnchorResolution:\(itemId)", "failed:\(error.localizedDescription)")
+                    self?.deps.recordDiagnostic("importedPodcastAnchorResolution:\(itemId)", "failed:\(SafeErrorText.describe(error))")
                 }
             }
         }

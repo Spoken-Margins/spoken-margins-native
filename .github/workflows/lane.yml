@@ -69,6 +69,13 @@ on:
         description: 'Link to the T3 PASS report that released it'
         required: false
         type: string
+      auto:
+        # #2170: the hosted audit asks for the merge run after a clean audit. Its re-arm's label change starts no run,
+        # because a workflow's own token did it. lane-runner.py re-reads the PR, and does nothing unless it is open on
+        # this head, armed and from this repository.
+        description: 'true: the automerge run a clean audit released, not the one a T3 PASS released'
+        required: false
+        type: string
 
 permissions:
   # write: the runner pushes the merge commits it tested to next. The checkout keeps no credentials
@@ -79,6 +86,9 @@ permissions:
   issues: write
   # read: the automerge runs read the hosted fast checks' results on the PR's head (#1389).
   checks: read
+  # write: a release run's own check sits on the trunk's tip, so its verdict goes on the PR's head as a commit status
+  # (#3501).
+  statuses: write
   # write: after pushing the trunk's new tip, the automerge and release runs start hosted-integration.yml on it
   # (lane-runner.py dispatch_hosted_integration); without it GitHub answers 403.
   actions: write
@@ -567,15 +577,19 @@ jobs:
     # on a build runner under the build runner's room rules, then tests the merge commit and merges on PASS, as
     # the lane job used to on the simulator runner. lane-runner.py re-reads the PR and does nothing unless it is
     # still open on this head, armed and held for T3 with its T3 passed, so a stale or stray dispatch is harmless.
+    # #3501: with all three hosted checks on, it runs on hosted Linux instead: it waits there for the checks, starts
+    # them again if main moved or they can't be had, and merges on them. Queueing for sm-lane-build stopped every such
+    # merge for 11.5 hours on 2026-11-05 while the Mac slept.
     if: >-
       github.event_name == 'workflow_dispatch' &&
       (github.ref_name == (vars.SM_TRUNK || 'main') || startsWith(github.ref, 'refs/heads/lane-check/'))
-    runs-on: [self-hosted, macOS, sm-lane-build]
+    runs-on: ${{ fromJSON((vars.LANE_HOSTED_FAST == 'on' && vars.LANE_HOSTED_MAC_REST == 'on') && '["ubuntu-latest"]' || '["self-hosted","macOS","sm-lane-build"]') }}
     # Its own group: sharing the automerge job's would let this replace a pending automerge run, or wait behind it.
     concurrency:
       group: lane-release-pr-${{ inputs.pr }}
       cancel-in-progress: false
-    # The build runner's room wait (up to 90 minutes), then host tests, as in the automerge job.
+    # The build runner's room wait (up to 90 minutes), then host tests, as in the automerge job. On hosted Linux, the
+    # wait for the hosted checks (up to 120 minutes, HOSTED_REST_WAIT).
     timeout-minutes: 150
     env:
       GH_TOKEN: ${{ github.token }}
@@ -584,18 +598,27 @@ jobs:
       PR_NUMBER: ${{ inputs.pr }}
       EVENT_HEAD: ${{ inputs.head }}
       T3_REPORT: ${{ inputs.t3 }}
+      MODE: ${{ inputs.auto == 'true' && 'auto' || 'release' }}
       BASE_REF: ${{ github.ref_name }}
       SM_TRUNK: ${{ vars.SM_TRUNK || 'main' }}
       RUN_ID: ${{ github.run_id }}
       LANE_HOSTED_FAST: ${{ vars.LANE_HOSTED_FAST }}
       LANE_HOSTED_MAC_REST: ${{ vars.LANE_HOSTED_MAC_REST }}
+      HOSTED_ARGS: ${{ (vars.LANE_HOSTED_FAST == 'on' && vars.LANE_HOSTED_MAC_REST == 'on') && '--hosted' || '' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ inputs.head }}
           fetch-depth: 0
           persist-credentials: false
-          lfs: true
+          # Mac host tests need the LFS models; the hosted run tests nothing here, or only T0 and ops Python.
+          lfs: ${{ !(vars.LANE_HOSTED_FAST == 'on' && vars.LANE_HOSTED_MAC_REST == 'on') }}
+      - name: Prepare hosted evidence
+        if: env.HOSTED_ARGS == '--hosted'
+        run: |
+          echo "GIT_LFS_SKIP_SMUDGE=1" >> "$GITHUB_ENV"
+          echo "SM_LANE_EVIDENCE_DIR=$RUNNER_TEMP/lane-evidence" >> "$GITHUB_ENV"
+          echo "SM_LANE_STATE_DIR=$RUNNER_TEMP/lane-state" >> "$GITHUB_ENV"
       # Written under another name first: a redirect creates the file even when git show fails, and an empty
       # lane-runner.py would let the tidy step "succeed" without posting anything (#1542).
       - name: Take the lane runner from the base branch
@@ -606,9 +629,10 @@ jobs:
         id: run
         run: >-
           /usr/bin/python3 "$RUNNER_TEMP/lane-runner.py" --tree "$GITHUB_WORKSPACE" --pr "$PR_NUMBER"
-          --event-head "$EVENT_HEAD" --run-id "$RUN_ID" --base "$BASE_REF" --mode release --t3-report "$T3_REPORT"
+          --event-head "$EVENT_HEAD" --run-id "$RUN_ID" --base "$BASE_REF" --mode "$MODE" --t3-report "$T3_REPORT" $HOSTED_ARGS
       # A dispatched run's check sits on next's tip, not on the PR, so a red one would read as "next is broken"
-      # and wake nobody: every verdict stays green here. The report and the lane:done relabel carry a FAIL.
+      # and wake nobody: every verdict stays green here. The report, the lane:done relabel and the commit status a
+      # later step puts on the PR's head carry a FAIL.
       - name: Verdict
         if: steps.run.outputs.reported == 'true'
         env:
@@ -623,7 +647,47 @@ jobs:
         if: (failure() || cancelled()) && steps.run.outputs.reported != 'true'
         run: >-
           /usr/bin/python3 "$RUNNER_TEMP/lane-runner.py" --cleanup --tree "$GITHUB_WORKSPACE" --pr "$PR_NUMBER"
-          --event-head "$EVENT_HEAD" --run-id "$RUN_ID" --base "$BASE_REF" --mode release
+          --event-head "$EVENT_HEAD" --run-id "$RUN_ID" --base "$BASE_REF" --mode "$MODE" $HOSTED_ARGS
+      - name: Keep hosted evidence
+        if: always() && env.HOSTED_ARGS == '--hosted'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: lane-hosted-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/lane-evidence
+          retention-days: 7
+      # #3501: the PR's own check is green with this run held on it, so without this a run that could not get the hosted
+      # checks would show nothing red anywhere on the PR. A verdict that is not a pass or a hold, or a run that stopped
+      # before reporting, is a failing status on the head; a pass or a hold clears an earlier one on the same head. It
+      # never fails this job, whose check sits on the trunk's tip. A run that never starts posts nothing here: the
+      # hand-off note says when it counts as lost.
+      - name: Put the verdict on the PR's head
+        if: always()
+        shell: bash
+        env:
+          REPORTED: ${{ steps.run.outputs.reported }}
+          VERDICT: ${{ steps.run.outputs.verdict }}
+          HELD: ${{ steps.run.outputs.held }}
+          JOB_STATUS: ${{ job.status }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          state=
+          if [ "$REPORTED" = true ]; then
+            if [ "$VERDICT" = PASS ] || [ "$HELD" = true ]; then state=success; else state=failure; fi
+          elif [ "$JOB_STATUS" != success ]; then
+            state=failure
+          fi
+          if [ -z "$state" ] || ! [[ "$PR_NUMBER" =~ ^[0-9]+$ && "$EVENT_HEAD" =~ ^[0-9a-f]{40}$ ]]; then
+            exit 0
+          fi
+          pulled=$(gh api "repos/$GH_REPO/pulls/$PR_NUMBER" --jq .head.sha) || pulled=
+          if [ "$pulled" != "$EVENT_HEAD" ]; then
+            echo "PR #$PR_NUMBER is not on ${EVENT_HEAD:0:7} ($pulled); no status to post."
+            exit 0
+          fi
+          if [ "$state" = success ]; then said="The merge run reported ${VERDICT}."; else said="The merge run did not merge it: ${VERDICT:-stopped before reporting}. The report on the PR says why."; fi
+          gh api "repos/$GH_REPO/statuses/$EVENT_HEAD" -f state="$state" -f context='lane: merge run' \
+            -f description="$said" -f target_url="$RUN_URL" > /dev/null ||
+            echo "::warning title=No status on the PR::Could not post $state on ${EVENT_HEAD:0:7}."
       # #1542: the lane job left lane:done to this run, so a run that stops before it can report must still say so.
       # When the checkout, its LFS fetch or the runner fetch failed, the tidy step above has no lane-runner.py to
       # run. This step needs nothing they bring: only gh, the job's token and the quoted variables above. It posts
@@ -648,7 +712,7 @@ jobs:
             echo "PR #$PR_NUMBER moved on, closed or lost automerge ($pull); nothing to report."
             exit 0
           fi
-          body="Lane: the automerge run stopped before reporting ($RUN_URL). It was the build runner's release run for \`${EVENT_HEAD:0:7}\` after its T3 PASS (#1209), and it ended (a failed checkout, a cancel or a timeout) before it could post a report. The T3 PASS stands: remove and re-add automerge to run the host tests and merge.
+          body="Lane: the automerge run stopped before reporting ($RUN_URL). It was the release run for \`${EVENT_HEAD:0:7}\` after its T3 PASS (#1209), and it ended (a failed checkout, a cancel or a timeout) before it could post a report. The T3 PASS stands: remove and re-add automerge to run the host tests and merge.
           <!-- lane-note -->"
           gh api "repos/$GH_REPO/issues/$PR_NUMBER/comments" -f body="$body" > /dev/null
           gh api -X DELETE "repos/$GH_REPO/issues/$PR_NUMBER/labels/lane%3Adone" > /dev/null 2>&1 || true

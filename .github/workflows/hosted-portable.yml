@@ -23,7 +23,7 @@
 # against its own merge (lane-runner.py hosted_fast_checks).
 #
 # Scope (#2596): the two Mac jobs wait for the `scope` job (hosted Linux, about 20 seconds), which asks
-# scripts/test-scope.py mac_checks_required whether the diff reaches a Swift input. If every changed path is one the
+# the base branch's scripts/test-scope.py mac_checks_required whether the diff reaches a Swift input. If every changed path is one the
 # Mac checks can ignore (docs, ops, most scripts, non-Swift tooling), both Mac jobs are skipped and cost no hosted-Mac
 # minute; lane-runner.py asks the same function and then merges on the portable check alone. A skipped job is not a
 # pass: its check run ends `skipped`, which the runner never reads as one. Unknown paths, a dispatch without a base
@@ -184,8 +184,10 @@ jobs:
           echo "hosted-portable took ${seconds}s on ubuntu-latest." | tee -a "$GITHUB_STEP_SUMMARY"
 
   scope:
-    # #2596: one cheap Linux job decides whether the Mac jobs below have anything to test. Runs the PR's own merge
-    # commit's copy of test-scope.py with no credentials and no write token; its only output is `mac`.
+    # #2596: one cheap Linux job decides whether the Mac jobs below have anything to test. Runs the base branch's copy
+    # of test-scope.py, the one lane-runner.py's hosted_check_set reads, with no credentials and no write token; its
+    # only output is `mac`. #3501: with the PR's copy the two could disagree (a PR changing the rule, or a branch older
+    # than a change to it), and the runner then required a check this job kept skipping.
     name: 'hosted fast: scope'
     if: >-
       github.event_name != 'pull_request' ||
@@ -209,16 +211,19 @@ jobs:
           # Mac rest job). A dispatch with a base: the dispatched commit against that base's tip. A dispatch without
           # a base has no diff to look at, so the Mac checks run.
           list="$RUNNER_TEMP/changed-files.txt"
+          rule="$RUNNER_TEMP/test-scope.py"
           if git rev-parse --verify --quiet HEAD^2 > /dev/null; then
             git diff --name-only --no-renames "$(git merge-base HEAD^1 HEAD^2)" HEAD^2 > "$list" || rm -f "$list"
+            git show HEAD^1:scripts/test-scope.py > "$rule" 2> /dev/null || rm -f "$rule"
           elif [ -n "$BASE" ]; then
             git fetch --no-tags origin "+refs/heads/$BASE:refs/remotes/origin/$BASE" &&
               git diff --name-only --no-renames "$(git merge-base HEAD "refs/remotes/origin/$BASE")" HEAD > "$list" || rm -f "$list"
+            git show "refs/remotes/origin/$BASE:scripts/test-scope.py" > "$rule" 2> /dev/null || rm -f "$rule"
           fi
-          if [ -s "$list" ]; then
-            python3 scripts/test-scope.py --mac-required "$list" | tee -a "$GITHUB_OUTPUT" || echo "mac=true" >> "$GITHUB_OUTPUT"
+          if [ -s "$list" ] && [ -s "$rule" ]; then
+            python3 "$rule" --mac-required "$list" | tee -a "$GITHUB_OUTPUT" || echo "mac=true" >> "$GITHUB_OUTPUT"
           else
-            { echo "mac=true"; echo "reason=no changed-file list, so the Mac checks run"; } | tee -a "$GITHUB_OUTPUT"
+            { echo "mac=true"; echo "reason=no changed-file list or base rule, so the Mac checks run"; } | tee -a "$GITHUB_OUTPUT"
           fi
           grep -q '^mac=' "$GITHUB_OUTPUT" || echo "mac=true" >> "$GITHUB_OUTPUT"
 

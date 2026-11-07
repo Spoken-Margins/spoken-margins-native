@@ -10,6 +10,7 @@ from controlled fault-injection tests.
 The newest `main` build waits on the Mac, ready for the owner's iPhone. No TestFlight, no Xcode window.
 
 - **Install:** plug the iPhone in with a cable, unlock it, and double-click **Install Spoken Margins on iPhone** on the Desktop (a copy of `scripts/install-phone-build.command`). It installs over the app, so the Library stays, and it never uninstalls. Then it opens that build's `test-plan.md`: about ten minutes of checks for what changed since the last install. If the phone already has the newest build, it says so and changes nothing (type R to reinstall anyway), and says whether a newer build is being made. Before installing, it says how far behind `main` the build is and why (from `trunk.json`, which `scripts/phone-build` writes), and afterwards the commit the phone should now show. The Desktop copy runs `~/SpokenMargins-phone/install-phone-build.command`, which `scripts/phone-build` keeps equal to `main`'s, so an old Desktop copy can't hold the phone back (#2782).
+- **The Watch (#3530):** after the phone install, the installer also installs the Watch app inside the build on the paired Watch (it needs the Watch awake and the phone nearby), reads the Watch's build back and prints which build it runs. A Watch that is asleep, unpaired or missing gets one plain line and never fails the phone install; nothing is uninstalled.
 - **Knowing a build is ready:** each new build posts a Mac notification ("Spoken Margins: new phone build") with its commit and how many things to try. A signing failure posts "phone build needs you", and so does a hosted build that stops arriving (gh failing twice in a row, or no hosted build of a `main` tip for 36 hours), with the reason.
 - **Name the build in issues:** Settings > Version reads `0.1 (29) · 1a2b3c4`; the last part is the commit. Label phone-found issues `found-on-phone`.
 - **Where builds live:** `~/SpokenMargins-phone/`, one folder per build (`<date-time>-<sha7>`), a `latest` link, and `installed.txt` (the commit on the phone). The three newest builds are kept.
@@ -74,6 +75,22 @@ Remaining native extension work:
 
 - Product-owner physical-device acceptance of the native Lock Screen path above.
 - Watch package rendering remains out of scope; a future Watch app or Smart Stack surface should dispatch the same compact-control commands instead of creating a second transport.
+
+## The Watch app closes at launch: reading its record (#3506)
+
+The Watch keeps a small record of launches, failures and unclean endings (no Margin text, titles, addresses or audio) in `WatchDiagnostics.json` in its own storage, and sends it to the phone whenever it can. It is under Diagnostics in the export as `watchDiagnostics`.
+
+**A launch that crashed, but a later launch worked.** Share Diagnostics from Settings on the phone and open the file. Under `watchDiagnostics`, look for:
+- `previousLaunchNeverBecameActive`: a launch ended before the app reached the front. This is the crash-at-launch line.
+- `previousRunEndedInFront`: the app was in front when it ended, so a crash or the system ending it.
+- `failure` lines (`transferFailed`, `activationFailed`, `recordingStartFailed`, `recordingNotSaved`) with an error domain and code.
+- `uncaughtException`: an Objective-C exception, by name. A Swift trap (a force unwrap, an index out of range) leaves no such line, only the two above.
+
+**A Watch that crashes at every launch can't send anything.** The record stays on the Watch, so read the crash report itself from the phone:
+1. On the iPhone, open Settings, Privacy & Security, Analytics & Improvements, then Analytics Data. (Share iPhone & Watch Analytics must be on in the same screen.)
+2. Find the newest entries whose name starts with `SpokenMarginsWatchApp`. Watch crash reports are copied to the phone here, sometimes after a few minutes.
+3. Open the newest one, tap the share button, and send the text to yourself. It holds the crash frames; a build from the rolling phone build or an upload keeps its dSYM, so the frames can be read.
+4. If the list is empty, the Watch has not synced yet: leave both devices on Wi-Fi and charged, then look again.
 
 ## Goal 4: Offline AI Deferral
 

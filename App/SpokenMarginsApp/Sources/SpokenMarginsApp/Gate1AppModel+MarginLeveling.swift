@@ -29,7 +29,7 @@ extension Gate1AppModel {
 
     /// The episode's file on this device: the one the listener downloaded, or the one they brought for a
     /// shared podcast.
-    private func localEpisodeFile(for itemId: String) -> URL? {
+    func localEpisodeFile(for itemId: String) -> URL? {
         importedPodcastRecipientLocalURLs[itemId] ?? podcastDownloadCoordinator?.validatedLocalURL(for: itemId)
     }
 

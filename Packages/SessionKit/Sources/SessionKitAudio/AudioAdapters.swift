@@ -2055,8 +2055,10 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, HeardAudio
         }
         let sessionStartedAt = ProcessInfo.processInfo.systemUptime
         #if os(iOS) || os(watchOS)
-        try configureStreamAudioSession()
-        try AVAudioSession.sharedInstance().setActive(true)
+        try MainThreadOperationLabels.shared.scoped("audioSession.activate") {
+            try configureStreamAudioSession()
+            try AVAudioSession.sharedInstance().setActive(true)
+        }
         #endif
         let sessionMs = Int((ProcessInfo.processInfo.systemUptime - sessionStartedAt) * 1000)
         let playerTimeMs = player.map { Int(($0.currentTime().seconds.isFinite ? $0.currentTime().seconds : -1) * 1000) } ?? -1
@@ -2259,7 +2261,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, HeardAudio
                 item.audioMix = mix
                 return true
             } catch {
-                context.cancelAll(reason: "decoded_playback_tap_install_failed:\(error.localizedDescription)")
+                context.cancelAll(reason: "decoded_playback_tap_install_failed:\(SafeErrorText.describe(error))")
                 removePostResumeEvidenceTap()
                 return false
             }
@@ -2841,7 +2843,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, HeardAudio
             postResumeEvidenceAudioMix = mix
             item.audioMix = mix
         } catch {
-            context.cancelAll(reason: "continuous_decoded_playback_tap_install_failed:\(error.localizedDescription)")
+            context.cancelAll(reason: "continuous_decoded_playback_tap_install_failed:\(SafeErrorText.describe(error))")
             removePostResumeEvidenceTap()
         }
         return true
@@ -3582,7 +3584,7 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
                 return false
             case .undetermined:
                 return await withCheckedContinuation { continuation in
-                    AVAudioApplication.requestRecordPermission { granted in
+                    AVAudioApplication.requestRecordPermission { @Sendable granted in
                         continuation.resume(returning: granted)
                     }
                 }
@@ -3611,7 +3613,7 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
             return false
         case .undetermined:
             return await withCheckedContinuation { continuation in
-                session.requestRecordPermission { granted in
+                session.requestRecordPermission { @Sendable granted in
                     continuation.resume(returning: granted)
                 }
             }
@@ -3636,13 +3638,15 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
         // session already on its route is left here. A restart's cycle sets the category again, as before (#937).
         let wanted = Self.recordingConfiguration(for: inputChoice)
         if cycleSession || AudioSessionConfiguration.needsCategoryChange(current: Self.currentConfiguration(session), wanted: wanted) {
-            try session.setCategory(.playAndRecord, mode: .spokenAudio, options: Self.recordingOptions(for: inputChoice))
+            try MainThreadOperationLabels.shared.scoped("audioSession.category") {
+                try session.setCategory(.playAndRecord, mode: .spokenAudio, options: Self.recordingOptions(for: inputChoice))
+            }
             sessionSwitchFields["sessionCategoryOnMain"] = "set"
         } else {
             sessionSwitchFields["sessionCategoryOnMain"] = "already_set"
         }
         #endif
-        try session.setActive(true)
+        try MainThreadOperationLabels.shared.scoped("audioSession.activate") { try session.setActive(true) }
         #if os(iOS)
         sessionSwitchFields["sessionOnMainMs"] = String(max(0, Int(((ProcessInfo.processInfo.systemUptime - started) * 1_000).rounded())))
         #endif
@@ -3657,12 +3661,18 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
             AVNumberOfChannelsKey: 1,
             AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
         ]
+        let recorderStartLabel = MainThreadOperationLabels.shared.push("recorder.start")
+        defer { MainThreadOperationLabels.shared.pop(recorderStartLabel) }
         let recorder = try AVAudioRecorder(url: url, settings: settings)
         let delegate = CaptureDelegate()
         recorder.delegate = delegate
         recorder.isMeteringEnabled = true
         recorder.prepareToRecord()
         guard recorder.record() else {
+            // `prepareToRecord` started the recorder's audio queue. Dropped without `stop()`, the queue's next input
+            // callback reads the freed recorder and the app crashes (#3633, in-app record over AirPlay).
+            recorder.stop()
+            try? fileManager.removeItem(at: url)
             throw SessionKitError.persistenceFailed("recording_failed")
         }
         recorderDelegate = delegate
@@ -3758,6 +3768,8 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
         #endif
         let (recorder, url) = try startRecorder(cycleSession: false)
         isCaptureActive = true
+        // A recorder still held here would be freed while running, which crashes as above (#3633).
+        self.recorder?.stop()
         self.recorder = recorder
         self.currentURL = url
         recordingStartedAt = Date()
@@ -3856,6 +3868,14 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
         #if canImport(AVFoundation)
         guard isCaptureActive, let currentURL else { return nil }
         return relativeRecordingPath(for: currentURL)
+        #else
+        return nil
+        #endif
+    }
+
+    public func captureInputRoute() -> String? {
+        #if os(iOS)
+        return AVAudioSession.sharedInstance().currentRoute.inputs.map(\.portType.rawValue).joined(separator: "+")
         #else
         return nil
         #endif

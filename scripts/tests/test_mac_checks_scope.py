@@ -344,6 +344,56 @@ class WorkflowScopeTests(unittest.TestCase):
         self.assertIn('echo "mac=true" >> "$GITHUB_OUTPUT"', text)
         self.assertIn('--mac-required', text)
 
+    def scope_says(self, layout, *, base_has_script=True):
+        """The scope step, run for real: a base whose rule needs the Mac for a Swift file, and a PR that changes that
+        rule so its own copy says Mac-free. <layout>: 'pr' (GitHub's merge commit) or 'dispatch' (the PR's branch, with a base)."""
+        step = next(step for step in self.jobs['scope']['steps'] if step.get('id') == 'scope')['run']
+
+        def git(*args, cwd):
+            subprocess.run(['git', '-c', 'user.name=t', '-c', 'user.email=t@example.test', *args], cwd=cwd,
+                           check=True, capture_output=True)
+        with tempfile.TemporaryDirectory() as temp:
+            temp = Path(temp)
+            origin, work = temp / 'origin', temp / 'work'
+            (origin / 'scripts').mkdir(parents=True)
+            git('init', '--quiet', '--initial-branch=main', cwd=origin)
+            if base_has_script:
+                (origin / 'scripts/test-scope.py').write_text((ROOT / 'scripts/test-scope.py').read_text())
+            (origin / 'readme.txt').write_text('base\n')
+            git('add', '.', cwd=origin)
+            git('commit', '--quiet', '-m', 'base', cwd=origin)
+            git('switch', '--quiet', '-c', 'pr', cwd=origin)
+            (origin / 'scripts/test-scope.py').write_text('print("mac=false")\nprint("reason=the PR\'s own rule")\n')
+            (origin / 'Packages').mkdir()
+            (origin / 'Packages/New.swift').write_text('// a Swift input\n')
+            git('add', '.', cwd=origin)
+            git('commit', '--quiet', '-m', 'pr', cwd=origin)
+            git('switch', '--quiet', 'main', cwd=origin)
+            git('clone', '--quiet', str(origin), str(work), cwd=temp)
+            git('switch', '--quiet', 'pr', cwd=work)
+            if layout == 'pr':
+                git('switch', '--quiet', '--detach', 'origin/main', cwd=work)
+                git('merge', '--quiet', '--no-ff', '--no-edit', 'origin/pr', cwd=work)
+            output = temp / 'output'
+            ran = subprocess.run(['bash', '-e', '-c', step], cwd=work, capture_output=True, text=True,
+                                 env={'PATH': '/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin', 'RUNNER_TEMP': str(temp),
+                                      'GITHUB_OUTPUT': str(output), 'BASE': 'main' if layout == 'dispatch' else ''})
+            self.assertEqual(ran.returncode, 0, ran.stderr)
+            return dict(line.split('=', 1) for line in output.read_text().splitlines() if '=' in line)
+
+    def test_the_scope_job_reads_the_base_s_rule_as_the_runner_does(self):
+        # #3501 audit: the job read the PR's copy and the runner the base's, so a PR whose copy said Mac-free had its
+        # Mac check skipped and required at once: an INCONCLUSIVE no fresh run could clear. A branch older than a
+        # change to the rule on the base did the same.
+        for layout in ('pr', 'dispatch'):
+            with self.subTest(layout=layout):
+                self.assertEqual(self.scope_says(layout)['mac'], 'true')
+
+    def test_a_base_without_the_script_runs_the_mac_checks(self):
+        for layout in ('pr', 'dispatch'):
+            with self.subTest(layout=layout):
+                self.assertEqual(self.scope_says(layout, base_has_script=False)['mac'], 'true')
+
 
 class OneMacJobTests(unittest.TestCase):
     """#2596: SessionKit core and Mac rest share one hosted Mac, so a Swift diff pays for one machine start, not two."""

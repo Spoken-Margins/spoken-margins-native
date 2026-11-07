@@ -69,6 +69,8 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
                 after: after.progressToken
             )
         }
+        // Article and PDF scene summaries take their turn once no podcast map or audio job is waiting (#3461).
+        if !hasAudioWork, let textResult = await performBackgroundTextSceneSummaryPass() { return textResult }
         let audioHasMore = await performBackgroundAudioPreparationPass()
         let plannerHasMore = backgroundPreparationPlanner.afterAudioPass(
             audioHasMore: audioHasMore, hadAudioWork: hasAudioWork, hadEpisodeJobs: !episodeJobs.isEmpty
@@ -346,7 +348,7 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
                 }
                 refreshLibraryRowsInBackground()
             }
-            diagnostics["backgroundAudioPreparation"] = "paused:\(error.localizedDescription)"
+            diagnostics["backgroundAudioPreparation"] = "paused:\(SafeErrorText.describe(error))"
             if attemptedJob?.policy == .explicit {
                 reportWarning(ListenerErrorText.line(prefix: "Audio preparation paused:", error: error))
             }

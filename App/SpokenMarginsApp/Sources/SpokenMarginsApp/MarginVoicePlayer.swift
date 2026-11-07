@@ -262,7 +262,7 @@ final class MarginVoicePlayer: ObservableObject {
         guard let host, !host.marginVoiceMixesWithOtherAudio, !transportHandedBack, let prompt = sharedMargin else { return }
         let player = currentPlayer
         remoteControls.publish(
-            sender: prompt.senderLabel, elapsed: player?.currentTime().seconds ?? 0,
+            sender: FriendArrivalWords.nowPlayingArtist(senderLabel: prompt.senderLabel), elapsed: player?.currentTime().seconds ?? 0,
             duration: player?.currentItem?.duration.seconds ?? .nan,
             rate: health?.nowPlayingRate(playerRate: Double(player?.rate ?? 0)) ?? 0
         )

@@ -15,6 +15,11 @@ public struct ReviewReturnPlace: Codable, Equatable, Sendable {
     /// Where a review can have left the source: from the first lead-in to just past the last Margin.
     public let stretchStartMs: Int
     public let stretchEndMs: Int
+    /// A Margin of the review has had the floor while the place stayed owed (the place was ahead of that Margin, so the
+    /// review pulled the listener back to catch up). From then on the source is where the listener's own listening has
+    /// it, as `placeToReturnToWhenStopped` treats Stop. Optional so a note saved by an earlier build still decodes; nil
+    /// means no Margin has been reached yet.
+    public private(set) var passedAMargin: Bool?
 
     /// The place a review about to start owes. Nil for a moment that isn't a review, or one that has no place to go back to.
     public init?(sequence: MarginMomentSequence) {
@@ -28,9 +33,41 @@ public struct ReviewReturnPlace: Codable, Equatable, Sendable {
 
     /// Whether `savedMediaTimeMs`, where the session was saved or the source stands now, is somewhere the review put it.
     /// A position outside the stretch was reached some other way (the listener scrubbed or listened on), and is theirs.
+    /// Before any Margin was reached, the review's own hop is what moved the source, so any position away from the place
+    /// goes back to it. After one, a position at or past the place is the listener's own listening, never rewound
+    /// (#3626, the same rule Stop follows); only a position still behind the place goes back to it.
     public func needsRestoring(from savedMediaTimeMs: Int?) -> Bool {
         guard let saved = savedMediaTimeMs, (stretchStartMs...stretchEndMs).contains(saved) else { return false }
+        if passedAMargin == true { return returnToMediaTimeMs - saved > Self.alreadyThereMs }
         return abs(saved - returnToMediaTimeMs) > Self.alreadyThereMs
+    }
+}
+
+extension ReviewReturnPlace {
+    /// Whether the place is still owed once the Margin at `marginMediaTimeMs` has the floor: only when the place is ahead
+    /// of that Margin (the review pulled the listener back to catch up). The episode plays on after a Margin (#3596), so
+    /// for any other listener the source is from then on where their own listening has it, and a relaunch must not send
+    /// them back to the place they started from. Whether an owed place is then restored is `needsRestoring`'s question.
+    public func isOwed(onceMarginAt marginMediaTimeMs: Int) -> Bool {
+        returnToMediaTimeMs > marginMediaTimeMs
+    }
+
+    /// What the note is worth now that the review is in the state `sequence` says. A Margin has the floor as soon as the
+    /// sequence says so, whether or not its voice ever starts (it may be unplayable, or the chime still sounding), so this
+    /// is called on every change of the sequence, not from the voice's start (#3626).
+    public func standing(whenReviewIs sequence: MarginMomentSequence) -> Standing {
+        guard sequence.hasReachedAMargin, let playing = sequence.playing else { return .owed(self) }
+        guard isOwed(onceMarginAt: playing.mediaTimeMs) else { return .released }
+        var passed = self
+        passed.passedAMargin = true
+        return .owed(passed)
+    }
+
+    public enum Standing: Equatable, Sendable {
+        /// Still owed, as this note says (the note to keep).
+        case owed(ReviewReturnPlace)
+        /// Nothing is owed any more: the source is where the listener's own listening has it.
+        case released
     }
 }
 

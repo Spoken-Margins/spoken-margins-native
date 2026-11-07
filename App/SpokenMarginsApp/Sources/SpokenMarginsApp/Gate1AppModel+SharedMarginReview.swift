@@ -23,7 +23,9 @@ extension Gate1AppModel {
     /// played, and nothing would ever mark it heard. A written Margin has no recording; its words are read (#3365).
     func newSharedMargins(itemId: String) -> [SharedMarginReview.Entry] {
         let entries: [SharedMarginReview.Entry]
-        if selectedItem.id == itemId {
+        if let dead = deadEpisodeEntries(itemId: itemId) { // a dead podcast episode: its Margins are unplaced (#3392)
+            entries = dead
+        } else if selectedItem.id == itemId {
             entries = SharedMarginReview.entries(
                 layers: selectedItem.importedCommentaryLayers, records: selectedItem.importedCommentaryInterjections,
                 ownMargins: ownMargins(itemId: itemId)
@@ -96,6 +98,7 @@ extension Gate1AppModel {
             reportWarning("There are no new Margins to review on this item.")
             return
         }
+        if reviewFriendMarginsOfDeadEpisode(itemId: itemId, entries: entries) { return } // the episode can't play (#3392)
         if WrittenMarginReadings.holdReview(itemId: itemId, thenContinue: thenContinue, entries: entries, model: self) { return } // readings not ready yet (#3365)
         endMarginMoment()
         // A Margin voice already playing (your own, #1538, or a friend's) or a shared-Margin card waiting gives way:
@@ -132,12 +135,39 @@ extension Gate1AppModel {
         marginMomentConductor?.onVoiceStarted = { [weak self] in
             if let margin = heard[$0] { self?.markSharedMarginHeard(margin) }
         }
+        settleReviewPlaceAsTheReviewProgresses(itemId: itemId)
         // Their voices get the same chime as the automatic prompt, except for a muted layer's (#932).
         marginMomentConductor?.chimedMarginIds = SharedMarginReview.chimedMarginIds(steps)
         marginMomentConductor?.onChimeStarted = { [weak self] in self?.diagnostics["marginMoment.chime"] = "played:\($0)" }
         WrittenMarginReadings.rewordUnavailable(on: marginMomentConductor, entries: entries, model: self)
         if !snapshot.status.isPlaybackActive { resumePlayback() }
         screen = .playback
+    }
+
+    /// The review's note of the listener's place follows the review: a Margin has the floor once the sequence says so,
+    /// whether or not its voice ever starts (an unplayable voice, a chime still sounding), and that is what matters to a
+    /// relaunch (#3626). So it is read on every change of the sequence, not from the voice's start.
+    private func settleReviewPlaceAsTheReviewProgresses(itemId: String) {
+        guard let conductor = marginMomentConductor else { return }
+        let existing = conductor.onChange
+        conductor.onChange = { [weak self, weak conductor] in
+            if let self, let conductor, self.marginMomentConductor === conductor {
+                self.settleReviewPlace(itemId: itemId, reviewIs: conductor.sequence)
+            }
+            existing?()
+        }
+    }
+
+    /// Once a Margin of the review has the floor, the episode plays on from it, so the saved session is the listener's own
+    /// listening and a relaunch must not hand back the place the review started from. The note stays only for a listener
+    /// whose place was ahead of the Margin, and then only to bring back a position still behind it
+    /// (`ReviewReturnPlace.standing(whenReviewIs:)`, audit of #3619).
+    func settleReviewPlace(itemId: String, reviewIs sequence: MarginMomentSequence) {
+        guard sequence.hasReachedAMargin, sequence.playing != nil, let place = reviewPlaces.owed(itemId: itemId) else { return }
+        switch place.standing(whenReviewIs: sequence) {
+        case .owed(let kept): if kept != place { reviewPlaces.owe(kept) }
+        case .released: reviewPlaces.clear(itemId: itemId)
+        }
     }
 
     /// Stop on the review card: the voice stops and the item goes back to where the listener left off, paused.
@@ -189,7 +219,9 @@ extension Gate1AppModel {
         let returnTo = review.returnToMediaTimeMs ?? 0
         var left = moment.unplayed
         if let playing = moment.playing { left.append(playing) }
-        let ahead = Set(left.filter { $0.mediaTimeMs > returnTo }.map(\.marginId))
+        let ahead = CantPlayListening.isCantPlayListening(moment)
+            ? CantPlayListening.unreachedMarginIds(in: moment) // one flat place: every unplayed Margin goes back (#3392)
+            : Set(left.filter { $0.mediaTimeMs > returnTo }.map(\.marginId))
         guard !ahead.isEmpty else { return }
         let stillNew = selectedItem.importedCommentaryInterjections.values.joined().filter {
             $0.isNewToListener && ahead.contains(SharedMarginReview.marginId(layerId: $0.layerId, interjectionId: $0.id))

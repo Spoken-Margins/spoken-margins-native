@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import SessionKit
 
@@ -10,7 +11,9 @@ import SessionKit
 final class LiveSessionController: ObservableObject {
     @Published private(set) var session: LiveSession?
     @Published var errorMessage: String?
-    @Published private(set) var isRecordingSpoken = false
+    /// The phone is recording a spoken Margin for this session. The recording itself belongs to
+    /// `LiveSessionSpokenCapture`, not to this screen, so closing or losing the screen never loses it (#3489).
+    var isRecordingSpoken: Bool { spokenCapture.isRecording(for: session?.id) }
     /// True once the stored session has been read, so a link waiting on it knows whether there is one to act on.
     @Published private(set) var didLoad = false
 
@@ -23,20 +26,30 @@ final class LiveSessionController: ObservableObject {
     private var saveGeneration = 0
     /// The last save or discard handed to the worker, so what follows it reads the store after it.
     private var lastWrite: Task<Void, Never>?
-    private var spokenStart: Task<Void, Never>?
     private var pollTask: Task<Void, Never>?
     private var clockStartTask: Task<Void, Never>?
     /// Removes the "Ended · Resume" card when its window closes (#2883), if the app is still running then.
     private var endedCardExpiry: Task<Void, Never>?
-    private let phoneRecorder = LiveSessionPhoneRecorder()
+    private let spokenCapture: LiveSessionSpokenCapture
+    private var captureObservers: Set<AnyCancellable> = []
     private var diskObserver: NSObjectProtocol?
     /// Finish tapped on the Lock Screen card while a spoken Margin records (#3499); lives only while one records.
-    private var finishObserver: NSObjectProtocol?
-    private var cardUpdate: Task<Void, Never>?
 
-    init(sessionId: String? = nil, files: LiveSessionFileWorker = .shared) {
+    init(sessionId: String? = nil, files: LiveSessionFileWorker = .shared, spokenCapture: LiveSessionSpokenCapture = .shared) {
         requestedSessionId = sessionId
         self.files = files
+        self.spokenCapture = spokenCapture
+        spokenCapture.objectWillChange
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &captureObservers)
+        spokenCapture.$notice
+            .compactMap { $0 }
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] notice in
+                self?.errorMessage = notice
+                self?.spokenCapture.notice = nil
+            }
+            .store(in: &captureObservers)
     }
 
     func load() {
@@ -51,7 +64,8 @@ final class LiveSessionController: ObservableObject {
             // A session started or discarded while the file was read is newer than the file.
             if saveGeneration == generation { session = stored }
             didLoad = true
-            syncCardRecording() // a card left on "Recording" by an earlier screen or run goes back to Mark (#3499)
+            // A card left on "Recording" by an earlier screen or run goes back to Mark (#3499).
+            if let id = session?.id { spokenCapture.syncCard(for: id) }
             WatchMarginReceiver.shared.fileWaitingMarks()
             startPolling()
             observeDisk()
@@ -104,6 +118,9 @@ final class LiveSessionController: ObservableObject {
             errorMessage = ListenerErrorText.message(for: error)
             return false
         }
+        // A spoken Margin still recording is stopped and saved, never dropped (#3489). It files into the store at its
+        // start, which is inside the session; this screen takes it in when it lands.
+        if isRecordingSpoken { stopSpokenMargin() }
         WatchMarginReceiver.shared.fileWaitingMarks()
         session = ending
         save()
@@ -221,6 +238,7 @@ final class LiveSessionController: ObservableObject {
 
     /// Lets go of a session that was saved as a Library item (`Gate1AppModel.saveLiveSession` marks it saved).
     func close() {
+        if isRecordingSpoken { stopSpokenMargin() }
         endActivities()
         session = nil
         sessionChanged()
@@ -228,14 +246,7 @@ final class LiveSessionController: ObservableObject {
 
     /// Deletes the session and its Margins, and records that, so a late copy of one of them is refused.
     func discard() {
-        if isRecordingSpoken {
-            isRecordingSpoken = false
-            removeFinishObserver()
-            Task { [phoneRecorder, spokenStart] in
-                await spokenStart?.value
-                await phoneRecorder.cancel()
-            }
-        }
+        if let id = session?.id { spokenCapture.cancel(sessionId: id) }
         endActivities()
         let discarded = session?.id
         session = nil
@@ -259,71 +270,15 @@ final class LiveSessionController: ObservableObject {
     /// Starts a spoken Margin on the phone. During a call it says to use the Watch instead: the call holds the
     /// phone's microphone, so nothing would be recorded.
     func startSpokenMargin() {
-        guard isRunning, !isRecordingSpoken else { return }
-        isRecordingSpoken = true
-        finishObserver = NotificationCenter.default.addObserver(
-            forName: LiveSessionFinishMargin.requested, object: nil, queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.stopSpokenMargin() }
-        }
-        spokenStart = Task { [weak self, phoneRecorder] in
-            do {
-                try await LiveSessionPhoneRecorder.checkCanRecord()
-                try await phoneRecorder.start()
-                self?.syncCardRecording()
-            } catch {
-                self?.isRecordingSpoken = false
-                self?.removeFinishObserver()
-                self?.errorMessage = ListenerErrorText.message(for: error)
-            }
-        }
+        guard isRunning, let id = session?.id, !isRecordingSpoken else { return }
+        spokenCapture.start(sessionId: id)
     }
 
-    /// Stops the spoken Margin, files it at the moment it was started, and transcribes it on the device.
+    /// Stops the spoken Margin and files it at the moment it was started; it is transcribed on the device. The
+    /// filing goes through the store, and this screen takes the Margin in from there (`reconcileWithDisk`).
     func stopSpokenMargin() {
         guard isRecordingSpoken else { return }
-        isRecordingSpoken = false
-        removeFinishObserver()
-        Task { [weak self, phoneRecorder, spokenStart] in
-            await spokenStart?.value // a stop tapped while the start was still opening the microphone waits for it
-            self?.syncCardRecording()
-            do {
-                guard let recording = try await phoneRecorder.stop() else { return }
-                self?.fileSpokenMargin(recording)
-            } catch {
-                self?.errorMessage = ListenerErrorText.line(prefix: "Couldn't save the spoken Margin:", error: error)
-            }
-        }
-    }
-
-    /// The Lock Screen card says a spoken Margin records, with Finish, or goes back to Mark (#3499).
-    /// One update at a time, each following `isRecordingSpoken` as it is when written.
-    private func syncCardRecording() {
-        guard let id = session?.id else { return }
-        let previous = cardUpdate
-        cardUpdate = Task { [weak self] in
-            await previous?.value
-            await LiveSessionActivities.showRecording(isRecording: { self?.isRecordingSpoken == true }, sessionId: id)
-        }
-    }
-
-    private func removeFinishObserver() {
-        if let finishObserver { NotificationCenter.default.removeObserver(finishObserver) }
-        finishObserver = nil
-    }
-
-    private func fileSpokenMargin(_ recording: LiveSessionPhoneRecorder.Recording) {
-        guard isRunning else { return }
-        let id = "phone-\(UUID().uuidString.lowercased())"
-        session?.attachSpokenMargin(
-            id: id, audioPath: recording.audioPath, markedAt: recording.startedAt,
-            durationMs: recording.durationMs, spokenOn: "phone"
-        )
-        save()
-        Task { [weak self] in
-            guard let text = await LiveSessionSpokenMargins.transcribe(audioPath: recording.audioPath) else { return }
-            if self?.session?.setTranscript(text, forMarginId: id) == true { self?.save() }
-        }
+        spokenCapture.stopAndFile()
     }
 
     /// The stored session changed underneath (a Watch Margin arrived, or a transcript finished): take in Margins

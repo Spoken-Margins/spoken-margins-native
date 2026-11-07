@@ -451,6 +451,34 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertNil(bare["voiceDownloads"], "no log, no key")
     }
 
+    /// #3506: the export carries the Watch's latest report from its file, so a launch that crashed shows up in the
+    /// phone's Diagnostics after a later launch that survived.
+    func testDiagnosticsExportCarriesTheWatchReportFromItsFile() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("watch-diag-export-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let file = folder.appendingPathComponent("WatchDiagnostics.json")
+        var log = WatchDiagnosticsLog()
+        log.launched(at: Date(timeIntervalSince1970: 1_800_000_000))
+        log.launched(at: Date(timeIntervalSince1970: 1_800_000_100)) // the first one never reached the front
+        WatchDiagnosticsStore.save(log.report(build: "36", osVersion: "26.1", at: Date(timeIntervalSince1970: 1_800_000_101)), to: file)
+        let fixed = DiagnosticsExport.Fixed(
+            developerBuild: "test", developerRecording: nil, playbackEvents: nil, exportedAt: Date(),
+            playbackStatus: "idle", sessionPhase: "idle", targetType: nil, pendingAIJobs: 0
+        )
+
+        let withReport = try DiagnosticsExportInputs(live: [:], store: nil, fixed: fixed, voiceDownloadLogFile: nil, watchDiagnosticsFile: file).writeFile()
+        defer { try? FileManager.default.removeItem(at: withReport) }
+        let payload = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(contentsOf: withReport)) as? [String: String])
+        let watch = try XCTUnwrap(payload["watchDiagnostics"])
+        XCTAssertTrue(watch.contains("previousLaunchNeverBecameActive"))
+
+        let without = try DiagnosticsExportInputs(live: [:], store: nil, fixed: fixed, voiceDownloadLogFile: nil, watchDiagnosticsFile: folder.appendingPathComponent("none.json")).writeFile()
+        defer { try? FileManager.default.removeItem(at: without) }
+        let bare = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(contentsOf: without)) as? [String: String])
+        XCTAssertNil(bare["watchDiagnostics"], "no report, no key")
+    }
+
     /// #1191: Share Diagnostics builds the file off the main actor so the button can show a spinner. The file
     /// carries the same safe payload as the synchronous export.
     func testPrepareDiagnosticsExportFileURLBuildsTheSafeFile() async throws {
@@ -3433,6 +3461,23 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.restoreItem(id: "item-pill")
         XCTAssertFalse(model.libraryItems.contains(where: { $0.id == "item-pill" }))
         XCTAssertFalse(model.recentlyDeletedItems.contains(where: { $0.id == "item-pill" }))
+    }
+
+    /// #2505: a permanent delete from Recently Deleted drops the row without a table read, so a Library read that began
+    /// before it (Home's, which checks only the revision) must be made stale, or it would publish the row again. A trashed
+    /// row is never in `libraryItems`, so the revision has to move on the `recentlyDeletedItems` change alone.
+    func testPermanentDeleteFromRecentlyDeletedMovesThePresentationRevision() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.moveItemToTrash(id: "item-pill")
+        XCTAssertTrue(model.recentlyDeletedItems.contains(where: { $0.id == "item-pill" }))
+        XCTAssertFalse(model.libraryItems.contains(where: { $0.id == "item-pill" }), "a trashed row is not in the Library list")
+        let before = model.libraryPresentationRevision
+
+        model.permanentlyDeleteItem(id: "item-pill")
+
+        XCTAssertFalse(model.recentlyDeletedItems.contains(where: { $0.id == "item-pill" }))
+        XCTAssertGreaterThan(model.libraryPresentationRevision, before, "a read begun before the delete must be stale")
     }
 
     func testEmptyRecentlyDeletedPermanentlyDeletesEveryTrashedItem() {

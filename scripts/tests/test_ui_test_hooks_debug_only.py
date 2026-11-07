@@ -18,7 +18,8 @@ SOURCES = [
 ]
 # The two source folders held about 600 Swift files when this floor was set (2026-10-17).
 MIN_SOURCE_FILES = 300
-HOOK = re.compile(r'--ui-testing|SPOKEN_MARGINS_UI_TEST')
+# `ui-test-share-link` is the host J10 hands its share link over on (#1842).
+HOOK = re.compile(r'--ui-testing|SPOKEN_MARGINS_UI_TEST|ui-test-share-link')
 
 
 def hook_lines_outside_debug(text: str) -> list[int]:
@@ -79,6 +80,38 @@ class UITestingHooksDebugOnlyTests(unittest.TestCase):
         self.assertGreaterEqual(len(scanned), MIN_SOURCE_FILES, f"scanned only {len(scanned)} Swift files; are {SOURCES} still the app's sources?")
         self.assertTrue(any(path.name == "UITestingHooks.swift" for path in scanned), "the file that holds the hooks was not scanned")
         self.assertEqual(offenders, [], "UI-test hook literals outside #if DEBUG")
+
+
+class ShareLinkHandoffTests(unittest.TestCase):
+    """J10 hands its share link to the app as `spokenmargins://ui-test-share-link?url=` (#1842).
+
+    Hosted simulators never route the universal link, so J10's share link step skipped on every hosted run and
+    the class never counted as a pass. The UI test target doesn't link SessionKit, so it builds the hand-off by
+    hand; these keep its copy, SessionKit's reader and the app's registered scheme saying the same thing.
+    """
+
+    HANDOFF = ROOT / "Packages" / "SessionKit" / "Sources" / "SessionKit" / "ShareLinkUITestHandoff.swift"
+    J10 = ROOT / "App" / "SpokenMarginsAppUITests" / "J10OfflineJourneyUITests.swift"
+
+    def handoff_prefix(self) -> str:
+        source = self.HANDOFF.read_text(encoding="utf-8")
+        scheme = re.search(r'static let scheme = "([^"]+)"', source)
+        host = re.search(r'static let host = "([^"]+)"', source)
+        self.assertIsNotNone(scheme, "ShareLinkUITestHandoff no longer names its scheme")
+        self.assertIsNotNone(host, "ShareLinkUITestHandoff no longer names its host")
+        return f"{scheme.group(1)}://{host.group(1)}?url="
+
+    def test_j10_opens_the_handoff_sessionkit_reads(self):
+        self.assertIn(self.handoff_prefix(), self.J10.read_text(encoding="utf-8"))
+
+    def test_j10_never_skips_its_share_link_step(self):
+        self.assertNotIn("XCTSkip", self.J10.read_text(encoding="utf-8"),
+                         "a skipped step never counts as a pass; the hand-off always reaches the app")
+
+    def test_the_app_registers_the_handoff_scheme(self):
+        scheme = self.handoff_prefix().split("://")[0]
+        project = (ROOT / "project.yml").read_text(encoding="utf-8")
+        self.assertRegex(project, rf"CFBundleURLSchemes:\s*\n\s*- {scheme}\s*\n")
 
 
 if __name__ == "__main__":

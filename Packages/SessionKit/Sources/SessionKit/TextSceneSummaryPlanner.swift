@@ -44,11 +44,16 @@ public enum TextSceneSummaryPlanner {
     public static let maximumSceneCharacters = 6_000
     /// A scene with fewer letters and digits than this, or no sentence at all, has nothing for the model to summarise.
     public static let minimumSummarizableCharacters = 40
+    /// The most scenes one text gets, kept below a packet's 200-scene limit (`ListeningMapPacket.maximumScenes`) so a
+    /// long PDF's map can still be shared (#3461). A text with more is cut into this many even groups of neighbouring
+    /// scenes; each group is one scene and the model reads the first part of it.
+    public static let maximumScenes = 190
 
     public static func plan(
         text: String,
         chapters: [Chapter],
-        maximumSceneCharacters: Int = TextSceneSummaryPlanner.maximumSceneCharacters
+        maximumSceneCharacters: Int = TextSceneSummaryPlanner.maximumSceneCharacters,
+        maximumScenes: Int = TextSceneSummaryPlanner.maximumScenes
     ) -> [TextSceneDraft] {
         let characters = Array(text)
         guard !characters.isEmpty, maximumSceneCharacters > 0 else { return [] }
@@ -74,7 +79,26 @@ public enum TextSceneSummaryPlanner {
                 ))
             }
         }
-        return drafts
+        return grouped(drafts, maximumScenes: maximumScenes, maximumSceneCharacters: maximumSceneCharacters)
+    }
+
+    /// At most `maximumScenes` drafts: more than that are merged, neighbours together, into even groups. A group keeps
+    /// its first scene's id and title and covers all of its characters. The model reads the group's first
+    /// `maximumSceneCharacters` of readable text, so a summary describes where the group begins.
+    static func grouped(_ drafts: [TextSceneDraft], maximumScenes: Int, maximumSceneCharacters: Int) -> [TextSceneDraft] {
+        guard maximumScenes > 0, drafts.count > maximumScenes else { return drafts }
+        let size = (drafts.count + maximumScenes - 1) / maximumScenes
+        return stride(from: 0, to: drafts.count, by: size).enumerated().map { order, from in
+            let group = drafts[from..<min(from + size, drafts.count)]
+            let first = group.first!
+            let readable = group.filter(\.isSummarizable).map(\.modelText).joined(separator: "\n\n")
+            return TextSceneDraft(
+                id: first.id, order: order, startChar: first.startChar, endChar: group.last!.endChar,
+                fallbackTitle: first.fallbackTitle,
+                modelText: String(readable.prefix(maximumSceneCharacters)),
+                isSummarizable: group.contains(where: \.isSummarizable)
+            )
+        }
     }
 
     /// Enough letters to say something, and prose rather than a list of headings: a sentence end somewhere, or one line
@@ -222,22 +246,31 @@ struct PageFurniture {
         let slice = String(characters[start..<end])
         return slice.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
             .filter { line in
-                guard let key = Self.key(String(line)) else { return true }
-                return !repeated.contains(key) && !Self.isPageNumber(String(line))
+                let text = String(line)
+                if Self.isPageNumber(text) { return false }
+                guard let key = Self.key(text) else { return true }
+                return !repeated.contains(key)
             }
             .joined(separator: "\n")
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// nil for a blank line, a long line, or one that ends like a sentence, which are never furniture: a running head
-    /// is a title, not a sentence, so "Sentence 4 about the market." repeated with another number stays text.
+    /// nil for a blank line, a long line, one that ends like a sentence, or one that is only digits. None is furniture
+    /// by repeating: a running head is a title, not a sentence, so "Sentence 4 about the market." repeated with another
+    /// number stays text; and digits fold to one key, so three bare page numbers would otherwise make "1990" repeat too.
+    /// Bare page numbers go through `isPageNumber` instead.
     private static func key(_ line: String) -> String? {
         let trimmed = line.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty, trimmed.count <= maximumLength, let last = trimmed.last,
-              !".!?…。！？".contains(last) else { return nil }
+              !".!?…。！？".contains(last), !isOnlyDigits(trimmed) else { return nil }
         let folded = trimmed.lowercased().map { $0.isNumber ? "#" : $0 }
         let collapsed = String(folded).split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
         return collapsed.replacingOccurrences(of: "##+", with: "#", options: .regularExpression)
+    }
+
+    /// "1990", "- 1990 -": digits with nothing else but spaces and dashes.
+    private static func isOnlyDigits(_ line: String) -> Bool {
+        line.contains(where: \.isNumber) && line.allSatisfy { $0.isNumber || $0.isWhitespace || "-–—".contains($0) }
     }
 
     /// "12", "Page 3 of 10", "- 4 -": a line that is only a page number, whatever else is on the page. A bare number of
