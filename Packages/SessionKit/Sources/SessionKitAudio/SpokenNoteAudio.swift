@@ -59,7 +59,7 @@ public final class SystemSpokenNoteTakeRecorder: NSObject, SpokenNoteTakeRecordi
 
     public func begin(writingTo url: URL) async throws {
         let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playAndRecord, mode: .spokenAudio, options: [.defaultToSpeaker, .allowBluetoothHFP])
+        try session.setCategory(.playAndRecord, mode: .spokenAudio, options: [.defaultToSpeaker, .allowBluetoothHFP, .allowAirPlay])
         try session.setActive(true)
         let settings: [String: Any] = [
             AVFormatIDKey: Int(kAudioFormatMPEG4AAC),

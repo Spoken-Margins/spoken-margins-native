@@ -15,6 +15,9 @@ public enum ListenerErrorText {
     public static let fallback = "Something went wrong. Try again."
 
     public static func message(for error: Error) -> String {
+        // #3633: the recorder refused to start (an audio route that wouldn't take the microphone). Its own sentence,
+        // not the generic line, since the listener can try again once the route settles.
+        if case SessionKitError.persistenceFailed("recording_failed") = error { return "Couldn't start recording. Try again." }
         let description = ((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return looksLikeCodeOrDump(description) ? fallback : description

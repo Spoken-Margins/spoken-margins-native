@@ -3673,15 +3673,25 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
         // session already on its route is left here. A restart's cycle sets the category again, as before (#937).
         let wanted = Self.recordingConfiguration(for: inputChoice)
         if cycleSession || AudioSessionConfiguration.needsCategoryChange(current: Self.currentConfiguration(session), wanted: wanted) {
-            try MainThreadOperationLabels.shared.scoped("audioSession.category") {
-                try session.setCategory(.playAndRecord, mode: .spokenAudio, options: Self.recordingOptions(for: inputChoice))
+            do {
+                try MainThreadOperationLabels.shared.scoped("audioSession.category") {
+                    try session.setCategory(.playAndRecord, mode: .spokenAudio, options: Self.recordingOptions(for: inputChoice))
+                }
+            } catch {
+                sessionSwitchFields["sessionSwitchError"] = "category:\(SafeErrorText.describe(error))" // #3633
+                throw error
             }
             sessionSwitchFields["sessionCategoryOnMain"] = "set"
         } else {
             sessionSwitchFields["sessionCategoryOnMain"] = "already_set"
         }
         #endif
-        try MainThreadOperationLabels.shared.scoped("audioSession.activate") { try session.setActive(true) }
+        do {
+            try MainThreadOperationLabels.shared.scoped("audioSession.activate") { try session.setActive(true) }
+        } catch {
+            sessionSwitchFields["sessionSwitchError"] = "activate:\(SafeErrorText.describe(error))" // #3633
+            throw error
+        }
         #if os(iOS)
         sessionSwitchFields["sessionOnMainMs"] = String(max(0, Int(((ProcessInfo.processInfo.systemUptime - started) * 1_000).rounded())))
         #endif
