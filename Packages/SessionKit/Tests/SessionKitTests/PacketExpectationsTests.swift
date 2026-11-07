@@ -11,7 +11,7 @@ import XCTest
 /// the tool (#1850). Here both readers run over every packet on every SessionKit run.
 ///
 /// An expectation's `swift` text is one of
-/// - `imports`: both readers accept the packet;
+/// - `imports`: this build reads the packet and Build 29 imports it;
 /// - `<refusal>`: both readers refuse it, this build's with that text (Build 29's wording may differ, so only
 ///   "refuses" is compared for it);
 /// - `imports; Build 29: <refusal>`: this build accepts it and Build 29 refuses it with that text;
