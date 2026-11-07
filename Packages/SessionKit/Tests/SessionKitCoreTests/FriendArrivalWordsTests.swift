@@ -119,4 +119,14 @@ final class FriendArrivalWordsTests: XCTestCase {
         XCTAssertEqual(FriendArrivalWords.sectionTitle(senderLabels: ["Cole", "Unsigned sender"]), "From friends")
         XCTAssertEqual(FriendArrivalWords.sectionTitle(senderLabels: ["Cole", " Cole\n"]), "From Cole")
     }
+
+    /// The Lock Screen and Live Activity read the prompt's stored label, which is the stand-in for a nameless file.
+    func testTheLockScreenAndLiveActivityNeverCarryTheStandIn() {
+        XCTAssertEqual(FriendArrivalWords.nowPlayingArtist(senderLabel: " Cole "), "Cole")
+        XCTAssertEqual(FriendArrivalWords.liveActivitySender(senderLabel: "Cole"), "Cole")
+        for raw in [nil, "", "  ", SharedPacketArrival.snapshotSenderLabel(nil), "UNSIGNED  sender", "Imported collection"] {
+            XCTAssertEqual(FriendArrivalWords.nowPlayingArtist(senderLabel: raw), "A friend", "\(raw ?? "nil")")
+            XCTAssertEqual(FriendArrivalWords.liveActivitySender(senderLabel: raw), "a friend", "\(raw ?? "nil")")
+        }
+    }
 }
