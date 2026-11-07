@@ -41,7 +41,6 @@ extension PinnedMarginCard {
     /// The card's buttons, left to right. Empty when nothing on the card has anywhere to go.
     public var actions: [Action] {
         let ahead = noun.inSentence
-        let next = Action(job: .goToNextMargin, title: "Next Margin", hint: "Stops what is playing and moves on to what comes next in these Margins.", prominence: .secondary)
         let skip = Action(job: .skipThisMargin, title: "Skip this Margin", hint: "Stops this Margin and carries on with the \(ahead).", prominence: .secondary)
         let stop = Action(
             job: .stopReview, title: "Stop",
@@ -49,12 +48,14 @@ extension PinnedMarginCard {
             prominence: .quiet)
         switch stage {
         case .speaking, .reading, .voicePaused, .loading:
+            // The one button while a voice sounds skips it: the episode plays on from where the Margin ended. It never says
+            // "Next Margin", because stopping a voice does not move the listener to the next one; the next Margin's own
+            // lead-in button ("Jump to 20 sec before it") comes once the voice is over (audit on #3623).
             // A review has no lead-in to leave from while its Margins chain (a can't-play listening), so Stop is here too.
-            let main = hasNextMargin ? next : skip
-            return run == .review ? [main, stop] : [main]
+            return run == .review ? [skip, stop] : [skip]
         case .failed:
             let retry = Action(job: .retry, title: "Retry", hint: "Tries to play this Margin again.", prominence: .secondary)
-            return [retry, hasNextMargin ? next : skip]
+            return [retry, skip]
         case .comingUp:
             return comingUpActions(ahead: ahead, stop: stop)
         case .waitingForTap:

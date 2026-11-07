@@ -120,13 +120,13 @@ final class PinnedMarginCardTests: XCTestCase {
 
     func testWhileAMarginPlaysThereIsOneButtonNamedForWhatItDoes() {
         for stage in [PinnedMarginCard.Stage.speaking, .reading, .voicePaused, .loading] {
-            // In a review: Next Margin beside a quiet Stop, and Skip this Margin (still with Stop) on the last one.
-            XCTAssertEqual(titles(card(cole, stage, press: more)), ["Next Margin", "Stop"], "\(stage): more follow")
-            XCTAssertEqual(titles(card(cole, stage, press: .playMarginNow)), ["Next Margin", "Stop"], "\(stage)")
-            XCTAssertEqual(titles(card(cole, stage, press: .unavailable)), ["Skip this Margin", "Stop"], "\(stage): the last one")
-            XCTAssertEqual(card(cole, stage, press: more).actions.map(\.job), [.goToNextMargin, .stopReview])
+            // In a review: Skip this Margin beside a quiet Stop, whether or not more follow. Stopping a voice does not
+            // move the listener to the next Margin, so the button never says "Next Margin" (audit on #3623).
+            for press in [more, .playMarginNow, .unavailable] {
+                XCTAssertEqual(titles(card(cole, stage, press: press)), ["Skip this Margin", "Stop"], "\(stage) \(press)")
+                XCTAssertEqual(card(cole, stage, press: press).actions.map(\.job), [.skipThisMargin, .stopReview])
+            }
             XCTAssertEqual(card(cole, stage, press: more).actions[1].prominence, .quiet)
-            XCTAssertEqual(card(cole, stage, press: .unavailable).actions[0].job, .skipThisMargin)
             // Outside a review nothing teleports the listener: a friend's Margin that plays by itself, or a moment's, is
             // skipped, whatever the press would be (owner, 2026-11-06).
             for run in [PinnedMarginCard.Run.none, .moment] {
@@ -150,8 +150,8 @@ final class PinnedMarginCardTests: XCTestCase {
     func testFailureNamesTheSameWayOnAsTheButtonItDraws() {
         let onward = card(cole, .failed, press: more)
         XCTAssertEqual(onward.headline, "Margin from Cole could not play")
-        XCTAssertEqual(onward.detail, "Tap Retry, or Next Margin to move on.")
-        XCTAssertEqual(titles(onward), ["Retry", "Next Margin"])
+        XCTAssertEqual(onward.detail, "Tap Retry, or skip this Margin.")
+        XCTAssertEqual(titles(onward), ["Retry", "Skip this Margin"])
         let last = card(cole, .failed, press: .unavailable)
         XCTAssertEqual(last.detail, "Tap Retry, or skip this Margin.")
         // The playback dock also draws "Return to Source" during a friend's voice; the card does not repeat that name.
@@ -165,7 +165,8 @@ final class PinnedMarginCardTests: XCTestCase {
         XCTAssertEqual(card(nobody, .failed).headline, "Shared Margin could not play")
         for press in [more, seek, .playMarginNow, .unavailable] {
             let c = card(cole, .failed, press: press)
-            XCTAssertEqual(c.detail.contains("Next Margin"), titles(c).contains("Next Margin"), "words and button agree for \(press)")
+            XCTAssertFalse(c.detail.contains("Next Margin"), "a failed voice is skipped, not hopped past: \(press)")
+            XCTAssertFalse(titles(c).contains("Next Margin"), "\(press)")
         }
     }
 
@@ -337,7 +338,7 @@ final class PinnedMarginCardTests: XCTestCase {
         XCTAssertEqual(card(cole, .speaking, noun: .article).detail, "Article paused while it plays.")
         XCTAssertEqual(card(cole, .speaking, noun: .pdf).detail, "PDF paused while it plays.")
         XCTAssertEqual(card(cole, .voicePaused, noun: .pdf).detail, "PDF stays paused.")
-        XCTAssertEqual(card(cole, .failed, noun: .article, press: more).detail, "Tap Retry, or Next Margin to move on.")
+        XCTAssertEqual(card(cole, .failed, noun: .article, press: more).detail, "Tap Retry, or skip this Margin.")
         XCTAssertEqual(card(cole, .comingUp(msRemaining: 1_000), noun: .article).detail, "It plays by itself when the article gets there.")
         XCTAssertEqual(card(cole, .comingUp(msRemaining: 1_000), noun: .pdf).detail, "It plays by itself when the PDF gets there.")
         XCTAssertEqual(card(cole, .speaking, noun: .article, press: more).actions[1].hint, "Stops these Margins and pauses the article. If none of them has played yet, it goes back to where you were.")

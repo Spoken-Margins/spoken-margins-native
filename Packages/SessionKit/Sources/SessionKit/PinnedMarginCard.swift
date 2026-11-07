@@ -64,7 +64,7 @@ public struct PinnedMarginCard: Equatable, Sendable {
         case voicePaused
         /// The voice was asked for and is not sounding yet.
         case loading
-        /// The voice could not play. Whether Next Margin has somewhere to go is `hasNextMargin`.
+        /// The voice could not play. The card offers Retry and Skip this Margin.
         case failed
         /// A lead-in is under way: the Margin plays when the source reaches it (or when the listener says so).
         case comingUp(msRemaining: Int?)
@@ -136,11 +136,6 @@ public struct PinnedMarginCard: Equatable, Sendable {
         self.nextPress = nextPress
     }
 
-    /// Next Margin is on the card while a Margin sounds or has failed: only inside a review with more to come. A Margin
-    /// that plays by itself, or a moment's, is skipped instead and the episode carries on, so nobody is teleported
-    /// (owner, 2026-11-06). One fact for the words ("Tap Retry, or Next Margin to move on") and the button.
-    public var hasNextMargin: Bool { run == .review && nextPress != .unavailable }
-
     /// What a Margin waiting for a tap shows under its headline: what it says, so the listener can choose. Only when the
     /// listener chooses; a Margin that plays by itself after a beat keeps the card's own line, so the card does not
     /// change height when the voice starts. Capped so Listen and Dismiss stay on the screen.
@@ -197,7 +192,7 @@ public struct PinnedMarginCard: Equatable, Sendable {
         case .voicePaused: return voiceTime.map { "\($0) · \(heading) stays paused." } ?? "\(heading) stays paused."
         case .loading: return "Hold on, this is getting ready."
         case .failed:
-            return hasNextMargin ? "Tap Retry, or Next Margin to move on." : "Tap Retry, or skip this Margin."
+            return "Tap Retry, or skip this Margin."
         case .comingUp: return "It plays by itself when the \(self.noun.inSentence) gets there."
         case .waitingForTap: return "Tap Listen to hear it."
         case .answerSaved(_, let sentTo): return "To send it to \(sentTo), tap Share below. You pick which of your Margins go."
@@ -245,7 +240,8 @@ public enum NextMarginPress: Equatable, Sendable {
     case seekToLeadIn(mediaTimeMs: Int)
     /// Play the Margin now, skipping what is left of its lead-in.
     case playMarginNow
-    /// A review's Margin voice is sounding: end it, and the review goes on to the next Margin's lead-in.
+    /// A review's Margin voice is sounding and more Margins follow. Ending it plays the episode on from where the Margin
+    /// ended; the card's button says "Skip this Margin", not "Next Margin", because the tap does not move ahead.
     case skipVoice
     /// There is no later Margin to go to.
     case unavailable
