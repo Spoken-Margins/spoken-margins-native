@@ -26,6 +26,14 @@ extension Gate1AppModel {
         playbackRate: Double? = nil,
         origin: String = "app_ui"
     ) {
+        // Every Now Playing command that reaches here while a Margin records, before a guard below can drop it, so
+        // the export tells "never arrived" from "arrived and ignored" (#3650).
+        if snapshot.isRecording, origin.hasPrefix("now_playing") {
+            recordDeveloperDiagnostic("transport.dispatch_during_recording", [
+                "command": command.rawValue, "origin": origin, "recordingMs": String(captureWatcher.elapsedMs),
+                "finishing": String(isFinishingInterjection),
+            ])
+        }
         // A play from the Lock Screen, headphones or the Watch while a live session spoken Margin records would start
         // our player, which takes the audio session and stops the recorder. Ignored, and logged (#3492).
         if LiveSessionTransportGuard.ignores(
@@ -71,16 +79,11 @@ extension Gate1AppModel {
                 "recordingMs": String(recordingMs),
                 "sinceRouteChangeMs": sinceRouteChangeMs.map(String.init) ?? "none",
                 "handsFreeInput": onHandsFree ? "true" : "false",
-                "doublePress": origin.hasSuffix(HeadphoneRemoteSignal.nextTrackOriginSuffix) ? "true" : "false",
                 "appState": Gate2AppState.isInBackground() ? "background" : "foreground",
                 "lowPowerMode": String(ProcessInfo.processInfo.isLowPowerModeEnabled),
             ]
-            // A headphone double press arrives as next track. A single press never ends a Margin on a hands-free
-            // input (owner, 2026-11-07, #3650), so the guard has to be told which this is.
-            let isDoublePress = origin.hasSuffix(HeadphoneRemoteSignal.nextTrackOriginSuffix)
             let verdict = RecordingTransportGuard.verdict(
-                command: command, recordingMs: recordingMs, sinceRouteChangeMs: sinceRouteChangeMs,
-                onHandsFreeProfile: onHandsFree, isDoublePress: isDoublePress
+                command: command, recordingMs: recordingMs, sinceRouteChangeMs: sinceRouteChangeMs, onHandsFreeProfile: onHandsFree
             )
             if case .ignore(let reason) = verdict {
                 recordDeveloperDiagnostic("transport.ignored_during_recording", context.merging(["reason": reason.rawValue]) { $1 })

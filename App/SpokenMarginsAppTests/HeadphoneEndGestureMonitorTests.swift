@@ -2,8 +2,8 @@ import AVFoundation
 import XCTest
 @testable import SpokenMarginsApp
 
-/// #3650: the real notification path. iOS reports a Bluetooth headset press during a recording as input mute
-/// state changes; two real ones within 0.6 s end the Margin, one never does, and every event is logged.
+/// #3650: the real notification path. iOS reports a Bluetooth headset press during a recording as an input mute
+/// state change; a real one outside the start-up and route-change windows ends the Margin, and every event is logged.
 @MainActor
 final class HeadphoneEndGestureMonitorTests: XCTestCase {
     private final class Clock { var ms = 5_000 }
@@ -16,17 +16,17 @@ final class HeadphoneEndGestureMonitorTests: XCTestCase {
         let lines: () -> [(kind: String, fields: [String: String])]
     }
 
-    private func rig(endsOnMutePair: Bool = true, sinceRouteChangeMs: Int? = nil) -> Rig {
+    private func rig(recordingMs: Int? = nil, sinceRouteChangeMs: Int? = nil) -> Rig {
         let center = NotificationCenter()
         let clock = Clock()
         var ended = 0
         var logged: [(kind: String, fields: [String: String])] = []
         let monitor = HeadphoneEndGestureMonitor(
             log: { kind, fields in logged.append((kind, fields)) },
-            recordingMs: { clock.ms },
+            recordingMs: { recordingMs ?? clock.ms },
             sinceRouteChangeMs: { sinceRouteChangeMs },
-            endsMarginOnMutePair: { endsOnMutePair },
             endMargin: { ended += 1 },
+            captureLevel: { ["peakNowDb": "-30", "capturedMs": "4000"] },
             notificationCenter: center,
             nowMs: { clock.ms }
         )
@@ -41,55 +41,41 @@ final class HeadphoneEndGestureMonitorTests: XCTestCase {
         try await Task.sleep(nanoseconds: 60_000_000) // the observer runs on the main queue
     }
 
-    func testASinglePressIsLoggedAndNeverEndsTheMargin() async throws {
+    func testASinglePressEndsTheMarginOnceAndIsLogged() async throws {
         let rig = rig()
         rig.monitor.begin()
         try await press(rig, muted: true)
         let mute = rig.lines().filter { $0.kind == "headphone.mute_state" }
         XCTAssertEqual(mute.count, 1)
         XCTAssertEqual(mute.first?.fields["muted"], "true")
-        XCTAssertEqual(mute.first?.fields["verdict"], "first_of_pair")
+        XCTAssertEqual(mute.first?.fields["verdict"], "end_margin")
         XCTAssertNotNil(mute.first?.fields["route"])
-        XCTAssertEqual(rig.ends(), 0)
-    }
-
-    func testTwoPressesWithinTheWindowEndTheMarginOnce() async throws {
-        let rig = rig()
-        rig.monitor.begin()
-        try await press(rig, muted: true)
-        rig.clock.ms += 300
-        try await press(rig, muted: false)
+        XCTAssertEqual(mute.first?.fields["peakNowDb"], "-30", "the level now is on the line, so a silent file shows")
         XCTAssertEqual(rig.ends(), 1)
-        let verdicts = rig.lines().filter { $0.kind == "headphone.mute_state" }.map { $0.fields["verdict"] }
-        XCTAssertEqual(verdicts, ["first_of_pair", "end_margin"])
     }
 
-    func testTwoSlowPressesDoNotEndTheMargin() async throws {
+    func testARepeatedStateIsLoggedAndIgnored() async throws {
         let rig = rig()
         rig.monitor.begin()
-        try await press(rig, muted: true)
-        rig.clock.ms += 2_000
         try await press(rig, muted: false)
         XCTAssertEqual(rig.ends(), 0)
+        XCTAssertEqual(rig.lines().last { $0.kind == "headphone.mute_state" }?.fields["verdict"], "ignored:no_change")
     }
 
-    func testTheSettingOffLogsThePairButDoesNotEndTheMargin() async throws {
-        let rig = rig(endsOnMutePair: false)
+    func testAPressInTheFirstMomentOfARecordingIsLoggedAndIgnored() async throws {
+        let rig = rig(recordingMs: 300)
         rig.monitor.begin()
         try await press(rig, muted: true)
-        rig.clock.ms += 300
-        try await press(rig, muted: false)
         XCTAssertEqual(rig.ends(), 0)
-        XCTAssertEqual(rig.lines().last { $0.kind == "headphone.mute_state" }?.fields["verdict"], "end_margin")
+        XCTAssertEqual(rig.lines().last { $0.kind == "headphone.mute_state" }?.fields["verdict"], "ignored:recording_just_started")
     }
 
-    func testAPairJustAfterARouteChangeIsPhantomAndIgnored() async throws {
+    func testAPressJustAfterARouteChangeIsLoggedAndIgnored() async throws {
         let rig = rig(sinceRouteChangeMs: 200)
         rig.monitor.begin()
         try await press(rig, muted: true)
-        rig.clock.ms += 300
-        try await press(rig, muted: false)
         XCTAssertEqual(rig.ends(), 0)
+        XCTAssertEqual(rig.lines().last { $0.kind == "headphone.mute_state" }?.fields["verdict"], "ignored:route_just_changed")
     }
 
     func testNothingIsLoggedOrEndedOnceTheRecordingHasStopped() async throws {
@@ -98,8 +84,6 @@ final class HeadphoneEndGestureMonitorTests: XCTestCase {
         rig.monitor.stop()
         let before = rig.lines().count
         try await press(rig, muted: true)
-        rig.clock.ms += 300
-        try await press(rig, muted: false)
         rig.monitor.noteRemoteCommand("nextTrack")
         XCTAssertEqual(rig.ends(), 0)
         XCTAssertEqual(rig.lines().count, before)

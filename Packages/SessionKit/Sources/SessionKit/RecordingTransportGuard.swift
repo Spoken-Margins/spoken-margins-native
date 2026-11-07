@@ -16,11 +16,6 @@ import Foundation
 /// Lock Screen without a hands-free input). The cost: while recording the Lock Screen card shows a play button, so on
 /// a hands-free headset that button no longer ends the Margin; the Live Activity's Finish and the app still do.
 ///
-/// A single press never ends a Margin on a hands-free input (owner, 2026-11-07): there a lone `pause` or
-/// play/pause toggle is as likely to be the profile's noise as a press, and the listener's real end gesture is the
-/// double press (next track, or the two-step mute pair in `HeadphoneMuteGestureDetector`). Skip forward from the Lock
-/// Screen or a car still ends it, and so do all of these on other routes (#1030).
-///
 /// Pure: the app passes the milliseconds on a clock that only moves forward.
 public enum RecordingTransportGuard {
     public enum Verdict: Equatable, Sendable {
@@ -34,8 +29,6 @@ public enum RecordingTransportGuard {
         case recordingJustStarted = "recording_just_started"
         case routeJustChanged = "route_just_changed"
         case barePlayOnHandsFree = "bare_play_on_hands_free"
-        /// A lone pause or play/pause toggle on a hands-free input: a single press, which never ends a Margin there.
-        case lonePressOnHandsFree = "lone_press_on_hands_free"
     }
 
     /// After a recording begins. Bluetooth routes take over a second to settle (`MarginCaptureTimings.startGraceMs`);
@@ -47,20 +40,15 @@ public enum RecordingTransportGuard {
     /// `command` is what arrived (it only matters for `play`). `recordingMs` is how long the Margin has been
     /// recording. `sinceRouteChangeMs` is how long ago the audio route last changed during this recording, nil when
     /// it has not. `onHandsFreeProfile` is whether the recording input is a Bluetooth hands-free port.
-    /// `isDoublePress` is whether the command is the headphone double press (the next-track command).
     public static func verdict(
         command: CompactControlCommand = .togglePlayPause,
         recordingMs: Int,
         sinceRouteChangeMs: Int?,
-        onHandsFreeProfile: Bool = false,
-        isDoublePress: Bool = false
+        onHandsFreeProfile: Bool = false
     ) -> Verdict {
         if recordingMs < startGraceMs { return .ignore(.recordingJustStarted) }
         if let sinceRouteChangeMs, sinceRouteChangeMs < routeChangeGraceMs { return .ignore(.routeJustChanged) }
-        if onHandsFreeProfile, !isDoublePress {
-            if command == .play { return .ignore(.barePlayOnHandsFree) }
-            if command == .pause || command == .togglePlayPause { return .ignore(.lonePressOnHandsFree) }
-        }
+        if onHandsFreeProfile, command == .play { return .ignore(.barePlayOnHandsFree) }
         return .endMargin
     }
 }

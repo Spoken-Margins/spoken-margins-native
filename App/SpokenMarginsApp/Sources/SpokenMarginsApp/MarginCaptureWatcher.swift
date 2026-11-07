@@ -63,6 +63,14 @@ final class MarginCaptureWatcher {
     var elapsedMs: Int { supervisor == nil ? 0 : max(0, nowMs() - startedAtMs) }
     /// Milliseconds since the audio route last changed during this recording, nil when it has not (#1708).
     var msSinceRouteChange: Int? { lastRouteChangeAtMs.map { max(0, nowMs() - $0) } }
+    /// The headphone-event monitor for this watcher's recordings, made by the model on first use (#3650). It lives here so
+    /// the model's own file does not grow.
+    var headphoneMonitor: HeadphoneEndGestureMonitor?
+    /// A fresh reading of the recorder, for the headphone log (#3650): the peak level now says whether the
+    /// recording went silent after a press. Nil when no recording is being watched.
+    func currentReading() -> RecordingCaptureReading? {
+        supervisor == nil ? nil : reading()
+    }
     /// The final diagnostics line for this recording is written (once per recording).
     var finalRecorded = false
 

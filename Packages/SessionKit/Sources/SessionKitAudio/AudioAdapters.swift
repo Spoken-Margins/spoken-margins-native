@@ -1831,6 +1831,9 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, HeardAudio
     /// previousTrack, skipForward, nextTrack, ...), before it is handled. For the Diagnostics log of a recording's
     /// headphone events (#3650); it changes nothing about how the command is answered.
     public var remoteCommandArrivalHandler: (@Sendable (String) -> Void)?
+    /// Told what each handler answered iOS for the command it just received ("success", "noSuchContent",
+    /// "commandFailed", ...). Diagnostics only (#3650).
+    public var remoteCommandAnswerHandler: (@Sendable (String, String) -> Void)?
     private let interruptionHandler: (@Sendable (AudioPlaybackInterruptionEvent) -> Void)?
     private let audioSessionNotificationCenter: NotificationCenter
     private var mediaContext: PlaybackMediaContext?
@@ -3262,9 +3265,22 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, HeardAudio
         let name = Self.remoteCommandName(command)
         let target = command.addTarget { [weak self] event in
             self?.remoteCommandArrivalHandler?(name)
-            return handler(event)
+            let status = handler(event)
+            self?.remoteCommandAnswerHandler?(name, Self.describe(status))
+            return status
         }
         remoteCommandTargets.append((command, target))
+    }
+
+    private static func describe(_ status: MPRemoteCommandHandlerStatus) -> String {
+        switch status {
+        case .success: return "success"
+        case .noSuchContent: return "noSuchContent"
+        case .noActionableNowPlayingItem: return "noActionableNowPlayingItem"
+        case .deviceNotFound: return "deviceNotFound"
+        case .commandFailed: return "commandFailed"
+        @unknown default: return "raw\(status.rawValue)"
+        }
     }
 
     private static func remoteCommandName(_ command: MPRemoteCommand) -> String {

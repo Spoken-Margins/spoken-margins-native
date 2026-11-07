@@ -1,5 +1,8 @@
 import Foundation
 import SessionKit
+#if canImport(MediaPlayer) && os(iOS)
+import MediaPlayer
+#endif
 #if canImport(AVFoundation) && os(iOS)
 import AVFoundation
 #endif
@@ -15,10 +18,12 @@ import AVFoundation
 /// open, a Bluetooth headset is in call mode and a press may arrive as a mute change instead of a command. The log
 /// is how the owner's phone tells which.
 ///
-/// This type observes. The only thing it can do is the one `HeadphoneMuteGestureDetector` allows: when two real mute
-/// changes land within 0.6 s and Settings has the headphone double press set to Add a Margin, it asks the model to
-/// end the Margin. `AVAudioApplication.setInputMuteStateChangeHandler` is macOS-only, so there is no handler to
-/// register on iOS and nothing here changes how iOS answers a press.
+/// This type observes. The only thing it can do is the one `HeadphoneMuteGestureDetector` allows: a real mute change,
+/// outside the start-up and route-change windows, asks the model to end and save the Margin (owner, 2026-11-07; not
+/// tied to the double-press setting, because it only acts on a Margin that is already recording and its words are
+/// kept). `AVAudioApplication.setInputMuteStateChangeHandler` is macOS-only, so there is no handler to register on
+/// iOS and nothing here changes how iOS answers a press. Every line also carries the recorder's level now, so the
+/// log shows whether the recording went silent after a press.
 ///
 /// Local only: port types, never device names. The model owns the one instance and starts and stops it with the
 /// capture watch.
@@ -29,8 +34,8 @@ final class HeadphoneEndGestureMonitor {
     private let log: Log
     private let recordingMs: () -> Int
     private let sinceRouteChangeMs: () -> Int?
-    private let endsMarginOnMutePair: () -> Bool
     private let endMargin: () -> Void
+    private let captureLevel: () -> [String: String]
     private let notificationCenter: NotificationCenter
     private let nowMs: () -> Int
     private var detector: HeadphoneMuteGestureDetector?
@@ -44,16 +49,16 @@ final class HeadphoneEndGestureMonitor {
         log: @escaping Log,
         recordingMs: @escaping () -> Int,
         sinceRouteChangeMs: @escaping () -> Int?,
-        endsMarginOnMutePair: @escaping () -> Bool,
         endMargin: @escaping () -> Void,
+        captureLevel: @escaping () -> [String: String] = { [:] },
         notificationCenter: NotificationCenter = .default,
         nowMs: @escaping () -> Int = { Int((ProcessInfo.processInfo.systemUptime * 1_000).rounded()) }
     ) {
         self.log = log
         self.recordingMs = recordingMs
         self.sinceRouteChangeMs = sinceRouteChangeMs
-        self.endsMarginOnMutePair = endsMarginOnMutePair
         self.endMargin = endMargin
+        self.captureLevel = captureLevel
         self.notificationCenter = notificationCenter
         self.nowMs = nowMs
     }
@@ -80,10 +85,7 @@ final class HeadphoneEndGestureMonitor {
         })
         #endif
         detector = HeadphoneMuteGestureDetector(initiallyMuted: mutedAtStart)
-        log("headphone.recording_begin", baseFields().merging([
-            "mutedAtStart": String(mutedAtStart),
-            "endsOnMutePair": String(endsMarginOnMutePair()),
-        ]) { $1 })
+        log("headphone.recording_begin", baseFields().merging(["mutedAtStart": String(mutedAtStart)]) { $1 })
     }
 
     /// The recording ended (saved, cancelled or interrupted).
@@ -107,18 +109,10 @@ final class HeadphoneEndGestureMonitor {
             log("headphone.mute_state", baseFields().merging(["muted": "unreadable"]) { $1 })
             return
         }
-        let now = nowMs()
-        let verdict = current.observe(muted: muted, recordingMs: recordingMs(), sinceRouteChangeMs: sinceRouteChangeMs(), nowMs: now)
+        let verdict = current.observe(muted: muted, recordingMs: recordingMs(), sinceRouteChangeMs: sinceRouteChangeMs())
         detector = current
-        var fields = baseFields().merging(["muted": String(muted), "verdict": Self.describe(verdict)]) { $1 }
-        if verdict == .endMargin {
-            let enabled = endsMarginOnMutePair()
-            fields["endsOnMutePair"] = String(enabled)
-            log("headphone.mute_state", fields)
-            if enabled { endMargin() }
-            return
-        }
-        log("headphone.mute_state", fields)
+        log("headphone.mute_state", baseFields().merging(["muted": String(muted), "verdict": Self.describe(verdict)]) { $1 })
+        if verdict == .endMargin { endMargin() }
     }
 
     private func routeChanged(reasonRaw: UInt?) {
@@ -135,18 +129,42 @@ final class HeadphoneEndGestureMonitor {
             "recordingMs": String(max(0, now - beganAtMs)),
             "sincePreviousEventMs": sincePrevious,
             "route": Self.routeSummary(),
+            "commandsEnabled": Self.commandAvailability(),
             "setting": HeadphoneDoublePressAction(
                 storedValue: UserDefaults.standard.string(forKey: HeadphoneDoublePressAction.storageKey)
             ).rawValue,
-        ]
+        ].merging(captureLevel()) { current, _ in current }
     }
 
     static func describe(_ verdict: HeadphoneMuteGestureDetector.Verdict) -> String {
         switch verdict {
         case .endMargin: return "end_margin"
-        case .firstOfPair: return "first_of_pair"
         case .ignore(let reason): return "ignored:" + reason.rawValue
         }
+    }
+
+    /// Whether each system remote command is enabled right now ("next:1" is `nextTrackCommand.isEnabled`). iOS
+    /// delivers a headset's double press only to an enabled command, so this tells "never delivered because
+    /// disabled" from "delivered and the app ignored it" (#3650).
+    static func commandAvailability() -> String {
+        #if canImport(MediaPlayer) && os(iOS)
+        let center = MPRemoteCommandCenter.shared()
+        let pairs: [(String, MPRemoteCommand)] = [
+            ("next", center.nextTrackCommand), ("prev", center.previousTrackCommand),
+            ("play", center.playCommand), ("pause", center.pauseCommand), ("toggle", center.togglePlayPauseCommand),
+            ("skipF", center.skipForwardCommand), ("skipB", center.skipBackwardCommand), ("stop", center.stopCommand),
+        ]
+        return pairs.map { "\($0.0):\($0.1.isEnabled ? 1 : 0)" }.joined(separator: ",")
+        #else
+        return "unavailable"
+        #endif
+    }
+
+    /// What the handler answered iOS for a command that arrived (success, noSuchContent, ...). A `noSuchContent`
+    /// for next track would make iOS treat the press as unhandled (#3650).
+    func noteRemoteCommandAnswer(_ name: String, answer: String) {
+        guard isWatching else { return }
+        log("headphone.remote_command_answer", baseFields().merging(["command": name, "answer": answer]) { $1 })
     }
 
     static func routeSummary() -> String {
