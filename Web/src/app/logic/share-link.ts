@@ -1,18 +1,8 @@
 // Share links in the web app (#3003, phase 1 of #2168). Opening: a `/l/<id>#<key>` link, loaded or pasted, fetches
 // the sealed packet from `/l/<id>/packet` and opens it here with the key from the `#` part, which the browser never
-// sends to a server (#805). The importer then places the Margins as it does a file. Making a link is the other half,
-// and only a build with SHARE_LINKS_ENABLED offers it. Plain TypeScript, so `npm run test:web` covers it.
-import type { Episode, Margin, Show } from '../../shared/model.ts';
-import { shareableLink } from '../../packet/links.ts';
-import {
-  DAMAGED_MESSAGE,
-  type LinkPreview,
-  PART,
-  ShareLinkUploadError,
-  ShareLinksOffError,
-  keyFromFragment,
-  openPart,
-} from '../../packet/share-link.ts';
+// sends to a server (#805). The importer then places the Margins as it does a file. The web app is receive-only for
+// links: it cannot make one (owner, 2026-11-05, #3542). Plain TypeScript, so the node tests cover it.
+import { DAMAGED_MESSAGE, PART, keyFromFragment, openPart } from '../../packet/share-link.ts';
 
 /** What the listener reads. Expired and server match the share page and the app's ShareLinkPacketDownloader. */
 export const LINK_MESSAGES = Object.freeze({
@@ -21,11 +11,6 @@ export const LINK_MESSAGES = Object.freeze({
   offline: 'You’re offline. Reconnect, then open the link again.',
   server: 'The server had a problem. Try again in a minute.',
   notALink: 'That isn’t a Spoken Margins link. A link looks like https://…/l/… with a # part.',
-  nothingToLink: 'None of these Margins have words, so there is nothing to put in a link. A voice Margin travels with its words.',
-  tooLarge: 'These Margins are too large for a link. Save them as a file instead.',
-  refused: 'The server didn’t accept these Margins. Save them as a file instead.',
-  tooMany: 'Too many links were made from here just now. Try again later.',
-  noServer: 'This copy of the web app has no link server.',
   off: 'Links are switched off for now. Ask your friend to send the Margins as a file.',
 });
 
@@ -56,7 +41,7 @@ export type DamagedLink = { kind: 'damaged'; reportable?: Pick<ShareLinkRef, 'or
 
 export type ParsedLink = { kind: 'link'; link: ShareLinkRef } | DamagedLink | { kind: 'none' };
 
-// The server's ids are 32 hex characters; uploadLink accepts any URL-safe id, so this does too, within reason.
+// The server's ids are 32 hex characters; the id is any URL-safe text here, within reason.
 const LINK_PATH = /\/l\/([A-Za-z0-9_-]{1,64})\/?$/;
 const LOOPBACK = ['localhost', '127.0.0.1', '[::1]'];
 
@@ -87,6 +72,44 @@ export function parseShareLink(text: string, base?: string): ParsedLink {
  * 410, offline when nothing answers, damaged when the bytes don't open under the key.
  */
 export async function openSharedPacket(link: ShareLinkRef, fetchImpl: typeof fetch = fetch): Promise<Uint8Array> {
+  return (await openSharedPacketWithExpiry(link, fetchImpl)).bytes;
+}
+
+/** The header the link server sends with the packet: the UTC day the link stops working, `YYYY-MM-DD` (#2168). */
+export const LINK_EXPIRES_HEADER = 'X-SM-Link-Expires';
+
+/** What the footer says when no usable expiry day reached the page (an older server, a missing or odd header). */
+export const LINK_FOOTER_DEFAULT = 'This link works for 30 days.';
+
+/**
+ * The footer sentence for a link. With a valid expiry day: "This link works until 6 December." in the browser's
+ * locale, with the year only when it isn't this year. Anything else keeps the old 30-day wording.
+ */
+export function linkFooterText(expires: string | undefined, now: Date = new Date(), locale?: string | string[]): string {
+  const match = expires === undefined ? null : /^(\d{4})-(\d{2})-(\d{2})$/.exec(expires);
+  if (!match) return LINK_FOOTER_DEFAULT;
+  const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])];
+  const date = new Date(Date.UTC(year, month - 1, day, 12));
+  // Reject a day that rolled over (2026-02-31) rather than word a date nobody meant.
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return LINK_FOOTER_DEFAULT;
+  try {
+    const words = new Intl.DateTimeFormat(locale, {
+      day: 'numeric',
+      month: 'long',
+      ...(year === now.getUTCFullYear() ? {} : { year: 'numeric' as const }),
+      timeZone: 'UTC',
+    }).format(date);
+    return `This link works until ${words}.`;
+  } catch {
+    return LINK_FOOTER_DEFAULT;
+  }
+}
+
+/** As openSharedPacket, and the expiry day the server sent with it, if it sent one. Only the day, never a time. */
+export async function openSharedPacketWithExpiry(
+  link: ShareLinkRef,
+  fetchImpl: typeof fetch = fetch,
+): Promise<{ bytes: Uint8Array; expires: string | undefined }> {
   let response: Response;
   try {
     response = await fetchImpl(`${link.origin}/l/${link.id}/packet`, {
@@ -109,38 +132,9 @@ export async function openSharedPacket(link: ShareLinkRef, fetchImpl: typeof fet
     throw new ShareLinkError(LINK_MESSAGES.offline, 'offline');
   }
   try {
-    return await openPart(sealed, PART.packet, link.key);
+    const bytes = await openPart(sealed, PART.packet, link.key);
+    return { bytes, expires: response.headers.get(LINK_EXPIRES_HEADER) ?? undefined };
   } catch {
     throw new ShareLinkError(LINK_MESSAGES.damaged, 'damaged');
   }
-}
-
-/**
- * The preview sealed next to the packet: the episode, its show, and the words of the Margins the packet carries.
- * A podcast Margin carries no source text, so there are no excerpts. The page link goes in only when it holds no
- * access secret. Throws when no Margin has words, since the share page needs at least one.
- */
-export function linkPreview(episode: Episode, show: Show | undefined, margins: readonly Margin[], included: readonly string[]): LinkPreview {
-  const chosen = new Set(included);
-  const words = margins.filter((m) => chosen.has(m.id) && m.text?.trim()).map((m) => ({ text: (m.text ?? '').trim() }));
-  if (words.length === 0) throw new ShareLinkError(LINK_MESSAGES.nothingToLink);
-  const url = shareableLink(episode.pageUrl);
-  return {
-    schema: 'spokenmargins.link-preview.v1',
-    source: { title: episode.title, ...(show?.title && { show: show.title }), ...(url && { url }) },
-    margins: words,
-  };
-}
-
-/** The listener's words for a failed upload. */
-export function linkUploadMessage(error: unknown): string {
-  if (error instanceof ShareLinkError || error instanceof ShareLinksOffError) return error.message;
-  if (error instanceof ShareLinkUploadError) {
-    if (error.status === 413) return LINK_MESSAGES.tooLarge;
-    if (error.status === 429) return LINK_MESSAGES.tooMany;
-    if (error.status === 400) return LINK_MESSAGES.refused;
-    return LINK_MESSAGES.server;
-  }
-  if (error instanceof TypeError) return LINK_MESSAGES.offline;
-  return LINK_MESSAGES.server;
 }

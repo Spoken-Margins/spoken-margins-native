@@ -9,14 +9,13 @@ import { BackIcon, DownIcon, DownloadIcon, ForwardIcon, MicIcon, PauseIcon, PenI
 import { cueFor, friendMargins, leading, possessive, readsAloud, senderName, speakingLine } from '../logic/arrival.ts';
 import { landingOffer, type Landing } from '../logic/import.ts';
 import { nextSpeed, timelineFraction, timelinePosts } from '../logic/library.ts';
+import { pickedMargins, preselected, replyBackOffer, savedMarginCard } from '../logic/reply-back.ts';
 import { plainError } from '../logic/messages.ts';
 import { NotSavedError } from '../logic/storage.ts';
 import { shareNativePacket } from '../logic/native-packets.ts';
 import { SKIP_SECONDS, usePlayer } from '../player.tsx';
 import type { RecordedVoice, VoiceRecording } from '../ports.ts';
-import { linkPreview, linkUploadMessage } from '../logic/share-link.ts';
-import { SHARE_LINKS_OFFERED, services, uploadShareLink } from '../services.ts';
-import { shortDate } from '../format.ts';
+import { services } from '../services.ts';
 import { useUi } from '../ui.tsx';
 import { voicePlaceholder } from '../../shared/placeholder.ts';
 import { isPlaceholder, prefillOverPlaceholder, voiceMarginOnStop, withWords } from '../logic/voice-words.ts';
@@ -104,7 +103,7 @@ function ArrivedMargin({ margins }: { margins: readonly Margin[] }) {
  * margin"). The first Skip lands 20 seconds before it, so the episode's own lead-in is heard; inside the lead-in the
  * Skip goes straight to the Margin. After the last, it points at the Margin buttons below, which are how to answer.
  */
-function MarginCue({ margins }: { margins: readonly Margin[] }) {
+function MarginCue({ margins, saved }: { margins: readonly Margin[]; /** The listener just saved a Margin (2026-11-06 card). */ saved: boolean }) {
   const player = usePlayer();
   const sender = friendMargins(margins)[0]?.author;
   const cue = cueFor(margins, player.time, sender, { failed: player.failed, heardWithoutEpisode: player.withoutEpisode === 'done' });
@@ -114,7 +113,20 @@ function MarginCue({ margins }: { margins: readonly Margin[] }) {
   const { registerFailureCard } = player;
   // A layout effect: the card and the player's notice are settled before the screen paints, so never both.
   useLayoutEffect(() => (sayingFailure ? registerFailureCard() : undefined), [sayingFailure, registerFailureCard]);
-  if (player.arrived || !cue) return null;
+  if (player.arrived) return null;
+  // After a save on a friend's item: what Share does with it, in place of the countdown or "That was X's last Margin"
+  // until a friend's Margin plays (2026-11-06).
+  const card = saved ? savedMarginCard(margins, cue) : undefined;
+  if (card) {
+    return (
+      <section className="margin-cue" aria-label="Your Margin is saved" data-testid="margin-cue">
+        <p className="margin-cue-line">
+          <strong>{card.sentence}</strong>
+        </p>
+      </section>
+    );
+  }
+  if (!cue) return null;
   if (cue.kind === 'unplayable' || cue.kind === 'unplayable-done') {
     // The episode can't play here (#3356): one sentence, and for the first, one button. No countdown, no Skip.
     return (
@@ -198,6 +210,26 @@ export function NowPlaying({ onClose, landing }: { onClose: () => void; landing?
     (closedKind === 'write' ? writeRef : recordRef).current?.focus();
     setClosedKind(undefined);
   }, [closedKind]);
+  // The listener's own Margins on this episode: a rise while a composer was open means a Margin was saved.
+  const ownCount = () => data.margins.filter((m) => m.episodeId === episode?.id && !m.author).length;
+  const ownAtOpen = useRef<number | undefined>(undefined);
+  const composerOpen = composer !== null;
+  // Checked after the render that closes the composer, so the saved Margin is already in `data.margins`.
+  useEffect(() => {
+    if (composerOpen) {
+      ownAtOpen.current ??= ownCount();
+      return;
+    }
+    if (ownAtOpen.current !== undefined && ownCount() > ownAtOpen.current) setSavedCard(true);
+    ownAtOpen.current = undefined;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [composerOpen]);
+  // The saved card stays until a friend's Margin plays (the player's `arrived`).
+  const [savedCard, setSavedCard] = useState(false);
+  const arrivedNow = player.arrived !== undefined;
+  useEffect(() => {
+    if (arrivedNow) setSavedCard(false);
+  }, [arrivedNow]);
   const closeComposer = (kind: 'write' | 'record') => () => {
     setComposer(null);
     setClosedKind(kind);
@@ -291,7 +323,7 @@ export function NowPlaying({ onClose, landing }: { onClose: () => void; landing?
         </div>
         {player.loading && <p className="muted np-status">Loading audio…</p>}
         <LandingOffer landing={landing} />
-        <MarginCue margins={margins} />
+        <MarginCue margins={margins} saved={savedCard} />
         <ArrivedMargin margins={margins} />
 
         {composer ? (
@@ -329,7 +361,7 @@ export function NowPlaying({ onClose, landing }: { onClose: () => void; landing?
                   <MarginRow key={margin.id} margin={margin} compact />
                 ))}
               </ol>
-              <ShareMargins episode={episode} margins={margins} show={show} />
+              <ShareMargins key={episode.id} episode={episode} margins={margins} show={show} />
             </>
           )}
         </section>
@@ -359,12 +391,20 @@ function ShareMargins({ episode, margins, show }: { episode: Episode; margins: M
   const [sendable] = useState(canSendFiles);
   // Inside the Android app (#3009) one button writes the file and opens Android's share sheet, which can also save it.
   const [bridge] = useState(() => capacitorBridge());
-  const [link, setLink] = useState('');
+  // After a friend's Margins, Share offers "Send replies to <friend>" (#2168, as the app's #3221): the replies picked,
+  // the listener's other new Margins unpicked, the friend's own never listed. With no offer Share is as before.
+  const offer = replyBackOffer(margins);
+  // The listener's own changes sit over the starting picks, so a reply made while this is open starts picked too.
+  const [changed, setChanged] = useState<Readonly<Record<string, boolean>>>({});
+  const starting = offer ? preselected(offer) : new Set<string>();
+  const picked = new Set([...(offer?.candidates ?? [])].map((m) => m.id).filter((id) => changed[id] ?? starting.has(id)));
+  const toWrite = offer ? pickedMargins(offer, picked) : margins;
+  const nothingPicked = toWrite.length === 0;
 
   const share = async (how: 'save' | 'send') => {
     setBusy(true);
     try {
-      const written = await services.packets.writePacket(episode, margins, show);
+      const written = await services.packets.writePacket(episode, toWrite, show);
       if (bridge) {
         if ((await shareNativePacket(bridge, written.bytes, written.fileName, episode.title)) === 'cancelled') return;
         const count = written.included.length === 1 ? '1 Margin' : `${written.included.length} Margins`;
@@ -391,63 +431,48 @@ function ShareMargins({ episode, margins, show }: { episode: Episode; margins: M
     }
   };
 
-  const makeLink = async () => {
-    setBusy(true);
-    try {
-      const written = await services.packets.writePacket(episode, margins, show);
-      const preview = linkPreview(episode, show, margins, written.included);
-      const made = await uploadShareLink(written.bytes, preview);
-      setLink(made.url);
-      let copied = false;
-      try {
-        await navigator.clipboard.writeText(made.url);
-        copied = true;
-      } catch {
-        // No clipboard permission: the link is in the field below to copy by hand.
-      }
-      const until = made.expiresAt ? ` It works until ${shortDate(made.expiresAt)}.` : '';
-      toast(`${copied ? 'Link copied.' : 'Link ready. Copy it below.'}${until}${written.notice ? ` ${written.notice}` : ''}`);
-    } catch (error) {
-      toast(`No link was made. ${linkUploadMessage(error)}`, 'problem');
-    } finally {
-      setBusy(false);
-    }
-  };
-
   return (
     <div className="share-margins">
+      {offer && (
+        <fieldset className="reply-back">
+          <legend>{offer.title}</legend>
+          <ul className="reply-back-list">
+            {offer.candidates.map((margin) => (
+              <li key={margin.id}>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={picked.has(margin.id)}
+                    onChange={(event) => setChanged({ ...changed, [margin.id]: event.target.checked })}
+                  />
+                  <span className="margin-time">{formatClock(margin.atSeconds)}</span>
+                  <span className="margin-text">{margin.text ? margin.text : `Voice Margin, ${formatClock(margin.voice?.durationSeconds ?? 0)}`}</span>
+                </label>
+              </li>
+            ))}
+          </ul>
+        </fieldset>
+      )}
       <p className="muted">Share them as a .spokenmargins file. A friend opens it in Spoken Margins and hears each one at its moment.</p>
       <div className="share-actions">
         {bridge ? (
-          <button type="button" className="button" disabled={busy} onClick={() => void share('send')}>
+          <button type="button" className="button" disabled={busy || nothingPicked} onClick={() => void share('send')}>
             <ShareIcon />
             Save or send
           </button>
         ) : (
-          <button type="button" className="button" disabled={busy} onClick={() => void share('save')}>
+          <button type="button" className="button" disabled={busy || nothingPicked} onClick={() => void share('save')}>
             <DownloadIcon />
             Save as a file
           </button>
         )}
         {!bridge && sendable && (
-          <button type="button" className="button" disabled={busy} onClick={() => void share('send')}>
+          <button type="button" className="button" disabled={busy || nothingPicked} onClick={() => void share('send')}>
             <ShareIcon />
             Send
           </button>
         )}
-        {SHARE_LINKS_OFFERED && (
-          <button type="button" className="button" disabled={busy} onClick={() => void makeLink()}>
-            <ShareIcon />
-            Make a link
-          </button>
-        )}
       </div>
-      {link && (
-        <div className="share-link-row">
-          <label htmlFor="share-link-made">Link to these Margins</label>
-          <input id="share-link-made" type="text" readOnly value={link} onFocus={(event) => event.target.select()} />
-        </div>
-      )}
     </div>
   );
 }
