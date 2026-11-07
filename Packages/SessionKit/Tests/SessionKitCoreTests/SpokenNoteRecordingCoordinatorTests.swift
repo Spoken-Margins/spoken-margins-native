@@ -51,7 +51,7 @@ final class SpokenNoteRecordingCoordinatorTests: XCTestCase {
     private final class FakeTranscriber: SpokenNoteTranscribing, @unchecked Sendable {
         private let lock = NSLock()
         private var requested: [String] = []
-        private var gate: CheckedContinuation<Void, Never>?
+        private let gate = ReleaseLatch()
         var holds = false
         var fails = false
         var words: [AlignedTranscriptSegment] = [
@@ -64,20 +64,12 @@ final class SpokenNoteRecordingCoordinatorTests: XCTestCase {
 
         func transcribe(fileAt url: URL) async throws -> [AlignedTranscriptSegment] {
             lock.withLock { requested.append(url.lastPathComponent) }
-            if holds { await withCheckedContinuation { continuation in lock.withLock { gate = continuation } } }
+            if holds { await gate.wait() }
             if fails { throw NSError(domain: "speech", code: 1) }
             return words
         }
 
-        func release() {
-            let continuation = lock.withLock { () -> CheckedContinuation<Void, Never>? in
-                defer { gate = nil }
-                return gate
-            }
-            continuation?.resume()
-        }
-
-        var isWaiting: Bool { lock.withLock { gate != nil } }
+        func release() { gate.release() }
     }
 
     private final class SavedItems: @unchecked Sendable {
@@ -150,6 +142,27 @@ final class SpokenNoteRecordingCoordinatorTests: XCTestCase {
 
         transcriber.release()
         await coordinator.waitForTranscripts()
+    }
+
+    /// #3616: the transcript runs in its own task, so a test's release can come before that task reaches the
+    /// transcriber. This forces that order. A stand-in that forgets the release parks the task for good, and with it
+    /// `waitForTranscripts`; the deadline turns that hang into a failure here.
+    func testAReleaseThatComesBeforeTheTranscriberIsReachedStillLetsTheTranscriptFinish() async throws {
+        let transcriber = FakeTranscriber()
+        transcriber.holds = true
+        transcriber.release()
+        let (coordinator, _, _, _) = makeCoordinator(transcriber: transcriber)
+
+        try await coordinator.startTake()
+        try await coordinator.stopTake()
+        let finished = expectation(description: "the transcript came back")
+        Task {
+            await coordinator.waitForTranscripts()
+            finished.fulfill()
+        }
+        await fulfillment(of: [finished], timeout: 10)
+
+        XCTAssertEqual(started.store.load().takes[0].sentences.map(\.text), ["Call the plumber."])
     }
 
     func testTheTranscriptFillsInAndTheLibraryItemTextFollows() async throws {
