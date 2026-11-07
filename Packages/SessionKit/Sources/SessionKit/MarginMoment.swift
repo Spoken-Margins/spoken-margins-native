@@ -277,7 +277,9 @@ public struct MarginMomentSequence: Sendable, Equatable {
             if let place = review.returnToMediaTimeMs, place > stoppedAt {
                 return .reviewDone(returnToMediaTimeMs: place, resumes: review.resumesAtEnd)
             }
-            return .reviewDone(returnToMediaTimeMs: nil, resumes: true)
+            // The episode plays on from the Margin. A can't-play listening (no lead-in, `CantPlayListening.leadInMs`) has an
+            // episode that cannot play, so it keeps its own `resumesAtEnd` (false) and never asks it to.
+            return .reviewDone(returnToMediaTimeMs: nil, resumes: review.leadInMs == 0 ? review.resumesAtEnd : true)
         }
         target = next
         if next.mediaTimeMs <= stoppedAt { return .playNow(play(next)) }
