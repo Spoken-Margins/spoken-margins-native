@@ -103,6 +103,10 @@ extension PinnedMarginCard {
             }
             return Action(job: .goToNextMargin, title: "Jump to \(leadInSeconds) sec before it", hint: "Moves the \(ahead) to about \(leadInSeconds) seconds before the next Margin.", prominence: .secondary)
         case .playMarginNow:
+            // A Margin the card calls heard says "Hear it again", whichever press the tap makes; the words and the button agree.
+            if arrival == .onRequest {
+                return Action(job: .goToNextMargin, title: "Hear it again", hint: "Plays this Margin again.", prominence: .secondary)
+            }
             return Action(job: .goToNextMargin, title: "Play it now", hint: "Plays the next Margin now.", prominence: .secondary)
         case .skipVoice:
             return Action(job: .goToNextMargin, title: "Next Margin", hint: "Goes on to the next Margin.", prominence: .secondary)

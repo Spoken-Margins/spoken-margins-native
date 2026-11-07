@@ -256,7 +256,7 @@ final class PinnedMarginCardTests: XCTestCase {
         XCTAssertEqual(button(.playsByItself, .playMarginNow), ["Play it now"])
         XCTAssertEqual(button(.toneThenTap, .playMarginNow), ["Play it now"])
         XCTAssertEqual(button(.onRequest, seek), ["Hear it again"])
-        XCTAssertEqual(button(.onRequest, .playMarginNow), ["Play it now"])
+        XCTAssertEqual(button(.onRequest, .playMarginNow), ["Hear it again"], "a heard Margin never offers \"Play it now\" (text sources always press playMarginNow)")
         XCTAssertEqual(button(.waitsForYou, .playMarginNow), ["Play it now"])
         XCTAssertEqual(button(.playsByItself, .unavailable), [], "nowhere to go, no button")
         XCTAssertEqual(button(.onRequest, .unavailable), [])
@@ -280,7 +280,7 @@ final class PinnedMarginCardTests: XCTestCase {
         XCTAssertEqual(title(position: lead), "Play it now", "inside the lead-in the second press plays it")
         XCTAssertEqual(title(position: 10_000, arrival: .waitsForYou), "Play it now", "a Fresh layer has no lead-in")
         XCTAssertEqual(title(position: 10_000, arrival: .onRequest), "Hear it again")
-        XCTAssertEqual(title(position: lead, arrival: .onRequest), "Play it now")
+        XCTAssertEqual(title(position: lead, arrival: .onRequest), "Hear it again")
     }
 
     func testAPlainMomentListeningForOthersSaysSoAndOffersOneWayToStop() {

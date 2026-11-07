@@ -120,9 +120,9 @@ The owner's one-phone version, with prepared packets and an episode that shares 
 3. Back out, then choose "Hear only…" on the item screen (or "Hear new Margins first" on the Library row's question).
    - Pass: the episode jumps to about 20 s before the friend's Margin and plays on. The card is pinned at the top of the Now screen and says "Margin from <friend>" ("Shared Margin" when the packet names nobody), and never "1 of 1"; with two or more Margins it counts "1 of 2". A short two-note chime, then the friend's voice. For a Margin the friend wrote, the chime is followed by the iPhone's voice saying "<name> wrote:" and then the words, and the card says "Your phone's voice is reading <name>'s words." (never that the friend is speaking). The owner checks by ear that the lead-in sounds natural and that the reading does not pass for the friend's own voice.
 4. Let the voice finish.
-   - Pass: the episode goes back to where it was paused and carries on. The Margin is no longer marked new.
-5. Repeat with three new Margins, one of them close to another. Use "Next Margin" (while a Margin plays, until the last one, where it reads "Skip this Margin"), "Play it now" and "Back to the episode" (or "article", or "PDF") once each. The title does not move between the Margins.
-   - Pass: close Margins play without an extra jump back. Stop leaves the episode paused where it was. Pause and Stop behave as they do for "Play this moment".
+   - Pass: the episode plays on from where the Margin ended, with no jump back (owner, 2026-11-06). The Margin is no longer marked new.
+5. Repeat with three new Margins, one of them close to another. Use "Next Margin" (while a Margin plays, until the last one, where it reads "Skip this Margin"), "Play it now" and "Stop" once each. The title does not move between the Margins.
+   - Pass: close Margins play without an extra jump back. Stop pauses the episode where it is; if no Margin of the review has played yet, it goes back to where the listener was. Pause and Stop behave as they do for "Play this moment".
 
 ## J10 — Everything local works with the product server unreachable
 
