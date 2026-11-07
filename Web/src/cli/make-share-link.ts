@@ -4,15 +4,15 @@
 //
 //   scripts/make-share-link <file.spokenmargins> [--server https://spokenmargins.com]
 //
-// This runs only from a checkout on the Mac. The web app's own upload stays behind SHARE_LINKS_ENABLED, which every
-// hosted build leaves off; nothing here is bundled into it.
+// This runs only from a checkout on the Mac. The web app cannot make links (owner, 2026-11-05, #3542); nothing here is
+// bundled into it.
 
 import { readFileSync } from 'node:fs';
 import { basename } from 'node:path';
 
 import { shareableLink } from '../packet/links.ts';
 import { readPacket, type ReadPacketResult } from '../packet/read.ts';
-import { postSealedLink, sealPacket, type LinkPreview } from '../packet/share-link.ts';
+import { postSealedLink, sealPacket, type LinkPreview } from './link-sealing.ts';
 
 export const DEFAULT_SERVER = 'https://spokenmargins.com';
 /** The link server's cap on a sealed packet (research/B4/server/internal/links/store.go, MaxPacketBytes). */
@@ -33,7 +33,7 @@ export interface MadeLink {
 }
 
 /**
- * The preview sealed next to the packet, as the web app's linkPreview builds it, plus the words of text Margins, since
+ * The preview sealed next to the packet, as the web app once built it, plus the words of text Margins, since
  * the iPhone exports article packets too. Words only: no quoted source text, as for a podcast.
  */
 export function previewOf(read: ReadPacketResult): LinkPreview {

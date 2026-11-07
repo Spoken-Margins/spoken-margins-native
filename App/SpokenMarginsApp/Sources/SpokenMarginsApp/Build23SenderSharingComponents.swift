@@ -303,7 +303,7 @@ struct Build23MarginSelectionRow: View {
                             if margin.isStarred {
                                 Label("Starred", systemImage: "star.fill")
                                     .font(.caption.weight(.semibold))
-                                    .foregroundStyle(AppColors.ochre)
+                                    .foregroundStyle(AppColors.ochreText)
                             } else {
                                 Text("Margin")
                                     .font(.caption.weight(.semibold))

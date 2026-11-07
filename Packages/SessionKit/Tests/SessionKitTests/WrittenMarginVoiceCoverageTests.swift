@@ -87,6 +87,48 @@ final class WrittenMarginVoiceCoverageTests: XCTestCase {
         XCTAssertTrue(coverage.canRead("यह बहुत अच्छा है"))
     }
 
+    /// PR #3606's audit: the arrival reads its count once and nothing redraws it, so on the first such note since launch
+    /// it said "1 new Margin" about a note no voice here can read. The count's own question starts the lookup.
+    func testACountReadOnceWaitsForTheLookupItStarted() async {
+        let voices = Voices([])
+        let coverage = WrittenMarginVoiceCoverage(findVoices: { Thread.sleep(forTimeInterval: 0.2); return voices.read() })
+        let count = await coverage.onceVoicesAreKnown(upTo: 10) { coverage.canRead("यह बहुत अच्छा है") ? 1 : 0 }
+        XCTAssertEqual(count, 0)
+    }
+
+    func testACountReadAgainWhenTheLookupLandedWhileItWasBeingRead() async {
+        let voices = Voices([])
+        let coverage = WrittenMarginVoiceCoverage(findVoices: { voices.read() })
+        let count = await coverage.onceVoicesAreKnown(upTo: 10) { () -> Int in
+            let answer = coverage.canRead("यह बहुत अच्छा है")
+            try? await Task.sleep(for: .milliseconds(300)) // the store read is slower than the lookup
+            return answer ? 1 : 0
+        }
+        XCTAssertEqual(count, 0)
+    }
+
+    func testACountWithNoLookupToWaitForIsReadOnce() async {
+        let voices = Voices([])
+        let coverage = WrittenMarginVoiceCoverage(findVoices: { voices.read() })
+        let reads = Calls()
+        let count = await coverage.onceVoicesAreKnown(upTo: 10) { () -> Int in
+            reads.add()
+            return coverage.canRead("Great point.") ? 1 : 0
+        }
+        XCTAssertEqual(count, 1)
+        XCTAssertEqual(reads.value, 1, "an English note costs no second read")
+        XCTAssertEqual(voices.lookups, 0, "and no voice lookup")
+    }
+
+    /// A voice lookup that hangs never holds a finished import: the count stands as it was, as it did before this.
+    func testACountDoesNotWaitLongerThanItsLimit() async {
+        let release = DispatchSemaphore(value: 0)
+        let coverage = WrittenMarginVoiceCoverage(findVoices: { release.wait(); return [] })
+        let count = await coverage.onceVoicesAreKnown(upTo: 0.1) { coverage.canRead("यह बहुत अच्छा है") ? 1 : 0 }
+        XCTAssertEqual(count, 1)
+        release.signal()
+    }
+
     func testALookupThatChangesNothingTellsNobody() {
         let voices = Voices(Set(WrittenMarginVoice.coverage.map(\.language)))
         let coverage = WrittenMarginVoiceCoverage(findVoices: { voices.read() })

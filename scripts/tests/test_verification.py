@@ -562,6 +562,8 @@ class VerificationTests(unittest.TestCase):
         self.assertTrue(str(raised.exception).startswith('lane fault, not the PR: no audio output'), raised.exception)
         self.assertNotIn('package', calls)
         self.assertNotIn('package-core', calls)
+        # #3585: the build is not waited for either; the answer comes before it.
+        self.assertNotIn('package-build', calls)
 
     def test_other_failures_stay_the_prs_even_with_no_sound_output_or_with_it(self):
         player = 'SessionKitTests/RealPlayerMarginMomentTests/testMarginPlays'

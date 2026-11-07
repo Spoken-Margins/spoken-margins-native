@@ -1,11 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import type { Episode, Margin, Show } from '../../shared/model.ts';
 import { readPacket } from '../../packet/read.ts';
-import { SHARE_LINKS_ENABLED, ShareLinkUploadError, ShareLinksOffError, sealPacket } from '../../packet/share-link.ts';
+import { sealPacket } from '../../cli/link-sealing.ts';
 import { EXPIRED_MESSAGE, SERVER_MESSAGE } from '../../../../research/B4/server/internal/links/share-link-page.mjs';
-import { LINK_MESSAGES, ShareLinkError, linkPreview, linkUploadMessage, openSharedPacket, parseShareLink, type ShareLinkRef } from './share-link.ts';
+import { LINK_MESSAGES, ShareLinkError, openSharedPacket, parseShareLink, type ShareLinkRef } from './share-link.ts';
 
 const repo = new URL('../../../../', import.meta.url);
 const vector = JSON.parse(readFileSync(new URL('research/B4/contracts/fixtures/share-link-sealing-vector.json', repo), 'utf8'));
@@ -121,7 +120,7 @@ test('a cut-off link names its link for the report form, and never carries a key
   assert.equal(JSON.stringify(parseShareLink(`https://example.com/l/${id}#${KEY.slice(0, 20)}`)).includes(KEY.slice(0, 12)), false);
 });
 
-test('a link made here opens back to the same packet, and the importer reads its Margins', async () => {
+test('a sealed link opens back to the same packet, and the importer reads its Margins', async () => {
   const packet = new Uint8Array(readFileSync(new URL('Contracts/fixtures/web-packets/web-voice.spokenmargins', repo)));
   const sealed = await sealPacket(packet, { schema: 'spokenmargins.link-preview.v1', source: { title: 'Episode 1' }, margins: [{ text: 'Hi' }] });
   const link = linkFor(`https://example.com/l/0123456789abcdef0123456789abcdef#${sealed.keyFragment}`);
@@ -129,35 +128,4 @@ test('a link made here opens back to the same packet, and the importer reads its
   const read = await readPacket(opened);
   assert.equal(read.episode.guid, 'example-episode-guid-1');
   assert.deepEqual(read.margins.map((m) => m.atSeconds), [30, 125.25]);
-});
-
-const show: Show = { id: 's', kind: 'podcast', title: 'Example Show', feedUrl: 'https://feeds.test/s.rss', followedAt: 'T0' };
-const episode: Episode = { id: 'e', showId: 's', title: 'Episode 1', pageUrl: 'https://example.com/podcast/episode-1' };
-const margin = (id: string, text: string | undefined): Margin => ({ id, episodeId: 'e', atSeconds: 1, createdAt: 'T0', ...(text !== undefined && { text }) });
-
-test('the preview carries the words of the Margins in the packet, and nothing else', () => {
-  const margins = [margin('a', 'First'), margin('b', '  Second  '), margin('c', undefined), margin('d', 'Not in the packet'), margin('e', '   ')];
-  const preview = linkPreview(episode, show, margins, ['a', 'b', 'c', 'e']);
-  assert.deepEqual(preview, {
-    schema: 'spokenmargins.link-preview.v1',
-    source: { title: 'Episode 1', show: 'Example Show', url: 'https://example.com/podcast/episode-1' },
-    margins: [{ text: 'First' }, { text: 'Second' }],
-  });
-  const secret = linkPreview({ ...episode, pageUrl: 'https://example.com/ep?token=abc' }, undefined, margins, ['a']);
-  assert.deepEqual(secret.source, { title: 'Episode 1' });
-  assert.throws(() => linkPreview(episode, show, margins, ['c']), { message: LINK_MESSAGES.nothingToLink });
-});
-
-test('upload failures read plainly', () => {
-  assert.equal(linkUploadMessage(new ShareLinkUploadError(413)), LINK_MESSAGES.tooLarge);
-  assert.equal(linkUploadMessage(new ShareLinkUploadError(429)), LINK_MESSAGES.tooMany);
-  assert.equal(linkUploadMessage(new ShareLinkUploadError(400)), LINK_MESSAGES.refused);
-  assert.equal(linkUploadMessage(new ShareLinkUploadError(503)), LINK_MESSAGES.server);
-  assert.equal(linkUploadMessage(new TypeError('Failed to fetch')), LINK_MESSAGES.offline);
-  assert.equal(linkUploadMessage(new ShareLinksOffError()), new ShareLinksOffError().message);
-  assert.equal(linkUploadMessage(new Error('x')), LINK_MESSAGES.server);
-});
-
-test('outside a build that turns them on, share links stay off', () => {
-  assert.equal(SHARE_LINKS_ENABLED, false);
 });

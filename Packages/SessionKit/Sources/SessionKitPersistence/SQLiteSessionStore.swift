@@ -2147,7 +2147,14 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
     }
 
     func withConnectionLock<T>(_ operation: () throws -> T) rethrows -> T {
-        connectionLock.lock()
+        if !connectionLock.try() {
+            // A background write holds the store. The main thread's wait is a hang of its own: name it (#2256).
+            if Thread.isMainThread {
+                MainThreadOperationLabels.shared.scoped("store.writeWait") { connectionLock.lock() }
+            } else {
+                connectionLock.lock()
+            }
+        }
         defer { connectionLock.unlock() }
         return try operation()
     }

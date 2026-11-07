@@ -76,19 +76,21 @@ extension Gate1AppModel {
         let labels = hangTelemetry.labels
         labels.scoped("snapshot.playbackEvents") { recordPlaybackEventState(previous: oldValue) }
         if oldValue.sessionId != snapshot.sessionId { resumeDeferredPodcastPlacements() }
-        if oldValue.isRecording, !snapshot.isRecording { endCaptureWatch() }
-        if !oldValue.isRecording, snapshot.isRecording { startCaptureWatch() }
-        settleSpeechInterruptionResume()
-        hearFriendMarginsIfStartFailed(from: oldValue) // the episode can't play: a friend's Margins don't need it (#3392)
+        labels.scoped("snapshot.captureWatch") {
+            if oldValue.isRecording, !snapshot.isRecording { endCaptureWatch() }
+            if !oldValue.isRecording, snapshot.isRecording { startCaptureWatch() }
+        }
+        labels.scoped("snapshot.speechResume") { settleSpeechInterruptionResume() }
+        labels.scoped("snapshot.cantPlayListening") { hearFriendMarginsIfStartFailed(from: oldValue) } // the episode can't play: a friend's Margins don't need it (#3392)
         labels.scoped("snapshot.listeningSignals") {
             listeningSignals.snapshotChanged(from: oldValue, to: snapshot); playQueueSnapshotChanged(from: oldValue, to: snapshot)
             PlayerRunController.note(snapshot, in: self) // where our player was, for a Watch Margin taken now (#2542)
         }
-        updateNarrationVoiceNotice()
+        labels.scoped("snapshot.voiceNotice") { updateNarrationVoiceNotice() }
         if playingImportedCommentary != nil,
            oldValue.sessionId != snapshot.sessionId || oldValue.itemId != snapshot.itemId
             || oldValue.targetId != snapshot.targetId || snapshot.status.isPlaybackActive {
-            stopImportedCommentaryPlayback(resumeSource: false)
+            labels.scoped("snapshot.stopSharedMargin") { stopImportedCommentaryPlayback(resumeSource: false) }
         }
         if snapshot.status.isPlaybackActive { releaseOwnMarginReturn(); libraryAudioLoop.renderPolicy.noteListenerEngaged() }
         if let status = snapshot.preparedTextAudioStatus, status != preparedTextAudioStatus { preparedTextAudioStatus = status } // an equal write still publishes
@@ -103,7 +105,7 @@ extension Gate1AppModel {
                 labels.scoped("snapshot.audioPreparation") { startForegroundAudioPreparationIfNeeded() }
             }
         }
-        reconcilePlaybackProgressTicker()
+        labels.scoped("snapshot.progressTicker") { reconcilePlaybackProgressTicker() }
         labels.scoped("snapshot.narrationProtection") { reconcileNarrationStartupProtection() }
         labels.scoped("snapshot.skimAvailability") { updateSkimAvailability(refreshResources: false) }
         updateGate2CompactState()

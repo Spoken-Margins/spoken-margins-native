@@ -84,7 +84,7 @@ struct PlayQueueRowLabel: View {
     var body: some View {
         HStack(spacing: 12) {
             Image(systemName: row.symbol)
-                .foregroundStyle(AppColors.ochre)
+                .foregroundStyle(AppColors.ochreText)
                 .frame(width: 28)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 3) {
@@ -114,7 +114,7 @@ struct PlayQueueSummaryRow: View {
                 HStack(spacing: 12) {
                     Image(systemName: "text.line.first.and.arrowtriangle.forward")
                         .font(.title3)
-                        .foregroundStyle(AppColors.ochre)
+                        .foregroundStyle(AppColors.ochreText)
                         .frame(width: 40, height: 40)
                         .background(AppColors.ochre.opacity(0.12), in: Circle())
                         .accessibilityHidden(true)

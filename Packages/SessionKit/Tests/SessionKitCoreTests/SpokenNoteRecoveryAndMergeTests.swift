@@ -253,19 +253,10 @@ private final class WritingRecorder: SpokenNoteTakeRecording, @unchecked Sendabl
 }
 
 private final class GatedTranscriber: SpokenNoteTranscribing, @unchecked Sendable {
-    private let lock = NSLock()
-    private var gate: CheckedContinuation<Void, Never>?
-    private var released = false
+    private let gate = ReleaseLatch()
 
     func transcribe(fileAt url: URL) async throws -> [AlignedTranscriptSegment] {
-        await withCheckedContinuation { continuation in
-            let resumeNow = lock.withLock { () -> Bool in
-                if released { return true }
-                gate = continuation
-                return false
-            }
-            if resumeNow { continuation.resume() }
-        }
+        await gate.wait()
         return [
             AlignedTranscriptSegment(id: "w0", text: "Call", startMs: 0, endMs: 300),
             AlignedTranscriptSegment(id: "w1", text: "the", startMs: 400, endMs: 600),
@@ -273,12 +264,5 @@ private final class GatedTranscriber: SpokenNoteTranscribing, @unchecked Sendabl
         ]
     }
 
-    func release() {
-        let continuation = lock.withLock { () -> CheckedContinuation<Void, Never>? in
-            released = true
-            defer { gate = nil }
-            return gate
-        }
-        continuation?.resume()
-    }
+    func release() { gate.release() }
 }

@@ -1,14 +1,13 @@
-// Share links in the web app (#3003, phase 1 of #2168), at phone size. Opening runs against a local stub link server
+// Opening share links in the web app (#3003, phase 1 of #2168), at phone size, against a local stub link server
 // (e2e/link-stub-server.ts) holding the shared test vector and a fixture packet sealed under the vector's key.
-// Making a link runs only in the stub's build, the one build with SHARE_LINKS_ENABLED on; the shipped
-// configuration is checked to offer no link and to carry no upload code.
-import { readFileSync, readdirSync } from 'node:fs';
+// The web app is receive-only for links (owner, 2026-11-05, #3542): the last journey here fails if the page ever sends
+// a POST or PUT to /api/v1/links while it shares a file and opens a link.
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { expect, test, type Page, type Request } from '@playwright/test';
 import { FEED_ORIGIN, seconds, serveAudio, serveFixtures, shot } from './fixtures.ts';
 
 const STUB = 'http://127.0.0.1:4174';
-const SHIPPED = `http://127.0.0.1:${process.env.SM_E2E_PORT ?? 4173}`;
 const vector = JSON.parse(
   readFileSync(fileURLToPath(new URL('../../research/B4/contracts/fixtures/share-link-sealing-vector.json', import.meta.url)), 'utf8'),
 );
@@ -28,10 +27,6 @@ test.beforeEach(async ({ page }, info) => {
 
 async function tab(page: Page, name: string) {
   await page.getByRole('navigation', { name: 'Sections' }).getByRole('button', { name }).click();
-}
-
-async function elapsed(page: Page): Promise<number> {
-  return seconds((await page.getByTestId('elapsed').textContent()) ?? '0:00');
 }
 
 /** A toast holding `text`; with `whole`, one whose words are exactly `text` (the toast's icon aside). */
@@ -122,64 +117,12 @@ test('a pasted link that is damaged or expired says so, and a link with no key a
   await expect(page.getByRole('dialog')).toHaveCount(0);
 });
 
-test('with links on, a Margin’s share menu makes a link that holds only sealed bytes and opens at the Margin', async ({ page, browser, request }, info) => {
+test('the page never sends a POST or PUT to /api/v1/links, however a listener shares or opens', async ({ page }) => {
+  // Every request the page makes, from any origin, with its method; a link is only ever read (GET /l/<id>/packet).
+  const sent: string[] = [];
+  page.on('request', (request) => sent.push(`${request.method()} ${new URL(request.url()).pathname}`));
+
   await page.goto('./#following');
-  await page.getByRole('button', { name: 'Follow a show' }).first().click();
-  await page.getByLabel('Show name, or a feed or Substack address').fill(FEED);
-  await page.getByRole('dialog', { name: 'Follow a show' }).getByRole('button', { name: 'Follow' }).click();
-  await page.getByRole('button', { name: /Play the newest episode/ }).click();
-  const nowPlaying = page.getByRole('dialog', { name: EPISODE_3 });
-  await expect.poll(() => elapsed(page), { timeout: 10_000 }).toBeGreaterThanOrEqual(3);
-  await nowPlaying.getByRole('button', { name: 'Write a Margin' }).click();
-  const label = await nowPlaying.locator('label[for="margin-text"]').textContent();
-  const writtenAt = seconds(label?.replace('Your Margin at ', '') ?? '0:00');
-  const words = 'Send Sam the bit about the tide tables.';
-  await nowPlaying.getByLabel(/Your Margin at/).fill(words);
-  await nowPlaying.getByRole('button', { name: 'Save Margin' }).click();
-  await expect(page.getByText(/Margin saved at/)).toBeVisible();
-
-  await nowPlaying.getByRole('button', { name: 'Make a link' }).click();
-  const field = nowPlaying.getByLabel('Link to these Margins');
-  await expect(field).toHaveValue(/^http:\/\/127\.0\.0\.1:4174\/l\/[0-9a-f]{32}#[A-Za-z0-9_-]{43}$/);
-  await expect(toast(page, /(Link copied\.|Link ready\. Copy it below\.) It works until/)).toBeVisible();
-  await shot(page, info, '32-link-made');
-  const link = await field.inputValue();
-  const id = /\/l\/([0-9a-f]{32})#/.exec(link)?.[1] ?? '';
-
-  // The server holds sealed bytes only: no Margin words, no episode title, in either part.
-  for (const part of ['packet', 'preview']) {
-    const stored = Buffer.from(await (await request.get(`${STUB}/l/${id}/${part}`)).body());
-    expect(stored.subarray(0, 6).toString('latin1')).toBe('SMLINK');
-    for (const plain of [words, 'tide tables', EPISODE_3]) expect(stored.includes(Buffer.from(plain))).toBe(false);
-  }
-
-  // The same listener opens it: the episode matches theirs, so no "shared" show appears, and the Margin they
-  // already have isn't added twice (#3012).
-  await nowPlaying.getByRole('button', { name: 'Close Now Playing' }).click();
-  await pasteLink(page, link);
-  await expect(page.getByText(`Every Margin in this file is already here, on “${EPISODE_3}”.`)).toBeVisible();
-  await page.getByRole('dialog', { name: EPISODE_3 }).getByRole('button', { name: 'Close Now Playing' }).click();
-  await tab(page, 'Following');
-  await expect(page.getByRole('button', { name: /Open Shared (by|with)/ })).toHaveCount(0);
-
-  // A friend with an empty Library opens it and taps Play: the episode runs from the start and the Margin (written at
-  // about 0:03, a few seconds in) comes up by itself, with no name on the packet, so the page calls the sender "your friend".
-  const friend = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, serviceWorkers: 'block' });
-  const friendPage = await friend.newPage();
-  await serveFixtures(friendPage);
-  await friendPage.goto(link);
-  await friendPage.getByTestId('arrival').getByRole('button', { name: 'Play' }).click();
-  const friendPlaying = friendPage.getByRole('dialog', { name: EPISODE_3 });
-  await expect(friendPlaying).toBeVisible();
-  await expect.poll(() => audioTime(friendPage), { timeout: 10_000 }).toBeGreaterThanOrEqual(writtenAt - 0.5);
-  expect(await audioTime(friendPage)).toBeLessThan(writtenAt + 8);
-  await expect(friendPlaying.getByText(words)).toBeVisible();
-  await shot(friendPage, info, '33-friend-opened-link');
-  await friend.close();
-});
-
-test('the shipped configuration offers no link and carries no upload code', async ({ page }) => {
-  await page.goto(`${SHIPPED}/#following`);
   await page.getByRole('button', { name: 'Follow a show' }).first().click();
   await page.getByLabel('Show name, or a feed or Substack address').fill(FEED);
   await page.getByRole('dialog', { name: 'Follow a show' }).getByRole('button', { name: 'Follow' }).click();
@@ -188,14 +131,22 @@ test('the shipped configuration offers no link and carries no upload code', asyn
   await nowPlaying.getByRole('button', { name: 'Write a Margin' }).click();
   await nowPlaying.getByLabel(/Your Margin at/).fill('A Margin to share.');
   await nowPlaying.getByRole('button', { name: 'Save Margin' }).click();
-  await expect(nowPlaying.getByRole('button', { name: 'Save as a file' })).toBeVisible();
-  await expect(nowPlaying.getByRole('button', { name: 'Make a link' })).toHaveCount(0);
 
-  // The build behind it (dist-e2e/, default mode) compiled the upload away.
-  const assets = fileURLToPath(new URL('../dist-e2e/assets/', import.meta.url));
-  const code = readdirSync(assets)
-    .filter((name) => name.endsWith('.js'))
-    .map((name) => readFileSync(`${assets}${name}`, 'utf8'))
-    .join('\n');
-  expect(code).not.toContain('/api/v1/links');
+  // The Share panel: a file is saved, and no way to make a link is offered.
+  await expect(nowPlaying.getByRole('button', { name: 'Save as a file' })).toBeVisible();
+  await expect(nowPlaying.getByRole('button', { name: /link/i })).toHaveCount(0);
+  const download = page.waitForEvent('download');
+  await nowPlaying.getByRole('button', { name: 'Save as a file' }).click();
+  expect((await download).suggestedFilename()).toMatch(/\.spokenmargins$/);
+  await expect(page.getByText(/Saved 1 Margin as /)).toBeVisible();
+
+  // Opening a link, pasted: it is read, never written.
+  await nowPlaying.getByRole('button', { name: 'Close Now Playing' }).click();
+  await pasteLink(page, `${STUB}/l/vectorvoice01#${KEY}`);
+  await expect(page.getByRole('dialog', { name: FIXTURE_EPISODE })).toBeVisible();
+
+  expect(sent).toContain('GET /l/vectorvoice01/packet');
+  const writes = sent.filter((entry) => !entry.startsWith('GET ') && !entry.startsWith('HEAD '));
+  expect(writes.filter((entry) => /\/api\/v1\/links/.test(entry))).toEqual([]);
+  expect(sent.filter((entry) => /\/api\/v1\/links/.test(entry))).toEqual([]);
 });

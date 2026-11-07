@@ -170,9 +170,9 @@ struct SpokenMarginsApp: App {
                 .onOpenURL(perform: open)
                 .onCompatibleChange(of: scenePhase) { phase in
                     if phase == .active {
-                        model.handleAppBecameActive()
+                        MainThreadOperationLabels.shared.scoped("scene.active") { model.handleAppBecameActive() }
                     } else if phase == .inactive || phase == .background {
-                        model.handleAppBecameInactiveOrBackground(entersBackground: phase == .background)
+                        MainThreadOperationLabels.shared.scoped("scene.inactiveOrBackground") { model.handleAppBecameInactiveOrBackground(entersBackground: phase == .background) }
                         #if canImport(BackgroundTasks) && canImport(UIKit)
                         if phase == .background {
                             // Read off main (#2508): the published list can predate the launch refresh.
@@ -190,7 +190,7 @@ struct SpokenMarginsApp: App {
                 }
                 #endif
                 .task {
-                    model.importPendingSourceLinkHandoffs()
+                    MainThreadOperationLabels.shared.scoped("launch.sourceLinkHandoffs") { model.importPendingSourceLinkHandoffs() }
                     #if DEBUG
                     // The screen tour's packets (#3237) open the way a listener's tap does.
                     if let packet = UITestingHooks.packetToOpen() { open(packet) }

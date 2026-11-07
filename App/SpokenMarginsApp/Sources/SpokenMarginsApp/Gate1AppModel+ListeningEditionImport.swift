@@ -146,21 +146,66 @@ extension Gate1AppModel {
             throw EditionError.invalid("This source already has a different Listening Map. To replace it, preview this edition (Review on its own, or paste it) in Import Listening Edition and turn on Replace.")
         }
         let store = try requireStore()
+        let itemId = edition.itemID
+        // The item (its text can be megabytes), the map and the audio map are written off the main thread (#2509), in
+        // the order they always had; the engine is told on main afterwards, and playback is checked again first.
         // Stable source identity preserves every existing session and Margin on retry.
-        if (try? store.loadItemSummary(id: edition.itemID)) == nil { // whether it is there, not its text (#2506)
-            try store.saveItem(Item(id: edition.itemID, title: edition.title, mediaType: "text", text: edition.text,
-                                   externalReference: edition.sourceURL, status: "ready", externalReferenceType: "url", createdAt: Date()))
-        }
-        try requireNoPlaybackForListeningEdition(itemId: edition.itemID)
-        try await Self.offMain { try ListeningEditionStore.application().save(edition) }
-        try requireNoPlaybackForListeningEdition(itemId: edition.itemID)
-        try hangTelemetry.labels.scoped("listeningEdition.attach") {
-            if let engine { snapshot = try engine.attachListeningMap(edition.listeningMap()) }
-            else { try store.saveListeningMap(edition.listeningMap()) }
-            if let timeline = try store.loadTranscriptTimeline(itemId: edition.itemID)?.timeline {
-                activateListeningEditionAudio(itemId: edition.itemID, timeline: timeline)
+        try await Self.offMain {
+            if (try? store.loadItemSummary(id: itemId)) == nil { // whether it is there, not its text (#2506)
+                try store.saveItem(Item(id: itemId, title: edition.title, mediaType: "text", text: edition.text,
+                                       externalReference: edition.sourceURL, status: "ready", externalReferenceType: "url", createdAt: Date()))
             }
         }
+        try requireNoPlaybackForListeningEdition(itemId: itemId)
+        try await Self.offMain { try ListeningEditionStore.application().save(edition) }
+        try requireNoPlaybackForListeningEdition(itemId: itemId)
+        let persister = try engine?.listeningMapPersister()
+        let written = try await Self.offMain { () -> (PersistedListeningMap?, TranscriptTimeline?) in
+            let map = edition.listeningMap()
+            var persisted: PersistedListeningMap?
+            if let persister { persisted = try persister.persist(map) } else { try store.saveListeningMap(map) }
+            return (persisted, try store.loadTranscriptTimeline(itemId: itemId)?.timeline)
+        }
+        // The listener may have pressed play on this item while the write ran: the map is saved, and the engine takes
+        // it the next time the item opens, as for a shared map ("left alone until the listener pauses").
+        let playingNow = snapshot.itemId == itemId && snapshot.status.isPlaybackActive
+        try hangTelemetry.labels.scoped("listeningEdition.attach") {
+            if let engine, let persisted = written.0, !playingNow { snapshot = try engine.attachListeningMap(persisted) }
+        }
+        if let timeline = written.1 {
+            await activateListeningEditionAudioOffMain(itemId: itemId, timeline: timeline)
+        }
+    }
+
+    /// Saves the audio map an edition's timeline resolves to, off the main thread (#2509), then tells the screen.
+    func activateListeningEditionAudioOffMain(itemId: String, timeline: TranscriptTimeline) async {
+        guard let edition = await saveListeningEditionAudioMap(itemId: itemId, timeline: timeline) else { return }
+        hangTelemetry.labels.scoped("listeningEdition.activateAudio") { finishListeningEditionAudio(itemId: itemId, edition: edition) }
+    }
+
+    /// The store half: the edition's audio map and its projection. Nil when there is no edition file or the map
+    /// could not be saved (the second case is noted in the diagnostics).
+    func saveListeningEditionAudioMap(itemId: String, timeline: TranscriptTimeline) async -> ListeningEdition? {
+        guard let store else { return nil }
+        do {
+            return try await Self.offMain { () -> ListeningEdition? in
+                guard let edition = try? ListeningEditionStore.application().load(itemID: itemId) else { return nil }
+                let (proposal, projection) = try edition.audioMap(timeline: timeline)
+                try store.savePortableListeningMapProposal(proposal, itemId: itemId)
+                try store.saveResolvedListeningMapProjection(projection)
+                return edition
+            }
+        } catch {
+            diagnostics["listeningEditionAudio"] = "not_ready"
+            return nil
+        }
+    }
+
+    /// What follows a saved audio map, on the main thread: the open screen refreshes and the listener is told.
+    func finishListeningEditionAudio(itemId: String, edition: ListeningEdition) {
+        if selectedItem.id == itemId { refreshSelectedItemInBackground() }
+        prepareImportedLocalAudioBridges(itemId: itemId)
+        Task { await ListeningReadyNotifications.notify(itemID: itemId, title: edition.title, revision: edition.revision) }
     }
 
     private func requireNoPlaybackForListeningEdition(itemId: String) throws {

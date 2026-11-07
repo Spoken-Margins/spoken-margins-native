@@ -33,9 +33,12 @@ public enum CantPlayListening {
         }
     }
 
-    /// The player's start failed for good (`.failed` with a start failure).
+    /// The player's last start failed for good and none has confirmed since. It reads the failure the engine keeps until
+    /// a start confirms, because the status alone doesn't last: anything that pauses a failed player (an ordinary review
+    /// giving its place back, a recording) makes it `.paused`, and the episode is no less dead (PR #3606's audit). A new
+    /// attempt is `.starting`, so Review keeps its retry while the player tries.
     public static func isStartFailure(_ start: Start) -> Bool {
-        start.status == .failed && start.lastFailure?.hasPrefix("playback_start_failed:") == true
+        (start.status == .failed || start.status == .paused) && start.lastFailure?.hasPrefix("playback_start_failed:") == true
     }
 
     /// What the app knows about the item and the moment, beside the player's own change.
@@ -76,7 +79,7 @@ public enum CantPlayListening {
     /// gets the ordinary failure.
     public static func startFailed(from old: Start, to new: Start, around: Surroundings) -> Bool {
         guard around.friendMargins > 0, around.appIsActive, around.onPlaybackScreen else { return false }
-        guard old.status == .starting, old.itemId == new.itemId else { return false }
+        guard old.status == .starting, new.status == .failed, old.itemId == new.itemId else { return false }
         return isDeadEpisode(new, around)
     }
 

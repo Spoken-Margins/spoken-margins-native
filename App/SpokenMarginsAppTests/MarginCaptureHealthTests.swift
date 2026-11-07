@@ -13,6 +13,23 @@ final class MarginCaptureHealthTests: XCTestCase {
     private static let termsKeys = [SpokenMarginsTerms.acceptanceVersionKey, SpokenMarginsTerms.acceptanceDateKey]
     private var priorTermsDefaults: [String: Any] = [:]
 
+    /// Answers a stop at once, so these tests read Try again's result on the next line. The real stop answers later;
+    /// `MarginOutcomeCueMomentTests` and `MarginCaptureRetryOrderTests` cover that gap.
+    private final class SilentOutcomeCue: MarginOutcomeCuePlaying {
+        func play(_ cue: MarginOutcomeCue) -> String { "skipped:test" }
+        func stop() {}
+    }
+    private var originalOutcomeCue: MarginOutcomeCuePlaying!
+
+    override func setUp() async throws {
+        originalOutcomeCue = MarginOutcomeCuePlayer.shared
+        MarginOutcomeCuePlayer.shared = SilentOutcomeCue()
+    }
+
+    override func tearDown() async throws {
+        MarginOutcomeCuePlayer.shared = originalOutcomeCue
+    }
+
     override func setUpWithError() throws {
         try super.setUpWithError()
         priorTermsDefaults = [:]

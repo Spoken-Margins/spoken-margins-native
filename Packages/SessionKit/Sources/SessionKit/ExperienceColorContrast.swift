@@ -126,6 +126,19 @@ public enum AppSemanticColorRGB {
         light: .init(red: 0.76, green: 0.52, blue: 0.16),
         dark: .init(red: 0.94, green: 0.72, blue: 0.32)
     )
+    /// Ochre for text and icons (#1920). `ochre` stays the fill and tint colour; in light mode it is 2.8:1 on bone, so
+    /// anything that is read or tapped as a mark uses this deeper one, at least 4.5:1 on bone, a panel and soft green.
+    /// Dark mode takes ochre's own value, which is 8:1 and more.
+    public static let ochreText = AppDynamicRGB(
+        light: .init(red: 0.55, green: 0.33, blue: 0.0),
+        dark: .init(red: 0.94, green: 0.72, blue: 0.32)
+    )
+    /// Warning copy and its icon (#1920), in place of the system orange (about 2:1 on white in light mode). The dark
+    /// value is the system orange's own dark value, which is already above 7:1.
+    public static let warningText = AppDynamicRGB(
+        light: .init(red: 0.66, green: 0.28, blue: 0.0),
+        dark: .init(red: 1.0, green: 0.624, blue: 0.039)
+    )
     public static let coral = AppDynamicRGB(
         light: .init(red: 0.70, green: 0.27, blue: 0.20),
         dark: .init(red: 1.00, green: 0.57, blue: 0.48)
@@ -151,18 +164,10 @@ public enum AppSemanticColorRGB {
         ("plum", plum), ("evergreen", evergreen), ("onEvergreen", onEvergreen), ("softGreen", softGreen),
         ("dangerText", dangerText), ("dangerBackground", dangerBackground), ("inputBackground", inputBackground),
         ("border", border), ("borderIncreased", borderIncreased), ("green", green), ("accent", accent), ("accentSoft", accentSoft),
-        ("watchBackground", watchBackground), ("watchControl", watchControl), ("ochre", ochre), ("coral", coral),
+        ("watchBackground", watchBackground), ("watchControl", watchControl), ("ochre", ochre), ("ochreText", ochreText),
+        ("warningText", warningText), ("coral", coral),
         ("star", star), ("watchDanger", watchDanger)
     ]
-}
-
-/// iOS system colours the app still draws with, as the approximate values Apple publishes. They move a little
-/// between releases, so a ratio here is "about", and a pair using one is a warning sign, not a proof.
-public enum AppSystemColorApproximation {
-    public static let orange = AppDynamicRGB(
-        light: .init(red: 1.0, green: 0.584, blue: 0.0),
-        dark: .init(red: 1.0, green: 0.624, blue: 0.039)
-    )
 }
 
 public enum AppColorContrastAudit {
@@ -206,11 +211,14 @@ public enum AppColorContrastAudit {
         .init(name: "coral text on app background", foreground: AppSemanticColorRGB.coral, background: AppSemanticColorRGB.background, minimumRatio: 4.5),
         .init(name: "coral text on panel", foreground: AppSemanticColorRGB.coral, background: AppSemanticColorRGB.panel, minimumRatio: 4.5),
         .init(name: "coral text on soft green", foreground: AppSemanticColorRGB.coral, background: AppSemanticColorRGB.softGreen, minimumRatio: 4.5),
-        .init(name: "ochre text on bone", foreground: AppSemanticColorRGB.ochre, background: AppSemanticColorRGB.bone, minimumRatio: 4.5),
-        .init(name: "ochre text on panel", foreground: AppSemanticColorRGB.ochre, background: AppSemanticColorRGB.panel, minimumRatio: 4.5),
-        .init(name: "ochre text on soft green", foreground: AppSemanticColorRGB.ochre, background: AppSemanticColorRGB.softGreen, minimumRatio: 4.5),
-        .init(name: "system orange text on panel", foreground: AppSystemColorApproximation.orange, background: AppSemanticColorRGB.panel, minimumRatio: 4.5),
-        .init(name: "system orange text on bone", foreground: AppSystemColorApproximation.orange, background: AppSemanticColorRGB.bone, minimumRatio: 4.5),
+        .init(name: "ochre text on bone", foreground: AppSemanticColorRGB.ochreText, background: AppSemanticColorRGB.bone, minimumRatio: 4.5),
+        .init(name: "ochre text on panel", foreground: AppSemanticColorRGB.ochreText, background: AppSemanticColorRGB.panel, minimumRatio: 4.5),
+        .init(name: "ochre text on soft green", foreground: AppSemanticColorRGB.ochreText, background: AppSemanticColorRGB.softGreen, minimumRatio: 4.5),
+        .init(name: "ochre text on app background", foreground: AppSemanticColorRGB.ochreText, background: AppSemanticColorRGB.background, minimumRatio: 4.5),
+        .init(name: "warning text on panel", foreground: AppSemanticColorRGB.warningText, background: AppSemanticColorRGB.panel, minimumRatio: 4.5),
+        .init(name: "warning text on bone", foreground: AppSemanticColorRGB.warningText, background: AppSemanticColorRGB.bone, minimumRatio: 4.5),
+        .init(name: "warning text on app background", foreground: AppSemanticColorRGB.warningText, background: AppSemanticColorRGB.background, minimumRatio: 4.5),
+        .init(name: "warning text on soft green", foreground: AppSemanticColorRGB.warningText, background: AppSemanticColorRGB.softGreen, minimumRatio: 4.5),
         .init(name: "playback accent on watch control", foreground: AppSemanticColorRGB.accent, background: AppSemanticColorRGB.watchControl, minimumRatio: 4.5),
         .init(name: "listening accent on watch control", foreground: AppSemanticColorRGB.listeningAccent, background: AppSemanticColorRGB.watchControl, minimumRatio: 4.5),
         .init(name: "listening secondary on watch control", foreground: AppSemanticColorRGB.listeningSecondary, background: AppSemanticColorRGB.watchControl, minimumRatio: 4.5),
@@ -231,10 +239,10 @@ public enum AppColorContrastAudit {
         .init(name: "green icon on soft green", foreground: AppSemanticColorRGB.green, background: AppSemanticColorRGB.softGreen, minimumRatio: 3),
         .init(name: "coral icon on panel", foreground: AppSemanticColorRGB.coral, background: AppSemanticColorRGB.panel, minimumRatio: 3),
         .init(name: "coral icon on soft green", foreground: AppSemanticColorRGB.coral, background: AppSemanticColorRGB.softGreen, minimumRatio: 3),
-        .init(name: "ochre icon on bone", foreground: AppSemanticColorRGB.ochre, background: AppSemanticColorRGB.bone, minimumRatio: 3),
-        .init(name: "ochre icon on panel", foreground: AppSemanticColorRGB.ochre, background: AppSemanticColorRGB.panel, minimumRatio: 3),
-        .init(name: "ochre icon on soft green", foreground: AppSemanticColorRGB.ochre, background: AppSemanticColorRGB.softGreen, minimumRatio: 3),
-        .init(name: "system orange icon on panel", foreground: AppSystemColorApproximation.orange, background: AppSemanticColorRGB.panel, minimumRatio: 3),
+        .init(name: "ochre icon on bone", foreground: AppSemanticColorRGB.ochreText, background: AppSemanticColorRGB.bone, minimumRatio: 3),
+        .init(name: "ochre icon on panel", foreground: AppSemanticColorRGB.ochreText, background: AppSemanticColorRGB.panel, minimumRatio: 3),
+        .init(name: "ochre icon on soft green", foreground: AppSemanticColorRGB.ochreText, background: AppSemanticColorRGB.softGreen, minimumRatio: 3),
+        .init(name: "warning icon on panel", foreground: AppSemanticColorRGB.warningText, background: AppSemanticColorRGB.panel, minimumRatio: 3),
         .init(name: "star icon on panel", foreground: AppSemanticColorRGB.star, background: AppSemanticColorRGB.panel, minimumRatio: 3),
         .init(name: "star icon on app background", foreground: AppSemanticColorRGB.star, background: AppSemanticColorRGB.background, minimumRatio: 3),
         .init(name: "star icon on bone", foreground: AppSemanticColorRGB.star, background: AppSemanticColorRGB.bone, minimumRatio: 3),
@@ -257,14 +265,6 @@ public enum AppColorContrastAudit {
     }
 
     public static let knownFailures: [KnownFailure] = [
-        .init(pair: "ochre text on bone", appearance: "light", since: "2026-10-17", fixedBy: "#1920"),
-        .init(pair: "ochre text on panel", appearance: "light", since: "2026-10-17", fixedBy: "#1920"),
-        .init(pair: "ochre text on soft green", appearance: "light", since: "2026-10-17", fixedBy: "#1920"),
-        .init(pair: "system orange text on panel", appearance: "light", since: "2026-10-17", fixedBy: "#1920"),
-        .init(pair: "system orange text on bone", appearance: "light", since: "2026-10-17", fixedBy: "#1920"),
-        .init(pair: "ochre icon on bone", appearance: "light", since: "2026-10-17", fixedBy: "#1920"),
-        .init(pair: "ochre icon on soft green", appearance: "light", since: "2026-10-17", fixedBy: "#1920"),
-        .init(pair: "system orange icon on panel", appearance: "light", since: "2026-10-17", fixedBy: "#1920"),
         .init(pair: "border on app background", appearance: "light", since: "2026-10-17", fixedBy: "#1922"),
         .init(pair: "border on app background", appearance: "dark", since: "2026-10-17", fixedBy: "#1922"),
         .init(pair: "border on panel", appearance: "light", since: "2026-10-17", fixedBy: "#1922"),

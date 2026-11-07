@@ -199,6 +199,19 @@ class ParallelCoreTests(unittest.TestCase):
             # Together they are the same tests the one step expected before.
             self.assertEqual(CORE | REST, host.step('package-core')[1]['expected'] | kw['expected'])
 
+    def test_the_measurements_that_run_only_on_request_are_allowed_in_both_core_steps(self):
+        # They skip on every fast run, and a skip the core steps don't allow turns the plan red. A new one in these
+        # files has to be named, and a renamed one has to follow.
+        tests = SCRIPTS.parent / 'Packages/SessionKit/Tests/SessionKitCoreTests'
+        skipping = set()
+        for name in ('EngineCompletionCostTests', 'PlayAndRecordStartCostTests'):
+            source = (tests / f'{name}.swift').read_text()
+            skipping |= {f'SessionKitCoreTests/{name}/{test}'
+                         for test, body in re.findall(r'func (test\w+)\(\)[^{]*\{(.*?)(?=\n    func |\n    private func |\Z)', source, re.S)
+                         if 'XCTSkip' in body}
+        self.assertEqual(skipping, verification.MEASURE_ON_REQUEST_SKIPS)
+        self.assertLessEqual(skipping, verification.CORE_ALLOWED_SKIPS)
+
     def test_the_read_meter_tests_that_skip_by_design_are_allowed_in_both_core_steps(self):
         # #2258: the known-oversized Library read skips on every fast run, and the cost table skips unless asked for.
         source = (SCRIPTS.parent / 'Packages/SessionKit/Tests/SessionKitCoreTests/StoreReadMeterTests.swift').read_text()
