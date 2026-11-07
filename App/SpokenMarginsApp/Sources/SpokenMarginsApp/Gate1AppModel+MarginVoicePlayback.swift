@@ -217,7 +217,7 @@ extension Gate1AppModel {
     }
 
     private func sharedMarginHeardFailed(_ marginId: String, _ error: Error) {
-        diagnostics["sharedMarginHeard:\(marginId)"] = "failed:\(error.localizedDescription)"
+        diagnostics["sharedMarginHeard:\(marginId)"] = "failed:\(SafeErrorText.describe(error))"
         refreshSelectedItemInBackground()
         refreshMarginRowsInBackground()
     }
@@ -373,7 +373,7 @@ extension Gate1AppModel {
     private func playImportedCommentaryCue() {
         #if canImport(AVFoundation)
         do { try marginVoicePlayer.playCue() } catch {
-            diagnostics["importedCommentaryCue"] = "failed:\(error.localizedDescription)"
+            diagnostics["importedCommentaryCue"] = "failed:\(SafeErrorText.describe(error))"
         }
         #endif
     }

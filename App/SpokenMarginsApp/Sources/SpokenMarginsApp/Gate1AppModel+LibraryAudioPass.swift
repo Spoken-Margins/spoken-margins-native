@@ -348,7 +348,7 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
                 }
                 refreshLibraryRowsInBackground()
             }
-            diagnostics["backgroundAudioPreparation"] = "paused:\(error.localizedDescription)"
+            diagnostics["backgroundAudioPreparation"] = "paused:\(SafeErrorText.describe(error))"
             if attemptedJob?.policy == .explicit {
                 reportWarning(ListenerErrorText.line(prefix: "Audio preparation paused:", error: error))
             }

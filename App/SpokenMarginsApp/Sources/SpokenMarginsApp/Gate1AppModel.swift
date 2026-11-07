@@ -931,7 +931,7 @@ final class Gate1AppModel: ObservableObject {
                 self.closeCompletedSessionIfReady()
             }
         } catch {
-            self.diagnostics["playbackProgressSyncError"] = String(describing: error)
+            self.diagnostics["playbackProgressSyncError"] = SafeErrorText.describe(error)
         }
     }
 
@@ -966,7 +966,7 @@ final class Gate1AppModel: ObservableObject {
             if completedCurrentAudio { refreshSelectedItem() } else if refreshingItem { refreshSelectedItemInBackground() } // a finished session is read by the next tap (#2505)
             diagnostics["playbackLifecycleSync"] = "saved"
         } catch {
-            diagnostics["playbackLifecycleSyncError"] = String(describing: error)
+            diagnostics["playbackLifecycleSyncError"] = SafeErrorText.describe(error)
         }
     }
 
@@ -2311,7 +2311,7 @@ final class Gate1AppModel: ObservableObject {
             diagnostics["streamingPresentationOffset"] = "\(presentationOffset)"
             diagnostics["streamingRecoveryOffset"] = "\(streamingSpeechQueue.currentRecoveryOffset ?? presentationOffset)"
         } catch {
-            diagnostics["streamingAnchorSyncError"] = String(describing: error)
+            diagnostics["streamingAnchorSyncError"] = SafeErrorText.describe(error)
         }
     }
 
@@ -2331,7 +2331,7 @@ final class Gate1AppModel: ObservableObject {
                 diagnostics["streamingSpeechFailure:\(observation.turnId)"] = "offset:\(observation.charOffset)"
             }
         } catch {
-            diagnostics["streamingSpeechObservationError"] = String(describing: error)
+            diagnostics["streamingSpeechObservationError"] = SafeErrorText.describe(error)
         }
     }
 
@@ -2634,11 +2634,11 @@ final class Gate1AppModel: ObservableObject {
                     }
                     self.attachPreparedTextAudio(prepared, itemId: itemId, preparedStatus: "ready", diagnosticStatus: "ready")
                 case .failure(let error):
-                    self.finishTextAudioPrewarm(itemId: itemId, status: "failed", diagnostic: "full_failed:\(error.localizedDescription)")
+                    self.finishTextAudioPrewarm(itemId: itemId, status: "failed", diagnostic: "full_failed:\(SafeErrorText.describe(error))")
                 }
             }
         } catch {
-            diagnostics["textAudioPrewarm:\(itemId)"] = "failed:\(error.localizedDescription)"
+            diagnostics["textAudioPrewarm:\(itemId)"] = "failed:\(SafeErrorText.describe(error))"
             preparedTextAudioStatus = "failed"
             snapshot.preparedTextAudioStatus = "failed"
         }
@@ -2676,7 +2676,7 @@ final class Gate1AppModel: ObservableObject {
             snapshot.preparedTextAudioStatus = preparedStatus
             return true
         } catch {
-            diagnostics["textAudioPrewarm:\(itemId)"] = "attach_failed:\(error.localizedDescription)"
+            diagnostics["textAudioPrewarm:\(itemId)"] = "attach_failed:\(SafeErrorText.describe(error))"
             preparedTextAudioStatus = "failed"
             snapshot.preparedTextAudioStatus = "failed"
             return false
@@ -2785,7 +2785,7 @@ final class Gate1AppModel: ObservableObject {
                     }
                     lastFailure = "empty:\(link.type)"
                 } catch {
-                    lastFailure = "\(link.type):\(error.localizedDescription)"
+                    lastFailure = "\(link.type):\(SafeErrorText.describe(error))"
                 }
             }
             await MainActor.run {
@@ -3026,7 +3026,7 @@ final class Gate1AppModel: ObservableObject {
         do {
             return try setting.resolvedURL()
         } catch {
-            diagnostics["\(setting.bookmarkKey)Error"] = String(describing: error)
+            diagnostics["\(setting.bookmarkKey)Error"] = SafeErrorText.describe(error)
             return nil
         }
     }

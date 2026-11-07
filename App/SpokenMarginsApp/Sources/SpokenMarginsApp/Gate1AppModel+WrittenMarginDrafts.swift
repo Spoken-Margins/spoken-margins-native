@@ -53,7 +53,7 @@ extension Gate1AppModel {
         let journal = WrittenMarginDraftJournal(directory: WrittenMarginDraftJournal.standardDirectory(applicationSupport: support))
         let loaded: WrittenMarginDraftJournal.Loaded
         do { loaded = try journal.load() } catch {
-            diagnostics["writtenMarginDraftRestore"] = "failed:\(error.localizedDescription)"
+            diagnostics["writtenMarginDraftRestore"] = "failed:\(SafeErrorText.describe(error))"
             return nil
         }
         if !loaded.unreadableFileNames.isEmpty { diagnostics["writtenMarginDraftsUnreadable"] = "\(loaded.unreadableFileNames.count)" }
@@ -71,7 +71,7 @@ extension Gate1AppModel {
                     selectedItem = detail
                     // The draft only needs the session open. A source whose file is gone reports that when played.
                     do { try prepareSourceMediaPlayback(itemId: record.itemId) } catch {
-                        diagnostics["writtenMarginDraftSource"] = "unavailable:\(error.localizedDescription)"
+                        diagnostics["writtenMarginDraftSource"] = "unavailable:\(SafeErrorText.describe(error))"
                     }
                 }
                 let choice = restoredReplyChoice(for: record.capture.replyTo)
@@ -83,7 +83,7 @@ extension Gate1AppModel {
                 diagnostics["writtenMarginDraftRestored"] = capture.id
                 return "Your unfinished Margin was kept."
             } catch {
-                diagnostics["writtenMarginDraftRestore"] = "failed:\(error.localizedDescription)"
+                diagnostics["writtenMarginDraftRestore"] = "failed:\(SafeErrorText.describe(error))"
             }
         }
         return nil

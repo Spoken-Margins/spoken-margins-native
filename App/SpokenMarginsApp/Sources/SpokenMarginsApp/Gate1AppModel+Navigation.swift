@@ -48,7 +48,7 @@ extension Gate1AppModel {
                 self.publishLibrary(data)
             } catch is CancellationError {
             } catch {
-                self?.diagnostics["homeLibraryRefreshError"] = String(describing: error)
+                self?.diagnostics["homeLibraryRefreshError"] = SafeErrorText.describe(error)
             }
         }
     }

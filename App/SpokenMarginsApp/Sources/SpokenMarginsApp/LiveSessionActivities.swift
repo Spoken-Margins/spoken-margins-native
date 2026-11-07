@@ -66,7 +66,7 @@ enum LiveSessionActivities {
                 pushType: nil
             )
         } catch {
-            noteStartOutcome("failed:\(error.localizedDescription)")
+            noteStartOutcome("failed:\(SafeErrorText.describe(error))")
             return
         }
         // The live session takes the Lock Screen (#2962). iOS decides which of an app's cards shows first, and a

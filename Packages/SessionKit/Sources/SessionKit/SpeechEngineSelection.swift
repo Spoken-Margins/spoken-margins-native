@@ -125,7 +125,7 @@ public enum SpeechGenerationStopReason {
 
     /// The code plus the error, so a device report shows what went wrong.
     public static func assemblyFailed(_ error: any Error) -> String {
-        "\(assemblyFailedCode): \(String(describing: error))"
+        "\(assemblyFailedCode): \(SafeErrorText.describe(error))"
     }
 
     /// One line for the player. The stop's own reason decides: it belongs to the item on

@@ -2259,7 +2259,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, HeardAudio
                 item.audioMix = mix
                 return true
             } catch {
-                context.cancelAll(reason: "decoded_playback_tap_install_failed:\(error.localizedDescription)")
+                context.cancelAll(reason: "decoded_playback_tap_install_failed:\(SafeErrorText.describe(error))")
                 removePostResumeEvidenceTap()
                 return false
             }
@@ -2841,7 +2841,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, HeardAudio
             postResumeEvidenceAudioMix = mix
             item.audioMix = mix
         } catch {
-            context.cancelAll(reason: "continuous_decoded_playback_tap_install_failed:\(error.localizedDescription)")
+            context.cancelAll(reason: "continuous_decoded_playback_tap_install_failed:\(SafeErrorText.describe(error))")
             removePostResumeEvidenceTap()
         }
         return true

@@ -194,7 +194,7 @@ public final class MarginMomentConductor {
                 beginVoice(player, marginId: margin.marginId)
             }
         } catch {
-            onVoiceUnavailable?(margin.marginId, String(describing: error))
+            onVoiceUnavailable?(margin.marginId, SafeErrorText.describe(error))
             finishVoice()
         }
     }

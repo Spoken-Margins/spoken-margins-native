@@ -59,7 +59,7 @@ extension Gate1AppModel {
             diagnostics.merge(gate2CompactControls.diagnostics(), uniquingKeysWith: { _, new in new })
         } catch {
             diagnostics["gate2CompactSurface"] = "configuration_failed"
-            diagnostics["gate2CompactError"] = String(describing: error)
+            diagnostics["gate2CompactError"] = SafeErrorText.describe(error)
         }
     }
 

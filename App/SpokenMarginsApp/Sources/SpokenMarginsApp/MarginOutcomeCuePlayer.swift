@@ -39,7 +39,7 @@ final class MarginOutcomeCuePlayer: MarginOutcomeCuePlaying {
             playingCue = cue
             return player.play() ? "played" : "skipped:player_refused"
         } catch {
-            return "skipped:\(error.localizedDescription)"
+            return "skipped:\(SafeErrorText.describe(error))"
         }
     }
 
