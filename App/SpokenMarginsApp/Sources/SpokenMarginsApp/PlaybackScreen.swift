@@ -340,26 +340,11 @@ struct PlaybackScreen: View {
 
     /// Add a Margin (spoken) with the pencil (written) beside it.
     private var marginRow: some View {
-        HStack(spacing: 8) {
-            Button(action: model.beginInterjection) {
-                Label(dynamicTypeSize.isAccessibilitySize ? "Record" : "Add a Margin", systemImage: "mic.fill")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(InterjectButtonStyle())
-            .accessibilityLabel("Record a Margin")
-            .accessibilityIdentifier("playback.interject.button")
-            Button(action: model.beginWrittenMargin) {
-                Image(systemName: "square.and.pencil")
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: dynamicTypeSize.isAccessibilitySize ? 32 : 24, height: dynamicTypeSize.isAccessibilitySize ? 32 : 24)
-                    .frame(width: 52, height: 52)
-            }
-            .buttonStyle(InterjectButtonStyle())
-            .accessibilityLabel("Write a Margin")
-            .accessibilityIdentifier("playback.write.button")
-        }
-        .disabled(!model.hasActiveSession)
+        MarginAddButtons(record: model.beginInterjection,
+                         write: model.beginWrittenMargin,
+                         recordIdentifier: "playback.interject.button",
+                         writeIdentifier: "playback.write.button",
+                         isDisabled: !model.hasActiveSession)
     }
 
     /// Share without opening More (#1507): the Share Margins sheet opens on its review, so Share here and Share
@@ -1997,17 +1982,6 @@ private struct WatchSecondaryButtonStyle: ButtonStyle {
         configuration.label
             .foregroundStyle(.white)
             .background(AppColors.watchControl.opacity(configuration.isPressed ? 0.72 : 1))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-    }
-}
-
-private struct InterjectButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.headline)
-            .frame(minHeight: 52)
-            .foregroundStyle(AppColors.interjectText)
-            .background(AppColors.captureBackground.opacity(configuration.isPressed ? 0.78 : 1))
             .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 }
