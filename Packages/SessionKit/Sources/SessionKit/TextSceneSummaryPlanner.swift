@@ -246,19 +246,23 @@ struct PageFurniture {
         let slice = String(characters[start..<end])
         return slice.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
             .filter { line in
-                guard let key = Self.key(String(line)) else { return true }
-                return !repeated.contains(key) && !Self.isPageNumber(String(line))
+                let text = String(line)
+                if Self.isPageNumber(text) { return false }
+                guard let key = Self.key(text) else { return true }
+                return !repeated.contains(key)
             }
             .joined(separator: "\n")
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// nil for a blank line, a long line, or one that ends like a sentence, which are never furniture: a running head
-    /// is a title, not a sentence, so "Sentence 4 about the market." repeated with another number stays text.
+    /// nil for a blank line, a long line, one that ends like a sentence, or one that is only digits. None is furniture
+    /// by repeating: a running head is a title, not a sentence, so "Sentence 4 about the market." repeated with another
+    /// number stays text; and digits fold to one key, so three bare page numbers would otherwise make "1990" repeat too.
+    /// Bare page numbers go through `isPageNumber` instead.
     private static func key(_ line: String) -> String? {
         let trimmed = line.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty, trimmed.count <= maximumLength, let last = trimmed.last,
-              !".!?…。！？".contains(last) else { return nil }
+              !".!?…。！？".contains(last), !trimmed.allSatisfy(\.isNumber) else { return nil }
         let folded = trimmed.lowercased().map { $0.isNumber ? "#" : $0 }
         let collapsed = String(folded).split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
         return collapsed.replacingOccurrences(of: "##+", with: "#", options: .regularExpression)

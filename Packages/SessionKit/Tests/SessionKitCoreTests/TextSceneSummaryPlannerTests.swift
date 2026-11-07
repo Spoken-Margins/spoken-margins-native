@@ -185,6 +185,27 @@ final class TextSceneSummaryPlannerTests: XCTestCase {
         XCTAssertFalse(model.contains("\n12\n"), model)
     }
 
+    /// #3461: digits fold to one key, so three bare page numbers made every digits-only line "repeated" and the year
+    /// went with them. A line that is only digits is never furniture by repeat; only the page-number rule removes it.
+    func testAYearIsKeptWhenThreeOrMoreBarePageNumbersAreInTheSameText() {
+        let rows: [(name: String, line: String, kept: Bool)] = [
+            ("a year", "1990", true),
+            ("a year with spaces around it", "  2024  ", true),
+            ("a four-digit figure", "1500", true),
+            ("a two-digit page number", "12", false),
+            ("a one-digit page number", "3", false),
+            ("a dashed page number", "- 4 -", false),
+            ("a three-digit page number", "118", false),
+        ]
+        for row in rows {
+            let pages = (1...4).map { "\(sentence($0))\n\($0 + 40)" }.joined(separator: "\n")
+            let text = sentence(9) + "\n" + row.line + "\n" + pages + "\n" + sentence(10)
+            let model = TextSceneSummaryPlanner.plan(text: text, chapters: [])[0].modelText
+            let present = model.split(separator: "\n").contains { $0.trimmingCharacters(in: .whitespaces) == row.line.trimmingCharacters(in: .whitespaces) }
+            XCTAssertEqual(present, row.kept, "\(row.name): \(model)")
+        }
+    }
+
     func testALineThatRepeatsOnlyTwiceIsKeptAndSoIsALongRepeatedLine() {
         let twice = "Sidebar note\n" + sentence(1) + "\nSidebar note\n" + sentence(2)
         let planned = TextSceneSummaryPlanner.plan(text: twice, chapters: [])
