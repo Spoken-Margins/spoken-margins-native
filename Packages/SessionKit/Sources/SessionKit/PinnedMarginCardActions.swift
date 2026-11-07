@@ -14,8 +14,12 @@ extension PinnedMarginCard {
             case retry
             /// "Play this moment" or a review, at its lead-in: play the Margin now.
             case playMomentNow
-            /// Ends the review or moment; the source keeps its play state.
-            case backToSource
+            /// Ends a plain moment's lead-in; the source keeps its play state (`MarginMomentConductor.cancel`).
+            case keepListening
+            /// Stops a review: the voice stops and the source PAUSES. If no Margin of the review has played yet it goes back
+            /// to where the listener was; after that it stays where it is, unless the listener's own place was ahead
+            /// (`MarginMomentSequence.placeToReturnToWhenStopped`).
+            case stopReview
             /// Stops a plain moment that is listening for the listener's other Margins.
             case stopPlayingMine
             case listen
@@ -37,19 +41,22 @@ extension PinnedMarginCard {
     /// The card's buttons, left to right. Empty when nothing on the card has anywhere to go.
     public var actions: [Action] {
         let ahead = noun.inSentence
-        let next = Action(job: .goToNextMargin, title: "Next Margin", hint: "Stops this Margin and goes on to the next one.", prominence: .secondary)
+        let next = Action(job: .goToNextMargin, title: "Next Margin", hint: "Stops what is playing and moves on to what comes next in these Margins.", prominence: .secondary)
         let skip = Action(job: .skipThisMargin, title: "Skip this Margin", hint: "Stops this Margin and carries on with the \(ahead).", prominence: .secondary)
+        let stop = Action(
+            job: .stopReview, title: "Stop",
+            hint: "Stops these Margins and pauses the \(ahead). If none of them has played yet, it goes back to where you were.",
+            prominence: .quiet)
         switch stage {
         case .speaking, .reading, .voicePaused, .loading:
-            return [hasNextMargin ? next : skip]
+            // A review has no lead-in to leave from while its Margins chain (a can't-play listening), so Stop is here too.
+            let main = hasNextMargin ? next : skip
+            return run == .review ? [main, stop] : [main]
         case .failed:
             let retry = Action(job: .retry, title: "Retry", hint: "Tries to play this Margin again.", prominence: .secondary)
             return [retry, hasNextMargin ? next : skip]
         case .comingUp:
-            return [
-                Action(job: .playMomentNow, title: "Play it now", hint: "Plays the Margin now, without waiting for the \(ahead).", prominence: .primary),
-                Action(job: .backToSource, title: "Back to the \(ahead)", hint: "Stops the lead-in. The \(ahead) carries on.", prominence: .quiet),
-            ]
+            return comingUpActions(ahead: ahead, stop: stop)
         case .waitingForTap:
             return [
                 Action(job: .listen, title: "Listen", hint: "Plays this Margin.", prominence: .primary),
@@ -63,6 +70,25 @@ extension PinnedMarginCard {
         case .answerSaved, .lastMargin:
             return []
         }
+    }
+
+    /// The lead-in. A review's main button is the press, as between a friend's Margins: far off it hops to the lead-in, near it
+    /// plays the Margin. Its quiet exit is Stop, which pauses (the episode plays on between a review's Margins, so
+    /// "back to the episode" would be false). A plain moment plays on from the lead-in, so "Keep listening" is true.
+    private func comingUpActions(ahead: String, stop: Action) -> [Action] {
+        let playNow = Action(job: .playMomentNow, title: "Play it now", hint: "Plays the Margin now, without waiting for the \(ahead).", prominence: .primary)
+        guard run == .review else {
+            return [
+                playNow,
+                Action(job: .keepListening, title: "Keep listening", hint: "Stops the lead-in. The \(ahead) carries on from here, as it was.", prominence: .quiet),
+            ]
+        }
+        if case .seekToLeadIn = nextPress {
+            let seconds = MarginMomentSequence.reviewLeadInMs / 1_000
+            let hop = Action(job: .goToNextMargin, title: "Jump to \(seconds) sec before it", hint: "Moves the \(ahead) to about \(seconds) seconds before this Margin.", prominence: .primary)
+            return [hop, stop]
+        }
+        return [playNow, stop]
     }
 
     /// Between a friend's Margins the one button is the press the tap makes. No later Margin, no button.
