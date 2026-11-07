@@ -176,7 +176,7 @@ struct SettingsScreen: View {
                             Text("Add a Margin").tag(HeadphoneDoublePressAction.addMargin.rawValue)
                         }
                         .accessibilityIdentifier("settings.headphoneDoublePress.picker")
-                        Text("Add a Margin starts one on a double-press. End it by going quiet or using the screen button.")
+                        Text("Add a Margin starts one; end it by going quiet or with the button on screen.")
                             .font(.caption)
                             .foregroundStyle(AppColors.secondaryText)
                         Picker("Podcast Skip Forward", selection: $model.mediaSkipForwardSeconds) {
