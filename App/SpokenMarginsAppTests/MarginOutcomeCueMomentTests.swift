@@ -11,6 +11,13 @@ final class MarginOutcomeCueMomentTests: XCTestCase {
         var stops = 0
         func play(_ cue: MarginOutcomeCue) -> String { played.append(cue); return "played" }
         func stop() { stops += 1 }
+        /// True: a stop's answer waits for the test, as the real one waits on the audio system's queue.
+        var holdsStopAnswers = false
+        var heldStopAnswers: [@MainActor () -> Void] = []
+        func stop(then finished: @escaping @MainActor () -> Void) {
+            stops += 1
+            if holdsStopAnswers { heldStopAnswers.append(finished) } else { finished() }
+        }
     }
 
     /// A recorder that says whether its end turned the audio session off, and can take in a dead microphone's 22 ms.
@@ -124,5 +131,66 @@ final class MarginOutcomeCueMomentTests: XCTestCase {
         recorder.onRestart = { [player] in stopsAtRestart = player?.stops }
         model.retryMicrophone()
         XCTAssertEqual(stopsAtRestart, stopsBefore + 1, "the cue ended before the new recorder started")
+    }
+
+    /// A dead microphone with the cue sounding and Try again on offer, for the two tests below.
+    private func modelWithDeadMicrophone(_ recorder: SessionRecorder) -> Gate1AppModel {
+        var nowMs = 0
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), recordingClient: recorder)
+        model.captureWatcher = MarginCaptureWatcher(autoPoll: false, readyCue: SilentReadyCue(), nowMs: { nowMs })
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        model.pause()
+        model.beginInterjection()
+        recorder.reading = RecordingCaptureReading(recorderRunning: true, capturedMs: 22)
+        for _ in 0..<40 {
+            nowMs += 250
+            model.captureWatcher.tick()
+        }
+        XCTAssertEqual(player.played.last, .micStopped, "the dead microphone is sounding")
+        XCTAssertTrue(model.canRetryMicrophone)
+        return model
+    }
+
+    /// The audit on 50b2782: the real stop lands later, on the cue's own queue, and the fake above answered at once, so
+    /// nothing caught the restart going ahead of it. Here the answer is late: nothing restarts until it comes, a poll
+    /// in the gap does not start the cue or the recorder again, and a second tap adds nothing.
+    func testTryAgainRestartsOnlyWhenTheCuesStopHasAnswered() {
+        let recorder = SessionRecorder()
+        let model = modelWithDeadMicrophone(recorder)
+        var restarts = 0
+        recorder.onRestart = { restarts += 1 }
+        let playedBefore = player.played.count
+        player.holdsStopAnswers = true
+
+        model.retryMicrophone()
+        model.retryMicrophone()
+        // A reading that would make a poll report a change, which sounds the cue again if the poll isn't held.
+        recorder.reading = RecordingCaptureReading(recorderRunning: true, capturedMs: 5_000)
+        model.captureWatcher.tick()
+        recorder.reading = RecordingCaptureReading(recorderRunning: true, capturedMs: 22)
+
+        XCTAssertEqual(restarts, 0, "the cue may still be sounding")
+        XCTAssertEqual(player.heldStopAnswers.count, 1, "the second tap adds nothing")
+        XCTAssertEqual(player.played.count, playedBefore, "the poll in the gap holds")
+        player.holdsStopAnswers = false
+        player.heldStopAnswers[0]()
+        XCTAssertEqual(restarts, 1)
+    }
+
+    /// Save or Cancel in the gap ends the recording, and a late stop must not restart a recorder for it.
+    func testARecordingThatEndsBeforeTheCuesStopAnswersIsNotRestarted() {
+        let recorder = SessionRecorder()
+        let model = modelWithDeadMicrophone(recorder)
+        var restarts = 0
+        recorder.onRestart = { restarts += 1 }
+        player.holdsStopAnswers = true
+
+        model.retryMicrophone()
+        model.cancelInterjection()
+
+        XCTAssertFalse(model.snapshot.isRecording)
+        player.heldStopAnswers[0]()
+        XCTAssertEqual(restarts, 0)
     }
 }
