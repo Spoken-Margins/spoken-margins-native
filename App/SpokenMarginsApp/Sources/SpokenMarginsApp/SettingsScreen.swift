@@ -30,6 +30,7 @@ struct SettingsScreen: View {
     /// The Supertonic download card's "Open Voices" lands here and opens Voices (#1820).
     @ObservedObject private var supertonicNotice: SupertonicDownloadNotice
     @State private var showsVoices = false
+    @State private var showsControls = false
 
     init(supertonicNotice: SupertonicDownloadNotice) {
         _supertonicNotice = ObservedObject(wrappedValue: supertonicNotice)
@@ -39,34 +40,6 @@ struct SettingsScreen: View {
         NavigationStack {
             Form {
                 Section("Voice") {
-                    Picker("Playback Controls", selection: $usesVerbosePlaybackActions) {
-                        Text("Labeled").tag(true)
-                        Text("Compact").tag(false)
-                    }
-                    .accessibilityIdentifier("settings.playbackControlStyle.picker")
-                    Text("Choose labels or icons in listening options.")
-                        .font(.caption)
-                        .foregroundStyle(AppColors.secondaryText)
-                    Toggle(
-                        "Show “Mix with Other Audio”",
-                        isOn: Binding(
-                            get: { model.showsMixWithOtherAudioOption },
-                            set: { enabled in
-                                model.showsMixWithOtherAudioOption = enabled
-                                model.mixWithOtherAudioAvailabilityChanged()
-                            }
-                        )
-                    )
-                    .accessibilityIdentifier("settings.mixWithOtherAudio.toggle")
-                    Text("Adds a per-session option to the listening screen. It lets music or other audio continue, but Lock Screen and headphone controls may control the other app. Each listening session starts with this option off.")
-                        .font(.caption)
-                        .foregroundStyle(AppColors.secondaryText)
-                    NavigationLink {
-                        VoicesSettingsScreen(voices: model.requireVoiceDownloads()).miniPlayerKeepOut()
-                    } label: {
-                        Label("Voices", systemImage: "waveform")
-                    }
-                    .accessibilityIdentifier("settings.voices.link")
                     AppVoicePicker(selection: $model.ttsVoiceSelection, voices: model.requireVoiceDownloads())
                     .onCompatibleChange(of: model.ttsVoiceSelection) { _ in
                         model.ttsVoiceSelectionChanged()
@@ -151,41 +124,72 @@ struct SettingsScreen: View {
                         .buttonStyle(SecondaryButtonStyle())
                         .accessibilityIdentifier("settings.preview.assistiveTech.button")
                     }
-                    Picker("Text Navigation", selection: $model.skipUnit) {
-                        Text("Sentence").tag("sentence")
-                        Text("Paragraph").tag("paragraph")
-                        Text("Section").tag("section")
+                    NavigationLink {
+                        VoicesSettingsScreen(voices: model.requireVoiceDownloads()).miniPlayerKeepOut()
+                    } label: {
+                        Label("Download Voices", systemImage: "waveform")
                     }
-                    .accessibilityIdentifier("settings.skipUnit.picker")
-                    .onCompatibleChange(of: model.skipUnit) { _ in
-                        model.skipUnitChanged()
-                    }
-                    Picker("Podcast Skip Back", selection: $model.mediaSkipBackSeconds) {
-                        ForEach(Gate1AppModel.supportedMediaSkipSeconds, id: \.self) { seconds in
-                            Text("\(seconds) seconds").tag(seconds)
+                    .accessibilityIdentifier("settings.voices.link")
+                    DisclosureGroup("Controls", isExpanded: $showsControls) {
+                        Picker("Playback Controls", selection: $usesVerbosePlaybackActions) {
+                            Text("Labeled").tag(true)
+                            Text("Compact").tag(false)
+                        }
+                        .accessibilityIdentifier("settings.playbackControlStyle.picker")
+                        Text("Choose labels or icons in listening options.")
+                            .font(.caption)
+                            .foregroundStyle(AppColors.secondaryText)
+                        Toggle(
+                            "Show “Mix with Other Audio”",
+                            isOn: Binding(
+                                get: { model.showsMixWithOtherAudioOption },
+                                set: { enabled in
+                                    model.showsMixWithOtherAudioOption = enabled
+                                    model.mixWithOtherAudioAvailabilityChanged()
+                                }
+                            )
+                        )
+                        .accessibilityIdentifier("settings.mixWithOtherAudio.toggle")
+                        Text("Adds a per-session option to the listening screen. It lets music or other audio continue, but Lock Screen and headphone controls may control the other app. Each listening session starts with this option off.")
+                            .font(.caption)
+                            .foregroundStyle(AppColors.secondaryText)
+                        Picker("Text Navigation", selection: $model.skipUnit) {
+                            Text("Sentence").tag("sentence")
+                            Text("Paragraph").tag("paragraph")
+                            Text("Section").tag("section")
+                        }
+                        .accessibilityIdentifier("settings.skipUnit.picker")
+                        .onCompatibleChange(of: model.skipUnit) { _ in
+                            model.skipUnitChanged()
+                        }
+                        Picker("Podcast Skip Back", selection: $model.mediaSkipBackSeconds) {
+                            ForEach(Gate1AppModel.supportedMediaSkipSeconds, id: \.self) { seconds in
+                                Text("\(seconds) seconds").tag(seconds)
+                            }
+                        }
+                        .accessibilityIdentifier("settings.mediaSkipBack.picker")
+                        .onCompatibleChange(of: model.mediaSkipBackSeconds) { _ in
+                            model.mediaSkipSettingsChanged()
+                        }
+                        Picker("Headphone double-press", selection: $headphoneDoublePress) {
+                            Text("Skip forward").tag(HeadphoneDoublePressAction.skipForward.rawValue)
+                            Text("Add a Margin").tag(HeadphoneDoublePressAction.addMargin.rawValue)
+                        }
+                        .accessibilityIdentifier("settings.headphoneDoublePress.picker")
+                        Text("Add a Margin starts one on a double-press. End it by going quiet or using the screen button.")
+                            .font(.caption)
+                            .foregroundStyle(AppColors.secondaryText)
+                        Picker("Podcast Skip Forward", selection: $model.mediaSkipForwardSeconds) {
+                            ForEach(Gate1AppModel.supportedMediaSkipSeconds, id: \.self) { seconds in
+                                Text("\(seconds) seconds").tag(seconds)
+                            }
+                        }
+                        .accessibilityIdentifier("settings.mediaSkipForward.picker")
+                        .onCompatibleChange(of: model.mediaSkipForwardSeconds) { _ in
+                            model.mediaSkipSettingsChanged()
                         }
                     }
-                    .accessibilityIdentifier("settings.mediaSkipBack.picker")
-                    .onCompatibleChange(of: model.mediaSkipBackSeconds) { _ in
-                        model.mediaSkipSettingsChanged()
-                    }
-                    Picker("Headphone double-press", selection: $headphoneDoublePress) {
-                        Text("Skip forward").tag(HeadphoneDoublePressAction.skipForward.rawValue)
-                        Text("Add a Margin").tag(HeadphoneDoublePressAction.addMargin.rawValue)
-                    }
-                    .accessibilityIdentifier("settings.headphoneDoublePress.picker")
-                    Text("Skip forward is the normal double-press. Add a Margin starts a Margin instead, but a headphone press can't end one: stop talking or use the button on the screen. Triple-press still skips back.")
-                        .font(.caption)
-                        .foregroundStyle(AppColors.secondaryText)
-                    Picker("Podcast Skip Forward", selection: $model.mediaSkipForwardSeconds) {
-                        ForEach(Gate1AppModel.supportedMediaSkipSeconds, id: \.self) { seconds in
-                            Text("\(seconds) seconds").tag(seconds)
-                        }
-                    }
-                    .accessibilityIdentifier("settings.mediaSkipForward.picker")
-                    .onCompatibleChange(of: model.mediaSkipForwardSeconds) { _ in
-                        model.mediaSkipSettingsChanged()
-                    }
+                    .accessibilityIdentifier("settings.controls.disclosure")
                 }
                 Section("Storage") {
                     Button(action: model.openOfflineStorage) {
