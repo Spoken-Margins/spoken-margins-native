@@ -459,8 +459,11 @@ func TestShowReportedLinkPrintsOnlyTheReportedLinksAndLogsTheRead(t *testing.T) 
 	if !strings.Contains(printed, "1: "+first+"\n") {
 		t.Fatalf("the reported link is not printed whole:\n%s", printed)
 	}
-	if !strings.Contains(printed, "2: https://share.example/l/"+id+"#k=JUNKKEY [2J fake line\n") {
+	if !strings.Contains(printed, "2: https://share.example/l/"+id+"#k=JUNKKEY [2J fake line   [altered: control or invisible characters shown as spaces]\n") {
 		t.Fatalf("the second link is not printed with its control characters dropped:\n%s", printed)
+	}
+	if strings.Contains(strings.SplitN(printed, "\n", 2)[0], "altered") {
+		t.Fatalf("a clean link was marked altered:\n%s", printed)
 	}
 	if strings.ContainsAny(printed, "\x1b\r") || strings.Count(printed, "\n") != 3 {
 		t.Fatalf("a reported link moved the cursor or faked a line:\n%q", printed)
@@ -518,5 +521,43 @@ func TestShowReportedLinkRefusesALinkThatIsNotHeldAndSaysWhenNoLinkWasKept(t *te
 	}
 	if !strings.Contains(out.String(), "no reported link was kept") {
 		t.Fatalf("a hold with no link says nothing useful: %q", out.String())
+	}
+}
+
+// A link in a held folder that is not a plain file (a symlink to the packet, say) is never followed, and an
+// unheld id leaves no line in the log.
+func TestShowReportedLinkNeverFollowsASymlinkAndLogsNothingForAnUnheldId(t *testing.T) {
+	dir := t.TempDir()
+	st, err := links.OpenStore(filepath.Join(dir, "links"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed := func(part byte) []byte {
+		return append([]byte{'S', 'M', 'L', 'I', 'N', 'K', 1, part}, []byte("twelve-nonce opaque ciphertext sixteen-byte-tag")...)
+	}
+	id, _, err := st.Put(sealed(links.PartPacket), sealed(links.PartPreview), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := showReportedLink([]string{"-state", dir, id}, &out, time.Now()); err == nil {
+		t.Fatal("an unheld link was shown")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "links-held", "access.log")); err == nil {
+		t.Fatal("an unheld id wrote to the access log")
+	}
+	if err := holdLink([]string{"-state", dir, "-report", "NCMEC-3", id}); err != nil {
+		t.Fatal(err)
+	}
+	held := filepath.Join(dir, "links-held", id)
+	if err := os.Symlink(filepath.Join(held, "packet"), filepath.Join(held, "reported-link")); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if err := showReportedLink([]string{"-state", dir, id}, &out, time.Now()); err == nil {
+		t.Fatal("a symlinked reported-link was followed")
+	}
+	if strings.Contains(out.String(), "opaque ciphertext") || strings.Contains(out.String(), "SMLINK") {
+		t.Fatal("held content was printed through a symlink")
 	}
 }

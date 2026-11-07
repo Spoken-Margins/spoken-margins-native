@@ -593,9 +593,14 @@ func showReportedLink(args []string, out io.Writer, now time.Time) error {
 		return nil
 	}
 	for i, link := range found {
-		fmt.Fprintf(out, "%d: %s\n", i+1, oneLine(string(link)))
+		shown := oneLine(string(link))
+		note := ""
+		if shown != string(link) {
+			note = "   [altered: control or invisible characters shown as spaces]"
+		}
+		fmt.Fprintf(out, "%d: %s%s\n", i+1, shown, note)
 	}
-	fmt.Fprintf(out, "%d reported link(s). Open none of them; forward them to the CyberTipline as they are.\n", len(found))
+	fmt.Fprintf(out, "%d reported link(s). Open none of them; forward them to the CyberTipline.\n", len(found))
 	return nil
 }
 

@@ -540,20 +540,31 @@ func (s *Store) ReportedLinks(id string, now time.Time) ([][]byte, error) {
 	if !ValidID(id) {
 		return nil, ErrNotFound
 	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock() // the log line is a write
+	defer s.mu.Unlock()
 	dir := filepath.Join(s.heldDir(), id)
-	if _, err := os.Stat(dir); errors.Is(err, os.ErrNotExist) {
+	if info, err := os.Lstat(dir); errors.Is(err, os.ErrNotExist) {
 		return nil, ErrNotHeld
 	} else if err != nil {
 		return nil, err
+	} else if !info.IsDir() {
+		return nil, ErrNotHeld
 	}
 	var found [][]byte
 	for n := 1; n <= ownerMaxReportedLinks; n++ {
-		data, err := os.ReadFile(filepath.Join(dir, reportedLinkName(n)))
+		path := filepath.Join(dir, reportedLinkName(n))
+		info, err := os.Lstat(path)
 		if errors.Is(err, os.ErrNotExist) {
 			break
 		}
+		if err != nil {
+			return nil, err
+		}
+		// A slot is a plain file the hold wrote. A link to another file (the packet, say) is never followed.
+		if !info.Mode().IsRegular() {
+			return nil, fmt.Errorf("links: %s is not a plain file", reportedLinkName(n))
+		}
+		data, err := os.ReadFile(path)
 		if err != nil {
 			return nil, err
 		}
