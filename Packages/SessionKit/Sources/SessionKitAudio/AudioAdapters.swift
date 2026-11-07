@@ -3669,6 +3669,10 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
         recorder.isMeteringEnabled = true
         recorder.prepareToRecord()
         guard recorder.record() else {
+            // `prepareToRecord` started the recorder's audio queue. Dropped without `stop()`, the queue's next input
+            // callback reads the freed recorder and the app crashes (#3633, in-app record over AirPlay).
+            recorder.stop()
+            try? fileManager.removeItem(at: url)
             throw SessionKitError.persistenceFailed("recording_failed")
         }
         recorderDelegate = delegate
@@ -3764,6 +3768,8 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
         #endif
         let (recorder, url) = try startRecorder(cycleSession: false)
         isCaptureActive = true
+        // A recorder still held here would be freed while running, which crashes as above (#3633).
+        self.recorder?.stop()
         self.recorder = recorder
         self.currentURL = url
         recordingStartedAt = Date()

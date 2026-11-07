@@ -732,7 +732,7 @@ RUNNER_TEST_READERS = ('test_filled_button_contrast', 'test_filled_button_labels
                        'test_sessionkit_pass', 'test_mini_player_keep_out', 'test_package_resolved',
                        'test_building_md', 'test_third_party_notices', 'test_main_thread_reads',
                        'test_repeat_trigger_scan', 'test_ordered_store_requests', 'test_system_callback_isolation',
-                       'test_listener_words',
+                       'test_listener_words', 'test_recorder_failed_start',
                        'test_starter_catalog',
                        # The accessibility source scans read App/ Swift files (#2041).
                        'test_screen_change_cue', 'test_selected_trait', 'test_screen_title_heading',
@@ -784,7 +784,7 @@ def on_hosted_runner(environ=None):
     return environ.get('RUNNER_ENVIRONMENT') == 'github-hosted'
 
 
-PORTABLE_STEPS = ('runner-tests', 'ops', 'contracts', 'public-tree', 'surfaces', 'inventory', 'main-thread-reads', 'repeat-trigger-scan', 'ordered-store-requests', 'system-callback-isolation', 'listener-words', 'browser', 'share-link', 'web', 'research')
+PORTABLE_STEPS = ('runner-tests', 'ops', 'contracts', 'public-tree', 'surfaces', 'inventory', 'main-thread-reads', 'repeat-trigger-scan', 'ordered-store-requests', 'system-callback-isolation', 'listener-words', 'recorder-failed-start', 'browser', 'share-link', 'web', 'research')
 PORTABLE_LEFT_OUT = {
     'package-build': 'needs the Swift toolchain on macOS; hosted-sessionkit-linux.yml builds the Foundation-only modules on Linux',
     'package-core': 'needs the Swift toolchain on macOS (SessionKitCoreTests also run in hosted-sessionkit-linux.yml)',
@@ -2031,6 +2031,8 @@ class Run:
         self.command('system-callback-isolation', [sys.executable, 'scripts/system_callback_isolation.py'])
         # A listener-facing string that says "item" fails here, in seconds, instead of on the phone (#3599).
         self.command('listener-words', [sys.executable, 'scripts/listener_words.py'])
+        # A recorder freed while its audio queue runs, after a failed start, crashes the app (#3633).
+        self.command('recorder-failed-start', [sys.executable, 'scripts/recorder_failed_start.py'])
         if not (ROOT / 'node_modules').exists():
             raise RuntimeError('node_modules is missing in this worktree; run scripts/setup-worktree.sh')
         # A lockfile that moved since node_modules was installed can fail the bundle check with "is stale". The
