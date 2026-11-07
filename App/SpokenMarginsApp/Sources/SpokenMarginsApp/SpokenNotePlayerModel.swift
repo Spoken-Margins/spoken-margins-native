@@ -8,6 +8,18 @@ import SessionKit
 actor SpokenNoteSentenceAudio {
     static let shared = SpokenNoteSentenceAudio()
 
+    /// Hands the session back to other apps. Fails harmlessly while something else of ours is still using it.
+    private let deactivate: @Sendable () -> Void
+    /// The player this actor started and has not yet stopped. The actor stops it itself, in `end`, so the hand-back
+    /// can never run while it is still playing (#3649).
+    private var current: AVAudioPlayer?
+
+    init(deactivate: @escaping @Sendable () -> Void = {
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+    }) {
+        self.deactivate = deactivate
+    }
+
     /// A player that has begun playing. The model reads only its position afterwards.
     struct Started: @unchecked Sendable {
         let player: AVAudioPlayer
@@ -17,15 +29,22 @@ actor SpokenNoteSentenceAudio {
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.playback, mode: .spokenAudio)
         try session.setActive(true)
+        current?.stop()
+        current = nil
         let player = try AVAudioPlayer(contentsOf: url)
         player.currentTime = Double(startMs) / 1_000
         guard player.prepareToPlay(), player.play() else { throw CocoaError(.fileReadUnknown) }
+        current = player
         return Started(player: player)
     }
 
-    /// Hands the session back to other apps. Fails harmlessly while something else of ours is still using it.
+    /// Stops the player, then hands the session back. The actor is serial, so a start still in flight finishes first
+    /// and its player is stopped here too. Deactivating while a player runs fails, and the session would stay active
+    /// as `.playback` with other apps' audio unable to resume.
     func end() {
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        current?.stop()
+        current = nil
+        deactivate()
     }
 }
 
