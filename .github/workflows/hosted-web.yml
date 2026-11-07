@@ -19,9 +19,9 @@
 # installing anything. Once it is there the job runs for real, with no further workflow change.
 #
 # No secrets, a read-only token, no pull_request_target, same-repo PRs only. This workflow touches `.github/`, so
-# the runner never merges a PR that changes it: it waits for the owner's merge tap. Making this check hold up
-# `automerge` is a separate change to the lane runner, which reads a fixed list of check names (lane-runner.py
-# HOSTED_*_CHECK); this job's check is "hosted web: build and Playwright".
+# the runner never merges a PR that changes it: it waits for the owner's merge tap. This check holds up `automerge`
+# (#3535): the runner waits for "hosted web: build and Playwright" on any diff in `paths` below (lane-runner.py
+# hosted_web_check, test-scope.py HOSTED_WEB_PREFIXES; a test keeps them equal). Rename the job there too.
 #
 # Dispatch it by hand on any branch with `gh workflow run hosted-web.yml --ref <branch>`.
 name: hosted-web

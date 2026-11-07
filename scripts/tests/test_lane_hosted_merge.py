@@ -3,6 +3,7 @@
 Before: every automerge job for a Mac diff queued for the build Mac (21 queued on 2026-10-22), waited there up to 15
 minutes for the hosted pair, ran --plan fast-mac-rest for about 8 minutes, and a PR held for T3 then reported held.
 """
+import json
 from pathlib import Path
 import sys
 import tempfile
@@ -269,6 +270,54 @@ class HostedRunAutoTests(unittest.TestCase):
         for runner in (folders, pair, fast, rest, ops):  # no Mac setup and no test of its own, ever
             runner.assert_not_called()
         return result, github, wait, push
+
+    # #3535: what a Web PR's merge depends on. The portable check alone stands, and Playwright decides.
+    PORTABLE_STOOD = ({'hosted fast: portable': STOOD['hosted fast: portable']}, '')
+
+    def web_merge(self, web):
+        with mock.patch.object(FakeGitHub, 'api', lambda github, path: json.dumps({'check_runs': web})):
+            return self.run_auto(found=self.PORTABLE_STOOD, paths=('Web/src/a.ts',))
+
+    @staticmethod
+    def web_run(conclusion, status='completed'):
+        return {'id': 9, 'status': status, 'conclusion': conclusion, 'app': {'slug': 'github-actions'},
+                'started_at': '2026-11-06T10:00:00Z', 'html_url': 'https://example.test/web'}
+
+    def test_a_web_pr_merges_on_the_portable_check_once_playwright_passes(self):
+        (verdict, where, ran, details), github, wait, push = self.web_merge([self.web_run('success')])
+        self.assertEqual(verdict, 'PASS')
+        push.assert_called_once()
+        self.assertEqual(wait.call_args.kwargs['checks'], lane.HOSTED_PORTABLE_CHECK)
+        self.assertIn('Mac checks not required: no Swift inputs', ' '.join(details))
+        self.assertTrue(any(f'"{lane.HOSTED_WEB_CHECK}": PASS' in line for line in details), details)
+
+    def test_a_web_pr_does_not_merge_while_playwright_is_red_running_or_absent(self):
+        for web, expected, says in (([self.web_run('failure')], 'FAIL', 'ended failure'),
+                                    ([self.web_run('timed_out')], 'FAIL', 'ended timed_out'),
+                                    ([self.web_run('cancelled')], 'INCONCLUSIVE', 'ended cancelled'),
+                                    ([self.web_run(None, 'in_progress')], 'INCONCLUSIVE', lane.NOT_FINISHED),
+                                    ([], 'INCONCLUSIVE', 'check ran')):
+            with self.subTest(says=says):
+                (verdict, where, ran, details), github, wait, push = self.web_merge(web)
+                self.assertEqual(verdict, expected)
+                push.assert_not_called()
+                self.assertEqual(github.posted, [])  # no merge check on the PR either
+                self.assertTrue(any(line.startswith('not merged: ') and says in line for line in details), details)
+
+    def test_a_swift_and_web_pr_waits_for_playwright_too(self):
+        with mock.patch.object(FakeGitHub, 'api', lambda github, path: json.dumps({'check_runs': []})):
+            (verdict, where, ran, details), github, wait, push = self.run_auto(
+                paths=('Packages/SessionKit/Sources/SessionKit/A.swift', 'Web/src/a.ts'))
+        self.assertEqual(verdict, 'INCONCLUSIVE')
+        push.assert_not_called()
+
+    def test_a_pr_with_no_web_path_never_reads_the_web_check(self):
+        with mock.patch.object(lane, 'hosted_web_check', wraps=lane.hosted_web_check) as check, \
+                mock.patch.object(FakeGitHub, 'api', side_effect=AssertionError('asked GitHub')):
+            (verdict, *_), github, wait, push = self.run_auto()
+        check.assert_called_once()
+        self.assertEqual(verdict, 'PASS')
+        push.assert_called_once()
 
     def test_a_pr_held_for_t3_is_reported_held_without_waiting_or_testing(self):
         (verdict, where, ran, details), github, wait, push = self.run_auto([self.T3_ASKED])
