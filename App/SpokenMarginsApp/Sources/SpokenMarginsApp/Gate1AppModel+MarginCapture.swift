@@ -72,8 +72,15 @@ extension Gate1AppModel {
     /// The listener tapped Try again on a recording screen that says the microphone isn't recording.
     func retryMicrophone() {
         guard snapshot.isRecording else { return }
-        // The new recorder starts inside `retry()`: end the microphone cue first, or its tail opens the new file.
-        MarginOutcomeCuePlayer.shared.stop()
+        // The new recorder starts inside `retry()`: the microphone cue has to have ended first, or its tail opens the
+        // new file. Stopping it can wait on the audio system, so the restart waits for the stop, not the main thread.
+        captureWatcher.retry(afterStopping: { MarginOutcomeCuePlayer.shared.stop(then: $0) }) { [weak self] in
+            self?.retryMicrophoneOnceCueHasStopped()
+        }
+    }
+
+    private func retryMicrophoneOnceCueHasStopped() {
+        guard snapshot.isRecording else { return }
         if captureWatcher.retry() {
             lastError = nil
         } else {

@@ -57,6 +57,35 @@ final class OffMainOutcomeCuePlayerTests: XCTestCase {
         XCTAssertFalse(player.isPlaying, "the stop was sent after the cue, so it lands after it")
     }
 
+    /// The audit on 50b2782: Try again sent the stop and started the new recorder straight away, so a looping cue
+    /// could still be sounding into the new file. The queue here is busy with a slow cue start, as when the audio
+    /// service is slow: the restart must come after that and the stop behind it, and the caller must not wait for them.
+    @MainActor
+    func testTryAgainsRestartFollowsTheCuesStopWithoutTheCallerWaiting() {
+        let box = OrderBox()
+        let player = OffMainOutcomeCuePlayer(sessionGate: { Thread.sleep(forTimeInterval: 0.4); box.earlierWorkDone = true; return nil })
+        player.play(.micStopped) { _ in }
+        let order = MarginCaptureRetryOrder()
+        let restarted = expectation(description: "restart")
+        let callerMs = elapsedMs {
+            order.begin(stop: { finished in player.stop(then: { Task { @MainActor in finished() } }) }) {
+                box.earlierWorkDoneAtRestart = box.earlierWorkDone
+                restarted.fulfill()
+            }
+        }
+        XCTAssertLessThan(callerMs, 50, "the main thread does not wait for the stop")
+        XCTAssertTrue(order.isWaiting)
+        wait(for: [restarted], timeout: 5)
+        XCTAssertEqual(box.earlierWorkDoneAtRestart, true, "the restart ran ahead of the stop")
+        XCTAssertFalse(order.isWaiting)
+        XCTAssertFalse(player.isPlaying)
+    }
+
+    private final class OrderBox: @unchecked Sendable {
+        var earlierWorkDone = false
+        var earlierWorkDoneAtRestart: Bool?
+    }
+
     func testANewCueReplacesTheOneSounding() {
         let player = OffMainOutcomeCuePlayer()
         XCTAssertNotNil(player.playAndWait(.micStopped))

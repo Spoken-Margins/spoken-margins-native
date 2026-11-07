@@ -9,12 +9,20 @@ protocol MarginOutcomeCuePlaying: AnyObject {
     @discardableResult func play(_ cue: MarginOutcomeCue) -> String
     /// Starts the cue without waiting for the audio system; `completion` gets the `play` outcome on the main actor.
     func play(_ cue: MarginOutcomeCue, completion: @escaping @MainActor (String) -> Void)
+    /// Sends the stop without waiting for it: the cue may still be sounding when this returns.
     func stop()
+    /// Sends the stop; `finished` runs on the main actor once it has landed. For a next step that needs the cue gone.
+    func stop(then finished: @escaping @MainActor () -> Void)
 }
 
 extension MarginOutcomeCuePlaying {
     func play(_ cue: MarginOutcomeCue, completion: @escaping @MainActor (String) -> Void) {
         completion(play(cue))
+    }
+
+    func stop(then finished: @escaping @MainActor () -> Void) {
+        stop()
+        finished()
     }
 }
 
@@ -45,4 +53,8 @@ final class MarginOutcomeCuePlayer: MarginOutcomeCuePlaying {
     }
 
     func stop() { core.stop() }
+
+    func stop(then finished: @escaping @MainActor () -> Void) {
+        core.stop { Task { @MainActor in finished() } }
+    }
 }

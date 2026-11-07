@@ -35,9 +35,19 @@ public final class OffMainOutcomeCuePlayer: @unchecked Sendable {
         queue.sync { playNow(cue) }
     }
 
-    /// Returns at once; the stop lands after every cue already sent.
+    /// Returns at once; the stop lands after every cue already sent. The cue may still be sounding when this returns:
+    /// a next step that needs it gone uses `stop(then:)`.
     public func stop() {
         queue.async { [self] in stopNow() }
+    }
+
+    /// Returns at once; `finished` runs on the main queue once the stop has landed, so a next step that needs the cue
+    /// gone (a new recorder hearing it, say) can follow it without its thread waiting on the audio system.
+    public func stop(then finished: @escaping @Sendable () -> Void) {
+        queue.async { [self] in
+            stopNow()
+            DispatchQueue.main.async { finished() }
+        }
     }
 
     /// Blocks until everything sent so far has run (tests).
