@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Every open issue carries exactly one area label (owner, 2026-11-07; #3636). Deterministic, no model.
 
-The five areas are in docs/areas.md. They were a field on the GitHub Project board from 2026-10-31 (#2173), but
+The six areas are in docs/areas.md. They were a field on the GitHub Project board from 2026-10-31 (#2173), but
 cloud sessions can't read or write the board (GraphQL is blocked for them, and the user project answers their
 token with 403), so most threads worked blind to an issue's area. Labels are readable and writable everywhere.
 
@@ -35,6 +35,7 @@ AREAS = {   # label -> colour; the order is docs/areas.md's
     'area: answer it': 'fbca04',
     'area: pass it on': '5319e7',
     'area: groundwork': 'bfbfbf',
+    'area: housekeeping': '006b75',
 }
 NEEDS = 'needs-area'
 NEEDS_COLOUR = 'd93f0b'
