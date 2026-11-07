@@ -41,7 +41,7 @@ struct PlaybackMarginsView: View {
                     if entry.origin == .own, let row = ownByID[entry.id] {
                         PlaybackMarginRowView(title: row.preview, detail: row.placeDescription(),
                             isShared: false, identifier: "margins.row.\(row.id)",
-                            showDetails: { selectedMargin = row }, play: { _ = model.playMarginMoment(row) })
+                            showDetails: { selectedMargin = row }, play: { MarginMomentTap.start(row, model: model) })
                     } else if entry.origin == .shared, let row = sharedByID[entry.id] {
                         PlaybackMarginRowView(title: row.interjection.approvedTranscript,
                             detail: "\(row.collectionLabel) · \(row.positionDescription)",
