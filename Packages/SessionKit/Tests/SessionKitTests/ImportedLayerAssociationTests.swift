@@ -68,6 +68,7 @@ final class ImportedLayerAssociationTests: XCTestCase {
         let absent = makeMargin(id: "absent", packageScopedId: "not-in-packet")
         repository.importedCommentaryLayers[existing.id] = existing
         repository.importedCommentaryInterjections = [known.id: known, absent.id: absent]
+        try repository.saveItem(Item(id: "new", title: "New", mediaType: "text", text: "Text", externalReference: nil, status: "ready"))
         try SpokenMarginsPackageImporter.repairAssociation(
             existing: existing, contents: makeContents(), itemId: "new", localItem: identity,
             itemText: nil, repository: repository
@@ -85,7 +86,9 @@ final class ImportedLayerAssociationTests: XCTestCase {
         XCTAssertEqual(repository.importedCommentaryInterjections[absent.id], expectedAbsent)
     }
 
-    func testRepairKeepsPartialWritesWhenAMarginSaveThrows() throws {
+    /// An in-memory repository has no transactions, so the repair has nothing to roll back there. The real store's
+    /// all-or-nothing behavior is in `ImportedLayerRepairTransactionTests`.
+    func testRepairOnARepositoryWithoutTransactionsStillStopsAtTheFailedMargin() throws {
         let repository = RecordingRepository()
         let existing = makeLayer()
         let first = makeMargin(id: "a", packageScopedId: "in-packet")
@@ -93,6 +96,7 @@ final class ImportedLayerAssociationTests: XCTestCase {
         repository.importedCommentaryLayers[existing.id] = existing
         repository.importedCommentaryInterjections = [first.id: first, second.id: second]
         repository.failMarginId = second.id
+        try repository.saveItem(Item(id: "new", title: "New", mediaType: "text", text: "Text", externalReference: nil, status: "ready"))
         XCTAssertThrowsError(try SpokenMarginsPackageImporter.repairAssociation(
             existing: existing, contents: makeContents(), itemId: "new", localItem: identity,
             itemText: nil, repository: repository

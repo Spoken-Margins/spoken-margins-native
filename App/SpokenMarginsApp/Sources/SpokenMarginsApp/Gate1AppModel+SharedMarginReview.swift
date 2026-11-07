@@ -23,7 +23,9 @@ extension Gate1AppModel {
     /// played, and nothing would ever mark it heard. A written Margin has no recording; its words are read (#3365).
     func newSharedMargins(itemId: String) -> [SharedMarginReview.Entry] {
         let entries: [SharedMarginReview.Entry]
-        if selectedItem.id == itemId {
+        if let dead = deadEpisodeEntries(itemId: itemId) { // a dead podcast episode: its Margins are unplaced (#3392)
+            entries = dead
+        } else if selectedItem.id == itemId {
             entries = SharedMarginReview.entries(
                 layers: selectedItem.importedCommentaryLayers, records: selectedItem.importedCommentaryInterjections,
                 ownMargins: ownMargins(itemId: itemId)
@@ -96,6 +98,7 @@ extension Gate1AppModel {
             reportWarning("There are no new Margins to review on this item.")
             return
         }
+        if reviewFriendMarginsOfDeadEpisode(itemId: itemId, entries: entries) { return } // the episode can't play (#3392)
         if WrittenMarginReadings.holdReview(itemId: itemId, thenContinue: thenContinue, entries: entries, model: self) { return } // readings not ready yet (#3365)
         endMarginMoment()
         // A Margin voice already playing (your own, #1538, or a friend's) or a shared-Margin card waiting gives way:
@@ -189,7 +192,9 @@ extension Gate1AppModel {
         let returnTo = review.returnToMediaTimeMs ?? 0
         var left = moment.unplayed
         if let playing = moment.playing { left.append(playing) }
-        let ahead = Set(left.filter { $0.mediaTimeMs > returnTo }.map(\.marginId))
+        let ahead = CantPlayListening.isCantPlayListening(moment)
+            ? CantPlayListening.unreachedMarginIds(in: moment) // one flat place: every unplayed Margin goes back (#3392)
+            : Set(left.filter { $0.mediaTimeMs > returnTo }.map(\.marginId))
         guard !ahead.isEmpty else { return }
         let stillNew = selectedItem.importedCommentaryInterjections.values.joined().filter {
             $0.isNewToListener && ahead.contains(SharedMarginReview.marginId(layerId: $0.layerId, interjectionId: $0.id))

@@ -79,6 +79,7 @@ extension Gate1AppModel {
         if oldValue.isRecording, !snapshot.isRecording { endCaptureWatch() }
         if !oldValue.isRecording, snapshot.isRecording { startCaptureWatch() }
         settleSpeechInterruptionResume()
+        hearFriendMarginsIfStartFailed(from: oldValue) // the episode can't play: a friend's Margins don't need it (#3392)
         labels.scoped("snapshot.listeningSignals") {
             listeningSignals.snapshotChanged(from: oldValue, to: snapshot); playQueueSnapshotChanged(from: oldValue, to: snapshot)
             PlayerRunController.note(snapshot, in: self) // where our player was, for a Watch Margin taken now (#2542)

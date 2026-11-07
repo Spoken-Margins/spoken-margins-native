@@ -53,6 +53,16 @@ public enum WrittenMarginVoice {
     /// Below this a language guess for a Latin-script note is not trusted, and the default voice reads it.
     static let confidenceFloor = 0.6
 
+    /// True when a Latin-script note is English, or its language can't be told (a short or mixed note): the on-device
+    /// voices read English, and a short note is taken as the listener's own language, as `voice(forNote:)` does.
+    public static func isEnglishOrUndetermined(_ text: String) -> Bool {
+        let recognizer = NLLanguageRecognizer()
+        recognizer.processString(String(text.prefix(1_000)))
+        let letters = text.unicodeScalars.filter { $0.properties.isAlphabetic }.count
+        guard letters >= 20, let guess = recognizer.languageHypotheses(withMaximum: 1).first, guess.value >= confidenceFloor else { return true }
+        return guess.key == .english || guess.key == .undetermined
+    }
+
     /// The voice for the whole `text` (already `WrittenMarginSpeech.speakable`), or nil when none can read all of it.
     /// `voiceFor` is the installed voice for a language code; `isAvailable` is asked of every identifier last, at the time
     /// of the render, so a voice the listener has since removed means no reading.
