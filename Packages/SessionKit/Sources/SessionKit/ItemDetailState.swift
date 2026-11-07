@@ -55,6 +55,9 @@ public struct ItemDetailState: Equatable, Sendable {
     /// Why a friend's shared map couldn't be placed on this copy, as stored on its packets (#481). Worked out when the
     /// detail is loaded, so the Item screen's `body` reads this instead of the store on every render (#2506).
     public var sharedMapRefusalReason: String?
+    /// Where the on-device scene summaries stand, for a text item (#3461). Worked out from the saved proposals when the
+    /// detail loads, so the Item screen doesn't read the store to decide whether to offer a run.
+    public var textSceneSummaries: TextSceneSummaryProgress.State = .notApplicable
     public var turns: [ConversationTurn] = []
 
     public init(
@@ -84,6 +87,7 @@ public struct ItemDetailState: Equatable, Sendable {
         importedCommentaryInterjections: [String: [ImportedCommentaryInterjection]] = [:],
         sharedMarginPlacement: SharedMarginPlacementPasses.Pass? = nil,
         sharedMapRefusalReason: String? = nil,
+        textSceneSummaries: TextSceneSummaryProgress.State = .notApplicable,
         turns: [ConversationTurn] = []
     ) {
         self.id = id
@@ -112,6 +116,7 @@ public struct ItemDetailState: Equatable, Sendable {
         self.importedCommentaryInterjections = importedCommentaryInterjections
         self.sharedMarginPlacement = sharedMarginPlacement
         self.sharedMapRefusalReason = sharedMapRefusalReason
+        self.textSceneSummaries = textSceneSummaries
         self.turns = turns
     }
 }

@@ -58,7 +58,7 @@ struct Gate1RootView: View {
             }
         }
         .onAppear {
-            model.bootstrapLibraryIfNeeded()
+            MainThreadOperationLabels.shared.scoped("launch.bootstrapLibrary") { model.bootstrapLibraryIfNeeded() }
             catalogDrawer.noteLaunch(of: model)
         }
         .firstLaunchWelcomeOrder(model: model, drawer: catalogDrawer)
@@ -580,7 +580,7 @@ enum AppColors {
     static let star = dynamicColor(AppSemanticColorRGB.star)
     static let watchDanger = dynamicColor(AppSemanticColorRGB.watchDanger)
 
-    private static func dynamicColor(_ colors: AppDynamicRGB) -> Color {
+    static func dynamicColor(_ colors: AppDynamicRGB) -> Color {
         #if canImport(UIKit)
         return Color(UIColor { traits in
             let value = traits.userInterfaceStyle == .dark ? colors.dark : colors.light

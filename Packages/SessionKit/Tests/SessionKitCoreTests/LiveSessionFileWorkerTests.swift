@@ -224,6 +224,25 @@ final class LiveSessionFileWorkerTests: XCTestCase {
         XCTAssertEqual(repeatPass.placements, [], "a repeat is not placed twice")
     }
 
+    func testAMarginAimedAtTheEpisodeIsAnsweredAsFiledOnThisEpisode() async throws {
+        let worker = LiveSessionFileWorker(root: root)
+        let transfer = WatchMarginTransfer(
+            id: "aimed", wallStart: t0.addingTimeInterval(100), durationMs: 2_000, itemTarget: WatchItemTarget(itemId: "ep", positionMs: 7_000)
+        )
+        let received = root.appending(path: "received-aimed.m4a")
+        try Data("audio-aimed".utf8).write(to: received)
+        try worker.storeIncoming(fileAt: received, transfer: transfer)
+
+        let pass = await worker.fileWatchInbox(playerRuns: [], now: t0.addingTimeInterval(105))
+        let placement = try XCTUnwrap(pass.placements.first)
+        XCTAssertEqual(placement.itemId, "ep")
+        XCTAssertEqual(placement.positionMs, 7_000, "the position the Watch saw, with no run of the item")
+        let answer = await worker.completePlacement(placement)
+
+        XCTAssertEqual(answer?.filedIn, "this episode")
+        XCTAssertEqual(answer?.positionMs, 7_000)
+    }
+
     func testAnAppThatEndedBeforeTheItemTookTheMarginFilesItOnTheNextPass() async throws {
         let worker = LiveSessionFileWorker(root: root, makeId: { "next" })
         let transfer = try dropInInbox(worker, id: "pod", at: 100)

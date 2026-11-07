@@ -15,7 +15,7 @@ final class ListeningMapExportTests: XCTestCase {
             externalReference: "https://example.com/episode", status: "ready", externalReferenceType: "url",
             media: ItemMedia(sourceType: .remoteStream, url: "https://example.com/episode.mp3", durationMs: 600_000)
         )
-        episode.publicSourceMark = PublicSourceMark(url: "https://example.com/episode", checkedAt: Date(timeIntervalSince1970: 1_800_000_000))
+        episode.publicSourceMark = PublicSourceMark(url: "https://example.com/episode", checkedAt: Date())
         return episode
     }()
 

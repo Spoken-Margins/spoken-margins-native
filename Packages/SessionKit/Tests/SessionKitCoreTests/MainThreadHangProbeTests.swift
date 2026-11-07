@@ -170,6 +170,41 @@ final class MainThreadHangProbeTests: XCTestCase {
         try conclude(jitter, [{ XCTAssertEqual(operations, ["run>refreshSelectedItem", ""]) }])
     }
 
+    /// `operation` names the work a stall ended in. A long stall that spent most of its time earlier has to say so,
+    /// or the label sends the reader to the wrong code (#2256).
+    func testALongStallSaysWhereItsSamplesFellAsWellAsWhatItEndedIn() throws {
+        let jitter = startJitterSampling()
+        let hangs = Hangs()
+        let probe = makeProbe(into: hangs)
+        probe.start(intervalMs: 100)
+        defer { probe.stop() }
+        settle(100)
+        let done = expectation(description: "block over")
+        let labels = labels
+        watched.async {
+            labels.scoped("run") {
+                labels.scoped("begin.recorder") { usleep(700_000) }
+                labels.scoped("snapshotChanged") { usleep(250_000) }
+            }
+            done.fulfill()
+        }
+        wait(for: [done], timeout: 5)
+        settle()
+        let hang = hangs.value.last
+        try conclude(jitter, [{
+            XCTAssertEqual(hang?.operation, "run>snapshotChanged", "the label still names what the stall ended in")
+            let counts = Dictionary(uniqueKeysWithValues: (hang?.samples ?? []).map { ($0.label, $0.count) })
+            XCTAssertGreaterThan(counts["begin.recorder"] ?? 0, counts["snapshotChanged"] ?? 0, "was \(counts)")
+            XCTAssertGreaterThan(counts["snapshotChanged"] ?? 0, 0, "was \(counts)")
+        }])
+    }
+
+    func testTheSamplesFieldReadsLabelEqualsCountAndIsEmptyWithoutSamples() {
+        let samples: [MainThreadHangProbe.Hang.Sample] = [.init(label: "none", count: 1), .init(label: "begin.recorder", count: 7)]
+        XCTAssertEqual(MainThreadHangProbe.Hang(durationMs: 800, operation: "run", samples: samples).samplesField, "none=1;begin.recorder=7")
+        XCTAssertEqual(MainThreadHangProbe.Hang(durationMs: 800, operation: "run").samplesField, "")
+    }
+
     func testAStoppedProbeRecordsNothingAndASecondHangAfterAFirstIsCounted() throws {
         let jitter = startJitterSampling()
         let hangs = Hangs()

@@ -26,7 +26,8 @@ final class ImportedMarginRemoteControls {
                                   (center.pauseCommand, .pause),
                                   (center.togglePlayPauseCommand, .togglePlayPause)] {
             remote.isEnabled = true
-            let target = remote.addTarget { _ in
+            // `@Sendable`: MediaPlayer doesn't promise the main thread (#3513).
+            let target = remote.addTarget { @Sendable _ in
                 Task { @MainActor in handler(command) }
                 return .success
             }

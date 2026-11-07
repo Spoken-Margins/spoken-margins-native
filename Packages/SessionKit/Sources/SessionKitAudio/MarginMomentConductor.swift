@@ -51,7 +51,7 @@ public final class MarginMomentConductor {
     /// Silence between the end of the chime and the start of the voice, matching the inline prompt's pause.
     static let pauseAfterChimeSeconds = 0.15
 
-    private let source: Source
+    private let givenSource: Source
     private let voiceURL: (String) -> URL?
     private var lastObservedMs: Int?
     private var voice: AVAudioPlayer?
@@ -65,7 +65,7 @@ public final class MarginMomentConductor {
 
     public init(sequence: MarginMomentSequence, source: Source, voiceURL: @escaping (String) -> URL?) {
         self.sequence = sequence
-        self.source = source
+        self.givenSource = source
         self.voiceURL = voiceURL
     }
 
@@ -130,6 +130,13 @@ public final class MarginMomentConductor {
         guard let margin = sequence.progressed(from: lastObservedMs, to: mediaTimeMs) else { return }
         source.pause()
         playVoice(for: margin)
+    }
+
+    /// The source, as everything below reaches it. A listening for an episode that can't play has none: a seek would
+    /// only wake the dead player and fail, and a pause would report "Paused." and turn its failure into a pause (#3392).
+    /// One rule here, so no way of moving, pausing or resuming can miss it.
+    private var source: Source {
+        CantPlayListening.isCantPlayListening(sequence) ? Source(pause: {}, resume: {}, seek: { _ in }) : givenSource
     }
 
     /// "Play it now" during the lead-in.

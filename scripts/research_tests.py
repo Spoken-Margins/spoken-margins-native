@@ -137,6 +137,14 @@ def python_suite(root, label, folder, arguments):
     return Result(label, tests=tests)
 
 
+# Deploy test scripts that print "N passed" last: the rollback path, and the host check for kept visitor
+# addresses (#2034), which must stay read-only and print no address.
+COUNTED_SHELL_SUITES = (
+    'research/B4/deploy/test-server-rollback.sh',
+    'research/B4/deploy/test-check-visitor-ips.sh',
+)
+
+
 def bash_has_mapfile(root):
     return run(['bash', '-c', 'type mapfile'], root).returncode == 0
 
@@ -161,9 +169,10 @@ def caddy_suite(root):
     return Result(label, tests=checks)
 
 
-def rollback_suite(root):
-    label = 'shell research/B4/deploy/test-server-rollback.sh'
-    done = run(['bash', str(root / 'research/B4/deploy/test-server-rollback.sh')], root)
+def counted_shell_suite(root, script):
+    """A deploy test script whose last line is "N passed"."""
+    label = f'shell {script}'
+    done = run(['bash', str(root / script)], root)
     text = done.stdout + done.stderr
     match = re.search(r'^(\d+) passed$', text, re.M)
     checks = int(match[1]) if match else 0
@@ -177,7 +186,8 @@ def suites(root):
     for label, folder, arguments in PYTHON_SUITES:
         yield lambda label=label, folder=folder, arguments=arguments: python_suite(root, label, folder, arguments)
     yield lambda: caddy_suite(root)
-    yield lambda: rollback_suite(root)
+    for script in COUNTED_SHELL_SUITES:
+        yield lambda script=script: counted_shell_suite(root, script)
 
 
 def main(root=ROOT, out=sys.stdout):

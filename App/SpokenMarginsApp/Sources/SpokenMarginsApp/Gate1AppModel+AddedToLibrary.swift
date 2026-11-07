@@ -9,6 +9,7 @@ extension Gate1AppModel {
     }
 
     func reportAddedToLibrary(title: String, itemId: String) {
+        startPublicSourceCheck(itemId: itemId) // the listener added this item: the one moment to look at its public copy (#3449)
         let confirmation = AddedToLibraryConfirmation(title: title, nowPlayingIsEmpty: nowPlayingIsEmpty)
         let playNow = confirmation.offersPlayNow ? UserFeedbackEvent.Action(
             title: "Play now",

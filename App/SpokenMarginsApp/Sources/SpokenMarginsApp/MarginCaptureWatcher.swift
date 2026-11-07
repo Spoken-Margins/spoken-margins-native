@@ -16,6 +16,7 @@ final class MarginCaptureWatcher {
     static let pollIntervalMs = 250
 
     private var supervisor: MarginCaptureSupervisor?
+    private let retryOrder = MarginCaptureRetryOrder()
     private var reading: () -> RecordingCaptureReading? = { nil }
     private var restart: () throws -> Void = {}
     private var changed: HealthChange = { _, _ in }
@@ -100,7 +101,7 @@ final class MarginCaptureWatcher {
 
     /// One poll: read the recorder, ask the supervisor, and carry out a restart if it asks for one.
     func tick() {
-        guard var current = supervisor else { return }
+        guard var current = supervisor, !retryOrder.isWaiting else { return } // Try again goes first: see `retry(afterStopping:then:)`
         let now = nowMs()
         if current.observe(reading(), nowMs: now) == .restartCapture {
             restartNow(&current)
@@ -120,6 +121,15 @@ final class MarginCaptureWatcher {
         let result = readyCue.playReadyCue()
         readyCueResult = result
         releaseRecorder(result == "played" ? MarginReadyCueHold.seconds : 0)
+    }
+
+    /// Try again's first half: `stop` ends what must be gone before a new recorder starts, and `retry` runs once it has
+    /// landed, with no wait on the main thread. Polling holds until then, and `stop()` drops it (`MarginCaptureRetryOrder`).
+    func retry(
+        afterStopping stop: @MainActor (_ finished: @escaping @MainActor () -> Void) -> Void,
+        then retry: @escaping @MainActor () -> Void
+    ) {
+        retryOrder.begin(stop: stop, then: retry)
     }
 
     /// The listener asked to try again after the capture failed: restart now, then judge afresh.
@@ -191,6 +201,7 @@ final class MarginCaptureWatcher {
     }
 
     func stop() {
+        retryOrder.cancel()
         pollTask?.cancel()
         pollTask = nil
         removeRouteObserver()

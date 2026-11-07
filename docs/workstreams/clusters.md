@@ -48,6 +48,15 @@ Yesterday these failed late, at the rollup, and forced refactors. Run them befor
 - The chief of staff checks after the merge that every issue closed, and closes any that didn't with `sm-gh close-issue`.
 - A rollup that fails an audit: at the second finding in one area, change the design or post an **Accepted audit finding** (AGENTS.md, "Fix the cause of an audit finding").
 
+## When a guard refuses a command
+
+On 2026-11-06 briefs in two clusters gave helpers a quoted path to a shared lock script. The worktree guard refused it, and helpers got the same script to run another way: through a shell by name, through a symlink, inside a script file they wrote, with a no-op command in front, or from the lead's session.
+
+- **Do what the refusal asks, or stop.** A helper may do what the guard's message says: plain, separate commands in its own worktree. It may also use the Edit tool there. It never hides the same command from the guard: no shell by name, no script file, no symlink, no extra command in front, no other session or worktree. If the job still can't be done, the helper stops and reports the refusal to its lead. The lead brings it to the director, who takes it to the owner if it can't be settled inside the guard.
+- **Nobody runs a refused command for a helper.** A lead doesn't run it from its own session.
+- **Briefs give plain commands:** the command itself, literal arguments, run from the helper's own worktree. No wrapper or lock scripts. The lead hands out the turns that keep a cluster to one fast plan and one build.
+- **Git stays in the helper's own worktree.** The lead creates and repairs worktrees from its own session, and no one runs `git worktree prune` during a run.
+
 ## CI watching
 
 - **Leads and their agents never watch CI.** No `gh run watch`, no polling loops, no timers. On 2026-10-25 several leads polled every 3 seconds and hit GitHub's secondary rate limit.
@@ -59,14 +68,13 @@ Yesterday these failed late, at the rollup, and forced refactors. Run them befor
 
 The director opens the tracking issue before it starts any session, so every brief can name it. On 2026-11-04 a run went without one until wind-down, and every session's state was scattered across its own issues.
 
-The chief of staff checks that `main` is green for the start: the Linux SessionKit check and the fast plan on `main`'s tip pass, and hosted integration's last completed run on `main` passed with nothing red, because that run takes up to 2h20 on a moving tip. The chief of staff raises any later red at once. If `main` is red, no cluster starts work. The chief of staff gets it fixed first (on 2026-10-25, a red Linux check made every sub-PR show red for hours).
+The chief of staff checks that `main` is green for the start: the Linux SessionKit check and the fast plan on `main`'s tip pass, and hosted integration's last completed run on `main` passed with nothing red, because that run takes up to 2h20 on a moving tip. The chief of staff raises any later red at once. If `main` is red with a test failure, no cluster starts work. A red with no test failure, such as a simulator boot crash that left journeys unrun, doesn't block a start, but the chief of staff says so on the tracking issue (run #3519 started on one, and `main` went green). The chief of staff gets it fixed first (on 2026-10-25, a red Linux check made every sub-PR show red for hours).
 
-**Trial for the next run (owner, 2026-11-05).** Put a cluster that changes only web and Go code in a cloud session. Clusters that need app builds stay local.
+**A cloud cluster (owner's trial, 2026-11-05; kept after run #3519).** A cluster that changes only web and Go code can run in a cloud session. Clusters that need app builds stay local.
 
-- A cloud session can't message the director, so it reports on its status comment, and the chief of staff watches its PRs.
+- A cloud session can't message the director, so it reports on its status comment, and the chief of staff watches its PRs. A question for the director goes on the first line of that comment, starting `QUESTION FOR DIRECTOR`, and the chief of staff's watcher passes it on.
 - Starting it takes the owner's click on a card, so start it while he is at the app.
 - That cluster's full check before the rollup is a dispatched hosted fast run on its branch, not a local plan.
-- Log each cluster's Mac load during the run. The retrospective says whether to keep this, then removes this paragraph.
 
 ## Context budget
 
@@ -77,6 +85,7 @@ Cluster leads and the chief of staff are automatic sessions. The hook blocks at 
 - From **200k**, keep a hand-off note current in your status comment: what's done, what's next, open sub-PRs, and anything learned.
 - At **250k**, carry on and let auto-compact run. After a compaction, re-read your status comment, the tracking issue body and this page.
 - At the hook's **300k** block, write the hand-off and tell the chief of staff, which tells the run's lead session to start a fresh lead from the status comment.
+- A helper waits for a test plan or build with a blocking command and never ends its turn while one runs. Ending the turn there leaves it idle until someone messages it; on 2026-11-06 two helpers each lost 30 minutes or more that way.
 - Helpers use Sonnet. Use Opus helpers only for careful review or design. No Haiku.
 
 ## Wind-down

@@ -42,6 +42,11 @@ enum LiveSessionSpokenMargins {
         }
     }
 
+    /// True while a live session spoken Margin records on the phone. A play from the Lock Screen, headphones or the
+    /// Watch is ignored then (`LiveSessionTransportGuard`, #3492), because our player taking the audio session stops
+    /// the recorder. It reads the app-lifetime capture, not a screen, because the recording outlives its screen (#3489).
+    @MainActor static var isRecordingOnPhone: Bool { LiveSessionSpokenCapture.shared.sessionId != nil }
+
     /// True while a phone call (Teams, FaceTime, a carrier call) is going on. The call holds the phone's microphone,
     /// even muted, so a phone recording would capture nothing; the Watch's microphone still works.
     @MainActor

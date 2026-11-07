@@ -26,6 +26,10 @@ extension LiveSessionFileWorker {
             if let resumed = LiveSessionWatchSessions.resume(id: id, at: min(asked, now), sessions: all) { changed = [resumed] }
         case .withdraw(let id):
             withdraw(watchMarginId: id)
+        case .transport:
+            break // the app runs it on the player; nothing here changes
+        case .diagnostics:
+            break // kept by the phone's receiver, which has the file; nothing in a session changes
         }
         if !changed.isEmpty {
             for session in changed {

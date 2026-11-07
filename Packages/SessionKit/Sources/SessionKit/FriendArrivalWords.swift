@@ -20,6 +20,17 @@ public enum FriendArrivalWords {
         return senderLabels.count > 1 ? "From friends" : "From a friend"
     }
 
+    /// The Lock Screen's artist line while a friend's Margin plays: the name, or "A friend". The prompt carries the
+    /// stored stand-in "Unsigned sender" for a file that named nobody, which must never reach the Lock Screen (#3247).
+    public static func nowPlayingArtist(senderLabel: String?) -> String {
+        SharedPacketArrival.name(senderLabel) ?? "A friend"
+    }
+
+    /// "Shared Margin from Cole" on the Live Activity, which says "a friend" when the file named nobody (#3247).
+    public static func liveActivitySender(senderLabel: String?) -> String {
+        SharedPacketArrival.name(senderLabel) ?? "a friend"
+    }
+
     /// Possessive for control names: "Cole's Margins", "Your friend's Margins".
     public static func possessiveMargins(senderLabel: String?) -> String {
         "\(SharedPacketArrival.name(senderLabel).map { "\($0)'s" } ?? "Your friend's") Margins"
