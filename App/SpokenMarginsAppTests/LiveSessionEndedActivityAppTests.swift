@@ -65,4 +65,22 @@ final class LiveSessionEndedActivityAppTests: XCTestCase {
         XCTAssertFalse(ended.isRecordingNow)
         XCTAssertNil(ended.isRecordingMargin)
     }
+
+    /// Finish on the card matters most with the phone locked and no screen open, so the recording's owner hears it,
+    /// not a screen (#3499, #3489). No controller exists in this test.
+    @MainActor
+    func testFinishOnTheCardStopsARecordingWithNoScreenOpen() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let capture = LiveSessionSpokenCapture(files: LiveSessionFileWorker(root: root))
+        capture.start(sessionId: "s")
+        XCTAssertTrue(capture.isRecording(for: "s"))
+
+        NotificationCenter.default.post(name: LiveSessionFinishMargin.requested, object: nil)
+
+        for _ in 0..<50 where capture.isRecording(for: "s") {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertFalse(capture.isRecording(for: "s"))
+    }
 }

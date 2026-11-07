@@ -43,8 +43,16 @@ if args[:3] == ["devicectl", "list", "devices"]:
         json.dump({"result": {"devices": json.loads(os.environ.get("FAKE_DEVICES", "[]"))}}, handle)
     sys.exit(0)
 if args[:4] == ["devicectl", "device", "install", "app"]:
+    if args[args.index("--device") + 1].startswith("WATCH"):
+        print(os.environ.get("FAKE_WATCH_INSTALL_OUTPUT", "App installed"))
+        sys.exit(int(os.environ.get("FAKE_WATCH_INSTALL_EXIT", "0")))
     print(os.environ.get("FAKE_INSTALL_OUTPUT", "App installed"))
     sys.exit(int(os.environ.get("FAKE_INSTALL_EXIT", "0")))
+if args[:4] == ["devicectl", "device", "info", "apps"]:
+    out = args[args.index("--json-output") + 1]
+    with open(out, "w") as handle:
+        json.dump({"result": {"apps": json.loads(os.environ.get("FAKE_WATCH_APPS", "[]"))}}, handle)
+    sys.exit(0)
 sys.exit(97)  # anything else (uninstall, launch, ...) is a test failure
 '''
 
@@ -57,6 +65,15 @@ def iphone(identifier, name='Cole iPhone', transport='wired', pairing='paired', 
     return {'identifier': identifier, 'deviceProperties': {'name': name},
             'hardwareProperties': {'platform': 'iOS', 'deviceType': kind},
             'connectionProperties': {'transportType': transport, 'pairingState': pairing}}
+
+
+def watch(identifier='WATCH-1', name='Cole Watch', pairing='paired'):
+    return {'identifier': identifier, 'deviceProperties': {'name': name},
+            'hardwareProperties': {'platform': 'watchOS', 'deviceType': 'appleWatch'},
+            'connectionProperties': {'transportType': 'localNetwork', 'pairingState': pairing}}
+
+
+WATCH_ID = 'com.example.fake.watchkitapp'
 
 
 class InstallerTests(unittest.TestCase):
@@ -289,6 +306,98 @@ class InstallerTests(unittest.TestCase):
         self.assertFalse(any('uninstall' in c for c in calls))
         self.assertEqual((self.phone / 'installed.txt').read_text().split()[0], self.sha)
         self.assertIn(f'open {folder.resolve()}/test-plan.md', calls)
+
+    def add_watch_app(self, folder, build='36'):
+        bundle = folder / 'SpokenMarginsApp.app' / 'Watch' / 'SpokenMarginsWatchApp.app'
+        bundle.mkdir(parents=True)
+        with open(bundle / 'Info.plist', 'wb') as handle:
+            plistlib.dump({'CFBundleIdentifier': WATCH_ID, 'CFBundleVersion': build}, handle)
+        return bundle
+
+    def watch_apps(self, build):
+        return json.dumps([{'bundleIdentifier': WATCH_ID, 'bundleVersion': build}])
+
+    def test_the_watch_app_follows_the_phone_and_the_build_is_read_back(self):
+        folder = self.make_build()
+        bundle = self.add_watch_app(folder, '36')
+        done, calls = self.run_installer([iphone('PHONE-1'), watch()], FAKE_WATCH_APPS=self.watch_apps('36'))
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        installs = [c for c in calls if 'install app' in c]
+        self.assertEqual(installs, [f'devicectl device install app --device PHONE-1 {folder.resolve()}/SpokenMarginsApp.app',
+                                    f'devicectl device install app --device WATCH-1 {folder.resolve()}/SpokenMarginsApp.app/Watch/SpokenMarginsWatchApp.app'])
+        self.assertIn(f'devicectl device info apps --device WATCH-1 --bundle-id {WATCH_ID}', ' '.join(calls))
+        self.assertFalse(any('uninstall' in c for c in calls))
+        self.assertIn('Cole Watch now runs the Watch app from this build (build 36)', done.stdout)
+
+    def test_a_watch_that_reports_an_older_build_is_named_not_hidden(self):
+        folder = self.make_build()
+        self.add_watch_app(folder, '36')
+        done, _ = self.run_installer([iphone('PHONE-1'), watch()], FAKE_WATCH_APPS=self.watch_apps('35'))
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn('says it runs build 35, but this build\'s Watch app is build 36', done.stdout)
+
+    def test_a_watch_whose_build_cannot_be_read_back_says_so(self):
+        folder = self.make_build()
+        self.add_watch_app(folder, '36')
+        done, _ = self.run_installer([iphone('PHONE-1'), watch()], FAKE_WATCH_APPS='[]')
+        self.assertIn("couldn't read its build back. Expected build 36", done.stdout)
+
+    def test_a_watch_that_will_not_install_never_fails_the_phone_install(self):
+        folder = self.make_build()
+        self.add_watch_app(folder, '36')
+        done, calls = self.run_installer([iphone('PHONE-1'), watch()], FAKE_WATCH_INSTALL_EXIT='1',
+                                         FAKE_WATCH_INSTALL_OUTPUT='The device is not reachable')
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual((self.phone / 'installed.txt').read_text().split()[0], self.sha)
+        self.assertIn('was not updated, so it still runs its old build. The phone is done.', done.stdout)
+        self.assertIn('devicectl said:', done.stdout)
+        self.assertIn(f'open {folder.resolve()}/test-plan.md', calls)
+        self.assertFalse(any('uninstall' in c for c in calls))
+
+    def test_a_watch_app_whose_build_cannot_be_read_leaves_the_watch_alone(self):
+        folder = self.make_build()
+        bundle = self.add_watch_app(folder)
+        (bundle / 'Info.plist').write_text('not a plist')
+        done, calls = self.run_installer([iphone('PHONE-1'), watch()])
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn("couldn't read the Watch app's build number", done.stdout)
+        self.assertEqual(len([c for c in calls if 'install app' in c]), 1)
+
+    def test_the_watch_step_comes_after_the_test_plan_is_opened(self):
+        folder = self.make_build()
+        self.add_watch_app(folder)
+        done, calls = self.run_installer([iphone('PHONE-1'), watch()], FAKE_WATCH_APPS=self.watch_apps('36'))
+        opened = calls.index(f'open {folder.resolve()}/test-plan.md')
+        watch_install = next(i for i, c in enumerate(calls) if 'install app --device WATCH-1' in c)
+        self.assertLess(opened, watch_install, 'a slow Watch must not delay the plan')
+
+    def test_no_paired_watch_is_one_plain_line(self):
+        folder = self.make_build()
+        self.add_watch_app(folder)
+        done, calls = self.run_installer([iphone('PHONE-1')])
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn('no Watch is paired with this Mac, so only the phone was updated', done.stdout)
+        self.assertEqual(len([c for c in calls if 'install app' in c]), 1)
+
+    def test_two_watches_leave_the_watch_alone(self):
+        folder = self.make_build()
+        self.add_watch_app(folder)
+        done, calls = self.run_installer([iphone('PHONE-1'), watch('WATCH-1', 'First'), watch('WATCH-2', 'Second')])
+        self.assertIn('more than one Watch is listed', done.stdout)
+        self.assertEqual(len([c for c in calls if 'install app' in c]), 1)
+
+    def test_an_unpaired_watch_is_not_installed_on(self):
+        folder = self.make_build()
+        self.add_watch_app(folder)
+        done, calls = self.run_installer([iphone('PHONE-1'), watch(pairing='unpaired')])
+        self.assertIn("isn't paired with this Mac, so only the phone was updated", done.stdout)
+        self.assertEqual(len([c for c in calls if 'install app' in c]), 1)
+
+    def test_a_build_without_a_watch_app_says_so_and_touches_no_watch(self):
+        self.make_build()
+        done, calls = self.run_installer([iphone('PHONE-1'), watch()])
+        self.assertIn('this build has no Watch app inside it', done.stdout)
+        self.assertEqual(len([c for c in calls if 'install app' in c]), 1)
 
     def test_copies_the_test_plan_to_icloud_drive_for_the_phone(self):
         folder = self.make_build()

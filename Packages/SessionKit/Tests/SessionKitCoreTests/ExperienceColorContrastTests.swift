@@ -122,11 +122,6 @@ final class AppColorContrastCoverageTests: XCTestCase {
             "PlaybackScreen.swift", "PlaybackFeedbackTagView.swift", "PlaybackMarginTranscriptionStatusView.swift",
             "LiveActivityTourPreview.swift"
         ]
-        // Temporary: these two audio-named files get their `ochreText` edit in a follow-up PR, because the test lane's
-        // audio plan needs a BlackHole loopback that the hosted Mac lacks (#3467). The follow-up deletes this set.
-        let allowedUntilTheAudioFollowUp: Set<String> = [
-            "ExperienceAudioPreparationQueueScreen.swift", "PlaybackTimelineListView.swift"
-        ]
         let directory = try TestInputs.directory(.appSources)
         let enumerator = try XCTUnwrap(FileManager.default.enumerator(at: directory, includingPropertiesForKeys: nil))
         let files = enumerator.compactMap { $0 as? URL }.filter { $0.pathExtension == "swift" }
@@ -140,9 +135,7 @@ final class AppColorContrastCoverageTests: XCTestCase {
             (#"[?:]\s*(Color)?\.orange\b"#, "ternary or switch arm")
         ]
         var found: [String] = []
-        for file in files
-        where !allowedBecauseTheyAreAlwaysDark.contains(file.lastPathComponent)
-            && !allowedUntilTheAudioFollowUp.contains(file.lastPathComponent) {
+        for file in files where !allowedBecauseTheyAreAlwaysDark.contains(file.lastPathComponent) {
             let text = try String(contentsOf: file, encoding: .utf8)
             let collapsed = text.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
             for (pattern, what) in banned where collapsed.range(of: pattern, options: .regularExpression) != nil {

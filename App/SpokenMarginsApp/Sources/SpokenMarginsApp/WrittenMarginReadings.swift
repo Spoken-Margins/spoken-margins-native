@@ -118,8 +118,9 @@ enum WrittenMarginReadings {
         model.importedCommentaryAutoPlayTask = nil
         model.reportConfirmation("Getting that Margin ready to read aloud.")
         let id = UUID()
+        let wait = askReaderNow(reading) // asked here, not from the task below (#3619's T3)
         let task = Task { @MainActor [weak model] in
-            let rendered = (try? await reader.rendered(reading, onDevice: stage)) != nil
+            let rendered = await wait()
             if tapWaits[prompt.id]?.id == id { tapWaits[prompt.id] = nil }
             guard !Task.isCancelled, let model else { return }
             guard model.selectedItem.id == prompt.layer.itemId, !model.recordingNavigationIsLocked else { return } // the listener left
@@ -139,6 +140,25 @@ enum WrittenMarginReadings {
         tapWaits[prompt.id] = Wait(id: id, wasPending: wasPending, task: task, itemId: prompt.layer.itemId, reading: reading)
     }
 
+    /// Asks the reader for `reading` now, before this returns, so it is counted as waited on from the caller's next line
+    /// (a tap that asks from a task of its own leaves a moment with nobody waiting, #3619's T3). The returned wait gives
+    /// whether the reading was made, and stops waiting if the task awaiting it is cancelled: the listener left or tapped
+    /// again, and an on-device try nobody else waits for stops (#3391).
+    private static func askReaderNow(_ reading: WrittenMarginReading) -> @Sendable () async -> Bool {
+        let (answer, give) = AsyncStream.makeStream(of: Bool.self, bufferingPolicy: .bufferingNewest(1))
+        let stopWaiting = reader.requestRender(reading, onDevice: stage) { result in
+            give.yield((try? result.get()) != nil)
+            give.finish()
+        }
+        return {
+            await withTaskCancellationHandler {
+                var answered = false
+                for await value in answer { answered = value }
+                return answered
+            } onCancel: { stopWaiting() }
+        }
+    }
+
     // MARK: A review
 
     /// A tap on a Timeline row, for a Margin whose reading in the chosen voice isn't made yet: it waits for that reading (the
@@ -152,8 +172,9 @@ enum WrittenMarginReadings {
         if tapWaits[key] != nil { return true } // a second tap during the wait
         model.reportConfirmation("Getting that Margin ready to read aloud.")
         let id = UUID()
+        let wait = askReaderNow(reading)
         let task = Task { @MainActor [weak model] in
-            let rendered = (try? await reader.rendered(reading, onDevice: stage)) != nil
+            let rendered = await wait()
             if tapWaits[key]?.id == id { tapWaits[key] = nil }
             // The row's callers are not all on the item screen (Now Playing, skim stops, reactions), so `leftItemScreen` does not
             // see every way out. Selecting another item, and Trash (which clears the selection), are caught here: the tap is
@@ -208,11 +229,11 @@ enum WrittenMarginReadings {
         let from = listenerPlace(model)
         model.reportConfirmation("Getting your new Margins ready.")
         let settled = Flag()
-        let settling = Task { await reader.waitUntilSettled(readings, upTo: reviewHold, onDevice: stage); settled.set() }
+        let stopWaiting = reader.whenRendered(readings, upTo: reviewHold, onDevice: stage) { settled.set() } // asked now, as a tap's wait is
         holds[key] = Task { @MainActor [weak model] in
             // However the hold ends (the review starts, the listener moves, they leave the screen), the wait for the readings
             // ends with it, and an on-device try nobody waits for stops (#3391).
-            defer { holds[key] = nil; settling.cancel() }
+            defer { holds[key] = nil; stopWaiting() }
             while !settled.isSet {
                 try? await Task.sleep(for: .milliseconds(250))
                 guard !Task.isCancelled, let model, listenerPlace(model) == from else { return } // they went elsewhere: nothing starts
