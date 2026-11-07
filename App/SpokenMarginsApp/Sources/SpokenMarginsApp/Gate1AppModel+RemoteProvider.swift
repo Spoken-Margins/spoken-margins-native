@@ -79,7 +79,7 @@ extension Gate1AppModel {
             diagnostics["streamingTurnCompleted"] = turnId
             refreshSelectedItemInBackground()
         } catch {
-            diagnostics["streamingTurnCompletionError"] = String(describing: error)
+            diagnostics["streamingTurnCompletionError"] = SafeErrorText.describe(error)
         }
     }
 
@@ -96,7 +96,7 @@ extension Gate1AppModel {
                 previousTargetId == updated.targetId &&
                 updated.currentPlaybackProgressPercent >= 100
         } catch {
-            diagnostics["playbackProgressSyncError"] = String(describing: error)
+            diagnostics["playbackProgressSyncError"] = SafeErrorText.describe(error)
             return false
         }
     }
@@ -115,7 +115,7 @@ extension Gate1AppModel {
                 refreshSelectedItemInBackground()
             }
         } catch {
-            diagnostics["providerFailurePersistence"] = String(describing: error)
+            diagnostics["providerFailurePersistence"] = SafeErrorText.describe(error)
         }
         providerProbeStatus = userMessage
         diagnostics["providerProbe"] = providerProbeStatus

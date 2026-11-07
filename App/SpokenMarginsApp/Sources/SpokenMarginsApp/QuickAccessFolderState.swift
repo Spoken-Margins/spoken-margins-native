@@ -188,7 +188,7 @@ final class QuickAccessFolderState: ObservableObject {
             }
             return url
         } catch {
-            recordDiagnostic("quickAccessBookmarkError", String(describing: error))
+            recordDiagnostic("quickAccessBookmarkError", SafeErrorText.describe(error))
             return nil
         }
     }

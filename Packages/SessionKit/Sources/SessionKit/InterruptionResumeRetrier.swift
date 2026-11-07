@@ -103,9 +103,8 @@ public final class InterruptionResumeRetrier {
         await (task ?? cancelledTask)?.value
     }
 
-    /// The error's text with its domain and code, so an export says why iOS refused (#2183).
+    /// The error's domain and code, so an export says why iOS refused (#2183). The message is left out (#3548).
     public static func describe(_ error: Error) -> String {
-        let ns = error as NSError
-        return "\(ns.localizedDescription) (\(ns.domain) \(ns.code))"
+        SafeErrorText.describe(error)
     }
 }

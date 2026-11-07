@@ -102,7 +102,9 @@ final class ImportedPodcastPlacementCoordinatorTests: XCTestCase {
 
         XCTAssertEqual(h.coordinator.lastTransientStart[item.id], start)
         XCTAssertEqual(h.spies.transientDiagnostics(item.id),
-                       ["transcribing_transiently", "failed_and_deleted:\(failure.localizedDescription)"])
+                       ["transcribing_transiently", "failed_and_deleted:\(SafeErrorText.describe(failure))"])
+        XCTAssertFalse(h.spies.transientDiagnostics(item.id).joined().contains(failure.localizedDescription),
+                       "the export carries the error's domain and code, never its message (#3548)")
         XCTAssertEqual(h.spies.purged, [item.id])
         XCTAssertNil(h.coordinator.passes.pass(itemId: item.id))
         XCTAssertTrue(h.spies.deferCalls.isEmpty, "a failed transcript never reaches placement")

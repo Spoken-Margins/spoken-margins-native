@@ -205,7 +205,7 @@ public struct SourceResolverRegistry: Sendable {
                             input: input,
                             resolverId: resolver.id,
                             candidates: [],
-                            failure: SourceResolutionFailure(code: "resolver_failed", message: String(describing: error))
+                            failure: SourceResolutionFailure(code: "resolver_failed", message: SafeErrorText.describe(error))
                         ))
                     }
                 }

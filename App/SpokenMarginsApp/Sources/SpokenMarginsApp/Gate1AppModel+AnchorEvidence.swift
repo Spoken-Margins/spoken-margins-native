@@ -88,13 +88,13 @@ extension Gate1AppModel {
                 } catch {
                     await self?.markPodcastAnchorEvidenceUnavailable(
                         request: request,
-                        reason: "local_signature_persistence_failed:\(error.localizedDescription)"
+                        reason: "local_signature_persistence_failed:\(SafeErrorText.describe(error))"
                     )
                 }
             } catch {
                 await self?.markPodcastAnchorEvidenceUnavailable(
                     request: request,
-                    reason: "local_signature_failed:\(error.localizedDescription)"
+                    reason: "local_signature_failed:\(SafeErrorText.describe(error))"
                 )
             }
         }
@@ -115,7 +115,7 @@ extension Gate1AppModel {
                 root = try podcastAnchorEvidenceDirectory(for: capture.request)
             } catch {
                 let request = capture.request
-                let reason = "stream_signature_persistence_failed:\(error.localizedDescription)"
+                let reason = "stream_signature_persistence_failed:\(SafeErrorText.describe(error))"
                 Task.detached { [weak self] in
                     await self?.markPodcastAnchorEvidenceUnavailable(request: request, reason: reason)
                 }
@@ -145,7 +145,7 @@ extension Gate1AppModel {
                 } catch {
                     await self?.markPodcastAnchorEvidenceUnavailable(
                         request: capture.request,
-                        reason: "stream_signature_persistence_failed:\(error.localizedDescription)"
+                        reason: "stream_signature_persistence_failed:\(SafeErrorText.describe(error))"
                     )
                 }
             }
@@ -191,7 +191,7 @@ extension Gate1AppModel {
                 try await writer.write(input)
                 self?.diagnostics[key] = captured
             } catch {
-                self?.diagnostics[key] = "persistence_failed:\(error.localizedDescription)"
+                self?.diagnostics[key] = "persistence_failed:\(SafeErrorText.describe(error))"
             }
         }
     }

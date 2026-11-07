@@ -5,16 +5,10 @@ import Foundation
 /// keep the error's domain and code chain, which name the cause, and strip anything that could
 /// identify a listener's library before the text is exported unhashed.
 public enum PlaybackFailureDetail {
-    /// The error's message followed by its domain and code, then each underlying error's, e.g.
-    /// `The operation could not be completed [AVFoundationErrorDomain -11800 < NSOSStatusErrorDomain -12842]`.
+    /// The error's domain and code, then each underlying error's, e.g.
+    /// `AVFoundationErrorDomain#-11800 < NSOSStatusErrorDomain#-12842`. The message is left out: it can name the file (#3548).
     public static func describe(_ error: Error) -> String {
-        var chain: [String] = []
-        var current: NSError? = error as NSError
-        while let nsError = current, chain.count < 4 {
-            chain.append("\(nsError.domain) \(nsError.code)")
-            current = nsError.userInfo[NSUnderlyingErrorKey] as? NSError
-        }
-        return "\(error.localizedDescription) [\(chain.joined(separator: " < "))]"
+        SafeErrorText.describe(error)
     }
 
     /// `failure` with URLs, file paths and quoted names removed, short enough for an event log.

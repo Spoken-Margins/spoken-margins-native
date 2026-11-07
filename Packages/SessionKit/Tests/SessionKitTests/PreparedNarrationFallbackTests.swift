@@ -89,9 +89,9 @@ final class PreparedNarrationFallbackTests: XCTestCase {
             NSUnderlyingErrorKey: NSError(domain: NSOSStatusErrorDomain, code: -12842)
         ])
         let described = PlaybackFailureDetail.describe(error)
-        XCTAssertEqual(described, "The operation could not be completed [AVFoundationErrorDomain -11800 < NSOSStatusErrorDomain -12842]")
+        XCTAssertEqual(described, "AVFoundationErrorDomain#-11800 < NSOSStatusErrorDomain#-12842")
         XCTAssertEqual(PlaybackFailureDetail.privacySafe("playback_start_failed:\(described)"),
-                       "playback_start_failed:The operation could not be completed [AVFoundationErrorDomain -11800 < NSOSStatusErrorDomain -12842]")
+                       "playback_start_failed:AVFoundationErrorDomain#-11800 < NSOSStatusErrorDomain#-12842")
 
         let leaky = "playback_start_failed:The file “My Private Article.m4a” couldn’t be opened. file:///var/mobile/x/y.m4a /private/var/mobile/z.m4a"
         let safe = PlaybackFailureDetail.privacySafe(leaky)
@@ -138,7 +138,7 @@ final class PreparedNarrationFallbackTests: XCTestCase {
             guard case .failed(let message) = status else {
                 return XCTFail("\(file.lastPathComponent): expected a start failure, got \(status)")
             }
-            XCTAssertTrue(message.contains(" [") && message.contains("Domain "), "\(file.lastPathComponent): \(message)")
+            XCTAssertTrue(message.contains("Domain#"), "\(file.lastPathComponent): \(message)")
             XCTAssertFalse(PlaybackFailureDetail.privacySafe(message).contains(directory.path))
         }
     }

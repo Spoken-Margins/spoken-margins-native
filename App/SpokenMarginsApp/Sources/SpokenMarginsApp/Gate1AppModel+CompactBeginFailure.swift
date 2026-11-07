@@ -18,7 +18,7 @@ extension Gate1AppModel {
         #endif
         let record = CompactBeginFailureRecord(
             appState: Gate2AppState.isInBackground() ? "background" : "foreground",
-            protectedDataAvailable: protectedData, origin: origin, error: String(describing: error), cue: cue)
+            protectedDataAvailable: protectedData, origin: origin, error: SafeErrorText.describe(error), cue: cue)
         diagnostics["lastCompactBeginFailure"] = record.diagnosticsLine
         recordDeveloperDiagnostic("margin.compact_begin_failed", record.eventFields)
     }

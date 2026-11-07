@@ -21,7 +21,7 @@ enum PlayQueueController {
         change(&value)
         queue = value
         PlayQueueState.shared.itemIds = value.itemIds
-        do { try store(model)?.save(value) } catch { model.diagnostics["playQueueSave"] = "failed: \(error.localizedDescription)" }
+        do { try store(model)?.save(value) } catch { model.diagnostics["playQueueSave"] = "failed: \(SafeErrorText.describe(error))" }
     }
 
     private static func store(_ model: Gate1AppModel) -> PlayQueueStore? {

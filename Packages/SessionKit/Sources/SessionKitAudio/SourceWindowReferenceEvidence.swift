@@ -32,7 +32,7 @@ public enum SourceWindowReferenceEvidence {
             )
             return Outcome(evidence: captured(from: generated, provenance: analysis.provenance), failure: nil)
         } catch {
-            return Outcome(evidence: [], failure: error.localizedDescription)
+            return Outcome(evidence: [], failure: SafeErrorText.describe(error))
         }
     }
 

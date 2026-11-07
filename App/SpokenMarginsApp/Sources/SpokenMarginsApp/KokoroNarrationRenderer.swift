@@ -294,8 +294,7 @@ final class KokoroNarrationRenderer: @unchecked Sendable {
 
     /// The error's type and, for Kokoro's own, its case, so a failed export names it (a bare type said only "RenderError").
     static func describe(_ error: Error) -> String {
-        let text = String(describing: error)
-        return "failed:\(type(of: error)):\(text.prefix(120))"
+        "failed:\(type(of: error)):\(SafeErrorText.describe(error))"
     }
 
     /// Drops the pipeline and the front end, and by default the audio this renderer wrote.

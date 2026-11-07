@@ -677,30 +677,22 @@ public final class SessionEngine {
 
     @discardableResult
     public func attachTranscriptTimeline(itemId: String, timeline: TranscriptTimeline) throws -> SessionSnapshot {
+        try attachTranscriptTimeline(try transcriptTimelinePersister(itemId: itemId).persist(itemId: itemId, timeline: timeline))
+    }
+
+    /// The store half of `attachTranscriptTimeline` (#2509): loads the item, merges and normalises the timeline (a
+    /// long transcript is heavy), saves both. It holds the repository and no engine state, so a caller may run it off
+    /// the main thread and hand the result to `attachTranscriptTimeline(_ persisted:)` on it.
+    public func transcriptTimelinePersister(itemId: String) throws -> TranscriptTimelinePersister {
         try require("attachTranscriptTimeline", category: "sync", capabilities: ["canonical_persistence"])
-        var item = try repository.loadItem(id: itemId)
-        var timelineWithPreferredChapters = timeline
-        if let map = try repository.loadListeningMap(itemId: itemId),
-           publisherChapterSource(from: map.id) != nil,
-           let existingChapters = try repository.loadTranscriptTimeline(itemId: itemId)?.timeline.chapters,
-           !existingChapters.isEmpty {
-            timelineWithPreferredChapters.chapters = existingChapters
-        }
-        let normalized = normalizedSourceTranscriptTimeline(timelineWithPreferredChapters)
-        let transcriptId = item.transcriptId ?? "transcript-\(item.id)"
-        let stored = SourceTranscriptTimeline(
-            id: transcriptId,
-            itemId: item.id,
-            createdAt: Date(),
-            timeline: normalized.timeline
-        )
-        try repository.saveTranscriptTimeline(stored)
-        item.transcriptId = transcriptId
-        item.text = normalized.text
-        if item.status == "ready" || item.status == "needs_transcript" || item.status == "audio_ready" {
-            item.status = "needs_listening_map"
-        }
-        try saveItem(item)
+        return TranscriptTimelinePersister(repository: repository, publisher: publisherPlayback[itemId])
+    }
+
+    /// The engine half of `attachTranscriptTimeline`: updates what the engine has open. It reads no store row.
+    @discardableResult
+    public func attachTranscriptTimeline(_ persisted: PersistedTranscriptTimeline) throws -> SessionSnapshot {
+        try require("attachTranscriptTimeline", category: "sync", capabilities: ["canonical_persistence"])
+        let item = persisted.item
         if currentItem?.id == item.id || currentSession?.itemId == item.id {
             currentItem = item
             if let session = currentSession, session.itemId == item.id {
@@ -724,12 +716,34 @@ public final class SessionEngine {
         prepared: PreparedTextAudio,
         replaceActivePlayback: Bool = false
     ) throws -> SessionSnapshot {
+        let persisted = try preparedTextAudioPersister(itemId: itemId).persist(itemId: itemId, prepared: prepared)
+        return try attachPreparedTextAudio(persisted, replaceActivePlayback: replaceActivePlayback)
+    }
+
+    /// The store half of `attachPreparedTextAudio` (#2509): loads the item, lets the guard decide, then writes the
+    /// timeline and item (megabytes of text). It holds the repository and copies of what it reads, so a caller may run
+    /// it off the main thread and hand the result to `attachPreparedTextAudio(_:replaceActivePlayback:)` on it.
+    public func preparedTextAudioPersister(itemId: String) throws -> PreparedTextAudioPersister {
         try require("attachPreparedTextAudio", category: "sync", capabilities: ["canonical_persistence"])
-        let item = try repository.loadItem(id: itemId)
-        guard shouldPrepareGeneratedTextAudio(for: item) else {
-            return snapshot
-        }
-        let updated = try applyPreparedTextAudio(prepared, to: item)
+        return PreparedTextAudioPersister(
+            repository: repository,
+            profile: profile,
+            currentMap: currentMap,
+            publisher: publisherPlayback[itemId]
+        )
+    }
+
+    /// The engine half of `attachPreparedTextAudio`: moves the open session onto what was just saved. A save the
+    /// guard refused (`updated` is nil) changes nothing.
+    @discardableResult
+    public func attachPreparedTextAudio(
+        _ persisted: PersistedPreparedTextAudio,
+        replaceActivePlayback: Bool = false
+    ) throws -> SessionSnapshot {
+        try require("attachPreparedTextAudio", category: "sync", capabilities: ["canonical_persistence"])
+        guard let updated = persisted.updated else { return snapshot }
+        let item = persisted.stored
+        let prepared = persisted.prepared
         if currentItem?.id == updated.id || currentSession?.itemId == updated.id {
             currentItem = updated
             if let session = currentSession, session.itemId == updated.id {
@@ -1245,70 +1259,25 @@ public final class SessionEngine {
         itemId: String,
         collection: PublisherChapterCollection
     ) throws -> SessionSnapshot {
+        try attachPublisherChapters(try publisherChaptersPersister(itemId: itemId).persist(itemId: itemId, collection: collection))
+    }
+
+    /// The store half of `attachPublisherChapters` (#2509): precedence check, normalising, and the timeline, map,
+    /// community-map and item writes. It holds the repository, so a caller may run it off the main thread and hand
+    /// the result to `attachPublisherChapters(_ persisted:)` on it.
+    public func publisherChaptersPersister(itemId: String) throws -> PublisherChaptersPersister {
         try require("attachPublisherChapters", category: "sync", capabilities: ["canonical_persistence"])
-        var item = try repository.loadItem(id: itemId)
-        if let existingMap = try repository.loadListeningMap(itemId: itemId),
-           let existingSource = publisherChapterSource(from: existingMap.id),
-           existingSource.precedence > collection.source.precedence {
-            return snapshot
-        }
+        return PublisherChaptersPersister(repository: repository, publisher: publisherPlayback[itemId])
+    }
 
-        let existingTimeline = try repository.loadTranscriptTimeline(itemId: itemId)
-        let durationMs = item.media?.durationMs ?? existingTimeline?.timeline.durationMs
-        let normalized = normalizedPublisherChapters(collection.chapters, durationMs: durationMs)
-        guard !normalized.isEmpty else { return snapshot }
-
-        let segments = existingTimeline?.timeline.segments ?? []
-        let mediaChapters = normalized.enumerated().map { index, chapter in
-            let id = publisherChapterId(source: collection.source, index: index)
-            let segmentId = segments.last(where: { $0.startMs <= chapter.startMs })?.id
-                ?? segments.first?.id
-                ?? "publisher-anchor-\(index + 1)"
-            return MediaTimelineChapter(
-                id: id,
-                title: chapter.title,
-                description: chapter.description,
-                startMs: chapter.startMs,
-                transcriptSegmentId: segmentId
-            )
-        }
-        let timeline = TranscriptTimeline(
-            segments: segments,
-            chapters: mediaChapters,
-            durationMs: durationMs ?? normalized.compactMap(\.endMs).max() ?? normalized.last?.startMs
-        )
-        try repository.saveTranscriptTimeline(SourceTranscriptTimeline(
-            id: existingTimeline?.id ?? "media-chapters-\(itemId)",
-            itemId: itemId,
-            createdAt: existingTimeline?.createdAt ?? Date(),
-            timeline: timeline
-        ))
-
-        let percentDuration = max(1, timeline.durationMs ?? normalized.last?.startMs ?? 1)
-        let chapters = normalized.enumerated().map { index, chapter in
-            Chapter(
-                id: mediaChapters[index].id,
-                title: chapter.title,
-                startChar: index,
-                endChar: index + 1,
-                percent: max(0, min(100, Int((Double(chapter.startMs) / Double(percentDuration) * 100).rounded())))
-            )
-        }
-        let map = ListeningMap(
-            id: "map-\(itemId)-publisher-\(collection.source.rawValue)",
-            itemId: itemId,
-            overview: ListeningMapOverviewText.appGenerated(title: item.title, chapterCount: chapters.count),
-            chapters: chapters
-        )
-        try repository.saveListeningMap(map)
-        // A community map never outlives the publisher's chapters (#553): the episode may have
-        // asked for one while its audio, and so its embedded chapters, was not yet readable.
-        try repository.removeCommunityMap(itemId: itemId)
-        if item.status == "needs_listening_map" {
-            item.status = "ready"
-            try saveItem(item)
-        }
-
+    /// The engine half of `attachPublisherChapters`: a nil result (nothing was written) changes nothing.
+    @discardableResult
+    public func attachPublisherChapters(_ persisted: PersistedPublisherChapters?) throws -> SessionSnapshot {
+        try require("attachPublisherChapters", category: "sync", capabilities: ["canonical_persistence"])
+        guard let persisted else { return snapshot }
+        let item = persisted.item
+        let map = persisted.map
+        let itemId = item.id
         guard currentItem?.id == itemId || currentSession?.itemId == itemId else { return snapshot }
         currentItem = item
         currentMap = map
@@ -1776,21 +1745,21 @@ public final class SessionEngine {
         )
         activeRecordingDraft = draft
         recordingDraftFailure = nil
-        do { try journal.write(draft) } catch { recordingDraftFailure = "write:\(error.localizedDescription)" }
+        do { try journal.write(draft) } catch { recordingDraftFailure = "write:\(SafeErrorText.describe(error))" }
     }
 
     private func updateRecordingDraft(_ change: (inout RecordingDraft) -> Void) {
         guard let journal = recordingDraftJournal, var draft = activeRecordingDraft else { return }
         change(&draft)
         activeRecordingDraft = draft
-        do { try journal.write(draft) } catch { recordingDraftFailure = "write:\(error.localizedDescription)" }
+        do { try journal.write(draft) } catch { recordingDraftFailure = "write:\(SafeErrorText.describe(error))" }
     }
 
     /// The Margin is stored, or the listener cancelled: the note has done its job.
     private func removeRecordingDraft() {
         guard let draft = activeRecordingDraft else { return }
         activeRecordingDraft = nil
-        do { try recordingDraftJournal?.remove(id: draft.id) } catch { recordingDraftFailure = "remove:\(error.localizedDescription)" }
+        do { try recordingDraftJournal?.remove(id: draft.id) } catch { recordingDraftFailure = "remove:\(SafeErrorText.describe(error))" }
     }
 
     public func recordingCaptureDiagnostics() -> [String: String] {
@@ -3013,7 +2982,7 @@ public final class SessionEngine {
 
     @discardableResult
     public func sourceWindowContextCompleted(interjectionId: String, sessionId: String? = nil, timeline: TranscriptTimeline) throws -> SessionSnapshot {
-        let normalized = normalizedSourceTranscriptTimeline(timeline).timeline
+        let normalized = Self.normalizedSourceTranscriptTimeline(timeline).timeline
         guard !normalized.segments.isEmpty else {
             return try sourceWindowContextUnavailable(interjectionId: interjectionId, sessionId: sessionId)
         }
@@ -3753,19 +3722,15 @@ public final class SessionEngine {
     }
 
     private func applyPreparedTextAudio(_ prepared: PreparedTextAudio, to item: Item) throws -> Item {
-        let write = { () throws -> Item in
-            let stored = try self.repository.loadItem(id: item.id)
-            guard stored.deletedAt == nil, stored.text == item.text,
-                  Self.preparedAudioMatches(prepared, item: stored) else {
-                throw SessionKitError.invalidCommandForState("applyPreparedTextAudio:source_text_changed")
-            }
-            return try self.writePreparedTextAudio(prepared, to: stored)
-        }
-        if let store = repository as? any SessionRepositoryTransaction { return try store.withSessionTransaction(write) }
-        return try write()
+        try PreparedTextAudioPersister(
+            repository: repository,
+            profile: profile,
+            currentMap: currentMap,
+            publisher: publisherPlayback[item.id]
+        ).write(prepared, to: item)
     }
 
-    private static func preparedAudioMatches(_ prepared: PreparedTextAudio, item: Item) -> Bool {
+    static func preparedAudioMatches(_ prepared: PreparedTextAudio, item: Item) -> Bool {
         let text = item.text ?? ""
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let projected = SpeechTextNormalizer.projectForSystemSpeech(trimmed).text
@@ -3773,29 +3738,11 @@ public final class SessionEngine {
             || SpeechTextNormalizer.projectForSystemSpeech(prepared.normalizedText).text == projected
     }
 
-    private func writePreparedTextAudio(_ prepared: PreparedTextAudio, to item: Item) throws -> Item {
-        let transcriptId = item.transcriptId ?? "generated-transcript-\(item.id)"
-        let map = currentMap?.itemId == item.id ? currentMap : (try? repository.loadListeningMap(itemId: item.id))
-        let timeline = generatedTextTimeline(prepared.timeline, using: map)
-        let stored = SourceTranscriptTimeline(
-            id: transcriptId,
-            itemId: item.id,
-            createdAt: prepared.createdAt,
-            timeline: timeline
-        )
-        try repository.saveTranscriptTimeline(stored)
-        var updated = item
-        updated.text = prepared.normalizedText
-        updated.media = prepared.media
-        updated.transcriptId = transcriptId
-        if updated.status == "ready" || updated.status == "needs_listening_map" {
-            updated.status = currentMap == nil ? "needs_listening_map" : "ready"
-        }
-        try saveItem(updated)
-        return updated
+    private func shouldPrepareGeneratedTextAudio(for item: Item) -> Bool {
+        Self.shouldPrepareGeneratedTextAudio(for: item, profile: profile)
     }
 
-    private func shouldPrepareGeneratedTextAudio(for item: Item) -> Bool {
+    static func shouldPrepareGeneratedTextAudio(for item: Item, profile: RuntimeCapabilityProfile) -> Bool {
         guard profile.has("playback", "prerendered_audio") else { return false }
         guard let text = item.text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { return false }
         if item.mediaType == TargetType.transcriptBackedMedia.rawValue {
@@ -3812,7 +3759,7 @@ public final class SessionEngine {
         }
     }
 
-    private func generatedTextTimeline(_ timeline: TranscriptTimeline, using map: ListeningMap?) -> TranscriptTimeline {
+    static func generatedTextTimeline(_ timeline: TranscriptTimeline, using map: ListeningMap?) -> TranscriptTimeline {
         guard let map, !map.chapters.isEmpty, !timeline.segments.isEmpty else {
             return timeline
         }
@@ -3945,7 +3892,7 @@ public final class SessionEngine {
             publisherAudioUnavailable[item.id] = nil
         }
         // The map carries the article's chapters too, as generated narration's does.
-        return plan.with(timeline: generatedTextTimeline(plan.timeline, using: try? repository.loadListeningMap(itemId: item.id)))
+        return plan.with(timeline: Self.generatedTextTimeline(plan.timeline, using: try? repository.loadListeningMap(itemId: item.id)))
     }
 
     /// `item`, a stored article, as a new session plays it: with its publisher's recording as its
@@ -4013,7 +3960,7 @@ public final class SessionEngine {
 
     private func mediaChapter(at mediaTimeMs: Int, timeline: TranscriptTimeline) -> MediaTimelineChapter? {
         timeline.chapters
-            .filter { !isSyntheticTranscriptChapter($0) && $0.startMs <= max(0, mediaTimeMs) }
+            .filter { !Self.isSyntheticTranscriptChapter($0) && $0.startMs <= max(0, mediaTimeMs) }
             .max { $0.startMs < $1.startMs }
     }
 
@@ -4031,11 +3978,11 @@ public final class SessionEngine {
             .max { lhs, rhs in lhs.source.precedence < rhs.source.precedence }
     }
 
-    private func publisherChapterSource(from mapId: String) -> PublisherChapterSource? {
+    static func publisherChapterSource(from mapId: String) -> PublisherChapterSource? {
         PublisherChapterSource.allCases.first { mapId.hasSuffix("publisher-\($0.rawValue)") }
     }
 
-    private func normalizedPublisherChapters(
+    static func normalizedPublisherChapters(
         _ chapters: [PublisherChapter],
         durationMs: Int?
     ) -> [PublisherChapter] {
@@ -4069,7 +4016,7 @@ public final class SessionEngine {
         }
     }
 
-    private func publisherChapterId(source: PublisherChapterSource, index: Int) -> String {
+    static func publisherChapterId(source: PublisherChapterSource, index: Int) -> String {
         "ch-publisher-\(source.rawValue)-\(String(format: "%03d", index + 1))"
     }
 
@@ -4489,7 +4436,7 @@ public final class SessionEngine {
                     )
                     chapterTitle = resolved.chapterId.flatMap { chapterId in
                         timeline.chapters.first(where: {
-                            $0.id == chapterId && !isSyntheticTranscriptChapter($0)
+                            $0.id == chapterId && !Self.isSyntheticTranscriptChapter($0)
                         })?.title
                     }
                 }
@@ -5944,7 +5891,7 @@ public final class SessionEngine {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private func normalizedSourceTranscriptTimeline(_ timeline: TranscriptTimeline) -> (text: String, timeline: TranscriptTimeline) {
+    static func normalizedSourceTranscriptTimeline(_ timeline: TranscriptTimeline) -> (text: String, timeline: TranscriptTimeline) {
         let sortedSegments = timeline.segments.sorted { $0.startMs < $1.startMs }
         var fullText = ""
         var normalizedSegments: [MediaTimelineSegment] = []
@@ -5970,7 +5917,7 @@ public final class SessionEngine {
         }
         let duration = timeline.durationMs
             ?? normalizedSegments.map(\.endMs).max()
-        let chapters = normalizedSourceTranscriptChapters(
+        let chapters = Self.normalizedSourceTranscriptChapters(
             existing: timeline.chapters,
             segments: normalizedSegments
         )
@@ -5984,12 +5931,12 @@ public final class SessionEngine {
         )
     }
 
-    private func normalizedSourceTranscriptChapters(
+    static func normalizedSourceTranscriptChapters(
         existing: [MediaTimelineChapter],
         segments: [MediaTimelineSegment]
     ) -> [MediaTimelineChapter] {
         guard !segments.isEmpty else { return [] }
-        let semanticChapters = existing.filter { !isSyntheticTranscriptChapter($0) }
+        let semanticChapters = existing.filter { !Self.isSyntheticTranscriptChapter($0) }
         if !semanticChapters.isEmpty {
             return semanticChapters.compactMap { chapter in
                 let segment = segments.last(where: { $0.startMs <= chapter.startMs }) ?? segments.first
@@ -6006,7 +5953,7 @@ public final class SessionEngine {
         return []
     }
 
-    private func isSyntheticTranscriptChapter(_ chapter: MediaTimelineChapter) -> Bool {
+    static func isSyntheticTranscriptChapter(_ chapter: MediaTimelineChapter) -> Bool {
         chapter.id.hasPrefix("ch-transcript-") || chapter.id.contains("-ch-transcript-")
     }
 
