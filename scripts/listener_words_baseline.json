@@ -34,12 +34,6 @@
   },
   {
    "kind": "voiceover",
-   "text": "More options for \\(item.title)",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "voiceover",
    "text": "Moves this item to the top of the audio preparation queue",
    "count": 1,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
@@ -64,12 +58,6 @@
   },
   {
    "kind": "voiceover",
-   "text": "Restore \\(item.title)",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "voiceover",
    "text": "Shows their items.",
    "count": 1,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
@@ -88,37 +76,7 @@
   },
   {
    "kind": "words",
-   "text": "# Spoken Margins AI Handoff: \\(export.item.title)",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
    "text": "(?i)(?:(?<![A-Za-z0-9])|(?<=\\\\[nrt]))(?:session-)?item-[\\p{L}\\p{N}_-]+",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": ") about **\\(markdownEscaped(manifest.item.title))**.",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": ") for **\\(markdownEscaped(manifest.item.title))**.",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": ")) item",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "). Existing audio and Library items were kept.",
    "count": 1,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
   },
@@ -130,7 +88,7 @@
   },
   {
    "kind": "words",
-   "text": "Acoustic signatures: \\(manifest.assets.filter { $0.role == SpokenMarginsAssetRole.acousticSignature }.count). These are opaque matching evidence, not item audio.",
+   "text": "Acoustic signatures: …. These are opaque matching evidence, not item audio.",
    "count": 1,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
   },
@@ -154,7 +112,7 @@
   },
   {
    "kind": "words",
-   "text": "Added \\(count) items to Library",
+   "text": "Added … items to Library",
    "count": 1,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
   },
@@ -172,14 +130,14 @@
   },
   {
    "kind": "words",
-   "text": "All \\(model.recentlyDeletedItems.count) recently deleted item\\(model.recentlyDeletedItems.count == 1 ? ",
-   "count": 1,
+   "text": "All items",
+   "count": 3,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
   },
   {
    "kind": "words",
-   "text": "All items",
-   "count": 3,
+   "text": "All … recently deleted item… and their sessions, notes, transcripts, and downloaded audio will be permanently deleted. This cannot be undone.",
+   "count": 1,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
   },
   {
@@ -214,6 +172,12 @@
   },
   {
    "kind": "words",
+   "text": "Cleared … audio preparation job…. Existing audio and Library items were kept.",
+   "count": 1,
+   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
+  },
+  {
+   "kind": "words",
    "text": "Completed items hidden",
    "count": 2,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
@@ -240,12 +204,6 @@
    "kind": "words",
    "text": "Current item",
    "count": 3,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "DELETE FROM quarantined_records WHERE (kind = 'item' AND id = ?1) OR (kind = 'publisher_audio' AND id = ?1) OR (kind IN (\\(Self.itemScopedQuarantineKinds)) AND \\(Self.quarantinedJSON(",
-   "count": 1,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
   },
   {
@@ -280,12 +238,6 @@
   },
   {
    "kind": "words",
-   "text": "Imported \\(item.title).",
-   "count": 2,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
    "text": "Imported item and Listening Map. Audio prepares separately; playback has not started.",
    "count": 1,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
@@ -316,7 +268,7 @@
   },
   {
    "kind": "words",
-   "text": "Item reference: <\\($0)>",
+   "text": "Item reference: <…>",
    "count": 2,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
   },
@@ -328,7 +280,7 @@
   },
   {
    "kind": "words",
-   "text": "Item transport: full listened-to text included (\\(characters) characters) after a private-sharing rights confirmation.",
+   "text": "Item transport: full listened-to text included (… characters) after a private-sharing rights confirmation.",
    "count": 1,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
   },
@@ -346,7 +298,7 @@
   },
   {
    "kind": "words",
-   "text": "Item: \\(reference)",
+   "text": "Item: …",
    "count": 1,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
   },
@@ -376,43 +328,19 @@
   },
   {
    "kind": "words",
-   "text": "Library Item",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
    "text": "Linked item",
    "count": 1,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
   },
   {
    "kind": "words",
-   "text": "Loaded UI test item \\(item.title).",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "Margin - \\(safeName(export.item.title)) - \\(position(of: note)).md",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "Margins - \\(safeName(item.title)).md",
+   "text": "Loaded UI test item ….",
    "count": 1,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
   },
   {
    "kind": "words",
    "text": "Move the item to Recently Deleted before deleting it permanently.",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "Moved \\(item.title) to Recently Deleted.",
    "count": 1,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
   },
@@ -526,13 +454,7 @@
   },
   {
    "kind": "words",
-   "text": "Permanently deleted \\(ids.count) item\\(ids.count == 1 ? ",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "Permanently deleted \\(item.title).",
+   "text": "Permanently deleted … item… from Recently Deleted.",
    "count": 1,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
   },
@@ -550,18 +472,6 @@
   },
   {
    "kind": "words",
-   "text": "Prioritized \\(item.title) for audio preparation.",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "Prioritized \\(item.title) for download.",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
    "text": "Record at least one Margin on this item before sharing.",
    "count": 2,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
@@ -574,12 +484,6 @@
   },
   {
    "kind": "words",
-   "text": "Restored \\(item.title).",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
    "text": "Return to the original item and listening target to retry this summary.",
    "count": 1,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
@@ -587,12 +491,6 @@
   {
    "kind": "words",
    "text": "Review the words, voice version, item transport, and where each Margin sits in the source that will leave your device.",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "SELECT payload, updated_at, length(CAST(payload AS BLOB)) FROM records WHERE kind = 'item' AND id = ?;",
    "count": 1,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
   },
@@ -647,12 +545,6 @@
   {
    "kind": "words",
    "text": "Spoken Margins will reconstruct this linked item and then place the shared Margins in it. Nothing will play automatically.",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "SpokenMargins/EpisodeMaps/\\(host.safePodcastEvidenceComponent(item.id))/\\(assetID).shazamsignature",
    "count": 1,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
   },
@@ -820,13 +712,13 @@
   },
   {
    "kind": "words",
-   "text": "This item has a community map with \\(scenes).",
+   "text": "This item has a community map with ….",
    "count": 1,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
   },
   {
    "kind": "words",
-   "text": "This item has a private Listening Map with \\(scenes).",
+   "text": "This item has a private Listening Map with ….",
    "count": 1,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
   },
@@ -940,7 +832,7 @@
   },
   {
    "kind": "words",
-   "text": "You've shared \\(count) items from this show",
+   "text": "You've shared … items from this show",
    "count": 1,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
   },
@@ -970,91 +862,7 @@
   },
   {
    "kind": "words",
-   "text": "\\(Self.margins(sent)) sent to Readwise across \\(itemCount) items, most recently \\u{201C}\\(title)\\u{201D}.",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "\\(SharedMarginExport.fileName(item.title))-\\(packageID.suffix(8)).spokenmargins",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "\\(count) items",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "\\(item.title) and all of its sessions, notes, and transcripts will be deleted. This cannot be undone.",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "\\(item.title) is already available offline.",
-   "count": 3,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "\\(items.count)",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "\\(label) \\(Self.redact(link)); parsed (\\(parsed.items.count) items, \\(audio) with audio)",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "\\(label): Substack feed, \\(parsed.items.count) items",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "\\(margins(group.marginIds.count)) on \\(items.count) \\(noun)",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "\\(prepared.item.title): \\(error)",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "\\(prepared.item.title)\\n\\(ListenerErrorText.message(for: error))",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "\\(queued) item\\(queued == 1 ? ",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "\\(recent) item\\(recent == 1 ? ",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "\\(resolverId):\\(appleId ?? String(item.position))",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "\\(source.id)\\n\\(item?.id ?? ",
+   "text": "a completed … item",
    "count": 1,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
   },
@@ -1062,12 +870,6 @@
    "kind": "words",
    "text": "a map packet needs a text, PDF or EPUB item with a title",
    "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "automaticAudioPreparation:\\(item.id)",
-   "count": 2,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
   },
   {
@@ -1090,67 +892,19 @@
   },
   {
    "kind": "words",
-   "text": "episode-fingerprint-\\(item.id)-\\(gridIndex)",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "episode-map-proposal-\\(host.safePodcastEvidenceComponent(item.id))",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "episode-projection-\\(host.safePodcastEvidenceComponent(item.id))",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "episode-sketch-\\(host.safePodcastEvidenceComponent(item.id))",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "episode-spine-\\(host.safePodcastEvidenceComponent(item.id))",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "episode-transcript-\\(item.id)",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "episodeMapPreparation:\\(item.id)",
-   "count": 5,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
    "text": "exact contiguous phrase copied from ITEM CONTENT",
    "count": 1,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
   },
   {
    "kind": "words",
-   "text": "explicitAudioPreparation:\\(item.id)",
-   "count": 3,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "feed \\(finalFeed) parsed (\\(parsed.items.count) items)",
+   "text": "feed … parsed (… items)",
    "count": 1,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
   },
   {
    "kind": "words",
-   "text": "generated-transcript-\\(item.id)",
+   "text": "item",
    "count": 1,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
   },
@@ -1192,115 +946,19 @@
   },
   {
    "kind": "words",
-   "text": "item-browser-\\(collapsed.prefix(48))",
+   "text": "items",
    "count": 1,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
   },
   {
    "kind": "words",
-   "text": "item-import-\\(UUID().uuidString.lowercased())",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "item-live-\\(UUID().uuidString.lowercased())",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "item-obsidian-\\(Int(Date().timeIntervalSince1970))-\\(index)-\\(base.isEmpty ? ",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "item-shared-\\(digest.prefix(20))",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "item-shared-text-\\(UUID().uuidString.lowercased())",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "item-source-v2-\\(digest)",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "item:\\(id)",
-   "count": 7,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "item:\\(item.id),subscription:\\(feedEntry.subscriptionId),title:feed_entry",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "item:\\(itemId)",
-   "count": 2,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "item:\\(requestedItemId)",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "item:\\(token(String(rest[..<end]), salt: salt))\\(rest[end...])",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "library-\\(item.id)",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "long_form_source_transcript_empty(item=\\(itemId))",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "map-\\(item.id)",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "map-\\(item.id)-generated",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "map-\\(item.id)-manual",
+   "text": "long_form_source_transcript_empty(item=…)",
    "count": 1,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
   },
   {
    "kind": "words",
    "text": "no completed audio item",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "podcastPlacementDeferred:\\(item.id)",
    "count": 1,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
   },
@@ -1318,19 +976,13 @@
   },
   {
    "kind": "words",
-   "text": "session-\\(item.id)-export",
+   "text": "started; ended … item card(s)",
    "count": 1,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
   },
   {
    "kind": "words",
-   "text": "started; ended \\(ended) item card(s)",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "startupAudioPreparation:\\(item.id)",
+   "text": "the selected item",
    "count": 1,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
   },
@@ -1342,25 +994,61 @@
   },
   {
    "kind": "words",
-   "text": "transcript-\\(item.id)",
+   "text": "this item",
    "count": 1,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
   },
   {
    "kind": "words",
-   "text": "withdrawn from \\(touched.count) item(s)",
+   "text": "withdrawn from … item(s)",
    "count": 1,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
   },
   {
    "kind": "words",
-   "text": "written-margin-item\\u{1f}\\(itemId)",
+   "text": "written-margin-item\\u{1f}…",
    "count": 1,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
   },
   {
    "kind": "words",
    "text": "your items",
+   "count": 1,
+   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
+  },
+  {
+   "kind": "words",
+   "text": "… items",
+   "count": 1,
+   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
+  },
+  {
+   "kind": "words",
+   "text": "… item… queued",
+   "count": 1,
+   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
+  },
+  {
+   "kind": "words",
+   "text": "… item… recently ready",
+   "count": 1,
+   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
+  },
+  {
+   "kind": "words",
+   "text": "… sent to Readwise across … items, most recently \\u{201C}…\\u{201D}.",
+   "count": 1,
+   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
+  },
+  {
+   "kind": "words",
+   "text": "… …; parsed (… items, … with audio)",
+   "count": 1,
+   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
+  },
+  {
+   "kind": "words",
+   "text": "…: Substack feed, … items",
    "count": 1,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
   }

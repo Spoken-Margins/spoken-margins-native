@@ -44,28 +44,93 @@ SOURCE_DIRS = ('App', 'Packages/SessionKit/Sources')
 SKIP_PARTS = ('Tests', 'UITests', '.build', 'Pods')
 
 ITEM_WORD = re.compile(r'\bitems?\b', re.IGNORECASE)
-# A Swift single-line string literal. Interpolations (\( ... )) may hold quotes in simple cases; a literal that
-# spans lines (a triple-quoted block) is a blind spot.
-LITERAL = re.compile(r'"((?:[^"\\]|\\.)*)"')
 # A lone token such as `item.lastFailure`, `item-row`, `row.item`: identifier-shaped, so it isn't read to anyone.
-IDENTIFIER = re.compile(r'^[A-Za-z0-9_.:/\-#\[\]()%$@{}]+$')
+IDENTIFIER = re.compile(r'^[A-Za-z0-9_.:/\-#\[\]()%$@{}\u2026,]+$')
 VOICEOVER_LINE = re.compile(r'accessibility(?:Label|Hint|Value|InputLabels)|\.accessibilityLabel|AccessibilityLabel')
-IDENTIFIER_LINE = re.compile(
-    r'accessibilityIdentifier|\bidentifier\s*:|\bLogger\b|\blogger\.|\bos_log\b|\bprint\(|\bNSLog\b|\bdebugPrint\b|'
-    r'\bfatalError\b|\bprecondition(?:Failure)?\b|\bassert(?:ionFailure)?\b|\bdiag(?:nostic)?[A-Za-z]*\(|'
-    r'\.record\(|\bevent\s*:|\bkind\s*:|\bcategory\s*:|\bUserDefaults\b|\bkey\s*:|\bforKey\b|Key\s*=|\bCodingKeys\b|'
-    r'\bcase\s+\w+\s*=\s*"|\bNotification\.Name|\bURL\(string|\bUTType|\bBGTask|\bqueue\b.*label|\blabel\s*:\s*"[a-z]')
+# Anywhere on the line: logs and assertion messages are never read to a listener.
+LOG_LINE = re.compile(
+    r'\bLogger\b|\blogger\.|\bos_log\b|\bprint\(|\bNSLog\b|\bdebugPrint\b|\bfatalError\b|'
+    r'\bprecondition(?:Failure)?\b|\bassert(?:ionFailure)?\b')
+# Only in the code before the literal, so a later `.accessibilityIdentifier(...)` or `kind:` argument can't hide
+# readable text that comes first on the line.
+IDENTIFIER_BEFORE = re.compile(
+    r'accessibilityIdentifier\s*\(?\s*$|\bidentifier\s*:\s*$|\bdiag(?:nostic)?[A-Za-z]*\(\s*$|\.record\(\s*$|'
+    r'\bevent\s*:\s*$|\bkind\s*:\s*$|\bcategory\s*:\s*$|\bkey\s*:\s*$|\bforKey\s*:\s*$|Key\s*=\s*$|'
+    r'\bcase\s+\w+\s*=\s*$|\bNotification\.Name\(\s*$|\bURL\(string\s*:\s*$|\bUTType\w*\(\s*$|\bBGTask\w*\(\s*$|'
+    r'\blabel\s*:\s*$|\bname\s*(?:==|:)\s*$|\brawValue\s*(?:==|:)\s*$|\btargetType\s*:\s*$|\bUserDefaults\b.*\(\s*$|'
+    r'\bidentifier\s*(?:==|=)\s*$')
+# A line that picks a word to put in a sentence: the bare token is read.
+SENTENCE_NOUN = re.compile(r'[Nn]oun|\bsingular\b|\bplural\b|\(\s*one\s*,\s*many\s*\)|\bone\s*:\s*"')
+SQL = re.compile(r'\b(?:SELECT|DELETE FROM|INSERT INTO|UPDATE|WHERE|CREATE TABLE|ALTER TABLE)\b')
 COMMENT = re.compile(r'^\s*(?://|\*|/\*)')
 
 
-def kind_of(line: str, text: str) -> str:
-    if IDENTIFIER_LINE.search(line):
+def kind_of(line: str, text: str, offset: int = 0) -> str:
+    before = line[:offset]
+    if LOG_LINE.search(line) or IDENTIFIER_BEFORE.search(before):
         return 'identifier'
-    if ' ' not in text.strip() and IDENTIFIER.match(text.strip()) and not text[:1].isupper():
+    if SQL.search(text):
         return 'identifier'
-    if VOICEOVER_LINE.search(line):
+    token = text.strip()
+    # A lone lowercase token with no spaces ("item.lastFailure", "item", "item:…") is a key or a name, not read to
+    # anyone, unless the line builds a sentence from it (`(one, many) = ("item", "items")`, an `itemNoun`).
+    in_sentence = False
+    start = before.rfind('\\(')
+    if start >= 0:
+        tail = before[start:]
+        in_sentence = tail.count('(') > tail.count(')')  # a word picked inside a sentence's interpolation
+    if ' ' not in token and IDENTIFIER.match(token) and not token[:1].isupper() and not in_sentence and not SENTENCE_NOUN.search(line):
+        return 'identifier'
+    if VOICEOVER_LINE.search(before):
         return 'voiceover'
     return 'words'
+
+
+def read_string(code: str, start: int, out: list) -> int:
+    """Read the string literal whose opening quote is at `start`; add (text, start) for it and for any literal nested
+    in its interpolations to `out`. The outer text has each interpolation blanked. Returns the index after it."""
+    text = []
+    index = start + 1
+    slot = len(out)
+    out.append(None)  # keeps the outer literal ahead of the ones nested in it
+    while index < len(code):
+        char = code[index]
+        if char == '\\' and index + 1 < len(code):
+            if code[index + 1] == '(':
+                depth, index = 1, index + 2
+                while index < len(code) and depth:
+                    if code[index] == '"':
+                        index = read_string(code, index, out)
+                        continue
+                    depth += (code[index] == '(') - (code[index] == ')')
+                    index += 1
+                text.append('\u2026')
+            else:
+                text.append(code[index:index + 2])
+                index += 2
+            continue
+        if char == '"':
+            out[slot] = (''.join(text), start)
+            return index + 1
+        text.append(char)
+        index += 1
+    out[slot] = (''.join(text), start)
+    return index
+
+
+def literals_in(code: str) -> list[tuple[str, int]]:
+    """Every single-line string literal in `code` as (text, offset), nested ones included. A triple-quoted block
+    is a blind spot and is skipped to the end of its line."""
+    out: list = []
+    index = 0
+    while index < len(code):
+        if code.startswith('"""', index):
+            break
+        if code[index] == '"':
+            index = read_string(code, index, out)
+            continue
+        index += 1
+    return out
 
 
 def strip_trailing_comment(line: str) -> str:
@@ -97,11 +162,10 @@ def scan_file(path: Path, rel: str) -> list[dict]:
         if COMMENT.match(line) or 'item' not in line.lower():
             continue
         code = strip_trailing_comment(line)
-        for match in LITERAL.finditer(code):
-            text = match.group(1)
+        for text, offset in literals_in(code):
             if not ITEM_WORD.search(text):
                 continue
-            rows.append({'kind': kind_of(line, text), 'text': text, 'file': rel, 'line': number})
+            rows.append({'kind': kind_of(line, text, offset), 'text': text, 'file': rel, 'line': number})
     return rows
 
 

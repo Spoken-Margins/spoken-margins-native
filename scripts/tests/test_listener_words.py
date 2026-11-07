@@ -51,6 +51,16 @@ class KindTests(unittest.TestCase):
             ('Text("A // B item")', ['words']),                             # `//` inside a string is not a comment
             ('Text("one item"); Text("two items")', ['words', 'words']),
             ('Text("It\\"s an item")', ['words']),
+            # A reviewer's cases: quotes inside an interpolation, and later arguments on the same line.
+            ('Text("\\(count) \\(count == 1 ? "item" : "items") saved")', ['words', 'words']),
+            ('Text("\\(n) item\\(n == 1 ? "" : "s")")', ['words']),
+            ('Text("Developer diagnostic for \\(open ? "the selected item" : "none").")', ['words']),
+            ('Text("Open Item").accessibilityIdentifier("x")', ['words']),
+            ('Text("Add item", key: k)', ['words']),
+            ('Row(kind: k, title: "Open item")', ['words']),
+            ('Text("Item", kind: .x)', ['words']),
+            ('case .other, nil: (one, many) = ("item", "items")', ['words', 'words']),
+            ('db.run("DELETE FROM records WHERE kind = \'item\'")', ['identifier']),
         ]
         for source, expected in table:
             self.assertEqual(kinds(source), expected, source)
