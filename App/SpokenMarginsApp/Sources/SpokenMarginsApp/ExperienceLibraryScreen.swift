@@ -68,15 +68,17 @@ struct ExperienceLibraryScreen: View {
                     if !queuedRows.isEmpty {
                         PlayQueueSummaryRow(rows: queuedRows) { isPlayQueuePresented = true }
                     }
+
+                    // Above the items while a job runs or a result is new, so a listener sees it without scrolling
+                    // past the list (#3215). It sits in this always-present row, so it comes and goes without a
+                    // new row shifting the items. The Continue row is the first item, so it stays the first of them.
+                    if !model.audioPreparationQueue.isEmpty || !model.recentlyPreparedAudio.isEmpty {
+                        preparationSummary
+                    }
                 }
                 .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
 
                 items
-
-                if !model.audioPreparationQueue.isEmpty || !model.recentlyPreparedAudio.isEmpty {
-                    preparationSummary
-                        .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 6)
-                }
 
                 if model.shouldShowOnboardingCard, screenState.allowsAddingContent {
                     onboardingStrip
@@ -138,20 +140,6 @@ struct ExperienceLibraryScreen: View {
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
-        ToolbarItem(placement: .topBarLeading) {
-            Menu {
-                Button("Help", systemImage: "questionmark.circle", action: model.openHelp)
-                Divider()
-                Button("Preparing Audio", systemImage: "waveform.badge.magnifyingglass") {
-                    isAudioPreparationQueuePresented = true
-                }
-            } label: {
-                Image(systemName: "ellipsis.circle")
-                    .frame(width: 44, height: 44)
-            }
-            .accessibilityLabel("Library options")
-            .accessibilityIdentifier("home.settings.button")
-        }
         ToolbarItem(placement: .topBarTrailing) {
             Button {
                 addSourceRoute = .linkOrPodcast
