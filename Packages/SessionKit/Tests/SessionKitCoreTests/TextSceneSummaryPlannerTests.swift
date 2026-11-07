@@ -192,6 +192,7 @@ final class TextSceneSummaryPlannerTests: XCTestCase {
             ("a year", "1990", true),
             ("a year with spaces around it", "  2024  ", true),
             ("a four-digit figure", "1500", true),
+            ("a dashed year", "- 1990 -", true),
             ("a two-digit page number", "12", false),
             ("a one-digit page number", "3", false),
             ("a dashed page number", "- 4 -", false),

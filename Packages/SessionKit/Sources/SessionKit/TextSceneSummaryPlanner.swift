@@ -262,10 +262,15 @@ struct PageFurniture {
     private static func key(_ line: String) -> String? {
         let trimmed = line.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty, trimmed.count <= maximumLength, let last = trimmed.last,
-              !".!?…。！？".contains(last), !trimmed.allSatisfy(\.isNumber) else { return nil }
+              !".!?…。！？".contains(last), !isOnlyDigits(trimmed) else { return nil }
         let folded = trimmed.lowercased().map { $0.isNumber ? "#" : $0 }
         let collapsed = String(folded).split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
         return collapsed.replacingOccurrences(of: "##+", with: "#", options: .regularExpression)
+    }
+
+    /// "1990", "- 1990 -": digits with nothing else but spaces and dashes.
+    private static func isOnlyDigits(_ line: String) -> Bool {
+        line.contains(where: \.isNumber) && line.allSatisfy { $0.isNumber || $0.isWhitespace || "-–—".contains($0) }
     }
 
     /// "12", "Page 3 of 10", "- 4 -": a line that is only a page number, whatever else is on the page. A bare number of
