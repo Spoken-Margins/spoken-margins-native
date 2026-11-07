@@ -219,6 +219,24 @@ class AnalysisTests(unittest.TestCase):
             self.assertEqual(bool(loopback.verdict(report)), not recurs, report['repeats'])
         self.assertEqual(report['repeats'][0]['words'], 'the harbour master')
 
+    def test_a_recurring_match_fails_on_one_word_or_a_dropped_hearing(self):
+        # The expected text says it twice, but the words can't vouch for that: one common word, or a
+        # transcript that heard the phrase only once (the recogniser dropped the other hearing).
+        phrase = steady_voice(51, 1.5)
+        samples = (steady_voice(50, 2, rhythm=(0.22, 0.17, 0.2)) + phrase
+                   + steady_voice(70, 2, rhythm=(0.2, 0.26, 0.17)) + phrase
+                   + steady_voice(53, 2, rhythm=(0.24, 0.18)) + silence(0.5))
+        match = self.analyse(samples)['recurring'][0]
+        one_word = [{'word': 'the', 'start': at} for at in (match['original_start'], match['start'])]
+        dropped = [{'word': w, 'start': match['start'] + i * 0.3}
+                   for i, w in enumerate(('the', 'harbour', 'master'))]
+        for heard in (one_word, dropped):
+            report = self.analyse(samples)
+            report['transcript'] = {'text': ' '.join(h['word'] for h in heard), 'words': heard}
+            loopback.explain_recurring(report, 'we met the harbour master and later the harbour master again')
+            self.assertEqual(report['recurring'], [], heard)
+            self.assertTrue(loopback.verdict(report), report['repeats'])
+
     def test_check_with_expected_text_reads_multi_word_items_and_fails_an_unexplained_replay(self):
         # The recogniser returns items like "short term memory" with one start; each word needs its own.
         phrase = steady_voice(51, 1.5)

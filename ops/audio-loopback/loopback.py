@@ -428,11 +428,12 @@ def score(transcript, expected):
 def explain_recurring(report, expected, slack=0.15):
     """Keep in `recurring` only the matches the expected text accounts for; move the rest to `repeats`.
 
-    A match is accounted for when the words heard during its second time come at least twice in the
-    expected text, and at least as often there as in the whole transcript. A replay adds a hearing the
-    text doesn't have, so even a common word ("the") fails it. No words heard there means sound came back
-    that the transcript can't place: a replay. A misheard word makes a true source repeat fail too: strict,
-    never a false pass."""
+    A match is accounted for when two or more words are heard during its second time, the transcript has
+    them at least twice, and the expected text has them at least as often as the transcript. A replay adds
+    a hearing the text doesn't have, so even a common word ("the") fails it. One word is too little to
+    vouch for a source repeat, and a transcript that heard the phrase only once has dropped a hearing, so
+    the count can't be trusted: both fail. No words heard there means sound came back that the transcript
+    can't place: a replay. A misheard word makes a true source repeat fail too: strict, never a false pass."""
     def times(sequence, phrase):
         return sum(1 for i in range(len(sequence) - len(phrase) + 1) if sequence[i:i + len(phrase)] == phrase)
 
@@ -447,7 +448,8 @@ def explain_recurring(report, expected, slack=0.15):
     kept = []
     for match in report.get('recurring', []):
         said = [w for at, w in heard if match['start'] - slack <= at < match['end']]
-        if said and times(reference, said) >= max(2, times(hypothesis, said)):
+        heard_times = times(hypothesis, said)
+        if len(said) >= 2 and heard_times >= 2 and times(reference, said) >= heard_times:
             kept.append({**match, 'words': ' '.join(said)})
         else:
             report['repeats'].append({**match, 'words': ' '.join(said),
