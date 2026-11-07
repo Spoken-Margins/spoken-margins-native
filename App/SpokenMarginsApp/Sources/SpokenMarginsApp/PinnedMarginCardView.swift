@@ -126,29 +126,32 @@ struct PinnedMarginCardView: View {
         }
     }
 
-    @ViewBuilder
     private func button(_ action: PinnedMarginCard.Action) -> some View {
         // Held for a moment while a Margin is being recorded: dimmed, not hidden, and `SecondaryButtonStyle` has no disabled look.
         let held = action.job.followsNavigationLock && model.recordingNavigationIsLocked
-        Group {
-            switch action.prominence {
-            case .primary:
-                Button { perform(action.job) } label: { wide(action.title, symbol(action.job), shares: action.job != .retry) }
-                    .buttonStyle(PrimaryButtonStyle())
-            case .secondary:
-                Button { perform(action.job) } label: { wide(action.title, symbol(action.job), shares: action.job != .retry) }
-                    .buttonStyle(SecondaryButtonStyle())
-            case .quiet:
-                Button(action.title) { perform(action.job) }
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.white.opacity(0.85))
-                    .frame(minHeight: 44)
-            }
+        // The identifier goes on the button itself, not on a container around the switch (#2898).
+        return styledButton(action)
+            .disabled(held)
+            .opacity(held ? 0.45 : 1)
+            .accessibilityHint(action.hint)
+            .accessibilityIdentifier(identifier(action.job))
+    }
+
+    @ViewBuilder
+    private func styledButton(_ action: PinnedMarginCard.Action) -> some View {
+        switch action.prominence {
+        case .primary:
+            Button { perform(action.job) } label: { wide(action.title, symbol(action.job), shares: action.job != .retry) }
+                .buttonStyle(PrimaryButtonStyle())
+        case .secondary:
+            Button { perform(action.job) } label: { wide(action.title, symbol(action.job), shares: action.job != .retry) }
+                .buttonStyle(SecondaryButtonStyle())
+        case .quiet:
+            Button(action.title) { perform(action.job) }
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.white.opacity(0.85))
+                .frame(minHeight: 44)
         }
-        .disabled(held)
-        .opacity(held ? 0.45 : 1)
-        .accessibilityHint(action.hint)
-        .accessibilityIdentifier(identifier(action.job))
     }
 
     /// Retry keeps the room its word needs; the other button takes the rest of the row, so "Skip this Margin" fits.
