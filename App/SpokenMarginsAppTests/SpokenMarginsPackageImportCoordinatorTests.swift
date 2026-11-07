@@ -256,6 +256,33 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
 
     // MARK: Confirm
 
+    // The issue's own example (#3402): a file adds three, one can't be read, and the arrival says what the offer says.
+    func testTheArrivalCountsWhatTheOfferCanPlayNotWhatTheFileHeld() async throws {
+        let h = try makeHarness()
+        let packet = try h.writePacket(named: "alpha", text: Self.alphaText, notes: ["First note.", "Second note.", "🎧🎧"])
+        let itemId = "item-shared-\(packet.digest.prefix(20))"
+        try h.saveEarlierFriendLayer(onItem: itemId)
+        assertStaged(await h.coordinator.stage(from: packet.url))
+
+        await h.confirmCurrentReview()
+
+        XCTAssertEqual(h.packetImports, [PacketImport(itemId: itemId, packetId: "package-alpha", marginCount: 3)], "all three are saved")
+        XCTAssertEqual(h.confirmations, ["2 new Margins from Cole"])
+    }
+
+    func testAnArrivalThatAddedOnlyANoteThatCannotBeReadSaysNothing() async throws {
+        let h = try makeHarness()
+        let packet = try h.writePacket(named: "alpha", text: Self.alphaText, notes: ["🎧"])
+        let itemId = "item-shared-\(packet.digest.prefix(20))"
+        try h.saveEarlierFriendLayer(onItem: itemId)
+        assertStaged(await h.coordinator.stage(from: packet.url))
+
+        await h.confirmCurrentReview()
+
+        XCTAssertEqual(h.packetImports, [PacketImport(itemId: itemId, packetId: "package-alpha", marginCount: 1)], "it is saved")
+        XCTAssertEqual(h.confirmations, [])
+    }
+
     func testConfirmImportsAndKeepsTheIncomingFolderForGood() async throws {
         let h = try makeHarness()
         let packet = try h.writePacket(named: "alpha", text: Self.alphaText, withVoice: true)
@@ -1031,6 +1058,14 @@ private final class ImportHarness {
         return name
     }
 
+    /// Margins a friend sent earlier on the item, which is what makes an arrival worth announcing.
+    func saveEarlierFriendLayer(onItem itemId: String) throws {
+        try store.saveImportedCommentaryLayer(ImportedCommentaryLayer(
+            id: "layer-earlier", itemId: itemId, packageDigest: "digest-earlier", packageId: "package-earlier",
+            itemIdentity: SharedItemIdentity(itemType: .text, title: "Essay"), displayLabel: "Cole",
+            importedAt: Date(timeIntervalSince1970: 1_777_000_000)))
+    }
+
     /// An imported friend's Margin whose recording is at `path`, saved as an import would.
     func saveImportedMargin(playingFrom path: String) throws {
         let date = Date(timeIntervalSince1970: 1_777_000_000)
@@ -1053,25 +1088,17 @@ private final class ImportHarness {
     }
 
     /// A packet that carries its item as text, so confirming needs no network.
-    /// `withVoice` makes the one Margin a recording: an import then saves a row whose audio path is inside the folder.
-    func writePacket(named name: String, text: String, recipientSupplied: Bool = false, withVoice: Bool = false) throws -> WrittenPacket {
+    /// `withVoice` makes every Margin a recording: an import then saves a row whose audio path is inside the folder.
+    func writePacket(
+        named name: String, text: String, recipientSupplied: Bool = false, notes: [String] = ["A sender-reviewed observation."],
+        withVoice: Bool = false
+    ) throws -> WrittenPacket {
         let packageID = "package-\(name)"
         let item = SharedItemIdentity(
             itemType: .text,
             title: "Essay \(name)",
             normalizedContentSHA256: PortableArticleAnchorResolver.normalizedContentSHA256(text),
             exactEditionSHA256: PortableArticleAnchorResolver.exactEditionSHA256(text)
-        )
-        let revision = InterjectionShareRevision(
-            id: "revision-\(packageID)",
-            interjectionId: "sender-margin",
-            itemId: "sender-item",
-            sessionId: "sender-session",
-            createdAt: Date(timeIntervalSince1970: 1_777_000_000),
-            approvedTranscript: "A sender-reviewed observation.",
-            anchorBefore: "Before this passage.",
-            anchorAfter: "After this passage.",
-            status: .senderApproved
         )
         let representation: ReviewedRepresentationSelection
         if withVoice {
@@ -1081,6 +1108,24 @@ private final class ImportHarness {
         } else {
             representation = .textOnly
         }
+        let selections = notes.enumerated().map { index, words in
+            ReviewedInterjectionSelection(
+                packageScopedId: "margin-\(String(format: "%03d", index + 1))",
+                revision: InterjectionShareRevision(
+                    id: index == 0 ? "revision-\(packageID)" : "revision-\(packageID)-\(index + 1)",
+                    interjectionId: index == 0 ? "sender-margin" : "sender-margin-\(index + 1)",
+                    itemId: "sender-item",
+                    sessionId: "sender-session",
+                    createdAt: Date(timeIntervalSince1970: 1_777_000_000),
+                    approvedTranscript: words,
+                    anchorBefore: "Before this passage.",
+                    anchorAfter: "After this passage.",
+                    status: .senderApproved
+                ),
+                anchor: PortableAnchorEvidence(anchorType: .text, exactText: "The exact phrase to remember is"),
+                representation: representation
+            )
+        }
         let transport: ReviewedItemTransportSelection = recipientSupplied
             ? .recipientSupplied
             : .embeddedText(text: text, originalMediaType: "text", rightsBasis: .senderConfirmedPrivateRights)
@@ -1089,12 +1134,7 @@ private final class ImportHarness {
             createdAt: Date(timeIntervalSince1970: 1_777_000_000),
             item: item,
             itemTransportSelection: transport,
-            selections: [ReviewedInterjectionSelection(
-                packageScopedId: "margin-001",
-                revision: revision,
-                anchor: PortableAnchorEvidence(anchorType: .text, exactText: "The exact phrase to remember is"),
-                representation: representation
-            )],
+            selections: selections,
             senderDisplayLabel: "Cole",
             suggestedRevealMode: .companion
         )
