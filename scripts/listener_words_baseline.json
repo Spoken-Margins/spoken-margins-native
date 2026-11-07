@@ -328,6 +328,12 @@
   },
   {
    "kind": "words",
+   "text": "Library Item",
+   "count": 1,
+   "reason": "Existing when the guard arrived (#3599): the Shortcuts type name for the Add Margin action's Item parameter (LibraryItemEntity); rename it with the Shortcuts words slice."
+  },
+  {
+   "kind": "words",
    "text": "Linked item",
    "count": 1,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."

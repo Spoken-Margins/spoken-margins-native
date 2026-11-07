@@ -59,6 +59,16 @@ class KindTests(unittest.TestCase):
             ('Text("Add item", key: k)', ['words']),
             ('Row(kind: k, title: "Open item")', ['words']),
             ('Text("Item", kind: .x)', ['words']),
+            # The audit's cases (#3624): argument names that carry readable text, and calls that follow the literal.
+            ('static let typeDisplayRepresentation = TypeDisplayRepresentation(name: "Library Item")', ['words']),
+            ('Choice(id: ownId, label: "Recent items")', ['words']),
+            ('Row(key: k, title: "Add item")', ['words']),
+            ('case recent = "Recent items"', ['words']),
+            ('Text("Skip to the item").onAppear { print("x") }', ['words']),
+            ('let word = n == 1 ? "item" : "items"', ['words', 'words']),
+            ('Text("\\(a ? "x//" : "y") item")', ['words']),
+            ('kind: "item"', ['identifier']),
+            ('SQLiteStore.save(name: "item")', ['identifier']),
             ('case .other, nil: (one, many) = ("item", "items")', ['words', 'words']),
             ('db.run("DELETE FROM records WHERE kind = \'item\'")', ['identifier']),
         ]

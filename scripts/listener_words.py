@@ -27,7 +27,7 @@ The baseline is keyed by kind and literal text, with a count, so moving code bet
 Do not accept a row to make the check pass: say episode, article or PDF (SourceNoun in SessionKit picks the word from
 the source), or "this" when you can't tell.
 
-Blind spots: a literal built from pieces ("Add " + noun), a multi-line string literal, and text that reaches the
+Blind spots: raw strings (`#"..."#`), a literal built from pieces ("Add " + noun), a multi-line string literal, and text that reaches the
 listener from a file or the server. Stdlib only, Python 3.9-compatible.
 """
 from __future__ import annotations
@@ -47,18 +47,19 @@ ITEM_WORD = re.compile(r'\bitems?\b', re.IGNORECASE)
 # A lone token such as `item.lastFailure`, `item-row`, `row.item`: identifier-shaped, so it isn't read to anyone.
 IDENTIFIER = re.compile(r'^[A-Za-z0-9_.:/\-#\[\]()%$@{}\u2026,]+$')
 VOICEOVER_LINE = re.compile(r'accessibility(?:Label|Hint|Value|InputLabels)|\.accessibilityLabel|AccessibilityLabel')
-# Anywhere on the line: logs and assertion messages are never read to a listener.
+# In the code before the literal: logs and assertion messages are never read to a listener.
 LOG_LINE = re.compile(
     r'\bLogger\b|\blogger\.|\bos_log\b|\bprint\(|\bNSLog\b|\bdebugPrint\b|\bfatalError\b|'
     r'\bprecondition(?:Failure)?\b|\bassert(?:ionFailure)?\b')
 # Only in the code before the literal, so a later `.accessibilityIdentifier(...)` or `kind:` argument can't hide
 # readable text that comes first on the line.
 IDENTIFIER_BEFORE = re.compile(
-    r'accessibilityIdentifier\s*\(?\s*$|\bidentifier\s*:\s*$|\bdiag(?:nostic)?[A-Za-z]*\(\s*$|\.record\(\s*$|'
-    r'\bevent\s*:\s*$|\bkind\s*:\s*$|\bcategory\s*:\s*$|\bkey\s*:\s*$|\bforKey\s*:\s*$|Key\s*=\s*$|'
-    r'\bcase\s+\w+\s*=\s*$|\bNotification\.Name\(\s*$|\bURL\(string\s*:\s*$|\bUTType\w*\(\s*$|\bBGTask\w*\(\s*$|'
-    r'\blabel\s*:\s*$|\bname\s*(?:==|:)\s*$|\brawValue\s*(?:==|:)\s*$|\btargetType\s*:\s*$|\bUserDefaults\b.*\(\s*$|'
-    r'\bidentifier\s*(?:==|=)\s*$')
+    r'accessibilityIdentifier\s*\(?\s*$|\bidentifier\s*(?::|==|=)\s*$|\bdiag(?:nostic)?[A-Za-z]*\(\s*$|\.record\(\s*$|'
+    r'\bNotification\.Name\(\s*$|\bURL\(string\s*:\s*$|\bUTType\w*\(\s*$|\bBGTask\w*\(\s*$|'
+    r'\brawValue\s*==\s*$|\btargetType\s*:\s*$|\bUserDefaults\b.*\(\s*$')
+# Not here on purpose: `label:`, `name:`, `key:`, `kind:`, `category:`, `event:` and `case x =`. In this app those
+# arguments carry readable text too (`TypeDisplayRepresentation(name: "Library Item")`, `Choice(label: "Your Margins")`).
+# A lone lowercase value after them is already an identifier by the no-spaces rule in kind_of.
 # A line that picks a word to put in a sentence: the bare token is read.
 SENTENCE_NOUN = re.compile(r'[Nn]oun|\bsingular\b|\bplural\b|\(\s*one\s*,\s*many\s*\)|\bone\s*:\s*"')
 SQL = re.compile(r'\b(?:SELECT|DELETE FROM|INSERT INTO|UPDATE|WHERE|CREATE TABLE|ALTER TABLE)\b')
@@ -67,7 +68,7 @@ COMMENT = re.compile(r'^\s*(?://|\*|/\*)')
 
 def kind_of(line: str, text: str, offset: int = 0) -> str:
     before = line[:offset]
-    if LOG_LINE.search(line) or IDENTIFIER_BEFORE.search(before):
+    if LOG_LINE.search(before) or IDENTIFIER_BEFORE.search(before):
         return 'identifier'
     if SQL.search(text):
         return 'identifier'
@@ -79,6 +80,9 @@ def kind_of(line: str, text: str, offset: int = 0) -> str:
     if start >= 0:
         tail = before[start:]
         in_sentence = tail.count('(') > tail.count(')')  # a word picked inside a sentence's interpolation
+    if (not in_sentence and token.lower() in ('item', 'items') and '?' in before and re.search(r'[?:]\s*$', before)
+            and re.search(r'(?:==|!=|>|<)\s*1\b|\bcount\b', before)):
+        in_sentence = True  # a word picked by a ternary: `n == 1 ? "item" : "items"`
     if ' ' not in token and IDENTIFIER.match(token) and not token[:1].isupper() and not in_sentence and not SENTENCE_NOUN.search(line):
         return 'identifier'
     if VOICEOVER_LINE.search(before):
@@ -134,19 +138,14 @@ def literals_in(code: str) -> list[tuple[str, int]]:
 
 
 def strip_trailing_comment(line: str) -> str:
-    """The line without a `// ...` comment that follows its code (a `//` inside a string literal stays)."""
-    in_string = False
+    """The line without a `// ...` comment that follows its code (a `//` inside a string literal, nested ones
+    included, stays). A raw string (`#"..."#`) is a blind spot."""
     index = 0
     while index < len(line):
-        char = line[index]
-        if in_string:
-            index += 2 if char == '\\' else 1
-            if char == '"':
-                in_string = False
+        if line[index] == '"':
+            index = read_string(line, index, [])
             continue
-        if char == '"':
-            in_string = True
-        elif line.startswith('//', index):
+        if line.startswith('//', index):
             return line[:index]
         index += 1
     return line
