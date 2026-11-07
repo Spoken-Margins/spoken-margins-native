@@ -46,6 +46,19 @@ final class ReviewReturnPlaceTests: XCTestCase {
         XCTAssertFalse(place.needsRestoring(from: nil), "nothing was saved")
     }
 
+    /// Audit of #3619: the episode plays on after a Margin, so a relaunch between Margins must leave the listener where they
+    /// are, not at the place the review started from, even a place only seconds into the episode.
+    func testThePlaceIsNotOwedOnceAMarginHasPlayedUnlessTheListenerWasAhead() throws {
+        let behind = try XCTUnwrap(ReviewReturnPlace(sequence: review(returnTo: 2_000, margins: [60_000, 2_312_000])))
+        XCTAssertTrue(behind.needsRestoring(from: 720_000), "what a relaunch between the Margins would have done")
+        XCTAssertFalse(behind.isOwed(onceMarginAt: 60_000), "the first Margin played: the listener stays where they are")
+        XCTAssertFalse(behind.isOwed(onceMarginAt: 2_312_000))
+        let ahead = try XCTUnwrap(ReviewReturnPlace(sequence: review(returnTo: 900_000, margins: [60_000, 2_312_000])))
+        XCTAssertTrue(ahead.isOwed(onceMarginAt: 60_000), "they were further on, so they are brought back")
+        XCTAssertFalse(ahead.isOwed(onceMarginAt: 2_312_000), "the last Margin is past their place")
+        XCTAssertFalse(ahead.isOwed(onceMarginAt: 900_000), "a Margin at their own place owes nothing")
+    }
+
     func testAPositionBeforeTheReviewStartedIsTheListenersOwn() throws {
         let place = try XCTUnwrap(ReviewReturnPlace(sequence: review(returnTo: 90_000, margins: [40_000, 60_000])))
         XCTAssertFalse(place.needsRestoring(from: place.stretchStartMs - 1), "scrubbed to before the review's stretch")
