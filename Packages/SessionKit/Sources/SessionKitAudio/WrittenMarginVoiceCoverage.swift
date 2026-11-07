@@ -26,7 +26,8 @@ extension WrittenMarginVoice {
 ///
 /// The voices are looked up once off the main thread, and only when a note in a non-Latin script first asks: a Library of
 /// English notes never touches the voice API. Until the lookup lands the answer is yes, which is what the app did before
-/// this; `onChange` then brings the screens up to date. They are looked up again when iOS says the voices changed, and
+/// this; `onChange` then brings the screens up to date, and an answer nothing redraws uses `onceVoicesAreKnown`. They are
+/// looked up again when iOS says the voices changed, and
 /// on each return to the foreground, since a download in Settings can finish while the app is suspended.
 public final class WrittenMarginVoiceCoverage: @unchecked Sendable {
     public static let shared = WrittenMarginVoiceCoverage(findVoices: WrittenMarginVoiceCoverage.installedLanguages)
@@ -35,6 +36,7 @@ public final class WrittenMarginVoiceCoverage: @unchecked Sendable {
     private let lock = NSLock()
     private var installed: Set<String>? // nil until a note in a non-Latin script has asked
     private var isLooking = false
+    private var lookupsLanded = 0
     private var onChange: (@Sendable () -> Void)?
     private var observers: [NSObjectProtocol] = []
     private let scripts = NSCache<NSString, Scripts>() // NSCache is thread-safe
@@ -83,6 +85,21 @@ public final class WrittenMarginVoiceCoverage: @unchecked Sendable {
         return WrittenMarginVoice.canRead(scripts: needed, hasVoice: known.contains)
     }
 
+    /// For an answer read once and never redrawn, like the arrival's "1 new Margin from Cole" (#3402): reads it, and if a
+    /// lookup was under way or that read started one, waits for it (at most `limit` seconds) and reads it again. A read
+    /// with no lookup to wait for, as in a Library of English notes, is read once and waits for nothing.
+    public func onceVoicesAreKnown<Answer>(
+        isolation: isolated (any Actor)? = #isolation, upTo limit: TimeInterval = 2, _ read: () async -> Answer
+    ) async -> Answer {
+        let landedBefore = lock.withLock { lookupsLanded }
+        let first = await read()
+        let deadline = Date().addingTimeInterval(limit)
+        while lock.withLock({ isLooking }), Date() < deadline {
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        return lock.withLock { lookupsLanded } == landedBefore ? first : await read()
+    }
+
     private func scripts(of words: String) -> Set<WrittenMarginVoice.Script> {
         let key = words as NSString
         if let known = scripts.object(forKey: key) { return known.value }
@@ -108,6 +125,7 @@ public final class WrittenMarginVoiceCoverage: @unchecked Sendable {
             let told = installed ?? Set(WrittenMarginVoice.coverage.map(\.language))
             installed = found
             isLooking = false
+            lookupsLanded += 1
             return (told != found, onChange)
         }
         if changed { notify?() }
