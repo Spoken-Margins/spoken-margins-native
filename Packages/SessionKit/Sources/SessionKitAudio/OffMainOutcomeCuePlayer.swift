@@ -69,7 +69,7 @@ public final class OffMainOutcomeCuePlayer: @unchecked Sendable {
             playingCue = cue
             return player.play() ? "played" : "skipped:player_refused"
         } catch {
-            return "skipped:\(error.localizedDescription)"
+            return "skipped:\(SafeErrorText.describe(error))"
         }
     }
 

@@ -176,7 +176,7 @@ final class PlaybackStartCue: ObservableObject {
             self.waitingPlayer = player
             return player.play(atTime: player.deviceCurrentTime + delay) ? "scheduled" : "skipped:player_refused"
         } catch {
-            return "skipped:\(error.localizedDescription)"
+            return "skipped:\(SafeErrorText.describe(error))"
         }
     }
 
@@ -190,7 +190,7 @@ final class PlaybackStartCue: ObservableObject {
             self.player = player
             return player.play() ? "played" : "skipped:player_refused"
         } catch {
-            return "skipped:\(error.localizedDescription)"
+            return "skipped:\(SafeErrorText.describe(error))"
         }
     }
 }

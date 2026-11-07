@@ -91,9 +91,8 @@ final class J9HearNewMarginsJourneyUITests: XCTestCase {
 
         XCTContext.runActivity(named: "J9 step 4: The friend's Margin plays in place after a lead-in") { _ in
             XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8), "Now Playing did not open")
-            let progress = element("review.progress")
-            XCTAssertTrue(progress.waitForExistence(timeout: 8), "The review card did not appear")
-            XCTAssertTrue(progress.label.contains("1 of 1"), "The review does not say it is one Margin: \(progress.label)")
+            XCTAssertTrue(element("marginCard").waitForExistence(timeout: 8), "The review card did not appear")
+            XCTAssertFalse(element("review.progress").exists, "One Margin is never counted \"1 of 1\" (#3597)")
             XCTAssertTrue(element("review.comingUp").waitForExistence(timeout: 5), "No lead-in before the friend's Margin")
             waitUntil("The lead-in did not start about \(leadIn) s before the Margin; clock shows \(element("playback.progress.label").label)", timeout: 10) {
                 self.currentPosition().map { ($0 >= self.friendMarginAt - self.leadIn - 10) && $0 <= self.friendMarginAt + 2 } ?? false
@@ -103,7 +102,7 @@ final class J9HearNewMarginsJourneyUITests: XCTestCase {
         }
 
         try XCTContext.runActivity(named: "J9 step 5: The episode carries on from where you were") { _ in
-            waitUntil("The review card did not go away after the Margin", timeout: 25) { !self.element("review.progress").exists }
+            waitUntil("The review card did not go away after the Margin", timeout: 25) { !self.element("review.playing").exists }
             try waitUntilPlaying("The episode did not carry on after the review")
             let resumed = try position()
             XCTAssertTrue(abs(resumed - pausedSeconds) <= 35,

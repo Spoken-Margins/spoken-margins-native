@@ -68,7 +68,7 @@ extension Gate1AppModel {
             } catch {
                 try? await Self.offMain { try packageStore.deletePackage(payloadID: payloadID) }
                 keptNotices.forget(payloadID: payloadID)
-                diagnostics["pendingSpokenMarginsPackage:\(payloadID)"] = "rejected:\(error.localizedDescription)"
+                diagnostics["pendingSpokenMarginsPackage:\(payloadID)"] = "rejected:\(SafeErrorText.describe(error))"
                 reportFailure(error, context: "Shared Margins package could not be opened")
             }
         }
@@ -269,7 +269,7 @@ extension Gate1AppModel {
                 }
                 self.diagnostics["localAudioSkim:\(itemId)"] = "ready"
             } catch {
-                self.diagnostics["localAudioSkim:\(itemId)"] = "failed:\(error.localizedDescription)"
+                self.diagnostics["localAudioSkim:\(itemId)"] = "failed:\(SafeErrorText.describe(error))"
                 self.reportWarning("Some Skim summaries are not ready. Reopen the item to retry, or reimport the package to restore its supplied voices.")
             }
             // A pass that stops early may still have adopted supplied summaries; Skim reads what was committed (#2184),

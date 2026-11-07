@@ -45,8 +45,8 @@ public struct MarginMomentAnchor: Sendable, Equatable {
 /// playback reaches it, then keep listening and play the listener's other Margins on the item as they come up.
 ///
 /// "Review new Margins" (#474) runs the same machine over an ordered list of shared Margins: a short lead-in, the
-/// Margin, then the episode plays on from where the Margin was (the listener's Next Margin button hops to the next
-/// lead-in; nothing hops by itself). At the end the episode keeps playing from the last Margin, unless the
+/// Margin, then the episode plays on from where the Margin was (between Margins the listener's Next Margin button hops to
+/// the next lead-in; nothing hops by itself, and "Skip this Margin" while a voice sounds only ends the voice). At the end the episode keeps playing from the last Margin, unless the
 /// listener's own place was beyond it, and then the source goes back there.
 ///
 /// This is the whole state machine. The app supplies progress ticks and plays the voices.

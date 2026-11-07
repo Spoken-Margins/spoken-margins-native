@@ -88,7 +88,7 @@ final class SharedLinkVoiceover {
             note("saved")
             PublisherAudioTextMapper.start(audio, store: store, transcriber: transcriber) { note($0) }
         } catch {
-            note("failed:\(String(describing: error))")
+            note("failed:\(SafeErrorText.describe(error))")
         }
     }
 

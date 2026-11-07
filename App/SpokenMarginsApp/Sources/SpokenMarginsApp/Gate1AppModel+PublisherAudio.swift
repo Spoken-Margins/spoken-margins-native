@@ -115,7 +115,7 @@ extension Gate1AppModel {
             snapshot = try applyPreferredPlaybackRate(to: switched, engine: engine)
             diagnostics["publisherVoiceSwitch"] = "\(itemId): switched_to_publisher_voice"
         } catch {
-            diagnostics["publisherVoiceSwitch"] = "\(itemId): failed:\(error.localizedDescription)"
+            diagnostics["publisherVoiceSwitch"] = "\(itemId): failed:\(SafeErrorText.describe(error))"
         }
     }
 

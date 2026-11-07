@@ -20,7 +20,7 @@ extension Gate1AppModel {
             handoff = try await readablePageExtractor.extract(url: url)
         } catch {
             if error is URLError { throw error } // offline and timeouts get the connection message
-            diagnostics["lastSharedArticleAcquisition"] = "failed:\(error.localizedDescription)"
+            diagnostics["lastSharedArticleAcquisition"] = "failed:\(SafeErrorText.describe(error))"
             throw SessionKitError.persistenceFailed("shared_article_unreadable")
         }
         guard SharedArticleReferencePolicy.fetchedPageIsTheSharedArticle(
