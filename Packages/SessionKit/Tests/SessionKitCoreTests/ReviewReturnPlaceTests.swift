@@ -126,4 +126,83 @@ final class ReviewReturnPlaceTests: XCTestCase {
             XCTAssertEqual(places.owed(itemId: "ep")?.returnToMediaTimeMs, 12_000)
         }
     }
+
+    // MARK: #3626 — a Margin whose voice never starts, and a catch-up review
+
+    /// The sequence once playback has reached its first Margin: the Margin has the floor, though no voice has started.
+    private func reachingTheFirstMargin(_ sequence: MarginMomentSequence) throws -> MarginMomentSequence {
+        var reached = sequence
+        let first = try XCTUnwrap(sequence.unplayed.first)
+        XCTAssertNotNil(reached.progressed(from: first.mediaTimeMs - 1_000, to: first.mediaTimeMs + 100))
+        XCTAssertTrue(reached.hasReachedAMargin)
+        return reached
+    }
+
+    func testNothingChangesBeforeAMarginIsReached() throws {
+        let sequence = review(returnTo: 2_000, margins: [60_000, 200_000])
+        let place = try XCTUnwrap(ReviewReturnPlace(sequence: sequence))
+        XCTAssertEqual(place.standing(whenReviewIs: sequence), .owed(place), "the first lead-in still owes the place")
+        XCTAssertTrue(place.needsRestoring(from: sequence.startMediaTimeMs), "a relaunch during the first lead-in goes back")
+    }
+
+    /// The Margin's voice is unplayable, or iOS ends the app during the chime: `onVoiceStarted` never runs, but the Margin
+    /// has had the floor, and the place is let go all the same.
+    func testAMarginThatHasTheFloorReleasesThePlaceEvenIfItsVoiceNeverStarts() throws {
+        let sequence = try reachingTheFirstMargin(review(returnTo: 2_000, margins: [60_000, 200_000]))
+        XCTAssertTrue(sequence.isPlayingMargin)
+        let place = try XCTUnwrap(ReviewReturnPlace(sequence: review(returnTo: 2_000, margins: [60_000, 200_000])))
+        XCTAssertEqual(place.standing(whenReviewIs: sequence), .released)
+        XCTAssertTrue(place.needsRestoring(from: 90_000), "what a relaunch would have done to a listener who had played on")
+    }
+
+    func testAPlaceBetweenTwoMarginsIsNotRestoredOnceTheEpisodePassedIt() throws {
+        // Margins at 1:00 and 3:20, the listener's place 1:40: the review pulls them back to catch up.
+        let start = review(returnTo: 100_000, margins: [60_000, 200_000])
+        let place = try XCTUnwrap(ReviewReturnPlace(sequence: start))
+        guard case .owed(let afterFirst) = place.standing(whenReviewIs: try reachingTheFirstMargin(start)) else {
+            return XCTFail("the place is ahead of the first Margin, so it stays owed")
+        }
+        XCTAssertEqual(afterFirst.passedAMargin, true)
+        XCTAssertEqual(afterFirst.returnToMediaTimeMs, 100_000)
+        XCTAssertFalse(afterFirst.needsRestoring(from: 150_000), "the episode played on past the place: stays, as Stop would")
+        XCTAssertFalse(afterFirst.needsRestoring(from: 100_000 + 5_000))
+        XCTAssertTrue(afterFirst.needsRestoring(from: 80_000), "still catching up: goes back to the place")
+        XCTAssertFalse(afterFirst.needsRestoring(from: 100_000 + ReviewReturnPlace.alreadyThereMs), "already there")
+        XCTAssertFalse(afterFirst.needsRestoring(from: afterFirst.stretchEndMs + 1), "outside the stretch is the listener's own")
+        XCTAssertFalse(afterFirst.needsRestoring(from: afterFirst.stretchStartMs - 1), "outside the stretch is the listener's own")
+        XCTAssertTrue(place.needsRestoring(from: 150_000), "the note before a Margin is reached still goes back: the hop moved it")
+    }
+
+    func testTheNextMarginPastThePlaceReleasesTheCatchUpNote() throws {
+        var sequence = review(returnTo: 100_000, margins: [60_000, 200_000])
+        let place = try XCTUnwrap(ReviewReturnPlace(sequence: sequence))
+        sequence = try reachingTheFirstMargin(sequence)
+        guard case .owed(let afterFirst) = place.standing(whenReviewIs: sequence) else { return XCTFail("still owed") }
+        sequence.marginFinished(sourceAtMediaTimeMs: 61_000)
+        XCTAssertEqual(afterFirst.standing(whenReviewIs: sequence), .owed(afterFirst), "between Margins nothing changes")
+        XCTAssertNotNil(sequence.progressed(from: 199_000, to: 200_100))
+        XCTAssertEqual(afterFirst.standing(whenReviewIs: sequence), .released, "the 3:20 Margin is past the place")
+    }
+
+    /// A note saved by an earlier build has no `passedAMargin`: it decodes, and keeps the rule it always had.
+    func testANoteSavedByAnEarlierBuildStillDecodes() throws {
+        let old = Data(#"{"itemId":"ep","returnToMediaTimeMs":12000,"stretchStartMs":0,"stretchEndMs":40000}"#.utf8)
+        let place = try JSONDecoder().decode(ReviewReturnPlace.self, from: old)
+        XCTAssertNil(place.passedAMargin)
+        XCTAssertTrue(place.needsRestoring(from: 30_000))
+        let again = try JSONDecoder().decode(ReviewReturnPlace.self, from: JSONEncoder().encode(place))
+        XCTAssertEqual(again, place)
+    }
+
+    func testAPassedMarginSurvivesALaunch() throws {
+        let start = review(returnTo: 100_000, margins: [60_000, 200_000])
+        let place = try XCTUnwrap(ReviewReturnPlace(sequence: start))
+        guard case .owed(let passed) = place.standing(whenReviewIs: try reachingTheFirstMargin(start)) else { return XCTFail() }
+        try withIsolatedDefaults { defaults in
+            ReviewReturnPlaces(defaults: defaults).owe(passed)
+            let reloaded = try XCTUnwrap(ReviewReturnPlaces(defaults: defaults).owed(itemId: "ep"))
+            XCTAssertEqual(reloaded.passedAMargin, true)
+            XCTAssertFalse(reloaded.needsRestoring(from: 150_000))
+        }
+    }
 }
