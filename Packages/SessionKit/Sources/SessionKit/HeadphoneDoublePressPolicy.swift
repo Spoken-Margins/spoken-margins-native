@@ -3,8 +3,10 @@ import Foundation
 /// What a headphone double-press does while nothing is recording (#2031). Stored as a raw string in
 /// UserDefaults under `storageKey`, never in the database, so older builds are unaffected. Add a Margin is
 /// opt-in (owner, 2026-10-30, #2957): a missing or unreadable value means skip forward, and only a stored
-/// `addMargin` turns it on. A headphone press can't end a recording: with the microphone open the headset
-/// is in call mode and a press is its mute, so Settings says so.
+/// `addMargin` turns it on. A single headphone press never ends a recording: with the microphone open the headset
+/// is in call mode and a press is its mute. A double press is meant to (owner, 2026-11-07, #3650): next track
+/// ends it here, and `HeadphoneMuteGestureDetector` reads two mute changes as the same press. Whether iOS
+/// delivers either is unverified until a device log shows it, so Settings still names the other ways to end one.
 public enum HeadphoneDoublePressAction: String, CaseIterable, Equatable, Sendable {
     case addMargin
     case skipForward

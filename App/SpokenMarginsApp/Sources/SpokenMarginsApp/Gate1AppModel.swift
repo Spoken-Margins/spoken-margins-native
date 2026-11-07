@@ -240,6 +240,8 @@ final class Gate1AppModel: ObservableObject {
     @Published private(set) var offlineStorageSnapshot = OfflineStorageSnapshot()
     @Published var recordingCaptureHealth: MarginCaptureSupervisor.Health = .capturing // written by Gate1AppModel+MarginCapture only
     var captureWatcher = MarginCaptureWatcher()
+    /// Logs the headphone events of a spoken Margin's recording and ends it on a mute double press (#3650, `Gate1AppModel+HeadphoneEndGesture.swift`).
+    lazy var headphoneEndGestureMonitor = makeHeadphoneEndGestureMonitor()
     /// The capture state (#993): its values reach views under their old names (`Gate1AppModel+MarginCapture.swift`), and its changes are forwarded here before they happen.
     private var marginCaptureObservation: AnyCancellable?
     private(set) lazy var marginCapture: MarginCaptureCoordinator = {

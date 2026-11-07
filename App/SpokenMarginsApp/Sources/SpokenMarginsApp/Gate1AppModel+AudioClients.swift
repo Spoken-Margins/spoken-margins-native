@@ -375,6 +375,9 @@ extension Gate1AppModel {
                 }
             }
         }
+        client.remoteCommandArrivalHandler = { [weak self] name in
+            Task { @MainActor [weak self] in self?.noteRemoteCommandArrival(name) }
+        }
         client.nextTrackHandler = { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self else { return }

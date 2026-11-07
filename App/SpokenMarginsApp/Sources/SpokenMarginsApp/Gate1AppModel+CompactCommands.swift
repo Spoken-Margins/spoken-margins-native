@@ -71,11 +71,16 @@ extension Gate1AppModel {
                 "recordingMs": String(recordingMs),
                 "sinceRouteChangeMs": sinceRouteChangeMs.map(String.init) ?? "none",
                 "handsFreeInput": onHandsFree ? "true" : "false",
+                "doublePress": origin.hasSuffix(HeadphoneRemoteSignal.nextTrackOriginSuffix) ? "true" : "false",
                 "appState": Gate2AppState.isInBackground() ? "background" : "foreground",
                 "lowPowerMode": String(ProcessInfo.processInfo.isLowPowerModeEnabled),
             ]
+            // A headphone double press arrives as next track. A single press never ends a Margin on a hands-free
+            // input (owner, 2026-11-07, #3650), so the guard has to be told which this is.
+            let isDoublePress = origin.hasSuffix(HeadphoneRemoteSignal.nextTrackOriginSuffix)
             let verdict = RecordingTransportGuard.verdict(
-                command: command, recordingMs: recordingMs, sinceRouteChangeMs: sinceRouteChangeMs, onHandsFreeProfile: onHandsFree
+                command: command, recordingMs: recordingMs, sinceRouteChangeMs: sinceRouteChangeMs,
+                onHandsFreeProfile: onHandsFree, isDoublePress: isDoublePress
             )
             if case .ignore(let reason) = verdict {
                 recordDeveloperDiagnostic("transport.ignored_during_recording", context.merging(["reason": reason.rawValue]) { $1 })

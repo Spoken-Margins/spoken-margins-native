@@ -1827,6 +1827,10 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, HeardAudio
     /// A headphone double-press arrives as next track. When set, it gets the press instead of skip forward,
     /// so the app can add a Margin by the listener's setting (#2031). Skip forward stays skip forward.
     public var nextTrackHandler: (@Sendable () -> Void)?
+    /// Told the name of every system remote command that arrives (play, pause, togglePlayPause, stop, skipBackward,
+    /// previousTrack, skipForward, nextTrack, ...), before it is handled. For the Diagnostics log of a recording's
+    /// headphone events (#3650); it changes nothing about how the command is answered.
+    public var remoteCommandArrivalHandler: (@Sendable (String) -> Void)?
     private let interruptionHandler: (@Sendable (AudioPlaybackInterruptionEvent) -> Void)?
     private let audioSessionNotificationCenter: NotificationCenter
     private var mediaContext: PlaybackMediaContext?
@@ -3255,8 +3259,23 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, HeardAudio
         _ command: MPRemoteCommand,
         handler: @escaping (MPRemoteCommandEvent) -> MPRemoteCommandHandlerStatus
     ) {
-        let target = command.addTarget(handler: handler)
+        let name = Self.remoteCommandName(command)
+        let target = command.addTarget { [weak self] event in
+            self?.remoteCommandArrivalHandler?(name)
+            return handler(event)
+        }
         remoteCommandTargets.append((command, target))
+    }
+
+    private static func remoteCommandName(_ command: MPRemoteCommand) -> String {
+        let center = MPRemoteCommandCenter.shared()
+        let known: [(String, MPRemoteCommand)] = [
+            ("play", center.playCommand), ("pause", center.pauseCommand), ("togglePlayPause", center.togglePlayPauseCommand),
+            ("stop", center.stopCommand), ("skipBackward", center.skipBackwardCommand), ("skipForward", center.skipForwardCommand),
+            ("previousTrack", center.previousTrackCommand), ("nextTrack", center.nextTrackCommand),
+            ("changePlaybackPosition", center.changePlaybackPositionCommand), ("changePlaybackRate", center.changePlaybackRateCommand),
+        ]
+        return known.first { $0.1 === command }?.0 ?? "other"
     }
 
     private func removeRemoteCommandHandlers() {
