@@ -13,7 +13,7 @@ import SessionKit
 /// own Margin follows with the shared-Margin chime (or, for a written one, "Cole wrote:"), so a synthetic voice never
 /// passes for the sender's own (owner, 2026-11-02, #3247).
 public enum CantPlayListening {
-    /// How the voice introduces a quote. DESIGN QUESTION on #3392: new spoken words the owner will hear.
+    /// How the voice introduces a quote (owner's wording, 2026-11-06, #3392).
     public static let quoteIntro = "The episode says:"
     /// A quote longer than this is cut at a word, so the words before a Margin never run for minutes.
     public static let longestQuoteCharacters = 240

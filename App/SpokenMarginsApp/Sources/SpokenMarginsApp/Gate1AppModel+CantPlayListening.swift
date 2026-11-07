@@ -113,17 +113,15 @@ extension Gate1AppModel {
         for beat in beats { heard[beat.marginId] = beat.entry.interjection }
         startMarginMoment(sequence: sequence, voiceURLs: files, title: "New Margins", isApproximate: false)
         guard let conductor = marginMomentConductor else { return }
-        // Default until the owner answers (#3392): nothing is marked heard. A start that timed out on a weak signal fails
-        // the same way a removed episode does, and a Margin marked heard is gone from the listener's new Margins for good.
-        // To mark Margins heard when their voice starts, set `conductor.onVoiceStarted` here to
-        // `{ [weak self] id in if let margin = heard[id] { self?.markSharedMarginHeard(margin) } }`.
+        // Nothing is marked heard (owner, 2026-11-06, #3392). A start that timed out on a weak signal fails the same way a
+        // removed episode does, and a Margin marked heard is gone from the listener's new Margins for good.
         conductor.chimedMarginIds = Set(beats.filter { !$0.entry.layer.isMuted }.map(\.marginId))
         conductor.onChimeStarted = { [weak self] in self?.diagnostics["marginMoment.chime"] = "played:\($0)" }
         // Words that can't be read are passed over without a word: the Margin follows at once. A recording that can't
         // play says so.
         conductor.onVoiceUnavailable = { [weak self] id, reason in
             self?.diagnostics["marginMoment.voiceUnavailable"] = "\(id):\(reason)"
-            guard let margin = heard[id], margin.audioPath != nil else { return }
+            guard let margin = heard[id], SharedMarginAudio.isRecording(margin) else { return }
             self?.reportWarning(SharedMarginAudio.unavailableWords(for: margin))
         }
         // A written Margin whose reading fails says what a written Margin's failure says, never "set not to be read".
