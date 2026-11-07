@@ -40,12 +40,6 @@
   },
   {
    "kind": "voiceover",
-   "text": "Opens item details and listening-session history",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "voiceover",
    "text": "Opens the item.",
    "count": 3,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
