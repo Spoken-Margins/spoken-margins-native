@@ -36,6 +36,8 @@ final class FirstRunVoiceDownloader {
         guard let voices else { return }
         let (termsAccepted, choice) = context()
         await voices.reload()
+        // A Stop in Voices during the reload clears the due key: that is the listener saying no (#2250 sibling).
+        guard isDue else { return stopWatching() }
         let row = voices.rows.first { $0.id == ReadingVoiceChoice.phononVoiceId }
         if FirstRunVoiceDefault.isSettled(choice: choice, state: row?.state) {
             defaults.removeObject(forKey: FirstRunVoiceDefault.downloadDueKey)
