@@ -132,11 +132,10 @@ extension Gate1AppModel {
         // Each Margin's recording, or its reading (rendered now if need be), from `SharedMarginAudio` (#3365, #3412).
         voiceURLs.merge(WrittenMarginReadings.startingReview(for: entries, voiceFile: resolvedApplicationSupportAssetURL(for:))) { voice, _ in voice }
         startMarginMoment(sequence: sequence, voiceURLs: voiceURLs, title: "New Margins", isApproximate: false)
-        let margins = Dictionary(steps.map { ($0.anchor.marginId, $0.anchor.mediaTimeMs) }, uniquingKeysWith: { first, _ in first })
         marginMomentConductor?.onVoiceStarted = { [weak self] in
             if let margin = heard[$0] { self?.markSharedMarginHeard(margin) }
-            if let at = margins[$0] { self?.releaseReviewPlace(itemId: itemId, onceMarginPlaysAt: at) }
         }
+        settleReviewPlaceAsTheReviewProgresses(itemId: itemId)
         // Their voices get the same chime as the automatic prompt, except for a muted layer's (#932).
         marginMomentConductor?.chimedMarginIds = SharedMarginReview.chimedMarginIds(steps)
         marginMomentConductor?.onChimeStarted = { [weak self] in self?.diagnostics["marginMoment.chime"] = "played:\($0)" }
@@ -145,12 +144,30 @@ extension Gate1AppModel {
         screen = .playback
     }
 
+    /// The review's note of the listener's place follows the review: a Margin has the floor once the sequence says so,
+    /// whether or not its voice ever starts (an unplayable voice, a chime still sounding), and that is what matters to a
+    /// relaunch (#3626). So it is read on every change of the sequence, not from the voice's start.
+    private func settleReviewPlaceAsTheReviewProgresses(itemId: String) {
+        guard let conductor = marginMomentConductor else { return }
+        let existing = conductor.onChange
+        conductor.onChange = { [weak self, weak conductor] in
+            if let self, let conductor, self.marginMomentConductor === conductor {
+                self.settleReviewPlace(itemId: itemId, reviewIs: conductor.sequence)
+            }
+            existing?()
+        }
+    }
+
     /// Once a Margin of the review has the floor, the episode plays on from it, so the saved session is the listener's own
     /// listening and a relaunch must not hand back the place the review started from. The note stays only for a listener
-    /// whose place was ahead of the Margin (`ReviewReturnPlace.isOwed(onceMarginAt:)`, audit of #3619).
-    func releaseReviewPlace(itemId: String, onceMarginPlaysAt marginMediaTimeMs: Int) {
-        guard let place = reviewPlaces.owed(itemId: itemId), !place.isOwed(onceMarginAt: marginMediaTimeMs) else { return }
-        reviewPlaces.clear(itemId: itemId)
+    /// whose place was ahead of the Margin, and then only to bring back a position still behind it
+    /// (`ReviewReturnPlace.standing(whenReviewIs:)`, audit of #3619).
+    func settleReviewPlace(itemId: String, reviewIs sequence: MarginMomentSequence) {
+        guard sequence.hasReachedAMargin, sequence.playing != nil, let place = reviewPlaces.owed(itemId: itemId) else { return }
+        switch place.standing(whenReviewIs: sequence) {
+        case .owed(let kept): if kept != place { reviewPlaces.owe(kept) }
+        case .released: reviewPlaces.clear(itemId: itemId)
+        }
     }
 
     /// Stop on the review card: the voice stops and the item goes back to where the listener left off, paused.
