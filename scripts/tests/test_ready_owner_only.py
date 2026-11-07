@@ -42,6 +42,18 @@ class Wording(unittest.TestCase):
             "Waiting only on the owner's check": True,
             "just waiting on his phone check": True,
             'Merged in #3403.\n\nOwner only.': True,
+            "the only thing left is the owner's check": True,
+            "Remaining: owner's phone check.": True,
+            # more work named: not "only"
+            "Only the owner's check is left on the fix; the sibling slice is still to build.": False,
+            "The owner's check is the only thing left, plus tests.": False,
+            "Only the owner's check is left? No, tests are still missing.": False,
+            "Only the owner's check is left, and the export step.": False,
+            'Hand back: owner-only items are listed in #12, the rest is mine.': False,
+            'Claimed. Owner only needs to tap once I merge, but the code is still to do.': False,
+            'Is this owner-only? No.': False,
+            'I am not sure this is owner only.': False,
+            'Owner only if the export works.': False,
             # look-alikes that must stay `ready`
             'Owner check: none. Leave this off the owner\'s plans.': False,
             "The owner's check is one item of three; the other two are code.": False,
@@ -152,12 +164,30 @@ class Apply(unittest.TestCase):
         api = FakeApi(self.issues, self.comments)
         guard.reconcile(api, apply=True)
         self.assertEqual(api.writes, [
-            ('POST', 'issues/1/comments', {'body': guard.COMMENT}),
             ('POST', 'issues/1/labels', {'labels': [guard.VALIDATION]}),
             ('DELETE', 'issues/1/labels/ready'),
-            ('POST', 'issues/3/comments', {'body': guard.COMMENT}),   # already carries a validation label: not added again
-            ('DELETE', 'issues/3/labels/ready'),
+            ('POST', 'issues/1/comments', {'body': guard.COMMENT}),   # labels first, comment last
+            ('DELETE', 'issues/3/labels/ready'),   # already carries a validation label: not added again
+            ('POST', 'issues/3/comments', {'body': guard.COMMENT}),
         ])
+
+    def test_a_failure_before_the_comment_is_found_again_next_pass(self):
+        class Fails(FakeApi):
+            def delete(self, path):
+                raise sm_status.GitHubError('HTTP 502')
+        api = Fails(self.issues, self.comments)
+        report = guard.reconcile(api, apply=True)
+        self.assertEqual([u['issue'] for u in report['unknown']], [1, 3])
+        self.assertNotIn('comments', ' '.join(w[1] for w in api.writes if w[0] == 'POST'))   # no comment, so no marker
+        self.assertEqual(guard.reconcile(api)['flagged'], [1, 3])
+
+    def test_a_comment_from_an_untrusted_poster_is_reported(self):
+        class Untrusted(FakeApi):
+            def post(self, path, body):
+                super().post(path, body)
+                return comment(body['body'], association='NONE', login='someone') if path.endswith('/comments') else None
+        report = guard.reconcile(Untrusted(self.issues, self.comments), apply=True)
+        self.assertEqual([u['issue'] for u in report['unknown']], [1, 3])
 
     def test_a_second_pass_does_nothing(self):
         api = FakeApi(self.issues, self.comments)

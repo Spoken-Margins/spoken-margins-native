@@ -10,7 +10,7 @@ on it sends a thread to an issue it can only hand back, and keeps the check off 
 For each open issue (pull requests are skipped) that carries `ready`, the newest comment from a trusted author
 (scripts/comment_trust.py: a stranger's comment is data and is skipped, whatever it says) is read:
   - it says "owner only", or names only the owner's check as what is left: `ready` comes off, the issue gets
-    `status: needs-human-validation` (unless it already carries a validation label) and one comment saying why;
+    `status: needs-human-validation` (unless it already carries a validation label) and one comment saying why, in that order (labels first, comment last);
   - anything else, including an issue with no comment: nothing happens.
 
 The comment carries a marker. When the newest trusted comment is that comment, the guard has already acted and
@@ -56,19 +56,35 @@ _THATS = r"(?:that(?:'s|\u2019s|[ \t]+is)[ \t]+)?"
 
 # Each pattern is one way a comment says "nothing is left but the owner". They are matched case-insensitively on
 # one line at a time, after the body's code spans and quoted lines are removed (quoting is not a statement).
+BARE = re.compile(r"\bowner[ \t]*[-\u2011\u2013]?[ \t]*only\b", re.I)   # only as a short statement of its own
+BARE_WORDS = 7
 PATTERNS = (
-    re.compile(r"\bowner[ \t]*[-\u2011\u2013]?[ \t]*only\b", re.I),
     re.compile(rf"\bonly[ \t]+{_OWNER}[ \t]+{_CHECK}[ \t]+{_IS}(?:what(?:'s|\u2019s|[ \t]+is)[ \t]+)?{_LEFT}\b", re.I),
     re.compile(rf"\b(?:all|everything)[ \t]+{_THATS}{_LEFT}[ \t]+is[ \t]+{_OWNER}[ \t]+{_CHECK}\b", re.I),
     re.compile(rf"\b(?:nothing|no[ \t]+work)[ \t]+{_LEFT}[ \t]+(?:but|except|besides|apart[ \t]+from)[ \t]+{_OWNER}[ \t]+{_CHECK}\b", re.I),
     re.compile(rf"\b{_OWNER}[ \t]+{_CHECK}[ \t]+is[ \t]+(?:all|the[ \t]+only[ \t]+(?:thing|step|item))[ \t]+{_THATS}{_LEFT}\b", re.I),
     re.compile(rf"\b(?:waiting|waits)[ \t]+(?:only|just)[ \t]+(?:on|for)[ \t]+{_OWNER}[ \t]+{_CHECK}\b", re.I),
     re.compile(rf"\b(?:only|just)[ \t]+(?:waiting|waits)[ \t]+(?:on|for)[ \t]+{_OWNER}[ \t]+{_CHECK}\b", re.I),
+    re.compile(rf"\bthe[ \t]+only[ \t]+(?:thing|step|item)[ \t]+{_LEFT}[ \t]+is[ \t]+{_OWNER}[ \t]+{_CHECK}\b", re.I),
+    re.compile(rf"\b(?:remaining|left)[ \t]*:[ \t]*{_OWNER}[ \t]+{_CHECK}\b", re.I),
 )
+# What follows a match may name more work, which makes it no longer "only": "...is left; the export step is still
+# to build", "... plus tests", "... left? No." A trailing question mark or any of these ends the claim.
+QUALIFIED = re.compile(r"[;,:?]|\b(?:but|plus|and|also|still|except|however|though|although|yet|if)\b", re.I)
 # "not owner only", "isn't only the owner's check left": a negation right before the match turns it round.
 NEGATED = re.compile(r"(?:\bnot|\bno[ \t]+longer|\bnever|n't|n\u2019t)[ \t]+(?:just[ \t]+)?$", re.I)
 CODE_SPAN = re.compile(r"```.*?```|`[^`\n]*`", re.S)
 QUOTE_LINE = re.compile(r"^[ \t]*>")
+
+
+def _bare_statement(sentence: str) -> bool:
+    """"Owner only." as a sentence of its own: a few words, no question and no qualifier ("owner-only items are in
+    #12, the rest is mine", "is this owner-only?" and "owner only needs to tap, but the code is to do" are not it)."""
+    match = BARE.search(sentence)
+    if not match or NEGATED.search(sentence[:match.start()]):
+        return False
+    words = re.findall(r"[\w'\u2019-]+", sentence)
+    return len(words) <= BARE_WORDS and not QUALIFIED.search(sentence) and not re.search(r"\bitems?\b|\bneeds?\b|\bdecisions?\b", sentence, re.I)
 
 
 def says_owner_only(body: str | None) -> bool:
@@ -77,9 +93,12 @@ def says_owner_only(body: str | None) -> bool:
     for line in text.splitlines():
         if QUOTE_LINE.match(line):
             continue
+        for sentence in re.split(r"(?<=[.!])[ \t]+|;", line):
+            if _bare_statement(sentence):
+                return True
         for pattern in PATTERNS:
             for match in pattern.finditer(line):
-                if not NEGATED.search(line[:match.start()]):
+                if not NEGATED.search(line[:match.start()]) and not QUALIFIED.search(line[match.end():]):
                     return True
     return False
 
@@ -113,9 +132,9 @@ def reconcile(api, apply: bool = False) -> dict:
                 continue
             report['flagged'].append(number)
             if apply:
-                # Comment first, labels last: a failure in between retries on the next pass, and the marker keeps
-                # that retry from posting twice (the guard stays out once its own comment is the newest).
-                api.post(f'issues/{number}/comments', {'body': COMMENT})
+                # Labels first, comment last: a failure before the comment leaves `ready` on and no comment, so the
+                # next pass finds the issue again; the comment is what stops a repeat, so it goes only when the
+                # labels are done (a failure after it costs a missing comment, nothing more).
                 if not VALIDATION_LABELS & {label.get('name') for label in issue.get('labels') or []}:
                     api.post(f'issues/{number}/labels', {'labels': [VALIDATION]})
                 try:
@@ -123,6 +142,11 @@ def reconcile(api, apply: bool = False) -> dict:
                 except sm_status.GitHubError as error:
                     if 'HTTP 404' not in str(error):   # 404: someone took `ready` off first
                         raise
+                posted = api.post(f'issues/{number}/comments', {'body': COMMENT})
+                if isinstance(posted, dict) and not comment_trust.trusted(posted):
+                    # The comment is what stops a second pass on an issue the owner puts `ready` back on; one from an
+                    # author we don't trust can't, so say so rather than repeat every hour.
+                    report['unknown'].append({'issue': number, 'reason': 'the guard\'s comment was posted by an author comment_trust does not trust'})
         except (sm_status.GitHubError, KeyError, TypeError, ValueError, OSError) as error:
             report['unknown'].append({'issue': number, 'reason': str(error)})
     return report
