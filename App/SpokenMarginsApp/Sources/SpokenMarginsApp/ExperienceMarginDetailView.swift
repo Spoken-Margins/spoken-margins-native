@@ -220,7 +220,7 @@ struct ExperienceMarginDetailView: View {
 
 /// Keep activation visible after a quick tap, including when the action performs
 /// synchronous model work. A completion toast is a separate acknowledgement.
-private struct MarginDetailActionButtonStyle: PrimitiveButtonStyle {
+struct MarginDetailActionButtonStyle: PrimitiveButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         MarginDetailActionButton(configuration: configuration)
     }
