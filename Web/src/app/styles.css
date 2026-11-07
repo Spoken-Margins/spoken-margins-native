@@ -1260,26 +1260,40 @@ button:disabled {
 }
 
 .open-link input,
-.share-link-row input {
-  flex: 1;
-  min-width: 0;
-  min-height: 44px;
-  padding: 0 12px;
-  border-radius: 12px;
-  border: 1.5px solid var(--rule);
-  background: var(--surface);
-}
-
-.share-link-row {
-  display: grid;
-  gap: 6px;
-}
-
 /* Sharing an episode's Margins as a file. */
 .share-margins {
   display: grid;
   gap: 10px;
   padding-top: 6px;
+}
+
+/* "Send replies to <friend>": the listener's Margins to pick from (#2168). */
+.reply-back {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.reply-back legend {
+  padding: 0;
+  font-weight: 600;
+}
+
+.reply-back-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.reply-back-list label {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  min-height: 44px;
 }
 
 .share-actions {

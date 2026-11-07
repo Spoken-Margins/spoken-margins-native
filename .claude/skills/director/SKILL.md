@@ -27,8 +27,9 @@ Then tell the owner, in a few lines: the tracking issue link, which sessions you
 
 - **When you find a rule you're breaking, fix it in the same reply, or ask the owner in that reply.** Writing a memory note or a lesson is not a fix. This is the failure this skill exists for.
 - **Don't read files, diffs, logs or issue bodies yourself, apart from step 1.** Helpers return under 300 words. Your context is what keeps the run coherent, and the tracking issue is its outside memory.
+- **Read every status comment at each pace re-read, the cloud lead's included.** A cloud lead can't message you, and the app can pause any session's messages, so its question may only be on its comment (on 2026-11-06 one waited 7.5 hours).
 - **Answer managed threads at your next turn.** Search `docs/decisions.md` before you take a question to the owner. Pass him only the questions that are his to answer.
-- **Archive a managed session once its final status is on the tracking issue** and its PR is open and armed, or handed back. Don't ask first (2026-11-04 in `docs/decisions.md`). A standing Test Desk is an exception; it keeps running.
+- **Archive a managed session once its final status is on the tracking issue** and its rollup has merged or been handed back. Don't ask first (2026-11-04 in `docs/decisions.md`). Armed isn't enough: on 2026-11-06 the audit held two armed rollups after their leads were archived, and nobody was left to fix them. A standing Test Desk is an exception; it keeps running.
 - **Never hand directing to a card or a child session.** Anything you start is managed, not a director. If you have to stop, write the hand-off on the tracking issue and tell the owner to type `/director` in a new top-level session, followed by the issue number.
 - **Before you say something is on the owner's phone, check the phone build.** Look at `~/SpokenMargins-phone/source` (`hosted` or `mac`), the commit that build was made from, and its build flags. A feature behind a flag isn't on his phone just because its code is on `main`.
 

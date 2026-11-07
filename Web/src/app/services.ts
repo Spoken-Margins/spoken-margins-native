@@ -2,7 +2,6 @@
 // No component imports those modules directly, so a test or a later swap changes only this file.
 import { readPacket } from '../packet/read.ts';
 import { recordVoiceMargin } from '../packet/record.ts';
-import { SHARE_LINKS_ENABLED, uploadLink, type LinkPreview } from '../packet/share-link.ts';
 import { writePacket } from '../packet/write.ts';
 import { readFeed, readSubstackVoice, searchPodcasts } from '../sources/index.ts';
 import { downloadSizeLabel } from '../transcribe/catalog.ts';
@@ -66,12 +65,3 @@ const packets: PacketPort = {
 const transcriber: TranscriberPort = Object.assign(createTranscriber(), { sizeLabel: downloadSizeLabel() });
 
 export const services: Services = { sources, recorder, packets, transcriber };
-
-/**
- * Making share links (#3003): offered only by a build with SHARE_LINKS_ENABLED, which every hosted build leaves
- * off until the DMCA designated agent is registered (owner, 2026-10-20 and 2026-10-30), and only with a link
- * server to upload to. Opening a link needs neither: it reads from the link's own server.
- */
-export const SHARE_LINKS_OFFERED: boolean = SHARE_LINKS_ENABLED && RELAY_ORIGIN !== '';
-
-export const uploadShareLink = (packet: Uint8Array, preview: LinkPreview) => uploadLink(packet, preview, { server: RELAY_ORIGIN });

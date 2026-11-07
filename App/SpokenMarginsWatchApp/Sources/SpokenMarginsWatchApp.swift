@@ -27,8 +27,12 @@ struct SpokenMarginsWatchApp: App {
         }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
-            case .active: WatchLink.shared.appBecameActive()
-            case .background: WatchLink.shared.appWentToBackground()
+            case .active:
+                WatchDiagnostics.becameActive()
+                WatchLink.shared.appBecameActive()
+            case .background:
+                WatchDiagnostics.wentToBackground()
+                WatchLink.shared.appWentToBackground()
             default: break
             }
         }
@@ -39,7 +43,11 @@ struct SpokenMarginsWatchApp: App {
 /// screen first appears (DESIGN section 9, changes point 10).
 final class WatchAppDelegate: NSObject, WKApplicationDelegate {
     func applicationDidFinishLaunching() {
-        MainActor.assumeIsolated { WatchLink.shared.activate() }
+        WatchDiagnostics.installExceptionHandler()
+        MainActor.assumeIsolated {
+            WatchDiagnostics.launched() // before anything else can fail (#3506)
+            WatchLink.shared.activate()
+        }
     }
 
     func handle(_ backgroundTasks: Set<WKRefreshBackgroundTask>) {

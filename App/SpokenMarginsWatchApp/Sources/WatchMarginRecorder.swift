@@ -73,6 +73,7 @@ final class WatchMarginRecorder: ObservableObject {
             choiceWasShown = link.nowPlaying(now: now) != nil
             state = .recording(since: now)
         } catch {
+            WatchDiagnostics.failed("recordingStartFailed", error: error)
             state = .failed(ListenerErrorText.line(prefix: "Couldn't start recording:", error: error))
         }
     }
@@ -86,6 +87,7 @@ final class WatchMarginRecorder: ObservableObject {
         let finished = await capture.stop()
         resumePhone(after: plan)
         guard let finished else {
+            WatchDiagnostics.failed("recordingNotSaved")
             state = .failed("The recording didn't save.")
             return
         }

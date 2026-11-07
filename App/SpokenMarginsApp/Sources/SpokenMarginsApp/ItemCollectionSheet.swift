@@ -30,7 +30,7 @@ struct ItemCollectionSheet: View {
                                 Text(collection.name).foregroundStyle(AppColors.text)
                                 Spacer()
                                 if collection.itemIDs.contains(item.id) {
-                                    Image(systemName: "checkmark").foregroundStyle(AppColors.ochre)
+                                    Image(systemName: "checkmark").foregroundStyle(AppColors.ochreText)
                                 }
                             }
                             .contentShape(Rectangle())
@@ -43,7 +43,7 @@ struct ItemCollectionSheet: View {
                         }
                         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                             Button("Delete", role: .destructive) { delete(collection) }
-                            Button("Rename") { beginRename(collection) }.tint(AppColors.ochre)
+                            Button("Rename") { beginRename(collection) }.tint(AppColors.ochreText)
                         }
                     }
                 } header: {

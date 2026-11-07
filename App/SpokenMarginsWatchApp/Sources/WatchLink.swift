@@ -83,6 +83,7 @@ final class WatchLink: NSObject, ObservableObject {
 
     private func becameActiveNow() {
         sayHello()
+        sendDiagnosticsIfDue()
         sendDue()
         retryLoop?.cancel()
         retryLoop = Task { [weak self] in
@@ -269,6 +270,22 @@ final class WatchLink: NSObject, ObservableObject {
         }, errorHandler: onError)
     }
 
+    /// The Watch's own record of launches and failures (#3506), whenever it holds something the phone hasn't seen.
+    /// Sent on the sure lane and the fast lane like every message; the phone keeps only the latest.
+    private func sendDiagnosticsIfDue() {
+        guard WCSession.isSupported(), WCSession.default.activationState == .activated else { return }
+        Task { [weak self] in
+            // The file is read off the main thread; two calls close together may both send, and the phone keeps the latest.
+            guard let report = await WatchDiagnostics.reportIfDue() else { return }
+            self?.sendDiagnostics(report)
+        }
+    }
+
+    private func sendDiagnostics(_ report: WatchDiagnosticsReport) {
+        send(.diagnostics(report))
+        WatchDiagnostics.didSend(report)
+    }
+
     private func sayHello() {
         guard WCSession.isSupported(), WCSession.default.activationState == .activated else { return }
         let holding = ledger.holdingIds
@@ -310,7 +327,8 @@ final class WatchLink: NSObject, ObservableObject {
         saveState()
     }
 
-    fileprivate func transferFailed(id: String, error: String) {
+    fileprivate func transferFailed(id: String, error: String, code: String) {
+        WatchDiagnostics.recorder.update { $0.failed("transferFailed", detail: code, at: Date()) }
         ledger.transferFailed(id, error: error)
         saveState()
     }
@@ -351,6 +369,7 @@ extension WatchLink: WCSessionDelegate {
     nonisolated func session(_ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState, error: Error?) {
         let board = WatchBoard(context: session.receivedApplicationContext)
         let reachable = session.isReachable
+        if let error { WatchDiagnostics.failed("activationFailed", error: error) }
         Task { @MainActor in
             if let board { self.apply(board: board) }
             self.isReachable = reachable
@@ -363,6 +382,7 @@ extension WatchLink: WCSessionDelegate {
             if WKApplication.shared().applicationState == .active {
                 self.sayHello()
             }
+            self.sendDiagnosticsIfDue() // a launch that dies later in the front still gets its record out
             self.sendDue()
             self.completeRefreshTasksIfDone()
         }
@@ -389,7 +409,8 @@ extension WatchLink: WCSessionDelegate {
     nonisolated func session(_ session: WCSession, didFinish fileTransfer: WCSessionFileTransfer, error: Error?) {
         guard let error, let id = fileTransfer.file.metadata?[WatchMarginTransfer.Key.id] as? String else { return }
         let words = ListenerErrorText.message(for: error)
-        Task { @MainActor in self.transferFailed(id: id, error: words) }
+        let code = WatchDiagnosticsLog.errorCode(error)
+        Task { @MainActor in self.transferFailed(id: id, error: words, code: code) }
     }
 }
 

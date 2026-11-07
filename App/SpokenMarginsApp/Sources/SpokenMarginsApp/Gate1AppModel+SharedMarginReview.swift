@@ -23,7 +23,9 @@ extension Gate1AppModel {
     /// played, and nothing would ever mark it heard. A written Margin has no recording; its words are read (#3365).
     func newSharedMargins(itemId: String) -> [SharedMarginReview.Entry] {
         let entries: [SharedMarginReview.Entry]
-        if selectedItem.id == itemId {
+        if let dead = deadEpisodeEntries(itemId: itemId) { // a dead podcast episode: its Margins are unplaced (#3392)
+            entries = dead
+        } else if selectedItem.id == itemId {
             entries = SharedMarginReview.entries(
                 layers: selectedItem.importedCommentaryLayers, records: selectedItem.importedCommentaryInterjections,
                 ownMargins: ownMargins(itemId: itemId)
@@ -96,6 +98,7 @@ extension Gate1AppModel {
             reportWarning("There are no new Margins to review on this item.")
             return
         }
+        if reviewFriendMarginsOfDeadEpisode(itemId: itemId, entries: entries) { return } // the episode can't play (#3392)
         if WrittenMarginReadings.holdReview(itemId: itemId, thenContinue: thenContinue, entries: entries, model: self) { return } // readings not ready yet (#3365)
         endMarginMoment()
         // A Margin voice already playing (your own, #1538, or a friend's) or a shared-Margin card waiting gives way:
@@ -129,8 +132,10 @@ extension Gate1AppModel {
         // Each Margin's recording, or its reading (rendered now if need be), from `SharedMarginAudio` (#3365, #3412).
         voiceURLs.merge(WrittenMarginReadings.startingReview(for: entries, voiceFile: resolvedApplicationSupportAssetURL(for:))) { voice, _ in voice }
         startMarginMoment(sequence: sequence, voiceURLs: voiceURLs, title: "New Margins", isApproximate: false)
+        let margins = Dictionary(steps.map { ($0.anchor.marginId, $0.anchor.mediaTimeMs) }, uniquingKeysWith: { first, _ in first })
         marginMomentConductor?.onVoiceStarted = { [weak self] in
             if let margin = heard[$0] { self?.markSharedMarginHeard(margin) }
+            if let at = margins[$0] { self?.releaseReviewPlace(itemId: itemId, onceMarginPlaysAt: at) }
         }
         // Their voices get the same chime as the automatic prompt, except for a muted layer's (#932).
         marginMomentConductor?.chimedMarginIds = SharedMarginReview.chimedMarginIds(steps)
@@ -138,6 +143,14 @@ extension Gate1AppModel {
         WrittenMarginReadings.rewordUnavailable(on: marginMomentConductor, entries: entries, model: self)
         if !snapshot.status.isPlaybackActive { resumePlayback() }
         screen = .playback
+    }
+
+    /// Once a Margin of the review has the floor, the episode plays on from it, so the saved session is the listener's own
+    /// listening and a relaunch must not hand back the place the review started from. The note stays only for a listener
+    /// whose place was ahead of the Margin (`ReviewReturnPlace.isOwed(onceMarginAt:)`, audit of #3619).
+    func releaseReviewPlace(itemId: String, onceMarginPlaysAt marginMediaTimeMs: Int) {
+        guard let place = reviewPlaces.owed(itemId: itemId), !place.isOwed(onceMarginAt: marginMediaTimeMs) else { return }
+        reviewPlaces.clear(itemId: itemId)
     }
 
     /// Stop on the review card: the voice stops and the item goes back to where the listener left off, paused.
@@ -189,7 +202,9 @@ extension Gate1AppModel {
         let returnTo = review.returnToMediaTimeMs ?? 0
         var left = moment.unplayed
         if let playing = moment.playing { left.append(playing) }
-        let ahead = Set(left.filter { $0.mediaTimeMs > returnTo }.map(\.marginId))
+        let ahead = CantPlayListening.isCantPlayListening(moment)
+            ? CantPlayListening.unreachedMarginIds(in: moment) // one flat place: every unplayed Margin goes back (#3392)
+            : Set(left.filter { $0.mediaTimeMs > returnTo }.map(\.marginId))
         guard !ahead.isEmpty else { return }
         let stillNew = selectedItem.importedCommentaryInterjections.values.joined().filter {
             $0.isNewToListener && ahead.contains(SharedMarginReview.marginId(layerId: $0.layerId, interjectionId: $0.id))

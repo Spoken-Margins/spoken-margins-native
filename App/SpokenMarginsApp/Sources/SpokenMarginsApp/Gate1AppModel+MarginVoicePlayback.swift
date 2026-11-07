@@ -94,7 +94,8 @@ extension Gate1AppModel {
     }
 
     func dismissPendingImportedCommentary() {
-        guard pendingImportedCommentary != nil else { return }
+        guard let dismissed = pendingImportedCommentary else { return }
+        WrittenMarginReadings.skipped(dismissed) // a reading still being made for it stops (#3391)
         importedCommentaryAutoPlayTask?.cancel()
         importedCommentaryAutoPlayTask = nil
         pendingImportedCommentary = nil

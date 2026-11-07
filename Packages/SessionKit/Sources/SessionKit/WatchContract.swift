@@ -494,6 +494,9 @@ public enum WatchMessage: Codable, Equatable, Sendable {
     case withdraw(id: String)
     /// Play, pause or skip the item the phone is playing (#3494). Fast lane only; stale ones are dropped.
     case transport(WatchTransport)
+    /// The Watch's record of launches, failures and unclean endings (#3506), for the phone's Diagnostics export. A
+    /// phone build before this one can't decode the case and drops the whole message, which is harmless.
+    case diagnostics(WatchDiagnosticsReport)
 }
 
 /// What travels: the message, the contract version, the Watch's clock at sending, and a counter that only rises.

@@ -13,16 +13,16 @@ enum FollowedArticleImport {
 
     static func handoff(for entry: FeedEntry, url: URL, startedByListener: Bool = true, using extractor: any ReadablePageExtracting, record: ([String: String]) -> Void) async throws -> BrowserTextHandoff {
         if !startedByListener, entry.publisherPlatform == "substack", (entry.audioURL ?? "").isEmpty, let handoff = PublisherAudioDetector.feedBodyHandoff(for: entry) {
-            record(["followedArticleExtractor": "feed_content", "followedArticleNetworkHosts": ""])
+            record(["followedArticleExtractor": "feed_content", "followedArticleNetworkHosts": DiagnosticsHostRedaction.hostCount([String]())])
             return handoff
         }
         if let handoff = PublisherAudioDetector.articleHandoff(for: entry) {
-            record(["followedArticleExtractor": "feed_content", "followedArticleNetworkHosts": ""])
+            record(["followedArticleExtractor": "feed_content", "followedArticleNetworkHosts": DiagnosticsHostRedaction.hostCount([String]())])
             return handoff
         }
         let handoff = try await extractor.extract(url: url)
         record(["followedArticleExtractor": extractor.lastExtractor ?? "unknown",
-                "followedArticleNetworkHosts": extractor.contactedHosts.joined(separator: ",")])
+                "followedArticleNetworkHosts": DiagnosticsHostRedaction.hostCount(extractor.contactedHosts)])
         return handoff
     }
 }

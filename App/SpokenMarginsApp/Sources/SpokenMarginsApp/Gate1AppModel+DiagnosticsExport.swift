@@ -43,6 +43,10 @@ struct DiagnosticsExportInputs: Sendable {
     var voiceDownloadLogFile: URL? = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
         .map { VoiceCatalogCoordinator.downloadLogURL(supportDirectory: $0) }
 
+    /// What the Watch last reported about its launches and failures (#3506). Read from its file, since the Watch
+    /// sends it whenever it can and the app may not have been running when it did.
+    var watchDiagnosticsFile: URL? = WatchDiagnosticsStore.defaultFileURL
+
     func writeFile() throws -> URL {
         var stored: [String: String] = [:]
         if let store {
@@ -53,6 +57,9 @@ struct DiagnosticsExportInputs: Sendable {
         }
         if let voiceDownloadLogFile, let log = VoiceDownloadLog.exportJSON(fileURL: voiceDownloadLogFile) {
             stored["voiceDownloads"] = log
+        }
+        if let watchDiagnosticsFile, let report = WatchDiagnosticsStore.exportJSON(fileURL: watchDiagnosticsFile) {
+            stored[WatchDiagnosticsStore.exportKey] = report
         }
         let text = try DiagnosticsExport.jsonText(DiagnosticsExport.entries(live: live, stored: stored, fixed: fixed))
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Diagnostics", isDirectory: true)

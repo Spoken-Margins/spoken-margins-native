@@ -38,17 +38,10 @@ function serviceWorker(): Plugin {
   };
 }
 
-// The share-link switch (#3003), fixed at build time (owner, 2026-10-17: a build setting, never a server switch).
-// Only the Playwright build turns it on, with `--mode share-links-test` into the git-ignored `dist-share-links/`;
-// every other build, including `npm run build`, leaves link creation out. Turning it on for listeners waits for
-// the DMCA designated agent (owner, 2026-10-20) and is a change to this line in a reviewed PR.
-export const SHARE_LINKS_TEST_MODE = 'share-links-test';
-
-export default defineConfig(({ mode }) => ({
+export default defineConfig({
   base: './',
   // e2eSilence() adds nothing unless VITE_E2E_SILENT=1, which only the Playwright web servers set (#3375).
   plugins: [react(), serviceWorker(), e2eSilence()],
-  define: { __SM_SHARE_LINKS__: JSON.stringify(mode === SHARE_LINKS_TEST_MODE) },
   build: { target: 'es2022', sourcemap: false },
   // The transcription worker (src/transcribe/worker.ts) loads transformers.js, which splits into chunks. They are
   // written under OPT_IN_DIR, so the service worker leaves them out of the shell everyone downloads.
@@ -57,4 +50,4 @@ export default defineConfig(({ mode }) => ({
     rolldownOptions: { output: { entryFileNames: `${OPT_IN_DIR}[name]-[hash].js`, chunkFileNames: `${OPT_IN_DIR}[name]-[hash].js` } },
   },
   preview: { port: 4173, strictPort: true },
-}));
+});

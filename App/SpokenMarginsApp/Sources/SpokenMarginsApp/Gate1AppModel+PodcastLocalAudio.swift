@@ -123,7 +123,8 @@ extension Gate1AppModel {
             return
         }
         guard let coordinator = podcastDownloadCoordinator else { return }
-        coordinator.configureActiveItem(itemId)
+        // Its offline-asset writes run here on purpose (#287), and so can wait behind a background write: name them.
+        hangTelemetry.labels.scoped("start.offlineAssets") { coordinator.configureActiveItem(itemId) }
         if let record = podcastDownloadRecords[itemId], record.state == .evicted,
            coordinator.networkTransport == .wifi,
            let remoteURL = URL(string: record.remoteURL) {
