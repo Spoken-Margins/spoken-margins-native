@@ -262,7 +262,7 @@ public actor VoiceModelInstaller {
                 // retry starts from the checked downloads alone and a preparer's move into place can't hit
                 // "file exists" (#2735 review).
                 try? pruneStaging(staging, keeping: files, archives: archives)
-                configuration.log?.record("prepare.failed", ["voice": voiceId, "reason": String(describing: error)])
+                configuration.log?.record("prepare.failed", ["voice": voiceId, "reason": SafeErrorText.describe(error)])
                 throw VoiceModelInstallError.preparationFailed(String(describing: error))
             }
             configuration.log?.record("prepare.finished", ["voice": voiceId, "version": version])

@@ -1745,21 +1745,21 @@ public final class SessionEngine {
         )
         activeRecordingDraft = draft
         recordingDraftFailure = nil
-        do { try journal.write(draft) } catch { recordingDraftFailure = "write:\(error.localizedDescription)" }
+        do { try journal.write(draft) } catch { recordingDraftFailure = "write:\(SafeErrorText.describe(error))" }
     }
 
     private func updateRecordingDraft(_ change: (inout RecordingDraft) -> Void) {
         guard let journal = recordingDraftJournal, var draft = activeRecordingDraft else { return }
         change(&draft)
         activeRecordingDraft = draft
-        do { try journal.write(draft) } catch { recordingDraftFailure = "write:\(error.localizedDescription)" }
+        do { try journal.write(draft) } catch { recordingDraftFailure = "write:\(SafeErrorText.describe(error))" }
     }
 
     /// The Margin is stored, or the listener cancelled: the note has done its job.
     private func removeRecordingDraft() {
         guard let draft = activeRecordingDraft else { return }
         activeRecordingDraft = nil
-        do { try recordingDraftJournal?.remove(id: draft.id) } catch { recordingDraftFailure = "remove:\(error.localizedDescription)" }
+        do { try recordingDraftJournal?.remove(id: draft.id) } catch { recordingDraftFailure = "remove:\(SafeErrorText.describe(error))" }
     }
 
     public func recordingCaptureDiagnostics() -> [String: String] {

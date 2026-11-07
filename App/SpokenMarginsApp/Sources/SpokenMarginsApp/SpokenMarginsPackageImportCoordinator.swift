@@ -388,7 +388,7 @@ final class SpokenMarginsPackageImportCoordinator {
         } catch {
             guard queue.isShowing(review.id) else { return }
             importError = SharedMarginsImportMessage.userFacing(error)
-            environment.recordDiagnostic("lastSpokenMarginsPackageImport", "source_reconciliation_failed:\(error.localizedDescription)")
+            environment.recordDiagnostic("lastSpokenMarginsPackageImport", "source_reconciliation_failed:\(SafeErrorText.describe(error))")
         }
     }
 
@@ -531,7 +531,7 @@ final class SpokenMarginsPackageImportCoordinator {
                 queue.replaceShowing(with: shown) // the same review, so this publishes nothing by itself
                 environment.publishReview(shown)
             }
-            environment.recordDiagnostic("lastSpokenMarginsPackageImport", "failed:\(error.localizedDescription)")
+            environment.recordDiagnostic("lastSpokenMarginsPackageImport", "failed:\(SafeErrorText.describe(error))")
             environment.reportFailure(error, "Shared Margins import failed")
         }
     }

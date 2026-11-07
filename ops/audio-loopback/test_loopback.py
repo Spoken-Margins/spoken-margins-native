@@ -154,6 +154,127 @@ class AnalysisTests(unittest.TestCase):
         report = self.analyse(chunk + silence(0.6) + late)
         self.assertTrue(report['repeats'], report)
 
+    def test_a_restart_after_a_short_silence_is_a_repeat_wherever_the_chunk_was_cut(self):
+        # Spliced desk recordings (#1790): an exact replay was dropped because a lag one frame off held the
+        # loudness match as long, won, then failed on brightness. These cut points all failed that way.
+        for seed, cut in ((202, 1.3), (202, 1.6), (202, 2.05), (203, 1.15), (203, 1.45), (203, 1.9)):
+            chunk = speech(seed, 6)
+            report = self.analyse(chunk[:int(cut * RATE)] + silence(0.2) + chunk + silence(0.5))
+            self.assertTrue(report['repeats'], f'seed {seed}, cut at {cut} s: {report.get("recurring")}')
+            self.assertAlmostEqual(report['repeats'][0]['lag'], cut + 0.2, delta=0.05)
+
+    def test_digital_silence_at_one_edge_does_not_sink_an_exact_replay(self):
+        # Desk audio has true digital silence (-100 dB). An exact replay whose stretch ends one frame into
+        # the original's silence scored correlation 0.81 until levels below the silence line were clamped.
+        stretch = [-15 - 30 * (0.5 - 0.5 * math.cos(2 * math.pi * i / 20)) for i in range(79)] + [-25.0]
+        env = stretch + [-30.0] * 20 + stretch[:-1] + [loopback.FLOOR_DB]
+        self.assertLess(loopback.similarity(env, 100, 0, 80)[0], 0.9)
+        corr, diff = loopback.similarity(env, 100, 0, 80, floor=-45.0)
+        self.assertGreater(corr, 0.9)
+        self.assertLess(diff, 1.0)
+
+    def test_a_phrase_the_source_says_twice_is_recurring_not_a_repeat(self):
+        # Desk run 2026-10-18, pdf-start.wav: "foundation for American innovation" in two authors'
+        # affiliations, 3.5 s apart with a name between, rendered the same both times. New sound comes
+        # between the two, and different words follow each, so nothing was replayed.
+        phrase = steady_voice(51, 1.5)
+        name = lambda seed, rhythm: steady_voice(seed, 2, rhythm=rhythm)  # noqa: E731
+        samples = (name(50, (0.22, 0.17, 0.2)) + phrase + name(52, (0.16, 0.25, 0.19, 0.2))
+                   + phrase + name(53, (0.24, 0.18)) + silence(0.5))
+        report = self.analyse(samples)
+        self.assertEqual(report['repeats'], [], report['repeats'])
+        self.assertTrue(report['recurring'], report)
+        self.assertAlmostEqual(report['recurring'][0]['lag'], 3.5, delta=0.1)
+        self.assertGreaterEqual(report['recurring'][0]['sound_between'], 0.5)
+        self.assertEqual(loopback.verdict(report), [])
+
+    def test_a_replay_that_ends_the_audio_is_a_repeat_even_after_new_sound(self):
+        # Review of #1790: a passage, a Margin, the passage again, then playback stops. Silence after the
+        # second time shows nothing new, so it can't be a phrase the source says twice.
+        phrase = steady_voice(51, 1.5)
+        for seed in (70, 71, 72):
+            margin = steady_voice(seed, 2, rhythm=(0.2, 0.26, 0.17))
+            report = self.analyse(steady_voice(50, 2, rhythm=(0.22, 0.17, 0.2)) + phrase + margin + phrase
+                                  + silence(1.5))
+            self.assertTrue(report['repeats'], f'seed {seed}: {report["recurring"]}')
+            self.assertEqual(report['recurring'], [], f'seed {seed}')
+
+    def test_the_expected_words_decide_whether_a_recurring_match_is_a_replay(self):
+        # Sound alone can't tell a phrase the source says twice from a replay after a Margin: both have
+        # new sound between and new words after. The expected text can.
+        phrase = steady_voice(51, 1.5)
+        samples = (steady_voice(50, 2, rhythm=(0.22, 0.17, 0.2)) + phrase
+                   + steady_voice(70, 2, rhythm=(0.2, 0.26, 0.17)) + phrase
+                   + steady_voice(53, 2, rhythm=(0.24, 0.18)) + silence(0.5))
+        fresh = lambda: self.analyse(samples)  # noqa: E731
+        match = fresh()['recurring'][0]
+        heard = [{'word': w, 'start': at + i * 0.3} for at in (match['original_start'], match['start'])
+                 for i, w in enumerate(('the', 'harbour', 'master'))]
+        for expected, recurs in (('we met the harbour master and later the harbour master again', True),
+                                 ('we met the harbour master on the quay', False)):
+            report = fresh()
+            report['transcript'] = {'text': ' '.join(h['word'] for h in heard), 'words': heard}
+            loopback.explain_recurring(report, expected)
+            self.assertEqual(bool(report['recurring']), recurs, expected)
+            self.assertEqual(bool(loopback.verdict(report)), not recurs, report['repeats'])
+        self.assertEqual(report['repeats'][0]['words'], 'the harbour master')
+
+    def test_a_recurring_match_fails_on_one_word_or_a_dropped_hearing(self):
+        # The expected text says it twice, but the words can't vouch for that: one common word, or a
+        # transcript that heard the phrase only once (the recogniser dropped the other hearing).
+        phrase = steady_voice(51, 1.5)
+        samples = (steady_voice(50, 2, rhythm=(0.22, 0.17, 0.2)) + phrase
+                   + steady_voice(70, 2, rhythm=(0.2, 0.26, 0.17)) + phrase
+                   + steady_voice(53, 2, rhythm=(0.24, 0.18)) + silence(0.5))
+        match = self.analyse(samples)['recurring'][0]
+        one_word = [{'word': 'the', 'start': at} for at in (match['original_start'], match['start'])]
+        dropped = [{'word': w, 'start': match['start'] + i * 0.3}
+                   for i, w in enumerate(('the', 'harbour', 'master'))]
+        for heard in (one_word, dropped):
+            report = self.analyse(samples)
+            report['transcript'] = {'text': ' '.join(h['word'] for h in heard), 'words': heard}
+            loopback.explain_recurring(report, 'we met the harbour master and later the harbour master again')
+            self.assertEqual(report['recurring'], [], heard)
+            self.assertTrue(loopback.verdict(report), report['repeats'])
+
+    def test_check_with_expected_text_reads_multi_word_items_and_fails_an_unexplained_replay(self):
+        # The recogniser returns items like "short term memory" with one start; each word needs its own.
+        phrase = steady_voice(51, 1.5)
+        path = self.fixture.wav(steady_voice(50, 2, rhythm=(0.22, 0.17, 0.2)) + phrase
+                                + steady_voice(70, 2, rhythm=(0.2, 0.26, 0.17)) + phrase
+                                + steady_voice(53, 2, rhythm=(0.24, 0.18)) + silence(0.5))
+        match = loopback.analyse(path)['recurring'][0]
+        # One item per hearing, starting before the match: only its later words fall inside it.
+        heard = [{'word': 'long short term memory', 'start': at - 0.5, 'duration': 1.2}
+                 for at in (match['original_start'], match['start'])]
+        heard.append({'word': 'and', 'start': match['original_start'] + 1.6, 'duration': 0.2})
+        heard.sort(key=lambda w: w['start'])
+        transcript = {'text': ' '.join(w['word'] for w in heard), 'words': heard}
+        with mock.patch.object(loopback, 'transcribe', return_value=transcript):
+            twice = loopback.check_recording(path, expected='long short term memory and long short term memory')
+            once = loopback.check_recording(path, expected='long short term memory and gated units')
+        self.assertEqual(twice['verdict'], 'PASS', twice['problems'])
+        self.assertEqual(twice['recurring'][0]['words'], 'term memory')
+        self.assertEqual(once['verdict'], 'FAIL')
+        self.assertEqual(once['repeats'][0]['words'], 'term memory')
+
+    def test_a_seek_back_after_new_words_is_still_a_repeat(self):
+        # Playback that jumps 2.3 s back keeps matching what it replays, so it never looks recurring.
+        # (Not 3 s: this voice's rhythm repeats every 1.5 s, so loudness matches at that lag everywhere.)
+        chunk = steady_voice(60, 8)
+        report = self.analyse(chunk[:5 * RATE] + chunk[int(2.7 * RATE):] + silence(0.5))
+        self.assertTrue(report['repeats'], report)
+        self.assertAlmostEqual(report['repeats'][0]['lag'], 2.3, delta=0.1)
+        self.assertEqual(report['recurring'], [])
+
+    def test_a_restarted_chunk_followed_by_new_words_is_still_a_repeat(self):
+        # #1762 with more after it: nothing new sits between the cut-off start and the restart.
+        chunk = steady_voice(61, 3)
+        report = self.analyse(chunk[:int(1.4 * RATE)] + silence(0.2) + chunk + steady_voice(62, 3)
+                              + silence(0.5))
+        self.assertTrue(report['repeats'], report)
+        self.assertEqual(report['recurring'], [])
+
     def test_digital_silence_warns(self):
         report = self.analyse(silence(2))
         self.assertEqual(report['sound_seconds'], 0)
