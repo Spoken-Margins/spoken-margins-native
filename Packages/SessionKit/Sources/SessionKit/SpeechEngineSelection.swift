@@ -85,11 +85,11 @@ public enum SpeechFallbackReason: String, Codable, Equatable, Sendable {
     public var bundledVoiceExplanation: String {
         switch self {
         case .deviceTooWarm:
-            "Using the app's backup voice while this iPhone is too warm. It reads the rest of this item, so the voice doesn't keep changing. Your voice comes back with the next item."
+            "Using the app's backup voice while this iPhone is too warm. It reads the rest of this one, so the voice doesn't keep changing. Your voice comes back with what you play next."
         case .memoryWarning:
-            "Using the app's backup voice after an iOS memory warning. It reads the rest of this item. Your voice comes back with the next item."
+            "Using the app's backup voice after an iOS memory warning. It reads the rest of this one. Your voice comes back with what you play next."
         case .renderTooSlow, .playbackFailed, .playerStalled, .backgroundGap, .listenerStoppedGeneration:
-            "Using the app's backup voice for the rest of this item. Your voice comes back with the next item."
+            "Using the app's backup voice for the rest of this one. Your voice comes back with what you play next."
         }
     }
 
@@ -97,7 +97,7 @@ public enum SpeechFallbackReason: String, Codable, Equatable, Sendable {
     public var listenerExplanation: String {
         switch self {
         case .deviceTooWarm:
-            "Using the iOS voice while this iPhone is too warm. It reads the rest of this item, so the voice doesn't keep changing. Your voice comes back with the next item."
+            "Using the iOS voice while this iPhone is too warm. It reads the rest of this one, so the voice doesn't keep changing. Your voice comes back with what you play next."
         case .memoryWarning:
             "Using the iOS voice after an iOS memory warning. Your voice comes back the next time you press play, after about a minute."
         case .renderTooSlow:
@@ -107,7 +107,7 @@ public enum SpeechFallbackReason: String, Codable, Equatable, Sendable {
         case .playerStalled:
             "Using the iOS voice because the on-device voice stopped playing. Your voice comes back the next time you press play."
         case .backgroundGap:
-            "Using the iOS voice because the on-device voice wasn't ready for the next passage while the app was in the background. It reads the rest of this item. Your voice comes back with the next item."
+            "Using the iOS voice because the on-device voice wasn't ready for the next passage while the app was in the background. It reads the rest of this one. Your voice comes back with what you play next."
         case .listenerStoppedGeneration:
             "Generation stopped · using the iOS system voice"
         }

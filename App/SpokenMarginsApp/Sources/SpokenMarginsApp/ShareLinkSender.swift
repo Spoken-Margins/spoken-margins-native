@@ -30,7 +30,7 @@ final class ShareLinkSender: ObservableObject {
     /// Shown while the link is made and after, when the share will carry the file too.
     @Published private(set) var companionNote: String?
     private let bridge = BridgeService.makeStore()
-    private static let companionLine = "This item has no public web page, so the file goes in the same message as the link."
+    private static let companionLine = "This has no public web page, so the file goes in the same message as the link."
 
     /// Whether to show the button at all. The cached config decides; with none, or a stale one, the sender's own
     /// screen asks the server once (our server, no one else's) so a fresh install can offer the button.
