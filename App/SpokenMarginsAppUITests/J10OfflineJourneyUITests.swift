@@ -153,9 +153,15 @@ final class J10OfflineJourneyUITests: XCTestCase {
             // takes the tapped link's path from there (`ShareLinkUITestHandoff`, built the same way in its tests).
             let encoded = try XCTUnwrap(link.absoluteString.addingPercentEncoding(withAllowedCharacters: .alphanumerics))
             XCUIDevice.shared.system.open(try XCTUnwrap(URL(string: "spokenmargins://ui-test-share-link?url=\(encoded)")))
+            // The system may ask "Open in Spoken Margins?" first, sometimes late; wait for it or the message, so a
+            // slow prompt isn't missed and a quick message isn't waited past.
             let confirm = XCUIApplication(bundleIdentifier: "com.apple.springboard").buttons["Open"]
-            if confirm.waitForExistence(timeout: 3) { confirm.tap() }
             let banner = element("app.feedback.banner")
+            let deadline = Date().addingTimeInterval(10)
+            while Date() < deadline, !banner.exists {
+                if confirm.exists { confirm.tap(); break }
+                _ = banner.waitForExistence(timeout: 0.5)
+            }
             XCTAssertTrue(banner.waitForExistence(timeout: 20),
                           "The share link showed no message (the app is \(app.state == .runningForeground ? "in front" : "not in front"))")
             screenshot("J10 share link with the server unreachable")
