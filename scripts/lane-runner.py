@@ -2386,8 +2386,8 @@ def run_release(github, pr: int, base: str, head: str, request_id: str, evidence
     if released is None:
         print('Nothing to release: the PR moved on, closed, lost automerge, or is no longer held for T3.')
     verdict = REPORT.search(released or '')
-    if verdict:
-        record_outcome(verdict.group(1))
+    if verdict:  # the workflow puts this on the PR's head: a hold stays green, as in the automerge job (#3501 audit)
+        record_outcome(verdict.group(1), is_hold(verdict.group(1), (released or '').splitlines()))
     merged = any(line.startswith(f'merged into {base} as ') for line in (released or '').splitlines())
     if released and not merged:
         github.relabel(DONE, DONE)  # the Hourly dispatch wakes on lane:done's `labeled` event

@@ -329,6 +329,15 @@ class MainWiringTests(unittest.TestCase):
         self.assertEqual(outcome, {'reported': 'true', 'verdict': 'FAIL', 'held': 'false'})  # for the Verdict step's warning
         self.assertEqual(github.labeled, ['lane:done'])
 
+    def test_the_release_job_tells_the_workflow_a_hold_from_a_lane_that_tested_nothing(self):
+        # The status on the PR's head reads this: a hold keeps it green, as in the automerge job (#2596).
+        for said, held in (('not merged: it has no Claude audit of its head.', 'true'),
+                           ('the hosted checks do not stand: "hosted fast: Mac rest" ended cancelled', 'false')):
+            with self.subTest(held=held):
+                github = FakeGitHub(labels=('automerge',))
+                _, outcome = self.release_job(github, f'Lane report pr5-r42-auto — INCONCLUSIVE\nran: nothing\n{said}\n')
+                self.assertEqual(outcome, {'reported': 'true', 'verdict': 'INCONCLUSIVE', 'held': held})
+
     def test_the_hosted_release_job_waits_on_linux_with_no_mac_setup(self):
         # #3501: 87 T3 PASSes in a week queued for the one build runner; on 2026-11-05 that stopped them for hours.
         github = FakeGitHub(labels=('automerge',))
@@ -414,6 +423,58 @@ class GitHubDispatchTests(unittest.TestCase):
                                     '-f', 'inputs[pr]=5', '-f', f'inputs[head]={HEAD}',
                                     '-f', 'inputs[t3]=https://example.test/t3')
         self.assertTrue(where.startswith('https://github.com/o/r/actions/workflows/lane.yml'), where)
+
+
+class VerdictOnThePrHeadTests(unittest.TestCase):
+    """#3501 audit: a dispatched run's own check sits on the trunk's tip, so a release run that could not get the hosted
+    checks left the PR with nothing red. The step that fixes it runs here for real, against a fake gh."""
+
+    def run_step(self, *, reported='true', verdict='', held='false', job='success', pull_head=HEAD, post_fails=False):
+        import yaml
+        steps = yaml.safe_load(WORKFLOW)['jobs']['release']['steps']
+        step = next(step for step in steps if step.get('name') == "Put the verdict on the PR's head")
+        self.assertEqual(step['if'], 'always()')
+        with tempfile.TemporaryDirectory() as temp:
+            temp, posts = Path(temp), Path(temp) / 'posts'
+            fake = temp / 'gh'
+            fake.write_text('#!/bin/bash\n'
+                            'case "$*" in\n'
+                            f'  *pulls/5*) echo {pull_head} ;;\n'
+                            f'  *) echo "$*" >> "{posts}"; exit {1 if post_fails else 0} ;;\n'
+                            'esac\n')
+            fake.chmod(0o755)
+            ran = subprocess.run(['bash', '-e', '-c', step['run']], capture_output=True, text=True, env={
+                'PATH': f'{temp}:/usr/bin:/bin', 'GH_REPO': 'o/r', 'PR_NUMBER': '5', 'EVENT_HEAD': HEAD,
+                'RUN_URL': 'https://example.test/run', 'REPORTED': reported, 'VERDICT': verdict, 'HELD': held,
+                'JOB_STATUS': job})
+            self.assertEqual(ran.returncode, 0, ran.stderr)  # never red on the trunk's tip
+            return (posts.read_text() if posts.exists() else ''), ran.stdout
+
+    def test_each_outcome_puts_the_right_state_on_the_head(self):
+        for name, kwargs, state in (
+                ('a pass clears an earlier red', {'verdict': 'PASS'}, 'success'),
+                ('a hold is not a failing PR', {'verdict': 'INCONCLUSIVE', 'held': 'true'}, 'success'),
+                ('checks it could not get', {'verdict': 'INCONCLUSIVE'}, 'failure'),
+                ('a failed check', {'verdict': 'FAIL'}, 'failure'),
+                ('stopped before reporting', {'reported': '', 'job': 'failure'}, 'failure'),
+                ('cancelled or timed out', {'reported': '', 'job': 'cancelled'}, 'failure')):
+            with self.subTest(name):
+                posts, _ = self.run_step(**kwargs)
+                self.assertIn(f'repos/o/r/statuses/{HEAD}', posts)
+                self.assertIn(f'state={state}', posts)
+                self.assertIn('target_url=https://example.test/run', posts)
+
+    def test_a_run_with_nothing_to_release_or_a_pr_that_moved_on_posts_nothing(self):
+        self.assertEqual(self.run_step(reported='')[0], '')
+        self.assertEqual(self.run_step(verdict='FAIL', pull_head='c' * 40)[0], '')
+
+    def test_a_status_it_cannot_post_is_a_warning_not_a_red_trunk(self):
+        posts, out = self.run_step(verdict='FAIL', post_fails=True)
+        self.assertIn('state=failure', posts)
+        self.assertIn('::warning', out)
+
+    def test_the_job_may_post_statuses(self):
+        self.assertIn('\n  statuses: write\n', WORKFLOW.split('\njobs:\n')[0])
 
 
 class WorkflowTests(unittest.TestCase):
