@@ -1529,6 +1529,11 @@ def hosted_rest_checks(github, tree: Path, base: str, head: str, base_sha: str, 
             return found, why
         if NOT_FINISHED in why:
             running_seen = True
+        elif any(plan is None and why.startswith((f'"{name}" ', f'no "{name}" ')) for name, plan in checks.items()):
+            # The app build (#3539): dispatch() starts hosted-portable.yml, never it, so a fresh run can't change what
+            # it shows and would spend hosted Macs for nothing (audit on 432241e). hosted_checks_missing says what does.
+            if not (HOSTED_MISSING.search(why) and clock() - started < grace):
+                return None, why
         elif run_again and HOSTED_UNREADABLE in why:
             pass  # the next poll reads them again; a job that never can ends at the deadline, and reports
         elif run_again and HOSTED_SKIPPED.search(why) and dispatches \
