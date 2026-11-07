@@ -158,7 +158,12 @@ final class WrittenMarginOnDeviceVoiceTests: XCTestCase {
         let release = DispatchSemaphore(value: 0)
         defer { release.signal() }
         let reader = reader(calls)
-        let slow = stage(calls, key: "phonon", budget: 0.2) { _, _ in release.wait(); return try Self.write("late", in: out) }
+        let wrote = expectation(description: "the late render wrote its file")
+        let slow = stage(calls, key: "phonon", budget: 0.2) { _, _ in
+            release.wait()
+            defer { wrote.fulfill() }
+            return try Self.write("late", in: out)
+        }
         _ = try await reader.rendered(reading, onDevice: slow)
         let second = WrittenMarginReading(intro: "Cole wrote:", text: "Another note about the harbour.", itemId: "item-1")
         let otherVoice = stage(calls, key: "lily", render: speaking(voiceOutput)) // the listener changed voice meanwhile
@@ -166,6 +171,8 @@ final class WrittenMarginOnDeviceVoiceTests: XCTestCase {
         XCTAssertEqual(calls.onDeviceCount, 1, "no second on-device render started while the first still held its model")
         XCTAssertTrue(try text(file).hasPrefix("iphone:"))
         release.signal()
+        // Wait for the late file to exist first: an empty folder before then proves nothing, and the loop would end early.
+        await fulfillment(of: [wrote], timeout: 5)
         let deadline = Date().addingTimeInterval(5)
         while !leftInVoiceOutput().isEmpty, Date() < deadline { try await Task.sleep(for: .milliseconds(20)) }
         XCTAssertEqual(leftInVoiceOutput(), [], "a render that came back after it was given up on is deleted, not kept")
