@@ -41,6 +41,8 @@ final class WatchMarginReceiver: NSObject {
     private(set) var nowPlaying: WatchNowPlaying?
     /// Runs a transport command from the Watch. Replaceable in tests, which have no player.
     var runTransport: (WatchTransport) -> Void = { PlayerRunController.runWatchTransport($0) }
+    /// How long after a transport command the board goes out once more. Replaceable in tests.
+    var transportSettle: Duration = .milliseconds(1_500)
     /// Answers handed to WatchConnectivity, newest last (at most 50), kept for tests and diagnostics.
     private(set) var sentAnswers: [WatchMarginAnswer] = []
     /// Passes run one after another, so each Margin is filed once.
@@ -91,6 +93,19 @@ final class WatchMarginReceiver: NSObject {
         Task { [weak self] in
             let board = await files.watchBoard()
             self?.publish(board: board)
+        }
+    }
+
+    /// Sends the board once more shortly after a transport command, so the last word the Watch hears is the player's state
+    /// after the command: a reply and a board can arrive in either order, and a command the player refused changes nothing
+    /// that would send one. Without it the Watch could keep a wrong play state, and Record would then not pause, or Stop
+    /// would start an item the listener had paused (#3494).
+    private func republishAfterTransport() {
+        let settle = transportSettle
+        Task { [weak self] in
+            try? await Task.sleep(for: settle)
+            guard let self else { return }
+            self.nowPlayingChanged(self.nowPlaying)
         }
     }
 
@@ -198,7 +213,10 @@ final class WatchMarginReceiver: NSObject {
     func handle(_ envelope: WatchEnvelope, fastLane: Bool = true, now: @escaping @Sendable () -> Date = { Date() }) -> Task<WatchPhoneReply, Never> {
         // A transport command runs at once, before any filing pass under way: a pause that waits is a pause that is late (#3494).
         // The sure lane repeats every message and may deliver a late copy, so only the fast lane runs one (#3494).
-        if fastLane, let transport = envelope.transportToRun(now: now()) { runTransport(transport) }
+        if fastLane, let transport = envelope.transportToRun(now: now()) {
+            runTransport(transport)
+            republishAfterTransport()
+        }
         // The Watch's own record (#3506) goes to a file for the Diagnostics export; it is small and not a session change.
         if case .diagnostics(let report) = envelope.message, let file = WatchDiagnosticsStore.defaultFileURL {
             // A small file write, off the main thread; an older copy arriving late never replaces a newer one.

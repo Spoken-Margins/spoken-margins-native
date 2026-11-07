@@ -14,6 +14,10 @@ final class WatchMarginRecorder: ObservableObject {
     }
 
     @Published private(set) var state: State = .idle
+    /// What this recording was aimed at and whether the Watch paused the phone's item (#3494). Nil while idle.
+    @Published private(set) var plan: WatchRecordingPlan?
+    /// An item was loaded when this recording began, so the listener chose a target and the screen names it.
+    @Published private(set) var choiceWasShown = false
 
     private let capture = WatchMarginCapture()
     private let link: WatchLink
@@ -30,16 +34,27 @@ final class WatchMarginRecorder: ObservableObject {
         return false
     }
 
-    func toggle() {
+    /// Starts, or stops if already recording. `target` is where a new recording is aimed.
+    func toggle(target: WatchRecordingTarget) {
         guard !isSwitching else { return }
         isSwitching = true
         Task {
-            if isRecording { await stop() } else { await start() }
+            if isRecording { await stop() } else { await start(target: target) }
             isSwitching = false
         }
     }
 
-    func start() async {
+    /// Throws the recording away and returns to the first screen, ready to try again (#3494).
+    func discardRecording() {
+        guard !isSwitching, isRecording else { return }
+        isSwitching = true
+        Task {
+            await discard()
+            isSwitching = false
+        }
+    }
+
+    func start(target: WatchRecordingTarget = .session) async {
         guard !isRecording else { return }
         guard await AVAudioApplication.requestRecordPermission() else {
             state = .failed("Spoken Margins can't use the microphone. Turn it on in the Watch app on your iPhone.")
@@ -49,7 +64,14 @@ final class WatchMarginRecorder: ObservableObject {
         do {
             try await capture.start(id: id)
             currentId = id
-            state = .recording(since: Date())
+            let now = Date()
+            // Record pauses the phone's item, as a Margin on the phone does (#3494).
+            var plan = WatchRecordingPlan.begin(target: target, nowPlaying: link.nowPlaying(now: now), phoneNow: link.phoneTime(of: now))
+            // A pause that never left the Watch (the phone out of reach) is not ours to undo later with a Play.
+            if let pause = plan.pauseOnStart, !link.sendTransport(pause) { plan.pausedPhone = false }
+            self.plan = plan
+            choiceWasShown = link.nowPlaying(now: now) != nil
+            state = .recording(since: now)
         } catch {
             WatchDiagnostics.failed("recordingStartFailed", error: error)
             state = .failed(ListenerErrorText.line(prefix: "Couldn't start recording:", error: error))
@@ -58,14 +80,34 @@ final class WatchMarginRecorder: ObservableObject {
 
     func stop() async {
         guard case .recording(let since) = state, let id = currentId else { return }
+        let plan = self.plan
         currentId = nil
         state = .idle
-        guard let finished = await capture.stop() else {
+        self.plan = nil
+        let finished = await capture.stop()
+        resumePhone(after: plan)
+        guard let finished else {
             WatchDiagnostics.failed("recordingNotSaved")
             state = .failed("The recording didn't save.")
             return
         }
-        link.record(finished, id: id, wallStart: since)
+        link.record(finished, id: id, wallStart: since, itemTarget: plan?.itemTarget)
+    }
+
+    func discard() async {
+        guard case .recording = state else { return }
+        let plan = self.plan
+        currentId = nil
+        state = .idle
+        self.plan = nil
+        await capture.discard()
+        resumePhone(after: plan)
+    }
+
+    /// Plays the phone's item again, but only if this recording paused it (#3494).
+    private func resumePhone(after plan: WatchRecordingPlan?) {
+        guard let plan, let play = plan.resumeOnEnd(nowPlaying: link.nowPlaying(now: Date())) else { return }
+        link.sendTransport(play)
     }
 }
 
@@ -114,6 +156,16 @@ actor WatchMarginCapture {
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         guard let sha256 = Self.digest(of: url) else { return nil }
         return Finished(url: url, duration: duration, sha256: sha256)
+    }
+
+    /// Stops the recorder and deletes what it wrote: a recording the listener threw away is never kept or sent.
+    func discard() {
+        guard let recorder, let url else { return }
+        recorder.stop()
+        self.recorder = nil
+        self.url = nil
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        try? FileManager.default.removeItem(at: url)
     }
 
     /// The file's SHA-256, lower-case hex, as the phone's inbox computes it.

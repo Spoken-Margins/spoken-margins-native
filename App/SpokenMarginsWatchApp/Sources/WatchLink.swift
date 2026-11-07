@@ -122,6 +122,27 @@ final class WatchLink: NSObject, ObservableObject {
         model.home(now: now, phoneReachable: isReachable)
     }
 
+    /// The item the phone is playing, when the board names one (#3494).
+    func nowPlaying(now: Date) -> WatchNowPlaying? {
+        model.nowPlaying(now: now, phoneReachable: isReachable)
+    }
+
+    func phoneTime(of watchTime: Date) -> Date {
+        model.phoneTime(of: watchTime)
+    }
+
+    /// Play, pause or skip the phone's item. The fast lane only: a command that waited on the sure lane would arrive
+    /// late and surprise the listener, so with the phone out of reach nothing is sent and nothing flips (#3494).
+    /// True when it was sent.
+    @discardableResult
+    func sendTransport(_ transport: WatchTransport) -> Bool {
+        guard isLoaded, isReachable, WCSession.isSupported(), WCSession.default.activationState == .activated else { return false }
+        model.noteTransport(transport, now: Date())
+        saveState()
+        sendFast(.transport(transport))
+        return true
+    }
+
     func startSession(kind: WatchSessionKind) {
         whenLoaded { self.startSessionNow(kind: kind) }
     }
@@ -156,16 +177,16 @@ final class WatchLink: NSObject, ObservableObject {
     // MARK: Margins
 
     /// A finished recording, closed on disk: it is held until the phone files it.
-    func record(_ finished: WatchMarginCapture.Finished, id: String, wallStart: Date) {
-        whenLoaded { self.recordNow(finished, id: id, wallStart: wallStart) }
+    func record(_ finished: WatchMarginCapture.Finished, id: String, wallStart: Date, itemTarget: WatchItemTarget? = nil) {
+        whenLoaded { self.recordNow(finished, id: id, wallStart: wallStart, itemTarget: itemTarget) }
     }
 
-    private func recordNow(_ finished: WatchMarginCapture.Finished, id: String, wallStart: Date) {
+    private func recordNow(_ finished: WatchMarginCapture.Finished, id: String, wallStart: Date, itemTarget: WatchItemTarget?) {
         let transfer = WatchMarginTransfer(
             id: id, wallStart: wallStart, durationMs: WatchContract.milliseconds(seconds: finished.duration),
             sessionId: model.sessionIdForMargin(now: wallStart),
             clock: model.clock.flatMap { $0.isFresh(at: wallStart) ? $0 : nil },
-            sha256: finished.sha256
+            sha256: finished.sha256, itemTarget: itemTarget
         )
         ledger.record(transfer, fileName: finished.url.lastPathComponent, now: Date())
         lastMarginId = id
@@ -235,13 +256,18 @@ final class WatchLink: NSObject, ObservableObject {
     private func sendFast(_ wrapped: WatchEnvelope, afterHello holding: [String]? = nil) {
         guard WCSession.default.activationState == .activated, WCSession.default.isReachable else { return }
         let sentAt = wrapped.sentAt
-        // WatchConnectivity calls this on its own background queue. Without @Sendable the closure takes on this class's
+        let isTransport = if case .transport = wrapped.message { true } else { false }
+        // WatchConnectivity calls these on its own background queue. Without @Sendable the closure takes on this class's
         // main-actor isolation, and Swift's check at its top stops the app whenever the phone answers (#2964).
         WCSession.default.sendMessage(wrapped.dictionary, replyHandler: { @Sendable [weak self] dictionary in
             let receivedAt = Date()
             guard let reply = WatchPhoneReply(dictionary: dictionary) else { return }
-            Task { @MainActor in self?.apply(reply, sentAt: sentAt, receivedAt: receivedAt, helloHolding: holding) }
-        }, errorHandler: nil)
+            Task { @MainActor in self?.apply(reply, sentAt: sentAt, receivedAt: receivedAt, helloHolding: holding, isTransport: isTransport) }
+        }, errorHandler: { @Sendable [weak self] _ in
+            // A command that never arrived leaves the button drawn wrong and sends no board, so ask the phone what is true.
+            guard isTransport else { return }
+            Task { @MainActor in self?.sayHello() }
+        })
     }
 
     /// The Watch's own record of launches and failures (#3506), whenever it holds something the phone hasn't seen.
@@ -270,11 +296,11 @@ final class WatchLink: NSObject, ObservableObject {
 
     // MARK: What the phone says
 
-    private func apply(_ reply: WatchPhoneReply, sentAt: Date, receivedAt: Date, helloHolding: [String]?) {
+    private func apply(_ reply: WatchPhoneReply, sentAt: Date, receivedAt: Date, helloHolding: [String]?, isTransport: Bool) {
         if let stamp = WatchClockStamp.measure(sentAt: sentAt, phoneTime: reply.phoneTime, receivedAt: receivedAt) {
             model.clock = stamp
         }
-        model.apply(reply.board, receivedAt: receivedAt)
+        model.apply(reply.board, receivedAt: receivedAt, keepingNowPlaying: isTransport)
         for answer in reply.answers { apply(answer) }
         if let helloHolding {
             let answered = Set(reply.answers.map(\.receipt.captureId))
