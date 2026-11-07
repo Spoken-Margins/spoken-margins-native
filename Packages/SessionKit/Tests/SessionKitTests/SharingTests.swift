@@ -1713,13 +1713,14 @@ final class SharingTests: XCTestCase {
 
     func testHeldOutPublicDomainPodcastAnchorCorpus() async throws {
         let environment = ProcessInfo.processInfo.environment
-        guard environment["SPOKEN_MARGINS_RUN_ANCHOR_CORPUS"] == "1",
-              let senderPath = environment["SPOKEN_MARGINS_BENCHMARK_SENDER_AUDIO"],
-              let recipientPath = environment["SPOKEN_MARGINS_BENCHMARK_RECIPIENT_AUDIO"],
-              let senderTranscriptPath = environment["SPOKEN_MARGINS_BENCHMARK_SENDER_TRANSCRIPT"],
-              let recipientTranscriptPath = environment["SPOKEN_MARGINS_BENCHMARK_RECIPIENT_TRANSCRIPT"] else {
+        guard environment["SPOKEN_MARGINS_RUN_ANCHOR_CORPUS"] == "1" else {
             throw XCTSkip("Run scripts/run-podcast-anchor-benchmark.sh to execute the held-out corpus.")
         }
+        // A requested run that is missing an input fails, so the benchmark never reports a skip as a measurement (#2133).
+        let senderPath = try XCTUnwrap(environment["SPOKEN_MARGINS_BENCHMARK_SENDER_AUDIO"])
+        let recipientPath = try XCTUnwrap(environment["SPOKEN_MARGINS_BENCHMARK_RECIPIENT_AUDIO"])
+        let senderTranscriptPath = try XCTUnwrap(environment["SPOKEN_MARGINS_BENCHMARK_SENDER_TRANSCRIPT"])
+        let recipientTranscriptPath = try XCTUnwrap(environment["SPOKEN_MARGINS_BENCHMARK_RECIPIENT_TRANSCRIPT"])
         let senderURL = URL(fileURLWithPath: senderPath)
         let recipientURL = URL(fileURLWithPath: recipientPath)
         let senderTimeline = try whisperTimeline(from: URL(fileURLWithPath: senderTranscriptPath))
