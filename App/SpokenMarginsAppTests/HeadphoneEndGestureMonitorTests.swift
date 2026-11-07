@@ -8,17 +8,27 @@ import XCTest
 final class HeadphoneEndGestureMonitorTests: XCTestCase {
     private final class Clock { var ms = 5_000 }
 
+    /// The app's input mute state as iOS holds it: a press sets it, and the monitor's unmute clears it.
+    private final class FakeInput {
+        var muted = false
+        var unmuteCalls = 0
+        var refuseUnmute = false
+    }
+
     private struct Rig {
         let monitor: HeadphoneEndGestureMonitor
         let center: NotificationCenter
         let clock: Clock
+        let input: FakeInput
         let ends: () -> Int
         let lines: () -> [(kind: String, fields: [String: String])]
     }
 
-    private func rig(recordingMs: Int? = nil, sinceRouteChangeMs: Int? = nil) -> Rig {
+    private func rig(recordingMs: Int? = nil, sinceRouteChangeMs: Int? = nil, mutedAtStart: Bool = false) -> Rig {
         let center = NotificationCenter()
         let clock = Clock()
+        let input = FakeInput()
+        input.muted = mutedAtStart
         var ended = 0
         var logged: [(kind: String, fields: [String: String])] = []
         let monitor = HeadphoneEndGestureMonitor(
@@ -28,12 +38,20 @@ final class HeadphoneEndGestureMonitorTests: XCTestCase {
             endMargin: { ended += 1 },
             captureLevel: { ["peakNowDb": "-30", "capturedMs": "4000"] },
             notificationCenter: center,
-            nowMs: { clock.ms }
+            nowMs: { clock.ms },
+            isInputMuted: { input.muted },
+            setInputMuted: { muted in
+                if muted == false { input.unmuteCalls += 1 }
+                if input.refuseUnmute { return false }
+                input.muted = muted
+                return true
+            }
         )
-        return Rig(monitor: monitor, center: center, clock: clock, ends: { ended }, lines: { logged })
+        return Rig(monitor: monitor, center: center, clock: clock, input: input, ends: { ended }, lines: { logged })
     }
 
     private func press(_ rig: Rig, muted: Bool) async throws {
+        rig.input.muted = muted // iOS mutes the input, then posts the notification
         rig.center.post(
             name: AVAudioApplication.inputMuteStateChangeNotification, object: nil,
             userInfo: [AVAudioApplication.muteStateKey: NSNumber(value: muted)]
@@ -52,6 +70,76 @@ final class HeadphoneEndGestureMonitorTests: XCTestCase {
         XCTAssertNotNil(mute.first?.fields["route"])
         XCTAssertEqual(mute.first?.fields["peakNowDb"], "-30", "the level now is on the line, so a silent file shows")
         XCTAssertEqual(rig.ends(), 1)
+    }
+
+    /// The audit finding on #3657: the press that ended a Margin left the input muted, so the next Margin recorded
+    /// silence. Fails without the unmute in the monitor.
+    func testThePressThatEndsAMarginLeavesTheInputUnmutedForTheNextOne() async throws {
+        let rig = rig()
+        rig.monitor.begin()
+        try await press(rig, muted: true)
+        XCTAssertEqual(rig.ends(), 1)
+        XCTAssertFalse(rig.input.muted, "the press that ended the Margin must not leave the next one muted")
+        let unmute = rig.lines().first { $0.kind == "headphone.unmute" }
+        XCTAssertEqual(unmute?.fields["reason"], "margin_ended")
+        XCTAssertEqual(unmute?.fields["unmuted"], "true")
+
+        // The next Margin: starts unmuted, and a press on it ends it too.
+        rig.monitor.stop()
+        rig.clock.ms += 10_000
+        rig.monitor.begin()
+        XCTAssertEqual(rig.lines().last { $0.kind == "headphone.recording_begin" }?.fields["mutedAtStart"], "false")
+        try await press(rig, muted: true)
+        XCTAssertEqual(rig.ends(), 2)
+        XCTAssertFalse(rig.input.muted)
+    }
+
+    func testTheUnmuteItselfDoesNotEndTheMarginAgain() async throws {
+        let rig = rig()
+        rig.monitor.begin()
+        try await press(rig, muted: true)
+        try await press(rig, muted: false) // the notification our own unmute posts
+        XCTAssertEqual(rig.ends(), 1)
+        XCTAssertEqual(rig.lines().last { $0.kind == "headphone.mute_state" }?.fields["verdict"], "ignored:already_ending")
+    }
+
+    func testAMarginStartedWhileTheInputIsStillMutedUnmutesItFirst() async throws {
+        let rig = rig(mutedAtStart: true)
+        rig.monitor.begin()
+        XCTAssertFalse(rig.input.muted)
+        let begin = rig.lines().last { $0.kind == "headphone.recording_begin" }
+        XCTAssertEqual(begin?.fields["mutedAtStart"], "true")
+        XCTAssertEqual(begin?.fields["unmutedAtStart"], "true")
+        try await press(rig, muted: true)
+        XCTAssertEqual(rig.ends(), 1, "a press on a Margin that began muted still ends it")
+    }
+
+    func testAnInputThatStaysMutedIsLoggedAsNotUnmuted() async throws {
+        let rig = rig()
+        rig.input.refuseUnmute = true
+        rig.monitor.begin()
+        try await press(rig, muted: true)
+        XCTAssertEqual(rig.ends(), 1)
+        XCTAssertEqual(rig.lines().first { $0.kind == "headphone.unmute" }?.fields["unmuted"], "false")
+    }
+
+    func testAMuteThatWasIgnoredIsStillClearedWhenTheRecordingStops() async throws {
+        let rig = rig(recordingMs: 300)
+        rig.monitor.begin()
+        try await press(rig, muted: true) // inside the start-up window: logged, not acted on
+        XCTAssertEqual(rig.ends(), 0)
+        XCTAssertTrue(rig.input.muted)
+        rig.monitor.stop()
+        XCTAssertFalse(rig.input.muted)
+        XCTAssertEqual(rig.lines().first { $0.kind == "headphone.unmute" }?.fields["reason"], "recording_stopped")
+    }
+
+    func testAnUnmutedInputIsNeverTouched() async throws {
+        let rig = rig()
+        rig.monitor.begin()
+        rig.monitor.stop()
+        XCTAssertEqual(rig.input.unmuteCalls, 0)
+        XCTAssertNil(rig.lines().first { $0.kind == "headphone.unmute" })
     }
 
     func testARepeatedStateIsLoggedAndIgnored() async throws {

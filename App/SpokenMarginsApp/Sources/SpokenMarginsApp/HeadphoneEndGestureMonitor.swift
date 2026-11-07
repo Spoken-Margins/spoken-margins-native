@@ -25,6 +25,11 @@ import AVFoundation
 /// iOS and nothing here changes how iOS answers a press. Every line also carries the recorder's level now, so the
 /// log shows whether the recording went silent after a press.
 ///
+/// The press that ends a Margin also leaves iOS holding the app's input muted. The monitor therefore unmutes the
+/// input as it asks for the end, again when the recording stops, and at the start of the next recording if it is
+/// still muted, so the next Margin never records silence (audit finding on #3657, #3650). Each unmute is logged
+/// as `headphone.unmute`.
+///
 /// Local only: port types, never device names. The model owns the one instance and starts and stops it with the
 /// capture watch.
 @MainActor
@@ -38,10 +43,14 @@ final class HeadphoneEndGestureMonitor {
     private let captureLevel: () -> [String: String]
     private let notificationCenter: NotificationCenter
     private let nowMs: () -> Int
+    private let isInputMuted: () -> Bool
+    private let setInputMuted: (Bool) -> Bool
     private var detector: HeadphoneMuteGestureDetector?
     private var observers: [NSObjectProtocol] = []
     private var beganAtMs = 0
     private var lastEventAtMs: Int?
+    /// A press already asked the model to end this Margin; later mute changes (our own unmute included) are noise.
+    private var endRequested = false
 
     var isWatching: Bool { detector != nil }
 
@@ -52,7 +61,9 @@ final class HeadphoneEndGestureMonitor {
         endMargin: @escaping () -> Void,
         captureLevel: @escaping () -> [String: String] = { [:] },
         notificationCenter: NotificationCenter = .default,
-        nowMs: @escaping () -> Int = { Int((ProcessInfo.processInfo.systemUptime * 1_000).rounded()) }
+        nowMs: @escaping () -> Int = { Int((ProcessInfo.processInfo.systemUptime * 1_000).rounded()) },
+        isInputMuted: @escaping () -> Bool = { HeadphoneEndGestureMonitor.systemInputMuted() },
+        setInputMuted: @escaping (Bool) -> Bool = { HeadphoneEndGestureMonitor.setSystemInputMuted($0) }
     ) {
         self.log = log
         self.recordingMs = recordingMs
@@ -61,6 +72,8 @@ final class HeadphoneEndGestureMonitor {
         self.captureLevel = captureLevel
         self.notificationCenter = notificationCenter
         self.nowMs = nowMs
+        self.isInputMuted = isInputMuted
+        self.setInputMuted = setInputMuted
     }
 
     /// A Margin has started recording.
@@ -68,9 +81,12 @@ final class HeadphoneEndGestureMonitor {
         stop()
         beganAtMs = nowMs()
         lastEventAtMs = nil
-        var mutedAtStart = false
+        endRequested = false
+        // A mute left over from a press on the last Margin would record this one as silence: clear it first.
+        let mutedAtStart = isInputMuted()
+        if mutedAtStart { _ = setInputMuted(false) }
+        let mutedNow = isInputMuted()
         #if canImport(AVFoundation) && os(iOS)
-        mutedAtStart = AVAudioApplication.shared.isInputMuted
         observers.append(notificationCenter.addObserver(
             forName: AVAudioApplication.inputMuteStateChangeNotification, object: nil, queue: .main
         ) { [weak self] note in
@@ -84,8 +100,10 @@ final class HeadphoneEndGestureMonitor {
             MainActor.assumeIsolated { self?.routeChanged(reasonRaw: raw) }
         })
         #endif
-        detector = HeadphoneMuteGestureDetector(initiallyMuted: mutedAtStart)
-        log("headphone.recording_begin", baseFields().merging(["mutedAtStart": String(mutedAtStart)]) { $1 })
+        detector = HeadphoneMuteGestureDetector(initiallyMuted: mutedNow)
+        var fields = ["mutedAtStart": String(mutedAtStart)]
+        if mutedAtStart { fields["unmutedAtStart"] = String(!mutedNow) }
+        log("headphone.recording_begin", baseFields().merging(fields) { $1 })
     }
 
     /// The recording ended (saved, cancelled or interrupted).
@@ -93,6 +111,7 @@ final class HeadphoneEndGestureMonitor {
         for observer in observers { notificationCenter.removeObserver(observer) }
         observers.removeAll()
         guard detector != nil else { return }
+        unmuteInput(reason: "recording_stopped")
         detector = nil
         log("headphone.recording_end", baseFields())
     }
@@ -109,10 +128,43 @@ final class HeadphoneEndGestureMonitor {
             log("headphone.mute_state", baseFields().merging(["muted": "unreadable"]) { $1 })
             return
         }
+        if endRequested {
+            log("headphone.mute_state", baseFields().merging(["muted": String(muted), "verdict": "ignored:already_ending"]) { $1 })
+            return
+        }
         let verdict = current.observe(muted: muted, recordingMs: recordingMs(), sinceRouteChangeMs: sinceRouteChangeMs())
         detector = current
         log("headphone.mute_state", baseFields().merging(["muted": String(muted), "verdict": Self.describe(verdict)]) { $1 })
-        if verdict == .endMargin { endMargin() }
+        if verdict == .endMargin {
+            endRequested = true
+            endMargin()
+            unmuteInput(reason: "margin_ended")
+        }
+    }
+
+    /// Puts the app's input back to unmuted if a press left it muted. Does nothing, and logs nothing, otherwise.
+    private func unmuteInput(reason: String) {
+        guard isInputMuted() else { return }
+        let unmuted = setInputMuted(false) && !isInputMuted()
+        log("headphone.unmute", baseFields().merging(["reason": reason, "unmuted": String(unmuted)]) { $1 })
+    }
+
+    /// The app's input mute state, as iOS holds it (false where there is no such state).
+    nonisolated static func systemInputMuted() -> Bool {
+        #if canImport(AVFoundation) && os(iOS)
+        return AVAudioApplication.shared.isInputMuted
+        #else
+        return false
+        #endif
+    }
+
+    /// Asks iOS to mute or unmute the app's input; true when iOS accepted it.
+    nonisolated static func setSystemInputMuted(_ muted: Bool) -> Bool {
+        #if canImport(AVFoundation) && os(iOS)
+        return (try? AVAudioApplication.shared.setInputMuted(muted)) != nil
+        #else
+        return false
+        #endif
     }
 
     private func routeChanged(reasonRaw: UInt?) {
