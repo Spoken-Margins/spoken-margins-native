@@ -29,9 +29,15 @@ final class MarginMomentTapTests: XCTestCase {
         try super.tearDownWithError()
     }
 
-    private func fixture(status: String = "active") throws -> (model: Gate1AppModel, row: MarginRow) {
+    private final class StubRecorder: RecordingClient {
+        func beginRecording() throws {}
+        func finishRecording(audioRef: String?) throws -> String { "" }
+        func cancelRecording() throws {}
+    }
+
+    private func fixture(status: String = "active", openHome: Bool = true) throws -> (model: Gate1AppModel, row: MarginRow) {
         let databaseURL = root.appending(path: "library.sqlite")
-        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: databaseURL)
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), recordingClient: StubRecorder(), databaseURLOverride: databaseURL)
         model.resetAndSeed()
         let store = try SQLiteSessionStore(path: databaseURL.path)
         try store.saveItem(Item(id: "tap-source", title: "Tap source", mediaType: "podcast", text: nil,
@@ -46,8 +52,12 @@ final class MarginMomentTapTests: XCTestCase {
             audioPath: root.appending(path: "margin.m4a").path, audioStatus: "recorded", transcriptionStatus: "transcribed",
             transcript: "A note.", cleanedTranscript: nil, displayText: nil, status: status)
         try store.saveInterjection(margin)
+        try store.saveItem(Item(id: "other-source", title: "Other source", mediaType: "podcast", text: nil,
+            externalReference: "local", status: "ready",
+            media: ItemMedia(sourceType: .nativeMediaFile, url: root.appending(path: "other.m4a").absoluteString,
+                durationMs: 180_000, nativeMediaId: "other-source")))
         model.refreshMarginRows()
-        model.openHome()
+        if openHome { model.openHome() }
         return (model, MarginRow(interjection: margin, itemTitle: "Tap source", sessionDate: nil))
     }
 
@@ -69,6 +79,7 @@ final class MarginMomentTapTests: XCTestCase {
         MarginMomentTap.start(row, model: model)
         model.showSettingsTab()
         let after = model.screen
+        XCTAssertNotEqual(after, .home, "the listener really went to another screen")
         await model.settleItemOpen()
         XCTAssertEqual(model.screen, after, "a late result must not cover the screen the listener chose")
         XCTAssertNil(model.marginMoment)
@@ -82,5 +93,27 @@ final class MarginMomentTapTests: XCTestCase {
         XCTAssertNil(model.marginMoment)
         XCTAssertEqual(model.screen, .home)
         XCTAssertNotNil(model.lastError)
+    }
+
+    func testAnotherItemStartedWhileTheReadsRunDropsTheMoment() async throws {
+        let (model, row) = try fixture(openHome: false)
+        defer { model.endMarginMoment(); model.pause() }
+        XCTAssertEqual(model.screen, .playback, "the tap comes from the playback screen, which a new item keeps")
+        MarginMomentTap.start(row, model: model)
+        model.startItem(id: "other-source") // starting an item does not touch the open gate
+        XCTAssertEqual(model.screen, .playback)
+        await model.settleItemOpen()
+        XCTAssertNil(model.marginMoment, "a late result must not take over newer playback")
+        XCTAssertEqual(model.snapshot.itemId, "other-source")
+    }
+
+    func testARecordingStartedWhileTheReadsRunDropsTheMoment() async throws {
+        let (model, row) = try fixture(openHome: false)
+        defer { model.endMarginMoment(); model.pause() }
+        MarginMomentTap.start(row, model: model)
+        model.dispatchGate2CompactCommand(.beginInterjection)
+        XCTAssertTrue(model.recordingNavigationIsLocked)
+        await model.settleItemOpen()
+        XCTAssertNil(model.marginMoment)
     }
 }

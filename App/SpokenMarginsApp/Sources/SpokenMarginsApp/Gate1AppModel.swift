@@ -2266,7 +2266,7 @@ final class Gate1AppModel: ObservableObject {
                     UserDefaults.standard.set(speechRate, forKey: "speechRate")
                 }
             }
-            if command == .finishInterjection { refreshSelectedItemInBackground() } else { refreshSelectedItemAfterTransport() } // a saved Margin shows at once
+            if command == .finishInterjection { refreshSelectedItemInBackground() } else { refreshSelectedItemAfterTransport() } // a saved Margin shows a moment later, when the reload lands
             if command == .finishInterjection {
                 recordSavedInterjectionForOnboarding()
             }

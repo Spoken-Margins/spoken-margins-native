@@ -22,12 +22,26 @@ struct MarginMomentLoad: Sendable {
 /// meanwhile drops the late result.
 @MainActor
 enum MarginMomentTap {
+    /// What was playing when the tap was made. Playing a shared Margin, starting an item, Skim and transport don't
+    /// touch the open gate, so a late read must also see that playback is what the tap saw.
+    @MainActor private struct Playing: Equatable {
+        let itemId: String?
+        let sessionId: String?
+        let momentId: String?
+        init(_ model: Gate1AppModel) {
+            itemId = model.snapshot.itemId
+            sessionId = model.snapshot.sessionId
+            momentId = model.marginMoment?.target.marginId
+        }
+    }
+
     static func start(_ row: MarginRow, model: Gate1AppModel) {
         guard !model.rejectNavigationOrSessionMutationWhileRecording("play_margin_moment") else { return }
         let store: SQLiteSessionStore
         do { store = try model.requireStore() } catch { return model.reportFailure(error, context: "Could not play this Margin's position") }
         let generation = model.backgroundRefresh.beginOpen()
         let from = model.screen
+        let playing = Playing(model)
         model.backgroundRefresh.holdOpen(Task { [weak model] in
             guard let model else { return }
             let i = row.interjection
@@ -39,7 +53,7 @@ enum MarginMomentTap {
                 guard let found else { throw MarginMomentLoad.unavailable }
                 loaded = .success(MarginMomentLoad(target: found, detail: try await model.loadItemDetailOffMain(id: found.session.itemId, store: store)))
             } catch { loaded = .failure(error) }
-            guard !Task.isCancelled, model.backgroundRefresh.isCurrentOpen(generation), model.screen == from, !model.recordingNavigationIsLocked else { return }
+            guard !Task.isCancelled, model.backgroundRefresh.isCurrentOpen(generation), model.screen == from, Playing(model) == playing, !model.recordingNavigationIsLocked else { return }
             switch loaded {
             case .success(let load): model.hangTelemetry.labels.scoped("playMarginMomentTap") { _ = model.playMarginMoment(row, loaded: load) }
             case .failure(let error): model.reportFailure(error, context: "Could not play this Margin's position")
