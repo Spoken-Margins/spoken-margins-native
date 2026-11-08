@@ -74,10 +74,16 @@ struct SpokenMarginsApp: App {
     #endif
 
     init() {
+        // How long each launch takes to reach a usable screen, kept across launches (#3752). First, so the
+        // time before the model exists counts. Unit tests have no launch to time.
+        let runningTests = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+        if !runningTests {
+            LaunchRecorder.shared = LaunchRecorder()
+        }
         let model = Gate1AppModel.makeApplicationModel()
         // Memory use and memory kills, in Diagnostics (#122). Unit tests keep nothing on disk.
-        let runningTests = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
         let pinnedDiagnostics = PinnedDiagnostics(diagnostics: model.runtimeDiagnostics)
+        LaunchRecorder.shared?.attach { key, value in pinnedDiagnostics.set(key, value) }
         let memoryFootprint = MemoryFootprintRecorder(diagnostics: pinnedDiagnostics,
                                                       fileURL: runningTests ? nil : MemoryFootprintRecorder.defaultFileURL)
         memoryFootprint.start(observing: model)
@@ -99,6 +105,7 @@ struct SpokenMarginsApp: App {
         if !runningTests {
             previousRunExit.start { [weak model] kind, fields in
                 model?.recordDeveloperDiagnostic(kind, fields)
+                LaunchRecorder.shared?.noteExit(fields: fields) // the event log's 300 can push it out (#3752)
             }
         }
         self.previousRunExit = previousRunExit
