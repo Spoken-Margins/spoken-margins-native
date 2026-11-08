@@ -21,7 +21,8 @@ final class SpokenNoteItemTests: XCTestCase {
         XCTAssertEqual(item.externalReference, "note://n1")
         XCTAssertEqual(item.externalReferenceType, "spoken_note")
         XCTAssertEqual(item.status, "ready")
-        XCTAssertEqual(item.title, "Spoken note")
+        XCTAssertEqual(item.title, SpokenNoteTitle.automatic(createdAt: Date(timeIntervalSince1970: 100), text: "First idea. Second idea."),
+                       "a note with words is named for its day and first words (#3663)")
         XCTAssertEqual(item.createdAt, Date(timeIntervalSince1970: 100))
     }
 
@@ -38,10 +39,12 @@ final class SpokenNoteItemTests: XCTestCase {
         XCTAssertNotEqual(a.id, SpokenNoteItem.makeItem(note: note(id: "n2"), createdAt: Date()).id)
     }
 
-    func testATitleIsTrimmedAndABlankOneFallsBackToTheDefault() {
-        XCTAssertEqual(SpokenNoteItem.makeItem(note: note(), title: "  Walk home idea ", createdAt: Date()).title, "Walk home idea")
+    func testATitleIsTrimmedAndABlankOneFallsBackToTheMadeUpOne() {
+        let day = Date(timeIntervalSince1970: 1_700_000_000)
+        XCTAssertEqual(SpokenNoteItem.makeItem(note: note(), title: "  Walk home idea ", createdAt: day).title, "Walk home idea")
         for blank in ["", "   ", "\n\t"] {
-            XCTAssertEqual(SpokenNoteItem.makeItem(note: note(), title: blank, createdAt: Date()).title, "Spoken note", "[\(blank)]")
+            XCTAssertEqual(SpokenNoteItem.makeItem(note: note(), title: blank, createdAt: day).title,
+                           SpokenNoteTitle.automatic(createdAt: day, text: ""), "[\(blank)]")
         }
     }
 
