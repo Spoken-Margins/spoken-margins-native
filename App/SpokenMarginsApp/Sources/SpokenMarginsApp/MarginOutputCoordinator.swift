@@ -271,7 +271,7 @@ final class MarginOutputCoordinator: ObservableObject {
             setStatus(MarginOutputStatus(MarginNoteDelivery.statusLine(
                 planners[destination.id]?.folderSummary ?? .init(), folderName: destination.name,
                 checkedAt: Date().formatted(date: .omitted, time: .shortened),
-                noun: content.shape == .itemOnCompletion ? ("item note", "item notes") : ("Margin", "Margins")
+                noun: content.shape == .itemOnCompletion ? ("source note", "source notes") : ("Margin", "Margins")
             )), for: destination.id)
         } catch is NeedsFolderAccess {
             // Already marked; the other destinations carry on.

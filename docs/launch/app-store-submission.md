@@ -114,7 +114,7 @@ It also says there is "no developer-operated … backend", but rows 1 and 2 use 
 > 4. The attached demo file [DEMO PACKET — TO PREPARE] shows this on a public podcast episode.
 >
 > **Margins from other people (guideline 1.2):** nothing is public and there is no feed, no search and no account. A person's Margins reach you only when they send you a `.spokenmargins` file or, once share links ship [[delete this clause while links are off in the build]], a link. You can hide what they sent and report a link:
-> 1. Open an item that has a friend's Margins, open the "About this file" disclosure on the friend's card and tap **Hide this sender**. Their Margins disappear from every item and from the Margins tab on this phone. Nothing is deleted.
+> 1. Open an item that has a friend's Margins, open the "About this file" disclosure on the friend's card and tap **Hide this sender**. Their Margins disappear from every list and from playback on this phone. Nothing is deleted.
 > 2. Settings › **Hidden senders** lists everyone you have hidden, each with **Show again**.
 > 3. To hide one Margin and keep the rest, tap **Hide this Margin** on its card in the item, or open it from the Margins tab and tap **Hide this Margin**. It disappears from every list and from playback on this phone. Settings › **Hidden Margins** lists each one with **Show again**.
 > 4. Margins that came from a share link also show **Report this link**, which opens the link's page in the browser, where a short form needs no account. The server stops serving a reported link at once and the developer reads the report record and can remove a link by its id. Nobody reads the reported content, because shares are end-to-end encrypted.

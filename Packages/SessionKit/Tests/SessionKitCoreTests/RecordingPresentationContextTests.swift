@@ -23,7 +23,7 @@ final class RecordingPresentationContextTests: XCTestCase {
             var snapshot = SessionSnapshot()
             snapshot.title = title
             let context = RecordingPresentationContext(snapshot: snapshot, startedAt: Date())
-            XCTAssertEqual(context.itemTitle, "Current item")
+            XCTAssertEqual(context.itemTitle, "Current")
             XCTAssertEqual(context.locationTitle, "Current listening position")
             XCTAssertEqual(context.progressPercent, 0)
         }

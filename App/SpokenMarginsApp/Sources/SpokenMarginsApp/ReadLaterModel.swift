@@ -100,7 +100,7 @@ final class ReadLaterModel: ObservableObject {
             fail("The token could not be removed. Try again while the device is unlocked."); return false
         }
         tracker.credentialChanged(for: service)
-        selectService(); status = "Disconnected. Imported items and Margins remain in your Library."
+        selectService(); status = "Disconnected. What you imported and your Margins remain in your Library."
         return true
     }
     func refresh(more: Bool = false) {

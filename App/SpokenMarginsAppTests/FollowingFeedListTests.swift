@@ -66,7 +66,16 @@ final class FollowingFeedListTests: XCTestCase {
         try await model.publishFeedSubscriptions(store: store)
         // The "N new" markers don't decide the order; keep the test off the host app's side file.
         model.followingLookedLoaded = true
+
+        // #3753: friends are already in memory, the shows are not. Until the first show load finishes, Following draws
+        // nothing (and no empty state), so friends are never drawn first and then pushed down by newer episodes.
+        let friendsBeforeLoad = model.followingFriends
+        XCTAssertFalse(friendsBeforeLoad.isEmpty, "the friends are in memory before the shows load")
+        XCTAssertFalse(model.followingShowListLoaded)
+        XCTAssertEqual(model.followingFeedRows(friends: friendsBeforeLoad).map(\.id), [], "no friends-only first frame")
+        XCTAssertFalse(model.followingShowsEmptyState(friends: []), "an unread show list is not an empty one")
         await model.reloadFollowingShowEntries()
+        XCTAssertTrue(model.followingShowListLoaded)
 
         let friends = model.followingFriends
         let seeded: Set<String> = ["friend::ada", "friend::blair", "friend::cole", "friend::shanti", "friend::ai professor",

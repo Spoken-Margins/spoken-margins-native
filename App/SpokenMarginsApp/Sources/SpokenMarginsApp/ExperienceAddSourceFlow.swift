@@ -322,7 +322,7 @@ struct ExperienceAddSourceFlow: View {
                     .accessibilityIdentifier("sourceLink.import.button")
                 }
                 SourceLinkImportStatusView()
-                Text("Adding a source never replaces the item already in Now Playing.")
+                Text("Adding a source never replaces what is already in Now Playing.")
                     .font(.caption)
                     .foregroundStyle(AppColors.secondaryText)
             }
