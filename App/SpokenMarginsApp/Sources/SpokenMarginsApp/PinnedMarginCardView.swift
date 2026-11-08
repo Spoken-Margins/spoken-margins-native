@@ -32,6 +32,22 @@ struct PinnedMarginCardView: View {
             }
         }
         .followsPlaybackClock(model.playbackClock, tick: $playbackTick)
+        // A Margin that waits for a tap, or could not play, appears at the top of Now while VoiceOver's focus is elsewhere:
+        // say so once, when the card enters that stage or another Margin replaces it (#3728). `VoiceOverAnnouncements`
+        // decides; the stages that play aloud, and a guided Margin's 420 ms beat, stay silent. The key carries the Margin's
+        // id because two single-Margin packets from one sender make equal cards, and `onChange` ignores equal values.
+        .onChange(of: announcementKey) { previous, key in
+            let guided = model.pendingImportedCommentary?.layer.revealMode == .guided
+            if let text = VoiceOverAnnouncements.marginCard(from: previous, to: key, playsByItself: guided) {
+                AccessibilityNotification.Announcement(text).post()
+            }
+        }
+    }
+
+    private var announcementKey: VoiceOverAnnouncements.CardKey {
+        VoiceOverAnnouncements.CardKey(
+            card: model.pinnedMarginCard,
+            marginID: model.pendingImportedCommentary?.interjection.id ?? model.playingImportedCommentary?.interjection.id)
     }
 
     /// At the accessibility text sizes the headline and the buttons wrap and stack instead of clipping (#1933).
