@@ -191,6 +191,63 @@ final class EngineAttachPersistersTests: XCTestCase {
         XCTAssertNil(try rig.store.loadTranscriptTimeline(itemId: "item-1"))
     }
 
+    /// The persister runs off the main thread, so the listener can trash or edit the item while its heavy step runs.
+    /// The item saved is the one stored at the write, not the one read when the work began (#2509).
+    func testTranscriptTimelineKeepsAnItemChangeThatLandedDuringTheHeavyStep() throws {
+        let rig = try rig(seed: [podcast(status: "needs_transcript")])
+        let persister = try rig.engine.transcriptTimelinePersister(itemId: "item-1")
+        let normalized = try persister.normalize(itemId: "item-1", timeline: rawTimeline())
+
+        // Lands between the heavy step and the write: the listener trashes it and renames it.
+        var changed = try rig.store.loadItem(id: "item-1")
+        changed.title = "Renamed while it ran"
+        changed.deletedAt = Date(timeIntervalSince1970: 1_760_000_500)
+        try rig.store.saveItem(changed)
+
+        let persisted = try persister.commit(normalized, itemId: "item-1")
+        let stored = try rig.store.loadItem(id: "item-1")
+        XCTAssertEqual(stored.title, "Renamed while it ran")
+        XCTAssertEqual(stored.deletedAt, Date(timeIntervalSince1970: 1_760_000_500), "the trash is not undone")
+        XCTAssertEqual(stored.text, "first line second line")
+        XCTAssertEqual(stored.transcriptId, "transcript-item-1")
+        XCTAssertEqual(persisted.item, stored)
+    }
+
+    /// A publisher's chapters can land between the heavy step and the write; the timeline saved keeps them.
+    func testTranscriptTimelineKeepsPublisherChaptersThatLandedDuringTheHeavyStep() throws {
+        let rig = try rig(seed: [podcast(status: "needs_transcript")])
+        let persister = try rig.engine.transcriptTimelinePersister(itemId: "item-1")
+        let normalized = try persister.normalize(itemId: "item-1", timeline: rawTimeline())
+        XCTAssertNil(normalized.keptChapters)
+
+        let collection = chapters(.podcasting20JSON, ["One", "Two"])
+        XCTAssertNotNil(try PublisherChaptersPersister(repository: rig.store, publisher: nil).persist(itemId: "item-1", collection: collection))
+        let publisherChapters = try XCTUnwrap(try rig.store.loadTranscriptTimeline(itemId: "item-1")?.timeline.chapters)
+        XCTAssertFalse(publisherChapters.isEmpty)
+
+        _ = try persister.commit(normalized, itemId: "item-1")
+        let saved = try XCTUnwrap(try rig.store.loadTranscriptTimeline(itemId: "item-1")?.timeline)
+        XCTAssertEqual(saved.chapters.map(\.title), ["One", "Two"], "the publisher's chapters are not replaced by the stale step")
+        XCTAssertEqual(saved.chapters.map(\.startMs), publisherChapters.map(\.startMs))
+        XCTAssertEqual(saved.segments.map(\.id), ["a", "b"])
+    }
+
+    func testTranscriptTimelineWritesTheTimelineAndItemInOneCommit() throws {
+        let rig = try rig(seed: [podcast(status: "needs_transcript")])
+        let persister = try rig.engine.transcriptTimelinePersister(itemId: "item-1")
+        let writesBefore = rig.writes()
+        _ = try persister.persist(itemId: "item-1", timeline: rawTimeline())
+        XCTAssertEqual(rig.writes() - writesBefore, 1, "the timeline and the item land together or not at all")
+    }
+
+    func testTranscriptTimelineForAnUnknownItemWritesNothing() throws {
+        let rig = try rig(seed: [podcast(status: "needs_transcript")])
+        let persister = try rig.engine.transcriptTimelinePersister(itemId: "item-missing")
+        let writesBefore = rig.writes()
+        XCTAssertThrowsError(try persister.persist(itemId: "item-missing", timeline: rawTimeline()))
+        XCTAssertEqual(rig.writes(), writesBefore)
+    }
+
     // MARK: Publisher chapters
 
     private func chapters(_ source: PublisherChapterSource, _ titles: [String]) -> PublisherChapterCollection {

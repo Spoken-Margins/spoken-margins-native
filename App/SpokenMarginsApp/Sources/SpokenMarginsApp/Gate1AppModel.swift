@@ -2621,7 +2621,7 @@ final class Gate1AppModel: ObservableObject {
                         self.finishTextAudioPrewarm(itemId: itemId, status: "failed", diagnostic: "full_unavailable")
                         return
                     }
-                    self.attachPreparedTextAudio(prepared, itemId: itemId, preparedStatus: "ready", diagnosticStatus: "ready")
+                    await self.attachPreparedTextAudioOffMain(prepared, itemId: itemId, preparedStatus: "ready", diagnosticStatus: "ready") // #2509
                 case .failure(let error):
                     self.finishTextAudioPrewarm(itemId: itemId, status: "failed", diagnostic: "full_failed:\(SafeErrorText.describe(error))")
                 }
@@ -2635,41 +2635,6 @@ final class Gate1AppModel: ObservableObject {
 
     static func startupPreparationCandidates(_ rows: [LibraryItemRow]) -> [String] {
         LibraryRowBuilder.startupPreparationCandidates(rows)
-    }
-
-    @discardableResult
-    func attachPreparedTextAudio(
-        _ prepared: PreparedTextAudio,
-        itemId: String,
-        preparedStatus: String = "ready",
-        diagnosticStatus: String = "ready",
-        replaceActivePlayback: Bool = false
-    ) -> Bool {
-        do {
-            if engine == nil, let store {
-                installEngine(try makeEngine(store: store))
-            }
-            guard let engine else { return false }
-            snapshot = try engine.attachPreparedTextAudio(
-                itemId: itemId,
-                prepared: prepared,
-                replaceActivePlayback: replaceActivePlayback
-            )
-            if let store {
-                refreshLibraryRowsInBackground(mustPublish: true) // #2505: a finished prewarm is no reason to freeze the screen
-                if activeItemId == itemId { refreshSelectedItemInBackground() } else if selectedItem.id == itemId { selectedItem = try loadItemDetail(id: itemId, store: store) }
-            }
-            activateListeningEditionAudio(itemId: itemId, timeline: prepared.timeline)
-            diagnostics["textAudioPrewarm:\(itemId)"] = diagnosticStatus
-            preparedTextAudioStatus = preparedStatus
-            snapshot.preparedTextAudioStatus = preparedStatus
-            return true
-        } catch {
-            diagnostics["textAudioPrewarm:\(itemId)"] = "attach_failed:\(SafeErrorText.describe(error))"
-            preparedTextAudioStatus = "failed"
-            snapshot.preparedTextAudioStatus = "failed"
-            return false
-        }
     }
 
     private func finishTextAudioPrewarm(itemId: String, status: String, diagnostic: String) {
@@ -2767,9 +2732,7 @@ final class Gate1AppModel: ObservableObject {
                         try SourceTranscriptParsing.transcriptTimeline(from: data, link: link, itemId: itemId, durationMs: durationMs)
                     }.value
                     if let timeline = parsed, !timeline.segments.isEmpty {
-                        await MainActor.run {
-                            self.finishDiscoveredSourceTranscript(timeline, itemId: itemId, linkType: link.type)
-                        }
+                        await self.finishDiscoveredSourceTranscript(timeline, itemId: itemId, linkType: link.type)
                         return
                     }
                     lastFailure = "empty:\(link.type)"
@@ -2831,46 +2794,12 @@ final class Gate1AppModel: ObservableObject {
                     itemId: item.id,
                     durationMs: item.media?.durationMs
                 )
-                await MainActor.run {
-                    self.finishFullSourceTranscription(timeline, itemId: item.id)
-                }
+                await self.finishFullSourceTranscription(timeline, itemId: item.id)
             } catch {
                 await MainActor.run {
                     self.failFullSourceTranscription(itemId: item.id, error: error)
                 }
             }
-        }
-    }
-
-    func attachSourceTranscriptTimeline(_ timeline: TranscriptTimeline, itemId: String) {
-        let shouldGeneratePendingMap = pendingMapGenerationItemId == itemId
-        run { engine in
-            snapshot = try engine.attachTranscriptTimeline(itemId: itemId, timeline: timeline)
-            if store != nil {
-                refreshLibraryRowsInBackground(mustPublish: true) // #2505
-                // Transcript imports can finish long after a shared podcast was
-                // added. They must never retarget the playback screen away from
-                // the item/session that is still active.
-                if activeItemId == itemId { // a pending map generation reads selectedItem.chapters next, so it keeps the direct read
-                    if shouldGeneratePendingMap, let store { selectedItem = try loadItemDetail(id: itemId, store: store) } else { refreshSelectedItemInBackground() }
-                }
-            }
-            diagnostics["sourceTranscriptionStatus"] = "complete"
-            diagnostics["sourceTranscriptionItem"] = itemId
-            if activeItemId == itemId {
-                sourceTranscriptStatus = "ready"
-                snapshot.sourceTranscriptStatus = "ready"
-            }
-        }
-        if shouldGeneratePendingMap {
-            pendingMapGenerationItemId = nil
-            generateListeningMap()
-        }
-        retrySourceWindowContexts(itemId: itemId)
-        if let store { CommunityMapUploadService.shared.transcriptAttached(itemId: itemId, store: store, localAudio: { [weak self] in self?.importedPodcastRecipientLocalURLs[$0] ?? self?.podcastDownloadCoordinator?.validatedLocalURL(for: $0) }) { [weak self] in self?.diagnostics["communityMapUpload"] = $0 } }
-        if let localURL = importedPodcastRecipientLocalURLs[itemId]
-            ?? podcastDownloadCoordinator?.validatedLocalURL(for: itemId) {
-            resolveImportedPodcastCommentary(itemId: itemId, localURL: localURL)
         }
     }
 
