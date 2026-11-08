@@ -46,7 +46,7 @@ struct ExperienceSourcesScreen: View {
                     quickFolderRow
                         .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
                 }
-                if list.rows.isEmpty && list.quiet.isEmpty && friends.isEmpty {
+                if model.followingShowsEmptyState(friends: friends) {
                     SMExperienceEmptyState(
                         systemImage: "dot.radiowaves.left.and.right",
                         title: "You’re not following anything yet",
