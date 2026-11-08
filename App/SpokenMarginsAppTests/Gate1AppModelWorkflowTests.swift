@@ -4037,6 +4037,10 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.pause()
         model.dispatchGate2CompactCommand(.beginInterjection)
         model.dispatchGate2CompactCommand(.finishInterjection)
+        // Summarize reads the item detail, which reloads off the main thread after the save (#2505). Tapping before
+        // that lands finds no unsummarized note, refuses with "already exists" and never starts a summary (#3688).
+        await model.settleItemReload()
+        XCTAssertTrue(model.canSummarizeInterjections)
         model.summarize()
         try await waitFor("first local summary completion") {
             model.selectedItem.turns.filter { $0.turnType == "interjection_summary" && $0.status == "complete" }.count == 1
