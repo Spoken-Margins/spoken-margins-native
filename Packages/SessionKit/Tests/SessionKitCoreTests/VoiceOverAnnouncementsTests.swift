@@ -61,4 +61,29 @@ final class VoiceOverAnnouncementsTests: XCTestCase {
         XCTAssertNil(VoiceOverAnnouncements.readerChapter(position: nil, title: nil))
         XCTAssertNil(VoiceOverAnnouncements.readerChapter(position: (1, 1), title: ""))
     }
+
+    // Audit of #3759, finding 1: a guided Margin waits 420 ms and then plays aloud, so it is never announced.
+    func testAMarginThatPlaysByItselfIsSilentWhileItWaitsItsBeat() {
+        XCTAssertNil(VoiceOverAnnouncements.marginCard(from: nil, to: card(.waitingForTap), playsByItself: true))
+        XCTAssertNil(VoiceOverAnnouncements.marginCard(from: card(.upNext(msRemaining: 5_000, arrival: .playsByItself)),
+                                                       to: card(.waitingForTap), playsByItself: true))
+        // A failure is announced either way: nothing else tells the listener the voice did not start.
+        XCTAssertNotNil(VoiceOverAnnouncements.marginCard(from: card(.loading), to: card(.failed), playsByItself: true))
+    }
+
+    // Audit finding 2: with VoiceOver on a tone-only card stays up, and a newly crossed Margin replaces it in the same stage.
+    func testANewMarginReplacingAWaitingCardInTheSameStageIsAnnounced() {
+        let cole = card(.waitingForTap, subject: .friend("Cole"))
+        let dana = card(.waitingForTap, subject: .friend("Dana"))
+        XCTAssertEqual(VoiceOverAnnouncements.marginCard(from: cole, to: dana, previousMarginID: "a", marginID: "b"),
+                       "Margin from Dana is here. Tap Listen to hear it.", "another sender")
+        XCTAssertNotNil(VoiceOverAnnouncements.marginCard(from: cole, to: cole, previousMarginID: "a", marginID: "b"),
+                        "a second Margin from the same sender")
+        let first = PinnedMarginCard(subject: .friend("Cole"), stage: .waitingForTap, position: "1 of 2")
+        let second = PinnedMarginCard(subject: .friend("Cole"), stage: .waitingForTap, position: "2 of 2")
+        XCTAssertNotNil(VoiceOverAnnouncements.marginCard(from: first, to: second, previousMarginID: "a", marginID: "a"),
+                        "the position moved on")
+        XCTAssertNil(VoiceOverAnnouncements.marginCard(from: cole, to: cole, previousMarginID: "a", marginID: "a"),
+                     "the same card redrawn stays silent")
+    }
 }

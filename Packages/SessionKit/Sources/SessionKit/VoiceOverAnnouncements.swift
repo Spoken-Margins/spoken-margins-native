@@ -4,13 +4,23 @@ import Foundation
 /// The words and the "say it now?" rules are pure so host tests can pin them; the views only post what these return.
 public enum VoiceOverAnnouncements {
     /// The Margin card on Now. A friend's Margin that waits for a tap, or one that could not play, appears at the top of
-    /// the screen in silence; a guided Margin plays aloud and needs no announcement. Returns the card's headline and
-    /// its one line ("Margin from Cole is here. Tap Listen to hear it.") when the card has just *entered* one of those
-    /// two stages, and nil on every other change: the same stage again (the headline's countdown ticks twice a second),
-    /// a stage that speaks for itself, or no card.
-    public static func marginCard(from previous: PinnedMarginCard?, to card: PinnedMarginCard?) -> String? {
-        guard let card, needsAnnouncement(card.stage) else { return nil }
-        if let previous, sameKind(previous.stage, card.stage) { return nil }
+    /// the screen in silence. Returns the card's headline and its one line ("Margin from Cole is here. Tap Listen to
+    /// hear it.") when the card has just *entered* one of those two stages, and nil on every other change.
+    ///
+    /// - `playsByItself`: this card's Margin is guided (auto-play), so it waits only a beat (420 ms) and then plays
+    ///   aloud. Telling the listener to tap a button they don't need would talk over the voice, so it is silent. A failure is announced either way.
+    /// - `previousMarginID` / `marginID`: which Margin each card is about. A card replaced by another Margin in the same
+    ///   stage (a second Margin crossed while a tone-only card waits, which only happens with VoiceOver or Switch Control
+    ///   on) is a new card and is announced; the same stage for the same Margin again (the card is redrawn) is not.
+    public static func marginCard(
+        from previous: PinnedMarginCard?, to card: PinnedMarginCard?,
+        playsByItself: Bool = false, previousMarginID: String? = nil, marginID: String? = nil
+    ) -> String? {
+        guard let card, needsAnnouncement(card.stage), !(playsByItself && card.stage == .waitingForTap) else { return nil }
+        if let previous, sameKind(previous.stage, card.stage),
+           previous.subject == card.subject, previous.position == card.position, previousMarginID == marginID {
+            return nil
+        }
         return "\(card.headline). \(card.detail)"
     }
 
