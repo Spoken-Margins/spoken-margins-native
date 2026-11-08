@@ -68,6 +68,30 @@ final class AppColorContrastAuditFindingsTests: XCTestCase {
     }
 }
 
+final class AppTintedFillPairsTests: XCTestCase {
+    func testTheTintedFillPairsAllPassToday() {
+        XCTAssertFalse(AppColorContrastAudit.tintedFillPairs.isEmpty)
+        XCTAssertEqual(AppColorContrastAudit.failures(for: AppColorContrastAudit.tintedFillPairs), [])
+    }
+
+    /// The pairs can fail: the fill colour `ochre` used as the icon colour on its own 0.2 tint is the mistake
+    /// `ochreText` exists to avoid, and the audit sees it in light mode.
+    func testTheAuditSeesTheWrongIconColourOnATile() {
+        let wrong = AppColorContrastAudit.Pair(
+            name: "artwork icon in the fill colour",
+            foreground: AppSemanticColorRGB.ochre,
+            background: AppSemanticColorRGB.ochre.composited(over: AppSemanticColorRGB.panel, alpha: 0.2),
+            minimumRatio: 3
+        )
+        XCTAssertFalse(AppColorContrastAudit.failures(for: [wrong]).isEmpty)
+    }
+
+    func testTheTintedFillPairsAreInTheAudit() {
+        let names = Set(AppColorContrastAudit.allPairs.map(\.name))
+        for pair in AppColorContrastAudit.tintedFillPairs { XCTAssertTrue(names.contains(pair.name), pair.name) }
+    }
+}
+
 /// Where the app draws a tint or a system colour, the audit has to know about it.
 final class AppColorUsageGuardTests: XCTestCase {
     private func appSwiftFiles() throws -> [URL] {
@@ -102,7 +126,7 @@ final class AppColorUsageGuardTests: XCTestCase {
     // MARK: Tints
 
     /// What each `AppColors.<token>.opacity(<alpha>)` in the app is, by `token@alpha`. `audited` means the text on it is
-    /// measured by `timelineRowPairs`; `noText` means no text sits on it (a hairline, a stripe, a pressed state, a
+    /// measured by `timelineRowPairs` or `tintedFillPairs`; `noText` means no text sits on it (a hairline, a stripe, a pressed state, a
     /// plain shape); `unaudited` is a fill with text or an icon on it that no pair measures yet, left for #3739's next
     /// slices. A new tint is not in this list, so it fails until someone says which of the three it is. The key is the token and the
     /// alpha, not the call site: a new text fill that reuses an audited key is not seen, so give it a new alpha or a pair.
@@ -111,6 +135,9 @@ final class AppColorUsageGuardTests: XCTestCase {
     private static let tints: [String: TintKind] = [
         "evergreen@0.12": .audited, "evergreen@0.07": .audited, "coral@0.08": .audited, "ochre@0.08": .audited,
         "plum@0.07": .audited,
+        // #3739 slice 2: `tintedFillPairs`.
+        "ochre@0.12": .audited, "evergreen@0.16": .audited,
+        "listeningAccent@0.18": .audited, "softGreen@0.85": .audited, "softGreen@0.55": .audited,
         // Card borders: `ExperienceSurface(tint:)` strokes with it, on a panel fill.
         "coral@0.34": .noText, "evergreen@0.18": .noText, "ochre@0.16": .noText, "ochre@0.65": .noText,
         "ochre@0.7": .noText, "ochre@0.5": .noText, "evergreen@0.5": .noText,
@@ -118,9 +145,10 @@ final class AppColorUsageGuardTests: XCTestCase {
         // Strokes, stripes and dots.
         "evergreen@0.25": .noText, "bone@0.75": .noText, "border@0.75": .noText, "border@0.8": .noText,
         // Fills with text or an icon on them that no pair measures yet.
-        "ochre@0.20": .unaudited, "plum@0.16": .unaudited, "ochre@0.12": .unaudited, "evergreen@0.16": .unaudited,
-        "listeningAccent@0.18": .unaudited, "border@0.45": .unaudited, "softGreen@0.85": .unaudited,
-        "softGreen@0.55": .unaudited,
+        // The empty track of the storage bar: the swatches on it carry the meaning. The artwork tile fills
+        // (`SMExperienceTypeCover`) are drawn by a view nothing uses yet, so they are left out until it is.
+        "ochre@0.20": .noText, "plum@0.16": .noText,
+        "border@0.45": .noText,
         // The Watch's plates and the playback card's own controls; the pressed state is the alpha.
         "watchControl@0.8": .unaudited, "watchControl@0.72": .unaudited, "watchControl@0.35": .unaudited,
         // Their button labels are drawn on the dimmed fill.
@@ -151,7 +179,9 @@ final class AppColorUsageGuardTests: XCTestCase {
         let names = AppColorContrastAudit.allPairs.map(\.name)
         for (key, kind) in Self.tints where kind == .audited {
             let parts = key.split(separator: "@")
-            let marker = "on \(parts[0]) at \(parts[1]) over"
+            // The pair names print the alpha as a number, so `0.20` in source is `0.2` there.
+            let alpha = Double(parts[1]).map { "\($0)" } ?? String(parts[1])
+            let marker = "on \(parts[0]) at \(alpha) over"
             XCTAssertTrue(names.contains { $0.contains(marker) }, "\(key) is listed as audited but no pair measures text on it")
         }
     }

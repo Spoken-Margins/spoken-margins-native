@@ -45,4 +45,17 @@ public enum FollowingFeed {
         merged += s.map(Row.show)
         return merged
     }
+
+    /// What the screen draws (#3753). Until the show list has loaded once, friends alone would be drawn, and the
+    /// shows' newer episodes would then sort above them and push them down: the "snap". So nothing is drawn until
+    /// the shows are in, and the first frame is already in its final order.
+    public static func visibleRows(friends: [FollowingFriends.Friend], shows: [FollowingShowRow], showsLoaded: Bool) -> [Row] {
+        showsLoaded ? rows(friends: friends, shows: shows) : []
+    }
+
+    /// Whether to say "You're not following anything yet" (#3753): only when the show list has loaded and there are
+    /// really no shows (Quiet ones count) and no friends. Before the load, an empty list means "not read yet".
+    public static func showsEmptyState(friends: [FollowingFriends.Friend], shows: FollowingShowList, showsLoaded: Bool) -> Bool {
+        showsLoaded && shows.rows.isEmpty && shows.quiet.isEmpty && friends.isEmpty
+    }
 }
