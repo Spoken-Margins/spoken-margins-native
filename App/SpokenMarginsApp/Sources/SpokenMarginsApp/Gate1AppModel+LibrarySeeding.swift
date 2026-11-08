@@ -117,6 +117,7 @@ extension Gate1AppModel {
             writtenMarginNotice = restoreUnfinishedWrittenMargin(store: store, availableItemIDs: availableItemIDs)
             tryRefreshOfflineStorageUsage()
             diagnostics["libraryBootstrap"] = "loaded:\(rows.count)"
+            LaunchRecorder.shared?.markLibraryReady(items: rows.count) // time to the first usable screen (#3752)
             reportSuccess(rows.isEmpty ? "Add a source to begin." : "Library ready.")
             // One status line holds one message, so a spoken-draft notice (#951) and this one share it.
             if let notice = [recordingDraftNotice, writtenMarginNotice].compactMap({ $0 }).joined(separator: " ").nilIfEmpty {
@@ -139,6 +140,7 @@ extension Gate1AppModel {
         } catch {
             libraryAccessError = "This build could not open your existing library. This attempt did not reset it. Do not use Reset Library or delete the app; install a compatible build and try again. Details: \(error.localizedDescription)"
             diagnostics["libraryBootstrap"] = "failed_without_reset:\(SafeErrorText.describe(error))"
+            LaunchRecorder.shared?.markLibraryFailed()
             reportFailure(error, context: "Library bootstrap failed")
         }
     }

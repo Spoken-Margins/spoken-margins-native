@@ -21,7 +21,7 @@ public struct AddedToLibraryConfirmation: Equatable, Sendable {
     /// #828: several Safari shares imported together get one message and no Play now: the listener
     /// picks what to play from the Library.
     public static func message(addedCount count: Int, nowPlayingIsEmpty: Bool) -> String {
-        let added = "Added \(count) items to Library"
+        let added = "Added \(count) to Library"
         return nowPlayingIsEmpty ? "\(added)." : "\(added) without changing Now Playing."
     }
 
