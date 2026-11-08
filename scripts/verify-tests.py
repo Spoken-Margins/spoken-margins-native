@@ -790,8 +790,8 @@ def on_hosted_runner(environ=None):
 
 PORTABLE_STEPS = ('runner-tests', 'ops', 'contracts', 'public-tree', 'surfaces', 'inventory', 'main-thread-reads', 'repeat-trigger-scan', 'ordered-store-requests', 'system-callback-isolation', 'listener-words', 'recorder-failed-start', 'browser', 'share-link', 'web', 'research')
 PORTABLE_LEFT_OUT = {
-    'package-build': 'needs the Swift toolchain on macOS; hosted-sessionkit-linux.yml builds the Foundation-only modules on Linux',
-    'package-core': 'needs the Swift toolchain on macOS (SessionKitCoreTests also run in hosted-sessionkit-linux.yml)',
+    'package-build': 'needs the Swift toolchain on macOS; hosted-portable.yml builds the Foundation-only modules on Linux, outside this plan',
+    'package-core': 'needs the Swift toolchain on macOS (hosted-portable.yml also runs SessionKitCoreTests on Linux, #3529, outside this plan)',
     'package-core-serial': 'needs the Swift toolchain on macOS',
     'package': 'needs the Swift toolchain, AVFoundation and a sound output; only the Mac lane runs the whole package',
     'shipped-compat': 'builds SessionKit and Build 29\'s persistence code with Swift on macOS; only the Mac lane runs it',
@@ -2407,6 +2407,10 @@ class Run:
                         step = self.manifest['steps'][-1]
                         step['audio_windows'] = lane_audio_window.attachments(audio)
                         step.setdefault('attachments', []).extend(step['audio_windows'])
+                        self.save()
+                    # A hosted Mac cannot listen and starts no window (#3604): its skipped AudioLoopback tests are
+                    # recorded as not run, for the report, instead of failing the step.
+                    if lane_audio_window.record_not_run(self.manifest['steps']):
                         self.save()
         finally:
             if scheme == 'SpokenMarginsAppBehavior':

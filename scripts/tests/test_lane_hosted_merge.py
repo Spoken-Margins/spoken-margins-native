@@ -212,6 +212,40 @@ class HostedRestChecksTests(unittest.TestCase):
         self.assertEqual(found, STOOD)
         self.assertEqual(dispatched, [0.0])
 
+    APP = next(iter(lane.HOSTED_APP_CHECK))
+    WITH_APP = {**CHECKS, **lane.HOSTED_APP_CHECK}
+
+    def test_a_cancelled_app_build_starts_no_fresh_hosted_run(self):
+        # #3555 audit on 432241e: dispatch() starts hosted-portable.yml, never the app build, so a cancelled build was
+        # "started again" three times (three hosted-macOS runs that could not change it) over up to two hours.
+        cancelled = f'"{self.APP}" ended cancelled on {HEAD[:7]}'
+        (found, why), waited, dispatched = self.wait([(None, cancelled)], checks=self.WITH_APP, run_again=True)
+        self.assertEqual((found, waited, dispatched), (None, 0, []))
+        verdict, _, _, details = lane.hosted_checks_missing(why, 'INCONCLUSIVE')
+        self.assertEqual(verdict, 'INCONCLUSIVE')
+        self.assertTrue(any('Re-run the app build' in line for line in details), details)
+
+    def test_a_skipped_app_build_starts_no_fresh_run_and_does_not_blame_the_scope_job(self):
+        skipped = f'"{self.APP}" ended skipped on {HEAD[:7]}'
+        (found, why), _, dispatched = self.wait([(None, skipped)], checks=self.WITH_APP, run_again=True)
+        self.assertEqual((found, dispatched), (None, []))
+        self.assertNotIn(lane.HOSTED_SCOPE_CLASH, why)
+
+    def test_a_missing_app_build_is_waited_out_for_the_grace_then_ends_with_no_fresh_run(self):
+        missing = f'no "{self.APP}" check ran on {HEAD[:7]}'
+        (found, why), waited, dispatched = self.wait([(None, missing)], checks=self.WITH_APP, run_again=True)
+        self.assertEqual((found, dispatched), (None, []))
+        self.assertGreaterEqual(waited, lane.HOSTED_MISSING_GRACE)
+        self.assertLess(waited, lane.HOSTED_MISSING_GRACE + 60)
+        self.assertIn('close and reopen', lane.hosted_checks_missing(why, 'INCONCLUSIVE')[3][0])
+
+    def test_an_app_build_that_shows_up_within_the_grace_is_still_taken(self):
+        missing = f'no "{self.APP}" check ran on {HEAD[:7]}'
+        running = f'"{self.APP}" {lane.NOT_FINISHED} on {HEAD[:7]}'
+        (found, why), _, dispatched = self.wait([(None, missing)] * 3 + [(None, running), (STOOD, '')],
+                                                checks=self.WITH_APP, run_again=True)
+        self.assertEqual((found, dispatched), (STOOD, []))
+
     def test_with_no_mac_a_failed_read_is_waited_out_and_starts_nothing(self):
         # #3501 audit: a read that failed (a 502, or the token's hourly limit) says nothing about the checks. Starting
         # them again would spend a hosted Mac and more of the same limit.
