@@ -62,7 +62,8 @@ extension Gate1AppModel {
                 let sounding: PinnedMarginCard.Stage = CantPlayListening.isWordsStep(moment) ? .loading : (current.isReadAloud ? .reading : .speaking)
                 return PinnedMarginCard(
                     subject: subject, stage: marginMomentVoiceIsPaused ? .voicePaused : sounding, position: position,
-                    voiceTime: playingVoiceTime, noun: sourceNoun, nextPress: nextMarginPress, run: run)
+                    voiceTime: playingVoiceTime, noun: sourceNoun, nextPress: nextMarginPress, run: run,
+                    chainsWithoutLeadIn: CantPlayListening.isCantPlayListening(moment))
             }
             // A plain moment that has played its Margin keeps listening for the others: the slot stays, saying so.
             if !moment.isReview, moment.phase == .listening {
