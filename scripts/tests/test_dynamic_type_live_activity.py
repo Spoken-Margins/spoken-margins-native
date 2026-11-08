@@ -67,6 +67,7 @@ class LiveActivityDynamicTypeTests(unittest.TestCase):
         controls = _between(text, "private var transportControls", "private var playbackCircles")
         self.assertNotIn("ViewThatFits", controls)
         self.assertNotIn("VStack", controls)
+        self.assertNotIn("Spacer", controls, "a Spacer adds a fifth gap, and the row no longer fits at 311 pt (#3692)")
         self.assertEqual(controls.count("HStack("), 1)
         self.assertEqual(controls.count("playbackCircles"), 1)
         self.assertNotIn("recordButton", controls, "the Margin control is its own column beside the row (#3692)")
@@ -98,12 +99,12 @@ class LiveActivityDynamicTypeTests(unittest.TestCase):
         play, chip = _constant(helper, "play"), _constant(helper, "nextChipHeight")
         # 10 pt padding top and bottom; the header is the taller of the title column (22 + 2 + 16) and the trailing
         # column (state word 16, a caption line, + the chip); a 6 pt gap, the 4 pt progress bar and a 6 pt gap; the transport row. A
-        # paused card adds the 6 pt gap and the 20 pt "Paused, tap to resume" line. The Summary and Discuss row is not
+        # paused card's prompt takes the chapter line, so it adds no row (#3692). The Summary and Discuss row is not
         # counted: it was already there and `main` is over the limit with it.
+        self.assertNotIn("Label(Gate2LiveActivityCopy.pausedPrompt", text, "a separate prompt row makes the card taller")
         header = max(22 + 2 + 16, 16 + chip)
         base = 2 * 10 + header + 6 + 4 + 6 + play
-        paused = base + 6 + 20
-        self.assertLessEqual(paused, LOCK_SCREEN_MAX_HEIGHT, paused)
+        self.assertLessEqual(base, LOCK_SCREEN_MAX_HEIGHT, base)
 
     def test_the_base_sizes_fit_one_row_on_the_narrowest_lock_screen(self):
         helper = _between(_text(), "enum Gate2ControlSize", "private struct AdaptiveLineLimit")

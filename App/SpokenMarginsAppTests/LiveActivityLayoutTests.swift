@@ -68,11 +68,17 @@ final class LiveActivityLayoutTests: XCTestCase {
         }
     }
 
-    /// The largest size before the accessibility range, where a playing card has to keep its controls. A paused card's
-    /// extra prompt line passes the limit there, as it did before #3692; accessibility sizes are not held to it.
-    func testAPlayingCardFitsTheLockScreenHeightAtTheLargestStandardTextSize() throws {
-        let rendered = try render(state(status: "playing"), size: .xxxLarge)
-        XCTAssertLessThanOrEqual(rendered.height, Self.lockScreenHeightLimit)
+    /// Every card keeps its controls through the largest size before the accessibility range. The paused prompt shares
+    /// the chapter line, so a paused card is held to the same limit as a playing one (#3692).
+    func testEveryCardFitsTheLockScreenHeightThroughTheLargestStandardTextSize() throws {
+        for card in [state(status: "playing"), state(status: "paused"), recordingState()] {
+            for size in [DynamicTypeSize.xLarge, .xxLarge, .xxxLarge] {
+                let rendered = try render(card, size: size)
+                XCTAssertLessThanOrEqual(
+                    rendered.height, Self.lockScreenHeightLimit, "\(card.status) at \(size): the system may cut the card off"
+                )
+            }
+        }
     }
 
     /// #3692: the circles and the Margin column share the narrowest Lock Screen, and no circle drops below 44 pt.

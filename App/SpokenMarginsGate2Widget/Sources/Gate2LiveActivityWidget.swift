@@ -230,6 +230,10 @@ struct Gate2LiveActivityView: View {
             && (state.canRun("beginInterjection") || state.canRun("finishInterjection"))
     }
 
+    private var offersResume: Bool {
+        state.offersResume(isStale: isStale)
+    }
+
     private var listeningColumn: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .top) {
@@ -239,9 +243,11 @@ struct Gate2LiveActivityView: View {
                         .foregroundStyle(.white)
                         .adaptiveLineLimit()
                         .minimumScaleFactor(0.82)
-                    Text(state.chapterTitle)
-                        .font(.caption)
-                        .foregroundStyle(.white.opacity(0.78))
+                    // The paused prompt takes the chapter line, as it does in the Dynamic Island, so a paused card is no
+                    // taller than a playing one (#3692).
+                    Text(offersResume ? Gate2LiveActivityCopy.pausedPrompt : state.chapterTitle)
+                        .font(offersResume ? .caption.weight(.semibold) : .caption)
+                        .foregroundStyle(.white.opacity(offersResume ? 1 : 0.78))
                         .adaptiveLineLimit()
                         .minimumScaleFactor(0.82)
                 }
@@ -262,12 +268,6 @@ struct Gate2LiveActivityView: View {
             // Empty space under the header, where the progress bar used to sit (#1508): the next-chapter chip's
             // tap area grows 16 pt down into it, so it never reaches the transport row below.
             .padding(.bottom, 10)
-
-            if state.offersResume(isStale: isStale) {
-                Label(Gate2LiveActivityCopy.pausedPrompt, systemImage: "play.circle.fill")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.white)
-            }
 
             if let sender = state.sharedMarginSenderLabel {
                 VStack(alignment: .leading, spacing: 7) {
@@ -311,8 +311,9 @@ struct Gate2LiveActivityView: View {
     private var transportControls: some View {
         HStack(spacing: Gate2ControlSize.rowSpacing) {
             playbackCircles
-            Spacer(minLength: 0)
         }
+        // A frame, not a Spacer: a Spacer would add a fifth gap and push the card past the narrowest Lock Screen.
+        .frame(maxWidth: .infinity, alignment: .leading)
         .buttonStyle(.plain)
     }
 
