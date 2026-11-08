@@ -90,7 +90,7 @@ struct WatchHomeView: View {
             // The screen the owner chose must fit a 41 mm Watch with no scrolling, so its lines stay short (#3494).
             let compact = playing != nil || (recorder.isRecording && recorder.choiceWasShown)
             ScrollView {
-                VStack(spacing: compact ? 4 : 8) {
+                VStack(spacing: compact ? WatchHomeLayout.spacing : 8) {
                     stateLine(home, now: now, lines: compact ? 1 : 2)
                     if recorder.isRecording {
                         recordingScreen(home, now: now)
@@ -108,7 +108,7 @@ struct WatchHomeView: View {
                     }
                     below(home, now: now)
                 }
-                .padding(.horizontal, 4)
+                .padding(.horizontal, WatchHomeLayout.sidePadding)
             }
         }
     }
@@ -177,27 +177,30 @@ struct WatchHomeView: View {
     /// "On this episode" is the big one; "On the session" is smaller and only there while a session runs.
     @ViewBuilder
     private func episodeButtons(_ home: WatchSessionModel.Home) -> some View {
-        targetButton(.episode, size: home.session == nil ? 90 : 60)
+        let layout = WatchHomeLayout(sessionRuns: home.session != nil)
+        targetButton(.episode, size: layout.height(of: .episodeButton))
         if home.session != nil {
-            targetButton(.session, size: 38)
+            targetButton(.session, size: layout.height(of: .sessionButton))
         }
     }
 
-    private func targetButton(_ target: WatchRecordingTarget, size: CGFloat) -> some View {
+    private func targetButton(_ target: WatchRecordingTarget, size: Double) -> some View {
         Button {
             recorder.toggle(target: target)
         } label: {
             Label(target.words, systemImage: "mic.fill")
-                .font(size >= 60 ? .headline : .footnote.weight(.semibold))
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .font(size >= 56 ? .headline : .footnote.weight(.semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
         }
+        // The plate fills this frame and no more, so it cannot draw over the transport row (#3674).
+        .buttonStyle(WatchPlateButtonStyle(fill: tint(target)))
         .frame(height: size)
-        .tint(tint(target))
         .accessibilityLabel("Record a spoken Margin \(target.words.lowercased())")
     }
 
     private func transportRow(_ playing: WatchNowPlaying) -> some View {
-        HStack(spacing: 6) {
+        HStack(spacing: WatchHomeLayout.transportSpacing) {
             transportButton(.skipBack, symbol: "gobackward", label: "Back")
             transportButton(
                 playing.isPlaying ? .pause : .play, symbol: playing.isPlaying ? "pause.fill" : "play.fill",
@@ -205,7 +208,7 @@ struct WatchHomeView: View {
             )
             transportButton(.skipForward, symbol: "goforward", label: "Forward")
         }
-        .frame(height: 38)
+        .frame(height: WatchHomeLayout(sessionRuns: false).height(of: .transport))
         .disabled(!link.isReachable)
         .opacity(link.isReachable ? 1 : 0.4)
     }
@@ -215,8 +218,8 @@ struct WatchHomeView: View {
             link.sendTransport(transport)
         } label: {
             Image(systemName: symbol)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .buttonStyle(WatchPlateButtonStyle(fill: Color.gray.opacity(0.4)))
         .accessibilityLabel(label)
     }
 
@@ -248,7 +251,7 @@ struct WatchHomeView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .tint(withTarget ? tint(target) : .orange)
+            .buttonStyle(WatchPlateButtonStyle(fill: withTarget ? tint(target) : .orange))
             .accessibilityLabel("Stop recording the spoken Margin")
             Button(role: .destructive) {
                 discardTapped(now: now)
@@ -261,6 +264,7 @@ struct WatchHomeView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+            .buttonStyle(WatchPlateButtonStyle(fill: Color.red.opacity(0.85)))
             .accessibilityLabel("Discard this recording")
         }
         .frame(height: withTarget ? 84 : 100)
@@ -424,5 +428,22 @@ struct WatchWaitingRow: View {
             .buttonStyle(.borderless)
             .font(.footnote)
         }
+    }
+}
+
+/// A button whose coloured plate is exactly the frame it is given, and whose tap area is that plate (#3674). The
+/// system button style sizes its chrome from the label, so a button given a fixed height could draw past it onto the
+/// button below, and take taps meant for it.
+struct WatchPlateButtonStyle: ButtonStyle {
+    let fill: Color
+
+    func makeBody(configuration: Configuration) -> some View {
+        let plate = RoundedRectangle(cornerRadius: 12, style: .continuous)
+        configuration.label
+            .foregroundStyle(.white)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(plate.fill(fill.opacity(configuration.isPressed ? 0.6 : 1)))
+            .clipShape(plate)
+            .contentShape(plate)
     }
 }

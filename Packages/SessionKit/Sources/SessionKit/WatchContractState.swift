@@ -551,3 +551,74 @@ public struct WatchRecordingPlan: Equatable, Sendable {
         elapsed >= Self.discardAsksAfter
     }
 }
+
+/// The Watch's first screen with an item loaded, as plain numbers (#3674). Its buttons stack in one column, and each
+/// one is drawn at exactly the height named here: the Watch app gives them a plate that fills their frame and no more,
+/// so the plates cannot spill onto a neighbour. Pure, so the stacking and the tap sizes are tested on the host, where
+/// no Watch is needed.
+public struct WatchHomeLayout: Equatable, Sendable {
+    /// One tap target in the column, top to bottom.
+    public enum Row: Equatable, Sendable {
+        case episodeButton
+        case sessionButton
+        case transport
+    }
+
+    /// The least height a tap target gets, and the gap kept between two of them.
+    public static let minimumTapHeight = 38.0
+    public static let spacing = 4.0
+    /// The gap between the three transport buttons, side by side.
+    public static let transportSpacing = 6.0
+    /// The screen's side padding.
+    public static let sidePadding = 4.0
+    /// What a 40 mm Watch (162 pt wide) offers; the smallest supported one.
+    public static let smallestContentWidth = 162.0
+    /// What a 41 mm Watch (215 pt tall) leaves for the column once the status bar, the state line, the header and the
+    /// gaps between them are out. A 40 mm Watch has 18 pt less and scrolls with the crown; its buttons still never overlap.
+    public static let columnBudget41mm = 143.0
+
+    public struct Frame: Equatable, Sendable {
+        public var row: Row
+        public var top: Double
+        public var height: Double
+        public var bottom: Double { top + height }
+    }
+
+    /// Whether a session is running: the episode button is then smaller, and "On the session" sits under it.
+    public var sessionRuns: Bool
+
+    public init(sessionRuns: Bool) {
+        self.sessionRuns = sessionRuns
+    }
+
+    public func height(of row: Row) -> Double {
+        switch row {
+        case .episodeButton: sessionRuns ? 56 : 90
+        case .sessionButton: Self.minimumTapHeight
+        case .transport: Self.minimumTapHeight
+        }
+    }
+
+    public var rows: [Row] {
+        sessionRuns ? [.episodeButton, .sessionButton, .transport] : [.episodeButton, .transport]
+    }
+
+    /// Where each row sits in the column, with `spacing` between rows.
+    public var frames: [Frame] {
+        var top = 0.0
+        return rows.map { row in
+            let frame = Frame(row: row, top: top, height: height(of: row))
+            top = frame.bottom + Self.spacing
+            return frame
+        }
+    }
+
+    public var totalHeight: Double {
+        frames.last?.bottom ?? 0
+    }
+
+    /// The width of one of the three transport buttons on a screen `contentWidth` points wide.
+    public static func transportButtonWidth(contentWidth: Double) -> Double {
+        (contentWidth - 2 * sidePadding - 2 * transportSpacing) / 3
+    }
+}
