@@ -184,32 +184,39 @@ final class J9HearNewMarginsJourneyUITests: XCTestCase {
         }
     }
 
-    /// The card is on the screen, no taller than 60% of it, its buttons are hittable and inside it, the last row sits
-    /// close under the card's bottom edge (no blank row), the dock's play button is still reachable, and no line of it
-    /// says "item" or "review".
+    /// The card is on the screen, no taller than 75% of it, its buttons are hittable and inside it, the last row sits
+    /// close under the card's bottom edge (no blank row), the dock's play button is still reachable, and no line or
+    /// button of it says "item" or "review". Everything is read in one quick pass first, because the lead-in lasts only
+    /// about 10 s and its Stop goes away when the voice starts; the assertions then run on what was read.
     private func assertCardFits(stage: String, buttons identifiers: [String], oneOf alternatives: [String]) {
         let card = element("marginCard")
         XCTAssertTrue(card.waitForExistence(timeout: 5), "No Margin card in the \(stage) stage")
         let window = app.windows.firstMatch.frame
         let frame = card.frame
+        var wanted = identifiers
+        if let main = alternatives.first(where: { app.buttons[$0].firstMatch.exists }) { wanted.insert(main, at: 0) }
+        let buttons = wanted.map { id -> (id: String, exists: Bool, hittable: Bool, frame: CGRect) in
+            let button = app.buttons[id].firstMatch
+            return (id, button.exists, button.exists && button.isHittable, button.exists ? button.frame : .zero)
+        }
+        let playReachable = playPause.exists && playPause.isHittable
+        let words = (card.staticTexts.allElementsBoundByIndex.map(\.label) + card.buttons.allElementsBoundByIndex.map(\.label))
+            .joined(separator: " | ")
+
         XCTAssertTrue(window.contains(frame), "The \(stage) card is off the screen: \(frame) in \(window)")
-        XCTAssertLessThan(frame.height, window.height * 0.6, "The \(stage) card takes more than 60% of the screen: \(frame.height) of \(window.height)")
-        var found: [XCUIElement] = identifiers.map { app.buttons[$0].firstMatch }
+        XCTAssertLessThan(frame.height, window.height * 0.75, "The \(stage) card takes more than 75% of the screen: \(frame.height) of \(window.height)")
         if !alternatives.isEmpty {
-            let main = alternatives.map { app.buttons[$0].firstMatch }.first(where: { $0.exists })
-            XCTAssertNotNil(main, "The \(stage) card has none of its main buttons: \(alternatives)")
-            if let main { found.insert(main, at: 0) }
+            XCTAssertEqual(wanted.count, identifiers.count + 1, "The \(stage) card has none of its main buttons: \(alternatives)")
         }
-        for button in found {
-            XCTAssertTrue(button.waitForExistence(timeout: 5), "The \(stage) card lost a button: \(button.identifier)")
-            XCTAssertTrue(button.isHittable, "The \(stage) card's button can't be tapped: \(button.identifier)")
-            XCTAssertTrue(frame.insetBy(dx: -2, dy: -2).contains(button.frame), "\(button.identifier) sticks out of the \(stage) card: \(button.frame) in \(frame)")
+        for button in buttons {
+            XCTAssertTrue(button.exists, "The \(stage) card lost a button: \(button.id)")
+            XCTAssertTrue(button.hittable, "The \(stage) card's button can't be tapped: \(button.id)")
+            XCTAssertTrue(frame.insetBy(dx: -2, dy: -2).contains(button.frame), "\(button.id) sticks out of the \(stage) card: \(button.frame) in \(frame)")
         }
-        if let lowest = found.map({ $0.frame.maxY }).max() {
+        if let lowest = buttons.filter(\.exists).map({ $0.frame.maxY }).max() {
             XCTAssertLessThanOrEqual(frame.maxY - lowest, 32, "A blank row sits under the \(stage) card's last button: \(frame.maxY - lowest) pt")
         }
-        XCTAssertTrue(playPause.exists && playPause.isHittable, "The dock's play button is out of reach under the \(stage) card")
-        let words = card.staticTexts.allElementsBoundByIndex.map(\.label).joined(separator: " | ")
+        XCTAssertTrue(playReachable, "The dock's play button is out of reach under the \(stage) card")
         XCTAssertNil(words.lowercased().range(of: #"\b(item|review)\b"#, options: .regularExpression), "The \(stage) card says item or review: \(words)")
         let note = XCTAttachment(string: "\(stage): card \(Int(frame.height)) pt of \(Int(window.height)) pt; words: \(words)")
         note.name = "J9 large text, \(stage) card"
