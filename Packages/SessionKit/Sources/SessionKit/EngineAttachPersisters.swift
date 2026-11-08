@@ -20,6 +20,12 @@ public struct PersistedPreparedTextAudio: Sendable {
     public let prepared: PreparedTextAudio
 }
 
+/// Why a prepared-audio save was refused with nothing written.
+public enum PreparedTextAudioRefusal: Error, Equatable, Sendable {
+    /// A Stop, a failure or a new voice retired the manifest the audio was rendered under.
+    case preparationRetired
+}
+
 public struct PreparedTextAudioPersister: Sendable {
     let repository: any SessionRepository
     let profile: RuntimeCapabilityProfile
@@ -27,18 +33,26 @@ public struct PreparedTextAudioPersister: Sendable {
     let publisher: PublisherAudioPlayback?
 
     /// Loads the item, lets the guard decide, then writes the prepared audio's timeline and item.
-    public func persist(itemId: String, prepared: PreparedTextAudio) throws -> PersistedPreparedTextAudio {
+    ///
+    /// A caller that rendered the audio under a prepared-audio manifest passes its id. The write then also checks, in
+    /// the same transaction, that a Stop, a failure or a new voice has not retired that manifest while this ran off the
+    /// main thread (#2134), and throws `PreparedTextAudioRefusal.preparationRetired` with nothing written if it has.
+    public func persist(itemId: String, prepared: PreparedTextAudio, manifestId: String? = nil) throws -> PersistedPreparedTextAudio {
         let item = try repository.loadItem(id: itemId)
         guard SessionEngine.shouldPrepareGeneratedTextAudio(for: item, profile: profile) else {
             return PersistedPreparedTextAudio(stored: item, updated: nil, prepared: prepared)
         }
-        let updated = try write(prepared, to: item)
+        let updated = try write(prepared, to: item, manifestId: manifestId)
         return PersistedPreparedTextAudio(stored: item, updated: updated, prepared: prepared)
     }
 
     /// Checks the source text is still what the audio was made from, then writes it (one transaction when the store has them).
-    func write(_ prepared: PreparedTextAudio, to item: Item) throws -> Item {
+    func write(_ prepared: PreparedTextAudio, to item: Item, manifestId: String? = nil) throws -> Item {
         let write = { () throws -> Item in
+            if let manifestId, let manifest = try repository.loadPreparedAudioManifest(id: manifestId),
+               !PreparedAudioEnqueue.mayComplete(manifest.state) {
+                throw PreparedTextAudioRefusal.preparationRetired
+            }
             let stored = try repository.loadItem(id: item.id)
             guard stored.deletedAt == nil, stored.text == item.text,
                   SessionEngine.preparedAudioMatches(prepared, item: stored) else {

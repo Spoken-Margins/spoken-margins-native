@@ -112,12 +112,15 @@ extension Gate1AppModel {
     }
 
     /// The same attach with its store work off the main thread. The persister decides before it writes, and writes in
-    /// one transaction that checks the source text is still the one the audio was made from. With no engine yet, or
-    /// one that cannot persist, it takes the synchronous path.
+    /// one transaction that checks the source text is still the one the audio was made from and, when `manifestId` is
+    /// given, that a Stop or a new voice has not retired the preparation meanwhile (#2134): then nothing is saved,
+    /// nothing changes on screen and the answer is false. With no engine yet, or one that cannot persist, it takes the
+    /// synchronous path.
     @discardableResult
     func attachPreparedTextAudioOffMain(
         _ prepared: PreparedTextAudio,
         itemId: String,
+        manifestId: String? = nil,
         preparedStatus: String = "ready",
         diagnosticStatus: String = "ready",
         replaceActivePlayback: Bool = false
@@ -127,10 +130,13 @@ extension Gate1AppModel {
         }
         let attached: Result<SessionSnapshot, Error>
         do {
-            let persisted = try await Self.offMain { try persister.persist(itemId: itemId, prepared: prepared) }
+            let persisted = try await Self.offMain { try persister.persist(itemId: itemId, prepared: prepared, manifestId: manifestId) }
             // Back on the main actor, on the engine it has now. The engine half reads no store row (EngineAttachPersistersTests).
             guard let current = self.engine else { return false }
             attached = .success(try current.attachPreparedTextAudio(persisted, replaceActivePlayback: replaceActivePlayback))
+        } catch PreparedTextAudioRefusal.preparationRetired {
+            diagnostics["supertonicPreparedCanonicalization:\(itemId)"] = "preparation_stopped" // #2134, as the check before the save
+            return false
         } catch {
             attached = .failure(error)
         }

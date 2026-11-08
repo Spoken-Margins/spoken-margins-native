@@ -131,6 +131,50 @@ final class EngineAttachPersistersTests: XCTestCase {
         XCTAssertEqual(try rig.store.loadItem(id: "item-1"), native)
     }
 
+    private func manifest(_ state: PreparedAudioState) -> PreparedAudioManifest {
+        PreparedAudioManifest(
+            id: "prepared-item-1-abc", itemId: "item-1", sourcePackageId: "source",
+            signature: TTSRenderSignature(engine: "supertonic", modelRevision: "3", assetManifestHash: "a", voiceStyleHash: "v",
+                                          synthesisParametersHash: "p", normalizationVersion: "n", chunkingVersion: "c", digest: "abc"),
+            state: state, plannedChunkCount: 1, chunks: [])
+    }
+
+    /// The listener can press Stop or pick another voice while a finished render is being saved off the main thread.
+    /// The save checks the manifest inside its transaction and writes nothing for a retired one (#2134).
+    func testTextAudioSaveRefusesAManifestRetiredWhileItRan() throws {
+        for state in [PreparedAudioState.stopped, .failed, .needsRepreparation, .notPrepared] {
+            let rig = try rig(seed: [textItem()])
+            try rig.engine.prepareSpeechText(itemId: "item-1", targetType: .itemTextTTS)
+            try rig.store.savePreparedAudioManifest(manifest(state))
+            let persister = try rig.engine.preparedTextAudioPersister(itemId: "item-1")
+            let before = try rig.store.loadItem(id: "item-1")
+            let writesBefore = rig.writes()
+            XCTAssertThrowsError(try persister.persist(itemId: "item-1", prepared: prepared(), manifestId: "prepared-item-1-abc"), "\(state)") {
+                XCTAssertEqual($0 as? PreparedTextAudioRefusal, .preparationRetired)
+            }
+            XCTAssertEqual(rig.writes(), writesBefore, "\(state): nothing is written")
+            XCTAssertEqual(try rig.store.loadItem(id: "item-1"), before)
+            XCTAssertNil(try rig.store.loadTranscriptTimeline(itemId: "item-1"))
+        }
+    }
+
+    func testTextAudioSaveGoesAheadForALiveManifestAndForNoManifest() throws {
+        for state in [PreparedAudioState.preparing, .pausedForThermal, .readyOffline] {
+            let rig = try rig(seed: [textItem()])
+            try rig.engine.prepareSpeechText(itemId: "item-1", targetType: .itemTextTTS)
+            try rig.store.savePreparedAudioManifest(manifest(state))
+            let persisted = try rig.engine.preparedTextAudioPersister(itemId: "item-1")
+                .persist(itemId: "item-1", prepared: prepared(), manifestId: "prepared-item-1-abc")
+            XCTAssertNotNil(persisted.updated, "\(state)")
+        }
+        // A manifest that does not exist is not refused, as `refusesCompletion` has it.
+        let rig = try rig(seed: [textItem()])
+        try rig.engine.prepareSpeechText(itemId: "item-1", targetType: .itemTextTTS)
+        let persisted = try rig.engine.preparedTextAudioPersister(itemId: "item-1")
+            .persist(itemId: "item-1", prepared: prepared(), manifestId: "prepared-item-1-missing")
+        XCTAssertNotNil(persisted.updated)
+    }
+
     func testTextAudioPersisterNeedsTheCapability() throws {
         let rig = try rig(capable: false, seed: [textItem()])
         XCTAssertThrowsError(try rig.engine.preparedTextAudioPersister(itemId: "item-1"))
