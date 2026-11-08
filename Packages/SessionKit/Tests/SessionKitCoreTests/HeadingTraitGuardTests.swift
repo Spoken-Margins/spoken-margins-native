@@ -44,6 +44,14 @@ final class HeadingTraitGuardTests: XCTestCase {
         XCTAssertTrue(traits.contains(".isButton") && traits.contains(".isHeader"), "the group title must keep .isButton and add .isHeader")
     }
 
+    /// The pinned Margin card's headline is the card's title.
+    func testThePinnedMarginCardHeadlineIsAHeading() throws {
+        let lines = try source(.appSources, "PinnedMarginCardView.swift")
+        let start = try XCTUnwrap(lines.firstIndex { $0.contains("Text(card.headline)") })
+        let body = lines[start..<min(start + 4, lines.count)].joined(separator: "\n")
+        XCTAssertTrue(body.contains(".accessibilityAddTraits(.isHeader)"), "the card headline has no heading trait")
+    }
+
     /// UIKit: the share extension's title label.
     func testTheShareExtensionTitleHasTheHeaderTrait() throws {
         let lines = try source(.appShareExtension, "Sources/SourceLinkShareViewController.swift")
