@@ -197,51 +197,6 @@ struct DiscretePlaybackRateSlider: View {
     }
 }
 
-/// Follow is offered on the Item screen only, not while listening (#280).
-struct SourceFollowSuggestionCard: View {
-    @EnvironmentObject private var model: Gate1AppModel
-
-    var body: some View {
-        if !model.sourceFollowSuggestionCandidates.isEmpty {
-            VStack(alignment: .leading, spacing: 10) {
-                Label("Keep up with this source?", systemImage: "dot.radiowaves.left.and.right")
-                    .font(.headline)
-                Text("Following only adds future entries to your source inbox. Nothing is imported, downloaded, or prepared automatically.")
-                    .font(.caption)
-                    .foregroundStyle(AppColors.secondaryText)
-                ForEach(model.sourceFollowSuggestionCandidates) { candidate in
-                    Button {
-                        model.acceptSourceFollowSuggestion(candidate)
-                    } label: {
-                        VStack(alignment: .leading) {
-                            Text("Follow \(candidate.displayName)")
-                            if model.sourceFollowSuggestionCandidates.filter({ $0.source.title == candidate.source.title }).count > 1 {
-                                Text(candidate.source.canonicalURL).font(.caption).lineLimit(2)
-                            }
-                        }
-                    }
-                    .buttonStyle(SecondaryButtonStyle())
-                    .accessibilityIdentifier("source.followSuggestion.accept.\(candidate.id)")
-                }
-                HStack {
-                    Button("Not now", action: model.deferSourceFollowSuggestion)
-                        .accessibilityIdentifier("source.followSuggestion.notNow")
-                    Button("Don't suggest", role: .destructive, action: model.rejectSourceFollowSuggestion)
-                        .accessibilityIdentifier("source.followSuggestion.never")
-                }
-                .font(.caption)
-            }
-            .padding(10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .foregroundStyle(AppColors.text)
-            .background(AppColors.watchControl.opacity(0.35))
-            .clipShape(RoundedRectangle(cornerRadius: 12))
-            .accessibilityElement(children: .contain)
-            .accessibilityIdentifier("source.followSuggestion.card")
-        }
-    }
-}
-
 struct ManualSourceFollowButton: View {
     @EnvironmentObject private var model: Gate1AppModel
 
