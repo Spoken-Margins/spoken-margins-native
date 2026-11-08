@@ -32,6 +32,14 @@ struct PinnedMarginCardView: View {
             }
         }
         .followsPlaybackClock(model.playbackClock, tick: $playbackTick)
+        // A Margin that waits for a tap, or could not play, appears at the top of Now while VoiceOver's focus is elsewhere:
+        // say so once, when the card enters that stage (#3728). `VoiceOverAnnouncements` decides; the countdown's ticks
+        // and the stages that play aloud stay silent.
+        .onChange(of: model.pinnedMarginCard) { previous, card in
+            if let text = VoiceOverAnnouncements.marginCard(from: previous, to: card) {
+                AccessibilityNotification.Announcement(text).post()
+            }
+        }
     }
 
     /// At the accessibility text sizes the headline and the buttons wrap and stack instead of clipping (#1933).
