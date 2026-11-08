@@ -139,8 +139,7 @@ struct ExperienceAddSourceFlow: View {
             if focusedField != nil {
                 HStack {
                     Spacer()
-                    Button("Done") { focusedField = nil }
-                        .frame(minWidth: 44, minHeight: 44)
+                    Button { focusedField = nil } label: { Text("Done").minimumTapTarget() }
                 }
                 .tint(AppColors.evergreen)
             }
@@ -378,11 +377,12 @@ struct ExperienceAddSourceFlow: View {
     private var filesSource: some View {
         ExperienceSurface {
             VStack(alignment: .leading, spacing: 12) {
-                Button("Choose Files", systemImage: "folder.badge.plus") {
+                Button {
                     presentFileImporter(.files)
+                } label: {
+                    Label("Choose Files", systemImage: "folder.badge.plus").frame(minHeight: 44).contentShape(Rectangle())
                 }
                 .filledActionButton()
-                .frame(minHeight: 44)
                 .accessibilityIdentifier("files.import.button")
                 Text("Documents and books stay local and retain authored structure when the format provides it. Audiobooks are copied into app-owned storage and protected from automatic eviction. A Listening Edition collection (.json) or a Margins packet (.spokenmargins) can be chosen here too.")
                     .font(.caption)
@@ -462,8 +462,7 @@ struct ExperienceAddSourceFlow: View {
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("sourceLink.candidate.\(index)")
             }
-            Button("Cancel", role: .cancel, action: model.cancelSourceLinkCandidateReview)
-                .frame(minHeight: 44)
+            Button(role: .cancel, action: model.cancelSourceLinkCandidateReview) { Text("Cancel").minimumTapTarget() }
         }
     }
 

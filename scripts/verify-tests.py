@@ -739,6 +739,8 @@ RUNNER_TEST_READERS = ('test_filled_button_contrast', 'test_filled_button_labels
                        'test_row_accessibility_actions', 'test_voiceover_label_nits',
                        'test_increase_contrast_wiring', 'test_reduce_motion', 'test_tap_target_styles',
                        'test_dynamic_type_live_activity',
+                       # The outer-tap-frame scan reads App/ Swift files (#3727).
+                       'test_outer_tap_frame',
                        # The article-entry inventory reads App/ Swift files (#2363).
                        'test_article_entry_followups',
                        # The task-cost map checks its controls against App/ Swift files (#2396).
