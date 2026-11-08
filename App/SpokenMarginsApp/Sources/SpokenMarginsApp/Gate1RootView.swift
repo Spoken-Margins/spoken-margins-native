@@ -223,19 +223,26 @@ struct SourceFollowSuggestionCard: View {
                     .buttonStyle(SecondaryButtonStyle())
                     .accessibilityIdentifier("source.followSuggestion.accept.\(candidate.id)")
                 }
+                // Own colours, not the system blue and red: those are 1.9:1 and 1.7:1 on this card in light mode (#3732).
                 HStack {
-                    Button("Not now", action: model.deferSourceFollowSuggestion)
-                        .accessibilityIdentifier("source.followSuggestion.notNow")
-                    Button("Don't suggest", role: .destructive, action: model.rejectSourceFollowSuggestion)
-                        .accessibilityIdentifier("source.followSuggestion.never")
+                    Button(action: model.deferSourceFollowSuggestion) {
+                        Text("Not now").foregroundStyle(AppColors.evergreen)
+                    }
+                    .accessibilityIdentifier("source.followSuggestion.notNow")
+                    Button(role: .destructive, action: model.rejectSourceFollowSuggestion) {
+                        Text("Don't suggest").foregroundStyle(AppColors.dangerText)
+                    }
+                    .accessibilityIdentifier("source.followSuggestion.never")
                 }
                 .font(.caption)
             }
             .padding(10)
             .frame(maxWidth: .infinity, alignment: .leading)
             .foregroundStyle(AppColors.text)
-            .background(AppColors.watchControl.opacity(0.35))
+            // A panel, not the dark `watchControl` tint: this card sits on bone in light mode (#3732).
+            .background(AppColors.panel)
             .clipShape(RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(AppColors.border, lineWidth: 1))
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("source.followSuggestion.card")
         }

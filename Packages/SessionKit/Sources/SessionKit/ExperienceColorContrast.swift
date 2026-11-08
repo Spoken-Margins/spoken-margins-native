@@ -226,6 +226,9 @@ public enum AppColorContrastAudit {
         .init(name: "listening secondary on watch background", foreground: AppSemanticColorRGB.listeningSecondary, background: AppSemanticColorRGB.watchBackground, minimumRatio: 4.5),
         .init(name: "danger label on watch control", foreground: AppSemanticColorRGB.watchDanger, background: AppSemanticColorRGB.watchControl, minimumRatio: 4.5),
         .init(name: "danger label on watch background", foreground: AppSemanticColorRGB.watchDanger, background: AppSemanticColorRGB.watchBackground, minimumRatio: 4.5),
+        // The follow-a-source card's two quiet buttons and its caption sit on a panel (#3732).
+        .init(name: "evergreen text on panel", foreground: AppSemanticColorRGB.evergreen, background: AppSemanticColorRGB.panel, minimumRatio: 4.5),
+        .init(name: "danger text on panel", foreground: AppSemanticColorRGB.dangerText, background: AppSemanticColorRGB.panel, minimumRatio: 4.5),
         .init(name: "NOW badge label", foreground: AppSemanticColorRGB.text, background: AppSemanticColorRGB.accentSoft, minimumRatio: 4.5)
     ]
 

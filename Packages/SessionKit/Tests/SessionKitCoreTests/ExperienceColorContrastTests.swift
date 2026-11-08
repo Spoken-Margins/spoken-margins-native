@@ -145,6 +145,26 @@ final class AppColorContrastCoverageTests: XCTestCase {
         XCTAssertEqual(found, [], "use AppColors.ochreText or AppColors.warningText for text and icons")
     }
 
+    /// #3732: the follow-a-source card put the dark `watchControl` tint behind light-mode text (secondary text 2.5:1,
+    /// the system blue and red buttons 1.9:1 and 1.7:1). The `watch*` colours are made for the always-dark playback
+    /// surface, so only the `Playback*` files may use them.
+    func testWatchColoursStayOnTheAlwaysDarkPlaybackSurface() throws {
+        let directory = try TestInputs.directory(.appSources)
+        let enumerator = try XCTUnwrap(FileManager.default.enumerator(at: directory, includingPropertiesForKeys: nil))
+        let files = enumerator.compactMap { $0 as? URL }.filter { $0.pathExtension == "swift" }
+        XCTAssertGreaterThan(files.count, 100)
+        var found: [String] = []
+        for file in files {
+            let name = file.lastPathComponent
+            if name.hasPrefix("Playback") { continue }
+            let text = try String(contentsOf: file, encoding: .utf8)
+            if text.range(of: #"AppColors\.watch\w+"#, options: .regularExpression) != nil {
+                found.append(name)
+            }
+        }
+        XCTAssertEqual(found, [], "use AppColors.panel, softGreen or bone outside the always-dark playback surface")
+    }
+
     func testKnownFailuresAreListedAndStillFail() {
         for line in AppColorContrastAudit.knownFailureReport() { print(line) }
         XCTAssertEqual(AppColorContrastAudit.staleKnownFailures(), [], "delete the entries that now pass")
