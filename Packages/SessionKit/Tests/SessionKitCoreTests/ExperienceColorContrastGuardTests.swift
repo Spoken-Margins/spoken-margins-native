@@ -69,49 +69,52 @@ final class AppColorContrastAuditFindingsTests: XCTestCase {
 }
 
 final class AppLiveActivityPairsTests: XCTestCase {
-    func testTheLiveActivityPairsAreInTheAuditAndPassToday() {
+    /// The same pairs on a white surface: every pair with a light mark on it has to fail, or the audit measures nothing.
+    private func onWhite(_ pairs: [AppColorContrastAudit.Pair]) -> [AppColorContrastAudit.Pair] {
+        pairs.map { .init(name: $0.name, foreground: $0.foreground, background: AppSemanticColorRGB.white, minimumRatio: $0.minimumRatio) }
+    }
+
+    func testTheLiveActivityPairsPassTodayExceptTheListedBlue() {
         XCTAssertFalse(AppColorContrastAudit.liveActivityPairs.isEmpty)
-        let names = Set(AppColorContrastAudit.allPairs.map(\.name))
-        for pair in AppColorContrastAudit.liveActivityPairs { XCTAssertTrue(names.contains(pair.name), pair.name) }
-        XCTAssertEqual(AppColorContrastAudit.failures(for: AppColorContrastAudit.liveActivityPairs), [])
+        let failing = AppColorContrastAudit.failures(for: AppColorContrastAudit.liveActivityPairs)
+        XCTAssertEqual(failing.count, 1, "\(failing)")
+        XCTAssertTrue(failing[0].hasPrefix("live activity button label tint (blue) [light]"), "\(failing)")
+        XCTAssertTrue(AppColorContrastAudit.knownFailures.contains { $0.pair == "live activity button label tint (blue)" && $0.appearance == "light" })
     }
 
-    /// The pairs can fail: the Live Activity's dim white at a low alpha, or its system red on a light plate, would not pass.
-    func testTheAuditSeesAWeakLiveActivityLabel() {
-        let plate = AppSystemColorRGB.liveActivityPlate
-        let weak = AppColorContrastAudit.Pair(
-            name: "live activity white text at 0.3",
-            foreground: AppSemanticColorRGB.white.composited(over: plate, alpha: 0.3),
-            background: plate,
-            minimumRatio: 4.5
-        )
-        XCTAssertFalse(AppColorContrastAudit.failures(for: [weak]).isEmpty)
+    func testTheLiveActivityPairsCanFail() {
+        let wrong = AppColorContrastAudit.failures(for: onWhite(AppColorContrastAudit.liveActivityPairs))
+        XCTAssertGreaterThan(wrong.count, 20, "white marks on a white plate must fail: \(wrong.count)")
     }
 
-    /// The pairs name the widget's literals, so a widget that changes a colour has to change the token with it.
+    func testThePressedFillPairsCanFail() {
+        let wrong = AppColorContrastAudit.failures(for: onWhite(AppColorContrastAudit.pressedFillPairs))
+        XCTAssertGreaterThan(wrong.count, 10, "light marks on a white surface must fail: \(wrong.count)")
+    }
+
+    /// The pairs name what the widgets draw, so a widget that changes a colour or an alpha has to change its pair with it.
     func testTheWidgetsStillDrawTheColoursThePairsMeasure() throws {
         let directory = try TestInputs.directory(.appGate2Widget)
         let text = try ["Gate2LiveActivityWidget.swift", "LiveSessionActivityWidget.swift"].map {
             try String(contentsOf: directory.appendingPathComponent("Sources/" + $0), encoding: .utf8)
-        }.joined()
+        }.joined().replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
         XCTAssertTrue(text.contains("Color(red: 0.08, green: 0.09, blue: 0.12)"), "the plate")
         XCTAssertTrue(text.contains("Color(red: 0.34, green: 0.71, blue: 0.91)"), "the progress blue")
         XCTAssertTrue(text.contains("Color(red: 0.27, green: 0.78, blue: 0.43)"), "the second green")
         for alpha in ["0.74", "0.78", "0.8", "0.84", "0.86"] {
             XCTAssertTrue(text.contains(".white.opacity(\(alpha))"), "white at \(alpha) is no longer drawn: drop its pair")
         }
+        for alpha in ["0.16", "0.12", "0.14"] {
+            XCTAssertTrue(text.contains("Color.white.opacity(\(alpha))"), "the white chip at \(alpha) is no longer drawn: drop its pair")
+        }
+        XCTAssertTrue(text.contains("Color.green.opacity(0.28)"), "the system green chip")
+        XCTAssertTrue(text.contains("? .red : .orange"), "the recording tint")
+        XCTAssertTrue(text.contains(".tint(.blue)"), "the blue button tint")
+        XCTAssertTrue(text.contains(".foregroundStyle(.secondary)"), "the Dynamic Island's secondary line")
     }
 }
 
 final class AppTintedFillPairsTests: XCTestCase {
-    /// #3739 slice 3: the pressed and dimmed fills of the buttons and plates.
-    func testThePressedFillPairsAreInTheAuditAndMeasured() {
-        XCTAssertFalse(AppColorContrastAudit.pressedFillPairs.isEmpty)
-        let names = Set(AppColorContrastAudit.allPairs.map(\.name))
-        for pair in AppColorContrastAudit.pressedFillPairs { XCTAssertTrue(names.contains(pair.name), pair.name) }
-        XCTAssertEqual(AppColorContrastAudit.failures(for: AppColorContrastAudit.pressedFillPairs), [])
-    }
-
     func testTheTintedFillPairsAllPassToday() {
         XCTAssertFalse(AppColorContrastAudit.tintedFillPairs.isEmpty)
         XCTAssertEqual(AppColorContrastAudit.failures(for: AppColorContrastAudit.tintedFillPairs), [])
@@ -169,7 +172,7 @@ final class AppColorUsageGuardTests: XCTestCase {
     // MARK: Tints
 
     /// What each `AppColors.<token>.opacity(<alpha>)` in the app is, by `token@alpha`. `audited` means the text on it is
-    /// measured by `timelineRowPairs` or `tintedFillPairs`; `noText` means no text sits on it (a hairline, a stripe, a pressed state, a
+    /// measured by `timelineRowPairs`, `tintedFillPairs`, `pressedFillPairs` or `liveActivityPairs`; `noText` means no text sits on it (a hairline, a stripe, a pressed state, a
     /// plain shape); `unaudited` is a fill with text or an icon on it that no pair measures yet, left for #3739's next
     /// slices (none left today). A new tint is not in this list, so it fails until someone says which of the three it is. The key is the token and the
     /// alpha, not the call site: a new text fill that reuses an audited key is not seen, so give it a new alpha or a pair.
