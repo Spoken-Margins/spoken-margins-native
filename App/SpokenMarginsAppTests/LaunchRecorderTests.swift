@@ -82,12 +82,14 @@ final class LaunchRecorderTests: XCTestCase {
         XCTAssertEqual(lines[LaunchRecorder.exitsKey], "09-21 14:13Z launch crash crashes=1", "shown from the first moment of the next run")
     }
 
-    func testAnUnknownProcessStartMarksNothingButStillKeepsTheLaunchAndExits() {
+    func testAnUnknownProcessStartLeavesOutOnlyThePreInitTime() {
         let recorder = LaunchRecorder(defaults: defaults, build: "36", processStart: nil, now: { [unowned self] in clock },
                                       runSoon: { work in work() })
-        recorder.markRootAppeared()
+        clock = clock.addingTimeInterval(0.25); recorder.markRootAppeared()
         recorder.markLibraryReady(items: 3)
-        XCTAssertNil(recorder.history.launches.last?.rootAppearMs)
+        XCTAssertNil(recorder.history.launches.last?.preInitMs)
+        XCTAssertNotEqual(recorder.history.launches.last?.prewarmed, true)
+        XCTAssertEqual(recorder.history.launches.last?.rootAppearMs, 250, "marks run from App.init, which is known")
         XCTAssertEqual(recorder.history.launches.count, 1)
     }
 
