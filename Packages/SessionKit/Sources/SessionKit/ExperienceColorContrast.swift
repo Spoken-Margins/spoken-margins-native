@@ -336,8 +336,19 @@ public enum AppColorContrastAudit {
         .init(name: "watch episode and Record plate label", foreground: AppSemanticColorRGB.white, background: AppSystemColorRGB.watchBlue, minimumRatio: 4.5)
     ]
 
+    /// Fills that carry an icon or a label and are not Timeline rows (#3739): the round icon
+    /// badges, the library row icon tiles, the selected subject chip and the live passage's current sentence. Each is a tint over the surface it is
+    /// drawn on (the badges sit in a panel card, the row tiles and chips on bone), and the mark on it is read as an icon (3:1) or as text (4.5:1).
+    public static let tintedFillPairs: [Pair] = [
+        onTint("round icon badge", foreground: AppSemanticColorRGB.ochreText, tint: "ochre", tintColor: AppSemanticColorRGB.ochre, alpha: 0.12, over: AppSemanticColorRGB.panel, baseName: "panel", minimumRatio: 3),
+        onTint("library row icon", foreground: AppSemanticColorRGB.evergreen, tint: "softGreen", tintColor: AppSemanticColorRGB.softGreen, alpha: 0.85, over: AppSemanticColorRGB.bone, baseName: "bone", minimumRatio: 3),
+        onTint("library row icon", foreground: AppSemanticColorRGB.evergreen, tint: "softGreen", tintColor: AppSemanticColorRGB.softGreen, alpha: 0.55, over: AppSemanticColorRGB.bone, baseName: "bone", minimumRatio: 3),
+        onTint("selected chip label", foreground: AppSemanticColorRGB.text, tint: "evergreen", tintColor: AppSemanticColorRGB.evergreen, alpha: 0.16, over: AppSemanticColorRGB.bone, baseName: "bone"),
+        onTint("current sentence text", foreground: AppSemanticColorRGB.white, tint: "listeningAccent", tintColor: AppSemanticColorRGB.listeningAccent, alpha: 0.18, over: AppSemanticColorRGB.listeningBackground, baseName: "listening background")
+    ]
+
     public static var allPairs: [Pair] {
-        textBackgroundPairs + nonTextPairs + increasedContrastEdgePairs + timelineRowPairs + watchPlatePairs
+        textBackgroundPairs + nonTextPairs + increasedContrastEdgePairs + timelineRowPairs + watchPlatePairs + tintedFillPairs
     }
 
     /// A pair that fails today, in an appearance, with the issue that fixes it. The audit prints these
