@@ -196,36 +196,104 @@ extension View {
 }
 
 extension View {
-    /// The share sheet for a spoken note's exported files while `files` is set (#3660). Setting `files` to nil, which the
-    /// sheet does when it closes, removes the folder the files were made in (`SpokenNoteExportModel`).
-    func spokenNoteExportSheet(_ files: Binding<SpokenNoteExportFiles?>) -> some View {
-        sheet(isPresented: Binding(get: { files.wrappedValue != nil }, set: { if !$0 { files.wrappedValue = nil } })) {
-            if let exported = files.wrappedValue {
+    /// The share sheet for a spoken note's export while `files` or `text` is set (#3660). Both go through this one sheet,
+    /// since two sheets on one view can drop each other. Clearing them, which the sheet does when it closes, removes the
+    /// folder the export was made in (`SpokenNoteExportModel`).
+    func spokenNoteExportSheet(_ export: SpokenNoteExportModel) -> some View {
+        sheet(isPresented: Binding(get: { export.files != nil || export.text != nil }, set: {
+            guard !$0 else { return }
+            export.files = nil
+            export.text = nil
+        })) {
+            if let exported = export.files {
                 SessionActivityView(activityItems: exported.shareURLs, onSuccessfulCompletion: {})
+            } else if let exported = export.text {
+                SessionActivityView(activityItems: SpokenNoteTextShareItem.items(for: exported), onSuccessfulCompletion: {})
             }
         }
     }
 }
 
 extension View {
-    /// Everything a spoken note's Export shows (#3660): the share sheet when the files are ready, a question first when
-    /// they hold less than the whole note, and a plain alert when it fails.
+    /// Everything a spoken note's Export shows (#3660): what to export, the share sheet when it is ready, a question first
+    /// when it holds less than the whole note or has no words yet, and a plain alert when it fails.
     func spokenNoteExportFlow(_ export: SpokenNoteExportModel) -> some View {
-        spokenNoteExportSheet(Binding(get: { export.files }, set: { export.files = $0 }))
+        spokenNoteExportSheet(export)
+            .confirmationDialog(
+                "What do you want to export?",
+                isPresented: Binding(get: { export.choosing != nil }, set: { if !$0 { export.choosing = nil } }),
+                titleVisibility: .visible,
+                presenting: export.choosing
+            ) { request in
+                Button("Text only") { export.choose(.textOnly, for: request) }
+                    .accessibilityIdentifier("spokenNote.export.textOnly")
+                Button("Audio and text") { export.choose(.audioAndText, for: request) }
+                    .accessibilityIdentifier("spokenNote.export.audioAndText")
+                Button("Cancel", role: .cancel) {}
+            }
             .alert(
                 "Part of this note can't be exported",
-                isPresented: Binding(get: { export.partial != nil }, set: { if !$0 { export.resolvePartial(share: false) } })
+                isPresented: Binding(get: { export.partialQuestion != nil }, set: { if !$0 { export.resolvePartial(share: false) } })
             ) {
                 Button("Export what's there") { export.resolvePartial(share: true) }
                 Button("Cancel", role: .cancel) { export.resolvePartial(share: false) }
             } message: {
-                Text(export.partial.map(SpokenNoteExportModel.partialMessage) ?? "")
+                Text(export.partialQuestion ?? "")
+            }
+            .alert(
+                "No words yet",
+                isPresented: Binding(get: { export.noWords != nil }, set: { if !$0 { export.noWords = nil } }),
+                presenting: export.noWords
+            ) { request in
+                Button("Export Audio") { export.choose(.audioAndText, for: request) }
+                    .accessibilityIdentifier("spokenNote.export.audioInstead")
+                Button("Cancel", role: .cancel) {}
+            } message: { _ in
+                Text("This note has no words written down yet, so there is no text to export. You can export its audio instead.")
             }
             .alert("Couldn't export", isPresented: Binding(get: { export.message != nil }, set: { if !$0 { export.message = nil } })) {
                 Button("OK", role: .cancel) {}
             } message: {
                 Text(export.message ?? "")
             }
+    }
+}
+
+/// One form of a spoken note's text for the share sheet (#3660). The sheet is given two of these, a String and a `.txt`,
+/// so it offers everything that takes either; once a destination is picked, each says whether that destination gets it
+/// (`SpokenNoteTextDelivery`). Notes, Messages and Copy then get real text, and Files a file named after the note.
+final class SpokenNoteTextShareItem: NSObject, UIActivityItemSource {
+    private let export: SpokenNoteTextExport
+    private let isFile: Bool
+
+    private init(_ export: SpokenNoteTextExport, isFile: Bool) {
+        self.export = export
+        self.isFile = isFile
+    }
+
+    static func items(for export: SpokenNoteTextExport) -> [SpokenNoteTextShareItem] {
+        [SpokenNoteTextShareItem(export, isFile: false), SpokenNoteTextShareItem(export, isFile: true)]
+    }
+
+    func activityViewControllerPlaceholderItem(_ activityViewController: UIActivityViewController) -> Any {
+        isFile ? export.fileURL : export.text
+    }
+
+    func activityViewController(_ activityViewController: UIActivityViewController, itemForActivityType activityType: UIActivity.ActivityType?) -> Any? {
+        item(forActivity: activityType?.rawValue)
+    }
+
+    func activityViewController(_ activityViewController: UIActivityViewController, subjectForActivityType activityType: UIActivity.ActivityType?) -> String {
+        export.title
+    }
+
+    /// The String or URL this destination gets from this item, or nil when it gets the other form.
+    func item(forActivity activityType: String?) -> Any? {
+        switch SpokenNoteTextDelivery.forActivity(activityType) {
+        case .text: return isFile ? nil : export.text
+        case .file: return isFile ? export.fileURL : nil
+        case .textAndFile: return isFile ? export.fileURL : export.text
+        }
     }
 }
 

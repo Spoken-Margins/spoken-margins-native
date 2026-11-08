@@ -22,7 +22,7 @@ struct ExperienceLibraryScreen: View {
     @State private var collectionItem: LibraryItemRow?
     /// A spoken note opened from its row: it has its own screen, not the text item screen (#3108).
     @State private var openedNote: SpokenNoteOpening?
-    /// Export of a spoken note from its row: the audio and transcript, through the share sheet (#3660).
+    /// Export of a spoken note from its row: its words alone, or its audio and words, through the share sheet (#3660).
     @StateObject private var noteExport = SpokenNoteExportModel()
     /// A spoken note whose name is being changed from its row (#3663).
     @State private var renamingNote: SpokenNoteRenameTarget?

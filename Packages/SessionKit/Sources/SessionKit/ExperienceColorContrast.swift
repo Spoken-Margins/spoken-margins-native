@@ -90,6 +90,42 @@ public enum AppSystemColorRGB {
     /// The Dynamic Island is always black, and its secondary label is the system's dark secondary: white-grey at 60%.
     public static let dynamicIslandBlack = fixed(0, 0, 0)
     public static let darkSecondaryLabel = fixed(0.922, 0.922, 0.961)
+
+    /// UIKit's own surface and label colours, as the share extension draws them (#3739 slice 4): the card is
+    /// `secondarySystemBackground` (#F2F2F7 light, #1C1C1E dark) and its words are `label` (black, white).
+    public static let secondarySystemBackground = AppDynamicRGB(
+        light: .init(red: 242.0 / 255, green: 242.0 / 255, blue: 247.0 / 255),
+        dark: .init(red: 28.0 / 255, green: 28.0 / 255, blue: 30.0 / 255)
+    )
+    public static let label = AppDynamicRGB(light: .init(red: 0, green: 0, blue: 0), dark: .init(red: 1, green: 1, blue: 1))
+}
+
+/// The colours of the Safari extension's popup (`popup.css`): one fixed palette, written as hex in the stylesheet, which
+/// the popup draws in both appearances. The guard tests read every hex literal in the stylesheet and fail on one that is
+/// not listed here, so a new colour needs a pair in `AppColorContrastAudit.safariPopupPairs` (#3739 slice 4).
+public enum AppSafariPopupRGB {
+    /// The six-digit hex (lower case, no `#`) of each colour the stylesheet may use, and the colour it is.
+    public static let palette: [String: AppDynamicRGB] = {
+        let hexes = ["f6f6f6", "101312", "57d696", "07110d", "aeb8b3", "111111", "bdbdbd"]
+        return Dictionary(uniqueKeysWithValues: hexes.map { ($0, fixed(hex: $0)) })
+    }()
+
+    public static func fixed(hex: String) -> AppDynamicRGB {
+        precondition(hex.count == 6, "a six-digit hex")
+        let value = UInt32(hex, radix: 16) ?? 0
+        let color = AppColorRGB(
+            red: Double((value >> 16) & 0xff) / 255, green: Double((value >> 8) & 0xff) / 255, blue: Double(value & 0xff) / 255
+        )
+        return AppDynamicRGB(light: color, dark: color)
+    }
+
+    public static var text: AppDynamicRGB { fixed(hex: "f6f6f6") }
+    public static var plate: AppDynamicRGB { fixed(hex: "101312") }
+    public static var accent: AppDynamicRGB { fixed(hex: "57d696") }
+    public static var markText: AppDynamicRGB { fixed(hex: "07110d") }
+    public static var caption: AppDynamicRGB { fixed(hex: "aeb8b3") }
+    public static var buttonText: AppDynamicRGB { fixed(hex: "111111") }
+    public static var status: AppDynamicRGB { fixed(hex: "bdbdbd") }
 }
 
 public enum AppSemanticColorRGB {
@@ -432,8 +468,38 @@ public enum AppColorContrastAudit {
         return pairs
     }()
 
+    /// The share extension's status card (`SourceLinkShareViewController.swift`): UIKit's `label` on `secondarySystemBackground`, with
+    /// the app's `green` for the icon and the Done button. The extension doesn't link SessionKit, so it carries a copy of the
+    /// green; the guard tests keep the copy equal to the token (#3739 slice 4).
+    public static let shareExtensionPairs: [Pair] = [
+        .init(name: "share extension title", foreground: AppSystemColorRGB.label, background: AppSystemColorRGB.secondarySystemBackground, minimumRatio: 4.5),
+        .init(name: "share extension status line", foreground: AppSystemColorRGB.label, background: AppSystemColorRGB.secondarySystemBackground, minimumRatio: 4.5),
+        .init(name: "share extension Done label (app green)", foreground: AppSemanticColorRGB.green, background: AppSystemColorRGB.secondarySystemBackground, minimumRatio: 4.5),
+        .init(name: "share extension icon (app green)", foreground: AppSemanticColorRGB.green, background: AppSystemColorRGB.secondarySystemBackground, minimumRatio: 3)
+    ]
+
+    /// The Safari popup (`popup.css`): every colour is a fixed hex on one dark plate. The disabled button is the whole
+    /// button at 55% over the plate; a disabled control is exempt from WCAG 1.4.3, and it is held to 3:1 here so it stays
+    /// legible as a control.
+    public static let safariPopupPairs: [Pair] = {
+        let plate = AppSafariPopupRGB.plate
+        return [
+            .init(name: "safari popup body and title", foreground: AppSafariPopupRGB.text, background: plate, minimumRatio: 4.5),
+            .init(name: "safari popup brand mark", foreground: AppSafariPopupRGB.markText, background: AppSafariPopupRGB.accent, minimumRatio: 4.5),
+            .init(name: "safari popup caption", foreground: AppSafariPopupRGB.caption, background: plate, minimumRatio: 4.5),
+            .init(name: "safari popup button label", foreground: AppSafariPopupRGB.buttonText, background: AppSafariPopupRGB.accent, minimumRatio: 4.5),
+            .init(
+                name: "safari popup disabled button label (exempt, kept above 3:1)",
+                foreground: AppSafariPopupRGB.buttonText.composited(over: plate, alpha: 0.55),
+                background: AppSafariPopupRGB.accent.composited(over: plate, alpha: 0.55), minimumRatio: 3
+            ),
+            .init(name: "safari popup status line", foreground: AppSafariPopupRGB.status, background: plate, minimumRatio: 4.5)
+        ]
+    }()
+
     public static var allPairs: [Pair] {
         textBackgroundPairs + nonTextPairs + increasedContrastEdgePairs + timelineRowPairs + watchPlatePairs + tintedFillPairs + pressedFillPairs + liveActivityPairs
+            + shareExtensionPairs + safariPopupPairs
     }
 
     /// A pair that fails today, in an appearance, with the issue that fixes it. The audit prints these
