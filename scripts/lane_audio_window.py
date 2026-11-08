@@ -5,6 +5,11 @@ The run's tests see the folder as SM_AUDIO_WINDOW: xcodebuild passes TEST_RUNNER
 runner without the prefix. Runs that don't name an AudioLoopback test start nothing, so the Mac's audio is
 touched only when a request names one. In a whole-plan run (Release, a full AudioAdapters) the test finds no
 window and skips, and `unasked` lets that skip pass: nobody asked that run to listen.
+
+A GitHub-hosted Mac (LANE_HOSTED_APP, every /lane request while it is `on`) has no BlackHole and no recorder app, so
+it can never listen (#3604). There the window is not started, an AudioLoopback test's skip passes even when a request
+names it, and the report says "not run: ... the audio check is still owed" instead of coming back INCONCLUSIVE. The
+self-hosted Mac keeps the strict rule: a named test that could not listen fails the run.
 """
 import contextlib
 import json
@@ -22,21 +27,44 @@ READY_WAIT = 20
 STOP_WAIT = 30  # a stop in mid-window lets route put the default output back first
 
 
+NOT_RUN = ('not run: the hosted Mac has no audio loopback (no BlackHole, no recorder app). The audio check is '
+           'still owed: the owner\'s pass, or a run on the Mac with BlackHole (ops/audio-loopback/README.md)')
+
+
+def hosted(environ=None):
+    """True on a GitHub-hosted runner (GitHub sets RUNNER_ENVIRONMENT=github-hosted there, and `self-hosted` on ours,
+    which also sets GITHUB_ACTIONS=true, so that variable alone says nothing; see verify-tests.py on_hosted_runner)."""
+    return (os.environ if environ is None else environ).get('RUNNER_ENVIRONMENT') == 'github-hosted'
+
+
 def wants_audio(tests):
     return any(MARKER in test for test in tests or ())
 
 
-def unasked(expected, selectors):
-    """The AudioLoopback tests that may skip: all of them unless the run's selectors name one, since then the
-    skip means the lane couldn't listen and the run must not pass."""
+def unasked(expected, selectors, hosted_runner=None):
+    """The AudioLoopback tests that may skip. On the self-hosted Mac: all of them unless the run's selectors name
+    one, since then the skip means the lane couldn't listen and the run must not pass. On a hosted Mac: all of them,
+    named or not, because it can never listen (#3604); `not_run` records them so the report says so."""
+    if hosted() if hosted_runner is None else hosted_runner:
+        return {test for test in expected or () if MARKER in test}
     return set() if wants_audio(selectors) else {test for test in expected or () if MARKER in test}
 
 
+def not_run(records, hosted_runner=None):
+    """(the AudioLoopback tests in a step's test records that skipped on a hosted Mac, the report entries for them).
+    Both are empty anywhere else: a skip there is either not asked for or a run that could not listen."""
+    if not (hosted() if hosted_runner is None else hosted_runner):
+        return [], []
+    names = sorted(test for test, record in (records or {}).items()
+                   if MARKER in test and record.get('status') == 'skipped')
+    return names, [{'test': test, 'files': [], 'audio': {'verdict': 'NOT RUN', 'summary': NOT_RUN}} for test in names]
+
+
 @contextlib.contextmanager
-def serve(output, tests, out=sys.stdout, server=SERVER, python=sys.executable):
+def serve(output, tests, out=sys.stdout, server=SERVER, python=sys.executable, hosted_runner=None):
     """Yields the window folder while the server runs, or None when `tests` (the run's -only-testing selectors)
-    name no AudioLoopback test."""
-    if not wants_audio(tests) or not Path(server).exists():
+    name no AudioLoopback test, or on a hosted Mac, which has nothing to record with (#3604)."""
+    if (hosted() if hosted_runner is None else hosted_runner) or not wants_audio(tests) or not Path(server).exists():
         yield None
         return
     folder = Path(output) / 'audio-window'

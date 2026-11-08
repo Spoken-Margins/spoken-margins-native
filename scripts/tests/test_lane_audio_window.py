@@ -9,6 +9,7 @@ import sys
 import tempfile
 import textwrap
 import unittest
+import unittest.mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import lane_audio_window
@@ -41,6 +42,10 @@ class ServeTests(unittest.TestCase):
         self.server = self.output / 'fake_window.py'
         self.server.write_text(FAKE_SERVER)
         os.environ.pop(lane_audio_window.ENV, None)
+        patch = unittest.mock.patch.dict(os.environ)  # CI's hosted runners set RUNNER_ENVIRONMENT
+        patch.start()
+        self.addCleanup(patch.stop)
+        os.environ.pop('RUNNER_ENVIRONMENT', None)
 
     def test_a_run_without_an_audio_test_starts_nothing(self):
         with lane_audio_window.serve(self.output, ['SpokenMarginsAppTests/OtherTests/testA'], server=self.server) as folder:
@@ -74,6 +79,10 @@ class WholePlanTests(unittest.TestCase):
         self.server.write_text(FAKE_SERVER)
         self.expected = {AUDIO_TEST, 'SpokenMarginsAppTests/OtherTests/testA'}
         self.records = {AUDIO_TEST: {'status': 'skipped'}, 'SpokenMarginsAppTests/OtherTests/testA': {'status': 'passed'}}
+        patch = unittest.mock.patch.dict(os.environ)  # CI's hosted runners set RUNNER_ENVIRONMENT
+        patch.start()
+        self.addCleanup(patch.stop)
+        os.environ.pop('RUNNER_ENVIRONMENT', None)
 
     def test_a_whole_plan_run_opens_no_window_and_its_audio_skip_passes(self):
         with lane_audio_window.serve(self.output, [], server=self.server) as folder:
@@ -91,6 +100,58 @@ class WholePlanTests(unittest.TestCase):
     def test_the_server_starts_on_the_selectors_not_the_plan(self):
         with lane_audio_window.serve(self.output, ['SpokenMarginsAppTests/OtherTests'], server=self.server) as folder:
             self.assertIsNone(folder)
+
+
+class HostedMacTests(unittest.TestCase):
+    """#3604: a GitHub-hosted Mac has no BlackHole and no recorder app, so a request that names the audio test could
+    only come back INCONCLUSIVE. There it is recorded as not run, and the report says the audio check is owed."""
+
+    def setUp(self):
+        self.output = Path(tempfile.mkdtemp())
+        self.server = self.output / 'fake_window.py'
+        self.server.write_text(FAKE_SERVER)
+        self.expected = {AUDIO_TEST, 'SpokenMarginsAppTests/OtherTests/testA'}
+        self.records = {AUDIO_TEST: {'status': 'skipped'}, 'SpokenMarginsAppTests/OtherTests/testA': {'status': 'passed'}}
+        self.selectors = ['SpokenMarginsAppTests/AudioLoopbackPlaybackTests']
+
+    def test_the_runner_environment_decides(self):
+        self.assertTrue(lane_audio_window.hosted({'RUNNER_ENVIRONMENT': 'github-hosted'}))
+        self.assertFalse(lane_audio_window.hosted({'RUNNER_ENVIRONMENT': 'self-hosted', 'GITHUB_ACTIONS': 'true'}))
+        self.assertFalse(lane_audio_window.hosted({}))
+
+    def test_a_named_audio_test_that_skips_on_a_hosted_mac_does_not_fail_the_step(self):
+        allowed = lane_audio_window.unasked(self.expected, self.selectors, hosted_runner=True)
+        self.assertEqual(allowed, {AUDIO_TEST})
+        self.assertEqual(verification.reconcile(self.expected, self.records, allowed), [])
+
+    def test_the_same_request_on_the_self_hosted_mac_still_fails_on_its_skip(self):
+        allowed = lane_audio_window.unasked(self.expected, self.selectors, hosted_runner=False)
+        self.assertEqual(verification.reconcile(self.expected, self.records, allowed), [f'Unexpected skip: {AUDIO_TEST}'])
+
+    def test_another_skip_on_a_hosted_mac_still_fails(self):
+        """The lane's other unexpected-skip check: only AudioLoopback tests are excused."""
+        records = {**self.records, 'SpokenMarginsAppTests/OtherTests/testA': {'status': 'skipped'}}
+        allowed = lane_audio_window.unasked(self.expected, self.selectors, hosted_runner=True)
+        self.assertEqual(verification.reconcile(self.expected, records, allowed),
+                         ['Unexpected skip: SpokenMarginsAppTests/OtherTests/testA'])
+
+    def test_a_hosted_mac_starts_no_window_even_when_a_test_is_named(self):
+        with lane_audio_window.serve(self.output, self.selectors, server=self.server, hosted_runner=True) as folder:
+            self.assertIsNone(folder)
+            self.assertNotIn(lane_audio_window.ENV, os.environ)
+        self.assertFalse((self.output / 'audio-window').exists())
+
+    def test_the_skip_is_recorded_as_not_run_and_the_report_says_the_check_is_owed(self):
+        names, entries = lane_audio_window.not_run(self.records, hosted_runner=True)
+        self.assertEqual(names, [AUDIO_TEST])
+        text = '\n'.join(lane_xcresult_attachments.report_lines(entries))
+        self.assertIn(f'Audio check for `{AUDIO_TEST}`: not run: the hosted Mac has no audio loopback', text)
+        self.assertIn('still owed', text)
+
+    def test_nothing_is_recorded_as_not_run_on_the_self_hosted_mac_or_for_a_pass(self):
+        self.assertEqual(lane_audio_window.not_run(self.records, hosted_runner=False), ([], []))
+        passed = {AUDIO_TEST: {'status': 'passed'}}
+        self.assertEqual(lane_audio_window.not_run(passed, hosted_runner=True), ([], []))
 
 
 class ReportTests(unittest.TestCase):

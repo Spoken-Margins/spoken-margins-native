@@ -482,6 +482,25 @@ class T3Tests(unittest.TestCase):
         stopped = lane.summarize_manifest({'steps': []})
         self.assertEqual(lane.t3_verdict([stopped], ['failed_or_incomplete']), 'INCONCLUSIVE')
 
+    def test_a_hosted_audio_loopback_class_that_could_not_listen_is_not_a_fail_or_an_inconclusive(self):
+        """#3604: a hosted Mac has no BlackHole, so the AudioLoopback skip is recorded as not run; the rest decides."""
+        ran = {'status': 'verified', 'steps': [{'name': 'xcode-tests', 'tests': {'T/A/test1': {'status': 'passed'}}}]}
+        audio = 'T/AudioLoopbackPlaybackTests/testVoice'
+        only_audio = {'status': 'verified', 'steps': [{'name': 'xcode-tests', 'audio_not_run': [audio],
+                                                       'tests': {audio: {'status': 'skipped'}}}]}
+        nothing = {'status': 'verified', 'steps': [{'name': 'xcode-tests', 'tests': {}}]}
+        for plans, verdict in (({'app': ran, 'adapters': only_audio}, 'PASS'),
+                               ({'adapters': only_audio}, 'INCONCLUSIVE'),
+                               ({'app': ran, 'adapters': nothing}, 'FAIL'),
+                               ({'app': ran, 'adapters': nothing, 'other': only_audio}, 'FAIL')):
+            with self.subTest(plans=list(plans), verdict=verdict):
+                grouped = {plan: ['T/A'] for plan in plans}
+                summaries, statuses, _, details = lane.run_plans(grouped, lambda plan, *_: plans[plan], Path('/e'))
+                self.assertEqual(lane.t3_verdict(summaries, statuses), verdict)
+                self.assertEqual(any('not run on the hosted Mac' in line and 'still owed' in line for line in details),
+                                 'adapters' in plans and plans['adapters'] is only_audio or 'other' in plans)
+                self.assertEqual(any('ran 0 of the requested tests' in line for line in details), verdict == 'FAIL')
+
     def test_only_a_deliberate_wait_is_a_hold(self):
         held = ['not merged: held for T3: this PR\'s newest /lane T3 request has no lane report yet.']
         self.assertTrue(lane.is_hold('INCONCLUSIVE', ['tested nothing'] + held))

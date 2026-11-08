@@ -2732,7 +2732,8 @@ def summarize_manifest(manifest: dict) -> dict:
     A build that was interrupted (timeout or flood) is not a build failure: that's INCONCLUSIVE.
     """
     summary = {'passed': 0, 'failed': [], 'crashes': [], 'flood': False, 'interrupted': False, 'build_failed': False,
-               'out_of_time': None, 'overloaded': runner_overloaded(manifest), 'xcresult_unreadable': []}
+               'out_of_time': None, 'overloaded': runner_overloaded(manifest), 'xcresult_unreadable': [],
+               'audio_not_run': []}
     for step in manifest.get('steps', []):
         if step.get('xcresult_unreadable'):
             summary['xcresult_unreadable'].append(step['xcresult_unreadable'])
@@ -2743,6 +2744,7 @@ def summarize_manifest(manifest: dict) -> dict:
                 summary['passed'] += 1
             elif record.get('status') == 'failed':
                 summary['failed'].append(test)
+        summary['audio_not_run'] += step.get('audio_not_run') or []  # a hosted Mac cannot listen (#3604)
         summary['crashes'] += [Path(p).name for p in step.get('simulator_crash_reports', [])]
         summary['flood'] |= bool(step.get('simulator_crash_report'))
         summary['interrupted'] |= bool(step.get('interrupted'))
@@ -2766,7 +2768,12 @@ def t3_verdict(summaries: list[dict], statuses: list[str]) -> str:
     if statuses and all(status == 'verified' for status in statuses):
         # Every plan in `grouped` holds part of a requested selector, so a plan that is verified yet passed no test ran
         # nothing it was asked to (#2596: a class that "ran" 0 tests in the adapters plan was a PASS).
-        return 'FAIL' if any(not s['passed'] for s in summaries) else 'PASS'
+        empty = [s for s in summaries if not s['passed']]
+        if any(not s.get('audio_not_run') for s in empty):
+            return 'FAIL'
+        # #3604: a hosted Mac cannot run an AudioLoopback test, so a plan holding only those passed nothing and asked
+        # nothing else. The others carry the verdict; when no plan passed a test, nothing ran: INCONCLUSIVE, not a PASS.
+        return 'INCONCLUSIVE' if empty and not any(s['passed'] for s in summaries) else 'PASS'
     # A plan that lost its simulator failed for the lane's reasons (#411: exit 70 when the device vanished).
     if any((s['failed'] or s['build_failed']) and not s.get('device_lost') for s in summaries):
         return 'FAIL'
@@ -2847,7 +2854,14 @@ def run_plans(grouped: dict[str, list[str]], run_plan, evidence: Path,
             details.append(f'{plan}: the xcresult could not be read ({error}); the pass count comes from the test log, '
                            f'where all {summary["passed"]} expected test(s) finished and passed (#3374). '
                            f'evidence: {output}/manifest.json')
-        if manifest.get('status') == 'verified' and not summary['passed']:
+        if summary['audio_not_run']:
+            details.append(f'{plan}: not run on the hosted Mac, which has no audio loopback: '
+                           f'{", ".join(t.split("/", 1)[-1] for t in summary["audio_not_run"])}. The audio check is still '
+                           'owed (the owner\'s pass, or a run on the Mac); the other tests carry this verdict (#3604).')
+        if manifest.get('status') == 'verified' and not summary['passed'] and summary['audio_not_run']:
+            details.append(f'{plan}: no test ran in this plan; only AudioLoopback tests were requested in it (#3604). '
+                           f'evidence: {output}/manifest.json')
+        elif manifest.get('status') == 'verified' and not summary['passed']:
             details.append(f'{plan}: ran 0 of the requested tests ({", ".join(s.split("/", 1)[-1] for s in selectors)}); '
                            f'a requested test that does not run is a FAIL (#2596). evidence: {output}/manifest.json')
         if manifest.get('status') != 'verified' and not summary['failed']:
