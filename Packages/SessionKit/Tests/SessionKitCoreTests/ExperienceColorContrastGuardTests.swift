@@ -194,7 +194,7 @@ final class AppColorUsageGuardTests: XCTestCase {
         // The empty track of the storage bar: the swatches on it carry the meaning. The artwork tile fills
         // (`SMExperienceTypeCover`) are drawn by a view nothing uses yet, so they are left out until it is.
         "ochre@0.20": .noText, "plum@0.16": .noText,
-        "border@0.45": .noText,
+        "border@0.45": .noText, "watchSecondary@0.24": .noText,
         // The playback card's plates and the pressed states of the buttons: `pressedFillPairs` (#3739 slice 3).
         "watchControl@0.8": .audited, "watchControl@0.72": .audited, "panel@0.75": .audited,
         "listeningAccent@0.75": .audited, "captureBackground@0.78": .audited,
