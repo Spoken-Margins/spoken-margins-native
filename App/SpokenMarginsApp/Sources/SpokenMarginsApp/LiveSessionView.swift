@@ -4,16 +4,29 @@ import SwiftUI
 /// Live session (#1989, #2481, prototype): Margins on a clock while a meeting, an audiobook in another app or
 /// a paper book goes on outside Spoken Margins. Nothing is recorded. Afterwards a meeting lines up with its
 /// transcript (and recording, if the listener has it); anything else is saved as session notes.
+///
+/// The running state is the playback screen's layout (#3491): a Margins pane and a Session pane, and a dock with
+/// the pane switch, the clock with End, and Add a Margin with the pencil. Add a Margin opens the normal recording
+/// screen and the pencil the normal writing sheet; neither is a control that changes shape on this screen.
 struct LiveSessionView: View {
     @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.dismiss) private var dismiss
     @StateObject private var controller: LiveSessionController
     @ObservedObject private var links = LiveSessionLinkRouter.shared
+    @ObservedObject private var capture = LiveSessionSpokenCapture.shared
 
     /// `sessionId` opens that session (from the Library's Live row); nil opens the running one, or the setup card.
     init(sessionId: String? = nil) {
         _controller = StateObject(wrappedValue: LiveSessionController(sessionId: sessionId))
     }
+
+    /// The two full-screen screens this screen opens. One cover, so two can never stack.
+    private enum Cover: String, Identifiable {
+        case liveRecording, liveWriting
+        var id: String { rawValue }
+    }
+
+    private struct MarginTarget: Identifiable { let id: String }
 
     // Setup
     @State private var kind: ElsewhereKind = .meeting
@@ -21,15 +34,13 @@ struct LiveSessionView: View {
     @State private var startPosition = ""
     @State private var startWhere = ""
     // Running
-    @State private var marginText = ""
-    @State private var marginWhere = ""
-    @State private var adjustmentMs = 0
-    @FocusState private var marginFieldFocused: Bool
-    // Editing while it runs
-    @State private var showsDetails = false
-    @State private var titleDraft = ""
-    @State private var whereDraft = ""
-    @State private var clockDraft = ""
+    @State private var pane: LiveSessionPane = .margins
+    @State private var cover: Cover?
+    /// When the pencil was tapped: the Margin is placed at that moment, not at the moment Save is tapped.
+    @State private var writingStartedAt = Date()
+    @State private var openMargin: MarginTarget?
+    /// Set by a Live Activity tap once the screen has presented; the change handler opens the writing sheet.
+    @State private var wantsWrite = false
     // Ending
     @State private var showsEndCard = false
     @State private var showsLineUp = false
@@ -37,90 +48,44 @@ struct LiveSessionView: View {
     @State private var isSaving = false
     @State private var isRegisteredRunning = false
 
+    private var isRunningScreen: Bool { controller.session != nil }
+
     var body: some View {
         NavigationStack {
-            ScrollViewReader { scroller in
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 18) {
-                        if let session = controller.session {
-                            sessionHeader(session)
-                            if showsDetails && controller.isRunning { detailsCard(session) }
-                            if controller.isRunning { marginComposer(session) }
-                            marginList(session)
-                            if controller.hasEnded {
-                                finishCard(session)
-                            } else if showsEndCard {
-                                endCard(session).id(Self.endCardId)
-                            } else {
-                                endButton
-                            }
-                        } else {
-                            setupCard
-                        }
-                    }
-                    .padding(20)
-                    .frame(maxWidth: 720)
-                    .frame(maxWidth: .infinity)
-                }
-                .onChange(of: controller.session?.id) { _, _ in
-                    showsEndCard = false
-                    showsDetails = false
-                }
-                .onChange(of: controller.isRunning) { _, running in if !running { showsDetails = false } }
-                .onChange(of: showsEndCard) { _, shown in
-                    if shown {
-                        DispatchQueue.main.async { withAnimation { scroller.scrollTo(Self.endCardId, anchor: .bottom) } }
-                    }
-                }
-                // Typing a Margin: bring the composer to the top of the visible area, so the field and the buttons under it sit
-                // above the keyboard even on a short screen (#2963).
-                .onChange(of: marginFieldFocused) { _, focused in
-                    guard focused else { return }
-                    Task {
-                        try? await Task.sleep(for: .milliseconds(350)) // after the keyboard has finished rising
-                        withAnimation { scroller.scrollTo(Self.composerId, anchor: .top) }
-                    }
+            Group {
+                if let session = controller.session {
+                    LiveSessionStage(pane: paneContent(session), pill: pill, dock: dock(session))
+                } else {
+                    setupScreen
                 }
             }
-            .scrollDismissesKeyboard(.interactively)
-            // Start Session sits above the keyboard, so one tap reaches it with the keyboard up (#3547).
-            .safeAreaInset(edge: .bottom, spacing: 0) {
-                if controller.session == nil {
-                    startButton
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 10)
-                        .frame(maxWidth: 720)
-                        .frame(maxWidth: .infinity)
-                        .background(AppColors.bone)
-                }
-            }
-            .background(AppColors.bone)
+            .background(isRunningScreen ? AppColors.listeningBackground : AppColors.bone)
+            // This screen is a full-screen cover over the root, so the root's pill padding doesn't apply here; the
+            // screen's own pill sits in the stage above the dock.
             .miniPlayerKeepOut()
             .navigationTitle("Live session")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(isRunningScreen ? AppColors.listeningBackground : AppColors.bone, for: .navigationBar)
+            .toolbarColorScheme(isRunningScreen ? .dark : nil, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("Close") {
-                        controller.stopSpokenMargin() // a spoken Margin still recording is saved, not dropped (#3489)
-                        dismiss()
+                    Button(action: leave) {
+                        Image(systemName: "chevron.left").font(.body.weight(.semibold)).minimumTapTarget()
                     }
+                    .accessibilityLabel("Back")
+                    .accessibilityHint("Leaves this screen. The session keeps running.")
+                    .accessibilityIdentifier("liveSession.back.button")
                 }
-                // Return is a new line in a Margin, so Add Margin is on the keyboard itself, not below it (#2963).
-                // Done closes the keyboard whichever field has it: the setup, details and end fields are not tied to
-                // `marginFieldFocused`, so it resigns the first responder directly too (#3547).
+                // Return is a new line in a field, so Done closes the keyboard whichever field has it: the setup and
+                // session fields are not tied to one focus state, so it resigns the first responder directly (#3547).
                 ToolbarItemGroup(placement: .keyboard) {
                     Button("Done") { dismissKeyboard() }
                         .accessibilityIdentifier("liveSession.keyboard.done")
                     Spacer()
-                    if marginFieldFocused {
-                        Button("Add Margin", action: submitMargin)
-                            .fontWeight(.semibold)
-                            .disabled(marginText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                            .accessibilityIdentifier("liveSession.addMargin.keyboard.button")
-                    }
                 }
             }
         }
+        .environment(\.miniPlayerClearance, 0)
         .onAppear { controller.load() }
         .onDisappear {
             unregisterRunningScreen()
@@ -128,6 +93,27 @@ struct LiveSessionView: View {
         }
         .onChange(of: links.pendingAction) { _, _ in applyLink() }
         .onChange(of: controller.didLoad) { _, _ in applyLink() }
+        // An ended session shows what to do with it, which is on the Session pane.
+        .onChange(of: controller.hasEnded, initial: true) { _, ended in if ended { pane = .session } }
+        // The mini player's mic starts the item's recording on the root, which sits under this screen. This screen
+        // closes so that recording shows (the mini player acts on the root and can't be told otherwise).
+        .onChange(of: model.recordingNavigationIsLocked) { _, locked in
+            if locked && cover == nil { leave() }
+        }
+        .onChange(of: wantsWrite) { _, wanted in
+            guard wanted else { return }
+            wantsWrite = false
+            beginWriting()
+        }
+        .onChange(of: controller.isRecordingSpoken) { _, recording in
+            if !recording && cover == .liveRecording { cover = nil }
+        }
+        .fullScreenCover(item: $cover) { cover in
+            switch cover {
+            case .liveRecording: recordingScreen
+            case .liveWriting: writingScreen
+            }
+        }
         .sheet(isPresented: $showsLineUp) {
             if let session = controller.session {
                 LiveSessionLineUpView(session: session) {
@@ -138,6 +124,10 @@ struct LiveSessionView: View {
                 .environmentObject(model)
             }
         }
+        // Ending asks "when did it end?" in a sheet on this stable root, which nothing redraws: the sheet once closed
+        // by itself before the listener could answer (#2831). Only its own End and Cancel close it.
+        .sheet(isPresented: $showsEndCard) { endSheet }
+        .sheet(item: $openMargin) { target in marginScreen(target) }
         .alert("Live session", isPresented: Binding(get: { controller.errorMessage != nil }, set: { if !$0 { controller.errorMessage = nil } })) {
             Button("OK", role: .cancel) {}
         } message: {
@@ -151,8 +141,16 @@ struct LiveSessionView: View {
         }
     }
 
-    /// A tap on the Live Activity's Write a Margin or Speak a Margin (#2833): the written field is ready to type in,
-    /// or the spoken Margin is already recording. Needs a running session; otherwise the screen just opens.
+    /// Back to where the listener came from. The session keeps running; a spoken Margin still recording is saved, not
+    /// dropped (#3489).
+    private func leave() {
+        dismissKeyboard() // a field the listener was still typing in is kept first
+        controller.stopSpokenMargin()
+        dismiss()
+    }
+
+    /// A tap on the Live Activity's Write a Margin or Speak a Margin (#2833): the writing sheet opens, or the spoken
+    /// Margin is already recording. Needs a running session; otherwise the screen just opens.
     private func applyLink() {
         guard controller.didLoad else { return }
         // Only a screen showing the running session takes a link; one open on an ended session leaves it waiting.
@@ -167,14 +165,13 @@ struct LiveSessionView: View {
         case .write:
             Task {
                 try? await Task.sleep(for: .milliseconds(400)) // after the screen has finished presenting
-                marginFieldFocused = true
+                wantsWrite = true
             }
-        case .speak: if !controller.isRecordingSpoken { controller.startSpokenMargin() }
+        case .speak: beginRecording()
         }
     }
 
     private func dismissKeyboard() {
-        marginFieldFocused = false
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
     }
 
@@ -185,6 +182,25 @@ struct LiveSessionView: View {
     }
 
     // MARK: Setup
+
+    private var setupScreen: some View {
+        ScrollView {
+            setupCard
+                .padding(20)
+                .frame(maxWidth: 720)
+                .frame(maxWidth: .infinity)
+        }
+        .scrollDismissesKeyboard(.interactively)
+        // Start Session sits above the keyboard, so one tap reaches it with the keyboard up (#3547).
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            startButton
+                .padding(.horizontal, 20)
+                .padding(.vertical, 10)
+                .frame(maxWidth: 720)
+                .frame(maxWidth: .infinity)
+                .background(AppColors.bone)
+        }
+    }
 
     private var setupCard: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -204,7 +220,7 @@ struct LiveSessionView: View {
                     TextField(kind == .meeting ? "Meeting clock, like 2:00" : "Time in the book, like 0:00", text: $startPosition)
                         .textFieldStyle(.roundedBorder)
                         .keyboardType(.numbersAndPunctuation)
-                    Text(kind == .meeting ? "Leave blank if you don't know. You can set it later with Edit." : "The time your audiobook app shows.")
+                    Text(kind == .meeting ? "Leave blank if you don't know. You can set it later in Session." : "The time your audiobook app shows.")
                         .font(.caption).foregroundStyle(AppColors.secondaryText)
                 }
             }
@@ -235,255 +251,154 @@ struct LiveSessionView: View {
 
     // MARK: Running
 
-    private func sessionHeader(_ session: LiveSession) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(session.title.isEmpty ? "\(session.kind.label) session" : session.title).font(.headline)
-                Spacer()
-                if controller.isRunning {
-                    Button(showsDetails ? "Done" : "Edit") { toggleDetails(session) }
-                        .buttonStyle(.bordered)
-                        .frame(minHeight: 44)
-                        .accessibilityIdentifier("liveSession.editDetails")
-                        .accessibilityHint("Change the kind, name, clock or chapter while the session runs.")
-                }
-            }
-            TimelineView(.periodic(from: .now, by: 0.5)) { context in
-                clockBlock(session, at: context.date)
-            }
-            if let bracket = session.bracket {
-                Text(bracket).font(.caption).foregroundStyle(AppColors.secondaryText)
-            }
-            if controller.isRunning {
-                Text("The Lock Screen has a Mark button for a quick blind Margin.").font(.caption).foregroundStyle(AppColors.secondaryText)
-            }
+    @ViewBuilder
+    private func paneContent(_ session: LiveSession) -> some View {
+        switch pane {
+        case .margins:
+            LiveSessionMarginsPane(session: session, select: { openMargin = MarginTarget(id: $0.id) }, pauseOtherAudio: pauseSource)
+        case .session:
+            LiveSessionSessionPane(
+                session: session, isRunning: controller.isRunning,
+                setKind: controller.setKind, setTitle: controller.setTitle, setDescription: controller.setDescription,
+                setStartWhere: controller.setStartWhere, setStatedStart: { controller.setStatedStart($0) },
+                setSourceClock: { controller.setSourceClock(positionMs: $0) },
+                showError: { controller.errorMessage = $0 },
+                header: { if controller.hasEnded { finishCard(session) } })
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(16)
-        .background(AppColors.panel, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 
-    /// The name and chapter are saved when the listener finishes with them, not on every keystroke.
-    private func commitDrafts() {
-        controller.setTitle(titleDraft)
-        controller.setStartWhere(whereDraft)
+    private func dock(_ session: LiveSession) -> LiveSessionDock {
+        LiveSessionDock(
+            pane: $pane, marginCount: session.margins.count, isRunning: controller.isRunning,
+            resumeUntil: controller.resumeUntil,
+            clock: { dockClock($0, session: session) },
+            end: { dismissKeyboard(); showsEndCard = true },
+            resume: { controller.resume() },
+            record: beginRecording, write: beginWriting,
+            addIsDisabled: model.recordingNavigationIsLocked)
+    }
+
+    /// The existing mini player above the dock while an item is playing. Its mic files on the item (this screen closes
+    /// so the item's recording shows); Add a Margin files on the session.
+    @ViewBuilder
+    private var pill: some View {
+        if model.shouldShowMiniPlayer {
+            MiniPlayerBar(openNowPlaying: {
+                controller.stopSpokenMargin()
+                dismiss()
+                model.openPlayback()
+            })
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity)
+            .background(AppColors.listeningBackground)
+        }
     }
 
     /// While it runs, the big clock is the source's own (the meeting's elapsed time) and the session counter is the
-    /// small line under it (#2834). Without a clock, or once it has ended, the session counter is the big one.
-    @ViewBuilder
-    private func clockBlock(_ session: LiveSession, at date: Date) -> some View {
+    /// small line beside it (#2834). Without a clock, or once it has ended, the session counter is the big one.
+    private func dockClock(_ date: Date, session: LiveSession) -> LiveSessionDockClock {
         let sessionTime = LiveSessionPositionMap.clock(controller.elapsedMs(at: date))
-        if controller.isRunning, let title = LiveSessionClock.title(for: session.kind),
-           let position = controller.predictedPosition(at: date) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(AppColors.secondaryText)
-                Text(LiveSessionPositionMap.clock(position.ms))
-                    .font(.system(size: 44, weight: .semibold, design: .rounded).monospacedDigit())
-                    .accessibilityLabel("\(title) \(LiveSessionPositionMap.clock(position.ms))")
-                Text("Session time \(sessionTime)").font(.subheadline.monospacedDigit()).foregroundStyle(AppColors.secondaryText)
-                if session.kind == .meeting {
-                    Text("Not where the meeting is? Tap Edit and say where it is now.")
-                        .font(.caption).foregroundStyle(AppColors.secondaryText)
-                }
+        let position = controller.predictedPosition(at: date)
+        if controller.isRunning, let title = LiveSessionClock.title(for: session.kind), let position {
+            let main = LiveSessionPositionMap.clock(position.ms)
+            return LiveSessionDockClock(
+                main: main, caption: "\(title) · session \(sessionTime)",
+                accessibility: "\(title) \(main), session time \(sessionTime)")
+        }
+        var caption: String?
+        if let position { caption = "Source: \(position.label)" }
+        if session.kind == .meeting, session.startPositionMs == nil, controller.isRunning {
+            caption = "Set the meeting clock in Session"
+        }
+        if controller.hasEnded { caption = caption.map { "Ended · \($0)" } ?? "Ended" }
+        return LiveSessionDockClock(main: sessionTime, caption: caption, accessibility: "Session time \(sessionTime)")
+    }
+
+    // MARK: Adding Margins
+
+    private var anchorTitle: String {
+        guard let session = controller.session else { return "Live session" }
+        return session.title.isEmpty ? "\(session.kind.label) session" : session.title
+    }
+
+    /// "about 1:23:10" or "Chapter 3", else how long the session has run.
+    private func anchorSubtitle(at date: Date) -> String {
+        controller.predictedPosition(at: date)?.label ?? "Session time \(LiveSessionPositionMap.clock(controller.elapsedMs(at: date)))"
+    }
+
+    /// An item playing in the app is paused first, the same as a Margin on the item does.
+    private func pauseSource() {
+        if model.activePlaybackIsPlaying { model.pause() }
+    }
+
+    private func beginRecording() {
+        guard controller.isRunning, !controller.isRecordingSpoken else { return }
+        dismissKeyboard()
+        pauseSource()
+        controller.startSpokenMargin()
+        if controller.isRecordingSpoken { cover = .liveRecording }
+    }
+
+    private func beginWriting() {
+        guard controller.isRunning else { return }
+        dismissKeyboard()
+        pauseSource()
+        writingStartedAt = Date()
+        cover = .liveWriting
+    }
+
+    private var recordingScreen: some View {
+        LiveSessionRecordingView(
+            capture: capture, sessionId: controller.session?.id ?? "", anchorTitle: anchorTitle,
+            anchorSubtitle: { anchorSubtitle(at: Date()) },
+            onWriteInstead: {
+                writingStartedAt = Date()
+                cover = .liveWriting
             }
-        } else {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(sessionTime)
-                    .font(.system(size: 44, weight: .semibold, design: .rounded).monospacedDigit())
-                    .accessibilityLabel("Session time \(sessionTime)")
-                if let position = controller.predictedPosition(at: date) {
-                    Text("Source: \(position.label)").font(.subheadline).foregroundStyle(AppColors.secondaryText)
-                }
-                if session.kind == .meeting, session.startPositionMs == nil, controller.isRunning {
-                    Text("Meeting clock not set. Tap Edit and say where the meeting is now.")
-                        .font(.caption).foregroundStyle(AppColors.secondaryText)
-                }
-            }
+        )
+        .environmentObject(model)
+    }
+
+    private var writingScreen: some View {
+        LiveSessionWriteSheet(
+            kind: controller.session?.kind ?? .meeting, anchorTitle: anchorTitle,
+            anchorLabel: anchorSubtitle(at: writingStartedAt),
+            predictedPosition: { controller.predictedPosition(at: $0, adjustmentMs: $1) },
+            onSave: { text, whereNote, adjustmentMs in
+                controller.addMargin(text: text, whereNote: whereNote, adjustmentMs: adjustmentMs, markedAt: writingStartedAt)
+                cover = nil
+            },
+            onCancel: { cover = nil }
+        )
+        .environmentObject(model)
+    }
+
+    @ViewBuilder
+    private func marginScreen(_ target: MarginTarget) -> some View {
+        if let session = controller.session, let margin = session.margins.first(where: { $0.id == target.id }) {
+            LiveSessionMarginDetailView(
+                margin: margin, sessionTitle: session.title,
+                position: LiveSessionMarginsList.positionLabel(for: margin, in: session),
+                keepHeardPlace: { controller.keepHeardPlace(id: margin.id) },
+                declineHeardPlace: { controller.declineHeardPlace(id: margin.id) },
+                saveText: { controller.updateText(id: margin.id, text: $0) },
+                delete: { controller.removeMargin(id: margin.id) },
+                pauseOtherAudio: pauseSource)
         }
     }
 
-    private func toggleDetails(_ session: LiveSession) {
-        if showsDetails { commitDrafts() }
-        if !showsDetails {
-            titleDraft = session.title
-            whereDraft = session.startWhere ?? ""
-            clockDraft = ""
+    // MARK: Ending
+
+    private var endSheet: some View {
+        ScrollView {
+            if let session = controller.session { endCard(session).padding(16) }
         }
-        showsDetails.toggle()
+        .background(AppColors.bone)
+        .presentationDetents([.medium])
+        .interactiveDismissDisabled()
     }
 
-    /// Everything the start card asks, changeable while the session runs (#2832): starting stays one tap with
-    /// blanks allowed.
-    private func detailsCard(_ session: LiveSession) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Picker("Kind", selection: Binding(get: { session.kind }, set: { controller.setKind($0) })) {
-                ForEach(ElsewhereKind.allCases, id: \.self) { Text($0.label).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            TextField(session.kind == .meeting ? "Meeting name" : "Title", text: $titleDraft)
-                .textFieldStyle(.roundedBorder)
-                .onSubmit { commitDrafts() }
-            if session.kind != .paper {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Where are you now?").font(.subheadline.weight(.semibold))
-                    HStack {
-                        TextField(session.kind == .meeting ? "What the meeting's clock shows, like 12:30" : "Time in the book, like 1:23:10", text: $clockDraft)
-                            .textFieldStyle(.roundedBorder)
-                            .keyboardType(.numbersAndPunctuation)
-                        Button("Set") {
-                            guard let ms = LiveSessionPositionMap.parse(clockDraft) else {
-                                controller.errorMessage = "Enter a time like 12:30 or 1:23:10."
-                                return
-                            }
-                            if controller.setSourceClock(positionMs: ms) { clockDraft = "" }
-                        }
-                        .buttonStyle(.bordered)
-                        .frame(minHeight: 44)
-                        .disabled(clockDraft.trimmingCharacters(in: .whitespaces).isEmpty)
-                    }
-                    Text("Type it once and the clock runs from there. Margins you've already taken move with it.")
-                        .font(.caption).foregroundStyle(AppColors.secondaryText)
-                }
-            }
-            LiveSessionPlaceField(
-                prompt: session.kind == .paper ? "Page, chapter or percent" : "Page, chapter or percent (optional)",
-                defaultUnit: LiveSessionPlace.defaultUnit(for: session.kind), text: $whereDraft
-            )
-            .onSubmit { commitDrafts() }
-        }
-        .padding(16)
-        .background(AppColors.panel, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-    }
-
-    private func guidance(_ kind: ElsewhereKind) -> String {
-        switch kind {
-        case .meeting: "Say something that helps place this, like \u{201C}Johnny was just talking about the budget\u{201D}"
-        case .audiobook, .paper, .other: "Say something that helps place this, like \u{201C}I think this is chapter 5\u{201D}"
-        }
-    }
-
-    private func marginComposer(_ session: LiveSession) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Add Margin").font(.headline)
-            TextField(guidance(session.kind), text: $marginText, axis: .vertical)
-                .lineLimit(2...5)
-                .textFieldStyle(.roundedBorder)
-                .focused($marginFieldFocused)
-                .accessibilityIdentifier("liveSession.marginText")
-            if session.kind != .meeting {
-                LiveSessionPlaceField(
-                    prompt: session.kind == .paper ? "Page (optional)" : "Page, chapter or percent (optional)",
-                    defaultUnit: LiveSessionPlace.defaultUnit(for: session.kind), text: $marginWhere
-                )
-            }
-            TimelineView(.periodic(from: .now, by: 0.5)) { context in
-                if let position = controller.predictedPosition(at: context.date, adjustmentMs: adjustmentMs) {
-                    PositionNudgeRow(label: adjustmentMs == 0 ? position.label : "you set \(LiveSessionPositionMap.clock(position.ms))", adjustmentMs: $adjustmentMs)
-                }
-            }
-            Button(action: submitMargin) {
-                Label("Add Margin", systemImage: "text.bubble").frame(maxWidth: .infinity, minHeight: 44)
-            }
-            .filledActionButton()
-            .disabled(marginText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            .accessibilityIdentifier("liveSession.addMargin.button")
-            spokenMarginButton
-        }
-        .padding(16)
-        .background(AppColors.panel, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .id(Self.composerId)
-    }
-
-    /// Add Margin, from the button under the field or the one on the keyboard.
-    private func submitMargin() {
-        controller.addMargin(text: marginText, whereNote: marginWhere.isEmpty ? nil : marginWhere, adjustmentMs: adjustmentMs)
-        marginText = ""
-        marginWhere = ""
-        adjustmentMs = 0
-        marginFieldFocused = false
-    }
-
-    private static let composerId = "liveSession.composer"
-
-    /// Speak a Margin on the phone (#2487). During a call it says to use the Watch: the call holds the microphone.
-    private var spokenMarginButton: some View {
-        Button {
-            if controller.isRecordingSpoken { controller.stopSpokenMargin() } else { controller.startSpokenMargin() }
-        } label: {
-            Label(
-                controller.isRecordingSpoken ? "Stop and Save Spoken Margin" : "Speak Margin",
-                systemImage: controller.isRecordingSpoken ? "stop.circle.fill" : "mic"
-            )
-            .frame(maxWidth: .infinity, minHeight: 44)
-        }
-        .buttonStyle(.bordered)
-        .accessibilityHint(controller.isRecordingSpoken ? "Recording. Tap to stop and save." : "Records a spoken Margin at this moment.")
-    }
-
-    private func marginList(_ session: LiveSession) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if !session.margins.isEmpty {
-                Text("Margins (\(session.margins.count))").font(.headline)
-            }
-            ForEach(session.margins) { margin in
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(alignment: .firstTextBaseline) {
-                        Text(LiveSessionMarginsList.positionLabel(for: margin, in: session))
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(AppColors.secondaryText)
-                        Spacer()
-                        Button { controller.removeMargin(id: margin.id) } label: { Image(systemName: "xmark.circle") }
-                            .buttonStyle(.borderless)
-                            .accessibilityLabel("Remove Margin")
-                    }
-                    if margin.isBlindMark {
-                        TextField("Mark: add words to help place it (optional)", text: Binding(
-                            get: { margin.text }, set: { controller.updateText(id: margin.id, text: $0) }
-                        ))
-                        .textFieldStyle(.roundedBorder)
-                    } else if margin.isSpoken {
-                        Label {
-                            Text(margin.spokenTranscript ?? "Spoken Margin")
-                        } icon: {
-                            Image(systemName: margin.spokenOn == "watch" ? "applewatch" : "mic")
-                        }
-                        .accessibilityLabel("Spoken on the \(margin.spokenOn == "watch" ? "Watch" : "phone"): \(margin.spokenTranscript ?? "not transcribed yet")")
-                    } else {
-                        Text(margin.text)
-                    }
-                    if let note = margin.filingNote {
-                        Text("Filed \(note)").font(.caption).foregroundStyle(AppColors.secondaryText)
-                    }
-                    if let heard = margin.heardPlace {
-                        heardPlaceOffer(heard, margin: margin)
-                    }
-                }
-                .padding(.vertical, 4)
-            }
-        }
-    }
-
-    /// A page, percent or chapter said in the Margin, offered as a checkpoint: one tap to keep it, never automatic.
-    private func heardPlaceOffer(_ heard: LiveSessionPlace, margin: LiveSessionMargin) -> some View {
-        HStack(spacing: 8) {
-            Text("Heard \u{201C}\(heard.label)\u{201D}. Keep it as a checkpoint?")
-                .font(.caption).foregroundStyle(AppColors.secondaryText)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            Button("Keep") { controller.keepHeardPlace(id: margin.id) }
-                .buttonStyle(.bordered)
-                .frame(minHeight: 44)
-                .accessibilityHint("Uses \(heard.label) to place the Margins around this one.")
-            Button("No") { controller.declineHeardPlace(id: margin.id) }
-                .buttonStyle(.borderless)
-                .frame(minHeight: 44)
-        }
-    }
-
-    private static let endCardId = "liveSession.endCard"
-
-    /// Ending asks "when did it end?" on the screen itself, not in a sheet (#2831): the sheet closed by itself before
-    /// the listener could answer, and nothing on the screen can close this card but its own End and Cancel.
     private func endCard(_ session: LiveSession) -> some View {
         LiveSessionEndCard(
             kind: session.kind, startedAt: session.startedAt,
@@ -498,50 +413,23 @@ struct LiveSessionView: View {
         }
     }
 
-    private var endButton: some View {
-        Button {
-            if showsDetails { commitDrafts() }
-            showsEndCard = true
-        } label: {
-            Label("End Session", systemImage: "stop.circle").frame(maxWidth: .infinity, minHeight: 44)
-        }
-        .buttonStyle(.bordered)
-        .accessibilityIdentifier("liveSession.endSession")
-    }
-
-    /// Resume for the 10 minutes after End (#2883), the same as the Watch's and the Lock Screen card's. It goes when the
-    /// window closes, without the screen needing to redraw for any other reason.
-    @ViewBuilder
-    private var resumeButton: some View {
-        if let until = controller.resumeUntil {
-            TimelineView(.explicit([min(Date.now, until), until])) { context in
-                if context.date < until {
-                    Button { controller.resume() } label: {
-                        Label("Resume Session", systemImage: "play.circle").frame(maxWidth: .infinity, minHeight: 44)
-                    }
-                    .filledActionButton()
-                    .accessibilityIdentifier("liveSession.resume")
-                }
-            }
-        }
-    }
-
+    /// The ended session's choices, at the top of the Session pane. Resume is in the dock, where End was.
     private func finishCard(_ session: LiveSession) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(session.isQuick == true ? "Quick session" : "Session ended").font(.headline)
-            resumeButton
             ForEach(Array(LiveSessionPlaceMap.conflicts(in: session).enumerated()), id: \.offset) { _, conflict in
-                Text(conflict.description()).font(.caption).foregroundStyle(AppColors.secondaryText)
+                Text(conflict.description()).font(.caption).foregroundStyle(AppColors.watchSecondary)
             }
             if let check = LiveSessionPlaceMap.clockCheck(for: session) {
-                Text(check.note).font(.caption).foregroundStyle(AppColors.secondaryText)
+                Text(check.note).font(.caption).foregroundStyle(AppColors.watchSecondary)
                 Button("Use the start the clock shows") { controller.useImpliedStart() }
                     .buttonStyle(.bordered)
+                    .tint(.white)
                     .frame(minHeight: 44)
             }
             if session.kind == .meeting {
                 Text("Line it up with the meeting's transcript (.vtt, .srt, .docx or .txt) to place your Margins on what was said. You can add the recording too.")
-                    .font(.caption).foregroundStyle(AppColors.secondaryText)
+                    .font(.caption).foregroundStyle(AppColors.watchSecondary)
             }
             Button { showsLineUp = true } label: {
                 Label("Line Up with a Transcript", systemImage: "text.alignleft").frame(maxWidth: .infinity, minHeight: 44)
@@ -565,11 +453,13 @@ struct LiveSessionView: View {
                 Label(isSaving ? "Saving…" : "Save as Notes", systemImage: "tray.and.arrow.down").frame(maxWidth: .infinity, minHeight: 44)
             }
             .buttonStyle(.bordered)
+            .tint(.white)
             .disabled(isSaving)
             Button("Discard Session", role: .destructive) { confirmsDiscard = true }
         }
         .padding(16)
-        .background(AppColors.panel, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 14))
     }
 }
 

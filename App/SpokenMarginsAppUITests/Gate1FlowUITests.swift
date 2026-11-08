@@ -716,28 +716,62 @@ final class Gate1FlowUITests: XCTestCase {
         let start = app.buttons["liveSession.start"]
         XCTAssertTrue(start.isHittable, "Start Session is behind the keyboard")
         start.tap()
-        XCTAssertTrue(element("liveSession.marginText").waitForExistence(timeout: 6), "One tap did not start the session")
+        XCTAssertTrue(app.buttons["liveSession.addMargin.button"].waitForExistence(timeout: 6), "One tap did not start the session")
     }
 
-    /// #2963: typing a Margin in a Live session, Add Margin is reachable above the keyboard without scrolling.
-    func testLiveSessionAddMarginIsAboveTheKeyboardWhileTyping() throws {
+    /// #3491: the pencil opens the normal writing sheet with the keyboard up, and Save puts a row on the Margins pane.
+    func testLiveSessionPencilOpensTheWritingSheetAndSaveAddsARow() throws {
+        startLiveSession()
+        app.buttons["liveSession.write.button"].tap()
+        let editor = element("writtenMargin.text")
+        XCTAssertTrue(editor.waitForExistence(timeout: 6), "The pencil did not open the writing sheet")
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 4), "The writing sheet opened with the keyboard down")
+        editor.tap()
+        editor.typeText("Johnny moved on to the budget.")
+        let save = element("writtenMargin.save.keyboard.button")
+        XCTAssertTrue(save.waitForExistence(timeout: 4) && save.isHittable, "Save is not reachable with the keyboard up")
+        save.tap()
+        let row = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'liveSession.margin.row.'")).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 6), "Save did not add a Margin row")
+        XCTAssertTrue(waitForDisappearance(element("writtenMargin.screen"), timeout: 4), "Save left the writing sheet up")
+    }
+
+    /// #3491: End is in the dock, so it is hittable without scrolling however many Margins the session has.
+    func testLiveSessionEndIsHittableWithoutScrollingAfterManyMargins() throws {
+        startLiveSession()
+        for index in 0..<8 {
+            app.buttons["liveSession.write.button"].tap()
+            let editor = element("writtenMargin.text")
+            XCTAssertTrue(editor.waitForExistence(timeout: 6))
+            editor.tap()
+            editor.typeText("Margin number \(index) with enough words to fill about two lines of the row on a phone.")
+            element("writtenMargin.save.keyboard.button").tap()
+            XCTAssertTrue(waitForDisappearance(element("writtenMargin.screen"), timeout: 4))
+        }
+        let end = app.buttons["liveSession.endSession"]
+        XCTAssertTrue(end.waitForExistence(timeout: 4))
+        XCTAssertTrue(end.isHittable, "End is not reachable without scrolling")
+        let window = app.windows.firstMatch.frame
+        XCTAssertLessThanOrEqual(end.frame.maxY, window.maxY, "End is below the screen")
+    }
+
+    /// #2831: the End sheet stays up until its own End or Cancel closes it; nothing on the screen redraws it away.
+    func testLiveSessionEndSheetStaysUpForThreeSeconds() throws {
+        startLiveSession()
+        app.buttons["liveSession.endSession"].tap()
+        let confirm = app.buttons["liveSession.confirmEnd"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 6), "End did not open its sheet")
+        Thread.sleep(forTimeInterval: 3)
+        XCTAssertTrue(confirm.exists && app.buttons["liveSession.cancelEnd"].exists, "The End sheet closed by itself")
+    }
+
+    private func startLiveSession() {
         app.buttons["home.addSource.button"].tap()
         scrollToElement("addSource.route.liveSession").tap()
         let start = app.buttons["liveSession.start"]
         XCTAssertTrue(start.waitForExistence(timeout: 6))
         start.tap()
-        let field = element("liveSession.marginText")
-        XCTAssertTrue(field.waitForExistence(timeout: 6))
-        field.tap()
-        field.typeText("Johnny moved on to the budget.")
-        let keyboard = app.keyboards.firstMatch
-        XCTAssertTrue(keyboard.waitForExistence(timeout: 4))
-        let add = element("liveSession.addMargin.keyboard.button")
-        XCTAssertTrue(add.waitForExistence(timeout: 4), "No Add Margin on the keyboard")
-        XCTAssertTrue(add.isEnabled && add.isHittable, "Add Margin on the keyboard can't be tapped")
-        captureScreen(named: "live-session-add-margin-keyboard")
-        add.tap()
-        XCTAssertTrue(waitForDisappearance(app.keyboards.firstMatch, timeout: 4), "Add Margin left the keyboard up")
+        XCTAssertTrue(app.buttons["liveSession.addMargin.button"].waitForExistence(timeout: 6), "The session did not start")
     }
 
     func testWrittenMarginSaveSearchStarAndDiscardPreserveTheSource() throws {
