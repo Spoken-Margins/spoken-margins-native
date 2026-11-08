@@ -42,17 +42,47 @@ extension Gate1AppModel {
     /// scene's summary for Skim, or the listener is told it can't and keeps the chapters (#3450). Moved from the
     /// model unchanged except for that last step.
     func generateLocalListeningMap(confirmation: String) {
+        let itemId = activeItemId
         run { engine in
-            snapshot = try engine.generateListeningMap(itemId: activeItemId)
+            snapshot = try engine.generateListeningMap(itemId: itemId)
             if let store {
                 libraryItems = try loadLibraryRows(store: store)
             }
-            refreshSelectedItemInBackground()
-            diagnostics["lastGeneratedMapItem"] = activeItemId
-            diagnostics["lastListeningMapMode"] = "local_deterministic"
-            schedulePrewarmAfterPreparedTextChange(itemId: activeItemId)
-            reportConfirmation("\(confirmation) \(textSceneMapPreparer.prepare(itemId: activeItemId).note)")
+            finishLocalListeningMap(itemId: itemId, confirmation: confirmation)
         }
+    }
+
+    /// The same map with its store work off the main thread (#2256): the item is loaded, cut into chapters and saved
+    /// by `ListeningMapGenerationPersister`, and only the engine half and the screen updates run here. With no engine
+    /// yet, or one that cannot generate, it takes the synchronous path, which installs the engine or reports the failure.
+    /// Everything after the wait uses the item the tap was made on, not whichever the listener has open by then.
+    func generateLocalListeningMapOffMain(confirmation: String) async {
+        let itemId = activeItemId
+        guard let engine, let persister = try? engine.listeningMapGenerationPersister(itemId: itemId) else {
+            generateLocalListeningMap(confirmation: confirmation)
+            return
+        }
+        let generated: Result<GeneratedListeningMapResult, Error>
+        do {
+            generated = .success(try await Self.offMain { try persister.generate(itemId: itemId) })
+        } catch {
+            generated = .failure(error)
+        }
+        hangTelemetry.labels.scoped("listeningMapGenerate") {
+            _ = run { engine in
+                snapshot = try engine.generateListeningMap(try generated.get())
+                refreshLibraryRowsInBackground(mustPublish: true) // #2505, as a finished transcript does
+                finishLocalListeningMap(itemId: itemId, confirmation: confirmation)
+            }
+        }
+    }
+
+    private func finishLocalListeningMap(itemId: String, confirmation: String) {
+        refreshSelectedItemInBackground()
+        diagnostics["lastGeneratedMapItem"] = itemId
+        diagnostics["lastListeningMapMode"] = "local_deterministic"
+        schedulePrewarmAfterPreparedTextChange(itemId: itemId)
+        reportConfirmation("\(confirmation) \(textSceneMapPreparer.prepare(itemId: itemId).note)")
     }
 }
 

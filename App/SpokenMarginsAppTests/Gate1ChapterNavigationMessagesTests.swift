@@ -96,6 +96,35 @@ final class Gate1ChapterNavigationMessagesTests: XCTestCase {
     }
 
 
+    /// #2256: the Prepare Listening Map tap's path loads, cuts and saves off the main thread, and says what the
+    /// synchronous path says when it lands.
+    func testTheTapsMapGenerationOffTheMainThreadSavesTheChaptersAndSaysTheSame() async {
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            localFoundationModelClient: NoModelFoundationModelClient()
+        )
+        model.resetAndSeed()
+        importPlainText(into: model)
+        model.run { _ in } // an engine exists, so the store work takes the off-main path and not the synchronous fallback
+
+        model.generateListeningMapFromTap()
+        XCTAssertTrue(model.isGeneratingListeningMap, "the button is held while the map is made off the main thread")
+        XCTAssertNil(model.diagnostics["lastListeningMapMode"], "nothing is generated on the main thread before the tap returns")
+        for _ in 0..<500 where model.isGeneratingListeningMap { try? await Task.sleep(nanoseconds: 10_000_000) }
+        XCTAssertFalse(model.isGeneratingListeningMap)
+
+        XCTAssertNil(model.lastError)
+        XCTAssertEqual(
+            model.statusMessage,
+            "Generated Listening Map. Scene summaries need the on-device model, so the chapters have no summaries. No on-device model in this test."
+        )
+        XCTAssertEqual(model.diagnostics["lastListeningMapMode"], "local_deterministic")
+        XCTAssertEqual(model.diagnostics["lastGeneratedMapItem"], model.activeItemId)
+        await model.settleItemReload()
+        XCTAssertFalse(model.selectedItem.chapters.isEmpty)
+    }
+
+
     private func importPlainText(into model: Gate1AppModel) {
         model.importTitle = "Plain Notes"
         model.importText = "A paragraph without structural headings. Another sentence follows. A third one closes it."

@@ -1526,10 +1526,34 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func generateListeningMap() {
-        guard !isGeneratingListeningMap else { return }
+        guard beginListeningMapGeneration() else { return }
+        generateLocalListeningMap(confirmation: "Generated Listening Map.")
+        isGeneratingListeningMap = false
+    }
+
+    /// The Prepare Listening Map tap (#2256): the same request with the item's load, its chapter cutting and the save
+    /// off the main thread, which took 787 ms on a 1.1 MB book. `isGeneratingListeningMap` holds the button until it ends.
+    func generateListeningMapFromTap() {
+        guard beginListeningMapGeneration() else { return }
+        Task {
+            await generateLocalListeningMapOffMain(confirmation: "Generated Listening Map.")
+            isGeneratingListeningMap = false
+            // A transcript that finished during the wait asked for its map while this one held the flag: it is made now.
+            if let pending = pendingMapGenerationItemId, pending == activeItemId {
+                pendingMapGenerationItemId = nil
+                generateListeningMap()
+            }
+        }
+    }
+
+    /// The checks both entry points share. True when a local map is to be made now, with `isGeneratingListeningMap` set
+    /// for the caller to clear; false when the request ended here (already generating, already has a map, an episode
+    /// that goes to the episode map, or a source that has no on-device map).
+    private func beginListeningMapGeneration() -> Bool {
+        guard !isGeneratingListeningMap else { return false }
         guard selectedItem.chapters.isEmpty, selectedItem.mediaChapters.isEmpty else {
             reportSuccess("This item already has a Listening Map.")
-            return
+            return false
         }
         isGeneratingListeningMap = true
         let selectedItemRecord = try? store?.loadItemSummary(id: activeItemId)
@@ -1537,16 +1561,15 @@ final class Gate1AppModel: ObservableObject {
            item.media?.sourceType == .nativeMediaFile || item.media?.sourceType == .remoteStream {
             isGeneratingListeningMap = false
             prepareEpisodeMap(itemId: item.id, policy: .explicit)
-            return
+            return false
         }
         guard selectedItemRecord?.media == nil else {
             diagnostics["lastListeningMapMode"] = "on_device_generation_disabled"
             isGeneratingListeningMap = false
             reportFailure("Publisher chapters appear when available. AI-generated podcast maps are reserved for a future server-hosted option.")
-            return
+            return false
         }
-        generateLocalListeningMap(confirmation: "Generated Listening Map.")
-        isGeneratingListeningMap = false
+        return true
     }
 
     /// Why a friend's shared map couldn't be placed on this item's copy, as stored on its packets (#481).

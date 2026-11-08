@@ -37,7 +37,7 @@ final class EngineAttachPersistersTests: XCTestCase {
         XCTAssertEqual(sqlite3_open_v2(path.path, &watcher, SQLITE_OPEN_READONLY, nil), SQLITE_OK)
         let handle = try XCTUnwrap(watcher)
         watchers.append(handle)
-        let capabilities: [String: [String]] = capable ? ["sync": ["canonical_persistence"], "playback": ["prerendered_audio"]] : [:]
+        let capabilities: [String: [String]] = capable ? ["sync": ["canonical_persistence"], "playback": ["prerendered_audio"], "ai": ["generate_listening_map"]] : [:]
         let engine = SessionEngine(profile: .init(id: "p", displayName: "P", capabilities: capabilities), repository: store)
         var last = Self.dataVersion(handle)
         var total = 0
@@ -352,5 +352,162 @@ final class EngineAttachPersistersTests: XCTestCase {
         XCTAssertEqual(try rig.store.loadListeningMap(itemId: "item-1"), stored)
         let snapshot = rig.engine.snapshot
         XCTAssertEqual(try rig.engine.attachPublisherChapters(nil).itemId, snapshot.itemId)
+    }
+
+    // MARK: Generated Listening Map (#2256)
+
+    private func sentences(_ count: Int) -> String {
+        (1...count).map { "This is sentence number \($0) of a long enough article to need several chapters." }.joined(separator: " ")
+    }
+
+    private func longArticle(status: String = "needs_listening_map") -> Item {
+        Item(id: "item-1", title: "Long Article", mediaType: "text", text: sentences(80), externalReference: nil, status: status)
+    }
+
+    func testListeningMapGenerationPersistsThenAppliesToTheEngineAndTheStore() throws {
+        let split = try rig(seed: [longArticle()])
+        let sync = try rig(seed: [longArticle()])
+        try split.engine.prepareSpeechText(itemId: "item-1", targetType: .itemTextTTS)
+        try sync.engine.prepareSpeechText(itemId: "item-1", targetType: .itemTextTTS)
+
+        let generated = try split.engine.listeningMapGenerationPersister(itemId: "item-1").generate(itemId: "item-1")
+        XCTAssertNil(split.engine.currentMap, "generating alone changes nothing in the engine")
+        XCTAssertTrue(generated.created)
+        let snapshot = try split.engine.generateListeningMap(generated)
+        let expected = try sync.engine.generateListeningMap(itemId: "item-1")
+
+        let map = try XCTUnwrap(try split.store.loadListeningMap(itemId: "item-1"))
+        XCTAssertEqual(map, try sync.store.loadListeningMap(itemId: "item-1"))
+        XCTAssertEqual(try split.store.loadItem(id: "item-1"), try sync.store.loadItem(id: "item-1"))
+        XCTAssertEqual(try split.store.loadItem(id: "item-1").status, "ready", "an item waiting for a map is ready once it has one")
+        XCTAssertEqual(split.engine.currentMap, sync.engine.currentMap)
+        XCTAssertEqual(split.engine.currentMap, map)
+        XCTAssertEqual(split.engine.currentItem, sync.engine.currentItem)
+        XCTAssertEqual(snapshot.itemId, expected.itemId)
+        XCTAssertEqual(snapshot.title, expected.title)
+        XCTAssertEqual(map.chapters.count, 7, "one chapter per about 900 characters")
+    }
+
+    /// The persister runs off the main thread, so the listener can rename, trash or edit the item, or a map can land,
+    /// while the chapters are cut. The write keeps what is stored then, not the item as it was when the work began.
+    func testListeningMapGenerationKeepsAnItemChangeThatLandedDuringTheHeavyStep() throws {
+        let rig = try rig(seed: [longArticle()])
+        let persister = try rig.engine.listeningMapGenerationPersister(itemId: "item-1")
+        guard case .made(let prepared) = try persister.prepare(itemId: "item-1") else { return XCTFail("a map was made") }
+
+        var changed = try rig.store.loadItem(id: "item-1")
+        changed.title = "Renamed while it ran"
+        changed.deletedAt = Date(timeIntervalSince1970: 1_760_000_500)
+        try rig.store.saveItem(changed)
+
+        let generated = try persister.commit(prepared, itemId: "item-1")
+        let stored = try rig.store.loadItem(id: "item-1")
+        XCTAssertEqual(stored.title, "Renamed while it ran")
+        XCTAssertEqual(stored.deletedAt, Date(timeIntervalSince1970: 1_760_000_500), "the trash is not undone")
+        XCTAssertEqual(stored.status, "ready")
+        XCTAssertEqual(generated.item, stored)
+        XCTAssertEqual(try rig.store.loadListeningMap(itemId: "item-1"), prepared.map)
+    }
+
+    func testListeningMapGenerationCutsAgainWhenTheTextMovedDuringTheHeavyStep() throws {
+        let rig = try rig(seed: [longArticle()])
+        let persister = try rig.engine.listeningMapGenerationPersister(itemId: "item-1")
+        guard case .made(let prepared) = try persister.prepare(itemId: "item-1") else { return XCTFail("a map was made") }
+
+        var edited = try rig.store.loadItem(id: "item-1")
+        edited.text = "A short replacement. It has two sentences."
+        try rig.store.saveItem(edited)
+
+        let generated = try persister.commit(prepared, itemId: "item-1")
+        XCTAssertEqual(generated.map.chapters.count, 2, "the chapters follow the text as stored, not the text first read")
+        XCTAssertEqual(generated.map.chapters.last?.endChar, edited.text?.count)
+        XCTAssertEqual(try rig.store.loadListeningMap(itemId: "item-1"), generated.map)
+    }
+
+    func testListeningMapGenerationKeepsAMapThatLandedDuringTheHeavyStep() throws {
+        let rig = try rig(seed: [longArticle()])
+        let persister = try rig.engine.listeningMapGenerationPersister(itemId: "item-1")
+        guard case .made(let prepared) = try persister.prepare(itemId: "item-1") else { return XCTFail("a map was made") }
+
+        let theirs = ListeningMap(id: "map-item-1-friend", itemId: "item-1", overview: "A friend's", chapters: [])
+        try rig.store.saveListeningMap(theirs)
+        let writesBefore = rig.writes()
+
+        let generated = try persister.commit(prepared, itemId: "item-1")
+        XCTAssertFalse(generated.created)
+        XCTAssertEqual(generated.map, theirs)
+        XCTAssertEqual(try rig.store.loadListeningMap(itemId: "item-1"), theirs, "the map that landed is not replaced")
+        XCTAssertEqual(rig.writes(), writesBefore)
+    }
+
+    func testListeningMapGenerationApplyReadsAndWritesNothing() throws {
+        let rig = try rig(seed: [longArticle()])
+        try rig.engine.prepareSpeechText(itemId: "item-1", targetType: .itemTextTTS)
+        let generated = try rig.engine.listeningMapGenerationPersister(itemId: "item-1").generate(itemId: "item-1")
+        let writesBefore = rig.writes()
+        let (_, reads) = try rig.meter.measuring { try rig.engine.generateListeningMap(generated) }
+        // The open item has no playing session here, so the engine half touches no row; the session save of a
+        // playing one is the one write it can make, as in `attachListeningMap`.
+        XCTAssertEqual(reads.count, 0, "the engine half reads no store row: \(reads.map(\.method))")
+        XCTAssertEqual(rig.writes(), writesBefore, "the engine half writes no store row")
+        XCTAssertNotNil(rig.engine.currentMap)
+    }
+
+    func testListeningMapGenerationKeepsAMapThatIsAlreadyThere() throws {
+        let rig = try rig(seed: [longArticle()])
+        let first = try rig.engine.listeningMapGenerationPersister(itemId: "item-1").generate(itemId: "item-1")
+        let writesBefore = rig.writes()
+        let (again, reads) = try rig.meter.measuring {
+            try rig.engine.listeningMapGenerationPersister(itemId: "item-1").generate(itemId: "item-1")
+        }
+        XCTAssertFalse(again.created)
+        XCTAssertNil(again.item, "the item, which holds all the text, is not loaded for a map that exists")
+        XCTAssertEqual(again.map, first.map)
+        XCTAssertFalse(reads.map(\.method).contains { $0.contains("loadItem") }, "\(reads.map(\.method))")
+        XCTAssertEqual(rig.writes(), writesBefore, "an existing map is not written again")
+    }
+
+    func testListeningMapGenerationWritesTheMapAndItemInOneCommit() throws {
+        let rig = try rig(seed: [longArticle()])
+        let persister = try rig.engine.listeningMapGenerationPersister(itemId: "item-1")
+        let writesBefore = rig.writes()
+        _ = try persister.generate(itemId: "item-1")
+        XCTAssertEqual(rig.writes() - writesBefore, 1, "the map and the status flip land together or not at all")
+    }
+
+    func testListeningMapGenerationLeavesAnItemThatWasNotWaitingForAMapAlone() throws {
+        let rig = try rig(seed: [longArticle(status: "ready")])
+        _ = try rig.engine.listeningMapGenerationPersister(itemId: "item-1").generate(itemId: "item-1")
+        XCTAssertEqual(try rig.store.loadItem(id: "item-1").status, "ready")
+        XCTAssertNotNil(try rig.store.loadListeningMap(itemId: "item-1"))
+    }
+
+    func testListeningMapGenerationCutsAnItemWithNoTextFromItsTranscript() throws {
+        let rig = try rig(seed: [podcast()])
+        try rig.store.saveTranscriptTimeline(SourceTranscriptTimeline(
+            id: "transcript-item-1", itemId: "item-1", createdAt: Date(timeIntervalSince1970: 1_760_000_000),
+            timeline: TranscriptTimeline(segments: [
+                MediaTimelineSegment(id: "b", startMs: 5_000, endMs: 9_000, startChar: 0, endChar: 0, text: "Second thing said."),
+                MediaTimelineSegment(id: "a", startMs: 0, endMs: 5_000, startChar: 0, endChar: 0, text: "First thing said."),
+            ], chapters: [], durationMs: 9_000)))
+        let generated = try rig.engine.listeningMapGenerationPersister(itemId: "item-1").generate(itemId: "item-1")
+        XCTAssertEqual(generated.map.chapters.map(\.title), ["First thing said", "Second thing said"], "segments are read in time order")
+    }
+
+    func testListeningMapGenerationNeedsTheCapabilityAndWritesNothingWithoutIt() throws {
+        let rig = try rig(capable: false, seed: [longArticle()])
+        let writesBefore = rig.writes()
+        XCTAssertThrowsError(try rig.engine.listeningMapGenerationPersister(itemId: "item-1"))
+        XCTAssertThrowsError(try rig.engine.generateListeningMap(itemId: "item-1"))
+        XCTAssertEqual(rig.writes(), writesBefore)
+        XCTAssertNil(try rig.store.loadListeningMap(itemId: "item-1"))
+    }
+
+    func testListeningMapGenerationForAnUnknownItemWritesNothing() throws {
+        let rig = try rig(seed: [longArticle()])
+        let persister = try rig.engine.listeningMapGenerationPersister(itemId: "item-missing")
+        let writesBefore = rig.writes()
+        XCTAssertThrowsError(try persister.generate(itemId: "item-missing"))
+        XCTAssertEqual(rig.writes(), writesBefore)
     }
 }
