@@ -29,9 +29,13 @@ final class LiveSessionRecordingScreenAppTests: XCTestCase {
         XCTAssertNotNil(capture.recordingStartedAt)
         XCTAssertTrue(capture.isStarting, "the screen says it is waiting until the recorder has the microphone")
 
-        let stopped = capture.stopAndFile()
-        await stopped?.value
+        // Stop clears the screen's state at once. The returned task is not awaited: it waits on the real microphone
+        // permission and recorder, which a test simulator can hold for minutes (lane run 42526217263 hung here).
+        XCTAssertNotNil(capture.stopAndFile())
         XCTAssertNil(capture.recordingStartedAt)
+        XCTAssertFalse(capture.isStarting)
+        try await settle()
+        XCTAssertNil(capture.recordingStartedAt, "a start finishing after the stop does not bring the clock back")
         XCTAssertFalse(capture.isStarting)
     }
 
