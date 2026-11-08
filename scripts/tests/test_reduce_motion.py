@@ -13,6 +13,9 @@ ROOT = Path(__file__).resolve().parents[2]
 SOURCES = ROOT / "App" / "SpokenMarginsApp" / "Sources" / "SpokenMarginsApp"
 
 
+BARE_ANIMATION = re.compile(r"\bwithAnimation\b|\.animation\(")
+
+
 def _strip_comments(text: str) -> str:
     return re.sub(r"//[^\n]*", "", text)
 
@@ -54,22 +57,20 @@ class ReduceMotionTests(unittest.TestCase):
         the edge-swipe-back screen (fades instead of sliding) and the batch export jump (no animation).
         """
         allowed = {"ReduceMotion.swift", "EdgeSwipeBackTransition.swift", "BatchExportScreen.swift"}
-        bare = re.compile(r"\bwithAnimation\b|\.animation\(")
         offenders = []
         for path in sorted((ROOT / "App").rglob("*.swift")):
             if path.name in allowed or "Tests" in path.parts[-3:-1] or path.parent.name.endswith("Tests"):
                 continue
             for number, line in enumerate(_strip_comments(path.read_text()).splitlines(), 1):
-                if bare.search(line):
+                if BARE_ANIMATION.search(line):
                     offenders.append(f"{path.relative_to(ROOT)}:{number}: {line.strip()}")
         self.assertEqual(offenders, [], "use withMotion / motionAnimation (ReduceMotion.swift)")
 
     def test_the_scan_catches_a_bare_animation(self):
-        bare = re.compile(r"\bwithAnimation\b|\.animation\(")
         for line in ("withAnimation { x.toggle() }", "withAnimation(.easeIn) { x }", "view.animation(.smooth, value: v)"):
-            self.assertTrue(bare.search(line), line)
+            self.assertTrue(BARE_ANIMATION.search(line), line)
         for line in ("withMotion { x.toggle() }", "view.motionAnimation(.smooth, value: v)", "// withAnimation"):
-            self.assertFalse(bare.search(_strip_comments(line)), line)
+            self.assertFalse(BARE_ANIMATION.search(_strip_comments(line)), line)
 
     def test_the_helpers_read_reduce_motion(self):
         text = _read("ReduceMotion.swift")
