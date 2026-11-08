@@ -480,6 +480,12 @@ How it is used:
   - What the build does: logs every remote command, input mute change and route change during a recording (`headphone.*` lines in Diagnostics, each with the route, which commands are enabled and the recorder's level now, so a file that goes silent after a press shows); a real input mute change ends and saves the Margin, and so does a next-track command. Ignored: mute events in the first 1.5 s of a recording and within 1 s after a route change (the #1708 and #2182 start-up noise), and a repeat of the current state. Ignored events are logged with the reason.
   - Default taken: not gated by the "Headphone double-press: Add a Margin" setting. It acts only while a Margin is already recording and the words are kept, so there is no new off switch; the way back is reverting the merge. The Lock Screen and car play/pause still end a Margin as before (#1030).
 
+## 2026-11-08
+
+- **Build 36 is on the external friends beta, and he has tested share links himself (#3785, #3786).** A friend onboarding review asked him to test a share link and to check which build the invite installs. His answer: "If you're asking me to test share links, I have already done that, and you should not have to ask me to do that, and it should have been documented at least 2 or 3 days ago." And on the build: "there's already a link to build 36 on the web, the answer is yes, and it is for the external friends beta, and I think that you can find it by going to spokenmargins.com/join."
+  - The invite on spokenmargins.com/join is the same one the share-link page offers, so a friend who installs from either gets Build 36. Build 36 opens share links.
+  - Don't ask him to test share links on his phone, or which build the invite serves. Search this file, then look at what is live.
+
 ## Background moved out of the guide (2026-11-06)
 - **From the guide.** Explanations that stood next to rules in `AGENTS.md`, moved here to keep it under its 4,000-word cap (the rules themselves are unchanged):
   - Verification layers: tests that pass while the app is broken usually fake the boundary that broke, such as audio sessions, players, file paths across containers and network responses.
