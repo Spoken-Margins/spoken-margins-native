@@ -125,7 +125,7 @@ public struct SpokenNoteWholeTimeline: Equatable, Sendable {
             let start = placed.startMs + sentence.startMs
             let end = placed.startMs + min(sentence.endMs, placed.durationMs)
             entries.append(Entry(
-                ref: ref, segmentId: "note-\(take.id)-\(ref.sentenceIndex)",
+                ref: ref, segmentId: SpokenNoteMargins.segmentId(takeId: take.id, sentenceIndex: ref.sentenceIndex),
                 startMs: start, endMs: max(start + 1, end), startChar: startChar, endChar: endChar, text: sentence.text
             ))
         }

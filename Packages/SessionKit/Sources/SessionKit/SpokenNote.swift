@@ -61,7 +61,7 @@ public struct SpokenNote: Codable, Equatable, Sendable {
     public static let currentSchemaVersion = 1
 
     /// A sentence's place in the whole note: which take, and which sentence of it.
-    public struct SentenceRef: Equatable, Sendable {
+    public struct SentenceRef: Hashable, Sendable {
         public let takeIndex: Int
         public let sentenceIndex: Int
 
