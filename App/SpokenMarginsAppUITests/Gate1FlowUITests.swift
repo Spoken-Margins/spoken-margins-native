@@ -12,34 +12,40 @@ final class Gate1FlowUITests: XCTestCase {
             "-libraryOfflineStateFilter", "all", "-librarySort", "recently_added",
             "-libraryUnfinishedDefaultApplied", "YES"]
         app.launchEnvironment["SPOKEN_MARGINS_UI_TESTING"] = "1"
-        launchAllowingOneStalledFirstLaunch()
+        launchAllowingOneStall()
     }
 
-    /// #3479 (and #2806): the first launch of a run on a fresh simulator sometimes stalls for about 200 seconds and
+    /// #3479 (and #2806), widened by #3097: a launch on a fresh simulator sometimes stalls for 130 to 200 seconds and
     /// fails with "Timed out while launching application via Xcode", "Simulator device failed to launch ... No such
-    /// process" or "does not have a process ID". Every later launch in the same run, about 20 of them, goes through, and
-    /// xcodebuild's retry then passed the test each time (3 retry-passes in 7 days on this test alone). The test is
-    /// only the first by name: Gate1FlowUITests sorts before the J* classes. The launch itself is the flake, so the
-    /// first launch of the process may fail in those three ways, once; the launch is then tried again as a real
-    /// launch. Any other failure, and any failure of a later launch, still fails the test.
-    nonisolated(unsafe) private static var firstLaunchOfTheRunIsDone = false
+    /// process" or "does not have a process ID". #3479 saw it on the first launch of a run. The first-attempt failure
+    /// of the AX5 editor journey on 8356f56 (hosted run 42017300552) was the same stall on the relaunch inside the
+    /// test: setUp launched in 19 s, `terminate()` and `launch()` with the AX5 size then hung for 130 s and failed with
+    /// "does not have a process ID" at line 656, and xcodebuild's retry passed. The launch is the flake, not the code
+    /// under test, so each test may have one launch, setUp's or an in-test relaunch, fail in those three ways; that
+    /// launch is then tried again as a real launch. Any other failure, a second stalled launch in the same test, and a
+    /// failure of the retried launch still fail the test. Use this for every launch in this class.
+    private var stalledLaunchStillAllowed = true
 
-    private func launchAllowingOneStalledFirstLaunch() {
-        guard !Self.firstLaunchOfTheRunIsDone else { return app.launch() }
-        Self.firstLaunchOfTheRunIsDone = true
+    private func launchAllowingOneStall() {
+        guard stalledLaunchStillAllowed else { return app.launch() }
         let options = XCTExpectedFailure.Options()
         options.isStrict = false
+        var stalled = false
         options.issueMatcher = { issue in
-            ["Timed out while launching", "Failed to launch", "Failed to get launch progress", "does not have a process ID"]
+            let isStall = ["Timed out while launching", "Failed to launch", "Failed to get launch progress", "does not have a process ID"]
                 .contains { issue.compactDescription.contains($0) }
+            if isStall { stalled = true }
+            return isStall
         }
         let keepGoing = continueAfterFailure
         continueAfterFailure = true
-        XCTExpectFailure("The first launch of a run can stall on a fresh simulator (#3479)", options: options) {
+        XCTExpectFailure("A launch can stall on a hosted simulator (#3479, #3097)", options: options) {
             app.launch()
         }
         continueAfterFailure = keepGoing
-        if app.state != .runningForeground { app.launch() }
+        // The allowance is spent when a stall was seen, whatever state the app ended in.
+        if stalled { stalledLaunchStillAllowed = false }
+        if stalled || app.state != .runningForeground { app.launch() }
     }
 
     func testListeningEditionPreviewShowsSuppliedScenesBeforeImport() throws {
@@ -102,7 +108,7 @@ final class Gate1FlowUITests: XCTestCase {
         app.terminate()
         app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_SOURCE_TEXT"] = String(repeating: "A long source passage lets us seek forward and backward while playback continues. ", count: 115)
         app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_SUPERTONIC"] = "1"
-        app.launch()
+        launchAllowingOneStall()
         openLibrarySettings()
         scrollToButton(containingLabel: "Developer tools").tap()
         let record = scrollToElement("settings.developer.recordDiagnostics")
@@ -201,7 +207,7 @@ final class Gate1FlowUITests: XCTestCase {
     func testMarginsHeadingAndScopeRowStackAtAccessibilitySizes() throws {
         app.terminate()
         app.launchArguments += ["-UIPreferredContentSizeCategoryName", UIContentSizeCategory.accessibilityExtraExtraExtraLarge.rawValue]
-        app.launch()
+        launchAllowingOneStall()
         scrollToElement("queue.start.item-pill").tap()
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
         pausePlaybackIfNeeded()
@@ -229,7 +235,7 @@ final class Gate1FlowUITests: XCTestCase {
     func testFeedbackBannerPutsItsButtonsOnTheirOwnRowAtAccessibilitySizes() throws {
         app.terminate()
         app.launchArguments += ["-UIPreferredContentSizeCategoryName", UIContentSizeCategory.accessibilityExtraExtraExtraLarge.rawValue]
-        app.launch()
+        launchAllowingOneStall()
         let row = app.buttons["library.row.item-pill"]
         XCTAssertTrue(row.waitForExistence(timeout: 8))
         row.press(forDuration: 0.8)
@@ -248,7 +254,7 @@ final class Gate1FlowUITests: XCTestCase {
 
     func testLibraryUnfinishedCompletionUndoAndSearchDiscovery() throws {
         app.terminate()
-        app.launch()
+        launchAllowingOneStall()
         let row = app.buttons["library.row.item-pill"]
         XCTAssertTrue(row.waitForExistence(timeout: 8))
         XCTAssertTrue(app.staticTexts["Completed hidden"].exists)
@@ -406,7 +412,7 @@ final class Gate1FlowUITests: XCTestCase {
         app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_SOURCE_URL"] = "https://example.com/summary-retry"
         app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_INTERJECTION"] = "The app should condense one interjection into its substantive claims instead of lightly cleaning up the transcript."
         app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_LOCAL_SUMMARY"] = "fail_once"
-        app.launch()
+        launchAllowingOneStall()
 
         XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8))
         let start = app.buttons["queue.start.item-ui-text-regression"]
@@ -503,7 +509,7 @@ final class Gate1FlowUITests: XCTestCase {
     func testAmbiguousPodcastImportImmediatelyReplacesAddSourceWithEpisodePicker() throws {
         app.terminate()
         app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_AMBIGUOUS_SOURCE_LINK"] = "1"
-        app.launch()
+        launchAllowingOneStall()
 
         XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8))
         app.buttons["home.addSource.button"].tap()
@@ -613,7 +619,7 @@ final class Gate1FlowUITests: XCTestCase {
     func testRecordingExclusivelyOwnsTheAccessibleExperience() throws {
         app.terminate()
         app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_RECORDING"] = "1"
-        app.launch()
+        launchAllowingOneStall()
 
         XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8))
         let seededStart = app.buttons["queue.start.item-pill"]
@@ -680,7 +686,7 @@ final class Gate1FlowUITests: XCTestCase {
         app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_SOURCE_TITLE"] = "A listener's notebook about the art of paying attention, ordinary streets, familiar voices, and everything we might otherwise forget"
         app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_SOURCE_TEXT"] = String(repeating: "Notice the small details along the way. ", count: 80)
         app.launchArguments += ["-UIPreferredContentSizeCategoryName", UIContentSizeCategory.accessibilityExtraExtraExtraLarge.rawValue]
-        app.launch()
+        launchAllowingOneStall()
         startSeededLibraryItem()
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
         pausePlaybackIfNeeded()
@@ -744,7 +750,7 @@ final class Gate1FlowUITests: XCTestCase {
         app.terminate()
         app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_SOURCE_TITLE"] = "A walk with room to think"
         app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_SOURCE_TEXT"] = String(repeating: "Notice the small details along the way. ", count: 80)
-        app.launch()
+        launchAllowingOneStall()
         startSeededLibraryItem()
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
         pausePlaybackIfNeeded()
@@ -818,7 +824,7 @@ final class Gate1FlowUITests: XCTestCase {
         app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_SOURCE_TITLE"] = Array(repeating: longTitle, count: 3).joined(separator: ". ")
         app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_SOURCE_TEXT"] = String(repeating: "A paragraph worth listening to. ", count: 80)
         app.launchArguments += ["-UIPreferredContentSizeCategoryName", UIContentSizeCategory.accessibilityExtraExtraExtraLarge.rawValue]
-        app.launch()
+        launchAllowingOneStall()
         startSeededLibraryItem()
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
         captureScreen(named: "second-edition-native-accessibility-size")
@@ -848,7 +854,7 @@ final class Gate1FlowUITests: XCTestCase {
     func testLibraryRowTitleGetsFullWidthAtAccessibilitySizes() throws {
         app.terminate()
         app.launchArguments += ["-UIPreferredContentSizeCategoryName", UIContentSizeCategory.accessibilityExtraExtraExtraLarge.rawValue]
-        app.launch()
+        launchAllowingOneStall()
         let play = scrollToElement("queue.start.item-pill")
         XCTAssertTrue(play.isHittable)
         let open = element("library.row.item-pill")
@@ -917,7 +923,7 @@ final class Gate1FlowUITests: XCTestCase {
     func testBatchExportPickersBecomeMenusAtAccessibilitySizes() throws {
         app.terminate()
         app.launchArguments += ["-UIPreferredContentSizeCategoryName", UIContentSizeCategory.accessibilityExtraExtraExtraLarge.rawValue]
-        app.launch()
+        launchAllowingOneStall()
         scrollToElement("queue.start.item-pill").tap()
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
         scrollToElement("playback.home.button").tap()
@@ -1046,7 +1052,7 @@ final class Gate1FlowUITests: XCTestCase {
             "-UIAccessibilityDarkerSystemColorsEnabled", "YES",
             "-UIAccessibilityReduceMotionEnabled", "YES"
         ]
-        app.launch()
+        launchAllowingOneStall()
 
         XCTAssertTrue(element("library.screen").waitForExistence(timeout: 8))
         let start = scrollTo(app.buttons["queue.start.item-pill"])
@@ -1167,7 +1173,7 @@ final class Gate1FlowUITests: XCTestCase {
         if forceFirstSourceMiss {
             app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_FORCE_FIRST_SHARED_SOURCE_MISS"] = "1"
         }
-        app.launch()
+        launchAllowingOneStall()
 
         XCTAssertTrue(element("library.screen").waitForExistence(timeout: 8))
         let start = app.buttons["queue.start.item-ui-text-regression"]
