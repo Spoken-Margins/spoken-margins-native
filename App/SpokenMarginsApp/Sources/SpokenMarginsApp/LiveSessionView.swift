@@ -69,7 +69,7 @@ struct LiveSessionView: View {
                 .onChange(of: controller.isRunning) { _, running in if !running { showsDetails = false } }
                 .onChange(of: showsEndCard) { _, shown in
                     if shown {
-                        DispatchQueue.main.async { withAnimation { scroller.scrollTo(Self.endCardId, anchor: .bottom) } }
+                        DispatchQueue.main.async { withMotion { scroller.scrollTo(Self.endCardId, anchor: .bottom) } }
                     }
                 }
                 // Typing a Margin: bring the composer to the top of the visible area, so the field and the buttons under it sit
@@ -78,7 +78,7 @@ struct LiveSessionView: View {
                     guard focused else { return }
                     Task {
                         try? await Task.sleep(for: .milliseconds(350)) // after the keyboard has finished rising
-                        withAnimation { scroller.scrollTo(Self.composerId, anchor: .top) }
+                        withMotion { scroller.scrollTo(Self.composerId, anchor: .top) }
                     }
                 }
             }
