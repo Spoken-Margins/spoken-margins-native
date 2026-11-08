@@ -26,8 +26,8 @@ public struct SharedMarginPromptStyle: Sendable, Equatable {
     /// The card goes away unanswered after this long. Nil when it waits for an answer.
     public let expiresAfterMs: Int?
 
-    /// A tone and a card the listener may ignore while the episode plays on: the one case a newer Margin may replace,
-    /// so a card that never expires (assistive technology) can't hide every later Margin (#3720).
+    /// A tone and a card the listener may ignore while the episode plays on. With no expiry (assistive technology) it
+    /// is the one card a newly crossed Margin may replace, so it can't hide every later Margin (#3720).
     public var isToneOnly: Bool { !pausesSource && autoPlayAfterMs == nil }
 
     /// A layer with no reveal mode set is not auto-play (as before: only `.guided` plays by itself).

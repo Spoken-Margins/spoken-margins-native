@@ -235,17 +235,20 @@ extension Gate1AppModel {
     func reconcileImportedCommentary(previous: SessionSnapshot, current: SessionSnapshot) {
         // Margins crossed together are offered one after another (#918). None is offered over a review of new
         // Margins (#474): its lead-ins cross Margins already heard, and an offer would pause the review.
-        // A tone-only card that is still up (no timer with VoiceOver or Switch Control) gives way to the next Margin (#3720).
-        // Read before the queue is modified: the call below holds the queue.
+        let nothingElseIsGoing = playingImportedCommentary == nil
+            && marginMomentConductor?.sequence.isReview != true
+            && marginMomentConductor?.isPlayingVoice != true // a moment's voice is not cut mid-sentence (#1671)
+        // A tone-only card with no timer (VoiceOver or Switch Control) gives way to a Margin the source just crossed,
+        // and to nothing else (#3720). Read before the queue is modified: the call below holds the queue.
         let toneOnlyCardID = sharedMarginOffers.toneOnlyCardID
+        let cardWithNoTimerIsUp = pendingImportedCommentary != nil && pendingImportedCommentary?.id == toneOnlyCardID
         guard let prompt = sharedMarginOffers.nextOffer(
             previous: previous, current: current, selectedItemID: selectedItem.id,
-            canOffer: (pendingImportedCommentary == nil || pendingImportedCommentary?.id == toneOnlyCardID)
-                && playingImportedCommentary == nil
-                && marginMomentConductor?.sequence.isReview != true
-                && marginMomentConductor?.isPlayingVoice != true, // a moment's voice is not cut mid-sentence (#1671)
+            canOffer: pendingImportedCommentary == nil && nothingElseIsGoing,
+            canReplaceCard: cardWithNoTimerIsUp && nothingElseIsGoing,
             prompts: importedCommentaryPrompts(includeAnnounced: true)
         ) else { return }
+        if cardWithNoTimerIsUp { dismissPendingImportedCommentary() } // the same clean-up as a timed card going away
         presentImportedCommentaryPrompt(prompt, sourceWasPlaying: current.status.isPlaybackActive)
     }
 
@@ -261,7 +264,7 @@ extension Gate1AppModel {
         let style = SharedMarginPromptStyle.style(
             revealMode: prompt.layer.revealMode, arrival: arrival, assistiveTechnologyRunning: AssistiveTechnology.isRunning)
         FeedbackBannerHold.marginCard.setTouched(false) // a touch on the card before can't carry over; focus stays where it is
-        sharedMarginOffers.toneOnlyCardID = style.isToneOnly ? prompt.id : nil
+        sharedMarginOffers.toneOnlyCardID = style.isToneOnly && style.expiresAfterMs == nil ? prompt.id : nil
         let pausesSource = sourceWasPlaying && style.pausesSource
         sharedMarginReturn.promptShown(sourceWasPlaying: pausesSource)
         if pausesSource, snapshot.status.isPlaybackActive { pause() }
