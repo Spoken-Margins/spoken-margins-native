@@ -30,8 +30,6 @@ final class SharedMarginAudioGuardTests: XCTestCase {
                    reason: "the row of the listener's own Margin (`MarginRow`)"),
             Excuse(file: app + "ExperienceModels.swift", line: #"var canRetryTranscription: Bool { !isWritten && !["transcribed", "complete"].contains(interjection.transcriptionStatus) && interjection.audioPath != nil }"#,
                    reason: "retrying the transcription of the listener's own recording"),
-            Excuse(file: app + "ExportScreen.swift", line: "SharedMarginTextRequirement.canShare($0, hasVoice: $0.audioPath.flatMap(model.resolvedInterjectionAudioURL(for:)) != nil)",
-                   reason: "sharing the listener's own Margins (has a voice or not)"),
             Excuse(file: app + "Gate1AppModel+ListeningSignals.swift", line: "audioURL: interjection.audioPath.flatMap(resolvedInterjectionAudioURL(for:)))",
                    reason: "a signal about the listener's own spoken Margin"),
             Excuse(file: app + "Gate1AppModel+MarginVoicePlayback.swift", line: "guard let audioPath = interjection.audioPath,",
