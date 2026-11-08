@@ -13,8 +13,12 @@ ROOT = Path(__file__).resolve().parents[2]
 SOURCES = ROOT / "App" / "SpokenMarginsApp" / "Sources" / "SpokenMarginsApp"
 
 
+def _strip_comments(text: str) -> str:
+    return re.sub(r"//[^\n]*", "", text)
+
+
 def _read(name: str) -> str:
-    return re.sub(r"//[^\n]*", "", (SOURCES / name).read_text())
+    return _strip_comments((SOURCES / name).read_text())
 
 
 class ReduceMotionTests(unittest.TestCase):
@@ -42,6 +46,30 @@ class ReduceMotionTests(unittest.TestCase):
             text = _read(name)
             self.assertIn(".numericTextTransition()", text, name)
             self.assertNotIn(".contentTransition(.numericText())", text, name)
+
+    def test_no_bare_animation_anywhere_in_the_app_outside_the_helper(self):
+        """#3725: newer code missed `withMotion`. A plain `withAnimation` or `.animation(` fails here.
+
+        Two files animate on purpose and choose the branch themselves from the Reduce Motion setting:
+        the edge-swipe-back screen (fades instead of sliding) and the batch export jump (no animation).
+        """
+        allowed = {"ReduceMotion.swift", "EdgeSwipeBackTransition.swift", "BatchExportScreen.swift"}
+        bare = re.compile(r"\bwithAnimation\b|\.animation\(")
+        offenders = []
+        for path in sorted((ROOT / "App").rglob("*.swift")):
+            if path.name in allowed or "Tests" in path.parts[-3:-1] or path.parent.name.endswith("Tests"):
+                continue
+            for number, line in enumerate(_strip_comments(path.read_text()).splitlines(), 1):
+                if bare.search(line):
+                    offenders.append(f"{path.relative_to(ROOT)}:{number}: {line.strip()}")
+        self.assertEqual(offenders, [], "use withMotion / motionAnimation (ReduceMotion.swift)")
+
+    def test_the_scan_catches_a_bare_animation(self):
+        bare = re.compile(r"\bwithAnimation\b|\.animation\(")
+        for line in ("withAnimation { x.toggle() }", "withAnimation(.easeIn) { x }", "view.animation(.smooth, value: v)"):
+            self.assertTrue(bare.search(line), line)
+        for line in ("withMotion { x.toggle() }", "view.motionAnimation(.smooth, value: v)", "// withAnimation"):
+            self.assertFalse(bare.search(_strip_comments(line)), line)
 
     def test_the_helpers_read_reduce_motion(self):
         text = _read("ReduceMotion.swift")
