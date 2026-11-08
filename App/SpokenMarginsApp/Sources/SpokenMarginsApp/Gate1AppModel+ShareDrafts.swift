@@ -42,6 +42,24 @@ extension Gate1AppModel {
         } catch { reportFailure(error, context: "Open export failed") }
     }
 
+    /// "Share this Margin" on Margin details (#3211): the friend sheet with only that Margin, starting on the review.
+    /// Share always means another listener, so this makes a packet and never a Markdown file. Like the Margins tab's
+    /// Share it leaves the playing session and the current screen alone; only `selectedItem` follows the Margin's item.
+    func openMarginShare(_ margin: Interjection) {
+        guard !rejectNavigationOrSessionMutationWhileRecording("open_margin_share") else { return }
+        guard ItemShareSessionSelection.isShareable(margin) else {
+            return reportFailure("This Margin can't be shared with a friend yet.")
+        }
+        do {
+            selectedItem = try loadItemDetail(id: margin.itemId, store: requireStore())
+            prepareShareInterjections(candidates: [margin])
+            if isSharingInterjectionsPresented {
+                sharingState.draftsPreparedForExport = true
+                sharingState.entry = .reviewDefaults
+            }
+        } catch { reportFailure(error, context: "Share this Margin failed") }
+    }
+
     func prepareShareInterjections() {
         prepareShareInterjections(candidates: selectedItem.interjections)
     }

@@ -33,7 +33,7 @@ struct HelpScreen: View {
                         isComplete: model.isOnboardingStepComplete(.reviewedTimeline)
                     )
                     OnboardingChecklistRow(
-                        title: "Export or copy a session",
+                        title: "Export or copy your Margins",
                         isComplete: model.isOnboardingStepComplete(.exportedSession)
                     )
                     Button(
