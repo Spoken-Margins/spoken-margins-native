@@ -202,8 +202,8 @@ struct ExperienceLibraryScreen: View {
         if queued > 0, recent > 0 {
             return "\(queued) queued · \(recent) recently ready"
         }
-        if queued > 0 { return "\(queued) item\(queued == 1 ? "" : "s") queued" }
-        return "\(recent) item\(recent == 1 ? "" : "s") recently ready"
+        if queued > 0 { return "\(queued) queued" }
+        return "\(recent) recently ready"
     }
 
     private var onboardingIcon: some View {
@@ -321,11 +321,11 @@ struct ExperienceLibraryScreen: View {
             if model.libraryHidesCompleted {
                 ViewThatFits(in: .horizontal) {
                     HStack {
-                        Text("Completed items hidden")
+                        Text("Completed hidden")
                         completedVisibilityButton
                     }
                     VStack(alignment: .leading) {
-                        Text("Completed items hidden")
+                        Text("Completed hidden")
                         completedVisibilityButton
                     }
                 }
@@ -455,7 +455,7 @@ struct ExperienceLibraryScreen: View {
             SMExperienceEmptyState(
                 systemImage: "checkmark.circle",
                 title: "You’re caught up",
-                detail: "Your completed items and Margins are still here.",
+                detail: "Everything you completed, and your Margins, are still here.",
                 actionTitle: "Show completed"
             ) { model.showCompletedLibraryItems() }
             .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
@@ -821,7 +821,7 @@ private struct ExperienceLibraryCompactRow: View {
 
     private var currentItemLabel: String {
         if (row.continuationProgressPercent ?? 0) >= 100 { return "Finished" }
-        return row.hasContinuationSession ? (dynamicTypeSize.isAccessibilitySize ? "Resume" : "Continue listening") : "Current item"
+        return row.hasContinuationSession ? (dynamicTypeSize.isAccessibilitySize ? "Resume" : "Continue listening") : "Current"
     }
 
     private var mediaSymbol: String { row.mediaSymbol }

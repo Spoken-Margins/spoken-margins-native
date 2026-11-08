@@ -355,7 +355,7 @@ extension Gate1AppModel {
         do {
             request = try enqueueAudioPreparationEdit { try AudioPreparationQueueEdits.skipItem(ofJob: id, in: $0) }
         } catch {
-            reportFailure(error, context: "Removing the item from audio preparation failed")
+            reportFailure(error, context: "Removing it from audio preparation failed")
             return Task {}
         }
         return Task { await finishSkippingAudioPreparationJob(request) }
@@ -370,9 +370,9 @@ extension Gate1AppModel {
             startupAudioPreparationCooldown.clear(Self.startupAudioCooldownKeys([skipped.itemId]))
             refreshLibraryRowsInBackground(mustPublish: true)
             diagnostics["audioPreparationSuppressed:\(skipped.itemId)"] = "user"
-            reportConfirmation("Removed \(skipped.title ?? "this item") from audio preparation.")
+            reportConfirmation("Removed \(skipped.title ?? "it") from audio preparation.")
         } catch {
-            reportFailure(error, context: "Removing the item from audio preparation failed")
+            reportFailure(error, context: "Removing it from audio preparation failed")
         }
     }
 
@@ -402,7 +402,7 @@ extension Gate1AppModel {
             startupAudioPreparationCooldown.clear(Self.startupAudioCooldownKeys(itemIds))
             refreshLibraryRowsInBackground(mustPublish: true)
             diagnostics["audioPreparationQueueCleared"] = "\(cleared.count)"
-            reportConfirmation("Cleared \(cleared.count) audio preparation job\(cleared.count == 1 ? "" : "s"). Existing audio and Library items were kept.")
+            reportConfirmation("Cleared \(cleared.count) audio preparation job\(cleared.count == 1 ? "" : "s"). Existing audio and your Library were kept.")
         } catch {
             reportFailure(error, context: "Clearing the audio preparation queue failed")
         }
@@ -434,7 +434,7 @@ extension Gate1AppModel {
         do {
             request = try enqueueAudioPreparationEdit { try AudioPreparationQueueEdits.prioritize(id: id, in: $0) }
         } catch {
-            reportFailure(error, context: "Unable to prepare this item next")
+            reportFailure(error, context: "Unable to prepare it next")
             return Task {}
         }
         return Task { await finishPrioritizingAudioPreparationJob(request) }
@@ -447,7 +447,7 @@ extension Gate1AppModel {
             await refreshAudioPreparationPresentation()
             startForegroundAudioPreparationIfNeeded()
         } catch {
-            reportFailure(error, context: "Unable to prepare this item next")
+            reportFailure(error, context: "Unable to prepare it next")
         }
     }
 

@@ -25,15 +25,15 @@ enum AddMarginShortcutError: Error, Equatable, LocalizedError {
         case .emptyText:
             return "The Margin is empty. Pass the text the Margin should say."
         case .nothingPlaying:
-            return "Nothing is playing in Spoken Margins. Start an item, then run the shortcut again."
+            return "Nothing is playing in Spoken Margins. Start an episode, article or PDF, then run the shortcut again."
         case .writingInProgress:
             return "Spoken Margins is already waiting on a Margin. Save or cancel it, then run the shortcut again."
         case .libraryUnavailable:
             return "Spoken Margins could not open its Library. Try the shortcut again."
         case .itemNotFound:
-            return "That item isn't in your Spoken Margins Library any more. Pick another item and run the shortcut again."
+            return "That episode, article or PDF isn't in your Spoken Margins Library any more. Pick another and run the shortcut again."
         case .itemNotStarted:
-            return "Start this item once before adding a Margin to it."
+            return "Start this once before adding a Margin to it."
         case .notSaved(let reason):
             return reason ?? "The Margin could not be saved."
         }
@@ -91,7 +91,7 @@ enum AddMarginShortcutAction {
 struct AddMarginToSpokenMarginsIntent: AppIntent {
     static let title: LocalizedStringResource = "Add Margin"
     static let description = IntentDescription(
-        "Writes a text Margin on whatever is playing in Spoken Margins, at the current place, and playback carries on. Choose an Item to write on a different item instead, at the place where you left it, without starting it."
+        "Writes a text Margin on whatever is playing in Spoken Margins, at the current place, and playback carries on. Choose something else from your Library to write on it instead, at the place where you left it, without starting it."
     )
     static let openAppWhenRun = false
 
@@ -103,8 +103,8 @@ struct AddMarginToSpokenMarginsIntent: AppIntent {
     var text: String
 
     @Parameter(
-        title: "Item",
-        description: "The Library item to write on, at the place where you left it. Leave empty to write on what's playing."
+        title: "Source",
+        description: "The episode, article or PDF to write on, at the place where you left it. Leave empty to write on what's playing."
     )
     var item: LibraryItemEntity?
 

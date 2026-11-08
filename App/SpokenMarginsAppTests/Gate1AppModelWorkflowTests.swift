@@ -191,7 +191,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
 
         XCTAssertFalse(model.isSharingInterjectionsPresented)
         XCTAssertEqual(model.screen, screen)
-        XCTAssertEqual(model.lastError, "Record at least one Margin on this item before sharing.")
+        XCTAssertEqual(model.lastError, "Record at least one Margin on it before sharing.")
     }
 
     /// #1254: Settings is a tab, so every route to it (the Offline Storage back button) lands

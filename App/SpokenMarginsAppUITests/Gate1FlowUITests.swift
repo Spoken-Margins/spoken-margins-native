@@ -251,7 +251,7 @@ final class Gate1FlowUITests: XCTestCase {
         app.launch()
         let row = app.buttons["library.row.item-pill"]
         XCTAssertTrue(row.waitForExistence(timeout: 8))
-        XCTAssertTrue(app.staticTexts["Completed items hidden"].exists)
+        XCTAssertTrue(app.staticTexts["Completed hidden"].exists)
         let search = app.textFields["library.search.field"]
         XCTAssertTrue(search.waitForExistence(timeout: 4))
         let searchTop = search.frame.minY
@@ -282,7 +282,7 @@ final class Gate1FlowUITests: XCTestCase {
         captureScreen(named: "library-completed-search-and-undo")
         app.buttons["Clear search"].tap()
         element("library.filters.reset").tap()
-        XCTAssertTrue(app.staticTexts["Completed items hidden"].exists)
+        XCTAssertTrue(app.staticTexts["Completed hidden"].exists)
     }
 
     func testLibraryCompactRowStaysDense() throws {

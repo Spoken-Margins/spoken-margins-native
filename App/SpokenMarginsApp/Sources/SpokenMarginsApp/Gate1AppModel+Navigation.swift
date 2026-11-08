@@ -154,7 +154,7 @@ extension Gate1AppModel {
             let store = try requireStore()
             showOpenedItem(id: id, detail: try loadItemDetail(id: id, store: store), store: store)
         } catch {
-            reportFailure(error, context: "Open item failed")
+            reportFailure(error, context: "Open failed")
         }
     }
 
@@ -170,7 +170,7 @@ extension Gate1AppModel {
         do {
             store = try requireStore()
         } catch {
-            reportFailure(error, context: "Open item failed")
+            reportFailure(error, context: "Open failed")
             return
         }
         let generation = backgroundRefresh.beginOpen()
@@ -185,7 +185,7 @@ extension Gate1AppModel {
                 self.hangTelemetry.labels.scoped("openItemFromTap") { self.showOpenedItem(id: id, detail: detail, store: store) }
             } catch {
                 guard self.stillWantsOpen(generation, from: from, playbackAtTap: playbackAtTap) else { return }
-                self.reportFailure(error, context: "Open item failed")
+                self.reportFailure(error, context: "Open failed")
             }
         })
     }
