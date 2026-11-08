@@ -148,6 +148,28 @@ final class AccessibilityFixProofTests: XCTestCase {
         }
     }
 
+    // MARK: - #3723 share-review button rows stack at accessibility sizes
+
+    /// The batch-preparation card's progress line and its Cancel button share one row. Side by side by default, the
+    /// button sits under the words at accessibility sizes (the other rows of #3723 use the same `AdaptiveStack`).
+    func testBatchPreparationCancelSitsUnderItsProgressAtAccessibilitySizes() async throws {
+        for (size, stacked) in [(DynamicTypeSize.large, false), (.accessibility5, true)] {
+            let mounted = try mount(AnyView(Build23BatchPreparationCard(
+                isPreparing: true, completed: 1, total: 3, failures: 0, canPrepare: false, onPrepare: {}, onCancel: {})),
+                textSize: size)
+            defer { mounted.close() }
+            let progress = try await mounted.waitForNode("the progress line") { $0.label?.contains("1 of 3 prepared") == true }
+            let cancel = try await mounted.waitForNode("the Cancel button") {
+                $0.identifier == "build23.sender.preparation.cancel" || $0.label == "Cancel preparation"
+            }
+            if stacked {
+                XCTAssertGreaterThanOrEqual(cancel.frame.minY, progress.frame.maxY - 1, "\(size): Cancel is beside the progress line, not under it")
+            } else {
+                XCTAssertGreaterThanOrEqual(cancel.frame.minX, progress.frame.maxX - 1, "\(size): Cancel is not beside the progress line")
+            }
+        }
+    }
+
     func testCatalogRowFollowControlSitsUnderTheTitleAtAccessibilitySizes() async throws {
         let entry = Self.catalogEntry(title: "The Daily Example")
         for (size, stacked) in [(DynamicTypeSize.large, false), (.accessibility3, true)] {
