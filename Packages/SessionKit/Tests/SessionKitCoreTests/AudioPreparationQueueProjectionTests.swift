@@ -267,9 +267,9 @@ final class AudioPreparationQueueProjectionTests: XCTestCase {
             id: "job-a-window", itemId: "a", manifestId: "manifest-a-other", policy: .demandWindow, requestedAt: date(1))
         let cases: [(name: String, jobs: [AudioPreparationJob], expected: String?)] = [
             ("nothing queued", [], nil),
-            ("one item", [job("a")], "Preparing audio · 1 item"),
-            ("two items", [job("a"), job("b")], "Preparing audio · 2 items"),
-            ("one item with two jobs", [job("a"), secondJobForA], "Preparing audio · 1 item"),
+            ("one item", [job("a")], "Preparing audio · 1 queued"),
+            ("two items", [job("a"), job("b")], "Preparing audio · 2 queued"),
+            ("one item with two jobs", [job("a"), secondJobForA], "Preparing audio · 1 queued"),
         ]
         for testCase in cases {
             XCTAssertEqual(AudioPreparationQueueProjection.libraryStatusLine(queue: rows(testCase.jobs)), testCase.expected, testCase.name)

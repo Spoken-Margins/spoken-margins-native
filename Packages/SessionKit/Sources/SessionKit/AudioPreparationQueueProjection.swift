@@ -71,9 +71,9 @@ public enum AudioPreparationQueueProjection {
     /// The Library's one line while audio is queued, counting items rather than jobs (#883); nil with nothing
     /// queued, so finished work alone never holds a place in the Library (#3764).
     public static func libraryStatusLine(queue: [AudioPreparationQueueRow]) -> String? {
-        let items = Set(queue.map(\.itemId)).count
-        guard items > 0 else { return nil }
-        return "Preparing audio · \(items) \(items == 1 ? "item" : "items")"
+        let queued = Set(queue.map(\.itemId)).count
+        guard queued > 0 else { return nil }
+        return "Preparing audio · \(queued) queued"
     }
 
     /// The "recently prepared" list: finished offline audio, one row per item (the newest), newest
