@@ -240,13 +240,13 @@ private struct AudioPreparationQueueItemRow: View {
                 .font(.caption)
                 .foregroundStyle(AppColors.secondaryText)
 
-            HStack(spacing: 8) {
+            AdaptiveStack(spacing: 8) {
                 Button("Prioritize", systemImage: "arrow.up.to.line") { prioritize() }
                     .font(.caption.weight(.semibold))
                     .buttonStyle(.bordered)
                     .accessibilityHint("Moves this one to the top of the audio preparation queue")
                     .accessibilityIdentifier("offlineRendering.prioritize.\(row.itemId)")
-                Spacer(minLength: 0)
+                AdaptiveSpacer(minLength: 0)
                 if row.policy != .explicit {
                     Button("Prepare Now") {
                         renderNow()

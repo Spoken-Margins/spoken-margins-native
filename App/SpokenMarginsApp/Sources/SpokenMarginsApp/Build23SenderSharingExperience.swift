@@ -236,10 +236,10 @@ struct Build23SenderSharingExperience: View {
                         total: Double(max(snapshot.preparationTotal, 1))
                     )
                     .tint(AppColors.evergreen)
-                    HStack {
+                    AdaptiveStack {
                         Text("Cleaning \(snapshot.preparationCompleted) of \(snapshot.preparationTotal)")
                             .font(.subheadline)
-                        Spacer()
+                        AdaptiveSpacer()
                         Button("Cancel", role: .cancel) {
                             coordinator.send(.cancelPreparation)
                         }
@@ -643,12 +643,12 @@ struct Build23SenderSharingExperience: View {
                 }
 
                 if !isSystemSharePresented {
-                    HStack {
+                    AdaptiveStack {
                         Button("Return to recipient preview", systemImage: "arrow.left") {
                             coordinator.send(.returnFromSystemShare)
                         }
                         .buttonStyle(.bordered)
-                        Spacer()
+                        AdaptiveSpacer()
                         Button("Open system share sheet", systemImage: "square.and.arrow.up") {
                             presentVerifiedSystemShare()
                         }
