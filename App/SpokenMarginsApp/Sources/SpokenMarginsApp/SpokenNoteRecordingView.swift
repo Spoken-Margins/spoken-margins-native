@@ -188,6 +188,8 @@ struct SpokenNoteRecordingView: View {
                 // A sentence that is playing hands the audio session back before the note moves and plays on.
                 Task {
                     await player.stopAndWait()
+                    // Record may have been tapped while the audio session was handed back: never play over a take.
+                    guard recorder.phase == .idle else { return }
                     let labels = MainThreadOperationLabels.shared // so a slow jump names its step (#2256)
                     labels.scoped("spokenNote.jump") {
                         model.seekMedia(toMediaTimeMs: jumpStartMs)
