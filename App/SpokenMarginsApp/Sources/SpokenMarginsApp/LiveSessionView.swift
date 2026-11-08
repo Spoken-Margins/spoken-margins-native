@@ -93,6 +93,7 @@ struct LiveSessionView: View {
         }
         .onChange(of: links.pendingAction) { _, _ in applyLink() }
         .onChange(of: controller.didLoad) { _, _ in applyLink() }
+        .onChange(of: controller.session?.id) { _, _ in showsEndCard = false }
         // An ended session shows what to do with it, which is on the Session pane.
         .onChange(of: controller.hasEnded, initial: true) { _, ended in if ended { pane = .session } }
         // The mini player's mic starts the item's recording on the root, which sits under this screen. This screen
@@ -159,6 +160,9 @@ struct LiveSessionView: View {
             isRegisteredRunning = true
             links.runningScreenAppeared()
         }
+        // A spoken Margin outlives this screen (#3489): one still recording when the screen comes back shows its
+        // recording screen again, so Finish and Cancel are in reach.
+        if controller.isRecordingSpoken && cover == nil { showRecordingAfterPresenting() }
         guard let action = links.takeAction() else { return }
         switch action {
         case .open: break
@@ -167,7 +171,9 @@ struct LiveSessionView: View {
                 try? await Task.sleep(for: .milliseconds(400)) // after the screen has finished presenting
                 wantsWrite = true
             }
-        case .speak: beginRecording()
+        case .speak:
+            startRecordingIfIdle()
+            showRecordingAfterPresenting()
         }
     }
 
@@ -333,11 +339,24 @@ struct LiveSessionView: View {
     }
 
     private func beginRecording() {
+        startRecordingIfIdle()
+        if controller.isRecordingSpoken { cover = .liveRecording }
+    }
+
+    private func startRecordingIfIdle() {
         guard controller.isRunning, !controller.isRecordingSpoken else { return }
         dismissKeyboard()
         pauseSource()
         controller.startSpokenMargin()
-        if controller.isRecordingSpoken { cover = .liveRecording }
+    }
+
+    /// For a link or a return to the screen: a cover asked for while this screen is itself still being presented
+    /// would be dropped, leaving a recording with no screen. The microphone doesn't wait for this.
+    private func showRecordingAfterPresenting() {
+        Task {
+            try? await Task.sleep(for: .milliseconds(400))
+            if controller.isRecordingSpoken && cover == nil { cover = .liveRecording }
+        }
     }
 
     private func beginWriting() {
