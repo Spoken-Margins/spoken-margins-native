@@ -18,12 +18,12 @@ final class AudioPreparationPresentationTests: XCTestCase {
             requestedAt: Date(timeIntervalSince1970: seconds))
     }
 
-    private func manifest(_ item: String, updatedAt seconds: TimeInterval) -> PreparedAudioManifest {
+    private func manifest(_ item: String, updatedAt seconds: TimeInterval, id: String? = nil) -> PreparedAudioManifest {
         let source = SourceLocator(documentId: "doc", spineItemId: nil, segmentId: "seg", utf8Start: 0, utf8End: 10)
         let chunk = PreparedAudioChunk(
             id: "chunk-\(item)", index: 0, sourceRange: source, relativePath: "c.m4a", byteCount: 1, checksumSHA256: "x", durationMs: 1000)
         return PreparedAudioManifest(
-            id: "manifest-\(item)", itemId: item, sourcePackageId: "source",
+            id: id ?? "manifest-\(item)", itemId: item, sourcePackageId: "source",
             signature: TTSRenderSignature(
                 engine: "supertonic", modelRevision: "3", assetManifestHash: "a", voiceStyleHash: "v",
                 synthesisParametersHash: "p", normalizationVersion: "n", chunkingVersion: "c", digest: "digest"),
@@ -58,6 +58,56 @@ final class AudioPreparationPresentationTests: XCTestCase {
         XCTAssertEqual(presentation.queue.map(\.title), ["Beta", "Alpha"])
         XCTAssertEqual(presentation.queue.first?.isActivePlaybackItem, true)
         XCTAssertEqual(presentation.recentlyPrepared.map(\.title), ["Alpha"])
+    }
+
+    /// #3764: the owner saw "9 recently ready" with fewer than 9 items. Trashing an item keeps its finished audio, so
+    /// the list has to ask the Library which items are still there; it can never name more items than the Library holds.
+    func testRecentlyReadyCountsOnlyItemsStillInTheLibrary() {
+        let sampleId = "item-spoken-margins-overview" // the built-in sample is a real Library row, so it counts
+        let cases: [(name: String, items: [LibraryItemSummary], manifests: [PreparedAudioManifestSummary], expected: [String])] = [
+            ("empty", [], [], []),
+            ("items but no finished audio", [summary("a")], [], []),
+            ("one live item", [summary("a")], [manifest("a", updatedAt: 1).summary], ["a"]),
+            ("same item twice", [summary("a")], [manifest("a", updatedAt: 1).summary, manifest("a", updatedAt: 2, id: "manifest-a-2").summary], ["a"]),
+            ("trashed item", [summary("a"), summary("t", trashed: true)], [manifest("a", updatedAt: 1).summary, manifest("t", updatedAt: 2).summary], ["a"]),
+            ("every item trashed", [summary("t", trashed: true)], [manifest("t", updatedAt: 1).summary], []),
+            ("item gone from the store", [summary("a")], [manifest("a", updatedAt: 1).summary, manifest("gone", updatedAt: 2).summary], ["a"]),
+            ("built-in sample", [summary(sampleId)], [manifest(sampleId, updatedAt: 1).summary], [sampleId]),
+            ("trashed built-in sample", [summary(sampleId, trashed: true)], [manifest(sampleId, updatedAt: 1).summary], []),
+        ]
+        for testCase in cases {
+            let presentation = AudioPreparationPresentation(
+                items: testCase.items, sessions: [], manifests: testCase.manifests, jobs: [], activeItemId: nil)
+            XCTAssertEqual(presentation.recentlyPrepared.map(\.itemId), testCase.expected, testCase.name)
+            XCTAssertLessThanOrEqual(
+                presentation.recentlyPrepared.count, testCase.items.filter { $0.deletedAt == nil }.count, testCase.name)
+        }
+    }
+
+    /// Trashed items' audio must not use up the ten places and push out items the listener still has.
+    func testTrashedItemsDoNotTakeThePlacesOfLiveOnes() {
+        let trashed = (0..<10).map { "t\($0)" }
+        let items = [summary("a")] + trashed.map { summary($0, trashed: true) }
+        let manifests = [manifest("a", updatedAt: 1).summary] + trashed.map { manifest($0, updatedAt: 100).summary }
+        let presentation = AudioPreparationPresentation(items: items, sessions: [], manifests: manifests, jobs: [], activeItemId: nil)
+        XCTAssertEqual(presentation.recentlyPrepared.map(\.itemId), ["a"])
+    }
+
+    /// A real trash through the real store: the manifest stays behind, and the list leaves it out until a restore.
+    func testRecentlyReadyFollowsTrashAndRestoreInTheStore() throws {
+        let path = FileManager.default.temporaryDirectory.appendingPathComponent("recent-ready-\(UUID().uuidString).sqlite").path
+        let store = try SQLiteSessionStore(path: path)
+        try store.seed(item: Item(id: "a", title: "A", mediaType: "text", text: "Some words to read.", externalReference: nil, status: "ready"))
+        try store.savePreparedAudioManifest(manifest("a", updatedAt: 5))
+        func listed() throws -> [String] {
+            try AudioPreparationPresentation(snapshot: LibraryReadSnapshot.read(store: store), activeItemId: nil).recentlyPrepared.map(\.itemId)
+        }
+        XCTAssertEqual(try listed(), ["a"])
+        try store.moveItemToTrash(id: "a")
+        XCTAssertEqual(try store.loadPreparedAudioManifests(itemId: "a").count, 1, "the trash keeps the audio, which is why the list must filter")
+        XCTAssertEqual(try listed(), [])
+        try store.restoreItem(id: "a")
+        XCTAssertEqual(try listed(), ["a"])
     }
 
     func testSnapshotAndLooseRowsGiveTheSameAnswer() {

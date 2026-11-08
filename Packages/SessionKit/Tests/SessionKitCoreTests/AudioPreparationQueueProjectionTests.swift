@@ -259,6 +259,23 @@ final class AudioPreparationQueueProjectionTests: XCTestCase {
             "stops at the bottom of Int")
     }
 
+    // MARK: The Library's line
+
+    /// #3764: the line exists only while something is queued, and counts items, not jobs (#883).
+    func testTheLibraryLineCountsQueuedItems() {
+        let secondJobForA = AudioPreparationJob(
+            id: "job-a-window", itemId: "a", manifestId: "manifest-a-other", policy: .demandWindow, requestedAt: date(1))
+        let cases: [(name: String, jobs: [AudioPreparationJob], expected: String?)] = [
+            ("nothing queued", [], nil),
+            ("one item", [job("a")], "Preparing audio · 1 item"),
+            ("two items", [job("a"), job("b")], "Preparing audio · 2 items"),
+            ("one item with two jobs", [job("a"), secondJobForA], "Preparing audio · 1 item"),
+        ]
+        for testCase in cases {
+            XCTAssertEqual(AudioPreparationQueueProjection.libraryStatusLine(queue: rows(testCase.jobs)), testCase.expected, testCase.name)
+        }
+    }
+
     // MARK: Recently prepared
 
     func testRecentlyPreparedKeepsOneRowPerItemNewestFirst() {
@@ -283,14 +300,15 @@ final class AudioPreparationQueueProjectionTests: XCTestCase {
                 manifest("failed", state: .failed),
                 manifest("done"),
             ].map(\.summary),
-            titlesByItemId: [:])
+            titlesByItemId: ["preparing": "P", "no-artifact": "N", "failed": "F", "done": "Done"])
         XCTAssertEqual(list.map(\.itemId), ["done"])
-        XCTAssertEqual(list.first?.title, "done", "a missing item shows its id")
+        XCTAssertEqual(list.first?.title, "Done")
     }
 
     func testRecentlyPreparedStopsAtTen() {
         let manifests = (0..<14).map { manifest("item-\($0)", updatedAt: Double($0)).summary }
-        let list = AudioPreparationQueueProjection.recentlyPrepared(manifests: manifests, titlesByItemId: [:])
+        let titles = Dictionary(uniqueKeysWithValues: manifests.map { ($0.itemId, "Title") })
+        let list = AudioPreparationQueueProjection.recentlyPrepared(manifests: manifests, titlesByItemId: titles)
         XCTAssertEqual(list.count, 10)
         XCTAssertEqual(list.first?.itemId, "item-13")
         XCTAssertEqual(list.last?.itemId, "item-4")
@@ -313,14 +331,14 @@ final class AudioPreparationQueueProjectionTests: XCTestCase {
         let notice = AudioPreparationQueueProjection.preparedAudioNotice(
             recentlyPrepared: [recent("Alpha", at: 300), recent("Beta", at: 200), recent("Gamma", at: 150), recent("Old", at: 50)],
             lastNoticeTimestamp: 100, now: date(400))
-        XCTAssertEqual(notice?.message, "Ready offline: Alpha and 2 more. Review them in Preparing Audio.")
+        XCTAssertEqual(notice?.message, "Ready offline: Alpha and 2 more.")
         XCTAssertEqual(notice?.newestCompletedAt, date(300))
     }
 
     func testTheNoticeCountsOneMoreForTwoCompletions() {
         let notice = AudioPreparationQueueProjection.preparedAudioNotice(
             recentlyPrepared: [recent("Alpha", at: 300), recent("Beta", at: 200)], lastNoticeTimestamp: 100, now: date(400))
-        XCTAssertEqual(notice?.message, "Ready offline: Alpha and 1 more. Review them in Preparing Audio.")
+        XCTAssertEqual(notice?.message, "Ready offline: Alpha and 1 more.")
     }
 
     func testTheNoticeIsSilentWhenNothingIsNewerThanTheLastOne() {
