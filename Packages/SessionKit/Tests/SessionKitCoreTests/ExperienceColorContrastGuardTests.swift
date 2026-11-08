@@ -104,7 +104,8 @@ final class AppColorUsageGuardTests: XCTestCase {
     /// What each `AppColors.<token>.opacity(<alpha>)` in the app is, by `token@alpha`. `audited` means the text on it is
     /// measured by `timelineRowPairs`; `noText` means no text sits on it (a hairline, a stripe, a pressed state, a
     /// plain shape); `unaudited` is a fill with text or an icon on it that no pair measures yet, left for #3739's next
-    /// slices. A new tint is not in this list, so it fails until someone says which of the three it is.
+    /// slices. A new tint is not in this list, so it fails until someone says which of the three it is. The key is the token and the
+    /// alpha, not the call site: a new text fill that reuses an audited key is not seen, so give it a new alpha or a pair.
     private enum TintKind: Equatable { case audited, noText, unaudited }
 
     private static let tints: [String: TintKind] = [
@@ -120,10 +121,11 @@ final class AppColorUsageGuardTests: XCTestCase {
         "ochre@0.20": .unaudited, "plum@0.16": .unaudited, "ochre@0.12": .unaudited, "evergreen@0.16": .unaudited,
         "listeningAccent@0.18": .unaudited, "border@0.45": .unaudited, "softGreen@0.85": .unaudited,
         "softGreen@0.55": .unaudited,
-        // Plates on the Watch and the playback card's own controls, where the pressed state is the alpha.
+        // The Watch's plates and the playback card's own controls; the pressed state is the alpha.
         "watchControl@0.8": .unaudited, "watchControl@0.72": .unaudited, "watchControl@0.35": .unaudited,
-        "panel@0.75": .noText, "listeningAccent@0.75": .noText, "captureBackground@0.78": .noText,
-        "primaryAction@0.78": .noText, "softGreen@0.7": .noText
+        // Their button labels are drawn on the dimmed fill.
+        "panel@0.75": .unaudited, "listeningAccent@0.75": .unaudited, "captureBackground@0.78": .unaudited,
+        "primaryAction@0.78": .unaudited, "softGreen@0.7": .unaudited
     ]
 
     func testEveryTintTheAppDrawsIsClassified() throws {
@@ -132,8 +134,8 @@ final class AppColorUsageGuardTests: XCTestCase {
             let text = try collapsedText(file)
             // `opacity(0.12)`, a pressed state `opacity(isPressed ? 0.75 : 1)` and `opacity(isCurrent ? 0.85 : 0.55)`: each
             // alpha other than a plain 1 is a tint.
-            for match in try matches(of: #"AppColors\.(\w+)\.opacity\(\s*(?:[\w.]+ \? )?([0-9.]+)(?: : ([0-9.]+))?\s*\)"#, in: text) {
-                for alpha in [match[2], match[3]] where !alpha.isEmpty && alpha != "1" { found.insert("\(match[1])@\(alpha)") }
+            for match in try matches(of: #"AppColors\.(\w+)\s*\.opacity\(\s*(?:!?[\w.]+ \? )?([0-9.]+)(?: : ([0-9.]+))?\s*\)"#, in: text) {
+                for alpha in [match[2], match[3]] where !alpha.isEmpty && Double(alpha) != 1 { found.insert("\(match[1])@\(alpha)") }
             }
         }
         XCTAssertGreaterThan(found.count, 20, "the scan must see the app's tints")
@@ -142,7 +144,7 @@ final class AppColorUsageGuardTests: XCTestCase {
             found.subtracting(known).sorted(), [],
             "a tint with no decision: if text sits on it, add a pair for it to the audit and list it as audited; if not, list it as noText"
         )
-        XCTAssertEqual(known.subtracting(found).sorted(), [], "delete the entries for tints the app no longer draws")
+        // A tint that is no longer drawn is not an error: two PRs that each add or remove one must not turn each other red.
     }
 
     func testEveryAuditedTintHasPairsInTheAudit() {
@@ -158,25 +160,38 @@ final class AppColorUsageGuardTests: XCTestCase {
 
     /// A system colour used directly: `Color.red`, `.foregroundStyle(.secondary)`, or an arm of a ternary. The default
     /// tint, placeholders and `.secondary` text fall under the same dynamic system values the audit cannot see
-    /// against the app's surfaces, so every use is counted per file and may only go down (#3739).
-    private static let systemColorUse = [
-        #"\bColor\.(?:red|green|blue|orange|yellow|teal|mint|indigo|purple|pink|cyan|brown|gray|secondary|tertiary|quaternary)\b"#,
-        #"(?:foregroundStyle|foregroundColor|tint|fill|stroke|background|overlay|accentColor)\(\s*\.(?:red|green|blue|orange|yellow|teal|mint|indigo|purple|pink|cyan|brown|gray|secondary|tertiary|quaternary)\b"#,
-        #"\?\s*\.(?:red|green|blue|orange|yellow|teal|mint|indigo|purple|pink|cyan|brown|gray|secondary|tertiary|quaternary)\b"#,
-        #"\?[^?:;{}]{1,60}:\s*\.(?:red|green|blue|orange|yellow|teal|mint|indigo|purple|pink|cyan|brown|gray|secondary|tertiary|quaternary)\b"#
-    ]
+    /// against the app's surfaces, so every use is counted per file and a file may not use more than its baseline (#3739).
+    private static let systemColorUse: [String] = {
+        let names = "red|green|blue|orange|yellow|teal|mint|indigo|purple|pink|cyan|brown|gray|secondary|tertiary|quaternary"
+        return [
+            #"\bColor\.(?:\#(names))\b"#,
+            #"(?:foregroundStyle|foregroundColor|tint|fill|stroke|background|overlay|accentColor)\(\s*\.(?:\#(names))\b"#,
+            #"\?\s*\.(?:\#(names))\b"#,
+            #"\?[^?:;{}]{1,60}:\s*\.(?:\#(names))\b"#,
+            // A colour returned from a switch or a function: `case .success: .green`, `return .red`.
+            #"(?:\bcase [^:]{1,60}:|\breturn)\s*\.(?:\#(names))\b"#,
+            // UIKit's system colours, and the bridge into SwiftUI.
+            #"\bUIColor\.system\w+"#,
+            #"\bColor\(\s*(?:uiColor: )?\.system\w+"#,
+            // White and black are not in the tokens either, and a text label drawn over them at an alpha is a tint.
+            #"(?<![\w])(?:Color)?\.(?:white|black)\s*\.opacity\("#
+        ]
+    }()
 
     /// The uses that exist today, by file. A file not listed here may not use one; a listed file may not use more.
     /// Lower a number, or delete the line, when a use goes. There is no test for slack, so two PRs that each remove or
     /// add a use never turn each other red.
     private static let systemColorBaseline: [String: Int] = [
-        "PKMSettingsViews.swift": 10, "PlaybackScreen.swift": 2, "SettingsScreen.swift": 2,
-        "PlaybackFeedbackTagView.swift": 3, "SpokenMarginsTermsView.swift": 3, "OpenSourceLicensesView.swift": 1,
-        "PlaybackMarginTranscriptionStatusView.swift": 1, "LiveActivityTourPreview.swift": 1,
-        "PlaybackLivePassageView.swift": 1, "ExperienceAudioPreparationQueueScreen.swift": 2,
-        "PlaybackTimelineSourceView.swift": 2, "Gate1RootView.swift": 1, "VoicesSettingsScreen.swift": 2,
-        "LiveSessionActivityWidget.swift": 3, "Gate2LiveActivityWidget.swift": 4, "WatchUntetheredView.swift": 15,
-        "SpokenMarginsWatchApp.swift": 5
+        "AppTopBanners.swift": 1, "EdgeSwipeBackTransition.swift": 1, "ExperienceAudioPreparationQueueScreen.swift": 2,
+        "ExperienceRecordingScreen.swift": 1, "FirstMarginPromptCard.swift": 2, "Gate1RootView.swift": 1,
+        "Gate2LiveActivityWidget.swift": 13, "LiveActivityTourPreview.swift": 1, "LiveSessionActivityWidget.swift": 8,
+        "MiniPlayer.swift": 1, "OpenSourceLicensesView.swift": 1, "PKMSettingsViews.swift": 10,
+        "PinnedMarginCardView.swift": 4, "PlaybackFeedbackTagView.swift": 3, "PlaybackLivePassageView.swift": 1,
+        "PlaybackMarginRowView.swift": 1, "PlaybackMarginTranscriptionStatusView.swift": 1, "PlaybackMarginsFilterView.swift": 2,
+        "PlaybackNativeTextPeekView.swift": 1, "PlaybackPaneSwitchView.swift": 2, "PlaybackPositionSlider.swift": 1,
+        "PlaybackScreen.swift": 6, "PlaybackTimelineSourceView.swift": 2, "SettingsScreen.swift": 2,
+        "SpokenMarginsTermsView.swift": 3, "SpokenMarginsWatchApp.swift": 5, "UserFeedbackBanner.swift": 1,
+        "VoicesSettingsScreen.swift": 2, "WatchUntetheredView.swift": 28
     ]
 
     private func systemColorUses() throws -> [String: Int] {

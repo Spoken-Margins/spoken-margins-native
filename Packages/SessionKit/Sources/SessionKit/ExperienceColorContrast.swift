@@ -57,7 +57,8 @@ extension AppDynamicRGB {
     }
 }
 
-/// The system colours the app draws with directly, as Apple publishes them (iOS 26 system colours, sRGB). They are
+/// The system colours the app draws with directly, as Apple publishes them (the sRGB values of the system palette as
+/// the audit issues quote them; iOS 26 may have shifted some, which would move a ratio and not the fact that it fails). They are
 /// here so the audit can measure a pair that names one, instead of the pair being invisible to it (#3739). A new use
 /// of a system colour outside the allowlist in the guard tests fails; the way out is a token in `AppSemanticColorRGB`.
 public enum AppSystemColorRGB {
@@ -292,14 +293,14 @@ public enum AppColorContrastAudit {
         .init(name: "playback accent mark on watch control", foreground: AppSemanticColorRGB.accent, background: AppSemanticColorRGB.watchControl, minimumRatio: 3)
     ]
 
-    /// A tint drawn at `alpha` over `base`, with the text that sits on it. The name carries the tint and its alpha,
-    /// which is how the tint guard finds the pairs that audit a tint.
+    /// A tint drawn at `alpha` over `base`, with the text that sits on it. The name carries the tint, its alpha and the
+    /// base's name, which is how the tint guard finds the pairs that audit a tint.
     private static func onTint(
         _ label: String, foreground: AppDynamicRGB, tint: String, tintColor: AppDynamicRGB, alpha: Double,
-        over base: AppDynamicRGB, minimumRatio: Double = 4.5
+        over base: AppDynamicRGB, baseName: String, minimumRatio: Double = 4.5
     ) -> Pair {
         Pair(
-            name: "\(label) on \(tint) at \(alpha) over bone",
+            name: "\(label) on \(tint) at \(alpha) over \(baseName)",
             foreground: foreground,
             background: tintColor.composited(over: base, alpha: alpha),
             minimumRatio: minimumRatio
@@ -318,9 +319,9 @@ public enum AppColorContrastAudit {
         ]
         return rows.flatMap { row in
             [
-                onTint("row title", foreground: AppSemanticColorRGB.text, tint: row.tint, tintColor: row.color, alpha: row.alpha, over: AppSemanticColorRGB.bone),
-                onTint("row detail", foreground: AppSemanticColorRGB.secondaryText, tint: row.tint, tintColor: row.color, alpha: row.alpha, over: AppSemanticColorRGB.bone),
-                onTint(row.label.name, foreground: row.label.color, tint: row.tint, tintColor: row.color, alpha: row.alpha, over: AppSemanticColorRGB.bone)
+                onTint("row title", foreground: AppSemanticColorRGB.text, tint: row.tint, tintColor: row.color, alpha: row.alpha, over: AppSemanticColorRGB.bone, baseName: "bone"),
+                onTint("row detail", foreground: AppSemanticColorRGB.secondaryText, tint: row.tint, tintColor: row.color, alpha: row.alpha, over: AppSemanticColorRGB.bone, baseName: "bone"),
+                onTint(row.label.name, foreground: row.label.color, tint: row.tint, tintColor: row.color, alpha: row.alpha, over: AppSemanticColorRGB.bone, baseName: "bone")
             ]
         }
     }()
