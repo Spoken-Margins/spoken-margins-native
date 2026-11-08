@@ -151,9 +151,10 @@ final class AccessibilityFixProofTests: XCTestCase {
 
     // MARK: - #3724 the Supertonic download notice keeps its buttons on screen
 
-    /// At accessibility5 the notice's words are taller than the screen. Before the fix its buttons sat under them in
-    /// one unscrollable stack and landed below the window's bottom edge; now they are pinned in a bottom inset.
-    func testSupertonicNoticeButtonsStayOnScreenAtTheLargestTextSize() async throws {
+    /// At accessibility5 the notice's words are taller than the screen. Squeezed into one stack, SwiftUI would cut the
+    /// text short to keep the buttons in view; now the words keep their full height inside a ScrollView and the buttons
+    /// stay pinned on screen. At the default size the words and buttons sit together, as before.
+    func testSupertonicNoticeKeepsFullTextAndOnScreenButtonsAtTheLargestTextSize() async throws {
         let screenHeight: CGFloat = 844  // the height `mount` gives its window
         for size in [DynamicTypeSize.large, .accessibility5] {
             let mounted = try mount(AnyView(SupertonicDownloadNoticeCard(openVoices: {}, notNow: {})), textSize: size)
@@ -164,12 +165,23 @@ final class AccessibilityFixProofTests: XCTestCase {
             let notNow = try await mounted.waitForNode("the Not Now button") {
                 $0.identifier == "supertonicNotice.notNow" || $0.label == "Not Now"
             }
+            let sentence = try await mounted.waitForNode("the download sentence") {
+                $0.label?.hasPrefix("James and Lily use the Supertonic voice") == true
+            }
+            let callout = try await mounted.waitForNode("the backup-voice line") {
+                $0.label?.hasPrefix("Until then, the app") == true
+            }
             for (name, button) in [("Open Voices", open), ("Not Now", notNow)] {
                 XCTAssertGreaterThanOrEqual(button.frame.minY, 0, "\(size): \(name) starts above the screen")
                 XCTAssertLessThanOrEqual(button.frame.maxY, screenHeight + 0.5,
                                          "\(size): \(name) ends at y \(button.frame.maxY), below the screen's \(screenHeight)")
             }
             XCTAssertLessThanOrEqual(open.frame.maxY, notNow.frame.minY + 1, "\(size): Not Now is not under Open Voices")
+            if size == .accessibility5 {
+                // Full-height words, not words cut short to fit: the two paragraphs alone are taller than the screen.
+                XCTAssertGreaterThan(sentence.frame.height + callout.frame.height, screenHeight,
+                                     "\(size): the words were squeezed to fit instead of scrolling")
+            }
         }
     }
 
