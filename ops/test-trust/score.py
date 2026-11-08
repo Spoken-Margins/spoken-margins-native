@@ -7,6 +7,8 @@ Usage, from the repo root (git fetch origin '+refs/pull/*/head:refs/remotes/orig
     python3 ops/test-trust/score.py . artifacts/test-trust 2026-10-07
 
 Input: lane-comments.jsonl (one GitHub comment per line: u, at, a, assoc, b), only bot-authored reports used.
+Optional input: trunk-red-issues.jsonl, one `{"test": ..., "issue": N, "from": ISO time, "to": ISO time}` per line, for
+each `regression` issue that names a test red on `main` (from: when the breaking PR merged; to: when the fix merged).
 Output: episodes.jsonl (one per failing test per PR failure run, with its class) and per-test.tsv.
 
 Classes, per failing test at head H on PR P:
@@ -15,16 +17,18 @@ Classes, per failing test at head H on PR P:
 - wrong-test: ... changed only test files
 - rerun-pass: the same head (or no own change) passed later, same next
 - next-moved: the same head passed later, next moved in between
+  (but if two or more different PRs failed the same test with no change of their own inside a trunk-red-issues.jsonl
+  window for that test, the issue names `main` as red, and those episodes are trunk-red, #3702)
 - trunk-red: the lane re-ran the test on plain next and it failed there too (collapsed per test per next sha)
 - unresolved: no later run on P passed it (PR closed, superseded, merged by other means)
 Runner faults (hangs, budgets, missing tests, no slot, build-before-boot) are counted per report, not per test.
 """
 import json, re, subprocess, sys, collections, pathlib
 
-REPO = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else '.')
-HERE = pathlib.Path(sys.argv[2] if len(sys.argv) > 2 else 'artifacts/test-trust')
-SINCE = sys.argv[3] if len(sys.argv) > 3 else '2026-10-07'
-sys.path.insert(0, str(REPO / 'scripts'))
+REPO = pathlib.Path('.')
+HERE = pathlib.Path('artifacts/test-trust')
+SINCE = '2026-10-07'
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2] / 'scripts'))
 import lane_ledger  # noqa: E402
 
 NAME = r'[A-Za-z_][\w]*Tests?(?:/[\w]+)?/test\w+(?![\w…])|test_[\w]+\.[\w]+Tests?\.test\w+'
@@ -40,7 +44,7 @@ NEXT_RED = re.compile(r're-run on plain next ([0-9a-f]{7,}): (.*)')
 
 
 def reports():
-    for line in (HERE / 'lane-comments.jsonl').open():
+    for line in (HERE / 'lane-comments.jsonl').read_text().splitlines():
         c = json.loads(line)
         if c['a'] != 'github-actions[bot]' or not c['b'].startswith('Lane report'):
             continue
@@ -95,7 +99,31 @@ def ran_test(r, t):
     return False
 
 
-def main():
+def trunk_red_from_issues(episodes, windows):
+    """Re-class `next-moved` episodes as `trunk-red` where a regression issue names `main` red for the test (#3702).
+
+    A window is {test, issue, from, to}. The episodes of that test inside it that are `next-moved` (no PR-side change)
+    are trunk breaks, not noise, once two or more different PRs hit it: one PR alone could still be a moved next.
+    """
+    for w in windows:
+        hit = [e for e in episodes if e['test'] == w['test'] and e.get('class') == 'next-moved'
+               and w['from'] <= e['at'] <= w['to']]
+        if len({e['key'] for e in hit}) >= 2:
+            for e in hit:
+                e['class'], e['trunk_issue'] = 'trunk-red', w['issue']
+    return episodes
+
+
+def read_windows():
+    path = HERE / 'trunk-red-issues.jsonl'
+    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()] if path.exists() else []
+
+
+def main(argv):
+    global REPO, HERE, SINCE
+    REPO = pathlib.Path(argv[1] if len(argv) > 1 else '.')
+    HERE = pathlib.Path(argv[2] if len(argv) > 2 else 'artifacts/test-trust')
+    SINCE = argv[3] if len(argv) > 3 else '2026-10-07'
     rs = sorted(reports(), key=lambda r: r['at'])
     rs = [r for r in rs if r['at'] >= SINCE]
     by_key = collections.defaultdict(list)
@@ -145,6 +173,7 @@ def main():
                        for e in episodes):
                     continue
                 episodes.append(ep)
+trunk_red_from_issues(episodes, read_windows())
     with (HERE / 'episodes.jsonl').open('w') as f:
         for e in episodes:
             f.write(json.dumps(e) + '\n')
@@ -171,4 +200,5 @@ def main():
     print('runs with a named test failure', dict(first))
 
 
-main()
+if __name__ == '__main__':
+    main(sys.argv)
