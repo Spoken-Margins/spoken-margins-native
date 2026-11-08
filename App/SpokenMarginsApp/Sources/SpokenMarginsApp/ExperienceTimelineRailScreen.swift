@@ -83,11 +83,12 @@ struct ExperienceTimelineRailScreen: View {
                 if onReturnToPlayback != nil && !followsPlayback && !responseEditorFocused {
                     HStack {
                         Spacer()
-                        Button("Follow playback", systemImage: "location.fill") {
+                        Button {
                             followsPlayback = true
                             focusTimeline(using: proxy)
+                        } label: {
+                            Label("Follow playback", systemImage: "location.fill").frame(minHeight: 44).contentShape(Rectangle())
                         }
-                        .frame(minHeight: 44)
                         .accessibilityIdentifier("timeline.followPlayback.button")
                     }
                     .padding(.horizontal, 18)

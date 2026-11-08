@@ -99,8 +99,9 @@ struct FollowSheet: View {
     }
 
     private var followButton: some View {
-        Button("Follow") { run { await model.followTypedLink() } }
-            .frame(minHeight: 46)
+        Button { run { await model.followTypedLink() } } label: {
+            Text("Follow").frame(minHeight: 46).contentShape(Rectangle())
+        }
             .filledActionButton()
             .disabled(isFollowing || model.followedSourceURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             .accessibilityIdentifier("sources.follow.button")

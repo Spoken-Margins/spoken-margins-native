@@ -1022,9 +1022,10 @@ private struct ItemDescriptionPreview: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("item.description.text")
             if ItemMetadata.needsExpansion(text) {
-                Button(expanded ? "Less" : "More") { expanded.toggle() }
+                Button { expanded.toggle() } label: {
+                    Text(expanded ? "Less" : "More").frame(minHeight: 44, alignment: .leading).contentShape(Rectangle())
+                }
                     .font(.subheadline.weight(.semibold))
-                    .frame(minHeight: 44, alignment: .leading)
                     .accessibilityHint(expanded ? "Shows fewer lines of the description." : "Shows the whole description.")
                     .accessibilityIdentifier("item.description.more")
             }

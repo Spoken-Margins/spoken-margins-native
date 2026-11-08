@@ -313,12 +313,10 @@ struct OPMLImportScreen: View {
                     importer.startFollowing()
                 }
                 .disabled(importer.selected.isEmpty)
-                Button("Cancel") { importer.cancel() }
-                    .frame(maxWidth: .infinity, minHeight: 44)
+                Button { importer.cancel() } label: { Text("Cancel").frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle()) }
                     .accessibilityIdentifier("opml.import.cancel")
             case .following:
-                Button("Stop") { importer.cancel() }
-                    .frame(maxWidth: .infinity, minHeight: 44)
+                Button { importer.cancel() } label: { Text("Stop").frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle()) }
                     .accessibilityIdentifier("opml.import.stop")
             case .finished:
                 primaryButton("Done", id: "opml.import.done") { dismiss() }

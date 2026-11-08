@@ -438,10 +438,11 @@ struct PlaybackScreen: View {
             .disabled(!model.canSummarizeInterjections || model.isSummarizingInterjections)
             .accessibilityIdentifier("playback.summary.button")
         }
-        Button("Margins", systemImage: "quote.bubble") {
+        Button {
             closeOptions(to: .margins)
+        } label: {
+            Label("Margins", systemImage: "quote.bubble").frame(minHeight: 44).contentShape(Rectangle())
         }
-        .frame(minHeight: 44)
     }
 
     private var sessionActionDock: some View {

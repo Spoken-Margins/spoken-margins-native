@@ -241,9 +241,8 @@ struct LiveSessionView: View {
                 Text(session.title.isEmpty ? "\(session.kind.label) session" : session.title).font(.headline)
                 Spacer()
                 if controller.isRunning {
-                    Button(showsDetails ? "Done" : "Edit") { toggleDetails(session) }
+                    Button { toggleDetails(session) } label: { Text(showsDetails ? "Done" : "Edit").minimumTapTarget() }
                         .buttonStyle(.bordered)
-                        .frame(minHeight: 44)
                         .accessibilityIdentifier("liveSession.editDetails")
                         .accessibilityHint("Change the kind, name, clock or chapter while the session runs.")
                 }
@@ -331,15 +330,16 @@ struct LiveSessionView: View {
                         TextField(session.kind == .meeting ? "What the meeting's clock shows, like 12:30" : "Time in the book, like 1:23:10", text: $clockDraft)
                             .textFieldStyle(.roundedBorder)
                             .keyboardType(.numbersAndPunctuation)
-                        Button("Set") {
+                        Button {
                             guard let ms = LiveSessionPositionMap.parse(clockDraft) else {
                                 controller.errorMessage = "Enter a time like 12:30 or 1:23:10."
                                 return
                             }
                             if controller.setSourceClock(positionMs: ms) { clockDraft = "" }
+                        } label: {
+                            Text("Set").minimumTapTarget()
                         }
                         .buttonStyle(.bordered)
-                        .frame(minHeight: 44)
                         .disabled(clockDraft.trimmingCharacters(in: .whitespaces).isEmpty)
                     }
                     Text("Type it once and the clock runs from there. Margins you've already taken move with it.")
@@ -433,7 +433,7 @@ struct LiveSessionView: View {
                             .font(.caption.monospacedDigit())
                             .foregroundStyle(AppColors.secondaryText)
                         Spacer()
-                        Button { controller.removeMargin(id: margin.id) } label: { Image(systemName: "xmark.circle") }
+                        Button { controller.removeMargin(id: margin.id) } label: { Image(systemName: "xmark.circle").minimumTapTarget() }
                             .buttonStyle(.borderless)
                             .accessibilityLabel("Remove Margin")
                     }
@@ -486,13 +486,11 @@ struct LiveSessionView: View {
             Text("Heard \u{201C}\(heard.label)\u{201D}. Keep it as a checkpoint?")
                 .font(.caption).foregroundStyle(AppColors.secondaryText)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            Button("Keep") { controller.keepHeardPlace(id: margin.id) }
+            Button { controller.keepHeardPlace(id: margin.id) } label: { Text("Keep").minimumTapTarget() }
                 .buttonStyle(.bordered)
-                .frame(minHeight: 44)
                 .accessibilityHint("Uses \(heard.label) to place the Margins around this one.")
-            Button("No") { controller.declineHeardPlace(id: margin.id) }
+            Button { controller.declineHeardPlace(id: margin.id) } label: { Text("No").minimumTapTarget() }
                 .buttonStyle(.borderless)
-                .frame(minHeight: 44)
         }
     }
 
@@ -551,9 +549,8 @@ struct LiveSessionView: View {
             }
             if let check = LiveSessionPlaceMap.clockCheck(for: session) {
                 Text(check.note).font(.caption).foregroundStyle(AppColors.secondaryText)
-                Button("Use the start the clock shows") { controller.useImpliedStart() }
+                Button { controller.useImpliedStart() } label: { Text("Use the start the clock shows").frame(minHeight: 44).contentShape(Rectangle()) }
                     .buttonStyle(.bordered)
-                    .frame(minHeight: 44)
             }
             if session.kind == .meeting {
                 Text("Line it up with the meeting's transcript (.vtt, .srt, .docx or .txt) to place your Margins on what was said. You can add the recording too.")
@@ -605,10 +602,9 @@ struct PositionNudgeRow: View {
     }
 
     private func nudge(_ title: String, _ delta: Int, _ accessibility: String) -> some View {
-        Button(title) { adjustmentMs += delta }
+        Button { adjustmentMs += delta } label: { Text(title).minimumTapTarget() }
             .buttonStyle(.bordered)
             .font(.caption.monospacedDigit())
-            .frame(minHeight: 44)
             .accessibilityLabel(accessibility)
     }
 }
@@ -679,12 +675,12 @@ private struct LiveSessionEndCard: View {
             }
             .filledActionButton()
             .accessibilityIdentifier("liveSession.confirmEnd")
-            Button("It's still going. Remind me in 15 minutes", action: onStillGoing)
+            Button(action: onStillGoing) {
+                Text("It's still going. Remind me in 15 minutes").frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+            }
                 .buttonStyle(.bordered)
-                .frame(maxWidth: .infinity, minHeight: 44)
                 .accessibilityIdentifier("liveSession.stillGoing")
-            Button("Cancel", action: onCancel)
-                .frame(maxWidth: .infinity, minHeight: 44)
+            Button(action: onCancel) { Text("Cancel").frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle()) }
                 .accessibilityIdentifier("liveSession.cancelEnd")
         }
         .padding(16)

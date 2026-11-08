@@ -50,8 +50,9 @@ struct PlaybackMarginsView: View {
                             showDetails: { selectedSharedMargin = row }, play: { model.playSharedMarginMoment(row) })
                     }
                 }
-                Button("All Margins and export", systemImage: "square.and.arrow.up", action: model.openMargins)
-                    .frame(minHeight: 44)
+                Button(action: model.openMargins) {
+                    Label("All Margins and export", systemImage: "square.and.arrow.up").frame(minHeight: 44).contentShape(Rectangle())
+                }
                     .accessibilityIdentifier("playback.margins.collection.button")
             }
             .padding(.horizontal, 22)

@@ -164,10 +164,9 @@ struct PinnedMarginCardView: View {
             Button { perform(action.job) } label: { wide(action.title, symbol(action.job), shares: action.job != .retry) }
                 .buttonStyle(SecondaryButtonStyle())
         case .quiet:
-            Button(action.title) { perform(action.job) }
+            Button { perform(action.job) } label: { Text(action.title).minimumTapTarget() }
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.white.opacity(0.85))
-                .frame(minHeight: 44)
         }
     }
 

@@ -17,10 +17,11 @@ struct ExperienceReplyChoiceRow: View {
                     .foregroundStyle(captionColor)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("\(identifierPrefix).replyCaption.label")
-                Button(title, action: switchReply)
+                Button(action: switchReply) {
+                    Text(title).frame(minHeight: 44, alignment: .leading).contentShape(Rectangle())
+                }
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(AppColors.listeningAccent)
-                    .frame(minHeight: 44, alignment: .leading)
                     .accessibilityIdentifier("\(identifierPrefix).replyToggle.button")
             }
         }

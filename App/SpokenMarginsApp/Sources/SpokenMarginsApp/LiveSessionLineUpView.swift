@@ -106,9 +106,8 @@ struct LiveSessionLineUpView: View {
                             .font(.caption.monospacedDigit().weight(.semibold))
                         Spacer()
                         if recordingURL != nil {
-                            Button("Hear") { hear(placed.offsetMs) }
+                            Button { hear(placed.offsetMs) } label: { Text("Hear").minimumTapTarget() }
                                 .buttonStyle(.borderless)
-                                .frame(minHeight: 44)
                                 .accessibilityLabel("Hear the recording at \(LiveSessionPositionMap.clock(placed.offsetMs))")
                         }
                     }

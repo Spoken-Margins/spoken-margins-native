@@ -278,10 +278,11 @@ struct SettingsScreen: View {
                                 }
                             }
                             if list.showsToggle {
-                                Button(list.toggleTitle) {
+                                Button {
                                     withAnimation { showsAllRecentlyDeleted.toggle() }
+                                } label: {
+                                    Text(list.toggleTitle).frame(minHeight: 44).contentShape(Rectangle())
                                 }
-                                .frame(minHeight: 44)
                                 .accessibilityHint(list.toggleHint)
                                 .accessibilityIdentifier("recentlyDeleted.toggle.button")
                             }

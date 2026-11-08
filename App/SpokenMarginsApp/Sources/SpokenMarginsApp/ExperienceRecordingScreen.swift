@@ -261,9 +261,10 @@ struct ExperienceRecordingView: View {
                 .accessibilityIdentifier("recording.retryMicrophone.button")
             }
             if isPreparing || model.snapshot.isRecording {
-                Button("Write instead", systemImage: "square.and.pencil", action: writeInstead)
+                Button(action: writeInstead) {
+                    Label("Write instead", systemImage: "square.and.pencil").frame(minHeight: 44).contentShape(Rectangle())
+                }
                     .foregroundStyle(.white)
-                    .frame(minHeight: 44)
                     .disabled(model.isFinishingInterjection)
                     .accessibilityIdentifier("recording.writeInstead.button")
                     // Attached to the button, so on iPad the dialog points at it.
