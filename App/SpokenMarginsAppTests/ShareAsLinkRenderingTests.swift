@@ -13,6 +13,18 @@ final class ShareAsLinkRenderingTests: XCTestCase {
     /// The preview's width on a 375 pt-wide phone, the narrowest iOS 26 runs on, less 16 pt of padding on each side.
     private static let narrowestWidth: CGFloat = 343
 
+    /// #3751 audit: sharing by link recorded no share signal (#483), though the file sheet does. The link's sheet now
+    /// reports a completed share, and only a completed one.
+    func testTheLinkSheetReportsACompletedShareOnly() {
+        var shared = 0
+        let sheet = ShareLinkActivityView(link: URL(string: "https://example.test/l/abc#k")!, companionFile: nil) { shared += 1 }
+        let controller = sheet.makeController()
+        controller.completionWithItemsHandler?(nil, false, nil, nil)
+        XCTAssertEqual(shared, 0, "a cancelled sheet is not a share")
+        controller.completionWithItemsHandler?(nil, true, nil, nil)
+        XCTAssertEqual(shared, 1)
+    }
+
     func testTheStatusLinesAreEmptyUntilALinkFailsOrNeedsItsFile() throws {
         for size in [DynamicTypeSize.large, .accessibility5] {
             let idle = try render(ShareLinkStatusLines(state: .idle, companionNote: nil), name: "status-idle", size: size)

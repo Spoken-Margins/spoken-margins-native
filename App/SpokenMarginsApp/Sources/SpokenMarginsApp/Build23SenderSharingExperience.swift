@@ -30,7 +30,9 @@ struct Build23SenderSharingExperience: View {
     private func withShareLink(_ content: some View) -> some View {
         #if SM_SHARE_LINK_CREATION
         content
-            .modifier(ShareLinkPresentation(sender: linkSender, packageURL: coordinator.verifiedShareFileURL))
+            .modifier(ShareLinkPresentation(sender: linkSender, packageURL: coordinator.verifiedShareFileURL) { packet in
+                coordinator.recordSystemShareCompleted(packetURL: packet)
+            })
             .task { isLinkOffered = await linkSender.isOffered() }
         #else
         content
@@ -129,16 +131,16 @@ struct Build23SenderSharingExperience: View {
             isAutoCleanChoicePresented = coordinator.snapshot.needsAutoCleanDecision
         }
         .onCompatibleChange(of: snapshot.previewState) { previewState in
-            switch previewState {
-            case .ready where pendingShare != nil:
-                let requested = pendingShare
+            let stage = coordinator.snapshot.stage
+            if previewState == .ready, stage != .select, let requested = pendingShare {
                 pendingShare = nil
-                if let requested { deliver(requested) }
-            case .failed, .stale:
-                pendingShare = nil
-            default:
-                break
+                deliver(requested)
+                return
             }
+            dropStaleShareRequests(stage: stage, previewState: previewState)
+        }
+        .onCompatibleChange(of: snapshot.stage) { stage in
+            dropStaleShareRequests(stage: stage, previewState: coordinator.snapshot.previewState)
         }
         .alert("Clean selected Margins automatically?", isPresented: $isAutoCleanChoicePresented) {
             Button("Clean selected") {
@@ -183,7 +185,7 @@ struct Build23SenderSharingExperience: View {
             .disabled(!snapshot.canAdvance || snapshot.isPreparingAll)
             .accessibilityIdentifier("build23.sender.select.continue")
         case .review where sharesLink:
-            linkShareButton(isWorking: isMakingLink || pendingShare == .link)
+            linkShareButton(isWorking: Build23ShareRequestPolicy.showsMakingLink(isMakingLink: isMakingLink, pendingShare: pendingShare))
                 .disabled(!snapshot.canAdvance || isMakingLink)
                 .accessibilityIdentifier("build23.sender.review.share")
         case .review:
@@ -194,7 +196,7 @@ struct Build23SenderSharingExperience: View {
             .disabled(!snapshot.canAdvance)
             .accessibilityIdentifier("build23.sender.review.share")
         case .recipientPreview where sharesLink:
-            linkShareButton(isWorking: isMakingLink || snapshot.previewState == .building)
+            linkShareButton(isWorking: Build23ShareRequestPolicy.showsMakingLink(isMakingLink: isMakingLink, pendingShare: pendingShare))
                 .disabled(snapshot.previewState != .ready || isMakingLink)
                 .accessibilityIdentifier("build23.sender.preview.share")
         case .recipientPreview:
@@ -828,6 +830,18 @@ struct Build23SenderSharingExperience: View {
         if case .failed = coordinator.previewState { pendingShare = nil }
     }
 
+    /// A share asked for, or a link being made, for a packet the screen no longer shows is dropped (#3751 audit).
+    private func dropStaleShareRequests(stage: Build23SharingStage, previewState: Build23SharingPreviewState) {
+        if !Build23ShareRequestPolicy.keepsPendingShare(stage: stage, previewState: previewState) {
+            pendingShare = nil
+        }
+        #if SM_SHARE_LINK_CREATION
+        if !Build23ShareRequestPolicy.keepsLink(stage: stage, previewState: previewState), linkSender.state != .idle {
+            linkSender.reset()
+        }
+        #endif
+    }
+
     private func deliver(_ kind: Build23PendingShare) {
         switch kind {
         case .file:
@@ -858,4 +872,28 @@ struct Build23SenderSharingExperience: View {
 enum Build23PendingShare: Equatable {
     case file
     case link
+}
+
+/// When a share the listener asked for still matches what the screen shows (#3751 audit). Going back to the
+/// selection, or any change that discards the packet, drops it, so no share sheet opens for Margins they removed.
+enum Build23ShareRequestPolicy {
+    /// A link being made, or made and not yet shared, is for the packet on screen only while that packet is ready and
+    /// the listener is past the selection.
+    static func keepsLink(stage: Build23SharingStage, previewState: Build23SharingPreviewState) -> Bool {
+        stage != .select && previewState == .ready
+    }
+
+    /// A share asked for before the packet existed waits while it builds and is delivered once it's ready.
+    static func keepsPendingShare(stage: Build23SharingStage, previewState: Build23SharingPreviewState) -> Bool {
+        guard stage != .select else { return false }
+        switch previewState {
+        case .building, .ready: return true
+        case .notBuilt, .stale, .failed: return false
+        }
+    }
+
+    /// "Making link…" only while a link is made or asked for; a file asked for, or a plain preview, is not a link.
+    static func showsMakingLink(isMakingLink: Bool, pendingShare: Build23PendingShare?) -> Bool {
+        isMakingLink || pendingShare == .link
+    }
 }
