@@ -61,8 +61,9 @@ extension Gate1AppModel {
     /// `markShowLooked` only updates memory and sets `followingLookedDirty`. If the followed shows can't be read,
     /// nothing is settled and the next reload tries again.
     func reloadFollowingShowEntries() async {
-        // No store means there is nothing to wait for: the list is final (empty), not still loading.
-        guard let store else { followingShowListLoaded = true; return }
+        // No store yet (it opens lazily): not loaded, so Following stays quiet instead of flashing "not following
+        // anything". The screen's task re-runs when the Library loads (`libraryCount` is in its key).
+        guard let store else { return }
         let needsMarkers = !followingLookedLoaded
         let url = Self.followingLookedURL
         let importedEntries = listeningSignals.importedEntries
