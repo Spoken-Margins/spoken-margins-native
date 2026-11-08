@@ -160,9 +160,10 @@ extension Gate1AppModel {
                             self.diagnostics["supertonicPreparedCanonicalization:\(itemId)"] = "preparation_stopped" // #2134
                             return
                         }
-                        let attached = self.attachPreparedTextAudio(
+                        let attached = await self.attachPreparedTextAudioOffMain(
                             canonical,
                             itemId: itemId,
+                            manifestId: PreparedAudioCoordinator.manifestId(itemId: itemId, signature: signature), // re-checked inside the save (#2134)
                             preparedStatus: "ready",
                             diagnosticStatus: "supertonic_full_ready",
                             replaceActivePlayback: false

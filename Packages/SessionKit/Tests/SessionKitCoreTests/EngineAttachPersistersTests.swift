@@ -131,6 +131,50 @@ final class EngineAttachPersistersTests: XCTestCase {
         XCTAssertEqual(try rig.store.loadItem(id: "item-1"), native)
     }
 
+    private func manifest(_ state: PreparedAudioState) -> PreparedAudioManifest {
+        PreparedAudioManifest(
+            id: "prepared-item-1-abc", itemId: "item-1", sourcePackageId: "source",
+            signature: TTSRenderSignature(engine: "supertonic", modelRevision: "3", assetManifestHash: "a", voiceStyleHash: "v",
+                                          synthesisParametersHash: "p", normalizationVersion: "n", chunkingVersion: "c", digest: "abc"),
+            state: state, plannedChunkCount: 1, chunks: [])
+    }
+
+    /// The listener can press Stop or pick another voice while a finished render is being saved off the main thread.
+    /// The save checks the manifest inside its transaction and writes nothing for a retired one (#2134).
+    func testTextAudioSaveRefusesAManifestRetiredWhileItRan() throws {
+        for state in [PreparedAudioState.stopped, .failed, .needsRepreparation, .notPrepared] {
+            let rig = try rig(seed: [textItem()])
+            try rig.engine.prepareSpeechText(itemId: "item-1", targetType: .itemTextTTS)
+            try rig.store.savePreparedAudioManifest(manifest(state))
+            let persister = try rig.engine.preparedTextAudioPersister(itemId: "item-1")
+            let before = try rig.store.loadItem(id: "item-1")
+            let writesBefore = rig.writes()
+            XCTAssertThrowsError(try persister.persist(itemId: "item-1", prepared: prepared(), manifestId: "prepared-item-1-abc"), "\(state)") {
+                XCTAssertEqual($0 as? PreparedTextAudioRefusal, .preparationRetired)
+            }
+            XCTAssertEqual(rig.writes(), writesBefore, "\(state): nothing is written")
+            XCTAssertEqual(try rig.store.loadItem(id: "item-1"), before)
+            XCTAssertNil(try rig.store.loadTranscriptTimeline(itemId: "item-1"))
+        }
+    }
+
+    func testTextAudioSaveGoesAheadForALiveManifestAndForNoManifest() throws {
+        for state in [PreparedAudioState.preparing, .pausedForThermal, .readyOffline] {
+            let rig = try rig(seed: [textItem()])
+            try rig.engine.prepareSpeechText(itemId: "item-1", targetType: .itemTextTTS)
+            try rig.store.savePreparedAudioManifest(manifest(state))
+            let persisted = try rig.engine.preparedTextAudioPersister(itemId: "item-1")
+                .persist(itemId: "item-1", prepared: prepared(), manifestId: "prepared-item-1-abc")
+            XCTAssertNotNil(persisted.updated, "\(state)")
+        }
+        // A manifest that does not exist is not refused, as `refusesCompletion` has it.
+        let rig = try rig(seed: [textItem()])
+        try rig.engine.prepareSpeechText(itemId: "item-1", targetType: .itemTextTTS)
+        let persisted = try rig.engine.preparedTextAudioPersister(itemId: "item-1")
+            .persist(itemId: "item-1", prepared: prepared(), manifestId: "prepared-item-1-missing")
+        XCTAssertNotNil(persisted.updated)
+    }
+
     func testTextAudioPersisterNeedsTheCapability() throws {
         let rig = try rig(capable: false, seed: [textItem()])
         XCTAssertThrowsError(try rig.engine.preparedTextAudioPersister(itemId: "item-1"))
@@ -189,6 +233,63 @@ final class EngineAttachPersistersTests: XCTestCase {
         XCTAssertThrowsError(try rig.engine.attachTranscriptTimeline(itemId: "item-1", timeline: rawTimeline()))
         XCTAssertEqual(rig.writes(), writesBefore)
         XCTAssertNil(try rig.store.loadTranscriptTimeline(itemId: "item-1"))
+    }
+
+    /// The persister runs off the main thread, so the listener can trash or edit the item while its heavy step runs.
+    /// The item saved is the one stored at the write, not the one read when the work began (#2509).
+    func testTranscriptTimelineKeepsAnItemChangeThatLandedDuringTheHeavyStep() throws {
+        let rig = try rig(seed: [podcast(status: "needs_transcript")])
+        let persister = try rig.engine.transcriptTimelinePersister(itemId: "item-1")
+        let normalized = try persister.normalize(itemId: "item-1", timeline: rawTimeline())
+
+        // Lands between the heavy step and the write: the listener trashes it and renames it.
+        var changed = try rig.store.loadItem(id: "item-1")
+        changed.title = "Renamed while it ran"
+        changed.deletedAt = Date(timeIntervalSince1970: 1_760_000_500)
+        try rig.store.saveItem(changed)
+
+        let persisted = try persister.commit(normalized, itemId: "item-1")
+        let stored = try rig.store.loadItem(id: "item-1")
+        XCTAssertEqual(stored.title, "Renamed while it ran")
+        XCTAssertEqual(stored.deletedAt, Date(timeIntervalSince1970: 1_760_000_500), "the trash is not undone")
+        XCTAssertEqual(stored.text, "first line second line")
+        XCTAssertEqual(stored.transcriptId, "transcript-item-1")
+        XCTAssertEqual(persisted.item, stored)
+    }
+
+    /// A publisher's chapters can land between the heavy step and the write; the timeline saved keeps them.
+    func testTranscriptTimelineKeepsPublisherChaptersThatLandedDuringTheHeavyStep() throws {
+        let rig = try rig(seed: [podcast(status: "needs_transcript")])
+        let persister = try rig.engine.transcriptTimelinePersister(itemId: "item-1")
+        let normalized = try persister.normalize(itemId: "item-1", timeline: rawTimeline())
+        XCTAssertNil(normalized.keptChapters)
+
+        let collection = chapters(.podcasting20JSON, ["One", "Two"])
+        XCTAssertNotNil(try PublisherChaptersPersister(repository: rig.store, publisher: nil).persist(itemId: "item-1", collection: collection))
+        let publisherChapters = try XCTUnwrap(try rig.store.loadTranscriptTimeline(itemId: "item-1")?.timeline.chapters)
+        XCTAssertFalse(publisherChapters.isEmpty)
+
+        _ = try persister.commit(normalized, itemId: "item-1")
+        let saved = try XCTUnwrap(try rig.store.loadTranscriptTimeline(itemId: "item-1")?.timeline)
+        XCTAssertEqual(saved.chapters.map(\.title), ["One", "Two"], "the publisher's chapters are not replaced by the stale step")
+        XCTAssertEqual(saved.chapters.map(\.startMs), publisherChapters.map(\.startMs))
+        XCTAssertEqual(saved.segments.map(\.id), ["a", "b"])
+    }
+
+    func testTranscriptTimelineWritesTheTimelineAndItemInOneCommit() throws {
+        let rig = try rig(seed: [podcast(status: "needs_transcript")])
+        let persister = try rig.engine.transcriptTimelinePersister(itemId: "item-1")
+        let writesBefore = rig.writes()
+        _ = try persister.persist(itemId: "item-1", timeline: rawTimeline())
+        XCTAssertEqual(rig.writes() - writesBefore, 1, "the timeline and the item land together or not at all")
+    }
+
+    func testTranscriptTimelineForAnUnknownItemWritesNothing() throws {
+        let rig = try rig(seed: [podcast(status: "needs_transcript")])
+        let persister = try rig.engine.transcriptTimelinePersister(itemId: "item-missing")
+        let writesBefore = rig.writes()
+        XCTAssertThrowsError(try persister.persist(itemId: "item-missing", timeline: rawTimeline()))
+        XCTAssertEqual(rig.writes(), writesBefore)
     }
 
     // MARK: Publisher chapters

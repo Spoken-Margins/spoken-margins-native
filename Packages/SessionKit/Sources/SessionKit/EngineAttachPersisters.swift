@@ -20,6 +20,12 @@ public struct PersistedPreparedTextAudio: Sendable {
     public let prepared: PreparedTextAudio
 }
 
+/// Why a prepared-audio save was refused with nothing written.
+public enum PreparedTextAudioRefusal: Error, Equatable, Sendable {
+    /// A Stop, a failure or a new voice retired the manifest the audio was rendered under.
+    case preparationRetired
+}
+
 public struct PreparedTextAudioPersister: Sendable {
     let repository: any SessionRepository
     let profile: RuntimeCapabilityProfile
@@ -27,18 +33,26 @@ public struct PreparedTextAudioPersister: Sendable {
     let publisher: PublisherAudioPlayback?
 
     /// Loads the item, lets the guard decide, then writes the prepared audio's timeline and item.
-    public func persist(itemId: String, prepared: PreparedTextAudio) throws -> PersistedPreparedTextAudio {
+    ///
+    /// A caller that rendered the audio under a prepared-audio manifest passes its id. The write then also checks, in
+    /// the same transaction, that a Stop, a failure or a new voice has not retired that manifest while this ran off the
+    /// main thread (#2134), and throws `PreparedTextAudioRefusal.preparationRetired` with nothing written if it has.
+    public func persist(itemId: String, prepared: PreparedTextAudio, manifestId: String? = nil) throws -> PersistedPreparedTextAudio {
         let item = try repository.loadItem(id: itemId)
         guard SessionEngine.shouldPrepareGeneratedTextAudio(for: item, profile: profile) else {
             return PersistedPreparedTextAudio(stored: item, updated: nil, prepared: prepared)
         }
-        let updated = try write(prepared, to: item)
+        let updated = try write(prepared, to: item, manifestId: manifestId)
         return PersistedPreparedTextAudio(stored: item, updated: updated, prepared: prepared)
     }
 
     /// Checks the source text is still what the audio was made from, then writes it (one transaction when the store has them).
-    func write(_ prepared: PreparedTextAudio, to item: Item) throws -> Item {
+    func write(_ prepared: PreparedTextAudio, to item: Item, manifestId: String? = nil) throws -> Item {
         let write = { () throws -> Item in
+            if let manifestId, let manifest = try repository.loadPreparedAudioManifest(id: manifestId),
+               !PreparedAudioEnqueue.mayComplete(manifest.state) {
+                throw PreparedTextAudioRefusal.preparationRetired
+            }
             let stored = try repository.loadItem(id: item.id)
             guard stored.deletedAt == nil, stored.text == item.text,
                   SessionEngine.preparedAudioMatches(prepared, item: stored) else {
@@ -74,6 +88,8 @@ public struct PreparedTextAudioPersister: Sendable {
 
 // MARK: Source transcript timeline
 
+typealias NormalizedTranscript = (text: String, timeline: TranscriptTimeline)
+
 public struct PersistedTranscriptTimeline: Sendable {
     public let item: Item
 }
@@ -83,16 +99,50 @@ public struct TranscriptTimelinePersister: Sendable {
     let publisher: PublisherAudioPlayback?
 
     /// Keeps a publisher's chapters over the new timeline's, normalises the text, then saves the timeline and item.
+    /// The reads and the heavy text step come first, outside any write. The item is then loaded again and both rows
+    /// are saved in one transaction, so a trash, a completion mark or a title edit that landed while this ran off the
+    /// main thread is kept, not overwritten by the item as it was when the work began.
     public func persist(itemId: String, timeline: TranscriptTimeline) throws -> PersistedTranscriptTimeline {
+        let prepared = try normalize(itemId: itemId, timeline: timeline)
+        let write = { () throws -> PersistedTranscriptTimeline in try commit(prepared, itemId: itemId) }
+        if let store = repository as? any SessionRepositoryTransaction { return try store.withSessionTransaction(write) }
+        return try write()
+    }
+
+    /// What the heavy step made, with what it was made from, so the write can tell whether that moved.
+    struct PreparedTranscript {
+        let timeline: TranscriptTimeline
+        /// The publisher's chapters kept over the new timeline's, nil when none were.
+        let keptChapters: [MediaTimelineChapter]?
+        let normalized: NormalizedTranscript
+    }
+
+    /// The reads and the heavy text step. Writes nothing.
+    func normalize(itemId: String, timeline: TranscriptTimeline) throws -> PreparedTranscript {
+        try normalize(timeline, keeping: try publisherChapters(itemId: itemId))
+    }
+
+    private func normalize(_ timeline: TranscriptTimeline, keeping chapters: [MediaTimelineChapter]?) -> PreparedTranscript {
+        var preferred = timeline
+        if let chapters { preferred.chapters = chapters }
+        return PreparedTranscript(timeline: timeline, keptChapters: chapters, normalized: SessionEngine.normalizedSourceTranscriptTimeline(preferred))
+    }
+
+    /// The chapters a publisher's map has put on the stored timeline, which a transcript must not replace.
+    private func publisherChapters(itemId: String) throws -> [MediaTimelineChapter]? {
+        guard let map = try repository.loadListeningMap(itemId: itemId),
+              SessionEngine.publisherChapterSource(from: map.id) != nil,
+              let existing = try repository.loadTranscriptTimeline(itemId: itemId)?.timeline.chapters,
+              !existing.isEmpty else { return nil }
+        return existing
+    }
+
+    /// Saves the timeline and the item as it is stored now. A publisher's chapters that landed since the heavy step are
+    /// kept over this timeline's: the step runs again then, which is rare.
+    func commit(_ prepared: PreparedTranscript, itemId: String) throws -> PersistedTranscriptTimeline {
         var item = try repository.loadItem(id: itemId)
-        var timelineWithPreferredChapters = timeline
-        if let map = try repository.loadListeningMap(itemId: itemId),
-           SessionEngine.publisherChapterSource(from: map.id) != nil,
-           let existingChapters = try repository.loadTranscriptTimeline(itemId: itemId)?.timeline.chapters,
-           !existingChapters.isEmpty {
-            timelineWithPreferredChapters.chapters = existingChapters
-        }
-        let normalized = SessionEngine.normalizedSourceTranscriptTimeline(timelineWithPreferredChapters)
+        let chapters = try publisherChapters(itemId: itemId)
+        let normalized = chapters == prepared.keptChapters ? prepared.normalized : normalize(prepared.timeline, keeping: chapters).normalized
         let transcriptId = item.transcriptId ?? "transcript-\(item.id)"
         try repository.saveTranscriptTimeline(SourceTranscriptTimeline(
             id: transcriptId,
