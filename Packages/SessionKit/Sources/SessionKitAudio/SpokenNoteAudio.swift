@@ -45,6 +45,9 @@ public final class SystemSpokenNoteTakeRecorder: NSObject, SpokenNoteTakeRecordi
     private var capturedHighWaterMs = 0
     private var interruptionObserver: NSObjectProtocol?
 
+    /// `.allowAirPlay` keeps a HomePod as the output while a take records (#3633). Named so a test can set it on a real session.
+    static let recordingOptions: AVAudioSession.CategoryOptions = [.defaultToSpeaker, .allowBluetoothHFP, .allowAirPlay]
+
     public override init() {
         super.init()
     }
@@ -59,7 +62,7 @@ public final class SystemSpokenNoteTakeRecorder: NSObject, SpokenNoteTakeRecordi
 
     public func begin(writingTo url: URL) async throws {
         let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playAndRecord, mode: .spokenAudio, options: [.defaultToSpeaker, .allowBluetoothHFP])
+        try session.setCategory(.playAndRecord, mode: .spokenAudio, options: Self.recordingOptions)
         try session.setActive(true)
         let settings: [String: Any] = [
             AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
