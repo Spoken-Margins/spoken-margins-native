@@ -18,7 +18,7 @@ extension Gate1AppModel {
         Task { @MainActor [weak self] in
             guard let self else { return }
             let outcome = await marginOutput.saveSpokenNote(noteId: noteId, title: title, applicationSupport: support)
-            presentSpokenNoteFolderOutcome(outcome, title: title)
+            hangTelemetry.labels.scoped("spokenNote.folderExport.publish") { presentSpokenNoteFolderOutcome(outcome, title: title) }
         }
     }
 

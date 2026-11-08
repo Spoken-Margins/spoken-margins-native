@@ -14,8 +14,6 @@ struct SpokenNoteFolderExporter {
         let audioSignature: String
         /// What the files leave out, in plain words, or empty.
         let leftOut: String
-
-        func discard() { files.discard() }
     }
 
     static func prepare(noteId: String, title: String, applicationSupport: URL?) async -> Result<Prepared, SpokenNoteFolderOutcome> {

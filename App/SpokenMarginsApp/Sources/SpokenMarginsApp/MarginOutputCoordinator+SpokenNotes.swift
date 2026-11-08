@@ -42,7 +42,8 @@ extension MarginOutputCoordinator {
         case .success(let made): prepared = made
         case .failure(let outcome): return outcome
         }
-        defer { prepared.discard() }
+        // The temporary copies go off the main thread; nothing waits for it.
+        defer { let made = prepared.files; Task.detached(priority: .utility) { made.discard() } }
         let writer: SpokenNoteFolderWriter
         if let existing = spokenNoteWriter {
             writer = existing
@@ -57,7 +58,7 @@ extension MarginOutputCoordinator {
             // Re-read: the listener can pause or remove a destination while an earlier one is writing.
             guard let current = self.destination(destination.id), current.isEnabled else { continue }
             let folder: URL
-            do { folder = try resolveFolder(of: current) } catch {
+            do { folder = try MainThreadOperationLabels.shared.scoped("spokenNoteResolveFolder") { try resolveFolder(of: current) } } catch {
                 deliveries.append(.init(folderName: current.name, state: .folderUnavailable))
                 continue
             }
