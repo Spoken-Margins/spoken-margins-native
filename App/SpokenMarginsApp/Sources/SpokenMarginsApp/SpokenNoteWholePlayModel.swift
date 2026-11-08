@@ -21,6 +21,7 @@ final class SpokenNoteWholePlayModel: ObservableObject {
 
     /// The screen that asked has gone: a play that finishes now does not start anything.
     private var isAbandoned = false
+    private var timelineRequests = 0
 
     /// Plays the note: pauses or resumes it when it is already the open session, otherwise gets it ready and starts it.
     /// A note not played before starts at its beginning; one left part-way (or after a relaunch) continues where it
@@ -29,6 +30,7 @@ final class SpokenNoteWholePlayModel: ObservableObject {
     func play(noteId: String, app: Gate1AppModel, beforeStart: (@MainActor () async -> Void)? = nil) {
         let itemId = SpokenNoteItem.itemId(forNoteId: noteId)
         let isOpenSession = app.hasActiveSession && app.snapshot.itemId == itemId && app.snapshot.phase != .finished
+            && app.snapshot.targetType == TargetType.transcriptBackedMedia.rawValue
         // Pause is at once. Nothing can have been added to a note that is playing (recording pauses it first).
         if isOpenSession, app.snapshot.status.isPlaybackActive {
             app.playPause()
@@ -56,6 +58,7 @@ final class SpokenNoteWholePlayModel: ObservableObject {
             isPreparing = false
             switch result {
             case .success(let prepared):
+                timelineRequests += 1
                 timeline = prepared.timeline
                 guard !isAbandoned else { return }
                 let labels = MainThreadOperationLabels.shared // so a slow start names its step (#2256)
@@ -78,11 +81,14 @@ final class SpokenNoteWholePlayModel: ObservableObject {
     /// Reads where the note's takes sit in the joined file, for a note whose audio was joined before (it may be playing
     /// now, or paused from earlier). A note never played has no joined file, and no timeline.
     func refreshTimeline(note: SpokenNote, noteFolder: URL) {
+        timelineRequests += 1
+        let request = timelineRequests
         Task {
             let found = await Task.detached(priority: .utility) {
                 SpokenNoteWholePlayback.timeline(of: note, inFolder: noteFolder)
             }.value
-            if found != timeline { timeline = found }
+            // Reads can finish out of order: only the newest request's answer is kept.
+            if request == timelineRequests, found != timeline { timeline = found }
         }
     }
 

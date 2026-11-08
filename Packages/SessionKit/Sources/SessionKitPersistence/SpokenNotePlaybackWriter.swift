@@ -17,6 +17,13 @@ extension SQLiteSessionStore: SpokenNotePlaybackWriting {
                 sourceType: .nativeMediaFile, url: audioURL.absoluteString, durationMs: durationMs,
                 nativeMediaId: "spoken-note-audio-\(itemId)"
             )
+            // Before #3662 a note could be started as text read aloud, which left a session that would resume in a synthetic
+            // voice. Its audio is the listener's own now, so such a session is set aside (kept, not deleted) and Play starts afresh.
+            for var session in try loadSessions(itemId: itemId)
+            where session.currentTargetType == .itemTextTTS && session.phase != .abandoned && session.status == "in_progress" {
+                session.phase = .abandoned
+                try saveSession(session)
+            }
             let stored = try loadTranscriptTimeline(itemId: itemId)
             // Playing the same note again, with nothing added, writes nothing.
             if row.media == media, row.text == text, row.transcriptId == transcriptId, stored?.timeline == timeline { return true }

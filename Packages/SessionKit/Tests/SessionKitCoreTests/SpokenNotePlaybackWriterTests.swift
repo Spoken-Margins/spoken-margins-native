@@ -101,4 +101,41 @@ final class SpokenNotePlaybackWriterTests: XCTestCase {
         XCTAssertTrue(try store.attachPlayback(itemId: item.id, audioURL: audio, durationMs: 1000, timeline: timeline("One."), text: "One."))
         XCTAssertEqual(AutomaticEpisodeMapJobs.candidates(itemIds: [item.id, control.id], store: store), [control.id])
     }
+
+    func testANoteNotMadeReadyIsNeverStartedAsTextToSpeech() throws {
+        let store = try SQLiteSessionStore(path: path)
+        var note = SpokenNote(id: "n")
+        note.appendTake(SpokenNoteTake(id: "a", audioFileName: "take-a.m4a", durationMs: 1000, createdAt: Date(),
+                                       sentences: [SpokenNoteSentence(text: "Hello there.", startMs: 0, endMs: 500)]))
+        let item = SpokenNoteItem.makeItem(note: note, createdAt: Date())
+        try store.saveItem(item)
+        let engine = SessionEngine(
+            profile: RuntimeCapabilityProfile(id: "test", displayName: "Test", capabilities: ["sync": ["canonical_persistence"]]),
+            repository: store
+        )
+        XCTAssertThrowsError(try engine.startSession(itemId: item.id)) { error in
+            guard case SessionKitError.invalidCommandForState(let reason) = error else { return XCTFail("\(error)") }
+            XCTAssertTrue(reason.contains("isn't ready to play"), reason)
+        }
+        XCTAssertTrue(try store.loadSessions(itemId: item.id).isEmpty, "a refused start leaves no session behind")
+    }
+
+    func testAnOldReadAloudSessionOfANoteIsSetAsideNotDeleted() throws {
+        let store = try SQLiteSessionStore(path: path)
+        let item = try savedNote(store)
+        let old = Session(
+            id: "old", itemId: item.id, status: "in_progress", phase: .itemPlayback, currentTargetType: .itemTextTTS,
+            currentTargetId: "t", position: Position(charOffset: 5, chapterId: nil), completionPercent: 10, playbackRate: 1)
+        let media = Session(
+            id: "media", itemId: item.id, status: "in_progress", phase: .itemPlayback, currentTargetType: .transcriptBackedMedia,
+            currentTargetId: "m", position: Position(charOffset: 0, mediaTimeMs: 4000, chapterId: nil), completionPercent: 20, playbackRate: 1)
+        try store.saveSession(old)
+        try store.saveSession(media)
+        XCTAssertTrue(try store.attachPlayback(itemId: item.id, audioURL: audio, durationMs: 1000, timeline: timeline("One."), text: "One."))
+        let sessions = Dictionary(uniqueKeysWithValues: try store.loadSessions(itemId: item.id).map { ($0.id, $0) })
+        XCTAssertEqual(sessions["old"]?.phase, .abandoned)
+        XCTAssertEqual(sessions["old"]?.position.charOffset, 5, "kept as it was")
+        XCTAssertEqual(sessions["media"]?.phase, .itemPlayback, "a listening session of the note's own audio is left alone")
+        XCTAssertFalse(SessionContinuation.isResumableSession(try XCTUnwrap(sessions["old"])))
+    }
 }

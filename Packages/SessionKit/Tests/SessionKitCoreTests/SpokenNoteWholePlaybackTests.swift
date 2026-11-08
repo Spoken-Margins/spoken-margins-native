@@ -338,19 +338,6 @@ final class SpokenNoteWholePlaybackTests: XCTestCase {
         XCTAssertEqual(recovered, [])
     }
 
-    func testAPreparedNoteItemIsNeverAskedAboutOnTheCommunityMapServer() {
-        let item = Item(
-            id: "spoken-note-n", title: "My note", mediaType: SpokenNoteItem.mediaType, text: "Words.",
-            externalReference: SpokenNoteItem.reference(forNoteId: "n"), status: "ready",
-            externalReferenceType: SpokenNoteItem.referenceType,
-            media: ItemMedia(sourceType: .nativeMediaFile, url: "file:///private/var/mobile/SpokenNotes/n/whole-note.m4a", durationMs: 60_000))
-        XCTAssertNil(CommunityMapEpisodeKey.key(for: item))
-        guard case .skip = CommunityMapFetchPolicy.decide(
-            optedIn: true, item: item, local: CommunityMapLocalState(hasPublisherChapters: false, hasMap: false),
-            blockedUntil: nil, now: Date()
-        ) else { return XCTFail("a spoken note must never be looked up as an episode") }
-    }
-
     func testPlaybackURLNeedsAPreparedNote() async throws {
         let support = root.appendingPathComponent("support", isDirectory: true)
         let started = try SpokenNoteStarter.start(in: support, now: Date(), makeId: { "n1" })

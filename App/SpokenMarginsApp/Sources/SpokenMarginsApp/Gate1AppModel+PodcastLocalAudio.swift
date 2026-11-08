@@ -117,21 +117,20 @@ extension Gate1AppModel {
         }
         // A file this app owns plays from that file: an imported audiobook, or a spoken note's joined audio (#3662).
         if let item = summary, item.mediaType == "audiobook" || SpokenNoteItem.isSpokenNote(mediaType: item.mediaType) {
-            let url: URL
+            let url: URL?
             if item.mediaType == "audiobook" {
                 guard let owned = resolvedOwnedAudiobookURL(for: item) else {
                     throw SessionKitError.invalidCommandForState("The imported audio file is unavailable. Restore the source audio to continue listening.")
                 }
                 url = owned
             } else {
-                // A note plays from the audio its Play made ready, and is never read aloud by a synthetic voice.
-                guard let support = try? applicationSupportDirectory(),
-                      let joined = SpokenNoteWholePlayback.playbackURL(for: item, applicationSupport: support) else {
-                    throw SessionKitError.invalidCommandForState("This note isn't ready to play yet. Open it and tap Play.")
+                // A note plays from the audio its Play made ready. One that was never made ready has no file to name here (a
+                // launch restoring its old session must not fail); the engine refuses to start it, and never reads it aloud.
+                url = (try? applicationSupportDirectory()).flatMap {
+                    SpokenNoteWholePlayback.playbackURL(for: item, applicationSupport: $0)
                 }
-                url = joined
             }
-            _ = try engine?.updatePlaybackTransport(itemId: itemId, playbackURL: url.absoluteString, replaceActivePlayback: false)
+            _ = try engine?.updatePlaybackTransport(itemId: itemId, playbackURL: url?.absoluteString, replaceActivePlayback: false)
             return
         }
         guard let coordinator = podcastDownloadCoordinator else { return }
