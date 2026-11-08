@@ -19,14 +19,21 @@ struct UserFeedbackDeliveryEffects: Sendable {
             #endif
         },
         sleep: { duration in try await Task.sleep(for: duration) },
-        assistiveTechnologyRunning: {
-            #if canImport(UIKit)
-            UIAccessibility.isVoiceOverRunning || UIAccessibility.isSwitchControlRunning
-            #else
-            false
-            #endif
-        }
+        assistiveTechnologyRunning: { AssistiveTechnology.isRunning }
     )
+}
+
+/// Whether VoiceOver or Switch Control is running. Timed cards and banners ask this one place, so none of them
+/// forgets Switch Control (#1927, #3720).
+@MainActor
+enum AssistiveTechnology {
+    static var isRunning: Bool {
+        #if canImport(UIKit)
+        UIAccessibility.isVoiceOverRunning || UIAccessibility.isSwitchControlRunning
+        #else
+        false
+        #endif
+    }
 }
 
 /// Whether the listener is touching the banner or has VoiceOver or Switch Control focus on it. The
@@ -42,6 +49,19 @@ final class FeedbackBannerHold {
     func setTouched(_ value: Bool) { touched = value }
     func setFocused(_ value: Bool) { focused = value }
     func reset() { touched = false; focused = false }
+
+    /// Waits while the listener is on the card, a second at a time. At most `maxSeconds` more, so a touch that
+    /// SwiftUI never reports as ended can't keep the card forever (#1927, #3720).
+    func waitWhileHeld(
+        maxSeconds: Int = 30,
+        sleep: (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
+    ) async throws {
+        var heldSeconds = 0
+        while isHeld, heldSeconds < maxSeconds {
+            try await sleep(.seconds(1))
+            heldSeconds += 1
+        }
+    }
 }
 
 private struct FeedbackBannerHoldKey: EnvironmentKey {

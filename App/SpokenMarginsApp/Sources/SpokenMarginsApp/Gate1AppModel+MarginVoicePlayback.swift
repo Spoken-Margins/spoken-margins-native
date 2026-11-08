@@ -237,7 +237,9 @@ extension Gate1AppModel {
         // Margins (#474): its lead-ins cross Margins already heard, and an offer would pause the review.
         guard let prompt = sharedMarginOffers.nextOffer(
             previous: previous, current: current, selectedItemID: selectedItem.id,
-            canOffer: pendingImportedCommentary == nil && playingImportedCommentary == nil
+            // A tone-only card that is still up (it has no timer with VoiceOver or Switch Control) gives way to the next Margin (#3720).
+            canOffer: (pendingImportedCommentary == nil || pendingImportedCommentary?.id == toneOnlyCardPromptID)
+                && playingImportedCommentary == nil
                 && marginMomentConductor?.sequence.isReview != true
                 && marginMomentConductor?.isPlayingVoice != true, // a moment's voice is not cut mid-sentence (#1671)
             prompts: importedCommentaryPrompts(includeAnnounced: true)
@@ -254,7 +256,10 @@ extension Gate1AppModel {
         sourceWasPlaying: Bool,
         arrival: SharedMarginPromptStyle.Arrival = .crossed
     ) {
-        let style = SharedMarginPromptStyle.style(revealMode: prompt.layer.revealMode, arrival: arrival)
+        let style = SharedMarginPromptStyle.style(
+            revealMode: prompt.layer.revealMode, arrival: arrival, assistiveTechnologyRunning: AssistiveTechnology.isRunning)
+        marginCardHold.setTouched(false) // a touch on the card before can't carry over; focus stays where it is
+        toneOnlyCardPromptID = style.isToneOnly ? prompt.id : nil
         let pausesSource = sourceWasPlaying && style.pausesSource
         sharedMarginReturn.promptShown(sourceWasPlaying: pausesSource)
         if pausesSource, snapshot.status.isPlaybackActive { pause() }
@@ -272,6 +277,9 @@ extension Gate1AppModel {
                 if autoPlays {
                     self.hangTelemetry.labels.scoped("importedCommentaryAutoPlay") { self.listenToPendingImportedCommentary() }
                 } else {
+                    // A listener still touching the card, or with focus on it, keeps it (#3720).
+                    try? await self.marginCardHold.waitWhileHeld()
+                    guard !Task.isCancelled, self.pendingImportedCommentary?.id == prompt.id else { return }
                     self.dismissPendingImportedCommentary()
                 }
             }

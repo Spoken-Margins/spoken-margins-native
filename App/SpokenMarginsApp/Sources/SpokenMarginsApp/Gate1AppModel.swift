@@ -496,6 +496,10 @@ final class Gate1AppModel: ObservableObject {
     var reviewPlaces = ReviewReturnPlaces() // the place a "Review new Margins" owes the listener, kept across launches (#474)
     var sharedMarginReturn = SharedMarginReturnClaim() // who owes the source back after a shared Margin (#997)
     var importedCommentaryAutoPlayTask: Task<Void, Never>?
+    /// Whether the listener is on the Margin card, by touch or by focus: the tone-only card's timer waits (#3720).
+    let marginCardHold = FeedbackBannerHold()
+    /// The prompt whose card is tone-only (`SharedMarginPromptStyle.isToneOnly`): a newer crossed Margin may replace it.
+    var toneOnlyCardPromptID: String?
     var bulkSharePreparationTask: Task<Void, Never>?
     var bulkSharePreparationGeneration = 0
     var shouldForceFirstSharedSourceMissForUITesting = UITestingHooks.forcesFirstSharedSourceMiss
