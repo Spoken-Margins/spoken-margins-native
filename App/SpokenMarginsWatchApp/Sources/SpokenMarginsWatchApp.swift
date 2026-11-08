@@ -90,7 +90,7 @@ struct WatchHomeView: View {
             // The screen the owner chose must fit a 41 mm Watch with no scrolling, so its lines stay short (#3494).
             let compact = playing != nil || (recorder.isRecording && recorder.choiceWasShown)
             ScrollView {
-                VStack(spacing: compact ? WatchHomeLayout.spacing : 8) {
+                VStack(spacing: compact ? CGFloat(WatchHomeLayout.spacing) : 8) {
                     stateLine(home, now: now, lines: compact ? 1 : 2)
                     if recorder.isRecording {
                         recordingScreen(home, now: now)
@@ -108,7 +108,7 @@ struct WatchHomeView: View {
                     }
                     below(home, now: now)
                 }
-                .padding(.horizontal, WatchHomeLayout.sidePadding)
+                .padding(.horizontal, CGFloat(WatchHomeLayout.sidePadding))
             }
         }
     }
@@ -142,9 +142,8 @@ struct WatchHomeView: View {
                 Text("Record")
                     .font(.headline)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .tint(.blue)
+        .buttonStyle(WatchPlateButtonStyle(fill: .blue))
         .accessibilityLabel("Record a spoken Margin")
     }
 
@@ -195,12 +194,12 @@ struct WatchHomeView: View {
         }
         // The plate fills this frame and no more, so it cannot draw over the transport row (#3674).
         .buttonStyle(WatchPlateButtonStyle(fill: tint(target)))
-        .frame(height: size)
+        .frame(height: CGFloat(size))
         .accessibilityLabel("Record a spoken Margin \(target.words.lowercased())")
     }
 
     private func transportRow(_ playing: WatchNowPlaying) -> some View {
-        HStack(spacing: WatchHomeLayout.transportSpacing) {
+        HStack(spacing: CGFloat(WatchHomeLayout.transportSpacing)) {
             transportButton(.skipBack, symbol: "gobackward", label: "Back")
             transportButton(
                 playing.isPlaying ? .pause : .play, symbol: playing.isPlaying ? "pause.fill" : "play.fill",
@@ -208,7 +207,7 @@ struct WatchHomeView: View {
             )
             transportButton(.skipForward, symbol: "goforward", label: "Forward")
         }
-        .frame(height: WatchHomeLayout(sessionRuns: false).height(of: .transport))
+        .frame(height: CGFloat(WatchHomeLayout(sessionRuns: false).height(of: .transport)))
         .disabled(!link.isReachable)
         .opacity(link.isReachable ? 1 : 0.4)
     }
