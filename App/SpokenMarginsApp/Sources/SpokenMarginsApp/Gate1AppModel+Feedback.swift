@@ -19,10 +19,10 @@ extension Gate1AppModel {
 
     /// Presents degraded-but-successful behavior without styling it as either a
     /// normal confirmation or a failure.
-    func reportWarning(_ message: String, origin: FeedbackOrigin? = nil, fileID: String = #fileID, line: Int = #line) {
+    func reportWarning(_ message: String, action: UserFeedbackEvent.Action? = nil, origin: FeedbackOrigin? = nil, fileID: String = #fileID, line: Int = #line) {
         statusMessage = message
         lastError = nil
-        presentFeedback(UserFeedbackEvent(kind: .warning, message: message, origin: origin), fileID: fileID, line: line)
+        presentFeedback(UserFeedbackEvent(kind: .warning, message: message, action: action, origin: origin), fileID: fileID, line: line)
         diagnostics["lastStatus"] = message
         diagnostics["recentFailure"] = "none"
     }

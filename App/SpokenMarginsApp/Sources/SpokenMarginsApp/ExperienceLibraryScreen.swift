@@ -474,6 +474,7 @@ struct ExperienceLibraryScreen: View {
                     row: row,
                     isCurrentItem: entry.isCurrent,
                     playbackSpeed: model.speechPlaybackRateMultiplier,
+                    spokenNoteFolders: model.marginOutput.spokenNotes,
                     onOpen: { openRow(row) },
                     onPlay: {
                         // A note plays whole, start to finish, like any item; its own screen is where a sentence is picked.
@@ -487,6 +488,10 @@ struct ExperienceLibraryScreen: View {
                     onAddToCollection: { collectionItem = row },
                     onExport: row.spokenNoteId.map { noteId -> () -> Void in
                         { noteExport.export(noteId: noteId, title: row.title, applicationSupport: try? model.applicationSupportDirectory()) }
+                    },
+                    onSaveToFolder: row.spokenNoteId.flatMap { noteId -> (() -> Void)? in
+                        guard row.isCompleted else { return nil }
+                        return { model.saveSpokenNoteToExportFolder(noteId: noteId, title: row.title) }
                     },
                     onDelete: { model.moveItemToTrash(id: row.id) }
                 )
@@ -545,6 +550,8 @@ private struct ExperienceLibraryCompactRow: View {
     var isCurrentItem = false
     /// The listener's speech speed, for a text item's estimated length (#305).
     var playbackSpeed: Double = 1
+    /// Which spoken notes were saved to the export folder, for the "Exported" word on a finished note (#3661).
+    @ObservedObject var spokenNoteFolders: SpokenNoteFolderLedger
     let onOpen: () -> Void
     let onPlay: () -> Void
     let onComplete: () -> Void
@@ -555,6 +562,8 @@ private struct ExperienceLibraryCompactRow: View {
     let onAddToCollection: () -> Void
     /// A spoken note's Export (#3660); nil for every other row.
     var onExport: (() -> Void)?
+    /// A finished spoken note's "Save to Export Folder" (#3661), the way to try again after the folder was set up.
+    var onSaveToFolder: (() -> Void)?
     let onDelete: () -> Void
 
     /// At accessibility sizes the title gets its own full-width line, with the icon and the play button together on a line
@@ -672,6 +681,10 @@ private struct ExperienceLibraryCompactRow: View {
                 Button("Export…", systemImage: "square.and.arrow.up", action: onExport)
                     .accessibilityIdentifier("library.export.\(row.id)")
             }
+            if let onSaveToFolder {
+                Button("Save to Export Folder", systemImage: "folder.badge.plus", action: onSaveToFolder)
+                    .accessibilityIdentifier("library.saveToFolder.\(row.id)")
+            }
             if row.canDelete {
                 Button("Move to Recently Deleted", systemImage: "trash", role: .destructive, action: onDelete)
             }
@@ -721,6 +734,9 @@ private struct ExperienceLibraryCompactRow: View {
             Button("Add to Collection", action: onAddToCollection)
             if let onExport {
                 Button("Export", action: onExport)
+            }
+            if let onSaveToFolder {
+                Button("Save to Export Folder", action: onSaveToFolder)
             }
             if row.canDelete {
                 Button("Move to Recently Deleted", action: onDelete)
@@ -800,9 +816,15 @@ private struct ExperienceLibraryCompactRow: View {
         ListeningTimeEstimator.libraryTotalText(textCharacterCount: row.textCharacterCount, playbackSpeed: playbackSpeed)
     }
 
+    /// A finished spoken note that was saved to the export folder says so, in words (#3661).
+    private var isSavedToExportFolder: Bool {
+        guard let noteId = row.spokenNoteId else { return false }
+        return !spokenNoteFolders.savedFolders(forNoteId: noteId).isEmpty
+    }
+
     private var listeningLabel: String? {
         if row.isCompleted {
-            "Completed"
+            isSavedToExportFolder ? "Completed · Exported" : "Completed"
         } else if let progress = row.continuationProgressPercent {
             "\(progress)%"
         } else {

@@ -70,7 +70,7 @@ struct MarginOutputDestinationsSection: View {
             if coordinator.destinations.contains(where: \.isEnabled) {
                 Button("Retry Delivery") { Task { await coordinator.retry() } }
             }
-            Text("Writes each text Margin as a Markdown note in a folder you choose, such as an Obsidian vault. Add more than one to send different Margins to different places. It doesn’t change how Margins play. Notes are written while the app is active and retried when you return. Existing Margins are included. Audio recordings and full source text are excluded. Your folder provider may sync files to its cloud.").font(.footnote).foregroundStyle(.secondary)
+            Text("Writes each text Margin as a Markdown note in a folder you choose, such as an Obsidian vault. Add more than one to send different Margins to different places. It doesn’t change how Margins play. Notes are written while the app is active and retried when you return. Existing Margins are included. Audio recordings and full source text are not part of Margin notes. A spoken note you mark complete is saved here as an audio file and a text file. Your folder provider may sync files to its cloud.").font(.footnote).foregroundStyle(.secondary)
         }
         .fileImporter(isPresented: $choosingFolder, allowedContentTypes: [.folder]) { result in
             switch result {
