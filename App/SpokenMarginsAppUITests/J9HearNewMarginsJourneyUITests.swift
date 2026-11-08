@@ -150,6 +150,73 @@ final class J9HearNewMarginsJourneyUITests: XCTestCase {
         }
     }
 
+    /// #3597 (large type, #1933): the Margin card on Now is as tall as its words, keeps every button on the screen and
+    /// reachable, leaves the playback controls reachable, and never calls the episode an "item" or the review a "review",
+    /// in the lead-in and while the friend's Margin plays, at the largest accessibility text size. The words and the
+    /// buttons of each stage are host-tested (`PinnedMarginCardTests`); this is the layout half. Attachments carry the
+    /// card's size per stage for the desk to read.
+    func testTheMarginCardFitsAtTheLargestTextSize() throws {
+        app.launchArguments += ["-UIPreferredContentSizeCategoryName", UIContentSizeCategory.accessibilityExtraExtraExtraLarge.rawValue]
+        XCTContext.runActivity(named: "J9 large text, step 1: The episode is in the Library (offline seed)") { _ in
+            app.launch()
+            XCTAssertTrue(element("library.row.\(itemId)").waitForExistence(timeout: 8), "Seeded episode did not appear in the Library")
+        }
+
+        XCTContext.runActivity(named: "J9 large text, step 2: Force-quit; a friend's Margin arrives; hear only the new Margin") { _ in
+            app.terminate()
+            app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_KEEP_LIBRARY"] = "1"
+            app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_COOP"] = "1"
+            app.launch()
+            tap("library.row.\(itemId)")
+            XCTAssertTrue(element("item.screen").waitForExistence(timeout: 8), "The item screen did not open")
+            tap("item.reviewNewMargins.button")
+            XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8), "Now Playing did not open")
+        }
+
+        XCTContext.runActivity(named: "J9 large text, step 3: The lead-in card fits, and its buttons can be tapped") { _ in
+            XCTAssertTrue(element("review.comingUp").waitForExistence(timeout: 8), "No lead-in before the friend's Margin")
+            assertCardFits(stage: "lead-in", buttons: ["marginMoment.end"], oneOf: ["marginCard.next", "marginMoment.playNow"])
+        }
+
+        XCTContext.runActivity(named: "J9 large text, step 4: The playing card fits, with one button to skip the Margin") { _ in
+            XCTAssertTrue(element("review.playing").waitForExistence(timeout: 25), "The friend's Margin never started playing")
+            assertCardFits(stage: "playing", buttons: ["marginMoment.skip"], oneOf: [])
+        }
+    }
+
+    /// The card is on the screen, no taller than 60% of it, its buttons are hittable and inside it, the last row sits
+    /// close under the card's bottom edge (no blank row), the dock's play button is still reachable, and no line of it
+    /// says "item" or "review".
+    private func assertCardFits(stage: String, buttons identifiers: [String], oneOf alternatives: [String]) {
+        let card = element("marginCard")
+        XCTAssertTrue(card.waitForExistence(timeout: 5), "No Margin card in the \(stage) stage")
+        let window = app.windows.firstMatch.frame
+        let frame = card.frame
+        XCTAssertTrue(window.contains(frame), "The \(stage) card is off the screen: \(frame) in \(window)")
+        XCTAssertLessThan(frame.height, window.height * 0.6, "The \(stage) card takes more than 60% of the screen: \(frame.height) of \(window.height)")
+        var found: [XCUIElement] = identifiers.map { app.buttons[$0].firstMatch }
+        if !alternatives.isEmpty {
+            let main = alternatives.map { app.buttons[$0].firstMatch }.first(where: { $0.exists })
+            XCTAssertNotNil(main, "The \(stage) card has none of its main buttons: \(alternatives)")
+            if let main { found.insert(main, at: 0) }
+        }
+        for button in found {
+            XCTAssertTrue(button.waitForExistence(timeout: 5), "The \(stage) card lost a button: \(button.identifier)")
+            XCTAssertTrue(button.isHittable, "The \(stage) card's button can't be tapped: \(button.identifier)")
+            XCTAssertTrue(frame.insetBy(dx: -2, dy: -2).contains(button.frame), "\(button.identifier) sticks out of the \(stage) card: \(button.frame) in \(frame)")
+        }
+        if let lowest = found.map({ $0.frame.maxY }).max() {
+            XCTAssertLessThanOrEqual(frame.maxY - lowest, 32, "A blank row sits under the \(stage) card's last button: \(frame.maxY - lowest) pt")
+        }
+        XCTAssertTrue(playPause.exists && playPause.isHittable, "The dock's play button is out of reach under the \(stage) card")
+        let words = card.staticTexts.allElementsBoundByIndex.map(\.label).joined(separator: " | ")
+        XCTAssertNil(words.lowercased().range(of: #"\b(item|review)\b"#, options: .regularExpression), "The \(stage) card says item or review: \(words)")
+        let note = XCTAttachment(string: "\(stage): card \(Int(frame.height)) pt of \(Int(window.height)) pt; words: \(words)")
+        note.name = "J9 large text, \(stage) card"
+        note.lifetime = .keepAlways
+        add(note)
+    }
+
     private var playPause: XCUIElement { app.buttons["playback.play.button"] }
 
     private func offerButton(_ identifier: String, orLabel label: String) -> XCUIElement {
