@@ -125,7 +125,7 @@ struct LiveSessionSessionPane<Header: View>: View {
         VStack(alignment: .leading, spacing: 12, content: content)
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 14))
+            .background(AppColors.watchControl, in: RoundedRectangle(cornerRadius: 14))
     }
 
     private func load() {

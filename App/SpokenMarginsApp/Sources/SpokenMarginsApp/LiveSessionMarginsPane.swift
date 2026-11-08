@@ -51,7 +51,7 @@ struct LiveSessionMarginsPane: View {
         return PlaybackMarginRowView(
             title: title(of: margin), detail: detail,
             isShared: false, identifier: "liveSession.margin.row.\(margin.id)",
-            canPlay: margin.isSpoken && margin.audioPath != nil,
+            canPlay: margin.isSpoken,
             playLabel: audio.isPlaying ? "Stop playing" : "Hear my recording",
             playHint: margin.isSpoken ? "Plays your recording of this Margin" : "Only a spoken Margin has a recording. Open it to read or edit it.",
             showDetails: { select(margin) },

@@ -73,7 +73,7 @@ struct LiveSessionDock: View {
         .frame(maxWidth: 620)
         .frame(maxWidth: .infinity)
         .background(AppColors.listeningBackground)
-        .overlay(alignment: .top) { Rectangle().fill(.white.opacity(0.18)).frame(height: 1) }
+        .overlay(alignment: .top) { Rectangle().fill(AppColors.watchSecondary.opacity(0.24)).frame(height: 1) }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("liveSession.dock")
         .boundedScrollDock(dynamicTypeSize.isAccessibilitySize)

@@ -212,7 +212,7 @@ final class AppColorUsageGuardTests: XCTestCase {
     /// Lower a number, or delete the line, when a use goes. There is no test for slack, so two PRs that each remove or
     /// add a use never turn each other red.
     private static let systemColorBaseline: [String: Int] = [
-        "AppTopBanners.swift": 1, "EdgeSwipeBackTransition.swift": 1, "ExperienceRecordingScreen.swift": 1,
+        "AppTopBanners.swift": 1, "EdgeSwipeBackTransition.swift": 1, "MarginRecordingScreen.swift": 1,
         "FirstMarginPromptCard.swift": 2, "Gate1RootView.swift": 1, "Gate2LiveActivityWidget.swift": 13,
         "LiveActivityTourPreview.swift": 1, "LiveSessionActivityWidget.swift": 8, "MiniPlayer.swift": 1,
         "PinnedMarginCardView.swift": 4, "PlaybackFeedbackTagView.swift": 3, "PlaybackLivePassageView.swift": 1,
