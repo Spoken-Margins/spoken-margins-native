@@ -72,7 +72,7 @@ extension Gate1AppModel {
                 }
             }
         }
-        if shouldGeneratePendingMap {
+        if shouldGeneratePendingMap, !isGeneratingListeningMap { // while the tap's map is being made, its end makes this one
             pendingMapGenerationItemId = nil
             generateListeningMap()
         }

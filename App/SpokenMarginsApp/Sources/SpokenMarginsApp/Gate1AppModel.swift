@@ -1525,30 +1525,6 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    func generateListeningMap() {
-        guard !isGeneratingListeningMap else { return }
-        guard selectedItem.chapters.isEmpty, selectedItem.mediaChapters.isEmpty else {
-            reportSuccess("This item already has a Listening Map.")
-            return
-        }
-        isGeneratingListeningMap = true
-        let selectedItemRecord = try? store?.loadItemSummary(id: activeItemId)
-        if let item = selectedItemRecord,
-           item.media?.sourceType == .nativeMediaFile || item.media?.sourceType == .remoteStream {
-            isGeneratingListeningMap = false
-            prepareEpisodeMap(itemId: item.id, policy: .explicit)
-            return
-        }
-        guard selectedItemRecord?.media == nil else {
-            diagnostics["lastListeningMapMode"] = "on_device_generation_disabled"
-            isGeneratingListeningMap = false
-            reportFailure("Publisher chapters appear when available. AI-generated podcast maps are reserved for a future server-hosted option.")
-            return
-        }
-        generateLocalListeningMap(confirmation: "Generated Listening Map.")
-        isGeneratingListeningMap = false
-    }
-
     /// Why a friend's shared map couldn't be placed on this item's copy, as stored on its packets (#481).
     /// Read from the open item's detail, worked out when it loaded; the Item screen asks on every render (#2506).
     /// Nil for an item that isn't the open one.
