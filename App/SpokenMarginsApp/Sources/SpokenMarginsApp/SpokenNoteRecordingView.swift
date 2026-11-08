@@ -185,9 +185,15 @@ struct SpokenNoteRecordingView: View {
         let jumpStartMs = isThisNoteOpen ? wholePlay.timeline?.startMs(of: ref) : nil
         return Button {
             if let jumpStartMs {
-                player.stop()
-                model.seekMedia(toMediaTimeMs: jumpStartMs)
-                if !model.snapshot.status.isPlaybackActive { model.resumePlayback() }
+                // A sentence that is playing hands the audio session back before the note moves and plays on.
+                Task {
+                    await player.stopAndWait()
+                    let labels = MainThreadOperationLabels.shared // so a slow jump names its step (#2256)
+                    labels.scoped("spokenNote.jump") {
+                        model.seekMedia(toMediaTimeMs: jumpStartMs)
+                        if !model.snapshot.status.isPlaybackActive { model.resumePlayback() }
+                    }
+                }
                 return
             }
             guard let note, let folder = recorder.noteFolder else { return }
@@ -234,7 +240,7 @@ struct SpokenNoteRecordingView: View {
         Button {
             guard let note = recorder.snapshot?.note else { return }
             // A sentence that is playing hands the audio session back before the note takes it.
-            wholePlay.play(noteId: note.id, app: model) { await player.stopAndWait() }
+            wholePlay.play(noteId: note.id, app: model, beforeStart: { await player.stopAndWait() }, shouldStart: { recorder.phase == .idle })
         } label: {
             HStack(spacing: 8) {
                 if wholePlay.isPreparing {
@@ -265,6 +271,7 @@ struct SpokenNoteRecordingView: View {
             } else {
                 // A sentence that is playing, or starting, hands the audio session back before recording takes it. The
                 // screen is busy from this tap on, so a second tap or a sentence tap can't slip in meanwhile.
+                wholePlay.abandon() // a note still getting ready must not start over the take
                 recorder.record { await player.stopAndWait() }
             }
         } label: {
@@ -275,7 +282,7 @@ struct SpokenNoteRecordingView: View {
             .frame(maxWidth: .infinity)
         }
         .buttonStyle(PrimaryButtonStyle())
-        .disabled(recorder.isBusy)
+        .disabled(recorder.isBusy || wholePlay.isPreparing)
         .accessibilityIdentifier("spokenNote.record")
     }
 

@@ -138,4 +138,16 @@ final class SpokenNotePlaybackWriterTests: XCTestCase {
         XCTAssertEqual(sessions["media"]?.phase, .itemPlayback, "a listening session of the note's own audio is left alone")
         XCTAssertFalse(SessionContinuation.isResumableSession(try XCTUnwrap(sessions["old"])))
     }
+
+    func testNewerWordsAlreadyOnTheRowAreKeptNotWrittenOverWithOlderOnes() throws {
+        let store = try SQLiteSessionStore(path: path)
+        var item = try savedNote(store)
+        item.text = "One. Two."   // a transcript arrived while the timeline was being made
+        try store.saveItem(item)
+        XCTAssertTrue(try store.attachPlayback(itemId: item.id, audioURL: audio, durationMs: 1000, timeline: timeline("One."), text: "One."))
+        XCTAssertEqual(try store.loadItem(id: item.id).text, "One. Two.")
+        // Text that is not a continuation (a different note state) is brought in step with the timeline's offsets.
+        XCTAssertTrue(try store.attachPlayback(itemId: item.id, audioURL: audio, durationMs: 1000, timeline: timeline("Other."), text: "Other."))
+        XCTAssertEqual(try store.loadItem(id: item.id).text, "Other.")
+    }
 }

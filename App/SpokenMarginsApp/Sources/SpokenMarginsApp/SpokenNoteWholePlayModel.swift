@@ -26,8 +26,14 @@ final class SpokenNoteWholePlayModel: ObservableObject {
     /// Plays the note: pauses or resumes it when it is already the open session, otherwise gets it ready and starts it.
     /// A note not played before starts at its beginning; one left part-way (or after a relaunch) continues where it
     /// stopped, as every other item does.
-    /// - Parameter beforeStart: work to finish before the note takes the audio session (a sentence handing it back).
-    func play(noteId: String, app: Gate1AppModel, beforeStart: (@MainActor () async -> Void)? = nil) {
+    /// - Parameters:
+    ///   - beforeStart: work to finish before the note takes the audio session (a sentence handing it back).
+    ///   - shouldStart: asked once the note is ready, so a screen that has since begun recording (which the join's seconds
+    ///     allow) is not played over: when it says no, nothing starts.
+    func play(
+        noteId: String, app: Gate1AppModel,
+        beforeStart: (@MainActor () async -> Void)? = nil, shouldStart: (@MainActor () -> Bool)? = nil
+    ) {
         let itemId = SpokenNoteItem.itemId(forNoteId: noteId)
         let isOpenSession = app.hasActiveSession && app.snapshot.itemId == itemId && app.snapshot.phase != .finished
             && app.snapshot.targetType == TargetType.transcriptBackedMedia.rawValue
@@ -60,7 +66,7 @@ final class SpokenNoteWholePlayModel: ObservableObject {
             case .success(let prepared):
                 timelineRequests += 1
                 timeline = prepared.timeline
-                guard !isAbandoned else { return }
+                guard !isAbandoned, shouldStart?() ?? true else { return }
                 let labels = MainThreadOperationLabels.shared // so a slow start names its step (#2256)
                 labels.scoped("spokenNote.play") {
                     if isOpenSession, prepared.rebuilt {

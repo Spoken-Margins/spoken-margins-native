@@ -13,6 +13,11 @@ extension SQLiteSessionStore: SpokenNotePlaybackWriting {
             guard var row = try? loadItem(id: itemId), row.deletedAt == nil,
                   SpokenNoteItem.isSpokenNote(mediaType: row.mediaType) else { return false }
             let transcriptId = row.transcriptId ?? "transcript-\(itemId)"
+            // The coordinator may have written newer words since the timeline was made (a transcript that arrived during the
+            // join). A take is only ever added at the end, so stored text that continues the incoming text is the newer one
+            // and is kept; the timeline's offsets still point at the same words in it.
+            var rowText = text
+            if let stored = row.text, stored.count > text.count, stored.hasPrefix(text) { rowText = stored }
             let media = ItemMedia(
                 sourceType: .nativeMediaFile, url: audioURL.absoluteString, durationMs: durationMs,
                 nativeMediaId: "spoken-note-audio-\(itemId)"
@@ -26,12 +31,12 @@ extension SQLiteSessionStore: SpokenNotePlaybackWriting {
             }
             let stored = try loadTranscriptTimeline(itemId: itemId)
             // Playing the same note again, with nothing added, writes nothing.
-            if row.media == media, row.text == text, row.transcriptId == transcriptId, stored?.timeline == timeline { return true }
+            if row.media == media, row.text == rowText, row.transcriptId == transcriptId, stored?.timeline == timeline { return true }
             if stored?.timeline != timeline {
                 try saveTranscriptTimeline(SourceTranscriptTimeline(id: transcriptId, itemId: itemId, createdAt: Date(), timeline: timeline))
             }
             row.media = media
-            row.text = text
+            row.text = rowText
             row.transcriptId = transcriptId
             try saveItem(row)
             return true
