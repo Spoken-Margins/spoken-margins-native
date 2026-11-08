@@ -16,6 +16,8 @@ struct SpokenNoteRecordingView: View {
     @StateObject private var player = SpokenNotePlayerModel()
     /// Play for the whole note (#3662): gets it ready, then the shared playback plays it.
     @StateObject private var wholePlay = SpokenNoteWholePlayModel()
+    /// Which sentences carry a Margin (#3664).
+    @StateObject private var noteMargins = SpokenNoteMarginsModel()
     @State private var playbackTick = 0 // bumped by each progress tick: the sounding sentence follows the playhead
     /// Export: the note's audio and transcript, through the share sheet (#3660).
     @StateObject private var noteExport = SpokenNoteExportModel()
@@ -35,6 +37,11 @@ struct SpokenNoteRecordingView: View {
     private var soundingSentence: SpokenNote.SentenceRef? {
         guard isThisNoteOpen, let timeline = wholePlay.timeline else { return nil }
         return timeline.ref(atMs: model.playbackClock.position.mediaTimeMs ?? 0)
+    }
+
+    /// A Margin is being started, recorded or written. Its screens are the app's own, under this one, so this screen steps aside.
+    private var isMarginCaptureActive: Bool {
+        model.snapshot.isRecording || model.isRequestingRecordingPermission || model.writtenMarginDraft != nil
     }
 
     private var exportWouldLeaveATakeOut: Bool {
@@ -97,6 +104,18 @@ struct SpokenNoteRecordingView: View {
         .task { recorder.attach(model.makeSpokenNoteRecorderEnvironment(), opening: opening) }
         .followsPlaybackClock(model.playbackClock, tick: $playbackTick)
         .onChange(of: recorder.snapshot?.note) { _, _ in refreshWholeTimeline() }
+        .onChange(of: wholePlay.timeline) { _, _ in refreshMargins() }
+        // Add a Margin from here, the Lock Screen or the headphones starts the app's own Margin screens, which sit under this
+        // one. This screen closes, the note plays on, and the Margin screen shows (#3664). A take being recorded stays.
+        .onChange(of: isMarginCaptureActive) { _, active in
+            guard active, recorder.phase == .idle else { return }
+            dismiss()
+        }
+        // A Margin that began while a take was still being saved closes this screen once the take is done.
+        .onChange(of: recorder.phase) { _, phase in
+            guard phase == .idle, isMarginCaptureActive else { return }
+            dismiss()
+        }
         .onChange(of: recorder.noteFolder) { _, _ in refreshWholeTimeline() }
         // Anything other than Done that removes this screen still closes a take that is running, so it is saved.
         .onDisappear {
@@ -215,6 +234,7 @@ struct SpokenNoteRecordingView: View {
         let isSounding = soundingSentence == ref
         let isPlaying = player.playing == ref || isSounding
         let hasAudio = note?.playback(for: ref) != nil
+        let marginCount = noteMargins.countsBySentence[ref] ?? 0
         // While the whole note is open in playback, a sentence is a place to jump to.
         let jumpStartMs = isThisNoteOpen ? wholePlay.timeline?.startMs(of: ref) : nil
         return Button {
@@ -244,6 +264,14 @@ struct SpokenNoteRecordingView: View {
                     .foregroundStyle(AppColors.text)
                     .fontWeight(isPlaying ? .semibold : .regular)
                     .multilineTextAlignment(.leading)
+                if marginCount > 0 {
+                    // A symbol and a count, never color alone.
+                    Spacer(minLength: 4)
+                    Label(marginCount == 1 ? "Margin" : "\(marginCount) Margins", systemImage: "text.bubble")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(AppColors.evergreen)
+                        .accessibilityIdentifier("spokenNote.sentence.\(ref.takeIndex).\(ref.sentenceIndex).margins")
+                }
             }
             .padding(.vertical, 6)
             .padding(.horizontal, 8)
@@ -253,7 +281,7 @@ struct SpokenNoteRecordingView: View {
         }
         .buttonStyle(.plain)
         .disabled(!hasAudio || recorder.phase != .idle)
-        .accessibilityLabel(sentence.text)
+        .accessibilityLabel(marginCount == 0 ? sentence.text : "\(sentence.text). \(marginCount == 1 ? "1 Margin" : "\(marginCount) Margins") here.")
         .accessibilityHint(jumpStartMs != nil ? "Plays the note from this sentence" : (isPlaying ? "Stops playing" : "Plays the audio for this sentence"))
         .accessibilityAddTraits(isPlaying ? .isSelected : [])
         .accessibilityIdentifier("spokenNote.sentence.\(ref.takeIndex).\(ref.sentenceIndex)")
@@ -261,6 +289,7 @@ struct SpokenNoteRecordingView: View {
 
     private var controls: some View {
         VStack(spacing: 10) {
+            if isThisNoteOpen, recorder.phase == .idle { marginRow }
             if !takes.isEmpty { playNoteButton }
             recordButton
         }
@@ -293,6 +322,33 @@ struct SpokenNoteRecordingView: View {
         .disabled(recorder.phase != .idle || wholePlay.isPreparing)
         .accessibilityHint("Plays this whole note, one take after another")
         .accessibilityIdentifier("spokenNote.play")
+    }
+
+    /// Add a Margin to the note while it plays or is paused: spoken, with the pencil for written beside it, as on Now. The Margin
+    /// is anchored to the sentence at the playhead by the shared playback, so it is heard there on the next play.
+    private var marginRow: some View {
+        HStack(spacing: 8) {
+            Button(action: model.beginInterjection) {
+                Label("Add a Margin", systemImage: "mic.fill").frame(maxWidth: .infinity)
+            }
+            .buttonStyle(SecondaryButtonStyle())
+            .accessibilityHint("Records a Margin at the sentence you are hearing")
+            .accessibilityIdentifier("spokenNote.margin.record")
+            Button(action: model.beginWrittenMargin) {
+                Image(systemName: "square.and.pencil").frame(width: 44, height: 24)
+            }
+            .buttonStyle(SecondaryButtonStyle())
+            .fixedSize(horizontal: true, vertical: false)
+            .accessibilityLabel("Write a Margin")
+            .accessibilityHint("Writes a Margin at the sentence you are hearing")
+            .accessibilityIdentifier("spokenNote.margin.write")
+        }
+        .disabled(wholePlay.isPreparing)
+    }
+
+    private func refreshMargins() {
+        guard let note = recorder.snapshot?.note else { return }
+        noteMargins.refresh(noteId: note.id, timeline: wholePlay.timeline, app: model)
     }
 
     private func refreshWholeTimeline() {

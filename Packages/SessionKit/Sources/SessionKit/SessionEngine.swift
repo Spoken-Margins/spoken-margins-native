@@ -2031,9 +2031,13 @@ public final class SessionEngine {
             session.currentTargetId = itemPlaybackTargetId(for: playingItem, targetType: targetType)
             session.phase = .itemPlayback
             if targetType == .transcriptBackedMedia || targetType == .browserOwnedMedia {
+                // A spoken note's Margin names its sentence, not a time: the note's joined audio is made again when a take is
+                // added, so the time is read from the timeline now (#3664). Any other item keeps the time it was recorded at.
+                let noteSentenceTimeMs = SpokenNoteItem.isSpokenNote(mediaType: playingItem.mediaType)
+                    ? SpokenNoteMargins.mediaTimeMs(of: stored.anchor, in: storedTranscriptTimeline(itemId: item.id)) : nil
                 let anchorMediaTimeMs = publisher.flatMap {
                     $0.mediaTimeMs(textOffset: stored.anchor.startChar)
-                } ?? narrationMediaTimeMs ?? stored.anchor.mediaTimeMs
+                } ?? narrationMediaTimeMs ?? noteSentenceTimeMs ?? stored.anchor.mediaTimeMs
                 guard let mediaTimeMs = anchorMediaTimeMs,
                       mediaTimeMs >= 0 else {
                     throw SessionKitError.invalidCommandForState("playInterjectionAnchor")
