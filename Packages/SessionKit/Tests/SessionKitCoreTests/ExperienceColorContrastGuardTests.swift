@@ -114,6 +114,123 @@ final class AppLiveActivityPairsTests: XCTestCase {
     }
 }
 
+/// #3739 slice 4: the share extension (UIKit) and the Safari popup (`popup.css`) draw colours outside the app's tokens.
+final class AppExtensionColourPairsTests: XCTestCase {
+    private func collapsed(_ text: String) -> String {
+        text.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+    }
+
+    private func matches(of pattern: String, in text: String) throws -> [[String]] {
+        let regex = try NSRegularExpression(pattern: pattern)
+        return regex.matches(in: text, range: NSRange(text.startIndex..., in: text)).map { match in
+            (0..<match.numberOfRanges).map { Range(match.range(at: $0), in: text).map { String(text[$0]) } ?? "" }
+        }
+    }
+
+    // MARK: Share extension
+
+    func testTheShareExtensionPairsPassAndTheOldBlueDoneLabelFails() {
+        XCTAssertEqual(AppColorContrastAudit.failures(for: AppColorContrastAudit.shareExtensionPairs), [])
+        // Before this slice the Done button drew the default tint, the system blue: 3.60:1 on the card in light mode.
+        let old = AppColorContrastAudit.Pair(
+            name: "share extension Done label (default tint)", foreground: AppSystemColorRGB.blue,
+            background: AppSystemColorRGB.secondarySystemBackground, minimumRatio: 4.5)
+        let failing = AppColorContrastAudit.measurements(for: [old]).filter(\.fails)
+        XCTAssertEqual(failing.map(\.appearance), ["light"])
+        XCTAssertEqual(failing[0].ratio, 3.60, accuracy: 0.01)
+    }
+
+    /// The extension draws only what its pairs measure: no other UIKit colour, no alpha, and the Done label in the icon's green.
+    func testTheShareExtensionDrawsOnlyTheColoursThePairsMeasure() throws {
+        // Comments are dropped, so a colour named in one is not a use, and a stale line left in one is not a pass.
+        let raw = try TestInputs.text(.appShareExtension, "Sources/SourceLinkShareViewController.swift")
+        let source = collapsed(raw.split(separator: "\n", omittingEmptySubsequences: false).map { line -> String in
+            line.range(of: "//").map { String(line[..<$0.lowerBound]) } ?? String(line)
+        }.joined(separator: "\n"))
+        let implicit = try matches(
+            of: #"(?<![\w)\]?!])\.(system[A-Z]\w*|secondarySystem\w*|tertiarySystem\w*|\w*[Ll]abel|separator|opaqueSeparator|placeholderText|lightText|darkText|white|black|gray|red|blue|green|orange|yellow|purple|brown|cyan|magenta|clear)\b"#,
+            in: source).map { $0[1] }
+        XCTAssertGreaterThanOrEqual(implicit.count, 4, "the scan must see the extension's colours: \(implicit)")
+        XCTAssertEqual(Set(implicit).subtracting(["systemBackground", "secondarySystemBackground", "label"]), [], "a new colour needs a pair in shareExtensionPairs")
+        XCTAssertEqual(try matches(of: #"\bUIColor\.\w+"#, in: source).count, 0, "no UIColor.<name>")
+        XCTAssertEqual(try matches(of: #"\bUIColor\("#, in: source).count, 2, "only the two copies of the green token")
+        XCTAssertEqual(try matches(of: #"\bUIColor \{"#, in: source).count, 1)
+        XCTAssertFalse(source.contains("withAlphaComponent") || source.contains(".alpha ="), "an alpha is a tint: give it a pair")
+        XCTAssertTrue(source.contains("statusLabel.textColor = .label") && source.contains("titleLabel.textColor = .label"))
+        let doneColour = try XCTUnwrap(source.range(of: "closeButton.setTitleColor(iconView.tintColor, for: .normal)"), "Done is the icon's green, not the default tint")
+        let iconColour = try XCTUnwrap(source.range(of: "iconView.tintColor = UIColor {"))
+        XCTAssertLessThan(iconColour.lowerBound, doneColour.lowerBound, "the icon's green is set before Done reads it, or Done gets the default blue")
+        XCTAssertTrue(source.contains("cardView.backgroundColor = .secondarySystemBackground"), "the card the pairs measure on")
+    }
+
+    // MARK: Safari popup
+
+    func testTheSafariPopupPairsPassAndCanFail() {
+        XCTAssertEqual(AppColorContrastAudit.failures(for: AppColorContrastAudit.safariPopupPairs), [])
+        // The caption on the accent plate is the wrong pairing, and it must fail.
+        let wrong = AppColorContrastAudit.Pair(
+            name: "caption on the accent", foreground: AppSafariPopupRGB.caption, background: AppSafariPopupRGB.accent, minimumRatio: 4.5)
+        XCTAssertFalse(AppColorContrastAudit.failures(for: [wrong]).isEmpty)
+    }
+
+    /// Every declaration in `popup.css` that carries a colour, an edge or an alpha, as `selector | property: value`. Each is
+    /// the pair in `safariPopupPairs` that measures it, so a colour changed, a new state (`:hover`, `:focus`, `:active`) or a new
+    /// property with a colour in it fails here until it has a pair.
+    private static let popupColourDeclarations: Set<String> = [
+        "body | color: #f6f6f6", "body | background: #101312",                      // safari popup body and title
+        ".brand-mark | color: #07110d", ".brand-mark | background: #57d696",        // safari popup brand mark
+        ".brand p | color: #aeb8b3",                                                 // safari popup caption
+        "button | color: #111", "button | background: #57d696", "button | border: 0",  // safari popup button label
+        "button:disabled | opacity: 0.55",                                           // safari popup disabled button label
+        "#status | color: #bdbdbd"                                                   // safari popup status line
+    ]
+
+    /// The stylesheet as `selector | property: value` for each declaration whose property can carry a colour, with comments
+    /// removed so a colour named in one is neither a use nor a pass.
+    private func popupDeclarations() throws -> [String] {
+        let css = try TestInputs.text(.appBrowserTextExtension, "Resources/Styles/popup.css")
+            .replacingOccurrences(of: #"/\*.*?\*/"#, with: " ", options: [.regularExpression])
+        let flattened = collapsed(css)
+        var found: [String] = []
+        for rule in try matches(of: #"([^{}]+)\{([^{}]*)\}"#, in: flattened) {
+            let selector = rule[1].trimmingCharacters(in: .whitespaces)
+            for declaration in rule[2].split(separator: ";") {
+                let parts = declaration.split(separator: ":", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
+                guard parts.count == 2 else { continue }
+                let carriesColour = parts[0].range(
+                    of: #"color|background|border|outline|shadow|filter|opacity|fill|stroke|blend|mask|accent|caret|decoration"#,
+                    options: .regularExpression) != nil
+                if carriesColour && !parts[0].hasSuffix("radius") { found.append("\(selector) | \(parts[0]): \(parts[1])") }
+            }
+        }
+        XCTAssertFalse(flattened.contains("@media") || flattened.contains("@supports"), "a conditional block hides rules from this scan: give its colours pairs and teach the scan")
+        return found
+    }
+
+    func testThePopupRulesAreExactlyThePairsThatMeasureThem() throws {
+        let found = try popupDeclarations()
+        XCTAssertGreaterThanOrEqual(found.count, 9, "the scan must see the stylesheet: \(found)")
+        XCTAssertEqual(Set(found), Self.popupColourDeclarations, "a colour, state or edge with no pair: add it to safariPopupPairs and to this table")
+        // A hex is a colour in the palette, in 3 or 6 digits: no alpha digits, no other colour syntax.
+        for declaration in found {
+            for hex in try matches(of: #"#([0-9a-fA-F]+)\b"#, in: declaration).map({ $0[1].lowercased() }) {
+                XCTAssertTrue(hex.count == 3 || hex.count == 6, "\(declaration): a hex with alpha is a tint the audit cannot read")
+                let sixDigit = hex.count == 3 ? hex.map { "\($0)\($0)" }.joined() : hex
+                XCTAssertNotNil(AppSafariPopupRGB.palette[sixDigit], "\(declaration): \(hex) is not in AppSafariPopupRGB")
+            }
+        }
+        for declaration in found where declaration.contains("color") || declaration.contains("background") {
+            XCTAssertNil(declaration.range(of: #"rgb|hsl|color-mix|light-dark|var\("#, options: .regularExpression), declaration)
+        }
+    }
+
+    func testThePopupPageSetsNoColoursOfItsOwn() throws {
+        let html = try TestInputs.text(.appBrowserTextExtension, "Resources/popup.html")
+        XCTAssertFalse(html.contains("<style"))
+        XCTAssertFalse(html.contains("style="))
+    }
+}
+
 final class AppTintedFillPairsTests: XCTestCase {
     func testTheTintedFillPairsAllPassToday() {
         XCTAssertFalse(AppColorContrastAudit.tintedFillPairs.isEmpty)

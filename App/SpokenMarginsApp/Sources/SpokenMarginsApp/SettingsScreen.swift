@@ -279,7 +279,7 @@ struct SettingsScreen: View {
                             }
                             if list.showsToggle {
                                 Button {
-                                    withAnimation { showsAllRecentlyDeleted.toggle() }
+                                    withMotion { showsAllRecentlyDeleted.toggle() }
                                 } label: {
                                     Text(list.toggleTitle).frame(minHeight: 44).contentShape(Rectangle())
                                 }

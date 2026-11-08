@@ -33,6 +33,8 @@ struct LiveSessionDockClock: Equatable {
 /// only; `LiveSessionView` owns the session.
 struct LiveSessionDock: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    /// The session clock: 28 pt at the default text size, growing with the listener's setting (#3726).
+    @ScaledMetric(relativeTo: .title) private var clockFontSize: CGFloat = 28
     @Binding var pane: LiveSessionPane
     let marginCount: Int
     let isRunning: Bool
@@ -88,10 +90,10 @@ struct LiveSessionDock: View {
                 let line = clock(context.date)
                 VStack(alignment: .leading, spacing: 0) {
                     Text(line.main)
-                        .font(.system(size: 28, weight: .semibold, design: .rounded).monospacedDigit())
+                        .font(.system(size: clockFontSize, weight: .semibold, design: .rounded).monospacedDigit())
                         .foregroundStyle(.white)
                         .lineLimit(1)
-                        .minimumScaleFactor(0.7)
+                        .minimumScaleFactor(0.5)
                     if let caption = line.caption {
                         Text(caption)
                             .font(.caption)

@@ -222,7 +222,7 @@ struct LiveSessionView: View {
                 .accessibilityIdentifier("liveSession.setup.title")
             if kind != .paper {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Where are you now?").font(.headline)
+                    Text("Where are you now?").font(.headline) // a field label, not a section title
                     AppTextField(kind == .meeting ? "Meeting clock, like 2:00" : "Time in the book, like 0:00", text: $startPosition)
                         .textFieldStyle(.roundedBorder)
                         .keyboardType(.numbersAndPunctuation)

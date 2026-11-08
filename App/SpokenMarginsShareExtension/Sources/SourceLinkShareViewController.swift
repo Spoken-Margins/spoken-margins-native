@@ -354,6 +354,7 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
         // Wraps at the largest text sizes instead of truncating (#1941).
         titleLabel.numberOfLines = 0
         titleLabel.textColor = .label
+        titleLabel.accessibilityTraits.insert(.header)
 
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
         statusLabel.textAlignment = .left
@@ -365,6 +366,8 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
 
         closeButton.translatesAutoresizingMaskIntoConstraints = false
         closeButton.setTitle("Done", for: .normal)
+        // The same green as the icon beside it: the default tint (system blue) is 3.6:1 on this card in light mode (#3739).
+        closeButton.setTitleColor(iconView.tintColor, for: .normal)
         closeButton.titleLabel?.font = .preferredFont(forTextStyle: .body)
         closeButton.titleLabel?.adjustsFontForContentSizeCategory = true
         closeButton.addTarget(self, action: #selector(close), for: .touchUpInside)

@@ -19,7 +19,7 @@ struct SpokenNoteRecordingView: View {
     /// Which sentences carry a Margin (#3664).
     @StateObject private var noteMargins = SpokenNoteMarginsModel()
     @State private var playbackTick = 0 // bumped by each progress tick: the sounding sentence follows the playhead
-    /// Export: the note's audio and transcript, through the share sheet (#3660).
+    /// Export: the note's words alone, or its audio and words, through the share sheet (#3660).
     @StateObject private var noteExport = SpokenNoteExportModel()
     /// The rename prompt, while the listener is typing a new title (#3663).
     @State private var renaming: SpokenNoteRenameTarget?
@@ -84,7 +84,7 @@ struct SpokenNoteRecordingView: View {
                     // Nothing to export before the first take, none while a take is being made or saved, and none while a take
                     // is not yet in the note or its words are still being written down: those would leave it out.
                     .disabled(takes.isEmpty || recorder.phase != .idle || noteExport.isPreparing || exportWouldLeaveATakeOut)
-                    .accessibilityHint("Exports this note's audio and words, to save or send")
+                    .accessibilityHint("Asks whether to export just the words, or the audio and words, to save or send")
                     .accessibilityIdentifier("spokenNote.export")
                 }
                 ToolbarItem(placement: .confirmationAction) {
