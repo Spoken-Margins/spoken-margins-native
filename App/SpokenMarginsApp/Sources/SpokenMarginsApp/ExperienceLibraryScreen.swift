@@ -280,7 +280,7 @@ struct ExperienceLibraryScreen: View {
                 Image(systemName: "magnifyingglass")
                     .foregroundStyle(AppColors.secondaryText)
                     .accessibilityHidden(true)
-                TextField("Search title, source, or author", text: $model.libraryQuery.query)
+                AppTextField("Search title, source, or author", text: $model.libraryQuery.query)
                     .textInputAutocapitalization(.never)
                     .submitLabel(.search)
                     .accessibilityIdentifier("library.search.field")

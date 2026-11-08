@@ -291,7 +291,7 @@ struct ExperienceAddSourceFlow: View {
         ExperienceSurface(tint: AppColors.evergreen) {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Link or Podcast").font(.headline)
-                TextField("Podcast, RSS, audio, or web URL", text: $model.sourceLinkURL)
+                AppTextField("Podcast, RSS, audio, or web URL", text: $model.sourceLinkURL)
                     .textFieldStyle(.roundedBorder)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
@@ -332,7 +332,7 @@ struct ExperienceAddSourceFlow: View {
     private var pastedTextSource: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 12) {
-                TextField("Title (optional)", text: $model.importTitle)
+                AppTextField("Title (optional)", text: $model.importTitle)
                     .textFieldStyle(.roundedBorder)
                     .focused($focusedField, equals: .title)
                     .accessibilityIdentifier("create.title.field")

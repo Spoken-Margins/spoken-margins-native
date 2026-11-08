@@ -282,7 +282,7 @@ struct Build23SenderSharingExperience: View {
                     .font(.caption)
                     .foregroundStyle(AppColors.secondaryText)
 
-                TextField(
+                AppTextField(
                     "Name shown to the recipient",
                     text: Binding(
                         get: { snapshot.senderDisplayLabel },
