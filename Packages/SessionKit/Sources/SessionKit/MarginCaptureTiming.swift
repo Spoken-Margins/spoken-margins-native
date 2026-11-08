@@ -44,6 +44,7 @@ public struct MarginCaptureTiming: Equatable, Sendable {
     private var recorderStartedMs: Int?
     private var firstAudioObservedMs: Int?
     private var firstNonSilentObservedMs: Int?
+    private var readyCueMs: Int?
     private var firstInputRoute: String?
     private var recorderInputRoute: String?
 
@@ -86,6 +87,12 @@ public struct MarginCaptureTiming: Equatable, Sendable {
         firstInputRoute = inputRoute
     }
 
+    /// The ready cue started playing (#1506): the moment the listener is told they can speak, which is the wait the
+    /// owner feels. Stamped once per capture, like the other milestones.
+    public mutating func readyCueSounded(at uptime: TimeInterval) {
+        if readyCueMs == nil { readyCueMs = milliseconds(at: uptime) }
+    }
+
     public var fields: [String: String] {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -100,6 +107,7 @@ public struct MarginCaptureTiming: Equatable, Sendable {
             "tapToRecorderStartedMs": recorderStartedMs.map(String.init) ?? "not_observed",
             "tapToFirstAudioObservedMs": firstAudioObservedMs.map(String.init) ?? "not_observed",
             "tapToFirstNonSilentObservedMs": firstNonSilentObservedMs.map(String.init) ?? "not_observed",
+            "tapToReadyCueMs": readyCueMs.map(String.init) ?? "not_observed",
             "recorderInputRoute": recorderInputRoute ?? "unknown",
             "firstNonSilentInputRoute": firstInputRoute ?? "not_observed",
             "firstAudioTimingMethod": "recorder_clock_poll_upper_bound",
