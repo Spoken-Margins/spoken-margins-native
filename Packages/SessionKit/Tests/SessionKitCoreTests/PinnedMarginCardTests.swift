@@ -120,8 +120,8 @@ final class PinnedMarginCardTests: XCTestCase {
 
     func testWhileAMarginPlaysThereIsOneButtonNamedForWhatItDoes() {
         for stage in [PinnedMarginCard.Stage.speaking, .reading, .voicePaused, .loading] {
-            // In a review: Skip this Margin alone, whether or not more follow, and never a Stop (#3597: "No Stop button;
-            // the pause control already does that job"). Stopping a voice does not move the listener to the next
+            // In a review with a lead-in: Skip this Margin alone, whether or not more follow, and never a Stop (#3597:
+            // "No Stop button; the pause control already does that job"). Stopping a voice does not move the listener to the next
             // Margin, so the button never says "Next Margin" (audit on #3623).
             for press in [more, .playMarginNow, .unavailable] {
                 XCTAssertEqual(titles(card(cole, stage, press: press)), ["Skip this Margin"], "\(stage) \(press)")
@@ -137,6 +137,17 @@ final class PinnedMarginCardTests: XCTestCase {
                     XCTAssertEqual(c.actions.map(\.job), [.skipThisMargin])
                 }
             }
+        }
+    }
+
+    func testACantPlayListeningKeepsItsStopBecauseItHasNoLeadInToLeaveFrom() {
+        for stage in [PinnedMarginCard.Stage.speaking, .reading, .voicePaused, .loading] {
+            let c = PinnedMarginCard(subject: cole, stage: stage, noun: .episode, nextPress: more, run: .review, chainsWithoutLeadIn: true)
+            XCTAssertEqual(c.actions.map(\.job), [.skipThisMargin, .stopReview], "\(stage)")
+            XCTAssertEqual(c.actions[1].prominence, .quiet)
+            // Outside a review the flag changes nothing.
+            let plain = PinnedMarginCard(subject: cole, stage: stage, noun: .episode, nextPress: more, run: .none, chainsWithoutLeadIn: true)
+            XCTAssertEqual(plain.actions.map(\.job), [.skipThisMargin])
         }
     }
 

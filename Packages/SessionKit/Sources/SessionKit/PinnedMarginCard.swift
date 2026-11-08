@@ -118,6 +118,9 @@ public struct PinnedMarginCard: Equatable, Sendable {
     public let nextPress: NextMarginPress
     /// What kind of run the card sits in. A friend's Margin that plays by itself is `.none`.
     public let run: Run
+    /// A can't-play listening chains its Margins with no lead-in between them, so the card never reaches the lead-in's
+    /// quiet Stop. While its voice plays, Stop is the listener's only way out of the chain (pause leaves it armed).
+    public let chainsWithoutLeadIn: Bool
 
     /// "Hear only Margins" and a can't-play listening are a review: the Margins follow one another and Next Margin moves
     /// between them. "Play this moment" is a moment. A Margin that plays when the episode reaches it is in no run.
@@ -125,9 +128,11 @@ public struct PinnedMarginCard: Equatable, Sendable {
 
     public init(
         subject: Subject, stage: Stage, position: String? = nil, voiceTime: String? = nil,
-        noun: SourceNoun = .episode, nextPress: NextMarginPress = .unavailable, run: Run = .none
+        noun: SourceNoun = .episode, nextPress: NextMarginPress = .unavailable, run: Run = .none,
+        chainsWithoutLeadIn: Bool = false
     ) {
         self.run = run
+        self.chainsWithoutLeadIn = chainsWithoutLeadIn
         self.subject = subject
         self.stage = stage
         self.position = position
