@@ -2,31 +2,50 @@ import SessionKit
 import SwiftUI
 
 /// Dictating a spoken note (#3108, #1609 slice 1): Record starts a take, Stop ends it, and each take shows its
-/// transcript as it arrives. The phone can lock while a take runs. Tapping a sentence plays the audio behind it.
+/// transcript as it arrives. The phone can lock while a take runs. Play plays the whole note start to finish through the
+/// app's own playback (Now, the Lock Screen, headphones), lighting the sentence that is sounding (#3662). Tapping a
+/// sentence jumps there while the note plays, and otherwise plays just that sentence.
 /// A note opened from the Library shows its takes at once and can take more.
 struct SpokenNoteRecordingView: View {
     var opening: SpokenNoteOpening?
 
-    @EnvironmentObject private var app: Gate1AppModel
+    @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.dismiss) private var dismiss
     @StateObject private var recorder = SpokenNoteRecorderModel()
     @StateObject private var player = SpokenNotePlayerModel()
+    /// Play for the whole note (#3662): gets it ready, then the shared playback plays it.
+    @StateObject private var wholePlay = SpokenNoteWholePlayModel()
+    @State private var playbackTick = 0 // bumped by each progress tick: the sounding sentence follows the playhead
     /// Export: the note's audio and transcript, through the share sheet (#3660).
     @StateObject private var noteExport = SpokenNoteExportModel()
 
     private var takes: [SpokenNoteTake] { recorder.snapshot?.note.takes ?? [] }
     private var hasTranscript: Bool { takes.contains { $0.hasTranscript } }
+    /// This note is the item the app's playback has open, playing or paused.
+    private var isThisNoteOpen: Bool {
+        guard let note = recorder.snapshot?.note else { return false }
+        return model.hasActiveSession && model.snapshot.itemId == SpokenNoteItem.itemId(forNoteId: note.id)
+            && model.snapshot.phase != .finished
+    }
+    private var isThisNotePlaying: Bool { isThisNoteOpen && model.snapshot.status.isPlaybackActive }
+    /// The sentence being heard now, while the whole note is open in playback and its place in the joined audio is known.
+    private var soundingSentence: SpokenNote.SentenceRef? {
+        guard isThisNoteOpen, let timeline = wholePlay.timeline else { return nil }
+        return timeline.ref(atMs: model.playbackClock.position.mediaTimeMs ?? 0)
+    }
+
     private var exportWouldLeaveATakeOut: Bool {
         guard let snapshot = recorder.snapshot else { return false }
         return snapshot.hasUnsavedTake || !snapshot.transcribingTakeIds.isEmpty
     }
 
     var body: some View {
+        let _ = playbackTick
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     status
-                    if let message = recorder.message ?? player.message {
+                    if let message = recorder.message ?? player.message ?? wholePlay.message {
                         FailureMessageLabel(message)
                             .accessibilityIdentifier("spokenNote.message")
                     }
@@ -71,10 +90,14 @@ struct SpokenNoteRecordingView: View {
         }
         // A take that is running ends only with Stop or Done, never by a swipe.
         .interactiveDismissDisabled(recorder.phase != .idle || !takes.isEmpty)
-        .task { recorder.attach(app.makeSpokenNoteRecorderEnvironment(), opening: opening) }
+        .task { recorder.attach(model.makeSpokenNoteRecorderEnvironment(), opening: opening) }
+        .followsPlaybackClock(model.playbackClock, tick: $playbackTick)
+        .onChange(of: recorder.snapshot?.note) { _, _ in refreshWholeTimeline() }
+        .onChange(of: recorder.noteFolder) { _, _ in refreshWholeTimeline() }
         // Anything other than Done that removes this screen still closes a take that is running, so it is saved.
         .onDisappear {
             player.stop()
+            wholePlay.abandon()
             noteExport.abandon()
             let recorder = recorder
             Task { @MainActor in await recorder.finish() }
@@ -155,14 +178,23 @@ struct SpokenNoteRecordingView: View {
     /// shows a stop symbol and a tinted background, so it never rests on color alone. Nothing plays while recording.
     private func sentenceRow(_ ref: SpokenNote.SentenceRef, _ sentence: SpokenNoteSentence) -> some View {
         let note = recorder.snapshot?.note
-        let isPlaying = player.playing == ref
+        let isSounding = soundingSentence == ref
+        let isPlaying = player.playing == ref || isSounding
         let hasAudio = note?.playback(for: ref) != nil
+        // While the whole note is open in playback, a sentence is a place to jump to.
+        let jumpStartMs = isThisNoteOpen ? wholePlay.timeline?.startMs(of: ref) : nil
         return Button {
+            if let jumpStartMs {
+                player.stop()
+                model.seekMedia(toMediaTimeMs: jumpStartMs)
+                if !model.snapshot.status.isPlaybackActive { model.resumePlayback() }
+                return
+            }
             guard let note, let folder = recorder.noteFolder else { return }
             player.toggle(ref, in: note, folder: folder) { recorder.pauseOtherPlayback() }
         } label: {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Image(systemName: isPlaying ? "stop.fill" : "play.fill")
+                Image(systemName: isSounding ? "speaker.wave.2.fill" : (isPlaying ? "stop.fill" : "play.fill"))
                     .font(.caption)
                     .foregroundStyle(hasAudio ? AppColors.evergreen : AppColors.secondaryText)
                     .accessibilityHidden(true)
@@ -180,12 +212,53 @@ struct SpokenNoteRecordingView: View {
         .buttonStyle(.plain)
         .disabled(!hasAudio || recorder.phase != .idle)
         .accessibilityLabel(sentence.text)
-        .accessibilityHint(isPlaying ? "Stops playing" : "Plays the audio for this sentence")
+        .accessibilityHint(jumpStartMs != nil ? "Plays the note from this sentence" : (isPlaying ? "Stops playing" : "Plays the audio for this sentence"))
         .accessibilityAddTraits(isPlaying ? .isSelected : [])
         .accessibilityIdentifier("spokenNote.sentence.\(ref.takeIndex).\(ref.sentenceIndex)")
     }
 
     private var controls: some View {
+        VStack(spacing: 10) {
+            if !takes.isEmpty { playNoteButton }
+            recordButton
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 12)
+        .frame(maxWidth: 560)
+        .frame(maxWidth: .infinity)
+        .background(AppColors.bone)
+    }
+
+    /// Plays the whole note, takes in order, through the app's own playback; the same control pauses and resumes it.
+    private var playNoteButton: some View {
+        Button {
+            guard let note = recorder.snapshot?.note else { return }
+            // A sentence that is playing hands the audio session back before the note takes it.
+            wholePlay.play(noteId: note.id, app: model) { await player.stopAndWait() }
+        } label: {
+            HStack(spacing: 8) {
+                if wholePlay.isPreparing {
+                    ProgressView()
+                    Text("Getting it ready…")
+                } else {
+                    Image(systemName: isThisNotePlaying ? "pause.fill" : "play.fill").accessibilityHidden(true)
+                    Text(isThisNotePlaying ? "Pause" : (isThisNoteOpen ? "Resume" : "Play note"))
+                }
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(SecondaryButtonStyle())
+        .disabled(recorder.phase != .idle || wholePlay.isPreparing)
+        .accessibilityHint("Plays this whole note, one take after another")
+        .accessibilityIdentifier("spokenNote.play")
+    }
+
+    private func refreshWholeTimeline() {
+        guard let note = recorder.snapshot?.note, let folder = recorder.noteFolder else { return }
+        wholePlay.refreshTimeline(note: note, noteFolder: folder)
+    }
+
+    private var recordButton: some View {
         Button {
             if recorder.phase == .recording {
                 recorder.stop()
@@ -203,11 +276,6 @@ struct SpokenNoteRecordingView: View {
         }
         .buttonStyle(PrimaryButtonStyle())
         .disabled(recorder.isBusy)
-        .padding(.horizontal, 20)
-        .padding(.vertical, 12)
-        .frame(maxWidth: 560)
-        .frame(maxWidth: .infinity)
-        .background(AppColors.bone)
         .accessibilityIdentifier("spokenNote.record")
     }
 

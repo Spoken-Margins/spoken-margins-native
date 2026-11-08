@@ -115,9 +115,21 @@ extension Gate1AppModel {
             guard let summary = try store.loadItemSummary(id: itemId) else { throw SessionKitError.missingFixture("item:\(itemId)") }
             return summary
         }
-        if let item = summary, item.mediaType == "audiobook" {
-            guard let url = resolvedOwnedAudiobookURL(for: item) else {
-                throw SessionKitError.invalidCommandForState("The imported audio file is unavailable. Restore the source audio to continue listening.")
+        // A file this app owns plays from that file: an imported audiobook, or a spoken note's joined audio (#3662).
+        if let item = summary, item.mediaType == "audiobook" || SpokenNoteItem.isSpokenNote(mediaType: item.mediaType) {
+            let url: URL
+            if item.mediaType == "audiobook" {
+                guard let owned = resolvedOwnedAudiobookURL(for: item) else {
+                    throw SessionKitError.invalidCommandForState("The imported audio file is unavailable. Restore the source audio to continue listening.")
+                }
+                url = owned
+            } else {
+                // A note plays from the audio its Play made ready, and is never read aloud by a synthetic voice.
+                guard let support = try? applicationSupportDirectory(),
+                      let joined = SpokenNoteWholePlayback.playbackURL(for: item, applicationSupport: support) else {
+                    throw SessionKitError.invalidCommandForState("This note isn't ready to play yet. Open it and tap Play.")
+                }
+                url = joined
             }
             _ = try engine?.updatePlaybackTransport(itemId: itemId, playbackURL: url.absoluteString, replaceActivePlayback: false)
             return

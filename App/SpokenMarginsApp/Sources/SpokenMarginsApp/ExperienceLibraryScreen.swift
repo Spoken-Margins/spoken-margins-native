@@ -24,6 +24,8 @@ struct ExperienceLibraryScreen: View {
     @State private var openedNote: SpokenNoteOpening?
     /// Export of a spoken note from its row: the audio and transcript, through the share sheet (#3660).
     @StateObject private var noteExport = SpokenNoteExportModel()
+    /// Play on a spoken note's row plays the whole note (#3662).
+    @StateObject private var notePlay = SpokenNoteWholePlayModel()
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.isEdgeSwipePreview) private var isEdgeSwipePreview
     /// A copied link on offer at the top of the Library (#1379).
@@ -118,8 +120,10 @@ struct ExperienceLibraryScreen: View {
             SpokenNoteRecordingView(opening: opening).environmentObject(model)
         }
         .spokenNoteExportFlow(noteExport)
+        .spokenNotePlayFlow(notePlay)
         .overlay {
             if noteExport.isPreparing { SpokenNoteExportProgress() }
+            if notePlay.isPreparing { SpokenNotePlayProgress() }
         }
         .sheet(item: $collectionItem) { item in
             ItemCollectionSheet(item: item)
@@ -472,8 +476,8 @@ struct ExperienceLibraryScreen: View {
                     playbackSpeed: model.speechPlaybackRateMultiplier,
                     onOpen: { openRow(row) },
                     onPlay: {
-                        // A note is heard a sentence at a time on its own screen; Play opens it.
-                        if row.spokenNoteId != nil { openRow(row) } else { model.continueListening(itemId: row.id) { pendingNewMarginsOffer = $0 } }
+                        // A note plays whole, start to finish, like any item; its own screen is where a sentence is picked.
+                        if let noteId = row.spokenNoteId { notePlay.play(noteId: noteId, app: model) } else { model.continueListening(itemId: row.id) { pendingNewMarginsOffer = $0 } }
                     },
                     onComplete: { model.markItemCompleted(id: row.id) },
                     onMarkUnfinished: { model.markItemUnfinished(id: row.id) },

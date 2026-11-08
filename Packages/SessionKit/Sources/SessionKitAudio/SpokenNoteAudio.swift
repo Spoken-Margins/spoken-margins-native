@@ -151,7 +151,7 @@ import AVFoundation
 /// Joins a spoken note's takes into one `.m4a` (#3660) for Export. The takes are read, never changed: they are laid end
 /// to end in a composition and exported as AAC to the new file. A take whose audio can't be opened fails the join, so a
 /// share never carries a note with a silent gap where a take should be.
-public struct SpokenNoteAudioJoiner: SpokenNoteAudioJoining {
+public struct SpokenNoteAudioJoiner: SpokenNoteAudioJoining, SpokenNoteMeasuredAudioJoining {
     public enum JoinError: Error, Equatable {
         case noAudio
         case exportFailed
@@ -160,30 +160,45 @@ public struct SpokenNoteAudioJoiner: SpokenNoteAudioJoining {
     public init() {}
 
     public func join(_ sources: [URL], to destination: URL) async throws -> Int {
+        let measurement = try await joinMeasured(sources, to: destination)
+        return sources.count - measurement.placements.count
+    }
+
+    /// Joins the sources that can be read and says where each landed, as the joined file counts it (#3662): the offsets
+    /// are the sums of the lengths the composition used, so a sentence's time on the joined clock does not drift by the
+    /// few milliseconds a recorder's own length can be off per take.
+    public func joinMeasured(_ sources: [URL], to destination: URL) async throws -> SpokenNoteJoinMeasurement {
         let composition = AVMutableComposition()
         guard let track = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else {
             throw JoinError.exportFailed
         }
         var cursor = CMTime.zero
-        var skipped = 0
-        for source in sources {
-            // A take that can't be opened (cut short by a system stop, say) is left out and counted; the rest still join.
+        var placements: [SpokenNoteJoinMeasurement.Placement] = []
+        for (index, source) in sources.enumerated() {
+            // A take that can't be opened (cut short by a system stop, say) is left out; the rest still join.
             let asset = AVURLAsset(url: source)
             guard let sourceTrack = try? await asset.loadTracks(withMediaType: .audio).first,
                   let duration = try? await asset.load(.duration),
                   (try? track.insertTimeRange(CMTimeRange(start: .zero, duration: duration), of: sourceTrack, at: cursor)) != nil
             else {
-                skipped += 1
                 continue
             }
+            placements.append(.init(
+                sourceIndex: index, startMs: Self.milliseconds(cursor), durationMs: Self.milliseconds(duration)
+            ))
             cursor = CMTimeAdd(cursor, duration)
         }
-        guard skipped < sources.count else { throw JoinError.noAudio }
+        guard !placements.isEmpty else { throw JoinError.noAudio }
         guard let exporter = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetAppleM4A) else {
             throw JoinError.exportFailed
         }
         try await exporter.export(to: destination, as: .m4a)
-        return skipped
+        return SpokenNoteJoinMeasurement(placements: placements, durationMs: Self.milliseconds(cursor))
+    }
+
+    private static func milliseconds(_ time: CMTime) -> Int {
+        let seconds = time.seconds
+        return seconds.isFinite ? max(0, Int((seconds * 1_000).rounded())) : 0
     }
 }
 #endif

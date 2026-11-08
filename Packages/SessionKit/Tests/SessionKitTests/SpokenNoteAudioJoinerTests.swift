@@ -80,5 +80,52 @@ final class SpokenNoteAudioJoinerTests: XCTestCase {
         let duration = try await AVURLAsset(url: XCTUnwrap(files.audioURL)).load(.duration).seconds
         XCTAssertEqual(duration, 4, accuracy: 0.3)
     }
+
+    // MARK: #3662, whole-note playback
+
+    func testTheMeasuredJoinPlacesEachTakeWhereTheJoinedFileHasIt() async throws {
+        let bad = root.appendingPathComponent("b.m4a")
+        try Data("not audio".utf8).write(to: bad)
+        let sources = [try take("a.m4a", seconds: 2, seed: 1), bad, try take("c.m4a", seconds: 3, seed: 3)]
+        let destination = root.appendingPathComponent("joined.m4a")
+
+        let measurement = try await SpokenNoteAudioJoiner().joinMeasured(sources, to: destination)
+
+        XCTAssertEqual(measurement.placements.map(\.sourceIndex), [0, 2], "the unreadable take is not placed")
+        XCTAssertEqual(measurement.placements[0].startMs, 0)
+        XCTAssertEqual(Double(measurement.placements[0].durationMs), 2000, accuracy: 100)
+        XCTAssertEqual(measurement.placements[1].startMs, measurement.placements[0].durationMs, "the next take starts where the last ends")
+        XCTAssertEqual(Double(measurement.durationMs), 5000, accuracy: 200)
+        let duration = try await AVURLAsset(url: destination).load(.duration).seconds
+        XCTAssertEqual(duration * 1000, Double(measurement.durationMs), accuracy: 300, "the measure is the file's own length")
+    }
+
+    func testAWholeNoteIsPreparedFromRealAudioAndPlaysAsOneFile() async throws {
+        let folder = root.appendingPathComponent("note", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        _ = try take("note/take-a.m4a", seconds: 2, seed: 1)
+        _ = try take("note/take-b.m4a", seconds: 2, seed: 2)
+        var note = SpokenNote(id: "n")
+        for id in ["a", "b"] {
+            note.appendTake(SpokenNoteTake(
+                id: id, audioFileName: "take-\(id).m4a", durationMs: 2000, createdAt: Date(timeIntervalSince1970: 0),
+                sentences: [SpokenNoteSentence(text: "Take \(id).", startMs: 0, endMs: 900)]))
+        }
+        let store = SpokenNoteStore(folderURL: folder, noteId: "n")
+        try store.save(note)
+        struct Writer: SpokenNotePlaybackWriting {
+            func attachPlayback(itemId: String, audioURL: URL, durationMs: Int, timeline: MediaTimeline, text: String) throws -> Bool { true }
+        }
+
+        let prepared = try await SpokenNoteWholePlayback.prepare(store: store, joiner: SpokenNoteAudioJoiner(), writer: Writer())
+
+        let duration = try await AVURLAsset(url: prepared.audioURL).load(.duration).seconds
+        XCTAssertEqual(duration, 4, accuracy: 0.3)
+        XCTAssertEqual(prepared.timeline.entries.count, 2)
+        XCTAssertEqual(Double(prepared.timeline.entries[1].startMs), 2000, accuracy: 150, "take b's first sentence starts where take a ends")
+        let again = try await SpokenNoteWholePlayback.prepare(store: store, joiner: SpokenNoteAudioJoiner(), writer: Writer())
+        XCTAssertFalse(again.rebuilt)
+        XCTAssertEqual(again.timeline, prepared.timeline)
+    }
 }
 #endif
