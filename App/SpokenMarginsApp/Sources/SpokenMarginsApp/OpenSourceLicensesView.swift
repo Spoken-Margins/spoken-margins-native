@@ -63,7 +63,7 @@ struct OpenSourceLicensesView: View {
                             Text(document.title)
                             Text(document.detail)
                                 .font(.caption)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(AppColors.secondaryText)
                         }
                     }
                     .accessibilityIdentifier("legal.openSource.\(document.resourceName)")

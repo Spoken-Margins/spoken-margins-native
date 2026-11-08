@@ -718,7 +718,7 @@ struct MarginsSearchField: View {
     var body: some View {
         // A single-line field stays about 34 pt tall inside the 44 pt frame, so a tap catcher behind it focuses
         // the field when the tap lands in the extra room above or below. Taps on the field itself never reach it.
-        TextField("Search your notes or an item", text: $text)
+        AppTextField("Search your notes or an item", text: $text)
             .textFieldStyle(.roundedBorder)
             .focused($isFocused)
             .frame(minHeight: TapTarget.minimum)

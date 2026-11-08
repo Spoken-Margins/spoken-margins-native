@@ -182,16 +182,14 @@ final class AppColorUsageGuardTests: XCTestCase {
     /// Lower a number, or delete the line, when a use goes. There is no test for slack, so two PRs that each remove or
     /// add a use never turn each other red.
     private static let systemColorBaseline: [String: Int] = [
-        "AppTopBanners.swift": 1, "EdgeSwipeBackTransition.swift": 1, "ExperienceAudioPreparationQueueScreen.swift": 2,
-        "ExperienceRecordingScreen.swift": 1, "FirstMarginPromptCard.swift": 2, "Gate1RootView.swift": 1,
-        "Gate2LiveActivityWidget.swift": 13, "LiveActivityTourPreview.swift": 1, "LiveSessionActivityWidget.swift": 8,
-        "MiniPlayer.swift": 1, "OpenSourceLicensesView.swift": 1, "PKMSettingsViews.swift": 10,
+        "AppTopBanners.swift": 1, "EdgeSwipeBackTransition.swift": 1, "ExperienceRecordingScreen.swift": 1,
+        "FirstMarginPromptCard.swift": 2, "Gate1RootView.swift": 1, "Gate2LiveActivityWidget.swift": 13,
+        "LiveActivityTourPreview.swift": 1, "LiveSessionActivityWidget.swift": 8, "MiniPlayer.swift": 1,
         "PinnedMarginCardView.swift": 4, "PlaybackFeedbackTagView.swift": 3, "PlaybackLivePassageView.swift": 1,
         "PlaybackMarginRowView.swift": 1, "PlaybackMarginTranscriptionStatusView.swift": 1, "PlaybackMarginsFilterView.swift": 2,
         "PlaybackNativeTextPeekView.swift": 1, "PlaybackPaneSwitchView.swift": 2, "PlaybackPositionSlider.swift": 1,
-        "PlaybackScreen.swift": 6, "PlaybackTimelineSourceView.swift": 2, "SettingsScreen.swift": 2,
-        "SpokenMarginsTermsView.swift": 3, "SpokenMarginsWatchApp.swift": 5, "UserFeedbackBanner.swift": 1,
-        "VoicesSettingsScreen.swift": 2, "WatchUntetheredView.swift": 28
+        "PlaybackScreen.swift": 6, "SpokenMarginsWatchApp.swift": 5, "VoicesSettingsScreen.swift": 2,
+        "WatchUntetheredView.swift": 28
     ]
 
     private func systemColorUses() throws -> [String: Int] {
@@ -216,5 +214,47 @@ final class AppColorUsageGuardTests: XCTestCase {
             over.sorted(), [],
             "use a token from AppSemanticColorRGB (the audit measures those), or add the system colour to AppSystemColorRGB with a pair"
         )
+    }
+
+    // MARK: Secondary text and placeholders (#3738)
+
+    /// Where `.foregroundStyle(.secondary)` is allowed: the Watch and the Live Activity draw on their own dark plates, and
+    /// the Listening options sheet in `PlaybackScreen.swift` is forced dark, so the system grey reads well there. Anywhere
+    /// else it is 3.4:1 on white in light mode, and the token `secondaryText` is 4.84:1 or better.
+    private static let darkSecondaryAllowed: Set<String> = [
+        "PlaybackScreen.swift", "WatchUntetheredView.swift", "SpokenMarginsWatchApp.swift", "Gate2LiveActivityWidget.swift",
+        "LiveSessionActivityWidget.swift"
+    ]
+
+    func testSecondaryTextOutsideTheDarkSurfacesUsesTheToken() throws {
+        var offenders: [String] = []
+        for file in try appSwiftFiles() where !Self.darkSecondaryAllowed.contains(file.lastPathComponent) {
+            let text = try collapsedText(file)
+            let count = try matches(of: #"foregroundStyle\(\s*\.(?:secondary|tertiary|quaternary)\s*\)"#, in: text).count
+            if count > 0 { offenders.append("\(file.lastPathComponent): \(count)") }
+        }
+        XCTAssertEqual(offenders.sorted(), [], "use AppColors.secondaryText: the system grey is 3.4:1 on white")
+    }
+
+    /// The default placeholder is a system grey, 1.73:1 on the input fill in light mode. `AppTextField` and
+    /// `AppSecureField` draw it in `secondaryText`. Only the three system alerts keep a plain field: the system draws those.
+    private static let plainFieldAllowed: [String: Int] = [
+        "ExperienceDesignSystem.swift": 3, "ExperienceItemDetailScreen.swift": 1, "ItemCollectionSheet.swift": 1,
+        "SpokenNoteRenameAlert.swift": 1
+    ]
+
+    func testTextFieldsUseTheAppPlaceholderColour() throws {
+        var counts: [String: Int] = [:]
+        for file in try appSwiftFiles() where !file.path.contains("Watch") {
+            let text = try collapsedText(file)
+            let count = try matches(of: #"(?<![\w])(?:TextField|SecureField)\("#, in: text).count
+            if count > 0 { counts[file.lastPathComponent] = count }
+        }
+        XCTAssertGreaterThan(counts["ExperienceDesignSystem.swift"] ?? 0, 0, "the scan must see the wrappers' own fields")
+        var over: [String] = []
+        for (file, count) in counts where count > (Self.plainFieldAllowed[file] ?? 0) {
+            over.append("\(file): \(count) plain fields, \(Self.plainFieldAllowed[file] ?? 0) allowed")
+        }
+        XCTAssertEqual(over.sorted(), [], "use AppTextField or AppSecureField so the placeholder meets contrast")
     }
 }
