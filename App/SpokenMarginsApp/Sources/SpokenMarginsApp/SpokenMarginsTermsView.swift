@@ -32,7 +32,7 @@ struct SpokenMarginsTermsView: View {
                         .screenTitle()
                     Text("Version \(SpokenMarginsTerms.currentVersion) · Effective \(SpokenMarginsTerms.effectiveDate)")
                         .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(AppColors.secondaryText)
                 }
 
                 Text(SpokenMarginsTerms.bundledText())
@@ -55,7 +55,7 @@ struct SpokenMarginsTermsView: View {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("By continuing, you agree to these Terms and enable the bundled Supertonic on-device voice. The iOS system voice remains available if you do not agree.")
                             .font(.footnote)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(AppColors.secondaryText)
 
                         Button("Agree and Enable On-Device Voice") {
                             model.acceptCurrentTermsAndEnableOnDeviceVoice()
@@ -126,7 +126,7 @@ private struct TermsSummaryView: View {
             VStack(alignment: .leading, spacing: 12) {
                 Text("By tapping Agree, you agree to the Spoken Margins Terms of Use, version \(SpokenMarginsTerms.currentVersion).")
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(AppColors.secondaryText)
                 Button {
                     model.acceptCurrentTermsAndEnableOnDeviceVoice()
                 } label: {

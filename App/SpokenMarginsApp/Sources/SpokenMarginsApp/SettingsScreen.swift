@@ -354,7 +354,7 @@ struct SettingsScreen: View {
                             Text("Help make listening maps")
                             Text("Send transcripts of public episodes to the Spoken Margins server, which turns them into maps and then deletes them.")
                                 .font(.footnote)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(AppColors.secondaryText)
                         }
                     }
                     .accessibilityIdentifier("settings.communityMaps.toggle")
@@ -363,7 +363,7 @@ struct SettingsScreen: View {
                             Text("Look up community maps")
                             Text("When you open or play a public podcast episode with no chapters, ask the Spoken Margins server for a map other listeners helped make. This tells the server which episode you opened, and it can see your IP address.")
                                 .font(.caption)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(AppColors.secondaryText)
                         }
                     }
                     .accessibilityIdentifier("settings.communityMapLookup.toggle")

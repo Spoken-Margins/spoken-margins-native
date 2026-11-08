@@ -315,7 +315,7 @@ struct InterjectionDetailView: View {
                         )
                     )
                     .accessibilityIdentifier("interjection.detail.shareStar")
-                    TextField("Private note for yourself", text: $privateSharingNoteDraft, axis: .vertical)
+                    AppTextField("Private note for yourself", text: $privateSharingNoteDraft, axis: .vertical)
                         .lineLimit(2...5)
                         .onCompatibleChange(of: privateSharingNoteDraft) { value in
                             if value.count > Gate1AppModel.privateSharingNoteCharacterLimit {

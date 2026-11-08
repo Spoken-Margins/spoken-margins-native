@@ -84,7 +84,7 @@ struct FollowSheet: View {
     }
 
     private var feedURLField: some View {
-        TextField("Paste an RSS feed link", text: $model.followedSourceURL)
+        AppTextField("Paste an RSS feed link", text: $model.followedSourceURL)
             .textInputAutocapitalization(.never)
             .autocorrectionDisabled()
             .textContentType(.URL)
