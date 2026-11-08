@@ -1752,6 +1752,7 @@ public final class SessionEngine {
 
     /// The cue has started, or did not play (0 seconds): the recorder listens again after `seconds`.
     public func resumeRecordingAfterReadyCue(after seconds: TimeInterval) {
+        if seconds > 0 { marginCaptureTiming?.readyCueSounded(at: ProcessInfo.processInfo.systemUptime) } // #1506: tap to the cue
         recorder.resumeAfterReadyCue(after: seconds)
     }
 
