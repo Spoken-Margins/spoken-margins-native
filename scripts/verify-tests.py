@@ -2408,14 +2408,8 @@ class Run:
                         self.save()
                     # A hosted Mac cannot listen and starts no window (#3604): its skipped AudioLoopback tests are
                     # recorded as not run, for the report, instead of failing the step.
-                    for run in self.manifest['steps']:
-                        if not str(run.get('name')).startswith('xcode-tests'):
-                            continue
-                        names, entries = lane_audio_window.not_run(run.get('tests'))
-                        if names:
-                            run['audio_not_run'] = names
-                            run.setdefault('attachments', []).extend(entries)
-                            self.save()
+                    if lane_audio_window.record_not_run(self.manifest['steps']):
+                        self.save()
         finally:
             if scheme == 'SpokenMarginsAppBehavior':
                 lane_sim.mark_quiet(chosen['udid'])

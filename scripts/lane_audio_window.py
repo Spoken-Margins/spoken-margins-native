@@ -60,6 +60,22 @@ def not_run(records, hosted_runner=None):
     return names, [{'test': test, 'files': [], 'audio': {'verdict': 'NOT RUN', 'summary': NOT_RUN}} for test in names]
 
 
+def record_not_run(steps, hosted_runner=None):
+    """Mark each xcode-tests step of a verify-tests.py manifest whose AudioLoopback tests skipped on a hosted Mac:
+    `audio_not_run` names them (lane-runner.py reads it) and an attachment entry puts the line in the report.
+    Returns whether any step changed."""
+    changed = False
+    for step in steps:
+        if not str(step.get('name')).startswith('xcode-tests'):
+            continue
+        names, entries = not_run(step.get('tests'), hosted_runner)
+        if names:
+            step['audio_not_run'] = names
+            step.setdefault('attachments', []).extend(entries)
+            changed = True
+    return changed
+
+
 @contextlib.contextmanager
 def serve(output, tests, out=sys.stdout, server=SERVER, python=sys.executable, hosted_runner=None):
     """Yields the window folder while the server runs, or None when `tests` (the run's -only-testing selectors)
