@@ -51,8 +51,9 @@ extension PinnedMarginCard {
             // The one button while a voice sounds skips it: the episode plays on from where the Margin ended. It never says
             // "Next Margin", because stopping a voice does not move the listener to the next one; the next Margin's own
             // lead-in button ("Jump to 20 sec before it") comes once the voice is over (audit on #3623).
-            // A review has no lead-in to leave from while its Margins chain (a can't-play listening), so Stop is here too.
-            return run == .review ? [skip, stop] : [skip]
+            // Never a Stop beside it: three exits for one short voice (#3597). The pause control already stops a voice, and the
+            // owner's proposal says "No Stop button" while a Margin plays (2026-11-06).
+            return [skip]
         case .failed:
             let retry = Action(job: .retry, title: "Retry", hint: "Tries to play this Margin again.", prominence: .secondary)
             return [retry, skip]

@@ -120,13 +120,14 @@ final class PinnedMarginCardTests: XCTestCase {
 
     func testWhileAMarginPlaysThereIsOneButtonNamedForWhatItDoes() {
         for stage in [PinnedMarginCard.Stage.speaking, .reading, .voicePaused, .loading] {
-            // In a review: Skip this Margin beside a quiet Stop, whether or not more follow. Stopping a voice does not
-            // move the listener to the next Margin, so the button never says "Next Margin" (audit on #3623).
+            // In a review: Skip this Margin alone, whether or not more follow, and never a Stop (#3597: "No Stop button;
+            // the pause control already does that job"). Stopping a voice does not move the listener to the next
+            // Margin, so the button never says "Next Margin" (audit on #3623).
             for press in [more, .playMarginNow, .unavailable] {
-                XCTAssertEqual(titles(card(cole, stage, press: press)), ["Skip this Margin", "Stop"], "\(stage) \(press)")
-                XCTAssertEqual(card(cole, stage, press: press).actions.map(\.job), [.skipThisMargin, .stopReview])
+                XCTAssertEqual(titles(card(cole, stage, press: press)), ["Skip this Margin"], "\(stage) \(press)")
+                XCTAssertEqual(card(cole, stage, press: press).actions.map(\.job), [.skipThisMargin])
+                XCTAssertFalse(card(cole, stage, press: press).actions.contains { $0.job == .stopReview }, "\(stage) \(press)")
             }
-            XCTAssertEqual(card(cole, stage, press: more).actions[1].prominence, .quiet)
             // Outside a review nothing teleports the listener: a friend's Margin that plays by itself, or a moment's, is
             // skipped, whatever the press would be (owner, 2026-11-06).
             for run in [PinnedMarginCard.Run.none, .moment] {
@@ -141,7 +142,8 @@ final class PinnedMarginCardTests: XCTestCase {
 
     func testAReviewsStopIsTrueToWhatItDoesWhichIsPause() {
         // `stopReview` pauses the source and goes back only to undo the review's own hop (`MarginMomentSequence.placeToReturnToWhenStopped`).
-        let stop = card(cole, .speaking, press: more).actions[1]
+        // It is drawn only at a review's lead-in now, never while a voice plays.
+        let stop = card(cole, .comingUp(msRemaining: 8_000), press: more).actions[1]
         XCTAssertEqual(stop.title, "Stop")
         XCTAssertEqual(stop.hint, "Stops these Margins and pauses the episode. If none of them has played yet, it goes back to where you were.")
         XCTAssertFalse(stop.hint.contains("carries on"))
@@ -341,7 +343,7 @@ final class PinnedMarginCardTests: XCTestCase {
         XCTAssertEqual(card(cole, .failed, noun: .article, press: more).detail, "Tap Retry, or skip this Margin.")
         XCTAssertEqual(card(cole, .comingUp(msRemaining: 1_000), noun: .article).detail, "It plays by itself when the article gets there.")
         XCTAssertEqual(card(cole, .comingUp(msRemaining: 1_000), noun: .pdf).detail, "It plays by itself when the PDF gets there.")
-        XCTAssertEqual(card(cole, .speaking, noun: .article, press: more).actions[1].hint, "Stops these Margins and pauses the article. If none of them has played yet, it goes back to where you were.")
+        XCTAssertEqual(card(cole, .comingUp(msRemaining: 1_000), noun: .article, press: more).actions[1].hint, "Stops these Margins and pauses the article. If none of them has played yet, it goes back to where you were.")
         XCTAssertEqual(card(cole, .speaking, noun: .pdf, run: .none).actions[0].hint, "Stops this Margin and carries on with the PDF.")
     }
 
