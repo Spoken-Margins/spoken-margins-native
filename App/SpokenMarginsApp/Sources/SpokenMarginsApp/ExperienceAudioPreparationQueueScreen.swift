@@ -105,7 +105,7 @@ private struct AudioPreparationQueueContent: View, @preconcurrency Equatable {
 
                     Text(policyExplanation)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(AppColors.secondaryText)
                 } header: {
                     Text("Automatic preparation")
                 }
@@ -113,7 +113,7 @@ private struct AudioPreparationQueueContent: View, @preconcurrency Equatable {
                 Section("Recently prepared") {
                     if recentlyPrepared.isEmpty {
                         Text("Finished audio will appear here after its final file is verified.")
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(AppColors.secondaryText)
                     } else {
                         ForEach(recentlyPrepared) { row in
                             Button {

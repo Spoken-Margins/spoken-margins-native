@@ -13,8 +13,14 @@ extension Gate1AppModel {
     }
 
     /// Friends and the shows that are not Quiet, newest first. Quiet shows stay in `followingShowListCache.quiet`.
+    /// Empty until the show list has loaded once, so the first frame is already in its final order (#3753).
     func followingFeedRows(friends: [FollowingFriends.Friend]) -> [FollowingFeed.Row] {
-        FollowingFeed.rows(friends: friends, shows: followingShowListCache.rows)
+        FollowingFeed.visibleRows(friends: friends, shows: followingShowListCache.rows, showsLoaded: followingShowListLoaded)
+    }
+
+    /// "You're not following anything yet" shows only once the show list has loaded and there really is nothing (#3753).
+    func followingShowsEmptyState(friends: [FollowingFriends.Friend]) -> Bool {
+        FollowingFeed.showsEmptyState(friends: friends, shows: followingShowListCache, showsLoaded: followingShowListLoaded)
     }
 
     /// A friend's item as its Library row reads it ("The Show · Podcast · 40%"); nil when the item isn't loaded.

@@ -52,7 +52,7 @@ struct ItemCollectionSheet: View {
                     Text("Deleting a collection keeps its items and their Margins.")
                 }
                 Section("New Collection") {
-                    TextField("Name, such as HIST 210", text: $newName)
+                    AppTextField("Name, such as HIST 210", text: $newName)
                         .submitLabel(.done)
                         .onSubmit(create)
                         .accessibilityIdentifier("collection.new.field")
