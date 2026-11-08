@@ -6,6 +6,10 @@ public struct SharedMarginOfferQueue: Equatable {
     public private(set) var announcedIDs: Set<String> = []
     public private(set) var waitingIDs: [String] = []
 
+    /// The prompt whose card is tone-only (`SharedMarginPromptStyle.isToneOnly`): a newer crossed Margin may replace
+    /// it, so a card with no timer (assistive technology, #3720) can't hide every later Margin.
+    public var toneOnlyCardID: String?
+
     public init() {}
 
     public var isEmpty: Bool { waitingIDs.isEmpty }

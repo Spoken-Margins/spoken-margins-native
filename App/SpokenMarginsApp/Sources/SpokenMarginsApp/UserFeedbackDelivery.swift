@@ -50,6 +50,10 @@ final class FeedbackBannerHold {
     func setFocused(_ value: Bool) { focused = value }
     func reset() { touched = false; focused = false }
 
+    /// Whether the listener is on the Margin card, by touch or by focus: the tone-only card's timer waits (#3720).
+    /// One card is on screen at a time, so one hold serves the app.
+    static let marginCard = FeedbackBannerHold()
+
     /// Waits while the listener is on the card, a second at a time. At most `maxSeconds` more, so a touch that
     /// SwiftUI never reports as ended can't keep the card forever (#1927, #3720).
     func waitWhileHeld(

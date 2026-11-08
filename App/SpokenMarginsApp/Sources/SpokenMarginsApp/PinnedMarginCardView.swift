@@ -80,11 +80,11 @@ struct PinnedMarginCardView: View {
         .accessibilityIdentifier("marginCard")
         .simultaneousGesture(
             DragGesture(minimumDistance: 0)
-                .onChanged { _ in model.marginCardHold.setTouched(true) }
-                .onEnded { _ in model.marginCardHold.setTouched(false) }
+                .onChanged { _ in FeedbackBannerHold.marginCard.setTouched(true) }
+                .onEnded { _ in FeedbackBannerHold.marginCard.setTouched(false) }
         )
-        .onChange(of: focusedPart) { _, part in model.marginCardHold.setFocused(part != nil) }
-        .onDisappear { model.marginCardHold.reset() }
+        .onChange(of: focusedPart) { _, part in FeedbackBannerHold.marginCard.setFocused(part != nil) }
+        .onDisappear { FeedbackBannerHold.marginCard.reset() }
         .padding(.horizontal, 22)
         .padding(.vertical, 8)
         .frame(maxWidth: 620)
