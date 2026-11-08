@@ -56,6 +56,15 @@ class ReclassifyTests(unittest.TestCase):
         self.assertEqual([e['class'] for e in out],
                          ['next-moved', 'next-moved', 'next-moved', 'next-moved', 'catch-candidate', 'rerun-pass'])
 
+    def test_an_open_window_without_to_still_applies(self):
+        eps = [episode(TEST, 'pr:3460', '2026-11-03T01:00:00Z'), episode(TEST, 'pr:3478', '2026-11-03T05:00:00Z')]
+        window = {k: v for k, v in WINDOW.items() if k != 'to'}
+        self.assertEqual({e['class'] for e in score.trunk_red_from_issues(eps, [window])}, {'trunk-red'})
+
+    def test_trunk_runs_do_not_count_as_a_pr(self):
+        eps = [episode(TEST, 'pr:3460', '2026-11-03T01:00:00Z'), episode(TEST, 'trunk', '2026-11-03T05:00:00Z')]
+        self.assertEqual({e['class'] for e in score.trunk_red_from_issues(eps, [WINDOW])}, {'next-moved'})
+
     def test_no_windows_changes_nothing(self):
         eps = [episode(TEST, 'pr:1', '2026-11-03T01:00:00Z'), episode(TEST, 'pr:2', '2026-11-03T02:00:00Z')]
         self.assertEqual({e['class'] for e in score.trunk_red_from_issues(eps, [])}, {'next-moved'})

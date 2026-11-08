@@ -7,7 +7,7 @@ Usage, from the repo root (git fetch origin '+refs/pull/*/head:refs/remotes/orig
     python3 ops/test-trust/score.py . artifacts/test-trust 2026-10-07
 
 Input: lane-comments.jsonl (one GitHub comment per line: u, at, a, assoc, b), only bot-authored reports used.
-Optional input: trunk-red-issues.jsonl, one `{"test": ..., "issue": N, "from": ISO time, "to": ISO time}` per line, for
+Optional input: trunk-red-issues.jsonl, one `{"test": ..., "issue": N, "from": "2026-11-02T00:00:00Z", "to": "..."}` per line (UTC, `Z` form; leave `to` out while the fix is unmerged), for
 each `regression` issue that names a test red on `main` (from: when the breaking PR merged; to: when the fix merged).
 Output: episodes.jsonl (one per failing test per PR failure run, with its class) and per-test.tsv.
 
@@ -106,8 +106,9 @@ def trunk_red_from_issues(episodes, windows):
     are trunk breaks, not noise, once two or more different PRs hit it: one PR alone could still be a moved next.
     """
     for w in windows:
+        # times are the comment's own UTC `...Z` strings; a fix not merged yet leaves `to` out, so the window is open
         hit = [e for e in episodes if e['test'] == w['test'] and e.get('class') == 'next-moved'
-               and w['from'] <= e['at'] <= w['to']]
+               and e['key'].startswith('pr:') and w['from'] <= e['at'] <= w.get('to', '9999')]
         if len({e['key'] for e in hit}) >= 2:
             for e in hit:
                 e['class'], e['trunk_issue'] = 'trunk-red', w['issue']
@@ -173,7 +174,7 @@ def main(argv):
                        for e in episodes):
                     continue
                 episodes.append(ep)
-trunk_red_from_issues(episodes, read_windows())
+    trunk_red_from_issues(episodes, read_windows())
     with (HERE / 'episodes.jsonl').open('w') as f:
         for e in episodes:
             f.write(json.dumps(e) + '\n')
