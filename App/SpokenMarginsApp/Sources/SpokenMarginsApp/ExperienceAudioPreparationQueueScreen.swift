@@ -246,7 +246,7 @@ private struct AudioPreparationQueueItemRow: View {
                     .buttonStyle(.bordered)
                     .accessibilityHint("Moves this one to the top of the audio preparation queue")
                     .accessibilityIdentifier("offlineRendering.prioritize.\(row.itemId)")
-                AdaptiveSpacer()
+                AdaptiveSpacer(minLength: 0)
                 if row.policy != .explicit {
                     Button("Prepare Now") {
                         renderNow()
