@@ -247,7 +247,9 @@ public enum SpokenNoteWholePlayback {
             layout = try await rebuild(requested: requested, store: store, joiner: joiner)
             rebuilt = true
         }
-        let timeline = SpokenNoteWholeTimeline(note: note, layout: layout)
+        // The note is read again: a transcript can arrive while the takes are being joined, and the item's text and timeline
+        // must not go back to the note as it was before the join. A take added meanwhile is simply not in the layout yet.
+        let timeline = SpokenNoteWholeTimeline(note: store.peek() ?? note, layout: layout)
         guard try writer.attachPlayback(
             itemId: SpokenNoteItem.itemId(forNoteId: note.id), audioURL: audio,
             durationMs: layout.durationMs, timeline: timeline.mediaTimeline, text: timeline.text
@@ -256,6 +258,20 @@ public enum SpokenNoteWholePlayback {
             itemId: SpokenNoteItem.itemId(forNoteId: note.id), audioURL: audio,
             durationMs: layout.durationMs, timeline: timeline, rebuilt: rebuilt
         )
+    }
+
+    private static let temporaryPrefix = "whole-note.tmp-"
+
+    /// A join cut short by the app ending leaves its half-made file. One older than an hour belongs to no join still
+    /// running, so it is removed; a younger one may be another screen's join in progress.
+    private static func removeStaleTemporaries(inFolder folder: URL, now: Date = Date()) {
+        let fileManager = FileManager.default
+        for name in (try? fileManager.contentsOfDirectory(atPath: folder.path)) ?? [] where name.hasPrefix(temporaryPrefix) {
+            let url = folder.appendingPathComponent(name)
+            guard let modified = (try? fileManager.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date,
+                  now.timeIntervalSince(modified) > 3600 else { continue }
+            try? fileManager.removeItem(at: url)
+        }
     }
 
     private static func readLayout(inFolder folder: URL) -> SpokenNoteWholeAudioLayout? {
@@ -274,7 +290,8 @@ public enum SpokenNoteWholePlayback {
         let folder = store.folderURL
         // Written beside the real file and moved over it, so a player still reading the old one keeps reading it, and a
         // join that fails leaves the old file as it was.
-        let temporary = folder.appendingPathComponent("whole-note.tmp-\(UUID().uuidString.lowercased()).m4a")
+        let temporary = folder.appendingPathComponent("\(temporaryPrefix)\(UUID().uuidString.lowercased()).m4a")
+        removeStaleTemporaries(inFolder: folder)
         do {
             let measurement = try await joiner.joinMeasured(requested.map { folder.appendingPathComponent($0.audioFileName) }, to: temporary)
             let placed = measurement.placements.compactMap { placement -> SpokenNoteWholeAudioLayout.Placed? in

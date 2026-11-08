@@ -25,9 +25,12 @@ final class SpokenNoteWholePlaybackTests: XCTestCase {
         var lengths: [String: Int] = [:]
         var unreadable: Set<String> = []
         var failing = false
+        /// Runs while the join is "in progress", like a transcript arriving during it.
+        var duringJoin: (() throws -> Void)?
 
         func joinMeasured(_ sources: [URL], to destination: URL) async throws -> SpokenNoteJoinMeasurement {
             calls.append(sources.map(\.lastPathComponent))
+            try duringJoin?()
             if failing {
                 try Data("half".utf8).write(to: destination)
                 throw CocoaError(.fileWriteUnknown)
@@ -271,6 +274,32 @@ final class SpokenNoteWholePlaybackTests: XCTestCase {
         _ = try await SpokenNoteWholePlayback.prepare(store: store, joiner: FakeJoiner(), writer: RecordingWriter())
         let after = try ["take-a.m4a", "take-b.m4a", "note.json"].map { try Data(contentsOf: store.folderURL.appendingPathComponent($0)) }
         XCTAssertEqual(before, after)
+    }
+
+    func testATranscriptThatArrivesDuringTheJoinIsNotLostFromTheTimeline() async throws {
+        let store = try makeStore(takes: [("a", ["One."]), ("b", [])])
+        let joiner = FakeJoiner()
+        joiner.duringJoin = {
+            var note = store.load()
+            note.setTranscript([SpokenNoteSentence(text: "Two.", startMs: 0, endMs: 900)], forTake: "b")
+            try store.save(note)
+        }
+        let writer = RecordingWriter()
+        let prepared = try await SpokenNoteWholePlayback.prepare(store: store, joiner: joiner, writer: writer)
+        XCTAssertEqual(prepared.timeline.entries.map(\.text), ["One.", "Two."])
+        XCTAssertEqual(writer.calls.last?.text, "One. Two.", "the item's words are the note as it is after the join")
+    }
+
+    func testAJoinThatWasCutShortLeavesNoStaleFileBehind() async throws {
+        let store = try makeStore(takes: [("a", ["One."])])
+        let old = store.folderURL.appendingPathComponent("whole-note.tmp-old.m4a")
+        let fresh = store.folderURL.appendingPathComponent("whole-note.tmp-fresh.m4a")
+        try Data("half".utf8).write(to: old)
+        try Data("half".utf8).write(to: fresh)
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -7200)], ofItemAtPath: old.path)
+        _ = try await SpokenNoteWholePlayback.prepare(store: store, joiner: FakeJoiner(), writer: RecordingWriter())
+        XCTAssertFalse(FileManager.default.fileExists(atPath: old.path), "a file two hours old belongs to no running join")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fresh.path), "a young one may be another screen's join in progress")
     }
 
     // MARK: what it refuses
