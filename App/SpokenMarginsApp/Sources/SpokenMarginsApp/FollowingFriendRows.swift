@@ -5,13 +5,15 @@ import SwiftUI
 /// shows' row style. The rows come from `FollowingFriends`.
 struct FollowingFriendRowView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    /// The avatar grows with the text but stops at 80 pt, so a row never becomes all picture (#3723).
+    @ScaledMetric(relativeTo: .headline) private var artworkSize: CGFloat = 56
     let friend: FollowingFriends.Friend
     let open: () -> Void
 
     var body: some View {
         Button(action: open) {
             HStack(alignment: .center, spacing: 12) {
-                ShowArtworkView(url: nil, title: friend.name, size: 56)
+                ShowArtworkView(url: nil, title: friend.name, size: min(artworkSize, 80))
                 VStack(alignment: .leading, spacing: 4) {
                     Text(friend.name)
                         .font(.headline)
@@ -27,7 +29,7 @@ struct FollowingFriendRowView: View {
                 Image(systemName: "chevron.right")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(AppColors.secondaryText)
-                    .frame(width: 44, height: 44)
+                    .frame(width: dynamicTypeSize.isAccessibilitySize ? nil : 44, height: 44)
                     .accessibilityHidden(true)
             }
             .contentShape(Rectangle())

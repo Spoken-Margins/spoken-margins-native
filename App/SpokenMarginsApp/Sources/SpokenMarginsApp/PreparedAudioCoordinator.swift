@@ -144,7 +144,7 @@ actor PreparedAudioCoordinator {
         plan: [PreparedChunkPlan], schedulesJob: Bool
     ) throws -> PreparedAudioManifest {
         try fileManager.createDirectory(at: rootDirectory, withIntermediateDirectories: true)
-        let manifestId = "prepared-\(itemId)-\(signature.digest.prefix(16))"
+        let manifestId = Self.manifestId(itemId: itemId, signature: signature)
         let sourceId = "source-\(itemId)"
         if try repository.loadCanonicalSource(itemId: itemId)?.segments.map(\.text).joined() != sourceText {
             let locator = SourceLocator(
@@ -222,7 +222,7 @@ actor PreparedAudioCoordinator {
         durationMs: Int,
         engine: String? = nil
     ) throws {
-        let manifestId = "prepared-\(itemId)-\(signature.digest.prefix(16))"
+        let manifestId = Self.manifestId(itemId: itemId, signature: signature)
         guard var manifest = try repository.loadPreparedAudioManifest(id: manifestId),
               manifest.signature == signature,
               manifest.state == .preparing || manifest.state == .pausedForThermal,
@@ -268,10 +268,15 @@ actor PreparedAudioCoordinator {
         })
     }
 
+    /// The id a preparation of this item under this render signature is saved as.
+    nonisolated static func manifestId(itemId: String, signature: TTSRenderSignature) -> String {
+        "prepared-\(itemId)-\(signature.digest.prefix(16))"
+    }
+
     /// True when a Stop, a failure or a new voice has retired this manifest, so audio finished for it
     /// must not be attached or marked ready (#2134). A manifest that does not exist is not refused.
     func refusesCompletion(itemId: String, signature: TTSRenderSignature) throws -> Bool {
-        let manifestId = "prepared-\(itemId)-\(signature.digest.prefix(16))"
+        let manifestId = Self.manifestId(itemId: itemId, signature: signature)
         guard let manifest = try repository.loadPreparedAudioManifest(id: manifestId) else { return false }
         return !PreparedAudioEnqueue.mayComplete(manifest.state)
     }
@@ -279,7 +284,7 @@ actor PreparedAudioCoordinator {
     /// False when the manifest is gone or was retired by a re-import meanwhile (#344 audit).
     @discardableResult
     func complete(itemId: String, signature: TTSRenderSignature, prepared: PreparedTextAudio) throws -> Bool {
-        let manifestId = "prepared-\(itemId)-\(signature.digest.prefix(16))"
+        let manifestId = Self.manifestId(itemId: itemId, signature: signature)
         guard try repository.loadPreparedAudioManifest(id: manifestId) != nil,
               let rawURL = prepared.media.url,
               let url = URL(string: rawURL),
@@ -320,7 +325,7 @@ actor PreparedAudioCoordinator {
     }
 
     func stop(itemId: String, signature: TTSRenderSignature) throws {
-        let manifestId = "prepared-\(itemId)-\(signature.digest.prefix(16))"
+        let manifestId = Self.manifestId(itemId: itemId, signature: signature)
         guard let candidate = try repository.loadPreparedAudioManifest(id: manifestId) else { return }
         _ = try PreparedAudioEnqueue.withCurrentManifest(candidate, repository: repository) { current, _ in
             var manifest = current
@@ -335,7 +340,7 @@ actor PreparedAudioCoordinator {
     }
 
     func retry(itemId: String, signature: TTSRenderSignature) throws {
-        let manifestId = "prepared-\(itemId)-\(signature.digest.prefix(16))"
+        let manifestId = Self.manifestId(itemId: itemId, signature: signature)
         guard let candidate = try repository.loadPreparedAudioManifest(id: manifestId) else { return }
         _ = try PreparedAudioEnqueue.withCurrentManifest(candidate, repository: repository) { current, _ in
             guard current.state != .readyOffline else { return }
@@ -458,7 +463,7 @@ actor PreparedAudioCoordinator {
     func committedChunk(
         itemId: String, signature: TTSRenderSignature, plan: PreparedChunkPlan, sourceText: String, engine: String? = nil
     ) throws -> PreparedChunkLookupResult? {
-        let manifestId = "prepared-\(itemId)-\(signature.digest.prefix(16))"
+        let manifestId = Self.manifestId(itemId: itemId, signature: signature)
         guard let manifest = try repository.loadPreparedAudioManifest(id: manifestId),
               manifest.signature == signature,
               manifest.state == .preparing || manifest.state == .pausedForThermal || manifest.state == .readyOffline,

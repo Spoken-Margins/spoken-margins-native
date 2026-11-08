@@ -555,7 +555,7 @@ struct Build23MarginEditor: View {
                 }
                 .font(.headline)
 
-                HStack(spacing: 10) {
+                AdaptiveStack(spacing: 10) {
                     Button("Undo", systemImage: "arrow.uturn.backward") {
                         send(.undo(id: margin.id))
                     }
@@ -569,7 +569,7 @@ struct Build23MarginEditor: View {
                     .accessibilityIdentifier("build23.sender.editor.redo.\(margin.id)")
 
                     if margin.canUndo || margin.automaticCleanupEnabled || margin.hasCleanedVoice {
-                        Spacer()
+                        AdaptiveSpacer()
                         Button("Undo all edits") {
                             send(.restoreOriginal(id: margin.id))
                         }
@@ -676,13 +676,13 @@ struct Build23BatchPreparationCard: View {
                     .accessibilityLabel("Voice preparation progress")
                     .accessibilityValue("\(completed) of \(total) complete")
 
-                    HStack {
+                    AdaptiveStack {
                         Build23StatusLabel(
                             icon: "hourglass",
                             title: "\(completed) of \(total) prepared",
                             tint: AppColors.evergreen
                         )
-                        Spacer()
+                        AdaptiveSpacer()
                         Button("Cancel preparation", role: .cancel, action: onCancel)
                             .buttonStyle(.bordered)
                             .accessibilityIdentifier("build23.sender.preparation.cancel")
