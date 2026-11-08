@@ -19,6 +19,7 @@ import XCTest
 /// - #1937 (PR #2018): the Library row's play circle grows with the text.
 /// - #1969 (PR #2013): a Library this build can't open says so, never "Your Library is ready".
 /// - #2900: the Margins pane's unselected filter chips and a Margin's play button take a tap over 44 × 44 pt.
+/// - #3724: the Supertonic download notice keeps Open Voices and Not Now on screen at accessibility5.
 ///
 /// SwiftUI builds its accessibility tree only when an assistive client is running, and an app-hosted test has none:
 /// an earlier mounted test found the tree empty (PlaybackDockLayoutTests, #1666) and UIKit's own traits missing
@@ -145,6 +146,30 @@ final class AccessibilityFixProofTests: XCTestCase {
             } else {
                 XCTAssertGreaterThan(paste.frame.minX, width / 2, "\(size): the Paste button is not beside the text")
             }
+        }
+    }
+
+    // MARK: - #3724 the Supertonic download notice keeps its buttons on screen
+
+    /// At accessibility5 the notice's words are taller than the screen. Before the fix its buttons sat under them in
+    /// one unscrollable stack and landed below the window's bottom edge; now they are pinned in a bottom inset.
+    func testSupertonicNoticeButtonsStayOnScreenAtTheLargestTextSize() async throws {
+        let screenHeight: CGFloat = 844  // the height `mount` gives its window
+        for size in [DynamicTypeSize.large, .accessibility5] {
+            let mounted = try mount(AnyView(SupertonicDownloadNoticeCard(openVoices: {}, notNow: {})), textSize: size)
+            defer { mounted.close() }
+            let open = try await mounted.waitForNode("the Open Voices button") {
+                $0.identifier == "supertonicNotice.openVoices" || $0.label == "Open Voices"
+            }
+            let notNow = try await mounted.waitForNode("the Not Now button") {
+                $0.identifier == "supertonicNotice.notNow" || $0.label == "Not Now"
+            }
+            for (name, button) in [("Open Voices", open), ("Not Now", notNow)] {
+                XCTAssertGreaterThanOrEqual(button.frame.minY, 0, "\(size): \(name) starts above the screen")
+                XCTAssertLessThanOrEqual(button.frame.maxY, screenHeight + 0.5,
+                                         "\(size): \(name) ends at y \(button.frame.maxY), below the screen's \(screenHeight)")
+            }
+            XCTAssertLessThanOrEqual(open.frame.maxY, notNow.frame.minY + 1, "\(size): Not Now is not under Open Voices")
         }
     }
 

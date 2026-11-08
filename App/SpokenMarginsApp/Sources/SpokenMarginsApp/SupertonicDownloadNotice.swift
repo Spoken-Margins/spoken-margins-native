@@ -97,33 +97,48 @@ struct SupertonicDownloadNoticeCard: View {
         return "James and Lily use the Supertonic voice, which no longer comes inside the app. Download it once\(size) in Settings › Voices, ideally on Wi‑Fi."
     }
 
+    /// The words scroll; the two buttons stay in a bottom inset, so at accessibility text sizes they are never pushed
+    /// off the sheet (#3724, the same fix #1942 made for the written Margin screen).
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Label {
-                Text("Supertonic is now a free download")
-                    .font(.title3.weight(.semibold))
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                Label {
+                    Text("Supertonic is now a free download")
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(AppColors.text)
+                } icon: {
+                    Image(systemName: "arrow.down.circle")
+                        .foregroundStyle(AppColors.accent)
+                }
+                .accessibilityAddTraits(.isHeader)
+                Text(Self.downloadSentence)
                     .foregroundStyle(AppColors.text)
-            } icon: {
-                Image(systemName: "arrow.down.circle")
-                    .foregroundStyle(AppColors.accent)
+                Text("Until then, the app’s backup voice reads your articles. Your choice of voice stays, and audio already made with Supertonic is kept.")
+                    .font(.callout)
+                    .foregroundStyle(AppColors.secondaryText)
             }
-            .accessibilityAddTraits(.isHeader)
-            Text(Self.downloadSentence)
-                .foregroundStyle(AppColors.text)
-            Text("Until then, the app’s backup voice reads your articles. Your choice of voice stays, and audio already made with Supertonic is kept.")
-                .font(.callout)
-                .foregroundStyle(AppColors.secondaryText)
-            Button(action: openVoices) {
-                Text("Open Voices").frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .accessibilityIdentifier("supertonicNotice.openVoices")
-            Button("Not Now", action: notNow)
-                .frame(maxWidth: .infinity)
-                .accessibilityIdentifier("supertonicNotice.notNow")
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 24)
+            .padding(.top, 24)
+            .padding(.bottom, 16)
         }
-        .padding(24)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            VStack(spacing: 16) {
+                Button(action: openVoices) {
+                    Text("Open Voices").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .accessibilityIdentifier("supertonicNotice.openVoices")
+                Button("Not Now", action: notNow)
+                    .frame(maxWidth: .infinity)
+                    .accessibilityIdentifier("supertonicNotice.notNow")
+            }
+            .padding(.horizontal, 24)
+            .padding(.top, 12)
+            .padding(.bottom, 24)
+            .background(.regularMaterial)
+        }
         .presentationDetents([.medium, .large])
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("supertonicNotice.card")
