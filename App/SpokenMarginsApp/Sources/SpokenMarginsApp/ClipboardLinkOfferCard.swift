@@ -75,6 +75,11 @@ struct ClipboardLinkOfferCard: View {
     @State private var stage = Stage.offered
     @State private var message: String?
     @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverEnabled
+    @State private var hold = FeedbackBannerHold()
+    @AccessibilityFocusState private var focusedPart: Part?
+
+    /// The parts VoiceOver or Switch Control can focus; the timer waits while one has focus (#3720).
+    private enum Part: Hashable { case title, paste, dismiss }
 
     private enum Stage: Equatable {
         case offered
@@ -103,10 +108,24 @@ struct ClipboardLinkOfferCard: View {
             message = nil
             stage = .offered
         }
-        .task(id: AutoDismissKey(changeCount: clipboard.offer.changeCount, stage: stage, busy: isBusy)) {
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { _ in hold.setTouched(true) }
+                .onEnded { _ in hold.setTouched(false) }
+        )
+        .onChange(of: focusedPart) { _, part in hold.setFocused(part != nil) }
+        .onDisappear { hold.reset() }
+        .task(id: AutoDismissKey(
+            changeCount: clipboard.offer.changeCount, stage: stage, busy: isBusy, voiceOverOn: voiceOverEnabled)
+        ) {
             guard !isBusy else { return }
-            let delay = ClipboardLinkOffer.autoDismissDelay(voiceOverRunning: voiceOverEnabled)
+            // With VoiceOver or Switch Control running the card stays until the listener answers it (#3720).
+            guard let delay = ClipboardLinkOffer.autoDismissDelay(assistiveTechnologyRunning: AssistiveTechnology.isRunning)
+            else { return }
+            hold.setTouched(false) // a touch on the card before can't carry over; focus stays where it is
             try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            // A listener still touching the card, or with focus on it, keeps it.
+            try? await hold.waitWhileHeld()
             guard !Task.isCancelled, !isBusy else { return }
             clipboard.markHandled()
         }
@@ -116,6 +135,8 @@ struct ClipboardLinkOfferCard: View {
         let changeCount: Int?
         let stage: Stage
         let busy: Bool
+        /// VoiceOver turning on or off re-reads the timer; Switch Control has no environment value, so it is read at the start.
+        let voiceOverOn: Bool
     }
 
     /// The listener has started something (a paste is being read or was read, an import runs) or an error shows,
@@ -149,6 +170,7 @@ struct ClipboardLinkOfferCard: View {
                     layout {
                         Label("Link detected", systemImage: "link")
                             .font(.subheadline.weight(.semibold))
+                            .accessibilityFocused($focusedPart, equals: .title)
                             .accessibilityIdentifier("library.clipboardLink.title")
                         if !dynamicTypeSize.isAccessibilitySize { Spacer(minLength: 8) }
                         pasteButton
@@ -190,6 +212,7 @@ struct ClipboardLinkOfferCard: View {
         .buttonBorderShape(.capsule)
         .controlSize(.regular)
         .tint(AppColors.evergreen)
+        .accessibilityFocused($focusedPart, equals: .paste)
         .accessibilityLabel("Paste the copied link")
         .accessibilityIdentifier("library.clipboardLink.paste")
     }
@@ -202,6 +225,7 @@ struct ClipboardLinkOfferCard: View {
                 .frame(width: TapTarget.minimum, height: TapTarget.minimum)
         }
         .buttonStyle(.plain)
+        .accessibilityFocused($focusedPart, equals: .dismiss)
         .accessibilityLabel("Dismiss copied link")
         .accessibilityIdentifier("library.clipboardLink.dismiss")
     }
