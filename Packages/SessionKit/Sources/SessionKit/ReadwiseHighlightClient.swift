@@ -271,10 +271,10 @@ public struct ReadwiseSyncReport: Equatable, Sendable {
         if unlisted == sent {
             return "Readwise accepted \(Self.margins(sent)) but didn't list any highlights. Check your Readwise account."
         }
-        let title = latestTitle.map(Self.shortTitle) ?? "your items"
+        let quoted = latestTitle.map { "\u{201C}\(Self.shortTitle($0))\u{201D}" }
         var line = itemCount <= 1
-            ? "\(Self.margins(sent)) sent to Readwise under \u{201C}\(title)\u{201D}."
-            : "\(Self.margins(sent)) sent to Readwise across \(itemCount) items, most recently \u{201C}\(title)\u{201D}."
+            ? "\(Self.margins(sent)) sent to Readwise" + (quoted.map { " under \($0)" } ?? "") + "."
+            : "\(Self.margins(sent)) sent to Readwise across \(itemCount) sources" + (quoted.map { ", most recently \($0)" } ?? "") + "."
         if unlisted > 0 { line += " Readwise didn't list \(unlisted) of them." }
         return line
     }

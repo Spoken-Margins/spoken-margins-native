@@ -33,7 +33,7 @@ final class FollowingFriendsTests: XCTestCase {
         XCTAssertEqual(FollowingFriends.friends(from: [entry("m", from: "Cole", item: "a", kind: .epub)]).first?.summary, "1 Margin on 1 book")
         XCTAssertEqual(FollowingFriends.friends(from: [
             entry("m", from: "Cole", item: "a", kind: .text), entry("n", from: "Cole", item: "b", kind: .podcast),
-        ]).first?.summary, "2 Margins on 2 items")
+        ]).first?.summary, "2 Margins on 2 sources")
     }
 
     /// The name comes from the sender's app; the neighbours a listener would read as the same name share a row.

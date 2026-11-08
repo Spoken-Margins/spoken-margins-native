@@ -31,7 +31,7 @@ public struct ItemDetailState: Equatable, Sendable {
     public var listeningMapIsCommunity: Bool { listeningMapScenes.first.map { CommunityMapConverter.isCommunitySceneId($0.id) } ?? false }
     public var listeningMapAvailabilityDescription: String {
         let scenes = "\(listeningMapScenes.count) scene\(listeningMapScenes.count == 1 ? "" : "s")"
-        return listeningMapIsCommunity ? "This item has a community map with \(scenes)." : "This item has a private Listening Map with \(scenes)."
+        return listeningMapIsCommunity ? "It has a community map with \(scenes)." : "It has a private Listening Map with \(scenes)."
     }
     /// The page this item was added from, when it has a public one (#1167).
     public var originalSourceURL: URL? {

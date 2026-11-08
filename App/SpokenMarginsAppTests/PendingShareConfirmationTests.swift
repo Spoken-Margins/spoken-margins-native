@@ -42,7 +42,7 @@ final class PendingShareConfirmationTests: XCTestCase {
         try await waitFor("the confirmation") { model.feedbackEvent != nil }
 
         let event = try XCTUnwrap(model.feedbackEvent)
-        XCTAssertEqual(event.message, "Added 3 items to Library.")
+        XCTAssertEqual(event.message, "Added 3 to Library.")
         XCTAssertNil(event.action)
         XCTAssertNil(model.snapshot.sessionId, "Shares never autoplay")
         for title in ["Share A", "Share B", "Share C"] {
@@ -73,7 +73,7 @@ final class PendingShareConfirmationTests: XCTestCase {
         model.importPendingSourceLinkHandoffs()
         try await waitFor("the confirmation") { model.feedbackEvent != nil }
 
-        XCTAssertEqual(model.feedbackEvent?.message, "Added 2 items to Library without changing Now Playing.")
+        XCTAssertEqual(model.feedbackEvent?.message, "Added 2 to Library without changing Now Playing.")
         XCTAssertNil(model.feedbackEvent?.action)
         XCTAssertEqual(model.snapshot, before)
     }

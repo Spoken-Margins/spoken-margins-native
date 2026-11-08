@@ -10,7 +10,7 @@ import AVFoundation
 @MainActor
 final class WatchOfflineLibraryModel: ObservableObject {
     @Published var packageRows: [WatchPackageLibraryRow] = []
-    @Published var status = "Offline items"
+    @Published var status = "Offline listening"
     @Published var lastError: String?
     @Published private(set) var isReachable = false
 
@@ -31,13 +31,13 @@ final class WatchOfflineLibraryModel: ObservableObject {
 
     func setReachable(_ reachable: Bool) {
         isReachable = reachable
-        status = reachable ? "Phone reachable" : "Offline items"
+        status = reachable ? "Phone reachable" : "Offline listening"
     }
 
     func refresh() {
         reloadLocalPackages()
         guard isReachable else {
-            status = packageRows.isEmpty ? "Open iPhone to sync packages" : "Offline items ready"
+            status = packageRows.isEmpty ? "Open iPhone to sync packages" : "Offline listening ready"
             return
         }
         connectivity?.requestPackageLibrary()
@@ -203,7 +203,7 @@ final class WatchOfflineLibraryModel: ObservableObject {
 final class WatchLocalPlaybackModel: ObservableObject {
     @Published var activePackage: WatchAudioPackage?
     @Published var snapshot: SessionSnapshot?
-    @Published var status = "Choose an item"
+    @Published var status = "Choose something to play"
     @Published var lastError: String?
     @Published var pendingSyncEventCount = 0
     @Published var isRecording = false
@@ -270,7 +270,7 @@ final class WatchLocalPlaybackModel: ObservableObject {
         localEngine = nil
         audioReady = false
         isRecording = false
-        status = "Choose an item"
+        status = "Choose something to play"
         lastError = nil
     }
 

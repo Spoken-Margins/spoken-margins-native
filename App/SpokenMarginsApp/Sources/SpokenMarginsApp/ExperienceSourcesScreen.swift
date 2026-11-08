@@ -524,7 +524,7 @@ struct SourceInboxRow: View {
                 if let subscription { model.unfollowSource(id: subscription.id) }
             }
         } message: {
-            Text("Items already in your Library will be kept.")
+            Text("Everything already in your Library will be kept.")
         }
     }
 
