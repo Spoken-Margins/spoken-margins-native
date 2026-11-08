@@ -10,8 +10,6 @@ struct PinnedMarginCardView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var playbackTick = 0 // bumped by each progress tick: the countdown follows the playhead (#2074)
     @AccessibilityFocusState private var focusedPart: Part?
-    /// Which Margin the card was about at its last change, so a different Margin in the same stage is announced (#3728).
-    @State private var announcedMarginID: String?
 
     /// The parts VoiceOver or Switch Control can focus, so the tone-only card's timer waits while one has focus (#3720).
     private enum Part: Hashable {
@@ -36,17 +34,20 @@ struct PinnedMarginCardView: View {
         .followsPlaybackClock(model.playbackClock, tick: $playbackTick)
         // A Margin that waits for a tap, or could not play, appears at the top of Now while VoiceOver's focus is elsewhere:
         // say so once, when the card enters that stage or another Margin replaces it (#3728). `VoiceOverAnnouncements`
-        // decides; the stages that play aloud, and a guided Margin's 420 ms beat, stay silent.
-        .onChange(of: model.pinnedMarginCard) { previous, card in
-            let pending = model.pendingImportedCommentary
-            let marginID = pending?.interjection.id ?? model.playingImportedCommentary?.interjection.id
-            if let text = VoiceOverAnnouncements.marginCard(
-                from: previous, to: card, playsByItself: pending?.layer.revealMode == .guided,
-                previousMarginID: announcedMarginID, marginID: marginID) {
+        // decides; the stages that play aloud, and a guided Margin's 420 ms beat, stay silent. The key carries the Margin's
+        // id because two single-Margin packets from one sender make equal cards, and `onChange` ignores equal values.
+        .onChange(of: announcementKey) { previous, key in
+            let guided = model.pendingImportedCommentary?.layer.revealMode == .guided
+            if let text = VoiceOverAnnouncements.marginCard(from: previous, to: key, playsByItself: guided) {
                 AccessibilityNotification.Announcement(text).post()
             }
-            announcedMarginID = marginID
         }
+    }
+
+    private var announcementKey: VoiceOverAnnouncements.CardKey {
+        VoiceOverAnnouncements.CardKey(
+            card: model.pinnedMarginCard,
+            marginID: model.pendingImportedCommentary?.interjection.id ?? model.playingImportedCommentary?.interjection.id)
     }
 
     /// At the accessibility text sizes the headline and the buttons wrap and stack instead of clipping (#1933).

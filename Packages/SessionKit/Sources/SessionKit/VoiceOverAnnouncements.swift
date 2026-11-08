@@ -3,22 +3,32 @@ import Foundation
 /// What VoiceOver should say when part of a screen changes in place and focus stays where it was (#3728, after #1914).
 /// The words and the "say it now?" rules are pure so host tests can pin them; the views only post what these return.
 public enum VoiceOverAnnouncements {
+    /// What the Margin card's `onChange` watches (#3728). It carries the Margin's id as well as the card because a waiting
+    /// card holds only the sender, stage, position and noun: two single-Margin packets from one sender give two equal cards,
+    /// and SwiftUI never calls `onChange` for equal values. With the id in the key, a different Margin is a different value.
+    public struct CardKey: Equatable, Sendable {
+        public var card: PinnedMarginCard?
+        /// The Margin the card is about: the pending or playing prompt's interjection id.
+        public var marginID: String?
+
+        public init(card: PinnedMarginCard?, marginID: String?) {
+            self.card = card
+            self.marginID = marginID
+        }
+    }
+
     /// The Margin card on Now. A friend's Margin that waits for a tap, or one that could not play, appears at the top of
     /// the screen in silence. Returns the card's headline and its one line ("Margin from Cole is here. Tap Listen to
-    /// hear it.") when the card has just *entered* one of those two stages, and nil on every other change.
+    /// hear it.") when the card has just *entered* one of those two stages or another Margin has replaced it in the same
+    /// stage, and nil on every other change (the same card redrawn, a stage that speaks for itself, no card).
     ///
     /// - `playsByItself`: this card's Margin is guided (auto-play), so it waits only a beat (420 ms) and then plays
-    ///   aloud. Telling the listener to tap a button they don't need would talk over the voice, so it is silent. A failure is announced either way.
-    /// - `previousMarginID` / `marginID`: which Margin each card is about. A card replaced by another Margin in the same
-    ///   stage (a second Margin crossed while a tone-only card waits, which only happens with VoiceOver or Switch Control
-    ///   on) is a new card and is announced; the same stage for the same Margin again (the card is redrawn) is not.
-    public static func marginCard(
-        from previous: PinnedMarginCard?, to card: PinnedMarginCard?,
-        playsByItself: Bool = false, previousMarginID: String? = nil, marginID: String? = nil
-    ) -> String? {
-        guard let card, needsAnnouncement(card.stage), !(playsByItself && card.stage == .waitingForTap) else { return nil }
-        if let previous, sameKind(previous.stage, card.stage),
-           previous.subject == card.subject, previous.position == card.position, previousMarginID == marginID {
+    ///   aloud. Telling the listener to tap a button they don't need would talk over the voice, so it is silent. A failure
+    ///   is announced either way.
+    public static func marginCard(from previous: CardKey?, to key: CardKey, playsByItself: Bool = false) -> String? {
+        guard let card = key.card, needsAnnouncement(card.stage), !(playsByItself && card.stage == .waitingForTap) else { return nil }
+        if let before = previous?.card, sameKind(before.stage, card.stage),
+           before.subject == card.subject, before.position == card.position, previous?.marginID == key.marginID {
             return nil
         }
         return "\(card.headline). \(card.detail)"

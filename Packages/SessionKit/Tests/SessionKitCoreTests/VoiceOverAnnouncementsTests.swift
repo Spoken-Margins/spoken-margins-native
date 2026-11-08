@@ -7,27 +7,36 @@ final class VoiceOverAnnouncementsTests: XCTestCase {
         PinnedMarginCard(subject: subject, stage: stage)
     }
 
+    private func key(_ card: PinnedMarginCard?, _ id: String? = nil) -> VoiceOverAnnouncements.CardKey {
+        .init(card: card, marginID: id)
+    }
+
+    private func say(from: PinnedMarginCard?, to: PinnedMarginCard?, fromID: String? = nil, id: String? = nil,
+                     playsByItself: Bool = false) -> String? {
+        VoiceOverAnnouncements.marginCard(from: from.map { key($0, fromID) }, to: key(to, id), playsByItself: playsByItself)
+    }
+
     func testAMarginWaitingForATapIsAnnouncedWithItsHeadlineAndInstruction() {
         XCTAssertEqual(
-            VoiceOverAnnouncements.marginCard(from: nil, to: card(.waitingForTap)),
+            say(from: nil, to: card(.waitingForTap)),
             "Margin from Cole is here. Tap Listen to hear it.")
         XCTAssertEqual(
-            VoiceOverAnnouncements.marginCard(from: card(.comingUp(msRemaining: 3_000)), to: card(.waitingForTap)),
+            say(from: card(.comingUp(msRemaining: 3_000)), to: card(.waitingForTap)),
             "Margin from Cole is here. Tap Listen to hear it.")
     }
 
     func testAFailedMarginIsAnnouncedWithRetry() {
         XCTAssertEqual(
-            VoiceOverAnnouncements.marginCard(from: card(.loading), to: card(.failed)),
+            say(from: card(.loading), to: card(.failed)),
             "Margin from Cole could not play. Tap Retry, or skip this Margin.")
         XCTAssertEqual(
-            VoiceOverAnnouncements.marginCard(from: nil, to: card(.failed, subject: .friend(nil))),
+            say(from: nil, to: card(.failed, subject: .friend(nil))),
             "Shared Margin could not play. Tap Retry, or skip this Margin.", "no sender name: never \"A friend\"")
     }
 
     func testTheSameStageAgainIsSilentSoTheCountdownTickDoesNotRepeatIt() {
-        XCTAssertNil(VoiceOverAnnouncements.marginCard(from: card(.waitingForTap), to: card(.waitingForTap)))
-        XCTAssertNil(VoiceOverAnnouncements.marginCard(from: card(.failed), to: card(.failed)))
+        XCTAssertNil(say(from: card(.waitingForTap), to: card(.waitingForTap)))
+        XCTAssertNil(say(from: card(.failed), to: card(.failed)))
     }
 
     func testStagesThatSpeakForThemselvesAndNoCardAreSilent() {
@@ -36,14 +45,14 @@ final class VoiceOverAnnouncementsTests: XCTestCase {
             .upNext(msRemaining: 60_000, arrival: .playsByItself), .answerSaved(atMs: 1_000, sentTo: "Cole"), .lastMargin(senders: 1),
         ]
         for stage in quiet {
-            XCTAssertNil(VoiceOverAnnouncements.marginCard(from: nil, to: card(stage)), "\(stage)")
+            XCTAssertNil(say(from: nil, to: card(stage)), "\(stage)")
         }
-        XCTAssertNil(VoiceOverAnnouncements.marginCard(from: card(.waitingForTap), to: nil), "the card going away says nothing")
+        XCTAssertNil(say(from: card(.waitingForTap), to: nil), "the card going away says nothing")
     }
 
     func testFailureAfterWaitingIsAnnouncedBecauseItIsADifferentStage() {
-        XCTAssertNotNil(VoiceOverAnnouncements.marginCard(from: card(.waitingForTap), to: card(.failed)))
-        XCTAssertNotNil(VoiceOverAnnouncements.marginCard(from: card(.failed), to: card(.waitingForTap)))
+        XCTAssertNotNil(say(from: card(.waitingForTap), to: card(.failed)))
+        XCTAssertNotNil(say(from: card(.failed), to: card(.waitingForTap)))
     }
 
     func testReaderChapterStepSaysPositionAndTitle() {
@@ -64,26 +73,37 @@ final class VoiceOverAnnouncementsTests: XCTestCase {
 
     // Audit of #3759, finding 1: a guided Margin waits 420 ms and then plays aloud, so it is never announced.
     func testAMarginThatPlaysByItselfIsSilentWhileItWaitsItsBeat() {
-        XCTAssertNil(VoiceOverAnnouncements.marginCard(from: nil, to: card(.waitingForTap), playsByItself: true))
-        XCTAssertNil(VoiceOverAnnouncements.marginCard(from: card(.upNext(msRemaining: 5_000, arrival: .playsByItself)),
-                                                       to: card(.waitingForTap), playsByItself: true))
+        XCTAssertNil(say(from: nil, to: card(.waitingForTap), playsByItself: true))
+        XCTAssertNil(say(from: card(.upNext(msRemaining: 5_000, arrival: .playsByItself)),
+                         to: card(.waitingForTap), playsByItself: true))
         // A failure is announced either way: nothing else tells the listener the voice did not start.
-        XCTAssertNotNil(VoiceOverAnnouncements.marginCard(from: card(.loading), to: card(.failed), playsByItself: true))
+        XCTAssertNotNil(say(from: card(.loading), to: card(.failed), playsByItself: true))
     }
 
     // Audit finding 2: with VoiceOver on a tone-only card stays up, and a newly crossed Margin replaces it in the same stage.
     func testANewMarginReplacingAWaitingCardInTheSameStageIsAnnounced() {
         let cole = card(.waitingForTap, subject: .friend("Cole"))
         let dana = card(.waitingForTap, subject: .friend("Dana"))
-        XCTAssertEqual(VoiceOverAnnouncements.marginCard(from: cole, to: dana, previousMarginID: "a", marginID: "b"),
+        XCTAssertEqual(say(from: cole, to: dana, fromID: "a", id: "b"),
                        "Margin from Dana is here. Tap Listen to hear it.", "another sender")
-        XCTAssertNotNil(VoiceOverAnnouncements.marginCard(from: cole, to: cole, previousMarginID: "a", marginID: "b"),
+        XCTAssertNotNil(say(from: cole, to: cole, fromID: "a", id: "b"),
                         "a second Margin from the same sender")
         let first = PinnedMarginCard(subject: .friend("Cole"), stage: .waitingForTap, position: "1 of 2")
         let second = PinnedMarginCard(subject: .friend("Cole"), stage: .waitingForTap, position: "2 of 2")
-        XCTAssertNotNil(VoiceOverAnnouncements.marginCard(from: first, to: second, previousMarginID: "a", marginID: "a"),
+        XCTAssertNotNil(say(from: first, to: second, fromID: "a", id: "a"),
                         "the position moved on")
-        XCTAssertNil(VoiceOverAnnouncements.marginCard(from: cole, to: cole, previousMarginID: "a", marginID: "a"),
+        XCTAssertNil(say(from: cole, to: cole, fromID: "a", id: "a"),
                      "the same card redrawn stays silent")
+    }
+
+    // Audit of #3759 (second pass): SwiftUI calls `onChange` only when the watched value changes. Two single-Margin packets
+    // from one sender give two equal cards, so the key must differ by Margin or the replacement is never seen.
+    func testTheWatchedKeyDiffersForTwoEqualCardsAboutDifferentMargins() {
+        let cole = card(.waitingForTap, subject: .friend("Cole"))
+        XCTAssertEqual(cole, card(.waitingForTap, subject: .friend("Cole")), "the two cards really are equal")
+        XCTAssertNotEqual(key(cole, "a"), key(cole, "b"), "so onChange fires for the second Margin")
+        XCTAssertEqual(key(cole, "a"), key(cole, "a"), "and stays quiet for a redraw of the same one")
+        XCTAssertNotNil(VoiceOverAnnouncements.marginCard(from: key(cole, "a"), to: key(cole, "b")))
+        XCTAssertNil(VoiceOverAnnouncements.marginCard(from: key(cole, "a"), to: key(cole, "a")))
     }
 }
