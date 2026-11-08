@@ -24,6 +24,8 @@ struct ExperienceLibraryScreen: View {
     @State private var openedNote: SpokenNoteOpening?
     /// Export of a spoken note from its row: the audio and transcript, through the share sheet (#3660).
     @StateObject private var noteExport = SpokenNoteExportModel()
+    /// A spoken note whose name is being changed from its row (#3663).
+    @State private var renamingNote: SpokenNoteRenameTarget?
     /// Play on a spoken note's row plays the whole note (#3662).
     @StateObject private var notePlay = SpokenNoteWholePlayModel()
     @Environment(\.scenePhase) private var scenePhase
@@ -120,6 +122,7 @@ struct ExperienceLibraryScreen: View {
             SpokenNoteRecordingView(opening: opening).environmentObject(model)
         }
         .spokenNoteExportFlow(noteExport)
+        .spokenNoteRenameAlert($renamingNote)
         .spokenNotePlayFlow(notePlay)
         .overlay {
             if noteExport.isPreparing { SpokenNoteExportProgress() }
@@ -489,6 +492,9 @@ struct ExperienceLibraryScreen: View {
                     onExport: row.spokenNoteId.map { noteId -> () -> Void in
                         { noteExport.export(noteId: noteId, title: row.title, applicationSupport: try? model.applicationSupportDirectory()) }
                     },
+                    onRename: row.spokenNoteId.map { _ -> () -> Void in
+                        { renamingNote = SpokenNoteRenameTarget(itemId: row.id, currentTitle: row.title) }
+                    },
                     onSaveToFolder: row.spokenNoteId.flatMap { noteId -> (() -> Void)? in
                         guard row.isCompleted else { return nil }
                         return { model.saveSpokenNoteToExportFolder(noteId: noteId, title: row.title) }
@@ -504,7 +510,7 @@ struct ExperienceLibraryScreen: View {
 
     private func openRow(_ row: LibraryItemRow) {
         if let noteId = row.spokenNoteId {
-            openedNote = SpokenNoteOpening(noteId: noteId, title: row.title)
+            openedNote = SpokenNoteOpening(noteId: noteId, title: row.title, createdAt: row.addedAt)
         } else {
             model.openItemFromTap(id: row.id)
         }
@@ -562,6 +568,8 @@ private struct ExperienceLibraryCompactRow: View {
     let onAddToCollection: () -> Void
     /// A spoken note's Export (#3660); nil for every other row.
     var onExport: (() -> Void)?
+    /// A spoken note's Rename… (#3663); nil for every other row.
+    var onRename: (() -> Void)?
     /// A finished spoken note's "Save to Export Folder" (#3661), the way to try again after the folder was set up.
     var onSaveToFolder: (() -> Void)?
     let onDelete: () -> Void
@@ -681,6 +689,10 @@ private struct ExperienceLibraryCompactRow: View {
                 Button("Export…", systemImage: "square.and.arrow.up", action: onExport)
                     .accessibilityIdentifier("library.export.\(row.id)")
             }
+            if let onRename {
+                Button("Rename…", systemImage: "pencil", action: onRename)
+                    .accessibilityIdentifier("library.rename.\(row.id)")
+            }
             if let onSaveToFolder {
                 Button("Save to Export Folder", systemImage: "folder.badge.plus", action: onSaveToFolder)
                     .accessibilityIdentifier("library.saveToFolder.\(row.id)")
@@ -734,6 +746,9 @@ private struct ExperienceLibraryCompactRow: View {
             Button("Add to Collection", action: onAddToCollection)
             if let onExport {
                 Button("Export", action: onExport)
+            }
+            if let onRename {
+                Button("Rename", action: onRename)
             }
             if let onSaveToFolder {
                 Button("Save to Export Folder", action: onSaveToFolder)

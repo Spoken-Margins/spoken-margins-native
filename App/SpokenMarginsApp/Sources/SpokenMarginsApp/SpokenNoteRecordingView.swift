@@ -5,7 +5,8 @@ import SwiftUI
 /// transcript as it arrives. The phone can lock while a take runs. Play plays the whole note start to finish through the
 /// app's own playback (Now, the Lock Screen, headphones), lighting the sentence that is sounding (#3662). Tapping a
 /// sentence jumps there while the note plays, and otherwise plays just that sentence.
-/// A note opened from the Library shows its takes at once and can take more.
+/// A note opened from the Library shows its takes at once and can take more. Its title is at the top of the screen once it has
+/// a take: tap it to rename the note (#3663).
 struct SpokenNoteRecordingView: View {
     var opening: SpokenNoteOpening?
 
@@ -18,6 +19,8 @@ struct SpokenNoteRecordingView: View {
     @State private var playbackTick = 0 // bumped by each progress tick: the sounding sentence follows the playhead
     /// Export: the note's audio and transcript, through the share sheet (#3660).
     @StateObject private var noteExport = SpokenNoteExportModel()
+    /// The rename prompt, while the listener is typing a new title (#3663).
+    @State private var renaming: SpokenNoteRenameTarget?
 
     private var takes: [SpokenNoteTake] { recorder.snapshot?.note.takes ?? [] }
     private var hasTranscript: Bool { takes.contains { $0.hasTranscript } }
@@ -44,6 +47,7 @@ struct SpokenNoteRecordingView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
+                    titleHeader
                     status
                     if let message = recorder.message ?? player.message ?? wholePlay.message {
                         FailureMessageLabel(message)
@@ -66,7 +70,7 @@ struct SpokenNoteRecordingView: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button {
                         guard let note = recorder.snapshot?.note, let folder = recorder.noteFolder else { return }
-                        noteExport.export(note: note, noteFolder: folder, title: opening?.title ?? SpokenNoteItem.defaultTitle)
+                        noteExport.export(note: note, noteFolder: folder, title: recorder.title ?? opening?.title ?? SpokenNoteItem.defaultTitle)
                     } label: {
                         Label("Export", systemImage: "square.and.arrow.up")
                     }
@@ -103,7 +107,37 @@ struct SpokenNoteRecordingView: View {
             Task { @MainActor in await recorder.finish() }
         }
         .spokenNoteExportFlow(noteExport)
+        .spokenNoteRenameAlert($renaming) { recorder.titleChanged(to: $0) }
         .accessibilityIdentifier("spokenNote.screen")
+    }
+
+    /// The note's name, with a pencil to say it can be changed: one tap opens the rename prompt. Shown once the note has a
+    /// take, which is when it has a Library row to rename.
+    @ViewBuilder private var titleHeader: some View {
+        if let note = recorder.snapshot?.note, !takes.isEmpty, let title = recorder.title {
+            Button {
+                renaming = SpokenNoteRenameTarget(itemId: SpokenNoteItem.itemId(forNoteId: note.id), currentTitle: title)
+            } label: {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(title)
+                        .font(.title2.weight(.bold))
+                        .foregroundStyle(AppColors.text)
+                        .multilineTextAlignment(.leading)
+                    Image(systemName: "pencil")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(AppColors.evergreen)
+                        .accessibilityHidden(true)
+                    Spacer(minLength: 0)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(recorder.isBusy)
+            .accessibilityLabel(title)
+            .accessibilityHint("Renames this note")
+            .accessibilityAddTraits(.isHeader)
+            .accessibilityIdentifier("spokenNote.title")
+        }
     }
 
     private var status: some View {

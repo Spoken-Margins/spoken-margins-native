@@ -1232,6 +1232,26 @@ public final class SessionEngine {
         return ListeningMapPersister(repository: repository)
     }
 
+    /// The listener renamed an item that is open here (a spoken note, #3663): the playing title (Now, the Lock Screen)
+    /// follows at once, not at the next time the item is opened. Nothing else about the item or its session changes, and an
+    /// item that is not the open one is left alone.
+    @discardableResult
+    public func applyItemTitle(itemId: String, title: String) -> SessionSnapshot {
+        guard currentItem?.id == itemId else { return snapshot }
+        currentItem?.title = title
+        if let session = currentSession, session.itemId == itemId {
+            // The Lock Screen card is built from the audio client's media context, not the snapshot: hand it the new title the
+            // way a pause does (same target, so playback does not restart).
+            if session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia {
+                try? audio.configureMediaContext(playbackMediaContext(for: session))
+            }
+            publish(status: snapshot.status, phase: session.phase)
+        } else {
+            snapshot.title = title
+        }
+        return snapshot
+    }
+
     /// The engine half of `attachListeningMap`: updates what the engine has open to match what was just saved.
     /// It reads the engine's state as it is now, so an item the listener opened or moved off in between is judged
     /// by where they are, not where they were when the save began.
