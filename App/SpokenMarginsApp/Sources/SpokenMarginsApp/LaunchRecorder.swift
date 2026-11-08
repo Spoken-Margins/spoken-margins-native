@@ -1,6 +1,7 @@
 import Darwin
 import Foundation
 import SessionKit
+import SwiftUI
 
 /// Times each launch and keeps the last few, with how the runs before them ended, in Diagnostics (#3752).
 ///
@@ -112,5 +113,13 @@ final class LaunchRecorder {
         let started = info.kp_proc.p_un.__p_starttime
         guard started.tv_sec > 0 else { return nil }
         return Date(timeIntervalSince1970: TimeInterval(started.tv_sec) + TimeInterval(started.tv_usec) / 1_000_000)
+    }
+}
+
+extension View {
+    /// Marks the first usable screen (#3752) when the root view updates for the loaded Library. A modifier of its own so
+    /// `Gate1RootView`, a hot file, doesn't grow.
+    func timesLaunchUsable(_ model: Gate1AppModel) -> some View {
+        onChange(of: model.libraryItems.count) { _, _ in LaunchRecorder.shared?.markLibraryShown() }
     }
 }
