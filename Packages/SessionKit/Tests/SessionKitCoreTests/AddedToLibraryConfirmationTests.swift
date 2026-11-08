@@ -16,10 +16,10 @@ final class AddedToLibraryConfirmationTests: XCTestCase {
 
     /// #828: several Safari shares imported together get one message, never a Play now.
     func testSeveralItemsGetOneMessage() {
-        XCTAssertEqual(AddedToLibraryConfirmation.message(addedCount: 3, nowPlayingIsEmpty: true), "Added 3 items to Library.")
+        XCTAssertEqual(AddedToLibraryConfirmation.message(addedCount: 3, nowPlayingIsEmpty: true), "Added 3 to Library.")
         XCTAssertEqual(
             AddedToLibraryConfirmation.message(addedCount: 2, nowPlayingIsEmpty: false),
-            "Added 2 items to Library without changing Now Playing."
+            "Added 2 to Library without changing Now Playing."
         )
     }
 
