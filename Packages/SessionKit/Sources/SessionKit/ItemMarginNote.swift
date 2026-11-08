@@ -14,7 +14,7 @@ public enum MarginNotesShape: String, CaseIterable, Codable, Sendable {
     public var title: String {
         switch self {
         case .eachMargin: "Send each Margin as it's made"
-        case .itemOnCompletion: "Send one note per item when I mark it complete"
+        case .itemOnCompletion: "Send one note per source when I mark it complete"
         }
     }
 

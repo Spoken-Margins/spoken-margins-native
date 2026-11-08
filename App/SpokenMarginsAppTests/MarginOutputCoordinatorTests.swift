@@ -342,7 +342,7 @@ final class MarginOutputCoordinatorTests: XCTestCase {
         XCTAssertEqual(first.count, 1, coordinator.statuses["items"]?.message ?? "")
         let firstNote = try XCTUnwrap(first.first)
         XCTAssertTrue(firstNote.contains("First thought.") && firstNote.contains("Second thought."), "one note holds every Margin")
-        XCTAssertTrue(coordinator.statuses["items"]?.message.hasPrefix("1 item note saved to Items") == true, coordinator.statuses["items"]?.message ?? "")
+        XCTAssertTrue(coordinator.statuses["items"]?.message.hasPrefix("1 source note saved to Items") == true, coordinator.statuses["items"]?.message ?? "")
 
         // Marked unfinished, then complete again later: the same file is rewritten, never a second one.
         try f.complete("item-1", at: Date(timeIntervalSince1970: 1_800_090_000))

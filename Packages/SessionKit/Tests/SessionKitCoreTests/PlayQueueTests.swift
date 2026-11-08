@@ -168,8 +168,8 @@ final class PlayQueueTests: XCTestCase {
     }
 
     func testTheCountAndNextLines() {
-        XCTAssertEqual(PlayQueueRows.countLine(1), "1 item")
-        XCTAssertEqual(PlayQueueRows.countLine(3), "3 items")
+        XCTAssertEqual(PlayQueueRows.countLine(1), "1 waiting")
+        XCTAssertEqual(PlayQueueRows.countLine(3), "3 waiting")
         let rows = PlayQueueRows.rows(for: PlayQueue(itemIds: ["a"]), items: [item("a", title: "How whales sleep")])
         XCTAssertEqual(PlayQueueRows.nextLine(rows), "Next: How whales sleep")
         XCTAssertNil(PlayQueueRows.nextLine([]))
