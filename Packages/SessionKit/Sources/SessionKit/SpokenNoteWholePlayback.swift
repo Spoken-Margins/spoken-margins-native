@@ -198,7 +198,7 @@ public enum SpokenNoteWholePlayback {
     /// are keep their times, because a take is only ever added at the end.
     public static func timeline(of note: SpokenNote, inFolder folder: URL) -> SpokenNoteWholeTimeline? {
         guard existingAudioURL(inFolder: folder) != nil, let layout = readLayout(inFolder: folder) else { return nil }
-        return SpokenNoteWholeTimeline(note: store.peek() ?? note, layout: layout)
+        return SpokenNoteWholeTimeline(note: note, layout: layout)
     }
 
     /// Where the engine should play an item from: the note's joined file, when the item is a spoken note whose media was
