@@ -208,7 +208,29 @@ struct Gate2LiveActivityView: View {
     let state: Gate2LiveActivityAttributes.ContentState
     let isStale: Bool
 
+    /// The Margin control is a column down the card's trailing side (#3692): nothing sits above it, and Next is beside
+    /// it instead of on top of it. The fixed vertical size lets the column take the height of the left column, whatever
+    /// height the Lock Screen proposes.
     var body: some View {
+        HStack(alignment: .top, spacing: Gate2ControlSize.marginColumnGap) {
+            listeningColumn
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if showsMarginColumn {
+                recordButton
+            }
+        }
+        .fixedSize(horizontal: false, vertical: true)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+    }
+
+    /// Absent while a Shared Margin is offered or the session cannot take a Margin; the left column then has the width.
+    private var showsMarginColumn: Bool {
+        state.sharedMarginSenderLabel == nil
+            && (state.canRun("beginInterjection") || state.canRun("finishInterjection"))
+    }
+
+    private var listeningColumn: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 2) {
@@ -280,19 +302,16 @@ struct Gate2LiveActivityView: View {
                 }
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
     }
 
-    /// The five circles and the mic always share one row, so the card keeps its height (#1940). At the default size
-    /// they total about 308 pt against the Lock Screen's roughly 327 pt of content, and the circles are fixed-size
-    /// controls (all at least 44 pt), not text. The next-chapter action sits in the header instead of this row,
-    /// because a second row would push the card past the 160 pt the Lock Screen allows.
+    /// The five circles share one row, so the card keeps its height (#1940). They are fixed-size controls (all at least
+    /// 44 pt), not text, and fit beside the Margin column on the narrowest Lock Screen (`Gate2ControlSize`). The
+    /// next-chapter action sits in the header instead of this row, because a second row would push the card past the
+    /// 160 pt the Lock Screen allows.
     private var transportControls: some View {
         HStack(spacing: Gate2ControlSize.rowSpacing) {
             playbackCircles
             Spacer(minLength: 0)
-            recordButton
         }
         .buttonStyle(.plain)
     }
@@ -358,31 +377,43 @@ struct Gate2LiveActivityView: View {
 
     @ViewBuilder
     private var recordButton: some View {
-        if state.canRun("beginInterjection") || state.canRun("finishInterjection") {
-            #if SM_LOCKED_MARGIN_SPIKE
-            // Phone builds only: record in place, without opening the app (#3086).
-            Button(intent: Gate2RecordMarginIntent(finish: state.isRecording)) {
-                marginButtonImage
-            }
-            .accessibilityLabel(state.isRecording ? "Finish Margin" : "Add a Margin")
-            #else
-            Link(destination: Gate2CompactCommandURL.url(command: state.isRecording ? "finishInterjection" : "beginInterjection")) {
-                marginButtonImage
-            }
-            .accessibilityLabel(state.isRecording ? "Finish Margin" : "Add a Margin")
-            #endif
+        #if SM_LOCKED_MARGIN_SPIKE
+        // Phone builds only: record in place, without opening the app (#3086).
+        Button(intent: Gate2RecordMarginIntent(finish: state.isRecording)) {
+            marginColumnLabel
         }
+        .buttonStyle(.plain)
+        .accessibilityLabel(state.isRecording ? "Finish Margin" : "Add a Margin")
+        #else
+        Link(destination: Gate2CompactCommandURL.url(command: state.isRecording ? "finishInterjection" : "beginInterjection")) {
+            marginColumnLabel
+        }
+        .accessibilityLabel(state.isRecording ? "Finish Margin" : "Add a Margin")
+        #endif
     }
 
-    private var marginButtonImage: some View {
-        let diameter = Gate2ControlSize.record
-        return Image(systemName: state.isRecording ? "checkmark" : "mic.fill")
-            .font(.title2.weight(.semibold))
-            .dynamicTypeSize(...Gate2ControlSize.glyphCeiling)
-            .frame(width: diameter, height: diameter)
-            .foregroundStyle(.white)
-            .background(Color.white.opacity(0.16))
-            .clipShape(Circle())
+    /// Start and finish differ by glyph, word, fill and outline, never by colour alone: a soft pill with the microphone
+    /// and "Margin", then a solid white, squarer block with the checkmark and "Finish". The whole column takes the tap.
+    private var marginColumnLabel: some View {
+        let finishes = state.isRecording
+        let outline = RoundedRectangle(
+            cornerRadius: finishes ? Gate2ControlSize.finishCornerRadius : Gate2ControlSize.marginColumnWidth / 2,
+            style: .continuous
+        )
+        return VStack(spacing: 4) {
+            Image(systemName: finishes ? "checkmark" : "mic.fill")
+                .font(.title2.weight(.semibold))
+            Text(finishes ? "Finish" : "Margin")
+                .font(.caption.weight(.bold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+        }
+        .dynamicTypeSize(...Gate2ControlSize.captionedGlyphCeiling)
+        .frame(width: Gate2ControlSize.marginColumnWidth)
+        .frame(maxHeight: .infinity)
+        .foregroundStyle(finishes ? Color.black : Color.white)
+        .background(finishes ? Color.white : Color.white.opacity(0.16), in: outline)
+        .contentShape(Rectangle())
     }
 
     @ViewBuilder
@@ -549,16 +580,20 @@ private struct CompactActionIntentButton: View {
     }
 }
 
-/// Sizes of the round controls (#1940). They are fixed-size controls, every one at least the 44 pt touch target. At
-/// the default text size the five transport circles and the mic total 284 pt, plus six 4 pt gaps (the spacer before
-/// the mic takes one on each side), so they share one row of the Lock Screen's roughly 327 pt of content (311 pt on a
-/// 375 pt-wide phone). Text inside a circle follows the text size up to a ceiling, because the circle does not grow.
+/// Sizes of the card's controls (#1940, #3692). They are fixed-size controls, every circle at least the 44 pt touch
+/// target. The five circles total 228 pt, and with four 4 pt gaps 244 pt; the Margin column and its gap take 66 pt, so
+/// 310 pt fits the 311 pt of content on a 375 pt-wide phone (about 327 pt on wider ones). Text inside a control follows
+/// the text size up to a ceiling, because the control does not grow.
 enum Gate2ControlSize {
     static let skim: CGFloat = 44
-    static let skip: CGFloat = 48
-    static let play: CGFloat = 56
-    static let record: CGFloat = 44
+    static let skip: CGFloat = 44
+    static let play: CGFloat = 52
     static let rowSpacing: CGFloat = 4
+    /// The Margin control's width; its height is the card's content (#3692).
+    static let marginColumnWidth: CGFloat = 60
+    static let marginColumnGap: CGFloat = 6
+    static let finishCornerRadius: CGFloat = 14
+    static var transportRowWidth: CGFloat { 2 * skim + 2 * skip + play + 4 * rowSpacing }
     /// 24 pt, not 28: under the state word (about 16 pt) it keeps the header column no taller than the titles (22 + 2 +
     /// 16 pt), which keeps a paused card with a next chapter under 160 pt (LiveActivityLayoutTests).
     static let nextChipHeight: CGFloat = 24
