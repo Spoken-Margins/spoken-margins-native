@@ -68,7 +68,50 @@ final class AppColorContrastAuditFindingsTests: XCTestCase {
     }
 }
 
+final class AppLiveActivityPairsTests: XCTestCase {
+    func testTheLiveActivityPairsAreInTheAuditAndPassToday() {
+        XCTAssertFalse(AppColorContrastAudit.liveActivityPairs.isEmpty)
+        let names = Set(AppColorContrastAudit.allPairs.map(\.name))
+        for pair in AppColorContrastAudit.liveActivityPairs { XCTAssertTrue(names.contains(pair.name), pair.name) }
+        XCTAssertEqual(AppColorContrastAudit.failures(for: AppColorContrastAudit.liveActivityPairs), [])
+    }
+
+    /// The pairs can fail: the Live Activity's dim white at a low alpha, or its system red on a light plate, would not pass.
+    func testTheAuditSeesAWeakLiveActivityLabel() {
+        let plate = AppSystemColorRGB.liveActivityPlate
+        let weak = AppColorContrastAudit.Pair(
+            name: "live activity white text at 0.3",
+            foreground: AppSemanticColorRGB.white.composited(over: plate, alpha: 0.3),
+            background: plate,
+            minimumRatio: 4.5
+        )
+        XCTAssertFalse(AppColorContrastAudit.failures(for: [weak]).isEmpty)
+    }
+
+    /// The pairs name the widget's literals, so a widget that changes a colour has to change the token with it.
+    func testTheWidgetsStillDrawTheColoursThePairsMeasure() throws {
+        let directory = try TestInputs.directory(.appGate2Widget)
+        let text = try ["Gate2LiveActivityWidget.swift", "LiveSessionActivityWidget.swift"].map {
+            try String(contentsOf: directory.appendingPathComponent("Sources/" + $0), encoding: .utf8)
+        }.joined()
+        XCTAssertTrue(text.contains("Color(red: 0.08, green: 0.09, blue: 0.12)"), "the plate")
+        XCTAssertTrue(text.contains("Color(red: 0.34, green: 0.71, blue: 0.91)"), "the progress blue")
+        XCTAssertTrue(text.contains("Color(red: 0.27, green: 0.78, blue: 0.43)"), "the second green")
+        for alpha in ["0.74", "0.78", "0.8", "0.84", "0.86"] {
+            XCTAssertTrue(text.contains(".white.opacity(\(alpha))"), "white at \(alpha) is no longer drawn: drop its pair")
+        }
+    }
+}
+
 final class AppTintedFillPairsTests: XCTestCase {
+    /// #3739 slice 3: the pressed and dimmed fills of the buttons and plates.
+    func testThePressedFillPairsAreInTheAuditAndMeasured() {
+        XCTAssertFalse(AppColorContrastAudit.pressedFillPairs.isEmpty)
+        let names = Set(AppColorContrastAudit.allPairs.map(\.name))
+        for pair in AppColorContrastAudit.pressedFillPairs { XCTAssertTrue(names.contains(pair.name), pair.name) }
+        XCTAssertEqual(AppColorContrastAudit.failures(for: AppColorContrastAudit.pressedFillPairs), [])
+    }
+
     func testTheTintedFillPairsAllPassToday() {
         XCTAssertFalse(AppColorContrastAudit.tintedFillPairs.isEmpty)
         XCTAssertEqual(AppColorContrastAudit.failures(for: AppColorContrastAudit.tintedFillPairs), [])
@@ -128,7 +171,7 @@ final class AppColorUsageGuardTests: XCTestCase {
     /// What each `AppColors.<token>.opacity(<alpha>)` in the app is, by `token@alpha`. `audited` means the text on it is
     /// measured by `timelineRowPairs` or `tintedFillPairs`; `noText` means no text sits on it (a hairline, a stripe, a pressed state, a
     /// plain shape); `unaudited` is a fill with text or an icon on it that no pair measures yet, left for #3739's next
-    /// slices. A new tint is not in this list, so it fails until someone says which of the three it is. The key is the token and the
+    /// slices (none left today). A new tint is not in this list, so it fails until someone says which of the three it is. The key is the token and the
     /// alpha, not the call site: a new text fill that reuses an audited key is not seen, so give it a new alpha or a pair.
     private enum TintKind: Equatable { case audited, noText, unaudited }
 
@@ -149,11 +192,10 @@ final class AppColorUsageGuardTests: XCTestCase {
         // (`SMExperienceTypeCover`) are drawn by a view nothing uses yet, so they are left out until it is.
         "ochre@0.20": .noText, "plum@0.16": .noText,
         "border@0.45": .noText,
-        // The Watch's plates and the playback card's own controls; the pressed state is the alpha.
-        "watchControl@0.8": .unaudited, "watchControl@0.72": .unaudited, "watchControl@0.35": .unaudited,
-        // Their button labels are drawn on the dimmed fill.
-        "panel@0.75": .unaudited, "listeningAccent@0.75": .unaudited, "captureBackground@0.78": .unaudited,
-        "primaryAction@0.78": .unaudited, "softGreen@0.7": .unaudited
+        // The playback card's plates and the pressed states of the buttons: `pressedFillPairs` (#3739 slice 3).
+        "watchControl@0.8": .audited, "watchControl@0.72": .audited, "panel@0.75": .audited,
+        "listeningAccent@0.75": .audited, "captureBackground@0.78": .audited,
+        "primaryAction@0.78": .audited, "softGreen@0.7": .audited
     ]
 
     func testEveryTintTheAppDrawsIsClassified() throws {
