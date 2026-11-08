@@ -101,4 +101,83 @@ final class ArtworkThumbnailLoaderTests: XCTestCase {
         let image = await loader.thumbnail(for: notAnImage)
         XCTAssertNil(image)
     }
+
+    // MARK: - A cell whose url changes (#2137)
+
+    private func pngData(_ color: UIColor) throws -> Data {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 8, height: 8), format: format).image { context in
+            color.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 8, height: 8))
+        }
+        return try XCTUnwrap(image.pngData())
+    }
+
+    /// Holds a fetch until the test lets it go.
+    private actor Gate {
+        private var waiting: CheckedContinuation<Void, Never>?
+        private var isOpen = false
+        func wait() async {
+            if isOpen { return }
+            await withCheckedContinuation { waiting = $0 }
+        }
+        func open() {
+            isOpen = true
+            waiting?.resume()
+            waiting = nil
+        }
+    }
+
+    @MainActor
+    func testACellThatMovesToAnotherArtworkDropsTheOldPictureAtOnce() async throws {
+        let first = URL(string: "https://example.com/a.png")!
+        let second = URL(string: "https://example.com/b.png")!
+        let red = try pngData(.red)
+        let gate = Gate()
+        let loader = ArtworkThumbnailLoader(diskDirectory: nil) { url in
+            if url == first { return red }
+            await gate.wait()
+            throw URLError(.badServerResponse)
+        }
+        let state = ArtworkThumbnailState(url: first, loader: loader)
+
+        await state.show(first, loader: loader)
+        XCTAssertNotNil(state.image(for: first))
+        XCTAssertNil(state.image(for: second), "the frame drawn with the new url before the load starts shows no old picture")
+
+        let next = Task { await state.show(second, loader: loader) }
+        await Task.yield() // the second load is now held in its fetch
+        XCTAssertNil(state.image, "the old picture is gone while the new one is still loading")
+        await gate.open()
+        await next.value
+        XCTAssertNil(state.image(for: second), "the new row shows its placeholder when its artwork cannot load")
+        await state.show(nil, loader: loader)
+        XCTAssertNil(state.image)
+    }
+
+    @MainActor
+    func testALoadStartedForAnEarlierUrlNeverLandsOnALaterOne() async throws {
+        let slow = URL(string: "https://example.com/slow.png")!
+        let quick = URL(string: "https://example.com/quick.png")!
+        let slowData = try pngData(.red)
+        let gate = Gate()
+        let loader = ArtworkThumbnailLoader(diskDirectory: nil) { url in
+            if url == slow {
+                await gate.wait()
+                return slowData
+            }
+            throw URLError(.badServerResponse)
+        }
+        let state = ArtworkThumbnailState(url: slow, loader: loader)
+
+        let earlier = Task { await state.show(slow, loader: loader) }
+        await Task.yield()
+        earlier.cancel() // the cell moved on, as `.task(id:)` cancels the old task
+        await state.show(quick, loader: loader)
+        await gate.open()
+        await earlier.value
+
+        XCTAssertNil(state.image, "the slow load finished late and must not replace the newer url's state")
+    }
 }

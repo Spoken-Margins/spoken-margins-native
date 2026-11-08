@@ -122,24 +122,56 @@ final class ArtworkThumbnailLoader: @unchecked Sendable {
     }
 }
 
+/// What one artwork cell shows. A cell is reused for another row, or its row's artwork changes, so `url` changes
+/// under it. The picture must follow the url: the old one goes the moment the url changes, and a load that was
+/// started for an earlier url never lands on a later one (#2137).
+@MainActor
+final class ArtworkThumbnailState: ObservableObject {
+    @Published private(set) var image: UIImage?
+    /// The url `image` belongs to.
+    private var imageURL: URL?
+
+    init(url: URL?, loader: ArtworkThumbnailLoader) {
+        image = url.flatMap(loader.cachedThumbnail(for:))
+        imageURL = image == nil ? nil : url
+    }
+
+    /// The picture for `url`, or nil when the one held is for another url. The view asks with its current url, so the
+    /// one frame drawn with the new url before `show` runs cannot show the old picture.
+    func image(for url: URL?) -> UIImage? { imageURL == url ? image : nil }
+
+    /// Shows `url`: what is cached at once (nothing when it isn't, so the placeholder shows, not the previous
+    /// picture), then the loaded image. A cancelled call, which means the cell moved to another url, leaves the
+    /// image to the call that replaced it.
+    func show(_ url: URL?, loader: ArtworkThumbnailLoader) async {
+        image = url.flatMap(loader.cachedThumbnail(for:))
+        imageURL = image == nil ? nil : url
+        guard let url else { return }
+        let loaded = await loader.thumbnail(for: url)
+        guard !Task.isCancelled else { return }
+        image = loaded
+        imageURL = loaded == nil ? nil : url
+    }
+}
+
 /// A small artwork square for list rows, loaded through `ArtworkThumbnailLoader`.
 struct ArtworkThumbnail: View {
     let url: URL?
     private let loader: ArtworkThumbnailLoader
     /// Shown while the image loads or when it can't; nil keeps the headphones tile.
     private let fallback: AnyView?
-    @State private var image: UIImage?
+    @StateObject private var state: ArtworkThumbnailState
 
     init(url: URL?, loader: ArtworkThumbnailLoader = .shared, fallback: AnyView? = nil) {
         self.url = url
         self.loader = loader
         self.fallback = fallback
-        _image = State(initialValue: url.flatMap(loader.cachedThumbnail(for:)))
+        _state = StateObject(wrappedValue: ArtworkThumbnailState(url: url, loader: loader))
     }
 
     var body: some View {
         Group {
-            if let image {
+            if let image = state.image(for: url) {
                 Image(uiImage: image).resizable().scaledToFill()
             } else if let fallback {
                 fallback
@@ -147,9 +179,6 @@ struct ArtworkThumbnail: View {
                 AppColors.panel.overlay { Image(systemName: "headphones").foregroundStyle(AppColors.secondaryText) }
             }
         }
-        .task(id: url) {
-            guard let url else { return }
-            if let loaded = await loader.thumbnail(for: url) { image = loaded }
-        }
+        .task(id: url) { await state.show(url, loader: loader) }
     }
 }
