@@ -57,7 +57,8 @@ struct WatchUntetheredView: View {
             }
 
             if let error = library.lastError ?? playback.lastError {
-                Text(error)
+                // The triangle says "error" without the colour (#3738).
+                Label(error, systemImage: "exclamationmark.triangle")
                     .font(.caption2)
                     .foregroundStyle(.red)
                     .lineLimit(3)

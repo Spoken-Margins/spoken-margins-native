@@ -105,7 +105,7 @@ struct LiveSessionLiveRows: View {
         HStack(spacing: 12) {
             Image(systemName: row.isRunning ? "record.circle" : (row.isQuick ? "bolt" : "stop.circle"))
                 .font(.title3)
-                .foregroundStyle(row.isRunning ? AppColors.accent : AppColors.secondaryText)
+                .foregroundStyle(row.isRunning ? AppColors.evergreen : AppColors.secondaryText)
                 .frame(width: glyphWidth)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {

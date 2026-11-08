@@ -195,13 +195,13 @@ struct LiveSessionView: View {
                 ForEach(ElsewhereKind.allCases, id: \.self) { Text($0.label).tag($0) }
             }
             .pickerStyle(.segmented)
-            TextField(kind == .meeting ? "Meeting name" : "Title", text: $title)
+            AppTextField(kind == .meeting ? "Meeting name" : "Title", text: $title)
                 .textFieldStyle(.roundedBorder)
                 .accessibilityIdentifier("liveSession.setup.title")
             if kind != .paper {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Where are you now?").font(.headline) // a field label, not a section title
-                    TextField(kind == .meeting ? "Meeting clock, like 2:00" : "Time in the book, like 0:00", text: $startPosition)
+                    AppTextField(kind == .meeting ? "Meeting clock, like 2:00" : "Time in the book, like 0:00", text: $startPosition)
                         .textFieldStyle(.roundedBorder)
                         .keyboardType(.numbersAndPunctuation)
                     Text(kind == .meeting ? "Leave blank if you don't know. You can set it later with Edit." : "The time your audiobook app shows.")
@@ -320,14 +320,14 @@ struct LiveSessionView: View {
                 ForEach(ElsewhereKind.allCases, id: \.self) { Text($0.label).tag($0) }
             }
             .pickerStyle(.segmented)
-            TextField(session.kind == .meeting ? "Meeting name" : "Title", text: $titleDraft)
+            AppTextField(session.kind == .meeting ? "Meeting name" : "Title", text: $titleDraft)
                 .textFieldStyle(.roundedBorder)
                 .onSubmit { commitDrafts() }
             if session.kind != .paper {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Where are you now?").font(.subheadline.weight(.semibold))
                     HStack {
-                        TextField(session.kind == .meeting ? "What the meeting's clock shows, like 12:30" : "Time in the book, like 1:23:10", text: $clockDraft)
+                        AppTextField(session.kind == .meeting ? "What the meeting's clock shows, like 12:30" : "Time in the book, like 1:23:10", text: $clockDraft)
                             .textFieldStyle(.roundedBorder)
                             .keyboardType(.numbersAndPunctuation)
                         Button {
@@ -366,7 +366,7 @@ struct LiveSessionView: View {
     private func marginComposer(_ session: LiveSession) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Add Margin").font(.headline).accessibilityAddTraits(.isHeader)
-            TextField(guidance(session.kind), text: $marginText, axis: .vertical)
+            AppTextField(guidance(session.kind), text: $marginText, axis: .vertical)
                 .lineLimit(2...5)
                 .textFieldStyle(.roundedBorder)
                 .focused($marginFieldFocused)
@@ -438,7 +438,7 @@ struct LiveSessionView: View {
                             .accessibilityLabel("Remove Margin")
                     }
                     if margin.isBlindMark {
-                        TextField("Mark: add words to help place it (optional)", text: Binding(
+                        AppTextField("Mark: add words to help place it (optional)", text: Binding(
                             get: { margin.text }, set: { controller.updateText(id: margin.id, text: $0) }
                         ))
                         .textFieldStyle(.roundedBorder)
@@ -658,7 +658,7 @@ private struct LiveSessionEndCard: View {
             if kind != .paper {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Where are you now?").font(.subheadline.weight(.semibold))
-                    TextField(kind == .meeting ? "Meeting clock, like 47:30" : "Time in the book, like 1:23:10", text: $endPosition)
+                    AppTextField(kind == .meeting ? "Meeting clock, like 47:30" : "Time in the book, like 1:23:10", text: $endPosition)
                         .textFieldStyle(.roundedBorder)
                         .keyboardType(.numbersAndPunctuation)
                     Text(kind == .audiobook
@@ -701,7 +701,7 @@ struct LiveSessionPlaceField: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            TextField(prompt, text: $text)
+            AppTextField(prompt, text: $text)
                 .textFieldStyle(.roundedBorder)
             if let read {
                 Text("Reads as \(read.label)").font(.caption).foregroundStyle(AppColors.secondaryText)

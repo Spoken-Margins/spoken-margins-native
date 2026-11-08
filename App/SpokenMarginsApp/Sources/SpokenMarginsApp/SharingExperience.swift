@@ -259,7 +259,7 @@ struct InterjectionSharingView: View {
                                 }
                             }
 
-                            TextField("Your display label (optional)", text: $model.sharingState.senderDisplayLabel)
+                            AppTextField("Your display label (optional)", text: $model.sharingState.senderDisplayLabel)
                                 .textFieldStyle(.roundedBorder)
 
                             itemTransportReview
@@ -696,11 +696,11 @@ struct InterjectionSharingView: View {
 
                 DisclosureGroup("Words around the Margin") {
                     VStack(alignment: .leading, spacing: 8) {
-                        TextField("Context before", text: Binding(
+                        AppTextField("Context before", text: Binding(
                             get: { model.sharingState.drafts.first(where: { $0.id == draft.id })?.anchorBefore ?? "" },
                             set: { model.setShareDraftAnchorBefore(draft.id, value: $0) }
                         ), axis: .vertical)
-                        TextField("Context after", text: Binding(
+                        AppTextField("Context after", text: Binding(
                             get: { model.sharingState.drafts.first(where: { $0.id == draft.id })?.anchorAfter ?? "" },
                             set: { model.setShareDraftAnchorAfter(draft.id, value: $0) }
                         ), axis: .vertical)

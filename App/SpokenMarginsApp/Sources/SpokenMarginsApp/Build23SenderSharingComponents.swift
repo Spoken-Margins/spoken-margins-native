@@ -173,7 +173,7 @@ struct Build23PlaceholderWordsEditor: View {
                     Build23PlaceholderTag()
                 }
             }
-            TextField(
+            AppTextField(
                 placeholder,
                 text: Binding(
                     get: { margin.isShowingPlaceholder ? "" : margin.reviewedText },
@@ -527,7 +527,7 @@ struct Build23MarginEditor: View {
                         Text("These excerpts help place the Margin for the recipient. Most people do not need to edit them.")
                             .font(.footnote)
                             .foregroundStyle(AppColors.secondaryText)
-                        TextField(
+                        AppTextField(
                             "Words before this Margin",
                             text: Binding(
                                 get: { margin.anchorBefore },
@@ -539,7 +539,7 @@ struct Build23MarginEditor: View {
                         .accessibilityLabel("Words before this Margin")
                         .accessibilityIdentifier("build23.sender.anchor.before.\(margin.id)")
 
-                        TextField(
+                        AppTextField(
                             "Words after this Margin",
                             text: Binding(
                                 get: { margin.anchorAfter },

@@ -136,7 +136,7 @@ struct SupertonicDownloadNoticeCard: View {
                     .foregroundStyle(AppColors.text)
             } icon: {
                 Image(systemName: "arrow.down.circle")
-                    .foregroundStyle(AppColors.accent)
+                    .foregroundStyle(AppColors.evergreen)
             }
             .accessibilityAddTraits(.isHeader)
             Text(Self.downloadSentence)
