@@ -111,6 +111,11 @@ struct SpokenNoteRecordingView: View {
             guard active, recorder.phase == .idle else { return }
             dismiss()
         }
+        // A Margin that began while a take was still being saved closes this screen once the take is done.
+        .onChange(of: recorder.phase) { _, phase in
+            guard phase == .idle, isMarginCaptureActive else { return }
+            dismiss()
+        }
         .onChange(of: recorder.noteFolder) { _, _ in refreshWholeTimeline() }
         // Anything other than Done that removes this screen still closes a take that is running, so it is saved.
         .onDisappear {

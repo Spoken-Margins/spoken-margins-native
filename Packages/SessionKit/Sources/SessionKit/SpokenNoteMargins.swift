@@ -16,6 +16,11 @@ public enum SpokenNoteMargins {
 
     static let segmentIdPrefix = "note-"
 
+    /// The anchor names a note's sentence by id.
+    public static func isSentenceAnchored(_ anchor: Anchor) -> Bool {
+        anchor.transcriptSegmentId?.hasPrefix(segmentIdPrefix) == true
+    }
+
     /// The sentence a Margin's anchor names on `timeline`, or nil when it names none.
     ///
     /// The segment id is read first. An anchor with no id, or one whose sentence is no longer in the note (its take

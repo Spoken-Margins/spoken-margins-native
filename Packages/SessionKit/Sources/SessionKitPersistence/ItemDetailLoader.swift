@@ -43,19 +43,24 @@ public struct ItemDetailLoader {
             try? store.loadInterjections(sessionId: $0).filter { $0.status == "active" }
         } ?? []
         let isNativeAudio = item.media?.sourceType == .nativeMediaFile || item.media?.sourceType == .remoteStream
-        // Only a Margin that is placed by media time needs the segments to name its surrounding words.
-        let needsSegments = isNativeAudio && storedInterjections.contains {
-            $0.targetType == .item && $0.anchor.mediaTimeMs != nil
+        // A Margin on a spoken note's sentence is placed by that sentence, not by time: the note's audio is joined again when a
+        // take is added, so a time read back now could name other words (#3664). It keeps the words it was made on.
+        let isNote = SpokenNoteItem.isSpokenNote(mediaType: item.mediaType)
+        func placedByTime(_ margin: Interjection) -> Bool {
+            margin.targetType == .item && margin.anchor.mediaTimeMs != nil
+                && !(isNote && SpokenNoteMargins.isSentenceAnchored(margin.anchor))
         }
+        // Only a Margin that is placed by media time needs the segments to name its surrounding words.
+        let needsSegments = isNativeAudio && storedInterjections.contains(where: placedByTime)
         let anchorContexts = try needsSegments
             ? store.resolveSourceAnchorContexts(
                 itemId: id,
-                mediaTimesMs: Set(storedInterjections.compactMap { $0.targetType == .item ? $0.anchor.mediaTimeMs : nil })
+                mediaTimesMs: Set(storedInterjections.filter(placedByTime).compactMap { $0.anchor.mediaTimeMs })
             )
             : [:]
         let interjections = storedInterjections.map { interjection -> Interjection in
             guard isNativeAudio,
-                  interjection.targetType == .item,
+                  placedByTime(interjection),
                   let mediaTimeMs = interjection.anchor.mediaTimeMs,
                   let answer = anchorContexts[mediaTimeMs] else {
                 return interjection
