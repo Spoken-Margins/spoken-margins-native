@@ -43,6 +43,7 @@ test('a new listener follows a suggested show in one tap, and its episodes play'
   await shot(page, info, '60-suggested-empty-following');
 
   // Showing the list reached no publisher, no relay and no third-party host.
+  await page.waitForTimeout(1000); // a late prefetch would show up here
   const appHost = new URL(baseURL ?? 'http://127.0.0.1:4173').host;
   const foreign = requests.map((r) => new URL(r.url())).filter((u) => u.protocol.startsWith('http') && u.host !== appHost);
   expect(foreign.map((u) => u.host), 'hosts contacted before any tap').toEqual([]);
@@ -56,6 +57,8 @@ test('a new listener follows a suggested show in one tap, and its episodes play'
 
   await expect(page.getByText('Following Spoken Margins Test Show. 3 episodes added to your Library.')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Open Spoken Margins Test Show' })).toContainText('3 new');
+  // The tapped button left with the empty screen, so focus went to the heading, not to the page.
+  await expect(page.getByRole('heading', { name: 'Following' })).toBeFocused();
   // Only the tapped feed was asked for: the other three publishers were never contacted.
   // (The browser tries the feed itself before the server reads it, so that one host is asked more than once.)
   const publishers = SUGGESTED_SHOWS.map((s) => new URL(s.feedUrl).host);
@@ -79,6 +82,7 @@ test('Not now keeps the suggestions and follows nothing, and the Follow sheet li
   await list.getByRole('button', { name: 'Add The Pragmatic Engineer' }).click();
   await page.getByRole('dialog', { name: CONSENT }).getByRole('button', { name: 'Not now' }).click();
   await expect(page.getByRole('alert')).toContainText('Not followed');
+  expect(await page.getByRole('alert').boundingBox().then((b) => b?.y ?? 0)).toBeLessThan((await list.boundingBox())?.y ?? 0);
   await expect(list.locator('.row-title')).toHaveCount(SUGGESTED_SHOWS.length);
   await shot(page, info, '63-suggested-not-now');
 

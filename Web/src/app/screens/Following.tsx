@@ -74,7 +74,7 @@ export function Following({ onPlay, followOpen, setFollowOpen }: { onPlay: () =>
           <button type="button" className="button button-primary" onClick={() => setFollowOpen(true)}>
             Follow a show
           </button>
-          <QuickAdd />
+          {!followOpen && <QuickAdd />}
         </div>
       ) : (
         <ul className="rows" aria-label="Shows you follow, newest episode first">
@@ -288,11 +288,12 @@ function ProblemLine({ problem }: { problem: string }) {
 /** The suggested shows on the empty Following screen (#3610), with the way a failed follow is told. */
 function QuickAdd() {
   const data = useData();
-  const { busy, problem, followFeed } = useFollowFeed();
+  // The empty screen is replaced by the list of shows, taking the tapped button with it, so focus goes to the heading.
+  const { busy, problem, followFeed } = useFollowFeed(() => document.getElementById('following-title')?.focus());
   return (
     <>
-      <SuggestedShows busy={busy} followedFeedUrls={data.shows.map((s) => s.feedUrl)} onFollow={(feedUrl) => void followFeed(feedUrl)} />
       {problem && <ProblemLine problem={problem} />}
+      <SuggestedShows busy={busy} followedFeedUrls={data.shows.map((s) => s.feedUrl)} onFollow={(feedUrl) => void followFeed(feedUrl)} />
     </>
   );
 }
@@ -303,12 +304,23 @@ function QuickAdd() {
  * usually asks once about our server; the line says so before the listener taps. The button says Add, not Follow,
  * so it never shares a name with the sheet's own Follow button.
  */
-function SuggestedShows({ busy, followedFeedUrls, onFollow }: { busy: boolean; followedFeedUrls: string[]; onFollow: (feedUrl: string) => void }) {
+function SuggestedShows({
+  busy,
+  followedFeedUrls,
+  onFollow,
+  inSheet = false,
+}: {
+  busy: boolean;
+  followedFeedUrls: string[];
+  onFollow: (feedUrl: string) => void;
+  /** In the sheet the heading sits under the sheet's own h2. */
+  inSheet?: boolean;
+}) {
   const shows = suggestionsToShow(followedFeedUrls);
   if (shows.length === 0) return null;
   return (
     <section className="suggested" aria-labelledby="suggested-title">
-      <h2 id="suggested-title">Or start with one of these</h2>
+      {inSheet ? <h3 id="suggested-title">Or start with one of these</h3> : <h2 id="suggested-title">Or start with one of these</h2>}
       <ul className="rows" aria-label="Suggested shows">
         {shows.map((show) => (
           <li key={show.feedUrl} className="row show-row">
@@ -402,7 +414,7 @@ function FollowSheet({ onClose }: { onClose: () => void }) {
       </form>
       {problem && <ProblemLine problem={problem} />}
       {!results?.length && (
-        <SuggestedShows busy={busy} followedFeedUrls={data.shows.map((s) => s.feedUrl)} onFollow={(feedUrl) => void followFeed(feedUrl)} />
+        <SuggestedShows inSheet busy={busy} followedFeedUrls={data.shows.map((s) => s.feedUrl)} onFollow={(feedUrl) => void followFeed(feedUrl)} />
       )}
       {results && results.length > 0 && (
         <ul className="rows" aria-label="Search results">
