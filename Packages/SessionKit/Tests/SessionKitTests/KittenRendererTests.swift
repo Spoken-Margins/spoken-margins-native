@@ -55,8 +55,8 @@ final class KittenRendererTests: XCTestCase {
     /// 3.5x to 4.0x, with compute time equal to clock time, so the difference is the machine and not load; the 13th ran
     /// at 2.2x and also broke the 1 s pause bar. The 7 failed on the 4x bar alone, with nothing wrong in the renderer.
     /// On a hosted runner (GitHub sets RUNNER_ENVIRONMENT to `github-hosted` there and `self-hosted` on the lane Mac)
-    /// the bar is 3x: it still fails a renderer that has lost a quarter or more of its speed on the slower hosted
-    /// class, and the 1 s pause and memory bars stay as they are.
+    /// the bar is 3x: it still fails a renderer that has lost about 15 to 25% of its speed on the slower hosted
+    /// class (3x against 3.5x to 4.0x), and the 1 s pause and memory bars stay as they are.
     static func soakSpeedBar(environment: [String: String]) -> Double {
         environment["RUNNER_ENVIRONMENT"] == "github-hosted" ? 3 : 4
     }
