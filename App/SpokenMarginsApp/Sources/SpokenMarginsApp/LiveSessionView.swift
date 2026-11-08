@@ -7,6 +7,8 @@ import SwiftUI
 struct LiveSessionView: View {
     @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.dismiss) private var dismiss
+    /// The big session clock: 44 pt at the default text size, growing with the listener's setting (#3726).
+    @ScaledMetric(relativeTo: .largeTitle) private var clockFontSize: CGFloat = 44
     @StateObject private var controller: LiveSessionController
     @ObservedObject private var links = LiveSessionLinkRouter.shared
 
@@ -278,7 +280,9 @@ struct LiveSessionView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(AppColors.secondaryText)
                 Text(LiveSessionPositionMap.clock(position.ms))
-                    .font(.system(size: 44, weight: .semibold, design: .rounded).monospacedDigit())
+                    .font(.system(size: clockFontSize, weight: .semibold, design: .rounded).monospacedDigit())
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.5)
                     .accessibilityLabel("\(title) \(LiveSessionPositionMap.clock(position.ms))")
                 Text("Session time \(sessionTime)").font(.subheadline.monospacedDigit()).foregroundStyle(AppColors.secondaryText)
                 if session.kind == .meeting {
@@ -289,7 +293,9 @@ struct LiveSessionView: View {
         } else {
             VStack(alignment: .leading, spacing: 6) {
                 Text(sessionTime)
-                    .font(.system(size: 44, weight: .semibold, design: .rounded).monospacedDigit())
+                    .font(.system(size: clockFontSize, weight: .semibold, design: .rounded).monospacedDigit())
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.5)
                     .accessibilityLabel("Session time \(sessionTime)")
                 if let position = controller.predictedPosition(at: date) {
                     Text("Source: \(position.label)").font(.subheadline).foregroundStyle(AppColors.secondaryText)

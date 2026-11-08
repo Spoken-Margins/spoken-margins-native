@@ -43,7 +43,7 @@ struct ExperienceTimelineRailScreen: View {
                     Text(model.selectedItem.title)
                         .font(.subheadline)
                         .foregroundStyle(AppColors.secondaryText)
-                        .lineLimit(1)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 1)
                         .truncationMode(.tail)
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.bottom, 12)

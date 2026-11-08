@@ -3,6 +3,7 @@ import SessionKit
 
 /// One source-ordered list of this item's own and shared Margins inside the playback shell.
 struct PlaybackMarginsView: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @EnvironmentObject private var model: Gate1AppModel
     @State private var filter: PlaybackMarginsList.Filter = .all
     @State private var selectedMargin: MarginRow?
@@ -26,7 +27,7 @@ struct PlaybackMarginsView: View {
                 Text(model.selectedItem.title)
                     .font(.subheadline)
                     .foregroundStyle(AppColors.watchSecondary)
-                    .lineLimit(1)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 1)
                     .truncationMode(.tail)
                 PlaybackMarginsFilterView(selection: $filter)
                 Text("Margins: \(visibleCount(counts))")
