@@ -238,3 +238,83 @@ public struct PublisherChaptersPersister: Sendable {
         return PersistedPublisherChapters(item: item, map: map)
     }
 }
+
+// MARK: Generated Listening Map
+
+/// What `ListeningMapGenerationPersister.generate` found or saved. `item` is nil when the item already had a map: that
+/// map is handed back as it was, nothing is written, and the item is not loaded at all.
+public struct GeneratedListeningMapResult: Sendable {
+    public let item: Item?
+    public let map: ListeningMap
+    /// False when the map was already there.
+    public let created: Bool
+}
+
+/// The store halves of `SessionEngine.generateListeningMap` (#2256), built like the persisters above. The Prepare
+/// Listening Map tap used to load the item, cut its whole text into chapters and save the map on the main actor: 24 ms
+/// on a 20 KB article, 787 ms on a 1.1 MB book. This does all three off it; `SessionEngine.generateListeningMap(_:)`
+/// is the half that updates what the engine has open.
+public struct ListeningMapGenerationPersister: Sendable {
+    let repository: any SessionRepository
+    let publisher: PublisherAudioPlayback?
+
+    /// Makes the map the same way the engine always has, then saves it. The reads and the chapter cutting come first,
+    /// outside any write. The item is then loaded again and the map and the status flip are written in one
+    /// transaction, so a rename, a trash or a map that landed while this ran off the main thread is kept, not
+    /// overwritten by the item as it was when the work began. A map that is there by then (a publisher's chapters, a
+    /// friend's map) is returned unchanged, as it is when the item had one at the start.
+    public func generate(itemId: String) throws -> GeneratedListeningMapResult {
+        switch try prepare(itemId: itemId) {
+        case .existing(let result): return result
+        case .made(let prepared):
+            let write = { () throws -> GeneratedListeningMapResult in try commit(prepared, itemId: itemId) }
+            if let store = repository as? any SessionRepositoryTransaction { return try store.withSessionTransaction(write) }
+            return try write()
+        }
+    }
+
+    /// What the heavy step made, with the item text it was made from, so the write can tell whether that moved.
+    struct PreparedMap {
+        let map: ListeningMap
+        let sourceText: String?
+    }
+
+    enum Preparation {
+        case existing(GeneratedListeningMapResult)
+        case made(PreparedMap)
+    }
+
+    /// The reads and the chapter cutting. Writes nothing.
+    func prepare(itemId: String) throws -> Preparation {
+        if let existing = try repository.loadListeningMap(itemId: itemId) {
+            return .existing(GeneratedListeningMapResult(item: nil, map: existing, created: false))
+        }
+        let loaded = try repository.loadItem(id: itemId)
+        let text = GeneratedListeningMap.text(for: loaded, transcript: transcript(itemId: itemId))
+        return .made(PreparedMap(map: GeneratedListeningMap.make(for: loaded, text: text), sourceText: loaded.text))
+    }
+
+    /// Saves the map and flips the status of the item as it is stored now. Run inside one transaction.
+    func commit(_ prepared: PreparedMap, itemId: String) throws -> GeneratedListeningMapResult {
+        if let existing = try repository.loadListeningMap(itemId: itemId) {
+            return GeneratedListeningMapResult(item: nil, map: existing, created: false)
+        }
+        var item = try repository.loadItem(id: itemId)
+        // The text moved since the chapters were cut (rare): cut them again from what is stored now.
+        let map = item.text == prepared.sourceText
+            ? prepared.map
+            : GeneratedListeningMap.make(for: item, text: GeneratedListeningMap.text(for: item, transcript: transcript(itemId: itemId)))
+        try repository.saveListeningMap(map)
+        if item.status == "needs_listening_map" {
+            item.status = "ready"
+            try repository.saveItem(storedItem(item, publisher: publisher))
+        }
+        return GeneratedListeningMapResult(item: item, map: map, created: true)
+    }
+
+    /// The source transcript the chapters fall back to for an item with no text: the publisher's, else the stored one.
+    private func transcript(itemId: String) -> TranscriptTimeline? {
+        if let publisher { return publisher.timeline }
+        return try? repository.loadTranscriptTimeline(itemId: itemId)?.timeline
+    }
+}
