@@ -132,7 +132,7 @@ struct ExperienceShowScreen: View {
             set: { model.setFeedNewItemPolicy(id: subscription.id, policy: $0) }
         )) {
             Text("Let me pick").tag(FeedNewItemPolicy.letMePick)
-            Text("Add every new item").tag(FeedNewItemPolicy.addEveryNewItem)
+            Text("Add everything new").tag(FeedNewItemPolicy.addEveryNewItem)
         }
         .frame(minHeight: 44)
         .accessibilityIdentifier("show.newItemPolicy")
@@ -144,7 +144,7 @@ struct ExperienceShowScreen: View {
                 .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
         }
         .buttonStyle(.borderless)
-        .accessibilityHint("Stops following this show. Items already in your Library are kept. You can undo right after.")
+        .accessibilityHint("Stops following this show. Everything already in your Library is kept. You can undo right after.")
         .accessibilityIdentifier("show.unfollow")
         .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
     }

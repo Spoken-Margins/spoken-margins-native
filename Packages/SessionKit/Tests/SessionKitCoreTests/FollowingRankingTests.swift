@@ -93,7 +93,7 @@ final class FollowingRankingTests: XCTestCase {
         XCTAssertEqual(reason(FollowingSourceSignals(listenedSeconds: 3_000, knownDurationSeconds: 3_600, itemsSeen: 1)), .listensToMuch)
         XCTAssertEqual(reason(FollowingSourceSignals(itemsSeen: 4, itemsFinished: 3, marginCount: 1)), .oftenFinishes)
         XCTAssertEqual(reason(FollowingSourceSignals(itemsSeen: 1, shareCount: 1)), .shares(1))
-        XCTAssertEqual(FollowingRankReason.shares(1).text, "You've shared 1 item from this show")
+        XCTAssertEqual(FollowingRankReason.shares(1).text, "You've shared 1 from this show")
         XCTAssertEqual(FollowingRankReason.margins(1).text, "You've made 1 Margin on this show")
         XCTAssertEqual(reason(FollowingSourceSignals(itemsSeen: 4, itemsDismissed: 4)), .oftenDismisses)
     }

@@ -29,7 +29,7 @@ struct WatchUntetheredView: View {
         List {
             Section {
                 if library.packageRows.isEmpty {
-                    Text("Open iPhone to sync items")
+                    Text("Open iPhone to sync")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else {
@@ -44,7 +44,7 @@ struct WatchUntetheredView: View {
                 }
             } header: {
                 HStack {
-                    Text("Items")
+                    Text("Offline listening")
                     Spacer(minLength: 4)
                     Button {
                         library.refresh()
@@ -98,7 +98,7 @@ struct WatchUntetheredView: View {
                 } label: {
                     Image(systemName: "chevron.left")
                 }
-                .accessibilityLabel("Items")
+                .accessibilityLabel("Offline listening")
             }
         }
     }
