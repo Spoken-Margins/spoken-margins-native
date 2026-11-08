@@ -258,31 +258,36 @@ struct Build23TransportConsequenceCard: View {
     }
 }
 
-/// The recipient preview's share actions: back to the selection, "Share your Margins", and under them what else
-/// the build offers to send ("Share as link", #487). One view, so a test can render the real buttons in each state.
-struct Build23VerifiedShareActions<LinkRow: View>: View {
+/// The recipient preview's share actions: back to the selection and the file share. In a build that makes links the
+/// pinned Share button makes the link, and the file share here becomes the second choice, "Send as a file" (#3750).
+/// One view, so a test can render the real buttons in each state.
+struct Build23VerifiedShareActions: View {
     let isFileShareEnabled: Bool
+    var fileIsSecondChoice = false
     let onEdit: () -> Void
     let onShareFile: () -> Void
-    @ViewBuilder let linkRow: () -> LinkRow
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            AdaptiveStack(spacing: 12) {
-                Button("Edit selection", systemImage: "arrow.left", action: onEdit)
+        AdaptiveStack(spacing: 12) {
+            Button("Edit selection", systemImage: "arrow.left", action: onEdit)
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("build23.sender.preview.edit")
+
+            Spacer()
+
+            if fileIsSecondChoice {
+                Button("Send as a file", systemImage: "doc", action: onShareFile)
                     .buttonStyle(.bordered)
-                    .accessibilityIdentifier("build23.sender.preview.edit")
-
-                Spacer()
-
+                    .disabled(!isFileShareEnabled)
+                    .accessibilityHint("Opens the share sheet with your Margins as a file")
+                    .accessibilityIdentifier("build23.sender.share.present")
+            } else {
                 Button("Share your Margins", systemImage: "square.and.arrow.up", action: onShareFile)
                     .filledActionButton()
                     .disabled(!isFileShareEnabled)
                     .accessibilityHint("Opens the system share sheet with your Margins")
                     .accessibilityIdentifier("build23.sender.share.present")
             }
-
-            linkRow()
         }
     }
 }

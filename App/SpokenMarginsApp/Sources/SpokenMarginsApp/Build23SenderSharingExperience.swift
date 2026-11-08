@@ -11,10 +11,51 @@ struct Build23SenderSharingExperience: View {
     @State private var isSystemSharePresented = false
     @State private var verifiedShareURLForPresentation: URL?
     @State private var isAutoCleanChoicePresented = false
-    @State private var shareAfterVerification = false
+    /// What the listener asked for while the packet was still being made; delivered once it is ready.
+    @State private var pendingShare: Build23PendingShare?
     @State private var showsSharingOptions = false
+    #if SM_SHARE_LINK_CREATION
+    @StateObject private var linkSender = ShareLinkSender()
+    /// The server's `links` switch, asked once when the screen opens. Off, Share sends the file as before.
+    @State private var isLinkOffered = false
+    #endif
 
     var body: some View {
+        withShareLink(screen)
+    }
+
+    /// In a build that makes links, Share makes the link (#3750): the consent alert and the link's share sheet hang
+    /// on the whole screen, and the server is asked once whether links are on.
+    @ViewBuilder
+    private func withShareLink(_ content: some View) -> some View {
+        #if SM_SHARE_LINK_CREATION
+        content
+            .modifier(ShareLinkPresentation(sender: linkSender, packageURL: coordinator.verifiedShareFileURL))
+            .task { isLinkOffered = await linkSender.isOffered() }
+        #else
+        content
+        #endif
+    }
+
+    /// Whether the main Share button makes a link. False in a build without links, and while the server says no.
+    private var sharesLink: Bool {
+        #if SM_SHARE_LINK_CREATION
+        isLinkOffered
+        #else
+        false
+        #endif
+    }
+
+    private var isMakingLink: Bool {
+        #if SM_SHARE_LINK_CREATION
+        linkSender.state == .making
+        #else
+        false
+        #endif
+    }
+
+    @ViewBuilder
+    private var screen: some View {
         let snapshot = coordinator.snapshot
 
         ScrollView {
@@ -67,12 +108,15 @@ struct Build23SenderSharingExperience: View {
         // Review and Share stay pinned at the bottom, within thumb reach, rather than scrolling away (#147).
         .safeAreaInset(edge: .bottom) {
             if snapshot.stage != .share {
-                primaryAction(snapshot)
-                    .controlSize(.large)
-                    .frame(maxWidth: .infinity)
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 12)
-                    .background(AppColors.bone)
+                VStack(alignment: .leading, spacing: 8) {
+                    linkStatusLines
+                    primaryAction(snapshot)
+                        .controlSize(.large)
+                        .frame(maxWidth: .infinity)
+                }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 12)
+                .background(AppColors.bone)
             }
         }
         .background(AppColors.bone.ignoresSafeArea())
@@ -86,11 +130,12 @@ struct Build23SenderSharingExperience: View {
         }
         .onCompatibleChange(of: snapshot.previewState) { previewState in
             switch previewState {
-            case .ready where shareAfterVerification:
-                shareAfterVerification = false
-                presentVerifiedSystemShare()
+            case .ready where pendingShare != nil:
+                let requested = pendingShare
+                pendingShare = nil
+                if let requested { deliver(requested) }
             case .failed, .stale:
-                shareAfterVerification = false
+                pendingShare = nil
             default:
                 break
             }
@@ -137,6 +182,10 @@ struct Build23SenderSharingExperience: View {
             .filledActionButton()
             .disabled(!snapshot.canAdvance || snapshot.isPreparingAll)
             .accessibilityIdentifier("build23.sender.select.continue")
+        case .review where sharesLink:
+            linkShareButton(isWorking: isMakingLink || pendingShare == .link)
+                .disabled(!snapshot.canAdvance || isMakingLink)
+                .accessibilityIdentifier("build23.sender.review.share")
         case .review:
             Button("Share \(includedCount)", systemImage: "square.and.arrow.up") {
                 shareVerifiedPackage()
@@ -144,6 +193,10 @@ struct Build23SenderSharingExperience: View {
             .filledActionButton()
             .disabled(!snapshot.canAdvance)
             .accessibilityIdentifier("build23.sender.review.share")
+        case .recipientPreview where sharesLink:
+            linkShareButton(isWorking: isMakingLink || snapshot.previewState == .building)
+                .disabled(snapshot.previewState != .ready || isMakingLink)
+                .accessibilityIdentifier("build23.sender.preview.share")
         case .recipientPreview:
             Button(
                 snapshot.previewState == .building ? "Getting ready…" : "Share \(includedCount)",
@@ -156,6 +209,45 @@ struct Build23SenderSharingExperience: View {
         case .share:
             EmptyView()
         }
+    }
+
+    /// The main Share button when it makes a link (#3750). The file is the second choice, "Send as a file".
+    private func linkShareButton(isWorking: Bool) -> some View {
+        Button {
+            share(.link)
+        } label: {
+            if isWorking {
+                HStack(spacing: 8) {
+                    ProgressView()
+                    Text("Making link…")
+                }
+            } else {
+                Label("Share link", systemImage: "link")
+            }
+        }
+        .filledActionButton()
+        .accessibilityHint("Makes a private link to these Margins and opens the share sheet with it")
+    }
+
+    @ViewBuilder
+    private var linkStatusLines: some View {
+        #if SM_SHARE_LINK_CREATION
+        let lines = ShareLinkStatusLines(state: linkSender.state, companionNote: linkSender.companionNote)
+        if sharesLink, lines.hasLines {
+            lines
+        }
+        #endif
+    }
+
+    /// "Send as a file", the second choice beside a Share button that makes a link.
+    private func sendFileButton(enabled: Bool, identifier: String) -> some View {
+        Button("Send as a file", systemImage: "doc") {
+            share(.file)
+        }
+        .buttonStyle(.bordered)
+        .disabled(!enabled)
+        .accessibilityHint("Opens the share sheet with your Margins as a file")
+        .accessibilityIdentifier(identifier)
     }
 
     private func selectStage(_ snapshot: Build23SharingSnapshot) -> some View {
@@ -528,6 +620,10 @@ struct Build23SenderSharingExperience: View {
                 .buttonStyle(.bordered)
                 .accessibilityIdentifier("build23.sender.review.back")
 
+                if sharesLink {
+                    sendFileButton(enabled: snapshot.canAdvance && !isMakingLink, identifier: "build23.sender.review.share.file")
+                }
+
                 Button("Preview what your friend gets", systemImage: "doc.text.magnifyingglass") {
                     coordinator.send(.buildRecipientPreview)
                 }
@@ -564,17 +660,11 @@ struct Build23SenderSharingExperience: View {
             case .ready:
                 if let verifiedPreview = snapshot.verifiedPreview {
                     Build23VerifiedShareActions(
-                        isFileShareEnabled: snapshot.canShareVerifiedFile && coordinator.verifiedShareFileURL != nil,
+                        isFileShareEnabled: coordinator.verifiedShareFileURL != nil && !isMakingLink,
+                        fileIsSecondChoice: sharesLink,
                         onEdit: { coordinator.send(.returnToSelect) },
                         onShareFile: presentVerifiedSystemShare
-                    ) {
-                        #if SM_SHARE_LINK_CREATION
-                        // Only in a build made to make links (#487); the file share above is unchanged.
-                        if snapshot.canShareVerifiedFile {
-                            ShareLinkSendControl(packageURL: coordinator.verifiedShareFileURL)
-                        }
-                        #endif
-                    }
+                    )
 
                     Build23VerifiedRecipientPreviewPanel(preview: verifiedPreview)
                 } else {
@@ -721,15 +811,35 @@ struct Build23SenderSharingExperience: View {
         isSystemSharePresented = true
     }
 
+    /// Share the way the main button does: a link when this build makes them and the server allows it, else the file.
     private func shareVerifiedPackage() {
+        share(sharesLink ? .link : .file)
+    }
+
+    /// Makes the packet if it isn't ready, then sends it the way the listener asked.
+    private func share(_ kind: Build23PendingShare) {
         if coordinator.verifiedShareFileURL != nil {
-            presentVerifiedSystemShare()
+            deliver(kind)
             return
         }
-        shareAfterVerification = true
+        pendingShare = kind
         coordinator.send(.buildRecipientPreview)
         // Export can fail synchronously, before SwiftUI observes .building.
-        if case .failed = coordinator.previewState { shareAfterVerification = false }
+        if case .failed = coordinator.previewState { pendingShare = nil }
+    }
+
+    private func deliver(_ kind: Build23PendingShare) {
+        switch kind {
+        case .file:
+            presentVerifiedSystemShare()
+        case .link:
+            #if SM_SHARE_LINK_CREATION
+            guard let packageURL = coordinator.verifiedShareFileURL else { return }
+            linkSender.makeLink(packageURL: packageURL)
+            #else
+            presentVerifiedSystemShare()
+            #endif
+        }
     }
 
     private func shareError(_ snapshot: Build23SharingSnapshot) -> String? {
@@ -742,4 +852,10 @@ struct Build23SenderSharingExperience: View {
         verifiedShareURLForPresentation = nil
         coordinator.send(.returnFromSystemShare)
     }
+}
+
+/// How the listener asked to send while the packet was still being made (#3750).
+enum Build23PendingShare: Equatable {
+    case file
+    case link
 }

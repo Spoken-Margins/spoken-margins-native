@@ -2,9 +2,10 @@ import SwiftUI
 import SessionKit
 import SessionKitSharing
 
-// "Share as link" on the sender's recipient preview (#487). The rules, the sealing and the upload live in SessionKit
-// (`ShareLinkClient`, `ShareLinkPreviewBuilder`, `ShareLinkSealing`); this file only gathers what they need, asks
-// the share sheet to carry the link, and shows one line when no link could be made.
+// "Share link", the sender screen's main Share button in a build that makes links (#487, #3750). The rules, the
+// sealing and the upload live in SessionKit (`ShareLinkClient`, `ShareLinkPreviewBuilder`, `ShareLinkSealing`); this
+// file only gathers what they need, asks the share sheet to carry the link, and shows one line when no link could be
+// made.
 //
 // Link creation exists only in a build made to have it (`SM_SHARE_LINK_CREATION`, project.yml): the owner's call is
 // that a gated feature is switched on by a new build, never by a server or a device setting (2026-10-17). In every
@@ -117,72 +118,54 @@ final class ShareLinkSender: ObservableObject {
     }
 }
 
-/// The "Share as link" button beside "Share your Margins", with its one-line fallback. Hidden while the cached
-/// server config says links are off.
-struct ShareLinkSendControl: View {
+/// The consent alert and the link's share sheet, attached to the sender screen whose Share button makes the link
+/// (#3750). They stay attached whatever stage the screen is on, so a link finished after the stage changed still opens.
+struct ShareLinkPresentation: ViewModifier {
+    @ObservedObject var sender: ShareLinkSender
     let packageURL: URL?
-    @StateObject private var sender = ShareLinkSender()
-    @State private var isOffered = false
 
-    var body: some View {
-        // A real container, not a Group: `.task` and `.sheet` must stay attached while the button is hidden, or the
-        // config is never asked for and the button never appears.
-        VStack(alignment: .leading, spacing: 0) {
-            if isOffered, let packageURL {
-                ShareLinkSendRow(state: sender.state, companionNote: sender.companionNote) {
-                    sender.makeLink(packageURL: packageURL)
+    func body(content: Content) -> some View {
+        content
+            .alert(ShareLinkConsentCopy.title, isPresented: Binding(
+                get: { sender.state == .needsConsent },
+                set: { if !$0, sender.state == .needsConsent { sender.reset() } }
+            )) {
+                Button(ShareLinkConsentCopy.accept) {
+                    if let packageURL { sender.agreeAndMakeLink(packageURL: packageURL) } else { sender.reset() }
+                }
+                .accessibilityIdentifier("build23.sender.share.link.consent.agree")
+                Button(ShareLinkConsentCopy.decline, role: .cancel) { sender.reset() }
+                    .accessibilityIdentifier("build23.sender.share.link.consent.decline")
+            } message: {
+                Text(ShareLinkConsentCopy.message)
+            }
+            .sheet(isPresented: Binding(
+                get: { if case .ready = sender.state { return true } else { return false } },
+                set: { if !$0 { sender.reset() } }
+            )) {
+                if case .ready(let url, let file) = sender.state {
+                    ShareLinkActivityView(link: url, companionFile: file)
+                        .presentationDetents([.medium, .large])
                 }
             }
-        }
-        .task { isOffered = await sender.isOffered() }
-        .alert(ShareLinkConsentCopy.title, isPresented: Binding(
-            get: { sender.state == .needsConsent },
-            set: { if !$0, sender.state == .needsConsent { sender.reset() } }
-        )) {
-            Button(ShareLinkConsentCopy.accept) {
-                if let packageURL { sender.agreeAndMakeLink(packageURL: packageURL) } else { sender.reset() }
-            }
-            .accessibilityIdentifier("build23.sender.share.link.consent.agree")
-            Button(ShareLinkConsentCopy.decline, role: .cancel) { sender.reset() }
-                .accessibilityIdentifier("build23.sender.share.link.consent.decline")
-        } message: {
-            Text(ShareLinkConsentCopy.message)
-        }
-        .sheet(isPresented: Binding(
-            get: { if case .ready = sender.state { return true } else { return false } },
-            set: { if !$0 { sender.reset() } }
-        )) {
-            if case .ready(let url, let file) = sender.state {
-                ShareLinkActivityView(link: url, companionFile: file)
-                    .presentationDetents([.medium, .large])
-            }
-        }
     }
 }
 
-/// The button and its lines, drawn from the sender's state alone, so a test can render each state (#487).
-struct ShareLinkSendRow: View {
+/// The lines under the Share button while and after a link is made: the companion-file note, or why no link was made
+/// and the file is the way. Drawn from the sender's state alone, so a test can render each state (#487, #3750).
+struct ShareLinkStatusLines: View {
     let state: ShareLinkSender.State
     let companionNote: String?
-    let makeLink: () -> Void
+
+    /// Whether there is anything to draw, so the screen leaves no gap above its button when there isn't.
+    var hasLines: Bool {
+        if companionNote != nil { return true }
+        if case .useFile = state { return true }
+        return false
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Button(action: makeLink) {
-                if state == .making {
-                    HStack(spacing: 8) {
-                        ProgressView()
-                        Text("Making link…")
-                    }
-                } else {
-                    Label("Share as link", systemImage: "link")
-                }
-            }
-            .buttonStyle(.bordered)
-            .disabled(state == .making)
-            .accessibilityHint("Uploads your Margins, sealed so only the link can open it, and opens the share sheet with the link")
-            .accessibilityIdentifier("build23.sender.share.link")
-
+        VStack(alignment: .leading, spacing: 6) {
             if let companionNote {
                 Text(companionNote)
                     .font(.subheadline)
@@ -190,7 +173,6 @@ struct ShareLinkSendRow: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("build23.sender.share.link.companion")
             }
-
             if case .useFile(let message) = state {
                 Text(message)
                     .font(.subheadline)
@@ -199,6 +181,7 @@ struct ShareLinkSendRow: View {
                     .accessibilityIdentifier("build23.sender.share.link.fallback")
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
