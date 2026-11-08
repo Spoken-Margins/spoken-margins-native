@@ -123,6 +123,51 @@ final class Build23SenderSharingExperienceTests: XCTestCase {
         XCTAssertNil(coordinator.verifiedShareFileURL)
     }
 
+    /// #3751 audit: a link asked for on review must not open its sheet after the listener went back to the selection
+    /// and removed a Margin. Walks the real coordinator through those steps and asks the screen's rule at each.
+    func testALinkIsDroppedOnceTheListenerGoesBackOrChangesTheSelection() async throws {
+        let coordinator = makeCoordinator()
+        coordinator.send(.begin)
+        coordinator.send(.setPrivateSharingRightsConfirmed(true))
+        coordinator.send(.advanceToReview)
+        coordinator.send(.buildRecipientPreview)
+        let preview = try await waitForVerifiedPreview(from: coordinator)
+        defer { try? FileManager.default.removeItem(at: preview.fileURL) }
+
+        func keepsLink() -> Bool {
+            Build23ShareRequestPolicy.keepsLink(stage: coordinator.snapshot.stage, previewState: coordinator.snapshot.previewState)
+        }
+        XCTAssertTrue(keepsLink(), "the packet is ready on screen: a link for it may open")
+
+        coordinator.send(.returnToSelect)
+        XCTAssertEqual(coordinator.snapshot.stage, .select)
+        XCTAssertFalse(keepsLink(), "back on the selection, a link finishing now must not open its sheet")
+
+        coordinator.send(.setAnchorBefore(id: coordinator.snapshot.margins[0].id, text: "Changed context"))
+        XCTAssertNil(coordinator.verifiedShareFileURL)
+        XCTAssertFalse(keepsLink(), "the packet the link was made from is gone")
+    }
+
+    func testAShareAskedForWhileThePacketBuildsWaitsOnlyForThatBuild() {
+        typealias Policy = Build23ShareRequestPolicy
+        XCTAssertTrue(Policy.keepsPendingShare(stage: .recipientPreview, previewState: .building))
+        XCTAssertTrue(Policy.keepsPendingShare(stage: .recipientPreview, previewState: .ready))
+        for state: Build23SharingPreviewState in [.notBuilt, .stale, .failed("no")] {
+            XCTAssertFalse(Policy.keepsPendingShare(stage: .review, previewState: state), "\(state)")
+        }
+        XCTAssertFalse(Policy.keepsPendingShare(stage: .select, previewState: .building))
+        XCTAssertFalse(Policy.keepsLink(stage: .recipientPreview, previewState: .building))
+    }
+
+    /// #3751 audit: "Making link…" showed on the preview while a file or a plain preview was being made.
+    func testMakingLinkShowsOnlyForALink() {
+        typealias Policy = Build23ShareRequestPolicy
+        XCTAssertFalse(Policy.showsMakingLink(isMakingLink: false, pendingShare: .file))
+        XCTAssertFalse(Policy.showsMakingLink(isMakingLink: false, pendingShare: nil))
+        XCTAssertTrue(Policy.showsMakingLink(isMakingLink: false, pendingShare: .link))
+        XCTAssertTrue(Policy.showsMakingLink(isMakingLink: true, pendingShare: nil))
+    }
+
     func testShareURLIsAbsentAndShareStageIsGatedBeforeVerification() {
         let coordinator = makeCoordinator()
         coordinator.send(.begin)

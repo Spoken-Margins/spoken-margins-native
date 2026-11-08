@@ -46,7 +46,7 @@ enum TextSceneSummaryStart: Equatable {
         switch self {
         case .started: "Writing scene summaries on this device."
         case .alreadyRunning: "Scene summaries are still being written."
-        case .busyWithAnotherItem: "Scene summaries for another item are still being written, so this one has chapters only."
+        case .busyWithAnotherItem: "Scene summaries for something else are still being written, so this one has chapters only."
         case .modelUnavailable(let reason): "Scene summaries need the on-device model, so the chapters have no summaries. \(reason)."
         }
     }
@@ -94,7 +94,7 @@ enum TextSceneSummaryOutcome: Equatable {
         case .summarised(let scenes, let total): "Scene summaries are ready (\(scenes) of \(total) scenes). Skim can read them."
         case .nothingToSummarise: "This text is too short to summarise. The chapters stay as they are."
         case .noSummaryAccepted: "The on-device model's summaries didn't pass the check, so the chapters stay without summaries."
-        case .keptOtherMap: "This item already has a Listening Map, so it was not replaced."
+        case .keptOtherMap: "This already has a Listening Map, so it was not replaced."
         case .paused(let stop, let written, let total):
             "\(EpisodeMapRunGuard.pausedStatus(stop)). \(written) of \(total) scene summaries are saved. Tap Continue Scene Summaries to pick up there."
         case .audioPaused(let stop):

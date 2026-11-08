@@ -58,7 +58,7 @@ struct Gate1RootView: View {
             }
         }
         .onAppear {
-            MainThreadOperationLabels.shared.scoped("launch.bootstrapLibrary") { model.bootstrapLibraryIfNeeded() }
+            LaunchRecorder.shared?.markRootAppeared(); MainThreadOperationLabels.shared.scoped("launch.bootstrapLibrary") { model.bootstrapLibraryIfNeeded() }
             catalogDrawer.noteLaunch(of: model)
         }
         .firstLaunchWelcomeOrder(model: model, drawer: catalogDrawer)
@@ -67,7 +67,7 @@ struct Gate1RootView: View {
             navigation.select(root, recordingIsLocked: model.recordingNavigationIsLocked)
             model.requestedExperienceRoot = nil
         }
-        .tracksKeyboard($keyboardIsPresented).liveSessionLinkCover(model)
+        .tracksKeyboard($keyboardIsPresented).liveSessionLinkCover(model).timesLaunchUsable(model)
         .sheet(isPresented: $model.isTermsOfUsePresented) {
             NavigationStack {
                 SpokenMarginsTermsView(allowsAcceptance: true)

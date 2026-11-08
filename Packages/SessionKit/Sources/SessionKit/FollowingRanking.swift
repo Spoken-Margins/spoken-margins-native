@@ -207,7 +207,7 @@ public enum FollowingRankReason: Equatable, Sendable {
         case .listensToMuch: "You listen to much of this show"
         case .oftenFinishes: "You often finish this show"
         case .margins(let count): count == 1 ? "You've made 1 Margin on this show" : "You've made \(count) Margins on this show"
-        case .shares(let count): count == 1 ? "You've shared 1 item from this show" : "You've shared \(count) items from this show"
+        case .shares(let count): count == 1 ? "You've shared 1 from this show" : "You've shared \(count) from this show"
         case .oftenDismisses: "You often dismiss this show"
         }
     }
