@@ -139,7 +139,7 @@ struct MarginOutputDestinationScreen: View {
                     }
                     .pickerStyle(.inline)
                     if row.destination.shape == .itemOnCompletion {
-                        Text("One note per item, written when you mark it complete. It holds every Margin from your listening, with the item’s properties. Items you finished before choosing this don’t get one. Finishing an item by listening is picked up within about half an hour.")
+                        Text("One note per source, written when you mark it complete. It holds every Margin from your listening, with the source’s properties. Sources you finished before choosing this don’t get one. Finishing a source by listening is picked up within about half an hour.")
                             .font(.footnote).foregroundStyle(AppColors.secondaryText)
                     }
                 }
@@ -163,7 +163,7 @@ struct MarginOutputDestinationScreen: View {
                         Text("Original").tag(MarginOutputDestination.TextChoice.original)
                     }
                     Text(row.destination.shape == .itemOnCompletion
-                         ? "These choices shape notes for single Margins. A note for a whole item keeps its own form."
+                         ? "These choices shape notes for single Margins. A note for a whole source keeps its own form."
                          : "Source context is the passage around each Margin. The title, source link and position are always included. Changing a choice rewrites the notes this app wrote, never ones you edited.")
                         .font(.footnote).foregroundStyle(AppColors.secondaryText)
                 }

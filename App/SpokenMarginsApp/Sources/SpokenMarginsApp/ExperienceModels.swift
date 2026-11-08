@@ -130,7 +130,7 @@ enum AddSourceRoute: String, CaseIterable, Identifiable, Hashable, Sendable {
     var detail: String {
         switch self {
         case .linkOrPodcast: "Podcast episode, RSS feed, public audio, or readable web link"
-        case .pastedText: "Create a listening item from text already on your clipboard"
+        case .pastedText: "Make something to listen to from text already on your clipboard"
         case .importFromFiles: "A document, book, audiobook, or Margins packet from Files"
         case .quickFolder: "Choose a folder whose eligible files appear in Following"
         }
