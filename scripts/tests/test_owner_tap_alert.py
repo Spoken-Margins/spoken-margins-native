@@ -539,7 +539,8 @@ class Workflow(unittest.TestCase):
 
     def test_check_workflows_end_with_an_alert_job_from_the_base(self):
         # hosted-portable.yml took over from linux-t1.yml, whose VPS queue held the alert for an hour or more (#2442).
-        for name, needs in (('hosted-portable.yml', '[portable, scope, sessionkit, mac-rest]'), ('shipped-build-compat.yml', 'compat')):
+        for name, needs in (('hosted-portable.yml', '[portable, scope, sessionkit, mac-rest, linux-retry-tally]'),
+                            ('shipped-build-compat.yml', 'compat')):
             with self.subTest(name):
                 text = (SCRIPTS.parent / '.github' / 'workflows' / name).read_text()
                 head, _, job = text.partition('\n  owner-tap-alert:\n')
@@ -557,7 +558,13 @@ class Workflow(unittest.TestCase):
                 self.assertIn('python3 scripts/owner_tap_alert.py --pr "$PR"', job)
                 # The job that runs PR code keeps the read-only workflow token.
                 self.assertIn('\npermissions:\n  contents: read\n\n', head)
-                self.assertNotIn('issues: write', head)
+                # Above it, only #3529's linux-retry-tally may write issues, and it too runs the base's script.
+                blocks = re.split(r'\n  ([\w-]+):\n', head)
+                for job_name, block in zip(blocks[1::2], blocks[2::2]):
+                    if 'issues: write' in block:
+                        self.assertEqual(job_name, 'linux-retry-tally')
+                        self.assertIn('ref: ${{ github.event.pull_request.base.sha', block)
+                        self.assertIn('persist-credentials: false', block)
 
     def test_a_base_without_the_script_skips_quietly(self):
         # Before this merges, the base has no script: the job must pass with a note, not fail (PR #2054's first run).
