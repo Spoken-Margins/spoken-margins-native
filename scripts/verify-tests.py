@@ -2408,6 +2408,10 @@ class Run:
                         step['audio_windows'] = lane_audio_window.attachments(audio)
                         step.setdefault('attachments', []).extend(step['audio_windows'])
                         self.save()
+                    # A hosted Mac cannot listen and starts no window (#3604): its skipped AudioLoopback tests are
+                    # recorded as not run, for the report, instead of failing the step.
+                    if lane_audio_window.record_not_run(self.manifest['steps']):
+                        self.save()
         finally:
             if scheme == 'SpokenMarginsAppBehavior':
                 lane_sim.mark_quiet(chosen['udid'])
