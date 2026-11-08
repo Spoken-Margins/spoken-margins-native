@@ -4,7 +4,8 @@ A `.frame(minHeight: 44)` after a `Button` gives the layout 44 pt of room, but t
 size of the label (the repo's own note on #430). Switch Control and motor-impaired touch then get a target the
 size of a word. The fix is the frame, plus `contentShape(Rectangle())`, inside the label, or `minimumTapTarget()`
 inside the label. This scan reads every App/ Swift file and fails on a `Button` whose modifier chain has an
-outer frame with a minimum of 44 pt or more, or an outer `minimumTapTarget()`.
+outer frame with a minimum of 44 pt or more, an outer `minimumTapTarget()`, or an outer `expandedHitArea()`
+(padding and contentShape outside the Button grow nothing either).
 """
 import re
 import unittest
@@ -14,7 +15,8 @@ ROOT = Path(__file__).resolve().parents[2]
 APP = ROOT / "App"
 
 OUTER_TARGET = re.compile(
-    r"\.frame\([^)]*\bmin(?:Height|Width)\s*:\s*(\d+)[^)]*\)|\.minimumTapTarget\(\)")
+    r"\.frame\(([^)]*)\)|\.minimumTapTarget\(\)|\.expandedHitArea\(")
+MIN_SIZE = re.compile(r"\bmin(?:Height|Width)\s*:\s*(\d+)")
 
 
 def _strip(text: str) -> str:
@@ -81,8 +83,10 @@ def outer_targets(source: str):
     found = []
     for pos, chain in _button_chains(text):
         for mm in OUTER_TARGET.finditer(chain):
-            if mm.group(1) is not None and int(mm.group(1)) < 44:
-                continue
+            if mm.group(0).startswith(".frame("):
+                # Only a frame that asks for 44 pt or more claims a tap target.
+                if not any(int(n) >= 44 for n in MIN_SIZE.findall(mm.group(1))):
+                    continue
             found.append((text[:pos].count("\n") + 1, mm.group(0)))
     return found
 
@@ -112,6 +116,14 @@ class OuterTapFrameScanTests(unittest.TestCase):
     def test_larger_minimums_and_an_outer_minimum_tap_target_are_flagged(self):
         self.assertEqual(len(outer_targets('Button("A") { }\n.frame(minHeight: 46)\n')), 1)
         self.assertEqual(len(outer_targets('Button("A") { }\n.minimumTapTarget()\n')), 1)
+
+    def test_an_outer_expanded_hit_area_is_flagged(self):
+        self.assertEqual(len(outer_targets('Button("A") { }\n.font(.caption)\n.expandedHitArea(vertical: 14)\n')), 1)
+
+    def test_either_minimum_at_44_counts(self):
+        self.assertEqual(len(outer_targets('Button("A") { }\n.frame(minHeight: 30, minWidth: 20)\n')), 0)
+        self.assertEqual(len(outer_targets('Button("A") { }\n.frame(minWidth: 96, minHeight: 30)\n')), 1)
+        self.assertEqual(len(outer_targets('Button("A") { }\n.frame(minWidth: 96, minHeight: 44)\n')), 1)
 
     def test_the_frame_inside_the_label_is_fine(self):
         self.assertEqual(outer_targets('Button { go() } label: { Text("Go").frame(minHeight: 44).contentShape(Rectangle()) }\n.buttonStyle(.bordered)\n'), [])

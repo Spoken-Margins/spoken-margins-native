@@ -312,9 +312,10 @@ struct ExperienceLibraryScreen: View {
                     .accessibilityIdentifier("library.filter.summary")
                 Spacer()
                 if hasActiveFilters {
-                    Button("Reset filters", action: model.resetLibraryFilters)
+                    Button(action: model.resetLibraryFilters) {
+                        Text("Reset filters").expandedHitArea(horizontal: 8, vertical: 14)
+                    }
                         .font(.caption)
-                        .expandedHitArea(horizontal: 8, vertical: 14)
                         .accessibilityIdentifier("library.filters.reset")
                 }
             }
