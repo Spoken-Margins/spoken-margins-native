@@ -23,6 +23,17 @@ struct AdaptiveStack<Content: View>: View {
     }
 }
 
+/// The gap that pushes the next control to the trailing edge in an `AdaptiveStack`'s side-by-side layout. When the
+/// stack is vertical (accessibility sizes) a flexible spacer would only add height, so it draws nothing (#3723).
+struct AdaptiveSpacer: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    var minLength: CGFloat?
+
+    var body: some View {
+        if !dynamicTypeSize.isAccessibilitySize { Spacer(minLength: minLength) }
+    }
+}
+
 /// A segmented control reads well with two or three short labels. At accessibility sizes the segments wrap
 /// or clip long labels such as "AI Handoff Markdown", so the same picker becomes a menu (#1939).
 private struct SegmentedUnlessLargeText: ViewModifier {

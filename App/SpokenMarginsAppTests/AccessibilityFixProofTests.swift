@@ -19,6 +19,7 @@ import XCTest
 /// - #1937 (PR #2018): the Library row's play circle grows with the text.
 /// - #1969 (PR #2013): a Library this build can't open says so, never "Your Library is ready".
 /// - #2900: the Margins pane's unselected filter chips and a Margin's play button take a tap over 44 × 44 pt.
+/// - #3723: the share review's Cancel preparation button stacks under its progress line at accessibility sizes.
 /// - #3724: the Supertonic download notice keeps Open Voices and Not Now on screen at accessibility5.
 ///
 /// SwiftUI builds its accessibility tree only when an assistive client is running, and an app-hosted test has none:
@@ -145,6 +146,28 @@ final class AccessibilityFixProofTests: XCTestCase {
                 XCTAssertLessThan(paste.frame.minX, 60, "\(size): the Paste button sits beside the text at x \(paste.frame.minX)")
             } else {
                 XCTAssertGreaterThan(paste.frame.minX, width / 2, "\(size): the Paste button is not beside the text")
+            }
+        }
+    }
+
+    // MARK: - #3723 share-review button rows stack at accessibility sizes
+
+    /// The batch-preparation card's progress line and its Cancel button share one row. Side by side by default, the
+    /// button sits under the words at accessibility sizes (the other rows of #3723 use the same `AdaptiveStack`).
+    func testBatchPreparationCancelSitsUnderItsProgressAtAccessibilitySizes() async throws {
+        for (size, stacked) in [(DynamicTypeSize.large, false), (.accessibility5, true)] {
+            let mounted = try mount(AnyView(Build23BatchPreparationCard(
+                isPreparing: true, completed: 1, total: 3, failures: 0, canPrepare: false, onPrepare: {}, onCancel: {})),
+                textSize: size)
+            defer { mounted.close() }
+            let progress = try await mounted.waitForNode("the progress line") { $0.label?.contains("1 of 3 prepared") == true }
+            let cancel = try await mounted.waitForNode("the Cancel button") {
+                $0.identifier == "build23.sender.preparation.cancel" || $0.label == "Cancel preparation"
+            }
+            if stacked {
+                XCTAssertGreaterThanOrEqual(cancel.frame.minY, progress.frame.maxY - 1, "\(size): Cancel is beside the progress line, not under it")
+            } else {
+                XCTAssertGreaterThanOrEqual(cancel.frame.minX, progress.frame.maxX - 1, "\(size): Cancel is not beside the progress line")
             }
         }
     }
