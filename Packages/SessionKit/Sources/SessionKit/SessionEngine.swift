@@ -183,6 +183,11 @@ public final class SessionEngine {
             let loaded = try discardUnavailableGeneratedTextAudio(from: repository.loadItem(id: itemId))
             return adoptingPublisherAudio(for: loaded)
         }
+        // A spoken note is the listener's own audio, never text to read aloud: until its Play has made its audio ready (#3662)
+        // there is nothing to start.
+        if SpokenNoteItem.isSpokenNote(mediaType: item.mediaType), item.media?.url == nil {
+            throw SessionKitError.invalidCommandForState("This note isn't ready to play yet. Open it and tap Play.")
+        }
         currentItem = item
         currentMap = try labels.scoped("start.loadMap") { try repository.loadListeningMap(itemId: itemId) }
         item = try labels.scoped("start.prepareAudio") { try prepareGeneratedTextAudioIfAvailable(for: item) }
