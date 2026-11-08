@@ -61,6 +61,7 @@ struct PinnedMarginCardView: View {
                     .accessibilityHidden(true)
                 Text(card.headline)
                     .font(.headline)
+                    .accessibilityAddTraits(.isHeader)
                     .foregroundStyle(.white)
                     // One line at regular sizes, shrunk before it is cut, so a long name does not make the card taller
                     // when a lead-in becomes a voice. It wraps at the larger sizes (#3597).

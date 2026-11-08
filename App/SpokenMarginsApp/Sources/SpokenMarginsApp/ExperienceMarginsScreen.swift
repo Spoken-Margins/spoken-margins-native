@@ -212,7 +212,7 @@ struct ExperienceMarginsScreen: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(group.isNewest ? "Newest. " : "")\(group.itemTitle), \(group.rows.count) Margins")
         .accessibilityHint("Opens the item.")
-        .accessibilityAddTraits(.isButton)
+        .accessibilityAddTraits([.isButton, .isHeader])
         .accessibilityIdentifier("margins.openItem.\(group.itemID)")
     }
 
