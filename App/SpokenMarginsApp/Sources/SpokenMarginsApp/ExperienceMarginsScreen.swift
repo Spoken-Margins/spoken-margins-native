@@ -147,7 +147,7 @@ struct ExperienceMarginsScreen: View {
         }
     }
 
-    /// The item heading, then Share and Share as Markdown. At accessibility sizes the buttons take their own
+    /// The item heading, then Share and Export as Markdown. At accessibility sizes the buttons take their own
     /// row under the title instead of squeezing it (#1938).
     @ViewBuilder
     private func groupHeading(_ group: MarginGroup) -> some View {
@@ -243,7 +243,7 @@ struct ExperienceMarginsScreen: View {
         }
         .disabled(preparingMarkdownItemID != nil || isPreparingExportAll)
         .buttonStyle(.borderless)
-        .accessibilityLabel("Share Margins from \(group.itemTitle) as Markdown")
+        .accessibilityLabel("Export Margins from \(group.itemTitle) as Markdown")
         .accessibilityIdentifier("margins.shareItemMarkdown.\(group.itemID)")
     }
 

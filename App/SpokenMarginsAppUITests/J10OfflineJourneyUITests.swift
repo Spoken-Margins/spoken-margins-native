@@ -80,21 +80,13 @@ final class J10OfflineJourneyUITests: XCTestCase {
             // the share sheet here. Importing it on a second simulator stays with the agent run.
             if playPause.label == "Pause" { playPause.tap() }
             waitUntil("The article did not pause before export") { self.playPause.label == "Play" }
-            tap("playback.options.button")
-            let export = element("playback.export.button")
-            for _ in 0..<12 where !export.isHittable { app.swipeUp() }
-            XCTAssertTrue(export.isHittable, "Export is not reachable from the playback options")
-            export.tap()
-            XCTAssertTrue(element("export.screen").waitForExistence(timeout: 5), "Export did not open")
-            let shareMargins = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Share Margins")).firstMatch
-            for _ in 0..<12 where !shareMargins.isHittable { app.swipeUp() }
-            XCTAssertTrue(shareMargins.isHittable, "Share Margins is not reachable on Export")
-            shareMargins.tap()
+            // Share on the playback screen opens the sheet on its review (#1507). The Export screen no longer
+            // carries Share (#3211): Export is for taking Margins out for yourself.
+            tap("playback.shareMargins.button")
             XCTAssertTrue(element("build23.sender.experience").waitForExistence(timeout: 8), "The sender flow did not open")
             let cleanUpQuestion = app.alerts["Clean selected Margins automatically?"]
             if cleanUpQuestion.waitForExistence(timeout: 2) { cleanUpQuestion.buttons["Not now"].tap() } // first share only
-            senderElement("build23.sender.select.continue").tap()
-            XCTAssertTrue(element("build23.sender.stage.review").waitForExistence(timeout: 5), "The review stage did not open")
+            XCTAssertTrue(element("build23.sender.stage.review").waitForExistence(timeout: 5), "Share did not open on the review stage")
             senderElement("build23.sender.preview.build").tap()
             XCTAssertTrue(element("build23.sender.recipient.verified-preview").waitForExistence(timeout: 12),
                           "The packet was not written and verified with the server unreachable")

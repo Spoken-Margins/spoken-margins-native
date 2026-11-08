@@ -129,6 +129,50 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.snapshot.sessionId, session)
     }
 
+    /// #3211: "Share this Margin" on Margin details is Share, so it opens the friend sheet with only that Margin on its
+    /// review (a packet, not a Markdown file), and leaves the playing session and the current screen alone.
+    func testShareThisMarginOpensTheFriendSheetWithOnlyThatMargin() throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        model.beginWrittenMargin()
+        model.saveWrittenMargin(text: "First private thought")
+        model.beginWrittenMargin()
+        model.saveWrittenMargin(text: "Second selected thought")
+        model.refreshMarginRows()
+        let row = try XCTUnwrap(model.marginRows.first { $0.preview.contains("Second selected") })
+        let session = model.snapshot.sessionId
+        let screen = model.screen
+
+        model.openMarginShare(row.interjection)
+
+        XCTAssertTrue(model.isSharingInterjectionsPresented)
+        XCTAssertEqual(model.sharingState.drafts.map(\.interjection.id), [row.interjection.id], "only the opened Margin is offered")
+        XCTAssertTrue(model.sharingState.drafts.allSatisfy(\.isIncluded))
+        XCTAssertEqual(model.sharingState.entry, .reviewDefaults)
+        XCTAssertTrue(model.sharingState.draftsPreparedForExport, "the sheet keeps the one-Margin list when it opens")
+        XCTAssertEqual(model.selectedItem.id, row.interjection.itemId)
+        XCTAssertEqual(model.screen, screen)
+        XCTAssertEqual(model.snapshot.sessionId, session)
+    }
+
+    /// #3211: a Margin the sheet can't send (not active) never opens an empty sheet.
+    func testShareThisMarginRefusesAMarginTheSheetCannotSend() throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        model.beginWrittenMargin()
+        model.saveWrittenMargin(text: "A thought that was removed")
+        model.refreshMarginRows()
+        var margin = try XCTUnwrap(model.marginRows.first).interjection
+        margin.status = "deleted"
+
+        model.openMarginShare(margin)
+
+        XCTAssertFalse(model.isSharingInterjectionsPresented)
+        XCTAssertTrue(model.sharingState.drafts.isEmpty)
+    }
+
     /// #147: when the newest session has no Margins, Share still opens the sheet with the Margins of the
     /// session that has them, as the Share/Export screen did.
     func testItemMarginsShareUsesTheSessionWithMarginsWhenTheNewestHasNone() throws {

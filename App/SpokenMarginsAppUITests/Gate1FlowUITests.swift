@@ -1181,9 +1181,12 @@ final class Gate1FlowUITests: XCTestCase {
         start.tap()
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
         pausePlaybackIfNeeded()
-        openPlaybackExport()
-        XCTAssertTrue(element("export.screen").waitForExistence(timeout: 5))
-        scrollToButton(containingLabel: "Share Margins").tap()
+        // Share lives on the Margins tab (#3211: the Export screen is for taking Margins out for yourself).
+        scrollToElement("playback.margins.button").tap()
+        scrollToElement("playback.margins.collection.button").tap()
+        let share = scrollToElement("margins.shareItem.item-ui-text-regression")
+        XCTAssertTrue(share.isHittable, "The item's Share action is not reachable on the Margins tab")
+        share.tap()
         XCTAssertTrue(element("build23.sender.experience").waitForExistence(timeout: 8))
     }
 
