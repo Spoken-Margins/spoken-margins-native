@@ -9,6 +9,8 @@ struct PlaybackMarginRowView: View {
     let isShared: Bool
     let identifier: String
     var canPlay = true
+    var playLabel = "Play this moment"
+    var playHint: String? = nil
     let showDetails: () -> Void
     let play: () -> Void
 
@@ -44,8 +46,8 @@ struct PlaybackMarginRowView: View {
                     .minimumTapTarget()
             }
             .disabled(!canPlay)
-            .accessibilityLabel("Play this moment: \(title)")
-            .accessibilityHint(canPlay ? "Plays the source lead-in and this Margin" : "Open details to review this Margin’s audio and position")
+            .accessibilityLabel("\(playLabel): \(title)")
+            .accessibilityHint(playHint ?? (canPlay ? "Plays the source lead-in and this Margin" : "Open details to review this Margin’s audio and position"))
             .accessibilityIdentifier("\(identifier).play")
         }
         .buttonStyle(.plain)
