@@ -58,10 +58,12 @@ struct Gate1RootView: View {
             }
         }
         .onAppear {
+            LaunchRecorder.shared?.markRootAppeared()
             MainThreadOperationLabels.shared.scoped("launch.bootstrapLibrary") { model.bootstrapLibraryIfNeeded() }
             catalogDrawer.noteLaunch(of: model)
         }
         .firstLaunchWelcomeOrder(model: model, drawer: catalogDrawer)
+        .onChange(of: model.libraryItems.count) { _, _ in LaunchRecorder.shared?.markLibraryShown() } // first usable screen (#3752)
         .onChange(of: model.requestedExperienceRoot) { _, root in
             guard let root else { return }
             navigation.select(root, recordingIsLocked: model.recordingNavigationIsLocked)
