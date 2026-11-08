@@ -75,11 +75,11 @@ struct ExperienceLibraryScreen: View {
                         PlayQueueSummaryRow(rows: queuedRows) { isPlayQueuePresented = true }
                     }
 
-                    // Above the items while a job runs or a result is new, so a listener sees it without scrolling
-                    // past the list (#3215). It sits in this always-present row, so it comes and goes without a
-                    // new row shifting the items. The Continue row is the first item, so it stays the first of them.
-                    if !model.audioPreparationQueue.isEmpty || !model.recentlyPreparedAudio.isEmpty {
-                        preparationSummary
+                    // Above the items while audio is queued, so a listener sees it without scrolling past the list
+                    // (#3215), and gone once nothing is, however much finished recently (#3764). It sits in this
+                    // always-present row, so it comes and goes without a new row shifting the items.
+                    if let line = AudioPreparationQueueProjection.libraryStatusLine(queue: model.audioPreparationQueue) {
+                        preparationLine(line)
                     }
                 }
                 .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
@@ -165,45 +165,27 @@ struct ExperienceLibraryScreen: View {
         }
     }
 
-    private var preparationSummary: some View {
+    /// One line, in the style of the links-waiting line above it, that opens Preparing Audio (#3764).
+    private func preparationLine(_ line: String) -> some View {
         Button {
             isAudioPreparationQueuePresented = true
         } label: {
-            ExperienceSurface(tint: AppColors.ochre.opacity(0.65)) {
-                HStack(spacing: 12) {
-                    Image(systemName: model.audioPreparationQueue.isEmpty ? "checkmark.circle.fill" : "waveform.badge.magnifyingglass")
-                        .font(.title3)
-                        .foregroundStyle(AppColors.ochreText)
-                        .frame(width: 40, height: 40)
-                        .background(AppColors.ochre.opacity(0.12), in: Circle())
-                        .accessibilityHidden(true)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("Preparing audio")
-                            .font(.headline)
-                        Text(preparationSummaryDetail)
-                            .font(.subheadline)
-                            .foregroundStyle(AppColors.secondaryText)
-                            .multilineTextAlignment(.leading)
-                    }
-                    Spacer(minLength: 8)
-                    Image(systemName: "chevron.right")
-                        .foregroundStyle(AppColors.secondaryText)
-                        .accessibilityHidden(true)
-                }
+            HStack(spacing: 8) {
+                Label(line, systemImage: "waveform.badge.magnifyingglass")
+                    .font(.subheadline)
+                    .foregroundStyle(AppColors.secondaryText)
+                    .multilineTextAlignment(.leading)
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundStyle(AppColors.secondaryText)
+                    .accessibilityHidden(true)
             }
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("library.offlineRendering.button")
-    }
-
-    private var preparationSummaryDetail: String {
-        let queued = Set(model.audioPreparationQueue.map(\.itemId)).count // items, not jobs (#883)
-        let recent = model.recentlyPreparedAudio.count
-        if queued > 0, recent > 0 {
-            return "\(queued) queued · \(recent) recently ready"
-        }
-        if queued > 0 { return "\(queued) queued" }
-        return "\(recent) recently ready"
     }
 
     private var onboardingIcon: some View {

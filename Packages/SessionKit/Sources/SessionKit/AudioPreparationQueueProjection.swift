@@ -68,8 +68,18 @@ public enum AudioPreparationQueueProjection {
         }
     }
 
+    /// The Library's one line while audio is queued, counting items rather than jobs (#883); nil with nothing
+    /// queued, so finished work alone never holds a place in the Library (#3764).
+    public static func libraryStatusLine(queue: [AudioPreparationQueueRow]) -> String? {
+        let queued = Set(queue.map(\.itemId)).count
+        guard queued > 0 else { return nil }
+        return "Preparing audio · \(queued) queued"
+    }
+
     /// The "recently prepared" list: finished offline audio, one row per item (the newest), newest
-    /// first, at most `recentlyPreparedLimit`.
+    /// first, at most `recentlyPreparedLimit`. Only items in `titlesByItemId`, the Library's live items, are listed:
+    /// the trash keeps an item's audio so a restore needs no new render, and counting those read "9 recently ready"
+    /// to a listener with fewer items than that (#3764).
     public static func recentlyPrepared(
         manifests: [PreparedAudioManifestSummary],
         titlesByItemId: [String: String]
@@ -79,11 +89,11 @@ public enum AudioPreparationQueueProjection {
             .filter { $0.state == .readyOffline && $0.artifact != nil }
             .sorted { $0.updatedAt > $1.updatedAt }
             .compactMap { manifest -> RecentlyPreparedAudioRow? in
-                guard seenItemIds.insert(manifest.itemId).inserted else { return nil }
+                guard let title = titlesByItemId[manifest.itemId], seenItemIds.insert(manifest.itemId).inserted else { return nil }
                 return RecentlyPreparedAudioRow(
                     id: manifest.id,
                     itemId: manifest.itemId,
-                    title: titlesByItemId[manifest.itemId] ?? manifest.itemId,
+                    title: title,
                     completedAt: manifest.updatedAt,
                     durationMs: manifest.artifact?.durationMs ?? 0
                 )
@@ -183,7 +193,7 @@ public enum AudioPreparationQueueProjection {
         if newlyCompleted.count == 1 {
             message = "Ready offline: \(newest.title)."
         } else {
-            message = "Ready offline: \(newest.title) and \(newlyCompleted.count - 1) more. Review them in Preparing Audio."
+            message = "Ready offline: \(newest.title) and \(newlyCompleted.count - 1) more."
         }
         return PreparedAudioNotice(message: message, newestCompletedAt: newest.completedAt)
     }
