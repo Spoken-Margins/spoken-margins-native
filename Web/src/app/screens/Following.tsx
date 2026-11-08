@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { useRestoreFocus } from '../focus.ts';
 import type { Show } from '../../shared/model.ts';
 import { useData } from '../data.tsx';
@@ -7,6 +7,7 @@ import { ChevronIcon, CloseIcon, PlayIcon, PlusIcon, RefreshIcon } from '../icon
 import { followingRows, libraryRows, newestFirst } from '../logic/library.ts';
 import { plainError } from '../logic/messages.ts';
 import { checkedLabel, needsRelayLine } from '../logic/refresh.ts';
+import { suggestionsToShow } from '../logic/suggestions.ts';
 import { usePlayer } from '../player.tsx';
 import { useFeedRefresh } from '../refresh.tsx';
 import { services } from '../services.ts';
@@ -73,6 +74,7 @@ export function Following({ onPlay, followOpen, setFollowOpen }: { onPlay: () =>
           <button type="button" className="button button-primary" onClick={() => setFollowOpen(true)}>
             Follow a show
           </button>
+          <QuickAdd />
         </div>
       ) : (
         <ul className="rows" aria-label="Shows you follow, newest episode first">
@@ -242,18 +244,107 @@ function ShowScreen({ show, onBack, onPlay }: { show: Show; onBack: () => void; 
   );
 }
 
+/**
+ * Reads a feed and follows it (the Follow sheet's address, a search result, a suggested show). A feed the browser
+ * can't read asks once for the server, through `useRelay`. `onFollowed` runs after the show is in the Library.
+ */
+function useFollowFeed(onFollowed?: () => void) {
+  const data = useData();
+  const relay = useRelay();
+  const { toast } = useUi();
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<string>();
+
+  const followFeed = useCallback(
+    async (feedUrl: string) => {
+      setBusy(true);
+      setProblem(undefined);
+      try {
+        const read = await relay((relayAllowed) => services.sources.readFeed(feedUrl, { relayAllowed }));
+        // Just read, so the next automatic refresh leaves it for 30 minutes.
+        await data.follow({ ...read.show, refreshedAt: new Date().toISOString() }, newestFirst(read.episodes));
+        toast(`Following ${read.show.title}. ${read.episodes.length} episodes added to your Library.`);
+        onFollowed?.();
+      } catch (error) {
+        setProblem(plainError(error));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [data, relay, toast, onFollowed],
+  );
+  return { busy, problem, setProblem, followFeed };
+}
+
+function ProblemLine({ problem }: { problem: string }) {
+  return (
+    <p className="problem" role="alert">
+      <span className="toast-mark" aria-hidden="true">!</span>
+      {problem}
+    </p>
+  );
+}
+
+/** The suggested shows on the empty Following screen (#3610), with the way a failed follow is told. */
+function QuickAdd() {
+  const data = useData();
+  const { busy, problem, followFeed } = useFollowFeed();
+  return (
+    <>
+      <SuggestedShows busy={busy} followedFeedUrls={data.shows.map((s) => s.feedUrl)} onFollow={(feedUrl) => void followFeed(feedUrl)} />
+      {problem && <ProblemLine problem={problem} />}
+    </>
+  );
+}
+
+/**
+ * A short hand-picked list, one tap each (#3610). It draws letters, never artwork, and touches no feed until a tap,
+ * so showing it contacts no publisher. Substack feeds can't be read by a browser directly, so the first tap
+ * usually asks once about our server; the line says so before the listener taps. The button says Add, not Follow,
+ * so it never shares a name with the sheet's own Follow button.
+ */
+function SuggestedShows({ busy, followedFeedUrls, onFollow }: { busy: boolean; followedFeedUrls: string[]; onFollow: (feedUrl: string) => void }) {
+  const shows = suggestionsToShow(followedFeedUrls);
+  if (shows.length === 0) return null;
+  return (
+    <section className="suggested" aria-labelledby="suggested-title">
+      <h2 id="suggested-title">Or start with one of these</h2>
+      <ul className="rows" aria-label="Suggested shows">
+        {shows.map((show) => (
+          <li key={show.feedUrl} className="row show-row">
+            <span className="row-open">
+              <span className="artwork artwork-letter" aria-hidden="true">
+                {show.title.trim().charAt(0).toUpperCase()}
+              </span>
+              <span className="row-main">
+                <span className="row-title">{show.title}</span>
+                <span className="row-meta">{show.about}</span>
+              </span>
+            </span>
+            <button type="button" className="button" disabled={busy} aria-label={`Add ${show.title}`} onClick={() => onFollow(show.feedUrl)}>
+              Add
+            </button>
+          </li>
+        ))}
+      </ul>
+      <p className="muted">
+        These shows’ feeds can’t be read straight from a browser, so your first tap may ask to use our server. It keeps nothing.
+      </p>
+    </section>
+  );
+}
+
 function looksLikeUrl(text: string): boolean {
   return /^https?:\/\//i.test(text) || /^[\w-]+(\.[\w-]+)+\/?\S*$/.test(text);
 }
 
 function FollowSheet({ onClose }: { onClose: () => void }) {
   const data = useData();
-  const relay = useRelay();
-  const { toast } = useUi();
   const [query, setQuery] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [problem, setProblem] = useState<string>();
   const [results, setResults] = useState<Show[]>();
+  const [searching, setSearching] = useState(false);
+  const { busy: following, problem, setProblem, followFeed } = useFollowFeed(onClose);
+  const busy = following || searching;
   const dialog = useRef<HTMLDialogElement>(null);
   useRestoreFocus('#following-title');
 
@@ -261,22 +352,6 @@ function FollowSheet({ onClose }: { onClose: () => void }) {
     const d = dialog.current;
     if (d && !d.open) d.showModal();
   }, []);
-
-  const followFeed = async (feedUrl: string) => {
-    setBusy(true);
-    setProblem(undefined);
-    try {
-      const read = await relay((relayAllowed) => services.sources.readFeed(feedUrl, { relayAllowed }));
-      // Just read, so the next automatic refresh leaves it for 30 minutes.
-      await data.follow({ ...read.show, refreshedAt: new Date().toISOString() }, newestFirst(read.episodes));
-      toast(`Following ${read.show.title}. ${read.episodes.length} episodes added to your Library.`);
-      onClose();
-    } catch (error) {
-      setProblem(plainError(error));
-    } finally {
-      setBusy(false);
-    }
-  };
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -286,7 +361,7 @@ function FollowSheet({ onClose }: { onClose: () => void }) {
       await followFeed(/^https?:\/\//i.test(text) ? text : `https://${text}`);
       return;
     }
-    setBusy(true);
+    setSearching(true);
     setProblem(undefined);
     try {
       const found = await services.sources.searchPodcasts(text);
@@ -295,7 +370,7 @@ function FollowSheet({ onClose }: { onClose: () => void }) {
     } catch (error) {
       setProblem(plainError(error));
     } finally {
-      setBusy(false);
+      setSearching(false);
     }
   };
 
@@ -325,11 +400,9 @@ function FollowSheet({ onClose }: { onClose: () => void }) {
           </button>
         </div>
       </form>
-      {problem && (
-        <p className="problem" role="alert">
-          <span className="toast-mark" aria-hidden="true">!</span>
-          {problem}
-        </p>
+      {problem && <ProblemLine problem={problem} />}
+      {!results?.length && (
+        <SuggestedShows busy={busy} followedFeedUrls={data.shows.map((s) => s.feedUrl)} onFollow={(feedUrl) => void followFeed(feedUrl)} />
       )}
       {results && results.length > 0 && (
         <ul className="rows" aria-label="Search results">

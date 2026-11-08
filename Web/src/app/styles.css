@@ -240,6 +240,24 @@ button:disabled {
   color: var(--muted);
 }
 
+.suggested {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  padding-top: 8px;
+  text-align: start;
+  color: var(--ink);
+}
+
+.suggested h2 {
+  font-size: 1.1rem;
+  color: var(--ink);
+}
+
+.suggested .rows {
+  padding: 0;
+}
+
 .rows {
   list-style: none;
   margin: 0;
