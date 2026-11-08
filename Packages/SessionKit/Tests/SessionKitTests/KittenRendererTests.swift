@@ -49,6 +49,34 @@ final class KittenRendererTests: XCTestCase {
         return status == KERN_SUCCESS ? Double(info.resident_size) / 1_048_576 : 0
     }
 
+    /// The speed bar for the soak, in seconds of audio per second of compute (#3534). 4x is the C2 M2 bar and holds on
+    /// the owner's Macs and the lane's build Mac. GitHub's hosted Macs are a mixed pool. Of the 13 SOAK lines in the
+    /// logs kept from hosted Mac runs that failed (7-day retention, read 2026-11-08), 5 ran at 4.9x to 5.8x and 7 at
+    /// 3.5x to 4.0x, with compute time equal to clock time, so the difference is the machine and not load; the 13th ran
+    /// at 2.2x and also broke the 1 s pause bar. The 7 failed on the 4x bar alone, with nothing wrong in the renderer.
+    /// On a hosted runner (GitHub sets RUNNER_ENVIRONMENT to `github-hosted` there and `self-hosted` on the lane Mac)
+    /// the bar is 3x: it still fails a renderer that has lost a quarter or more of its speed on the slower hosted
+    /// class, and the 1 s pause and memory bars stay as they are.
+    static func soakSpeedBar(environment: [String: String]) -> Double {
+        environment["RUNNER_ENVIRONMENT"] == "github-hosted" ? 3 : 4
+    }
+
+    /// The machine's CPU name, for the SOAK line, so a speed that misses its bar says which hardware it ran on.
+    private func cpuBrand() -> String {
+        var size = 0
+        guard sysctlbyname("machdep.cpu.brand_string", nil, &size, nil, 0) == 0, size > 0 else { return "unknown CPU" }
+        var buffer = [CChar](repeating: 0, count: size)
+        guard sysctlbyname("machdep.cpu.brand_string", &buffer, &size, nil, 0) == 0 else { return "unknown CPU" }
+        return String(cString: buffer)
+    }
+
+    func testTheSoakSpeedBarIsFourOffHostedRunnersAndThreeOnThem() {
+        XCTAssertEqual(Self.soakSpeedBar(environment: [:]), 4, "the owner's Mac")
+        XCTAssertEqual(Self.soakSpeedBar(environment: ["RUNNER_ENVIRONMENT": "self-hosted"]), 4, "the lane's build Mac")
+        XCTAssertEqual(Self.soakSpeedBar(environment: ["RUNNER_ENVIRONMENT": "github-hosted"]), 3)
+        XCTAssertEqual(Self.soakSpeedBar(environment: ["GITHUB_ACTIONS": "true"]), 4, "GITHUB_ACTIONS is set on the lane Mac too")
+    }
+
     func testRendersASentenceAsAReadableWavWithTheKittenEngineTag() async throws {
         let renderer = try KittenNarrationRenderer(assets: assets, outputDirectory: outputDirectory, governor: OnDeviceVoiceGovernor())
         let result = try await renderer.render(text: Self.prose[0])
@@ -146,7 +174,7 @@ final class KittenRendererTests: XCTestCase {
     /// can't stretch the way it stretches the clock (the wall-clock version failed at load averages of 60 and up with
     /// the same code). The model runs on one thread here, so CPU time is what the render would take alone on a core;
     /// the app's two threads measured faster than one (C2 M2), so passing the bars on one is the stricter check.
-    /// The wall-clock time is printed for the log and is not asserted.
+    /// The wall-clock time is printed for the log and is not asserted. The speed bar is `soakSpeedBar` (#3534).
     func testALongArticleThroughTheFallbackVoiceNeverPausesOverOneSecond() async throws {
         let minutes = Int(ProcessInfo.processInfo.environment["SPEECH_SOAK_MINUTES"] ?? "") ?? 6
         let text = article(minutes: minutes)
@@ -154,6 +182,7 @@ final class KittenRendererTests: XCTestCase {
         let chunks = NarrationChunkPlanner.splittingFirstChunk(
             of: spoken.chunks, spokenText: SpeechTextNormalizer.normalize(text), playheadOffset: 0)
         let renderer = try KittenNarrationRenderer(assets: assets, outputDirectory: outputDirectory, threads: 1, governor: OnDeviceVoiceGovernor())
+        let speedBar = Self.soakSpeedBar(environment: ProcessInfo.processInfo.environment)
 
         var renderedChunks = 0, rendered = 0.0, wall = 0.0, audio = 0.0, ends = 0.0, longestPause = 0.0, firstReady = 0.0, memoryAfterFirst = 0.0, peak = 0.0
         for (index, chunk) in chunks.enumerated() {
@@ -171,12 +200,13 @@ final class KittenRendererTests: XCTestCase {
             await renderer.discardGeneratedAudio(at: result.audioURL)
             if audio >= Double(minutes) * 60 { break }
         }
-        print(String(format: "SOAK %d min article: %.0f s of audio from %d chunks in %.0f s of compute (%.1fx; %.0f s on the clock, %.1fx), first audio after %.2f s, longest pause %.2f s, memory %.0f MB after the first chunk, peak %.0f MB",
-                     minutes, audio, renderedChunks, rendered, audio / rendered, wall, audio / wall, firstReady, longestPause, memoryAfterFirst, peak))
+        print(String(format: "SOAK %d min article: %.0f s of audio from %d chunks in %.0f s of compute (%.1fx; %.0f s on the clock, %.1fx), first audio after %.2f s, longest pause %.2f s, memory %.0f MB after the first chunk, peak %.0f MB; %@, %d cores, bar %.0fx",
+                     minutes, audio, renderedChunks, rendered, audio / rendered, wall, audio / wall, firstReady, longestPause, memoryAfterFirst, peak,
+                     cpuBrand(), ProcessInfo.processInfo.activeProcessorCount, speedBar))
         XCTAssertGreaterThan(rendered, 0, "the process CPU clock could not be read")
         XCTAssertGreaterThanOrEqual(audio, Double(minutes) * 60 * 0.95)
         XCTAssertLessThanOrEqual(longestPause, 1.0)
-        XCTAssertGreaterThan(audio / rendered, 4, "the 4x bar from C2 M2")
+        XCTAssertGreaterThan(audio / rendered, speedBar, "the \(speedBar)x bar (4x from C2 M2, 3x on a hosted runner, #3534)")
         XCTAssertLessThan(peak - memoryAfterFirst, 500, "memory must not climb across a long article")
     }
 }
