@@ -2769,7 +2769,9 @@ def t3_verdict(summaries: list[dict], statuses: list[str]) -> str:
         # Every plan in `grouped` holds part of a requested selector, so a plan that is verified yet passed no test ran
         # nothing it was asked to (#2596: a class that "ran" 0 tests in the adapters plan was a PASS).
         empty = [s for s in summaries if not s['passed']]
-        if any(not s.get('audio_not_run') for s in empty):
+        # Excused only when the plan held nothing but AudioLoopback selectors: with any other selector in it, an empty
+        # plan is a requested test that ran nothing (#2596), whatever else skipped.
+        if any(not (s.get('audio_not_run') and s.get('audio_only')) for s in empty):
             return 'FAIL'
         # #3604: a hosted Mac cannot run an AudioLoopback test, so a plan holding only those passed nothing and asked
         # nothing else. The others carry the verdict; when no plan passed a test, nothing ran: INCONCLUSIVE, not a PASS.
@@ -2821,6 +2823,7 @@ def run_plans(grouped: dict[str, list[str]], run_plan, evidence: Path,
             output = Path(overload_rerun['output'])  # the rerun's evidence is the plan's
             details.append(overload_rerun_note(plan, overload_rerun))
         summary = summarize_manifest(manifest)
+        summary['audio_only'] = bool(selectors) and all('AudioLoopback' in s for s in selectors)  # lane_audio_window.MARKER
         summaries.append(summary)
         statuses.append(manifest.get('status', 'missing'))
         ran.append(f'{", ".join(s.split("/", 1)[1] for s in selectors)} ({summary["passed"]} passed'
@@ -2858,7 +2861,8 @@ def run_plans(grouped: dict[str, list[str]], run_plan, evidence: Path,
             details.append(f'{plan}: not run on the hosted Mac, which has no audio loopback: '
                            f'{", ".join(t.split("/", 1)[-1] for t in summary["audio_not_run"])}. The audio check is still '
                            'owed (the owner\'s pass, or a run on the Mac); the other tests carry this verdict (#3604).')
-        if manifest.get('status') == 'verified' and not summary['passed'] and summary['audio_not_run']:
+        if manifest.get('status') == 'verified' and not summary['passed'] and summary['audio_not_run'] \
+                and summary['audio_only']:
             details.append(f'{plan}: no test ran in this plan; only AudioLoopback tests were requested in it (#3604). '
                            f'evidence: {output}/manifest.json')
         elif manifest.get('status') == 'verified' and not summary['passed']:
