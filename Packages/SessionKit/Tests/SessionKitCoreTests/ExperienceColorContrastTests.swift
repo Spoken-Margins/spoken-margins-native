@@ -145,6 +145,62 @@ final class AppColorContrastCoverageTests: XCTestCase {
         XCTAssertEqual(found, [], "use AppColors.ochreText or AppColors.warningText for text and icons")
     }
 
+    /// #3732: the follow-a-source card put the dark `watchControl` tint behind light-mode text (secondary text 2.5:1,
+    /// the system blue and red buttons 1.9:1 and 1.7:1). The `watch*` colours are made for the always-dark playback
+    /// surface, so only the `Playback*` files may use them.
+    func testWatchColoursStayOnTheAlwaysDarkPlaybackSurface() throws {
+        let directory = try TestInputs.directory(.appSources)
+        let enumerator = try XCTUnwrap(FileManager.default.enumerator(at: directory, includingPropertiesForKeys: nil))
+        let files = enumerator.compactMap { $0 as? URL }.filter { $0.pathExtension == "swift" }
+        XCTAssertGreaterThan(files.count, 100)
+        var found: [String] = []
+        for file in files {
+            let name = file.lastPathComponent
+            if name.hasPrefix("Playback") { continue }
+            let text = try String(contentsOf: file, encoding: .utf8)
+            if text.range(of: #"AppColors\.watch\w+"#, options: .regularExpression) != nil {
+                found.append(name)
+            }
+        }
+        XCTAssertEqual(found, [], "use AppColors.panel, softGreen or bone outside the always-dark playback surface")
+    }
+
+    /// #3737: the share extension's status line was `.secondaryLabel` (3.3:1) on `.secondarySystemBackground` in light
+    /// mode, and its icon the system green (2.0:1). The extension doesn't link SessionKit, so it carries a copy of the
+    /// app's `green` token; this keeps the copy equal to the token and measures it against the card.
+    func testShareExtensionStatusAndIconAreReadableOnItsCard() throws {
+        let source = try TestInputs.text(.appShareExtension, "Sources/SourceLinkShareViewController.swift")
+        XCTAssertTrue(source.contains("statusLabel.textColor = .label"), "the status line uses .label")
+        XCTAssertFalse(source.contains("secondaryLabel"), "no secondary text on the extension's card")
+        XCTAssertFalse(source.contains("systemGreen"), "the icon uses the app's green, not the system green")
+
+        let pattern = #"iconView\.tintColor = UIColor \{ traits in\s*traits\.userInterfaceStyle == \.dark\s*\?\s*UIColor\(red: ([\d.]+), green: ([\d.]+), blue: ([\d.]+), alpha: 1\)\s*:\s*UIColor\(red: ([\d.]+), green: ([\d.]+), blue: ([\d.]+), alpha: 1\)"#
+        let regex = try NSRegularExpression(pattern: pattern)
+        let range = NSRange(source.startIndex..., in: source)
+        let match = try XCTUnwrap(regex.firstMatch(in: source, range: range), "the icon's dynamic colour was not found")
+        let numbers = (1...6).map { index -> Double in
+            Double(String(source[Range(match.range(at: index), in: source)!]))!
+        }
+        let dark = AppColorRGB(red: numbers[0], green: numbers[1], blue: numbers[2])
+        let light = AppColorRGB(red: numbers[3], green: numbers[4], blue: numbers[5])
+        XCTAssertEqual(light, AppSemanticColorRGB.green.light)
+        XCTAssertEqual(dark, AppSemanticColorRGB.green.dark)
+
+        // iOS's secondarySystemBackground: #F2F2F7 in light, #1C1C1E in dark. Label is black / white on it.
+        let card = AppDynamicRGB(
+            light: .init(red: 242 / 255, green: 242 / 255, blue: 247 / 255),
+            dark: .init(red: 28 / 255, green: 28 / 255, blue: 30 / 255))
+        let ratios = [
+            AppColorContrastAudit.contrastRatio(foreground: light, background: card.light),
+            AppColorContrastAudit.contrastRatio(foreground: dark, background: card.dark)
+        ]
+        for ratio in ratios { XCTAssertGreaterThanOrEqual(ratio, 3, "the icon needs 3:1 on the card") }
+        let systemGreenLight = AppColorRGB(red: 52 / 255, green: 199 / 255, blue: 89 / 255)
+        XCTAssertLessThan(
+            AppColorContrastAudit.contrastRatio(foreground: systemGreenLight, background: card.light), 3,
+            "the old system green fails here, so this check can fail")
+    }
+
     func testKnownFailuresAreListedAndStillFail() {
         for line in AppColorContrastAudit.knownFailureReport() { print(line) }
         XCTAssertEqual(AppColorContrastAudit.staleKnownFailures(), [], "delete the entries that now pass")

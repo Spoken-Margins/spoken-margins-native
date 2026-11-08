@@ -57,10 +57,14 @@ final class MarginOutputCoordinator: ObservableObject {
     @Published private(set) var destinations: [MarginOutputDestination] = []
     /// What the last pass, test or change said about each destination, by id.
     @Published private(set) var statuses: [String: MarginOutputStatus] = [:]
+    /// How many times each destination's status was written; see `writeStatus`.
+    private var statusStamps: [String: Int] = [:]
     /// Destinations whose folder can't be reached.
     @Published private(set) var accessLost: Set<String> = []
     /// Something that isn't about one destination: the saved list couldn't be read or written.
     @Published private(set) var notice: MarginOutputStatus?
+    /// Which spoken notes were saved to which folders (#3661).
+    let spokenNotes = SpokenNoteFolderLedger()
 
     var rows: [Row] {
         destinations.map { destination in
@@ -78,7 +82,7 @@ final class MarginOutputCoordinator: ObservableObject {
     /// Skips a pass while a Margin is being recorded; the save at the end of the recording asks for one.
     private let isRecording: @MainActor () -> Bool
     private let recordGather: @MainActor (_ ms: Int, _ sessions: Int, _ notes: Int) -> Void
-    private let journalURL: () throws -> URL
+    let journalURL: () throws -> URL
     private let destinationStore: MarginOutputDestinationStore
     private let folders: FolderAccess
     /// False when the saved list exists but couldn't be read: it is left alone rather than replaced by a guess.
@@ -89,6 +93,8 @@ final class MarginOutputCoordinator: ObservableObject {
     private var isDelivering = false
     private var passRequestedDuringPass = false
     private var writer: AutomaticMarginWriter?
+    /// One writer for spoken notes, so two saves at once take turns instead of both reading the same journal (#3661).
+    var spokenNoteWriter: SpokenNoteFolderWriter?
     /// What each destination's last finished pass left to do next time (#1192).
     private var planners: [String: MarginNotePassPlanner] = [:]
     private var folderNames: [String: String] = [:]
@@ -127,6 +133,7 @@ final class MarginOutputCoordinator: ObservableObject {
             canSave = false
             notice = MarginOutputStatus.failure("Your Margin Output destinations couldn't be read, so none are shown and none can be changed. Your Margins remain safely in the Library.")
         }
+        loadSpokenNoteLedger()
     }
 
     nonisolated static func defaultJournalURL() throws -> URL {
@@ -288,11 +295,11 @@ final class MarginOutputCoordinator: ObservableObject {
 
     // MARK: - The folder behind a destination
 
-    private struct NeedsFolderAccess: Error {}
+    struct NeedsFolderAccess: Error {}
 
     /// The destination's folder. A stale bookmark that still resolves is refreshed and saved. One that doesn't, or a
     /// folder that is gone, marks only this destination "Needs folder access" and throws `NeedsFolderAccess`.
-    private func resolveFolder(of destination: MarginOutputDestination) throws -> URL {
+    func resolveFolder(of destination: MarginOutputDestination) throws -> URL {
         let url: URL
         do {
             let resolved = try folders.resolve(destination.bookmark)
@@ -307,13 +314,13 @@ final class MarginOutputCoordinator: ObservableObject {
             throw NeedsFolderAccess()
         }
         folderNames[destination.id] = url.lastPathComponent
-        if accessLost.remove(destination.id) != nil { statuses[destination.id] = nil }
+        if accessLost.remove(destination.id) != nil { writeStatus(nil, for: destination.id) }
         return url
     }
 
     private func markNeedsAccess(_ destination: MarginOutputDestination) {
         accessLost.insert(destination.id)
-        statuses[destination.id] = MarginOutputStatus.failure("Needs folder access. Reselect the folder to keep delivering to \(destination.name). Your Margins remain safely in the Library.")
+        writeStatus(MarginOutputStatus.failure("Needs folder access. Reselect the folder to keep delivering to \(destination.name). Your Margins remain safely in the Library."), for: destination.id)
     }
 
     // MARK: - What the listener can do
@@ -335,7 +342,7 @@ final class MarginOutputCoordinator: ObservableObject {
                 return nil
             }
             folderNames[destination.id] = url.lastPathComponent
-            statuses[destination.id] = MarginOutputStatus("Folder set to \(url.lastPathComponent). Send a test note, then start delivery.")
+            writeStatus(MarginOutputStatus("Folder set to \(url.lastPathComponent). Send a test note, then start delivery."), for: destination.id)
             return destination
         } catch {
             notice = MarginOutputStatus.failure(ListenerErrorText.line(prefix: "Couldn't use that folder:", error: error))
@@ -352,11 +359,11 @@ final class MarginOutputCoordinator: ObservableObject {
             update(id, save: true) { $0.bookmark = bookmark }
             folderNames[id] = url.lastPathComponent
             accessLost.remove(id)
-            statuses[id] = MarginOutputStatus("Folder set to \(url.lastPathComponent).")
+            writeStatus(MarginOutputStatus("Folder set to \(url.lastPathComponent)."), for: id)
             planners[id] = nil
             deliverSoon()
         } catch {
-            statuses[id] = MarginOutputStatus.failure(ListenerErrorText.line(prefix: "Couldn't use that folder:", error: error))
+            writeStatus(MarginOutputStatus.failure(ListenerErrorText.line(prefix: "Couldn't use that folder:", error: error)), for: id)
         }
     }
 
@@ -406,12 +413,12 @@ final class MarginOutputCoordinator: ObservableObject {
     func setEnabled(_ id: String, _ enabled: Bool) {
         update(id, save: true) { $0.isEnabled = enabled }
         if enabled {
-            statuses[id] = nil
+            writeStatus(nil, for: id)
             start()
             deliverSoon()
         } else {
             planners[id] = nil
-            statuses[id] = MarginOutputStatus("Paused. Margins stay in your Library and nothing new is written here.")
+            writeStatus(MarginOutputStatus("Paused. Margins stay in your Library and nothing new is written here."), for: id)
             if !isEnabled { stop() }
         }
     }
@@ -427,7 +434,7 @@ final class MarginOutputCoordinator: ObservableObject {
             return
         }
         planners[id] = nil
-        statuses[id] = nil
+        writeStatus(nil, for: id)
         folderNames[id] = nil
         accessLost.remove(id)
         if !isEnabled { stop() }
@@ -439,13 +446,18 @@ final class MarginOutputCoordinator: ObservableObject {
     /// Sends a sample note so the listener can check the folder before turning delivery on.
     func sendTestNote(to id: String) async {
         guard let destination = destination(id) else { return }
+        var stamp: Int?
         do {
             let folder = try resolveFolder(of: destination)
+            // After resolving, which can itself write a status: only a write after this point is newer than the note.
+            stamp = statusStamps[id, default: 0]
             let summary = try await currentWriter().deliver(
                 [.init(id: "sample-margin", markdown: "# Spoken Margins test\n\nYour thoughts will arrive here as Markdown, with the source around each one.\n")],
                 to: folder, destinationID: destination.id
             )
             let file = "Margin-\(ListeningEdition.digest("sample-margin")).md"
+            // A Retry Delivery, a pause or a new folder while the note was writing said something newer: keep that.
+            guard statusStamps[id, default: 0] == stamp else { return }
             setStatus(
                 summary.keptEdits > 0
                     ? MarginOutputStatus("The test note \(file) is already in this folder and you edited it, so it was left as is.")
@@ -454,6 +466,7 @@ final class MarginOutputCoordinator: ObservableObject {
             )
         } catch is NeedsFolderAccess {
         } catch {
+            if let stamp, statusStamps[id, default: 0] != stamp { return }
             setStatus(.failure(ListenerErrorText.message(for: error)), for: id)
         }
     }
@@ -470,6 +483,14 @@ final class MarginOutputCoordinator: ObservableObject {
 
     private func setStatus(_ status: MarginOutputStatus, for id: String) {
         guard destination(id) != nil else { return }
+        writeStatus(status, for: id)
+    }
+
+    /// Every write to a destination's status goes through here, so `statusStamps` counts them. An operation that
+    /// awaits (the test note) keeps the count from before it waited and drops its result if the count moved: a late
+    /// completion must not replace a status something newer wrote (#2137).
+    private func writeStatus(_ status: MarginOutputStatus?, for id: String) {
+        statusStamps[id, default: 0] += 1
         statuses[id] = status
     }
 

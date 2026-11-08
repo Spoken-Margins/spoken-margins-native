@@ -70,7 +70,7 @@ struct MarginOutputDestinationsSection: View {
             if coordinator.destinations.contains(where: \.isEnabled) {
                 Button("Retry Delivery") { Task { await coordinator.retry() } }
             }
-            Text("Writes each text Margin as a Markdown note in a folder you choose, such as an Obsidian vault. Add more than one to send different Margins to different places. It doesn’t change how Margins play. Notes are written while the app is active and retried when you return. Existing Margins are included. Audio recordings and full source text are excluded. Your folder provider may sync files to its cloud.").font(.footnote).foregroundStyle(.secondary)
+            Text("Writes each text Margin as a Markdown note in a folder you choose, such as an Obsidian vault. Add more than one to send different Margins to different places. It doesn’t change how Margins play. Notes are written while the app is active and retried when you return. Existing Margins are included. Audio recordings and full source text are not part of Margin notes. A spoken note you mark complete is saved here as an audio file and a text file. Your folder provider may sync files to its cloud.").font(.footnote).foregroundStyle(AppColors.secondaryText)
         }
         .fileImporter(isPresented: $choosingFolder, allowedContentTypes: [.folder]) { result in
             switch result {
@@ -99,7 +99,7 @@ private struct MarginOutputDestinationRow: View {
             if row.needsAccess {
                 FailureMessageLabel("Needs folder access").font(.footnote)
             } else {
-                Text(summary).font(.footnote).foregroundStyle(.secondary)
+                Text(summary).font(.footnote).foregroundStyle(AppColors.secondaryText)
             }
         }
         .accessibilityElement(children: .combine)
@@ -124,7 +124,7 @@ struct MarginOutputDestinationScreen: View {
         Form {
             if let row = coordinator.rows.first(where: { $0.id == id }) {
                 Section("Destination") {
-                    TextField("Name", text: $name)
+                    AppTextField("Name", text: $name)
                         .onSubmit { coordinator.rename(id, to: name) }
                     Label(row.folderName, systemImage: "folder")
                     Button(row.needsAccess ? "Reselect Folder" : "Change Folder", systemImage: "folder.badge.gearshape") { choosingFolder = true }
@@ -140,7 +140,7 @@ struct MarginOutputDestinationScreen: View {
                     .pickerStyle(.inline)
                     if row.destination.shape == .itemOnCompletion {
                         Text("One note per item, written when you mark it complete. It holds every Margin from your listening, with the item’s properties. Items you finished before choosing this don’t get one. Finishing an item by listening is picked up within about half an hour.")
-                            .font(.footnote).foregroundStyle(.secondary)
+                            .font(.footnote).foregroundStyle(AppColors.secondaryText)
                     }
                 }
                 Section("Contents") {
@@ -165,7 +165,7 @@ struct MarginOutputDestinationScreen: View {
                     Text(row.destination.shape == .itemOnCompletion
                          ? "These choices shape notes for single Margins. A note for a whole item keeps its own form."
                          : "Source context is the passage around each Margin. The title, source link and position are always included. Changing a choice rewrites the notes this app wrote, never ones you edited.")
-                        .font(.footnote).foregroundStyle(.secondary)
+                        .font(.footnote).foregroundStyle(AppColors.secondaryText)
                 }
                 Section("Delivery") {
                     StatusMessageText(message: row.status.message, isFailure: row.status.isFailure)
@@ -247,7 +247,7 @@ struct ListeningEditionImportScreen: View {
                     ForEach(picked) { entry in
                         VStack(alignment: .leading, spacing: 2) {
                             Text(entry.name).font(.subheadline.weight(.semibold))
-                            if entry.isValid { Text(entry.detail).font(.footnote).foregroundStyle(.secondary) }
+                            if entry.isValid { Text(entry.detail).font(.footnote).foregroundStyle(AppColors.secondaryText) }
                             else { FailureMessageLabel(entry.detail).font(.footnote) }
                             if let loaded = entry.edition {
                                 Button("Review on its own") { review(loaded, id: entry.id) }.font(.footnote).buttonStyle(.borderless)
@@ -284,7 +284,7 @@ struct ListeningEditionImportScreen: View {
                         }
                     }
                     Toggle("Replace existing map for this exact source", isOn: $replaceMap)
-                    Text("Replacing applies when this is the only edition you import.").font(.caption).foregroundStyle(.secondary)
+                    Text("Replacing applies when this is the only edition you import.").font(.caption).foregroundStyle(AppColors.secondaryText)
                 }
             }
         }
@@ -389,7 +389,7 @@ struct ReadLaterScreen: View {
                 Picker("Service", selection: $connection.service) {
                     ForEach(ReadLaterService.allCases, id: \.self) { Text($0.title).tag($0) }
                 }.onChange(of: connection.service) { _, _ in connection.selectService() }
-                SecureField("Access token", text: $connection.token).textInputAutocapitalization(.never).autocorrectionDisabled()
+                AppSecureField("Access token", text: $connection.token).textInputAutocapitalization(.never).autocorrectionDisabled()
                 Link("Get an access token", destination: URL(string: connection.service == .reader ? "https://readwise.io/access_token" : "https://app.raindrop.io/settings/integrations")!)
                 Button("Connect", action: connection.connect).disabled(connection.isLoading)
                 if connection.connected {
@@ -403,7 +403,7 @@ struct ReadLaterScreen: View {
                 Text(connection.service == .reader
                      ? "Reader requires a Readwise account. This view lists Later articles with available text. PDFs, books and highlights are not imported by this adapter."
                      : "Raindrop has a free bookmark account. For personal setup, create an integration and paste its test token. Articles are fetched from their original websites; saved paid/offline copies are not used.")
-                    .font(.footnote).foregroundStyle(.secondary)
+                    .font(.footnote).foregroundStyle(AppColors.secondaryText)
                 if let symbol = connection.statusSymbol {
                     Label(connection.status, systemImage: symbol.rawValue).font(.footnote)
                 } else {
@@ -419,7 +419,7 @@ struct ReadLaterScreen: View {
                     if connection.connected, connection.failure != nil, !connection.isLoading {
                         FailureMessageLabel(line).font(.footnote)
                     } else {
-                        Text(line).font(.footnote).foregroundStyle(.secondary)
+                        Text(line).font(.footnote).foregroundStyle(AppColors.secondaryText)
                     }
                 }
                 ForEach(connection.documents) { document in
@@ -446,7 +446,7 @@ struct ReadwiseHighlightSection: View {
                 .onChange(of: sync.enabled) { _, _ in sync.enabledChanged() }
             if !sync.status.isEmpty { StatusMessageText(message: sync.status, isFailure: sync.statusIsFailure) }
             Text("Each Margin with text becomes a Readwise highlight: the passage around it, your Margin as the note, filed under the article or episode. Margins are checked once a minute while the app is open. Private feed links are never sent.")
-                .font(.footnote).foregroundStyle(.secondary)
+                .font(.footnote).foregroundStyle(AppColors.secondaryText)
         }
     }
 }
@@ -457,7 +457,7 @@ struct ListeningEditionScenes: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Imported Listening Map").font(.headline)
-            Text("Supplied by \(edition.generator). Descriptions and summaries are user-supplied.").font(.caption).foregroundStyle(.secondary)
+            Text("Supplied by \(edition.generator). Descriptions and summaries are user-supplied.").font(.caption).foregroundStyle(AppColors.secondaryText)
             ForEach(Array(edition.scenes.enumerated()), id: \.offset) { index, scene in
                 VStack(alignment: .leading, spacing: 5) {
                     Text(scene.title).bold()

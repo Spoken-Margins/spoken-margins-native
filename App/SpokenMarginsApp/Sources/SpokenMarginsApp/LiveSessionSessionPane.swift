@@ -42,13 +42,13 @@ struct LiveSessionSessionPane<Header: View>: View {
                     .pickerStyle(.segmented)
                     .disabled(!isRunning)
                     .accessibilityIdentifier("liveSession.kind")
-                    TextField(session.kind == .meeting ? "Meeting name" : "Title", text: $titleDraft)
+                    AppTextField(session.kind == .meeting ? "Meeting name" : "Title", text: $titleDraft)
                         .textFieldStyle(.roundedBorder)
                         .focused($focus, equals: .title)
                         .disabled(!isRunning)
                         .onSubmit(commit)
                         .accessibilityIdentifier("liveSession.session.title")
-                    TextField("What is this about? (optional)", text: $descriptionDraft, axis: .vertical)
+                    AppTextField("What is this about? (optional)", text: $descriptionDraft, axis: .vertical)
                         .lineLimit(1...4)
                         .textFieldStyle(.roundedBorder)
                         .focused($focus, equals: .description)
@@ -66,17 +66,16 @@ struct LiveSessionSessionPane<Header: View>: View {
                         VStack(alignment: .leading, spacing: 4) {
                             Text("Where are you now?").font(.subheadline.weight(.semibold))
                             HStack {
-                                TextField(
+                                AppTextField(
                                     session.kind == .meeting ? "What the meeting's clock shows, like 12:30" : "Time in the book, like 1:23:10",
                                     text: $clockDraft
                                 )
                                 .textFieldStyle(.roundedBorder)
                                 .keyboardType(.numbersAndPunctuation)
                                 .focused($focus, equals: .clock)
-                                Button("Set", action: setClock)
+                                Button(action: setClock) { Text("Set").minimumTapTarget() }
                                     .buttonStyle(.bordered)
                                     .tint(.white)
-                                    .frame(minHeight: 44)
                                     .disabled(clockDraft.trimmingCharacters(in: .whitespaces).isEmpty)
                             }
                             Text("Type it once and the clock runs from there. Margins you've already taken move with it.")

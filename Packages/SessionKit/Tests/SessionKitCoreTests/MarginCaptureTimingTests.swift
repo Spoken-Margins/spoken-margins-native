@@ -79,4 +79,13 @@ final class MarginCaptureTimingTests: XCTestCase {
         XCTAssertEqual(timing.fields["tapToRecorderStartedMs"], "30100")
         XCTAssertEqual(timing.fields["tapAt"], "1970-01-01T00:00:00.000Z")
     }
+
+    func testReadyCueIsMeasuredFromTapOnceAndNeverInventedBeforeItSounds() {
+        var timing = MarginCaptureTiming(request: request)
+        XCTAssertEqual(timing.fields["tapToReadyCueMs"], "not_observed")
+        timing.recorderStarted(at: 100.4, inputRoute: "BuiltInMic")
+        timing.readyCueSounded(at: 100.62)
+        timing.readyCueSounded(at: 103) // a restart's second cue does not move the first
+        XCTAssertEqual(timing.fields["tapToReadyCueMs"], "620")
+    }
 }

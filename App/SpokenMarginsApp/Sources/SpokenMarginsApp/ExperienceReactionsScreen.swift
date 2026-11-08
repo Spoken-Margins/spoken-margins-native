@@ -183,7 +183,7 @@ struct ReactionsPlayTarget: Equatable {
             else { return }
             model.playSharedMarginMoment(SharedMarginRow(interjection: margin, layer: layer, itemTitle: item.title))
         } else if let margin = item.interjections.first(where: { $0.id == marginId }) {
-            _ = model.playMarginMoment(MarginRow(interjection: margin, itemTitle: item.title, sessionDate: nil))
+            MarginMomentTap.start(MarginRow(interjection: margin, itemTitle: item.title, sessionDate: nil), model: model)
         }
     }
 }
@@ -285,9 +285,8 @@ struct ExperienceReactionsScreen: View {
                     }
                 }
                 if let message = reactions.errorMessage {
-                    Text(message)
+                    FailureMessageLabel(message)
                         .font(.footnote)
-                        .foregroundStyle(AppColors.coral)
                         .accessibilityIdentifier("reactions.summary.error")
                 }
                 if let summary = reactions.summary { summaryBlock(summary) }

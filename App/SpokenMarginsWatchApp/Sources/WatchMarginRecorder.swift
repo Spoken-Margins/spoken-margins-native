@@ -138,6 +138,7 @@ actor WatchMarginCapture {
             AVEncoderAudioQualityKey: AVAudioQuality.medium.rawValue
         ])
         guard recorder.record() else {
+            recorder.stop() // its audio queue may be running; freed unstopped, it crashes (#3633)
             try? session.setActive(false, options: .notifyOthersOnDeactivation)
             throw CaptureError.wouldNotStart
         }

@@ -22,6 +22,12 @@ struct ExperienceLibraryScreen: View {
     @State private var collectionItem: LibraryItemRow?
     /// A spoken note opened from its row: it has its own screen, not the text item screen (#3108).
     @State private var openedNote: SpokenNoteOpening?
+    /// Export of a spoken note from its row: the audio and transcript, through the share sheet (#3660).
+    @StateObject private var noteExport = SpokenNoteExportModel()
+    /// A spoken note whose name is being changed from its row (#3663).
+    @State private var renamingNote: SpokenNoteRenameTarget?
+    /// Play on a spoken note's row plays the whole note (#3662).
+    @StateObject private var notePlay = SpokenNoteWholePlayModel()
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.isEdgeSwipePreview) private var isEdgeSwipePreview
     /// A copied link on offer at the top of the Library (#1379).
@@ -115,6 +121,13 @@ struct ExperienceLibraryScreen: View {
         .fullScreenCover(item: $openedNote) { opening in
             SpokenNoteRecordingView(opening: opening).environmentObject(model)
         }
+        .spokenNoteExportFlow(noteExport)
+        .spokenNoteRenameAlert($renamingNote)
+        .spokenNotePlayFlow(notePlay)
+        .overlay {
+            if noteExport.isPreparing { SpokenNoteExportProgress() }
+            if notePlay.isPreparing { SpokenNotePlayProgress() }
+        }
         .sheet(item: $collectionItem) { item in
             ItemCollectionSheet(item: item)
                 .environmentObject(model)
@@ -189,8 +202,8 @@ struct ExperienceLibraryScreen: View {
         if queued > 0, recent > 0 {
             return "\(queued) queued · \(recent) recently ready"
         }
-        if queued > 0 { return "\(queued) item\(queued == 1 ? "" : "s") queued" }
-        return "\(recent) item\(recent == 1 ? "" : "s") recently ready"
+        if queued > 0 { return "\(queued) queued" }
+        return "\(recent) recently ready"
     }
 
     private var onboardingIcon: some View {
@@ -267,7 +280,7 @@ struct ExperienceLibraryScreen: View {
                 Image(systemName: "magnifyingglass")
                     .foregroundStyle(AppColors.secondaryText)
                     .accessibilityHidden(true)
-                TextField("Search title, source, or author", text: $model.libraryQuery.query)
+                AppTextField("Search title, source, or author", text: $model.libraryQuery.query)
                     .textInputAutocapitalization(.never)
                     .submitLabel(.search)
                     .accessibilityIdentifier("library.search.field")
@@ -299,20 +312,21 @@ struct ExperienceLibraryScreen: View {
                     .accessibilityIdentifier("library.filter.summary")
                 Spacer()
                 if hasActiveFilters {
-                    Button("Reset filters", action: model.resetLibraryFilters)
+                    Button(action: model.resetLibraryFilters) {
+                        Text("Reset filters").expandedHitArea(horizontal: 8, vertical: 14)
+                    }
                         .font(.caption)
-                        .expandedHitArea(horizontal: 8, vertical: 14)
                         .accessibilityIdentifier("library.filters.reset")
                 }
             }
             if model.libraryHidesCompleted {
                 ViewThatFits(in: .horizontal) {
                     HStack {
-                        Text("Completed items hidden")
+                        Text("Completed hidden")
                         completedVisibilityButton
                     }
                     VStack(alignment: .leading) {
-                        Text("Completed items hidden")
+                        Text("Completed hidden")
                         completedVisibilityButton
                     }
                 }
@@ -442,7 +456,7 @@ struct ExperienceLibraryScreen: View {
             SMExperienceEmptyState(
                 systemImage: "checkmark.circle",
                 title: "You’re caught up",
-                detail: "Your completed items and Margins are still here.",
+                detail: "Everything you completed, and your Margins, are still here.",
                 actionTitle: "Show completed"
             ) { model.showCompletedLibraryItems() }
             .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
@@ -464,10 +478,11 @@ struct ExperienceLibraryScreen: View {
                     row: row,
                     isCurrentItem: entry.isCurrent,
                     playbackSpeed: model.speechPlaybackRateMultiplier,
+                    spokenNoteFolders: model.marginOutput.spokenNotes,
                     onOpen: { openRow(row) },
                     onPlay: {
-                        // A note is heard a sentence at a time on its own screen; Play opens it.
-                        if row.spokenNoteId != nil { openRow(row) } else { model.continueListening(itemId: row.id) { pendingNewMarginsOffer = $0 } }
+                        // A note plays whole, start to finish, like any item; its own screen is where a sentence is picked.
+                        if let noteId = row.spokenNoteId { notePlay.play(noteId: noteId, app: model) } else { model.continueListening(itemId: row.id) { pendingNewMarginsOffer = $0 } }
                     },
                     onComplete: { model.markItemCompleted(id: row.id) },
                     onMarkUnfinished: { model.markItemUnfinished(id: row.id) },
@@ -475,6 +490,16 @@ struct ExperienceLibraryScreen: View {
                     onPlayNext: { model.queuePlayNext(itemId: row.id) },
                     onAddToQueue: { model.queueAppend(itemId: row.id) },
                     onAddToCollection: { collectionItem = row },
+                    onExport: row.spokenNoteId.map { noteId -> () -> Void in
+                        { noteExport.export(noteId: noteId, title: row.title, applicationSupport: try? model.applicationSupportDirectory()) }
+                    },
+                    onRename: row.spokenNoteId.map { _ -> () -> Void in
+                        { renamingNote = SpokenNoteRenameTarget(itemId: row.id, currentTitle: row.title) }
+                    },
+                    onSaveToFolder: row.spokenNoteId.flatMap { noteId -> (() -> Void)? in
+                        guard row.isCompleted else { return nil }
+                        return { model.saveSpokenNoteToExportFolder(noteId: noteId, title: row.title) }
+                    },
                     onDelete: { model.moveItemToTrash(id: row.id) }
                 )
                 .libraryRowLayout(horizontalSizeClass: horizontalSizeClass)
@@ -486,7 +511,7 @@ struct ExperienceLibraryScreen: View {
 
     private func openRow(_ row: LibraryItemRow) {
         if let noteId = row.spokenNoteId {
-            openedNote = SpokenNoteOpening(noteId: noteId, title: row.title)
+            openedNote = SpokenNoteOpening(noteId: noteId, title: row.title, createdAt: row.addedAt)
         } else {
             model.openItemFromTap(id: row.id)
         }
@@ -532,6 +557,8 @@ private struct ExperienceLibraryCompactRow: View {
     var isCurrentItem = false
     /// The listener's speech speed, for a text item's estimated length (#305).
     var playbackSpeed: Double = 1
+    /// Which spoken notes were saved to the export folder, for the "Exported" word on a finished note (#3661).
+    @ObservedObject var spokenNoteFolders: SpokenNoteFolderLedger
     let onOpen: () -> Void
     let onPlay: () -> Void
     let onComplete: () -> Void
@@ -540,6 +567,12 @@ private struct ExperienceLibraryCompactRow: View {
     let onPlayNext: () -> Void
     let onAddToQueue: () -> Void
     let onAddToCollection: () -> Void
+    /// A spoken note's Export (#3660); nil for every other row.
+    var onExport: (() -> Void)?
+    /// A spoken note's Rename… (#3663); nil for every other row.
+    var onRename: (() -> Void)?
+    /// A finished spoken note's "Save to Export Folder" (#3661), the way to try again after the folder was set up.
+    var onSaveToFolder: (() -> Void)?
     let onDelete: () -> Void
 
     /// At accessibility sizes the title gets its own full-width line, with the icon and the play button together on a line
@@ -653,6 +686,18 @@ private struct ExperienceLibraryCompactRow: View {
                 .accessibilityIdentifier("library.addToQueue.\(row.id)")
             Button("Add to Collection…", systemImage: "folder.badge.plus", action: onAddToCollection)
                 .accessibilityIdentifier("library.addToCollection.\(row.id)")
+            if let onExport {
+                Button("Export…", systemImage: "square.and.arrow.up", action: onExport)
+                    .accessibilityIdentifier("library.export.\(row.id)")
+            }
+            if let onRename {
+                Button("Rename…", systemImage: "pencil", action: onRename)
+                    .accessibilityIdentifier("library.rename.\(row.id)")
+            }
+            if let onSaveToFolder {
+                Button("Save to Export Folder", systemImage: "folder.badge.plus", action: onSaveToFolder)
+                    .accessibilityIdentifier("library.saveToFolder.\(row.id)")
+            }
             if row.canDelete {
                 Button("Move to Recently Deleted", systemImage: "trash", role: .destructive, action: onDelete)
             }
@@ -673,6 +718,11 @@ private struct ExperienceLibraryCompactRow: View {
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
             if row.canDelete {
                 Button(role: .destructive, action: onDelete) { Label("Delete", systemImage: "trash") }
+            }
+            if let onExport {
+                Button(action: onExport) { Label("Export", systemImage: "square.and.arrow.up") }
+                    .tint(AppColors.evergreen)
+                    .accessibilityIdentifier("library.exportSwipe.\(row.id)")
             }
             if row.offlineState != .readyOffline {
                 Button(action: onPrepareOffline) { Label("Offline", systemImage: "arrow.down.circle") }
@@ -695,6 +745,15 @@ private struct ExperienceLibraryCompactRow: View {
                 Button("Prepare Offline", action: onPrepareOffline)
             }
             Button("Add to Collection", action: onAddToCollection)
+            if let onExport {
+                Button("Export", action: onExport)
+            }
+            if let onRename {
+                Button("Rename", action: onRename)
+            }
+            if let onSaveToFolder {
+                Button("Save to Export Folder", action: onSaveToFolder)
+            }
             if row.canDelete {
                 Button("Move to Recently Deleted", action: onDelete)
             }
@@ -763,7 +822,7 @@ private struct ExperienceLibraryCompactRow: View {
 
     private var currentItemLabel: String {
         if (row.continuationProgressPercent ?? 0) >= 100 { return "Finished" }
-        return row.hasContinuationSession ? (dynamicTypeSize.isAccessibilitySize ? "Resume" : "Continue listening") : "Current item"
+        return row.hasContinuationSession ? (dynamicTypeSize.isAccessibilitySize ? "Resume" : "Continue listening") : "Current"
     }
 
     private var mediaSymbol: String { row.mediaSymbol }
@@ -773,9 +832,15 @@ private struct ExperienceLibraryCompactRow: View {
         ListeningTimeEstimator.libraryTotalText(textCharacterCount: row.textCharacterCount, playbackSpeed: playbackSpeed)
     }
 
+    /// A finished spoken note that was saved to the export folder says so, in words (#3661).
+    private var isSavedToExportFolder: Bool {
+        guard let noteId = row.spokenNoteId else { return false }
+        return !spokenNoteFolders.savedFolders(forNoteId: noteId).isEmpty
+    }
+
     private var listeningLabel: String? {
         if row.isCompleted {
-            "Completed"
+            isSavedToExportFolder ? "Completed · Exported" : "Completed"
         } else if let progress = row.continuationProgressPercent {
             "\(progress)%"
         } else {

@@ -177,12 +177,12 @@ private struct Build23ImportedLayerList: View, Equatable {
             )
             .tint(AppColors.evergreen)
 
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
+            AdaptiveStack(alignment: .firstTextBaseline, spacing: 12) {
                 Label(FriendArrivalWords.playModeTitle, systemImage: "eye")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(AppColors.text)
 
-                Spacer(minLength: 12)
+                AdaptiveSpacer(minLength: 12)
 
                 Picker(
                     FriendArrivalWords.playModeTitle,

@@ -13,7 +13,7 @@ final class FeedbackBannerTests: XCTestCase {
 
         // Reports a failure: the item isn't in Recently Deleted.
         model.permanentlyDeleteItem(id: "item-pill")
-        let message = "Move the item to Recently Deleted before deleting it permanently."
+        let message = "Move it to Recently Deleted before deleting it permanently."
         XCTAssertEqual(model.feedbackEvent?.kind, .error)
         XCTAssertEqual(model.itemFailures.lastFailure(itemId: "item-pill")?.message, message)
 
@@ -327,6 +327,37 @@ final class FeedbackBannerTests: XCTestCase {
         }
         XCTFail("Timed out waiting for the local summary failure.")
     }
+
+    // MARK: The hold the timed cards share (#3720)
+
+    /// A card the listener is touching waits, a second at a time, until they let go.
+    func testTheHoldWaitsWhileTouchedAndStopsWhenReleased() async throws {
+        let hold = FeedbackBannerHold()
+        hold.setTouched(true)
+        var slept = 0
+        try await hold.waitWhileHeld { _ in
+            slept += 1
+            if slept == 3 { hold.setTouched(false) }
+        }
+        XCTAssertEqual(slept, 3)
+    }
+
+    func testTheHoldDoesNotWaitWhenNothingHoldsTheCard() async throws {
+        let hold = FeedbackBannerHold()
+        var slept = 0
+        try await hold.waitWhileHeld { _ in slept += 1 }
+        XCTAssertEqual(slept, 0)
+    }
+
+    /// A touch SwiftUI never reports as ended can't keep a card forever.
+    func testTheHoldGivesUpAfterItsCap() async throws {
+        let hold = FeedbackBannerHold()
+        hold.setFocused(true)
+        var slept = 0
+        try await hold.waitWhileHeld(maxSeconds: 5) { _ in slept += 1 }
+        XCTAssertEqual(slept, 5)
+    }
+
 }
 
 private actor PendingFailingSummaryClient: LocalFoundationModelClient {

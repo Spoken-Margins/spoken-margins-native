@@ -1,6 +1,6 @@
 # Product areas
 
-Spoken Margins does four things for a listener, in order: it gets content in, plays it well, lets them answer it, and lets them pass it on. Each issue belongs to one of these areas, or to Groundwork. The owner sees them as columns on the GitHub Project "Spoken Margins areas", where the Area field is the record; there are no `area:` labels (retired 2026-10-31, #2173). Streams ([workstreams/](workstreams/README.md)) and milestones still decide what gets worked on and when; an area says what "excellent" means for the work.
+Spoken Margins does four things for a listener, in order: it gets content in, plays it well, lets them answer it, and lets them pass it on. Each issue belongs to exactly one of these areas, to Groundwork, or to Housekeeping, and carries its label: `area: get it in`, `area: hear it well`, `area: answer it`, `area: pass it on`, `area: groundwork` or `area: housekeeping` (owner, 2026-11-07, #3636). An hourly check on the Mac (`scripts/area_labels.py`) adds `needs-area` to an open issue with none or with two; whoever files or picks up the issue sets one. If an issue seems to need two, it is usually two issues. The labels replaced the GitHub Project board's Area field (#2173), which cloud sessions could not read. Streams ([workstreams/](workstreams/README.md)) and milestones still decide what gets worked on and when; an area says what "excellent" means for the work.
 
 The areas come from the owner's voice memo of 2026-10-05 (about 21:50–38:30), regrouped on 2026-10-12. In the memo, review and co-op share one backbone, so they share an area here. Social work is only what passing things between people adds.
 
@@ -51,4 +51,8 @@ Packets, share links, shared Margins landing in the right place, friends, storie
 
 Not a product area: the pipeline, the test lane, test honesty, the model split and anything else that makes the four areas cheaper and safer to change. Streams A1–A3. Its standard is the Solid Ground target in `AGENTS.md`: later builds arrive faster, and the Test Desk catches bugs before they reach the owner's phone.
 
-Issues that serve no area and no groundwork, such as G2 growth research and D6 settings, are left without an area.
+Groundwork has no milestone: it is a lane that always runs, and a groundwork item joins a release milestone only when it blocks that release.
+
+## Housekeeping
+
+Not one of the four things a listener does, and not pipeline work: settings, onboarding and first-run polish, accessibility, growth research and other product improvements that serve several areas or none. Its standard is the "learnable the first time" bar at the top of this page. An issue takes a product area when its listener benefit lands in one; Housekeeping is for the rest, never a place to park pipeline work (that is Groundwork). Like Groundwork it has no milestone, and joins a release milestone only when it blocks that release (owner, 2026-11-07, #3636: "something other than groundwork… housekeeping and other kind of improvement stuff").

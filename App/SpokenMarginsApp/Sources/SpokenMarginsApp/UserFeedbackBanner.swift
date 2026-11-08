@@ -144,12 +144,13 @@ struct UserFeedbackBanner: View {
     @ViewBuilder
     private var buttons: some View {
         if let action = feedback.action {
-            Button(action.title) {
+            Button {
                 model.dismissFeedback(id: feedback.id)
                 action.perform()
+            } label: {
+                Text(action.title).frame(minHeight: 44).contentShape(Rectangle())
             }
             .filledActionButton()
-            .frame(minHeight: 44)
             .accessibilityLabel(action.accessibilityLabel)
             .accessibilityFocused($focusedPart, equals: .action)
             .accessibilityIdentifier(action.identifier)
@@ -186,7 +187,7 @@ struct UserFeedbackBanner: View {
 
     private var iconColor: Color {
         switch feedback.kind {
-        case .success: .green
+        case .success: AppColors.green
         case .warning: AppColors.warningText
         case .error: AppColors.dangerText // octagon, not triangle: must differ from warnings by shape (#308)
         }

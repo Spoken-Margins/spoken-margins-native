@@ -13,7 +13,7 @@ struct ExperienceMarginDetailView: View {
     @State private var isPreparingMarkdown = false
     let row: MarginRow
 
-    private enum NavigationIntent { case moment, item }
+    private enum NavigationIntent { case moment, item, share }
     private var current: MarginRow { model.marginRows.first { $0.id == row.id } ?? row }
 
     private var isStarred: Bool { current.interjection.isStarredForSharing == true }
@@ -57,8 +57,18 @@ struct ExperienceMarginDetailView: View {
             }
             .buttonStyle(.automatic)
             .accessibilityIdentifier("marginDetail.copyWithContext.button")
+            // Share means another listener (#3211): this opens the friend sheet with only this Margin.
+            if ItemShareSessionSelection.isShareable(current.interjection) {
+                Button("Share this Margin", systemImage: "person.wave.2") {
+                    pendingNavigation = .share // the friend sheet opens once this screen has closed
+                    dismiss()
+                }
+                .buttonStyle(.automatic)
+                .accessibilityIdentifier("marginDetail.share.button")
+            }
+            // Export means yourself or your tools: this Margin's note as a Markdown file (#1866, #3211).
             if MarginMarkdownShare.hasNote(current.interjection) {
-                Button("Share this Margin", systemImage: "square.and.arrow.up") { // its note as Markdown (#1866 Done when 4)
+                Button("Export this Margin as Markdown", systemImage: "square.and.arrow.up") {
                     guard !isPreparingMarkdown else { return }
                     isPreparingMarkdown = true
                     let margin = current.interjection
@@ -68,7 +78,7 @@ struct ExperienceMarginDetailView: View {
                     }
                 }
                 .buttonStyle(.automatic)
-                .accessibilityIdentifier("marginDetail.shareMarkdown.button")
+                .accessibilityIdentifier("marginDetail.exportMarkdown.button")
             }
             if model.selectedItem.id == current.interjection.itemId,
                model.snapshot.sessionId == current.interjection.sessionId {
@@ -207,8 +217,9 @@ struct ExperienceMarginDetailView: View {
             .onDisappear {
                 if model.isPlayingInterjectionAudio(current.interjection) { model.stopInterjectionAudioPlayback() }
                 switch pendingNavigation {
-                case .moment: model.playMarginMoment(current)
+                case .moment: MarginMomentTap.start(current, model: model)
                 case .item: model.openItemFromTap(id: current.interjection.itemId)
+                case .share: model.openMarginShare(current.interjection)
                 case nil: break
                 }
                 pendingNavigation = nil

@@ -103,6 +103,13 @@ enum UITestingHooks {
         return (try? bytes.write(to: url, options: .atomic)) == nil ? nil : url
     }
 
+    /// The share link a UI test handed over through the app's own scheme, because hosted simulators don't route
+    /// universal links (#1842). Nil for any other URL and for a launch that isn't a UI test.
+    static func handedOffShareLink(_ url: URL) -> URL? {
+        guard isActive else { return nil }
+        return ShareLinkUITestHandoff.shareLink(in: url)
+    }
+
     /// The text size to show the Live Activity's Lock Screen card at, in place of the app (#1940), as a
     /// `DynamicTypeSize` case name such as `large` or `accessibility5`.
     static var liveActivityPreviewTextSize: String? {
@@ -126,5 +133,6 @@ enum UITestingHooks {
     static var liveActivityPreviewTextSize: String? { nil }
     static var marksListenerMarginShared: Bool { false }
     static func packetToOpen() -> URL? { nil }
+    static func handedOffShareLink(_ url: URL) -> URL? { nil }
     #endif
 }

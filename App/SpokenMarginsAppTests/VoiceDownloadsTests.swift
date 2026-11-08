@@ -122,6 +122,34 @@ final class VoiceDownloadsTests: XCTestCase {
         XCTAssertFalse(defaults.bool(forKey: FirstRunVoiceDefault.downloadDueKey), "Phonon's Cancel is the listener saying no")
     }
 
+    /// #2250: Stop used to clear the restart intent only when the task's cancellation finished. A model made before
+    /// then (a relaunch) found the voice pending and started it again. The intent goes at the tap, for this voice only,
+    /// and a later Download writes it again.
+    func testStopClearsTheRestartIntentAtOnceAndDownloadWritesItAgain() throws {
+        let coordinator = VoiceCatalogCoordinator(
+            supportDirectory: root,
+            configuration: .init(catalogURL: nil, trustedKeys: [], playableVoiceIds: [], bundledSnapshot: nil),
+            transport: FixtureTransport(files: [:]),
+            installerConfiguration: .init(marginBytes: 0, attemptsPerSource: 1, retryDelay: .zero, availableCapacity: { _ in nil }),
+            repository: nil
+        )
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "voice-downloads-\(UUID().uuidString)"))
+        defaults.set(["kokoro-82m", ReadingVoiceChoice.phononVoiceId], forKey: "voiceDownloads.pending")
+        defaults.set([ReadingVoiceChoice.phononVoiceId], forKey: "voiceDownloads.automatic")
+        let voices = VoiceDownloadsModel(coordinator: coordinator, defaults: defaults)
+
+        voices.cancel(ReadingVoiceChoice.phononVoiceId)
+        XCTAssertEqual(defaults.stringArray(forKey: "voiceDownloads.pending"), ["kokoro-82m"], "only the stopped voice leaves pending")
+        XCTAssertEqual(defaults.stringArray(forKey: "voiceDownloads.automatic") ?? [], [], "and leaves the Wi-Fi-only list")
+
+        voices.download(ReadingVoiceChoice.phononVoiceId)
+        XCTAssertEqual(
+            Set(defaults.stringArray(forKey: "voiceDownloads.pending") ?? []),
+            ["kokoro-82m", ReadingVoiceChoice.phononVoiceId],
+            "Download after Stop is pending again"
+        )
+    }
+
     /// #2858 audit: after a relaunch the app's own start must not take over a pending download the listener started,
     /// which may be on mobile data by their say-so. It would turn their download Wi-Fi only and fetch the file twice.
     func testTheAutomaticStartLeavesAPendingDownloadTheListenerStarted() throws {

@@ -51,11 +51,9 @@ extension Gate1AppModel {
     // MARK: Source transcript finishes (#2512)
     // The main-actor stretches that end a source-transcript import, labelled so a hang names them.
 
-    func finishDiscoveredSourceTranscript(_ timeline: TranscriptTimeline, itemId: String, linkType: String) {
-        hangTelemetry.labels.scoped("sourceTranscriptAttach") {
-            diagnostics["sourceTranscriptDiscovery:\(itemId)"] = "attached:\(linkType)"
-            attachSourceTranscriptTimeline(timeline, itemId: itemId)
-        }
+    func finishDiscoveredSourceTranscript(_ timeline: TranscriptTimeline, itemId: String, linkType: String) async {
+        diagnostics["sourceTranscriptDiscovery:\(itemId)"] = "attached:\(linkType)"
+        await attachSourceTranscriptTimelineOffMain(timeline, itemId: itemId)
     }
 
     func markSourceTranscriptUnavailable(itemId: String, lastFailure: String) {
@@ -69,11 +67,11 @@ extension Gate1AppModel {
         }
     }
 
-    func finishFullSourceTranscription(_ timeline: TranscriptTimeline, itemId: String) {
-        hangTelemetry.labels.scoped("sourceTranscriptAttach") {
-            importedPodcastPlacement.releaseFullSourceTranscription(itemId: itemId)
-            attachSourceTranscriptTimeline(timeline, itemId: itemId)
-        }
+    func finishFullSourceTranscription(_ timeline: TranscriptTimeline, itemId: String) async {
+        // The slot stays taken while the transcript is saved off the main thread: until it is, the item has no transcript
+        // id, and a Listening Map request or an item open would start a second transcription of the same audio.
+        await attachSourceTranscriptTimelineOffMain(timeline, itemId: itemId)
+        importedPodcastPlacement.releaseFullSourceTranscription(itemId: itemId)
     }
 
     func failFullSourceTranscription(itemId: String, error: Error) {

@@ -21,7 +21,7 @@ struct ExperiencePlayQueueScreen: View {
                     ContentUnavailableView(
                         "Nothing queued",
                         systemImage: "text.line.first.and.arrowtriangle.forward",
-                        description: Text("Choose Play Next or Add to Queue on an item, and it plays after the one you are listening to.")
+                        description: Text("Choose Play Next or Add to Queue on an episode, article or PDF, and it plays after the one you are listening to.")
                     )
                     .listRowBackground(Color.clear)
                 } else {
@@ -44,7 +44,7 @@ struct ExperiencePlayQueueScreen: View {
                     } header: {
                         Text("Plays in this order")
                     } footer: {
-                        Text("When the item you are listening to ends, the first one here starts. A sleep timer stops the whole run.")
+                        Text("When what you are listening to ends, the first one here starts. A sleep timer stops the whole run.")
                     }
                 }
             }
@@ -61,7 +61,7 @@ struct ExperiencePlayQueueScreen: View {
                     }
                     ToolbarItem(placement: .bottomBar) {
                         Button("Clear queue", role: .destructive) { isConfirmingClear = true }
-                            .accessibilityHint("Empties the queue. Library items stay.")
+                            .accessibilityHint("Empties the queue. Everything in your Library stays.")
                             .accessibilityIdentifier("playQueue.clear.button")
                     }
                 }
@@ -70,7 +70,7 @@ struct ExperiencePlayQueueScreen: View {
                 Button("Clear queue", role: .destructive) { model.clearPlayQueue() }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("Your Library items stay.")
+                Text("Everything in your Library stays.")
             }
             .onAppear { model.loadPlayQueue() }
         }

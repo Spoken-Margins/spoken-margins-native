@@ -80,21 +80,13 @@ final class J10OfflineJourneyUITests: XCTestCase {
             // the share sheet here. Importing it on a second simulator stays with the agent run.
             if playPause.label == "Pause" { playPause.tap() }
             waitUntil("The article did not pause before export") { self.playPause.label == "Play" }
-            tap("playback.options.button")
-            let export = element("playback.export.button")
-            for _ in 0..<12 where !export.isHittable { app.swipeUp() }
-            XCTAssertTrue(export.isHittable, "Export is not reachable from the playback options")
-            export.tap()
-            XCTAssertTrue(element("export.screen").waitForExistence(timeout: 5), "Export did not open")
-            let shareMargins = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Share Margins")).firstMatch
-            for _ in 0..<12 where !shareMargins.isHittable { app.swipeUp() }
-            XCTAssertTrue(shareMargins.isHittable, "Share Margins is not reachable on Export")
-            shareMargins.tap()
+            // Share on the playback screen opens the sheet on its review (#1507). The Export screen no longer
+            // carries Share (#3211): Export is for taking Margins out for yourself.
+            tap("playback.shareMargins.button")
             XCTAssertTrue(element("build23.sender.experience").waitForExistence(timeout: 8), "The sender flow did not open")
             let cleanUpQuestion = app.alerts["Clean selected Margins automatically?"]
             if cleanUpQuestion.waitForExistence(timeout: 2) { cleanUpQuestion.buttons["Not now"].tap() } // first share only
-            senderElement("build23.sender.select.continue").tap()
-            XCTAssertTrue(element("build23.sender.stage.review").waitForExistence(timeout: 5), "The review stage did not open")
+            XCTAssertTrue(element("build23.sender.stage.review").waitForExistence(timeout: 5), "Share did not open on the review stage")
             senderElement("build23.sender.preview.build").tap()
             XCTAssertTrue(element("build23.sender.recipient.verified-preview").waitForExistence(timeout: 12),
                           "The packet was not written and verified with the server unreachable")
@@ -148,16 +140,22 @@ final class J10OfflineJourneyUITests: XCTestCase {
             // automation session at this step, #2919), which ends the article and lands on a fresh Library, so it
             // can't show playback surviving a failed link. The system opens the link, as a tap in another app would,
             // and hands it to the app that is already running.
-            XCUIDevice.shared.system.open(link)
+            // Hosted simulators never route the universal link itself (Safari took it on every hosted run until
+            // 2026-11-07), so the link travels inside the app's own scheme, which always reaches the app, and
+            // takes the tapped link's path from there (`ShareLinkUITestHandoff`, built the same way in its tests).
+            let encoded = try XCTUnwrap(link.absoluteString.addingPercentEncoding(withAllowedCharacters: .alphanumerics))
+            XCUIDevice.shared.system.open(try XCTUnwrap(URL(string: "spokenmargins://ui-test-share-link?url=\(encoded)")))
+            // The system may ask "Open in Spoken Margins?" first, sometimes late; wait for it or the message, so a
+            // slow prompt isn't missed and a quick message isn't waited past.
+            let confirm = XCUIApplication(bundleIdentifier: "com.apple.springboard").buttons["Open"]
             let banner = element("app.feedback.banner")
-            guard banner.waitForExistence(timeout: 20) else {
-                // J10: if Safari takes the link, the universal link didn't route; neither a pass nor a fail.
-                // The app is still foreground when `open` returns, so only a missing message tells the two apart.
-                if app.state != .runningForeground {
-                    throw XCTSkip("The share link opened outside the app, so this simulator didn't route it")
-                }
-                return XCTFail("The share link showed no message")
+            let deadline = Date().addingTimeInterval(10)
+            while Date() < deadline, !banner.exists {
+                if confirm.exists { confirm.tap(); break }
+                _ = banner.waitForExistence(timeout: 0.5)
             }
+            XCTAssertTrue(banner.waitForExistence(timeout: 20),
+                          "The share link showed no message (the app is \(app.state == .runningForeground ? "in front" : "not in front"))")
             screenshot("J10 share link with the server unreachable")
             // "offline" means the fetch went to the swapped host; the real server would answer with a not-found.
             XCTAssertTrue(banner.label.localizedCaseInsensitiveContains("offline"),

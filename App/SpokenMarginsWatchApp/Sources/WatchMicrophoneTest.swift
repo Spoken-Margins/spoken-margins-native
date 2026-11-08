@@ -116,6 +116,7 @@ actor WatchMicrophoneTestRig {
             AVNumberOfChannelsKey: 1
         ])
         guard recorder.record() else {
+            recorder.stop() // its audio queue may be running; freed unstopped, it crashes (#3633)
             try? session.setActive(false, options: .notifyOthersOnDeactivation)
             throw TestError.wouldNotStart
         }

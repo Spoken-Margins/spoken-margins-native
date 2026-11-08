@@ -15,9 +15,9 @@ sender_transcript_prefix="$cache_root/sender-transcript"
 recipient_transcript_prefix="$cache_root/recipient-transcript"
 sender_transcript="$sender_transcript_prefix.json"
 recipient_transcript="$recipient_transcript_prefix.json"
-result_path="$repo_root/artifacts/validation/sharing-next/podcast-anchor-benchmark-result.json"
+result_path="${SPOKEN_MARGINS_BENCHMARK_RESULT_PATH:-$repo_root/artifacts/validation/sharing-next/podcast-anchor-benchmark-result.json}"
 
-for command_name in curl ffmpeg swift whisper-cli; do
+for command_name in curl ffmpeg python3 swift whisper-cli; do
     command -v "$command_name" >/dev/null || {
         echo "Required command is unavailable: $command_name" >&2
         exit 1
@@ -74,6 +74,10 @@ if [[ ! -s "$recipient_transcript" ]]; then
         -l en -t 8 -oj -np -of "$recipient_transcript_prefix"
 fi
 
+# A result left by an earlier run must not pass for this one: the test writes it before its gate asserts,
+# and a skip or a filter that matches nothing leaves `swift test` green with no result (#2133).
+rm -f "$result_path"
+test_status=0
 SPOKEN_MARGINS_RUN_ANCHOR_CORPUS=1 \
 SPOKEN_MARGINS_BENCHMARK_SENDER_AUDIO="$sender_audio" \
 SPOKEN_MARGINS_BENCHMARK_RECIPIENT_AUDIO="$recipient_audio" \
@@ -81,6 +85,20 @@ SPOKEN_MARGINS_BENCHMARK_SENDER_TRANSCRIPT="$sender_transcript" \
 SPOKEN_MARGINS_BENCHMARK_RECIPIENT_TRANSCRIPT="$recipient_transcript" \
 SPOKEN_MARGINS_BENCHMARK_RESULT_PATH="$result_path" \
 swift test --package-path "$repo_root/Packages/SessionKit" \
-    --filter SharingTests/testHeldOutPublicDomainPodcastAnchorCorpus
+    --filter SharingTests/testHeldOutPublicDomainPodcastAnchorCorpus || test_status=$?
 
+if [[ ! -s "$result_path" ]]; then
+    echo "The held-out corpus test wrote no result: it skipped, failed early or did not run." >&2
+    exit 1
+fi
+python3 - "$result_path" <<'SUMMARY'
+import json, sys
+result = json.load(open(sys.argv[1]))
+anchors = result['anchors']
+print(f"Anchors: total {anchors['total']}, eligible {anchors['eligible']}, absent {anchors['absent']}")
+for method in ('timestampOnly', 'transcript', 'acoustic', 'fusedMonotonic'):
+    metrics = result[method]
+    print(f"{method}: p95 {metrics['p95ErrorMs']} ms, false-confident {metrics['falseConfident']}")
+SUMMARY
 echo "Benchmark result: $result_path"
+exit "$test_status"

@@ -274,25 +274,25 @@ class VerdictTests(unittest.TestCase):
         self.assertLess(len(text), 30000)
 
     def test_a_journey_that_passes_on_retry_carries_its_first_message_into_the_report(self):
-        # Audit on 6d4e4cf: run_tests copied the journeys' retry-passes but not what their first attempts said.
+        # Audit on 6d4e4cf: the journeys' retry-passes were copied but not what their first attempts said (#3669: now
+        # the journeys run alone, in run_journeys, and report as their own scripted-journeys report).
         said = "XCTAssertTrue failed - The friend's Margin never started playing"
         listing = {'gating': [{'test': f'{JOURNEY}/testOpen', 'journey': 'J1'}], 'probation': []}
         journeys = manifest({f'{JOURNEY}/testOpen': 'passed'}, retried=[f'{JOURNEY}/testOpen'])
         journeys['steps'][0]['gating'] = {f'{JOURNEY}/testOpen': 'passed'}
         journeys['steps'][0]['retry_failures'] = {f'{JOURNEY}/testOpen': [said]}
         journeys['status'] = 'verified'
-        plans = [manifest({TEST: 'passed'}), journeys, tour_manifest()]
         with tempfile.TemporaryDirectory() as tmp:
-            ops = FakeOps(tmp, plans, listing=listing)
+            ops = FakeOps(tmp, [journeys], listing=listing)
             wt = Path(tmp) / 'wt'
             (wt / 'TestPlans').mkdir(parents=True)
             (wt / 'TestPlans' / 'scripted-journeys.json').write_text(json.dumps(listing))
-            result = run.run_tests(ops, wt, Path(tmp) / 'evidence', (7, 8))
+            result = run.run_journeys(ops, wt, Path(tmp) / 'evidence', (7, 8))
+        self.assertEqual(result['verdict'], 'PASS')
         self.assertIn(f'{JOURNEY}/testOpen', result['flaky'])
         self.assertEqual(result['retry_failures'][f'{JOURNEY}/testOpen'], [said])
-        counts = {'passed': 0, 'failed': 0, 'skipped': 0}
-        text = run.report_text('a' * 40, dict(result, crashes=[], counts=counts), started=0, finished=1,
-                               previous=None, suspects=[], evidence=Path('/e'))
+        text = run.journeys_report_text('a' * 40, result, started=0, finished=1, previous=None, suspects=[],
+                                        evidence=Path('/e'), why='a phone build was cut')
         self.assertIn(f'first attempt said (1 test, e.g. testOpen): {said}', text)
 
     def test_a_test_the_scripts_own_rerun_clears_keeps_its_first_runs_message(self):
@@ -364,41 +364,69 @@ class ReportTextTests(unittest.TestCase):
         self.assertEqual(run.reported([body]), [(SHA[:7], 'PASS')])
         for words in (f'run by: {run.RUN_BY}', f'{run.BASE_BRANCH} moved from {OLD[:7]}', '1 passed, 0 failed',
                       'passed on retry: none', run.NOT_RUN, run.NOT_VERIFIED, '/mac/evidence',
-                      f'{SHA[:7]} is the current phone candidate: app tests passed; scripted journeys not run; '
-                      'attended journeys not run.'):
+                      f'{SHA[:7]} is the current phone candidate: app tests passed; scripted journeys run when the '
+                      'phone build is cut (#3669); attended journeys not run.', run.JOURNEYS_NOT_ON_TIP):
             self.assertIn(words, body)
 
-    def test_the_candidate_line_says_what_a_pass_covers(self):
-        """#1465: an app-test PASS must not read as a full candidate when journeys failed or didn't run."""
-        base = dict(run.settle(run.summarize(manifest({TEST: 'passed'})), []), reruns=0)
-        for journeys, words in (({'J1Tests/testOpen': 'passed'}, 'scripted journeys passed (1 of 1)'),
-                                ({'J1Tests/testOpen': 'failed', 'J4Tests/testPlay': 'passed'},
-                                 'scripted journeys 1 passed, 1 failed, 0 skipped, 0 not run (failed: testOpen)'),
-                                ({'J1Tests/testOpen': 'not_run'}, 'scripted journeys not run'),
-                                ({}, 'scripted journeys not run')):
-            with self.subTest(journeys=journeys):
-                body = self.text(dict(base, journeys=journeys))
-                self.assertIn(f'is the current phone candidate: app tests passed; {words}; attended journeys not run.', body)
-                phone = load_phone_build()
-                plan_lines = phone.commit_record([body], SHA)
-                kinds = {what: status for what, status, _ in plan_lines}
-                self.assertEqual(kinds['App tests'], 'pass')
-                self.assertEqual(kinds['Scripted journeys'], 'fail' if 'failed' in words else
-                                 'pass' if 'passed' in words else 'not run')
-                self.assertEqual(kinds['Attended journeys'], 'not run')
+    def journeys_text(self, journeys, verdict='PASS', gating_failed=(), probation_failed=(), suspects=()):
+        result = {'verdict': verdict, 'journeys': journeys, 'gating_failed': list(gating_failed),
+                  'probation_failed': list(probation_failed), 'flaky': [], 'crashes': [], 'errors': ['why not'],
+                  'minutes': {'scripted journeys': 41}}
+        return run.journeys_report_text(SHA, result, started=1_791_550_000, finished=1_791_550_600, previous=OLD[:7],
+                                        suspects=list(suspects), evidence=Path('/mac/evidence'),
+                                        why='a phone build was cut from this commit')
 
-    def test_the_candidate_line_never_calls_journeys_passed_when_some_did_not_run(self):
-        """#1901: one passing script among skipped and unrun ones used to read "scripted journeys passed"."""
-        base = dict(run.settle(run.summarize(manifest({TEST: 'passed'})), []), reruns=0)
-        mixed = {'J1Tests/a': 'passed', 'J2Tests/b': 'skipped', 'J3Tests/c': 'not_run', 'J7Tests/d': 'passed'}
-        body = self.text(dict(base, journeys=mixed))
-        self.assertIn('app tests passed; scripted journeys 2 passed, 0 failed, 1 skipped, 1 not run; attended', body)
-        self.assertNotIn('scripted journeys passed', body)
-        for journeys in ({'a/b': 'passed', 'c/d': 'skipped'}, {'a/b': 'passed', 'c/d': 'not_run'},
-                         {'a/b': 'passed', 'c/d': 'missing'}):
+    def test_a_tip_report_never_lists_journeys_and_says_where_they_run(self):
+        """#3669: the integration report is app tests and the tour; a journeys list in it would be stale or invented."""
+        body = self.text(dict(run.settle(run.summarize(manifest({TEST: 'passed'})), []), reruns=0,
+                              journeys={'J1Tests/testOpen': 'failed'}, minutes={'app': 22, 'screen tour': 5}))
+        self.assertNotIn('scripted journeys (only those on gating', body)
+        self.assertIn(run.JOURNEYS_NOT_ON_TIP, body)
+        self.assertIn('minutes: app 22, screen tour 5', body)
+        phone = load_phone_build()
+        kinds = {what: (status, detail) for what, status, detail in phone.commit_record([body], SHA)}
+        self.assertEqual(kinds['App tests'][0], 'pass')
+        self.assertEqual(kinds['Scripted journeys'][0], 'not run')
+        self.assertIn('no scripted-journeys report for this commit yet', kinds['Scripted journeys'][1])
+
+    def test_the_journeys_report_says_what_a_pass_covers(self):
+        """#1465, #1901: one passing script among skipped and unrun ones is never "scripted journeys passed"."""
+        for journeys, words, status in (
+                ({'J1Tests/testOpen': 'passed'}, 'scripted journeys passed (1 of 1)', 'pass'),
+                ({'J1Tests/testOpen': 'passed', 'J2Tests/b': 'skipped', 'J3Tests/c': 'not_run', 'J7Tests/d': 'passed'},
+                 'scripted journeys 2 passed, 0 failed, 1 skipped, 1 not run', 'not run'),
+                ({'a/b': 'passed', 'c/d': 'missing'}, 'scripted journeys 1 passed, 1 failed, 0 skipped, 0 not run',
+                 'fail')):
             with self.subTest(journeys=journeys):
-                self.assertNotIn('scripted journeys passed', self.text(dict(base, journeys=journeys)))
-        self.assertIn('scripted journeys passed (2 of 2)', self.text(dict(base, journeys={'a/b': 'passed', 'c/d': 'passed'})))
+                body = self.journeys_text(journeys)
+                self.assertIn(f'{SHA[:7]}: {words}', body)
+                self.assertTrue(body.startswith(f'```text\nLane report scripted-journeys-{SHA[:7]} — PASS\n'))
+                self.assertEqual(run.reported([body]), [])          # never an integration report: no previous, no last PASS
+                self.assertEqual(run.journey_reported([body]), [(SHA[:7], 'PASS')])
+                phone = load_phone_build()
+                kinds = {what: st for what, st, _ in phone.commit_record([body], SHA)}
+                self.assertEqual(kinds['Scripted journeys'], status)
+                self.assertEqual(kinds['App tests'], 'not run')      # this report says nothing about app tests
+
+    def test_a_failing_journeys_report_names_every_merge_since_the_last_pass_and_opens_no_revert(self):
+        body = self.journeys_text({'J1Tests/testOpen': 'failed'}, verdict='FAIL', gating_failed=['J1Tests/testOpen'],
+                                  suspects=['#1170 Add a thing', '#1169 Fix a thing'])
+        self.assertIn(f'merges since the last scripted-journeys PASS ({OLD[:7]}): #1170 Add a thing, #1169 Fix a thing',
+                      body)
+        self.assertIn('Any of them can be the cause; no revert is opened for a journey.', body)
+        self.assertIn('failing: J1Tests/testOpen', body)
+        self.assertIn('minutes: scripted journeys 41', body)
+        phone = load_phone_build()
+        plan = '\n'.join(phone.outcome_lines([body], SHA))
+        self.assertIn('Scripted journeys: **fail**', plan)
+        self.assertIn('merges since the last scripted-journeys PASS', plan)   # the plan carries the whole range
+
+    def test_an_inconclusive_journeys_report_is_not_a_pass_or_a_fail(self):
+        body = self.journeys_text({}, verdict='INCONCLUSIVE')
+        self.assertIn('why inconclusive: why not', body)
+        phone = load_phone_build()
+        kinds = {what: st for what, st, _ in phone.commit_record([body], SHA)}
+        self.assertEqual(kinds['Scripted journeys'], 'not run')
 
     def test_fail_report_lists_failures_flakes_and_suspect_merges(self):
         first = run.summarize(manifest({TEST: 'failed', OTHER: 'failed'}))
@@ -816,24 +844,32 @@ class TickTests(unittest.TestCase):
         self.assertEqual(ops.diagnosed, [])
         self.assertTrue(any(c[:3] == ['git', 'worktree', 'remove'] for c in ops.calls))
 
-    def test_two_passing_tips_name_the_probation_script_that_earned_gating(self):
-        # #1901: nothing counted a script's passes, so nothing was ever promoted.
+    def test_two_passing_journeys_runs_name_the_probation_script_that_earned_gating(self):
+        # #1901: nothing counted a script's passes, so nothing was ever promoted. #3669: the passes now come from the
+        # journeys runs at a phone build, not from every tip.
         listing = {'gating': [], 'probation': [{'test': JOURNEY, 'journey': 'J1'}]}
         passing = manifest({}, probation={f'{JOURNEY}/testOpen': 'passed'})
         passing['status'] = 'verified'
-        plans = [manifest({TEST: 'passed'}), passing, tour_manifest(), manifest({TEST: 'passed'}), passing, tour_manifest()]
         with tempfile.TemporaryDirectory() as tmp, mac_with_room():
-            ops = FakeOps(tmp, plans, bodies=[report_comment(OLD[:7], 'PASS')], listing=listing)
-            self.assertEqual(run.tick(ops), 'PASS')
+            ops = FakeOps(tmp, [passing, passing], bodies=[report_comment(OLD[:7], 'PASS')], listing=listing)
+            self.assertEqual(run.journeys_run(ops, SHA, 'a phone build was cut'), 'PASS')
             self.assertEqual(json.loads((ops.home / 'state.json').read_text())['journeys'][JOURNEY],
                              {'passes': 1, 'bad': 0})
-            ops.sha = 'c' * 40
-            self.assertEqual(run.tick(ops), 'PASS')
+            self.assertEqual(run.journeys_run(ops, 'c' * 40, 'a phone build was cut'), 'PASS')
             streaks = json.loads((ops.home / 'state.json').read_text())['journeys']
         self.assertEqual(streaks[JOURNEY], {'passes': 2, 'bad': 0})
         self.assertNotIn('journeys due to move', ops.posted[0])
         self.assertIn('journeys due to move: J1ListenToAnArticleJourneyUITests passed twice running, move to gating',
                       ops.posted[1])
+
+    def test_a_tip_tick_runs_the_app_plan_and_never_the_journeys_plan(self):
+        listing = {'gating': [{'test': JOURNEY, 'journey': 'J1'}], 'probation': []}
+        with tempfile.TemporaryDirectory() as tmp, mac_with_room():
+            ops = FakeOps(tmp, [manifest({TEST: 'passed'}), tour_manifest()],
+                          bodies=[report_comment(OLD[:7], 'PASS')], listing=listing)
+            self.assertEqual(run.tick(ops), 'PASS')
+        self.assertEqual([c[1] for c in ops.calls if c[0] == 'test_plan'], ['app', 'tour'])
+        self.assertIn(run.JOURNEYS_NOT_ON_TIP, ops.posted[0])
 
     def test_flaky_failure_is_rerun_twice_and_reported_as_pass_without_claude(self):
         plans = [manifest({TEST: 'failed'}), manifest({TEST: 'passed'}), manifest({TEST: 'passed'})]
@@ -1022,7 +1058,7 @@ class CulpritTests(unittest.TestCase):
 
 
 class ScriptedJourneyOutcomeTests(unittest.TestCase):
-    """The Mac tick, end to end, when the app plan passes but a scripted journey does not (#2590, audit on 327a481)."""
+    """The journeys run at a phone build, end to end (#3669; #2590, audit on 327a481 for the verdict rules)."""
     GATING = JOURNEY + '/testOpen'
     LISTING = {'gating': [{'test': JOURNEY, 'journey': 'J1'}], 'probation': [{'test': JOURNEY + '2', 'journey': 'J2'}]}
 
@@ -1032,26 +1068,35 @@ class ScriptedJourneyOutcomeTests(unittest.TestCase):
                 'gating': {self.GATING: gating}, 'probation': {JOURNEY + '2/testOpen': probation}}
         return {'status': 'verified', 'steps': [step]}
 
-    def tick(self, plans):
+    def journeys_run(self, plans, bodies=(report_comment(OLD[:7], 'PASS'),)):
         with tempfile.TemporaryDirectory() as tmp:
-            ops = CulpritOps(tmp, plans, bodies=[report_comment(OLD[:7], 'PASS')], listing=self.LISTING)
+            ops = CulpritOps(tmp, plans, bodies=list(bodies), listing=self.LISTING)
             with recording_slot(ops.events), patch.object(run.revert, 'load_test_scope', return_value=real_scope()):
-                verdict = run.tick(ops)
+                verdict = run.journeys_run(ops, SHA, 'a phone build was cut from this commit')
         return ops, verdict
 
-    def test_a_gating_journey_that_fails_is_a_fail_and_never_passed_on_a_rerun(self):
-        ops, verdict = self.tick([manifest({TEST: 'passed'}), self.journeys('failed', 'passed')])
+    def test_a_gating_journey_that_fails_is_a_fail_with_one_issue_and_no_revert(self):
+        previous = report_comment(OLD[:7], 'PASS').replace('integration-', 'scripted-journeys-')
+        ops, verdict = self.journeys_run([self.journeys('failed', 'passed')], bodies=[previous])
         self.assertEqual(verdict, 'FAIL')
         self.assertFalse(any(e[0] in ('commits_since', 'check') for e in ops.events))   # nothing searchable
-        note = ops.comments[0][1]
-        self.assertIn('no single culprit merge: a gating scripted journey failed', note)
-        self.assertNotIn('passed on a re-run', note)
+        self.assertEqual((ops.reverts, ops.comments, ops.diagnosed), ([], [], []))
         report = ops.posted[0]
-        self.assertIn('— FAIL', report)
+        self.assertTrue(report.startswith(f'```text\nLane report scripted-journeys-{SHA[:7]} — FAIL'))
         self.assertIn(f'failing: {JOURNEY}', report)
-        self.assertIn('passed on retry: none', report)
-        self.assertNotIn('phone candidate', report)
-        self.assertEqual(ops.diagnosed_journeys, (JOURNEY,))
+        self.assertIn(f'merges since the last scripted-journeys PASS ({OLD[:7]}): #1170', report)
+        self.assertIn('why it ran: a phone build was cut from this commit', report)
+        self.assertEqual(ops.filed, [[[JOURNEY]]])
+        self.assertEqual(run.reported(ops.posted), [])   # a journeys report is not an integration report
+
+    def test_the_issue_a_failing_journey_files_names_the_whole_range_to_search(self):
+        groups = run.journey_fail_groups([JOURNEY], ['#1170 Add a thing', '#1169 Fix a thing'], OLD[:7])
+        self.assertEqual(len(groups), 1)
+        self.assertIn('#1170 Add a thing, #1169 Fix a thing', groups[0]['suspect'])
+        self.assertIn(OLD[:7], groups[0]['suspect'])
+        self.assertIn(f'--plan journeys --only-testing {JOURNEY}', groups[0]['steps'])
+        text = run.issue_text(groups[0], SHA, 'https://x/report', Path('/e'), None)
+        self.assertIn(f'Failing tests: `{JOURNEY}`', text)   # the line find_duplicate reads, so a repeat comments
 
     def boot_failed(self):
         """What verify-tests.py writes when the simulator boot stops on a crash report: no journey ran (#3519)."""
@@ -1059,47 +1104,280 @@ class ScriptedJourneyOutcomeTests(unittest.TestCase):
         return {'status': 'failed_or_incomplete', 'steps': [boot], 'error': 'simulator-boot: assetsd-x.ips while booting'}
 
     def test_journeys_that_never_booted_are_inconclusive_not_a_fail(self):
-        ops, verdict = self.tick([manifest({TEST: 'passed'}), self.boot_failed(), self.boot_failed()])
+        ops, verdict = self.journeys_run([self.boot_failed(), self.boot_failed()])
         self.assertEqual(verdict, 'INCONCLUSIVE')
-        self.assertEqual([c[1] for c in ops.calls if c[0] == 'test_plan'], ['app', 'journeys', 'journeys-retry'])
+        self.assertEqual([c[1] for c in ops.calls if c[0] == 'test_plan'], ['journeys', 'journeys-retry'])
         report = ops.posted[0]
         self.assertIn('— INCONCLUSIVE', report)
         self.assertIn('journeys not run: simulator boot failed', report)
         self.assertNotIn('failing:', report)
-        self.assertNotIn('phone candidate', report)
-        self.assertEqual((ops.comments, ops.diagnosed), ([], []))
+        self.assertEqual((ops.comments, ops.diagnosed, ops.filed), ([], [], []))
+
+    def test_a_plan_that_ran_no_journey_is_inconclusive_even_without_a_boot_fault(self):
+        # No manifest at all (a build failure, a runner exit): nothing was verified, so the gating journey is not "failed".
+        broken = {'status': 'failed_or_incomplete', 'steps': [], 'error': 'journeys: runner exit 1, no manifest'}
+        ops, verdict = self.journeys_run([broken])
+        self.assertEqual(verdict, 'INCONCLUSIVE')
+        self.assertIn('no scripted journey ran, so nothing was verified', ops.posted[0])
+        self.assertEqual(ops.filed, [])
 
     def test_a_journeys_boot_fault_that_clears_on_the_retry_is_judged_by_the_journeys(self):
-        ops, verdict = self.tick([manifest({TEST: 'passed'}), self.boot_failed(), self.journeys('passed', 'passed'),
-                                  tour_manifest()])
+        ops, verdict = self.journeys_run([self.boot_failed(), self.journeys('passed', 'passed')])
         self.assertEqual(verdict, 'PASS')
         self.assertIn('— PASS', ops.posted[0])
-        ops, verdict = self.tick([manifest({TEST: 'passed'}), self.boot_failed(), self.journeys('failed', 'passed')])
+        ops, verdict = self.journeys_run([self.boot_failed(), self.journeys('failed', 'passed')])
         self.assertEqual(verdict, 'FAIL')
         self.assertIn(f'failing: {JOURNEY}', ops.posted[0])
 
-    def test_a_boot_fault_does_not_hide_a_confirmed_app_failure(self):
-        plans = [manifest({TEST: 'failed'}), manifest({TEST: 'failed'}), manifest({TEST: 'failed'}),
-                 self.boot_failed(), self.boot_failed()]
-        ops, verdict = self.tick(plans)
-        self.assertEqual(verdict, 'FAIL')
-        self.assertIn(f'failing: {TEST}', ops.posted[0])
-
     def test_a_probation_journey_that_fails_is_named_and_not_verdict_input(self):
-        ops, verdict = self.tick([manifest({TEST: 'passed'}), self.journeys('passed', 'failed')])
+        ops, verdict = self.journeys_run([self.journeys('passed', 'failed')])
         self.assertEqual(verdict, 'PASS')
         self.assertIn(f'probation scripted journeys that failed (not verdict input): {JOURNEY}2', ops.posted[0])
         self.assertNotIn('failing:', ops.posted[0])
-        self.assertEqual((ops.comments, ops.diagnosed), ([], []))
+        self.assertEqual((ops.comments, ops.diagnosed, ops.filed), ([], [], []))
 
-    def test_an_app_failure_and_a_gating_failure_search_only_the_app_test(self):
-        plans = [manifest({TEST: 'failed'}), manifest({TEST: 'failed'}), manifest({TEST: 'failed'}),
-                 self.journeys('failed', 'passed')]
-        ops, verdict = self.tick(plans)
-        self.assertEqual(verdict, 'FAIL')
-        self.assertTrue(any(e[0] == 'check' for e in ops.events))
-        self.assertIn('failing: ' + ', '.join(sorted([JOURNEY, TEST])), ops.posted[0])
-        self.assertEqual(ops.diagnosed[0][0], sorted([JOURNEY, TEST]))
+    def test_the_report_carries_the_plans_minutes(self):
+        plans = Path(tempfile.mkdtemp())
+        for folder, seconds in (('journeys', [120, 30.4]), ('app', [600]), ('rerun-1', [60]), ('tour', [300])):
+            (plans / folder).mkdir()
+            (plans / folder / 'manifest.json').write_text(json.dumps({'steps': [{'seconds': x} for x in seconds]}))
+        (plans / 'rerun-2').mkdir()
+        (plans / 'rerun-2' / 'manifest.json').write_text('not json')
+        self.assertEqual(run.plan_minutes(plans), {'app': 11, 'screen tour': 5, 'scripted journeys': 3})
+        self.assertEqual(run.plan_minutes(plans / 'nowhere'), {})
+        self.assertEqual(run.minutes_line({'app': 11, 'scripted journeys': 3}), 'minutes: app 11, scripted journeys 3')
+        self.assertEqual(run.minutes_line({}), '')
+        shutil.rmtree(plans)
+
+    def test_a_commit_with_a_pass_or_fail_report_is_not_run_again_and_an_inconclusive_one_is(self):
+        def reported(verdict):
+            return [f'```text\nLane report scripted-journeys-{SHA[:7]} — {verdict}\n```\n']
+        for verdict, plans, expected in (('PASS', [], 'held'), ('FAIL', [], 'held'),
+                                         ('INCONCLUSIVE', [self.journeys('passed', 'passed')], 'PASS')):
+            with self.subTest(verdict=verdict):
+                ops, got = self.journeys_run(plans, bodies=reported(verdict))
+                self.assertEqual(got, expected)
+                self.assertEqual(len(ops.posted), 0 if expected == 'held' else 1)
+
+
+class PhoneBuildAsksForJourneysTests(unittest.TestCase):
+    """scripts/phone-build is the other half of #3669: every build it delivers asks for the journeys on its commit."""
+
+    def test_deliver_asks_for_the_journeys_after_the_plan_is_written(self):
+        import inspect
+        phone = load_phone_build()
+        source = inspect.getsource(phone.deliver)
+        self.assertLess(source.index('share_files(folder, sha)'), source.index('request_journeys(sha)'))
+        self.assertLess(source.index('request_journeys(sha)'), source.index('notify_ready(sha, plan)'))
+
+    def test_the_request_names_the_commit_and_never_fails_the_build(self):
+        phone = load_phone_build()
+        for outcome in (types.SimpleNamespace(returncode=0, stdout='', stderr=''),
+                        types.SimpleNamespace(returncode=1, stdout='', stderr='no such commit'), OSError('no python')):
+            with self.subTest(outcome=str(outcome)[:30]):
+                calls = []
+
+                def fake(cmd, **kw):
+                    calls.append(cmd)
+                    if isinstance(outcome, Exception):
+                        raise outcome
+                    return outcome
+                with patch.object(phone.subprocess, 'run', fake), patch.object(phone, 'say'):
+                    phone.request_journeys(SHA)    # must not raise
+                self.assertEqual(calls[0][1:4], [str(run.REPO_ROOT / 'ops' / 'testdesk' / 'sm_integration_run.py'),
+                                                 '--journeys-request', SHA])
+
+
+class JourneysRequestTests(unittest.TestCase):
+    """scripts/phone-build asks for the journeys; the launchd tick runs them first (#3669)."""
+
+    def request(self, home, sha=SHA, why='a phone build was cut', at=1_000_000.0):
+        return run.write_journeys_request(Path(home), sha, why, at)
+
+    def test_a_request_is_kept_once_and_listed_oldest_first(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.request(tmp, SHA, 'first', 100.0)
+            self.request(tmp, SHA, 'second', 200.0)       # asking twice for one commit keeps the first
+            self.request(tmp, OLD, 'older commit, later ask', 150.0)
+            found = run.pending_journeys_requests(Path(tmp), 300.0)
+        self.assertEqual([(r['sha'], r['why']) for r in found], [(SHA, 'first'), (OLD, 'older commit, later ask')])
+
+    def test_stale_and_unreadable_requests_are_dropped(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            stale = self.request(tmp, SHA, at=0.0)
+            (run.request_dir(Path(tmp)) / ('c' * 40 + '.json')).write_text('{not json')
+            (run.request_dir(Path(tmp)) / ('d' * 40 + '.json')).write_text(json.dumps(
+                {'sha': 'e' * 40, 'why': 'name does not match the commit', 'requested': 1.0}))
+            fresh = self.request(tmp, OLD, at=run.REQUEST_MAX_AGE_SECONDS)
+            found = run.pending_journeys_requests(Path(tmp), run.REQUEST_MAX_AGE_SECONDS + 1)
+            self.assertEqual([r['sha'] for r in found], [OLD])
+            self.assertFalse(stale.exists())
+            self.assertTrue(fresh.exists())
+            self.assertEqual(sorted(p.name for p in run.request_dir(Path(tmp)).iterdir()), [OLD + '.json'])
+
+    def tick_with(self, tmp, plans, bodies=(), **kw):
+        ops = FakeOps(tmp, plans, bodies=list(bodies), listing=ScriptedJourneyOutcomeTests.LISTING)
+        self.request(ops.home, ops.sha, 'a phone build was cut from this commit', at=ops.now())
+        with mac_with_room():
+            return ops, run.tick(ops)
+
+    def test_the_tick_runs_a_requested_commit_first_and_clears_the_request(self):
+        passing = ScriptedJourneyOutcomeTests.journeys(ScriptedJourneyOutcomeTests(), 'passed', 'passed')
+        with tempfile.TemporaryDirectory() as tmp:
+            ops, verdict = self.tick_with(tmp, [passing], bodies=[report_comment(OLD[:7], 'PASS')])
+            left = list(run.request_dir(ops.home).glob('*.json'))
+        self.assertEqual(verdict, 'journeys')
+        self.assertEqual([c[1] for c in ops.calls if c[0] == 'test_plan'], ['journeys'])   # not the tip's app plan
+        self.assertEqual(run.journey_reported(ops.posted), [(SHA[:7], 'PASS')])
+        self.assertEqual(left, [])
+
+    def test_a_request_waits_while_the_mac_has_no_room_and_the_tip_is_not_tested_instead(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ops = FakeOps(tmp, [], bodies=[report_comment(OLD[:7], 'PASS')])
+            self.request(ops.home, ops.sha, at=ops.now())
+            with patch.object(run.lane_slots, 'memory_pressure_level', return_value=2), \
+                    patch.object(run.lane_slots, 'simulator_job_running', return_value=False):
+                self.assertEqual(run.tick(ops), 'held')
+            self.assertEqual(len(list(run.request_dir(ops.home).glob('*.json'))), 1)
+        self.assertEqual(ops.posted, [])
+
+    def test_a_request_whose_commit_already_has_a_report_is_cleared_and_the_tick_goes_on(self):
+        done = f'```text\nLane report scripted-journeys-{SHA[:7]} — PASS\n```\n'
+        with tempfile.TemporaryDirectory() as tmp:
+            ops, verdict = self.tick_with(tmp, [manifest({TEST: 'passed'}), tour_manifest()],
+                                          bodies=[report_comment(OLD[:7], 'PASS'), done])
+            left = list(run.request_dir(ops.home).glob('*.json'))
+        self.assertEqual(verdict, 'PASS')   # the tip's own run
+        self.assertEqual(left, [])
+
+    def test_an_inconclusive_run_is_tried_once_more_and_then_dropped(self):
+        broken = {'status': 'failed_or_incomplete', 'steps': [], 'error': 'journeys: runner exit 1, no manifest'}
+        with tempfile.TemporaryDirectory() as tmp:
+            ops = FakeOps(tmp, [broken, broken], listing=ScriptedJourneyOutcomeTests.LISTING)
+            seconds = [run.time.time()]
+            def now():  # every look at the clock is a minute later, so two runs never share an evidence folder
+                seconds[0] += 60
+                return seconds[0]
+            ops.now = now
+            path = self.request(ops.home, ops.sha, at=ops.now())
+            with mac_with_room():
+                self.assertEqual(run.tick(ops), 'journeys')
+                self.assertTrue(path.exists())      # first attempt: kept
+                self.assertEqual(run.tick(ops), 'journeys')
+            self.assertFalse(path.exists())         # second attempt: dropped
+        self.assertEqual(len(ops.posted), 2)
+
+    def test_a_run_that_raises_is_counted_and_never_stops_the_tips_tests(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ops = FakeOps(tmp, [manifest({TEST: 'passed'}), tour_manifest()], bodies=[report_comment(OLD[:7], 'PASS')],
+                          listing=ScriptedJourneyOutcomeTests.LISTING)
+            clock = [run.time.time()]
+            ops.now = lambda: clock.__setitem__(0, clock[0] + 60) or clock[0]
+            path = self.request(ops.home, ops.sha, at=ops.now())
+            with mac_with_room(), patch.object(run, 'journeys_run', side_effect=RuntimeError('post failed')):
+                self.assertEqual(run.take_journeys_request(ops, ops.now(), ops.report_comments()), 'INCONCLUSIVE')
+                self.assertTrue(path.exists())                       # first attempt: kept
+                self.assertEqual(run.take_journeys_request(ops, ops.now(), ops.report_comments()), 'INCONCLUSIVE')
+                self.assertFalse(path.exists())                      # second: dropped, not retried for three days
+            with mac_with_room(), patch.object(run, 'journeys_run', side_effect=RuntimeError('post failed')):
+                self.request(ops.home, ops.sha, at=ops.now())
+                self.assertEqual(run.tick(ops), 'journeys')          # logged, not raised: no 'tick error', the tip waits one tick
+
+    def test_a_busy_simulator_uses_no_attempt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ops = FakeOps(tmp, [], listing=ScriptedJourneyOutcomeTests.LISTING)
+            path = self.request(ops.home, ops.sha, at=ops.now())
+            @contextlib.contextmanager
+            def busy():
+                raise TimeoutError('Mac-wide simulator slot is busy')
+                yield
+            with mac_with_room(), patch.object(run, 'exclusive_slot', busy):
+                for _ in range(3):
+                    self.assertEqual(run.tick(ops), 'held')
+            self.assertEqual(json.loads(path.read_text())['attempts'], 0)
+        self.assertEqual(ops.posted, [])
+
+    def test_a_request_yields_to_waiting_lane_tests_for_three_hours_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ops = FakeOps(tmp, [], waiting=[7], listing=ScriptedJourneyOutcomeTests.LISTING)
+            self.request(ops.home, ops.sha, at=ops.now())
+            with mac_with_room():
+                self.assertEqual(run.tick(ops), 'held')
+            self.assertEqual(ops.posted, [])
+            passing = ScriptedJourneyOutcomeTests.journeys(ScriptedJourneyOutcomeTests(), 'passed', 'passed')
+            ops.plans = [passing]
+            (run.request_dir(ops.home) / f'{ops.sha}.json').write_text(json.dumps(
+                {'sha': ops.sha, 'why': 'w', 'requested': ops.now() - run.LANE_YIELD_SECONDS - 1, 'attempts': 0}))
+            with mac_with_room():
+                self.assertEqual(run.tick(ops), 'journeys')
+
+    def test_a_confirmed_hosted_fail_is_handled_before_a_waiting_request(self):
+        hosted = hosted_report(OLD[:7], 'FAIL', [TEST])
+        with tempfile.TemporaryDirectory() as tmp:
+            ops = HostedOps(tmp, [], bodies=[hosted], listing=ScriptedJourneyOutcomeTests.LISTING)
+            self.request(ops.home, ops.sha, at=ops.now())
+            with patch.object(run, 'journeys_run', side_effect=AssertionError('revert first')), \
+                    recording_slot(ops.events):
+                run.tick(ops)   # goes on to the hosted FAIL (its own tests cover what it does there)
+            self.assertEqual(len(list(run.request_dir(ops.home).glob('*.json'))), 1)
+
+    def test_again_runs_a_commit_that_already_has_a_report(self):
+        done = f'```text\nLane report scripted-journeys-{SHA[:7]} — FAIL\n```\n'
+        passing = ScriptedJourneyOutcomeTests.journeys(ScriptedJourneyOutcomeTests(), 'passed', 'passed')
+        with tempfile.TemporaryDirectory() as tmp, mac_with_room():
+            ops = FakeOps(tmp, [passing], bodies=[done], listing=ScriptedJourneyOutcomeTests.LISTING)
+            self.assertEqual(run.journeys_run(ops, SHA, 'a flake?'), 'held')
+            self.assertEqual(run.journeys_run(ops, SHA, 'a flake?', again=True), 'PASS')
+
+    def test_the_command_line_exit_codes_for_an_upload(self):
+        cases = (('PASS', 0), ('FAIL', 1), ('INCONCLUSIVE', 1), ('held', 75))
+        for verdict, code in cases:
+            with self.subTest(verdict=verdict), tempfile.TemporaryDirectory() as tmp:
+                ops = FakeOps(tmp, [])
+                with patch.object(run, 'Ops', return_value=ops), patch.object(run, 'journeys_run', return_value=verdict), \
+                        patch('builtins.print'):
+                    self.assertEqual(run.main(['--journeys', '--sha', SHA]), code)
+        with tempfile.TemporaryDirectory() as tmp:   # held because an earlier report stands: that report's verdict
+            ops = FakeOps(tmp, [], bodies=[f'```text\nLane report scripted-journeys-{SHA[:7]} — FAIL\n```\n'])
+            with patch.object(run, 'Ops', return_value=ops), patch.object(run, 'journeys_run', return_value='held'), \
+                    patch('builtins.print'):
+                self.assertEqual(run.main(['--journeys', '--sha', SHA]), 1)
+
+    def test_dry_run_never_writes_a_request(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ops = FakeOps(tmp, [])
+            with patch.object(run, 'Ops', return_value=ops), patch('builtins.print'):
+                self.assertEqual(run.main(['--dry-run', '--journeys-request', 'HEAD']), 0)
+            self.assertEqual(run.pending_journeys_requests(ops.home, ops.now()), [])
+
+    def test_the_owners_plan_is_rewritten_only_for_the_build_waiting_for_him(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            phone = Path(tmp) / 'phone'
+            (phone / 'latest').mkdir(parents=True)
+            ops = FakeOps(tmp, [])
+            for sha, rewrites in ((SHA, 1), (OLD, 0)):
+                (phone / 'latest' / 'build.json').write_text(json.dumps({'sha': sha}))
+                before = len(ops.calls)
+                with patch.dict(os.environ, {'SM_PHONE_DIR': str(phone)}):
+                    run.refresh_phone_plan(ops, SHA)
+                self.assertEqual(sum(1 for c in ops.calls[before:] if c[-1:] == ['--plan-only']), rewrites)
+            with patch.dict(os.environ, {'SM_PHONE_DIR': str(phone / 'none')}):
+                run.refresh_phone_plan(ops, SHA)   # no phone build at all: nothing to do, nothing raised
+
+    def test_journeys_reports_do_not_count_as_integration_reports(self):
+        body = f'```text\nLane report scripted-journeys-{SHA[:7]} — PASS\n```\n'
+        self.assertEqual(run.reported([body]), [])
+        self.assertEqual(run.last_green(run.reported([body])), None)
+        self.assertEqual(run.journey_reported([body, report_comment(OLD[:7], 'PASS')]), [(SHA[:7], 'PASS')])
+
+    def test_the_command_line_asks_without_running_anything(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ops = FakeOps(tmp, [])
+            with patch.object(run, 'Ops', return_value=ops), patch('builtins.print'):
+                self.assertEqual(run.main(['--journeys-request', 'HEAD', '--why', 'a phone build was cut']), 0)
+            asked = run.pending_journeys_requests(ops.home, ops.now())
+        self.assertEqual([(r['sha'], r['why']) for r in asked], [(SHA, 'a phone build was cut')])
+        self.assertFalse(any(c[:3] == ['git', 'worktree', 'add'] for c in ops.calls))
 
 
 class FlakeTallyTests(unittest.TestCase):
@@ -1417,22 +1695,18 @@ class HostedRunTests(unittest.TestCase):
         self.assertEqual(bundles, [])
         self.assertFalse(state_written)
 
-    def test_a_second_hosted_pass_names_the_journey_that_earned_gating(self):
-        # #2894: the hosted run has no state.json, so its streaks come from the earlier reports on #184.
-        passing = manifest({}, probation={f'{JOURNEY}/testOpen': 'passed'})
-        passing['status'] = 'verified'
-        listing = {'gating': [], 'probation': [{'test': JOURNEY, 'journey': 'J1'}]}
-        first = report_comment(OLD[:7], 'PASS') + \
-            f'\n  scripted journeys (only those on gating are verdict input): {JOURNEY.rsplit("/", 1)[-1]} passed\n'
-        for earlier, due in ((first, True), (report_comment(OLD[:7], 'PASS'), False)):
-            with self.subTest(earlier_pass=due), tempfile.TemporaryDirectory() as tmp:
-                ops = HostedOps(tmp, [manifest({TEST: 'passed'}), passing], bodies=[earlier])
-                (ops.repo_root / 'TestPlans').mkdir(parents=True)
-                (ops.repo_root / 'TestPlans' / 'scripted-journeys.json').write_text(json.dumps(listing))
-                with recording_slot(ops.events), patch.dict(os.environ, {'GITHUB_RUN_ID': '42'}):
-                    self.assertEqual(run.hosted_run(ops, SHA), 'PASS')
-                self.assertEqual('journeys due to move: J1ListenToAnArticleJourneyUITests passed twice running'
-                                 in ops.posted[0], due)
+    def test_a_hosted_run_tests_the_tip_with_the_app_plan_and_the_tour_and_no_journeys(self):
+        # #3669: the journeys cost about an hour of a hosted Mac per tip; they run at the phone build instead.
+        listing = {'gating': [{'test': JOURNEY, 'journey': 'J1'}], 'probation': []}
+        with tempfile.TemporaryDirectory() as tmp:
+            ops = HostedOps(tmp, [manifest({TEST: 'passed'}), tour_manifest()], listing=listing,
+                            bodies=[report_comment(OLD[:7], 'PASS')])
+            (ops.repo_root / 'TestPlans').mkdir(parents=True)
+            (ops.repo_root / 'TestPlans' / 'scripted-journeys.json').write_text(json.dumps(listing))
+            with recording_slot(ops.events), patch.dict(os.environ, {'GITHUB_RUN_ID': '42'}):
+                self.assertEqual(run.hosted_run(ops, SHA), 'PASS')
+        self.assertEqual([c[1] for c in ops.calls if c[0] == 'test_plan'], ['app', 'tour'])
+        self.assertIn(run.JOURNEYS_NOT_ON_TIP, ops.posted[0])
 
     def test_a_pass_names_the_hosted_runner_and_the_candidate(self):
         with tempfile.TemporaryDirectory() as tmp:

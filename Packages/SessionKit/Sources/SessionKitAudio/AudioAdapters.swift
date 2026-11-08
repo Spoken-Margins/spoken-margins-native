@@ -1827,6 +1827,13 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, HeardAudio
     /// A headphone double-press arrives as next track. When set, it gets the press instead of skip forward,
     /// so the app can add a Margin by the listener's setting (#2031). Skip forward stays skip forward.
     public var nextTrackHandler: (@Sendable () -> Void)?
+    /// Told the name of every system remote command that arrives (play, pause, togglePlayPause, stop, skipBackward,
+    /// previousTrack, skipForward, nextTrack, ...), before it is handled. For the Diagnostics log of a recording's
+    /// headphone events (#3650); it changes nothing about how the command is answered.
+    public var remoteCommandArrivalHandler: (@Sendable (String) -> Void)?
+    /// Told what each handler answered iOS for the command it just received ("success", "noSuchContent",
+    /// "commandFailed", ...). Diagnostics only (#3650).
+    public var remoteCommandAnswerHandler: (@Sendable (String, String) -> Void)?
     private let interruptionHandler: (@Sendable (AudioPlaybackInterruptionEvent) -> Void)?
     private let audioSessionNotificationCenter: NotificationCenter
     private var mediaContext: PlaybackMediaContext?
@@ -3255,8 +3262,36 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, HeardAudio
         _ command: MPRemoteCommand,
         handler: @escaping (MPRemoteCommandEvent) -> MPRemoteCommandHandlerStatus
     ) {
-        let target = command.addTarget(handler: handler)
+        let name = Self.remoteCommandName(command)
+        let target = command.addTarget { [weak self] event in
+            self?.remoteCommandArrivalHandler?(name)
+            let status = handler(event)
+            self?.remoteCommandAnswerHandler?(name, Self.describe(status))
+            return status
+        }
         remoteCommandTargets.append((command, target))
+    }
+
+    private static func describe(_ status: MPRemoteCommandHandlerStatus) -> String {
+        switch status {
+        case .success: return "success"
+        case .noSuchContent: return "noSuchContent"
+        case .noActionableNowPlayingItem: return "noActionableNowPlayingItem"
+        case .deviceNotFound: return "deviceNotFound"
+        case .commandFailed: return "commandFailed"
+        @unknown default: return "raw\(status.rawValue)"
+        }
+    }
+
+    private static func remoteCommandName(_ command: MPRemoteCommand) -> String {
+        let center = MPRemoteCommandCenter.shared()
+        let known: [(String, MPRemoteCommand)] = [
+            ("play", center.playCommand), ("pause", center.pauseCommand), ("togglePlayPause", center.togglePlayPauseCommand),
+            ("stop", center.stopCommand), ("skipBackward", center.skipBackwardCommand), ("skipForward", center.skipForwardCommand),
+            ("previousTrack", center.previousTrackCommand), ("nextTrack", center.nextTrackCommand),
+            ("changePlaybackPosition", center.changePlaybackPositionCommand), ("changePlaybackRate", center.changePlaybackRateCommand),
+        ]
+        return known.first { $0.1 === command }?.0 ?? "other"
     }
 
     private func removeRemoteCommandHandlers() {
@@ -3638,15 +3673,25 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
         // session already on its route is left here. A restart's cycle sets the category again, as before (#937).
         let wanted = Self.recordingConfiguration(for: inputChoice)
         if cycleSession || AudioSessionConfiguration.needsCategoryChange(current: Self.currentConfiguration(session), wanted: wanted) {
-            try MainThreadOperationLabels.shared.scoped("audioSession.category") {
-                try session.setCategory(.playAndRecord, mode: .spokenAudio, options: Self.recordingOptions(for: inputChoice))
+            do {
+                try MainThreadOperationLabels.shared.scoped("audioSession.category") {
+                    try session.setCategory(.playAndRecord, mode: .spokenAudio, options: Self.recordingOptions(for: inputChoice))
+                }
+            } catch {
+                sessionSwitchFields["sessionSwitchError"] = "category:\(SafeErrorText.describe(error))" // #3633
+                throw error
             }
             sessionSwitchFields["sessionCategoryOnMain"] = "set"
         } else {
             sessionSwitchFields["sessionCategoryOnMain"] = "already_set"
         }
         #endif
-        try MainThreadOperationLabels.shared.scoped("audioSession.activate") { try session.setActive(true) }
+        do {
+            try MainThreadOperationLabels.shared.scoped("audioSession.activate") { try session.setActive(true) }
+        } catch {
+            sessionSwitchFields["sessionSwitchError"] = "activate:\(SafeErrorText.describe(error))" // #3633
+            throw error
+        }
         #if os(iOS)
         sessionSwitchFields["sessionOnMainMs"] = String(max(0, Int(((ProcessInfo.processInfo.systemUptime - started) * 1_000).rounded())))
         #endif
@@ -3669,6 +3714,18 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
         recorder.isMeteringEnabled = true
         recorder.prepareToRecord()
         guard recorder.record() else {
+            // `prepareToRecord` started the recorder's audio queue. Dropped without `stop()`, the queue's next input
+            // callback reads the freed recorder and the app crashes (#3633, in-app record over AirPlay).
+            recorder.stop()
+            try? fileManager.removeItem(at: url)
+            #if os(iOS)
+            // Why `record()` said no is not known (#3633). Keep the route and category as they stood at the refusal,
+            // since the cleanup after a failed start changes them before anything reads them.
+            let refused = AVAudioSession.sharedInstance()
+            sessionSwitchFields["recordRefusedOutputs"] = refused.currentRoute.outputs.map(\.portType.rawValue).joined(separator: "+")
+            sessionSwitchFields["recordRefusedInputs"] = refused.currentRoute.inputs.map(\.portType.rawValue).joined(separator: "+")
+            sessionSwitchFields["recordRefusedCategory"] = "\(refused.category.rawValue)/\(refused.mode.rawValue)/\(refused.categoryOptions.rawValue)"
+            #endif
             throw SessionKitError.persistenceFailed("recording_failed")
         }
         recorderDelegate = delegate
@@ -3764,6 +3821,8 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
         #endif
         let (recorder, url) = try startRecorder(cycleSession: false)
         isCaptureActive = true
+        // A recorder still held here would be freed while running, which crashes as above (#3633).
+        self.recorder?.stop()
         self.recorder = recorder
         self.currentURL = url
         recordingStartedAt = Date()
@@ -4118,7 +4177,7 @@ extension SystemRecordingClient: RecordingSessionPreparing {
         }
         sessionPreparation.prepare(
             readContext: { Self.readRecordingContext(AVAudioSession.sharedInstance()) },
-            apply: { context in Self.applyRecordingSession(for: context.inputChoice) },
+            applyReportingFailure: { context in Self.applyRecordingSession(for: context.inputChoice) },
             then: then
         )
         #else
@@ -4139,14 +4198,17 @@ extension SystemRecordingClient: RecordingSessionPreparing {
     }
 
     #if canImport(AVFoundation) && os(iOS)
+    /// `.allowAirPlay` is on for both: `playAndRecord` drops AirPlay outputs without it, so an in-app record over a
+    /// HomePod moved playback to the phone speaker and the recorder start failed (#3633). Whether the start now
+    /// succeeds over AirPlay only the owner's phone shows; the options themselves are pinned by a test.
     static func recordingOptions(for choice: RecordingInputChoice) -> AVAudioSession.CategoryOptions {
         switch choice {
         case .phoneMicrophoneKeepingA2DP:
             // No hands-free profile in the options: the Bluetooth microphone isn't an input, so iOS leaves
             // the headphones on A2DP and records from the phone (#1506).
-            return [.defaultToSpeaker, .allowBluetoothA2DP]
+            return [.defaultToSpeaker, .allowBluetoothA2DP, .allowAirPlay]
         case .headsetMicrophoneAllowed:
-            return [.defaultToSpeaker, .allowBluetoothHFP]
+            return [.defaultToSpeaker, .allowBluetoothHFP, .allowAirPlay]
         }
     }
 
@@ -4173,7 +4235,7 @@ extension SystemRecordingClient: RecordingSessionPreparing {
 
     /// Runs on the preparation queue. True when it left the session in the recording configuration, which is
     /// what an abandon has to let go of.
-    static func applyRecordingSession(for choice: RecordingInputChoice) -> Bool {
+    static func applyRecordingSession(for choice: RecordingInputChoice) -> RecordingSessionPreparation<PreparedRecordingSession>.Outcome {
         let session = AVAudioSession.sharedInstance()
         var changed = false
         do {
@@ -4182,9 +4244,10 @@ extension SystemRecordingClient: RecordingSessionPreparing {
                 changed = true
             }
             try session.setActive(true)
-            return true
+            return .init(applied: true)
         } catch {
-            return changed
+            // `beginRecording` redoes the switch, so the start may go on; the reason must not vanish (#3633).
+            return .init(applied: changed, failure: SafeErrorText.describe(error))
         }
     }
 
@@ -4192,6 +4255,7 @@ extension SystemRecordingClient: RecordingSessionPreparing {
         guard let claim else { return ["sessionPreparedOffMain": "none"] }
         var fields = ["sessionPreparedOffMain": claim.applied ? "applied" : "failed"]
         if let elapsedMs = claim.elapsedMs { fields["sessionPreparedOffMainMs"] = String(elapsedMs) }
+        if let failure = claim.failure { fields["sessionPrepareError"] = failure }
         return fields
     }
     #endif

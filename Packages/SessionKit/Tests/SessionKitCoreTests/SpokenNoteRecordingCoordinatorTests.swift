@@ -118,6 +118,32 @@ final class SpokenNoteRecordingCoordinatorTests: XCTestCase {
 
     // MARK: Tests
 
+    /// #3663: the note is named for its day until words arrive, then for its first words; a rename is the recording's own.
+    func testTheTitleFollowsTheWordsUntilTheListenerRenamesTheNote() async throws {
+        let transcriber = FakeTranscriber()
+        transcriber.holds = true
+        let (coordinator, _, _, saved) = makeCoordinator(transcriber: transcriber)
+
+        let before = await coordinator.snapshot().title
+        XCTAssertTrue(before.hasPrefix("Spoken note,"), before)
+
+        try await coordinator.startTake()
+        _ = try await coordinator.stopTake()
+        XCTAssertEqual(saved.all.last?.title, before, "the row is created with the day-and-time name while the words are awaited")
+
+        transcriber.release()
+        await coordinator.waitForTranscripts()
+        let named = await coordinator.snapshot().title
+        XCTAssertTrue(named.hasSuffix("· Call the plumber"), named)
+        XCTAssertEqual(saved.all.last?.title, named, "the row the recording saves carries the same name")
+
+        await coordinator.adoptTitle("Plumber call")
+        let renamed = await coordinator.snapshot().title
+        XCTAssertEqual(renamed, "Plumber call")
+        await coordinator.flushItem()
+        XCTAssertEqual(saved.all.last?.title, named, "adopting a title writes nothing itself: the rename was written by the store")
+    }
+
     func testAStoppedTakeIsInTheNoteBeforeAnyTranscriptExistsAndTheRowIsCreatedWithIt() async throws {
         let transcriber = FakeTranscriber()
         transcriber.holds = true

@@ -211,13 +211,13 @@ struct LiveSessionView: View {
                 ForEach(ElsewhereKind.allCases, id: \.self) { Text($0.label).tag($0) }
             }
             .pickerStyle(.segmented)
-            TextField(kind == .meeting ? "Meeting name" : "Title", text: $title)
+            AppTextField(kind == .meeting ? "Meeting name" : "Title", text: $title)
                 .textFieldStyle(.roundedBorder)
                 .accessibilityIdentifier("liveSession.setup.title")
             if kind != .paper {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Where are you now?").font(.headline)
-                    TextField(kind == .meeting ? "Meeting clock, like 2:00" : "Time in the book, like 0:00", text: $startPosition)
+                    AppTextField(kind == .meeting ? "Meeting clock, like 2:00" : "Time in the book, like 0:00", text: $startPosition)
                         .textFieldStyle(.roundedBorder)
                         .keyboardType(.numbersAndPunctuation)
                     Text(kind == .meeting ? "Leave blank if you don't know. You can set it later in Session." : "The time your audiobook app shows.")
@@ -416,16 +416,15 @@ struct LiveSessionView: View {
     /// The ended session's choices, at the top of the Session pane. Resume is in the dock, where End was.
     private func finishCard(_ session: LiveSession) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(session.isQuick == true ? "Quick session" : "Session ended").font(.headline)
+            Text(session.isQuick == true ? "Quick session" : "Session ended").font(.headline).accessibilityAddTraits(.isHeader)
             ForEach(Array(LiveSessionPlaceMap.conflicts(in: session).enumerated()), id: \.offset) { _, conflict in
                 Text(conflict.description()).font(.caption).foregroundStyle(AppColors.watchSecondary)
             }
             if let check = LiveSessionPlaceMap.clockCheck(for: session) {
                 Text(check.note).font(.caption).foregroundStyle(AppColors.watchSecondary)
-                Button("Use the start the clock shows") { controller.useImpliedStart() }
+                Button { controller.useImpliedStart() } label: { Text("Use the start the clock shows").frame(minHeight: 44).contentShape(Rectangle()) }
                     .buttonStyle(.bordered)
                     .tint(.white)
-                    .frame(minHeight: 44)
             }
             if session.kind == .meeting {
                 Text("Line it up with the meeting's transcript (.vtt, .srt, .docx or .txt) to place your Margins on what was said. You can add the recording too.")
@@ -479,10 +478,9 @@ struct PositionNudgeRow: View {
     }
 
     private func nudge(_ title: String, _ delta: Int, _ accessibility: String) -> some View {
-        Button(title) { adjustmentMs += delta }
+        Button { adjustmentMs += delta } label: { Text(title).minimumTapTarget() }
             .buttonStyle(.bordered)
             .font(.caption.monospacedDigit())
-            .frame(minHeight: 44)
             .accessibilityLabel(accessibility)
     }
 }
@@ -518,7 +516,7 @@ private struct LiveSessionEndCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("End Session").font(.headline)
+            Text("End Session").font(.headline).accessibilityAddTraits(.isHeader)
             VStack(alignment: .leading, spacing: 4) {
                 Picker("When did it end?", selection: $whenIndex) {
                     ForEach(Array(choices.enumerated()), id: \.offset) { index, choice in
@@ -536,7 +534,7 @@ private struct LiveSessionEndCard: View {
             if kind != .paper {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Where are you now?").font(.subheadline.weight(.semibold))
-                    TextField(kind == .meeting ? "Meeting clock, like 47:30" : "Time in the book, like 1:23:10", text: $endPosition)
+                    AppTextField(kind == .meeting ? "Meeting clock, like 47:30" : "Time in the book, like 1:23:10", text: $endPosition)
                         .textFieldStyle(.roundedBorder)
                         .keyboardType(.numbersAndPunctuation)
                     Text(kind == .audiobook
@@ -553,12 +551,12 @@ private struct LiveSessionEndCard: View {
             }
             .filledActionButton()
             .accessibilityIdentifier("liveSession.confirmEnd")
-            Button("It's still going. Remind me in 15 minutes", action: onStillGoing)
+            Button(action: onStillGoing) {
+                Text("It's still going. Remind me in 15 minutes").frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+            }
                 .buttonStyle(.bordered)
-                .frame(maxWidth: .infinity, minHeight: 44)
                 .accessibilityIdentifier("liveSession.stillGoing")
-            Button("Cancel", action: onCancel)
-                .frame(maxWidth: .infinity, minHeight: 44)
+            Button(action: onCancel) { Text("Cancel").frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle()) }
                 .accessibilityIdentifier("liveSession.cancelEnd")
         }
         .padding(16)
@@ -579,7 +577,7 @@ struct LiveSessionPlaceField: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            TextField(prompt, text: $text)
+            AppTextField(prompt, text: $text)
                 .textFieldStyle(.roundedBorder)
             if let read {
                 Text("Reads as \(read.label)").font(.caption).foregroundStyle(AppColors.secondaryText)

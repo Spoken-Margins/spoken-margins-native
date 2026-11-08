@@ -154,13 +154,13 @@ extension Gate1AppModel {
             let store = try requireStore()
             showOpenedItem(id: id, detail: try loadItemDetail(id: id, store: store), store: store)
         } catch {
-            reportFailure(error, context: "Open item failed")
+            reportFailure(error, context: "Open failed")
         }
     }
 
     /// A listener's tap on an item (#2505). The item is read off the main thread, and the screen the tap came from
     /// stays until it is ready, so opening a large item no longer freezes the tap. A newer open, leaving that screen,
-    /// or a recording starting meanwhile drops it.
+    /// a recording starting, or playback starting by any route (#3638) meanwhile drops it.
     func openItemFromTap(id: String) {
         let diagnosticStart = ProcessInfo.processInfo.systemUptime
         recordDeveloperDiagnostic("item.open.begin", ["item": DeveloperDiagnosticRecording.token(id)])
@@ -170,21 +170,22 @@ extension Gate1AppModel {
         do {
             store = try requireStore()
         } catch {
-            reportFailure(error, context: "Open item failed")
+            reportFailure(error, context: "Open failed")
             return
         }
         let generation = backgroundRefresh.beginOpen()
         let from = screen
+        let playbackAtTap = playbackStartMark
         backgroundRefresh.holdOpen(Task { [weak self] in
             guard let self else { return }
             defer { self.recordItemOpenEnd(since: diagnosticStart) }
             do {
                 let detail = try await self.loadItemDetailOffMain(id: id, store: store)
-                guard self.stillWantsOpen(generation, from: from) else { return }
+                guard self.stillWantsOpen(generation, from: from, playbackAtTap: playbackAtTap) else { return }
                 self.hangTelemetry.labels.scoped("openItemFromTap") { self.showOpenedItem(id: id, detail: detail, store: store) }
             } catch {
-                guard self.stillWantsOpen(generation, from: from) else { return }
-                self.reportFailure(error, context: "Open item failed")
+                guard self.stillWantsOpen(generation, from: from, playbackAtTap: playbackAtTap) else { return }
+                self.reportFailure(error, context: "Open failed")
             }
         })
     }
@@ -196,8 +197,16 @@ extension Gate1AppModel {
     /// Waits for the open a tap started. Production code never waits; tests do.
     func settleItemOpen() async { await backgroundRefresh.settledOpen() }
 
-    private func stillWantsOpen(_ generation: Int, from: Gate1Screen) -> Bool {
+    /// What is sounding now (#3638). Playing a shared Margin, starting an item, Skim and the transport don't touch the
+    /// open gate, so a late open asks this instead of each of them, and no start can be forgotten.
+    var playbackStartMark: PlaybackStartMark {
+        PlaybackStartMark(snapshot: snapshot, momentId: marginMoment?.target.marginId,
+                          sharedMarginId: playingImportedCommentary?.id, ownMarginId: playingInterjectionAudioId)
+    }
+
+    private func stillWantsOpen(_ generation: Int, from: Gate1Screen, playbackAtTap: PlaybackStartMark) -> Bool {
         !Task.isCancelled && backgroundRefresh.isCurrentOpen(generation) && screen == from && !recordingNavigationIsLocked
+            && !playbackStartMark.startedSince(playbackAtTap)
     }
 
     private func showOpenedItem(id: String, detail: ItemDetailState, store: SQLiteSessionStore) {

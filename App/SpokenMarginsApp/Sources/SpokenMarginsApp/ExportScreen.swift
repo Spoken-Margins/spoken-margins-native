@@ -14,31 +14,15 @@ struct ExportScreen: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    Text("Share")
+                    Text("Export")
                         .font(.largeTitle.bold())
                         .screenTitle()
                     Text(model.selectedItem.title)
                         .font(.headline)
                         .fixedSize(horizontal: false, vertical: true)
-                    Text("Share reviewed Margins with their voice, or export a session handoff as Markdown or JSON.")
+                    Text("Take a session out for yourself or your tools, as Markdown or JSON. To send Margins to a friend, use Share.")
                         .foregroundStyle(AppColors.secondaryText)
-                    ProductPanel {
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text("Share Margins")
-                                .font(.headline)
-                            Text("Review the words, voice version, item transport, and where each Margin sits in the source that will leave your device.")
-                                .font(.callout)
-                                .foregroundStyle(AppColors.secondaryText)
-                            Button(action: model.prepareExportShareInterjections) {
-                                Label("Share Margins (\(shareableMarginCount))", systemImage: "person.wave.2")
-                                    .frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(PrimaryButtonStyle())
-                            // Stay tappable while Margins exist but lack words: the sheet says why they're left out.
-                            .disabled(model.exportShareCandidates.isEmpty)
-                        }
-                    }
-                    Text("Export listening session")
+                    Text("Export a session")
                         .font(.headline)
                     ProductPanel {
                         VStack(alignment: .leading, spacing: 14) {
@@ -149,7 +133,7 @@ struct ExportScreen: View {
                             }
                             if model.exportPreviewIsTruncated {
                                 Label(
-                                    "Preview truncated; Copy and Share use the complete export.",
+                                    "Preview truncated; Copy and Export use the complete export.",
                                     systemImage: "doc.text.magnifyingglass"
                                 )
                                 .font(.caption)
@@ -162,7 +146,7 @@ struct ExportScreen: View {
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .accessibilityLabel(
                                     model.exportPreviewIsTruncated
-                                        ? "Truncated export preview, \(model.exportPreviewSizeDescription). Copy and Share use the complete export."
+                                        ? "Truncated export preview, \(model.exportPreviewSizeDescription). Copy and Export use the complete export."
                                         : "Export preview, \(model.exportPreviewSizeDescription)."
                                 )
                                 .accessibilityIdentifier("export.preview")
@@ -182,13 +166,6 @@ struct ExportScreen: View {
             }
             .miniPlayerKeepOut()
         }
-    }
-
-    private var shareableMarginCount: Int {
-        // A voice Margin with no words still counts: it goes with placeholder words (#3027).
-        SharedMarginTextRequirement.initiallyIncluded(model.exportShareCandidates).filter {
-            SharedMarginTextRequirement.canShare($0, hasVoice: $0.audioPath.flatMap(model.resolvedInterjectionAudioURL(for:)) != nil)
-        }.count
     }
 
     #if canImport(UIKit)
@@ -215,6 +192,50 @@ extension View {
                 SessionActivityView(activityItems: [file], onSuccessfulCompletion: {})
             }
         }
+    }
+}
+
+extension View {
+    /// The share sheet for a spoken note's exported files while `files` is set (#3660). Setting `files` to nil, which the
+    /// sheet does when it closes, removes the folder the files were made in (`SpokenNoteExportModel`).
+    func spokenNoteExportSheet(_ files: Binding<SpokenNoteExportFiles?>) -> some View {
+        sheet(isPresented: Binding(get: { files.wrappedValue != nil }, set: { if !$0 { files.wrappedValue = nil } })) {
+            if let exported = files.wrappedValue {
+                SessionActivityView(activityItems: exported.shareURLs, onSuccessfulCompletion: {})
+            }
+        }
+    }
+}
+
+extension View {
+    /// Everything a spoken note's Export shows (#3660): the share sheet when the files are ready, a question first when
+    /// they hold less than the whole note, and a plain alert when it fails.
+    func spokenNoteExportFlow(_ export: SpokenNoteExportModel) -> some View {
+        spokenNoteExportSheet(Binding(get: { export.files }, set: { export.files = $0 }))
+            .alert(
+                "Part of this note can't be exported",
+                isPresented: Binding(get: { export.partial != nil }, set: { if !$0 { export.resolvePartial(share: false) } })
+            ) {
+                Button("Export what's there") { export.resolvePartial(share: true) }
+                Button("Cancel", role: .cancel) { export.resolvePartial(share: false) }
+            } message: {
+                Text(export.partial.map(SpokenNoteExportModel.partialMessage) ?? "")
+            }
+            .alert("Couldn't export", isPresented: Binding(get: { export.message != nil }, set: { if !$0 { export.message = nil } })) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(export.message ?? "")
+            }
+    }
+}
+
+/// Shown over the Library while a note's files are being made (a long note takes a moment to join).
+struct SpokenNoteExportProgress: View {
+    var body: some View {
+        ProgressView("Preparing export…")
+            .padding(20)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .accessibilityIdentifier("spokenNote.exportProgress")
     }
 }
 

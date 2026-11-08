@@ -20,7 +20,7 @@ struct Build23PrivateFeedRecoveryPanel: View {
                 .foregroundStyle(AppColors.secondaryText)
                 .fixedSize(horizontal: false, vertical: true)
 
-            TextField("Your feed link", text: $feedLink)
+            AppTextField("Your feed link", text: $feedLink)
                 .textFieldStyle(.roundedBorder)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()

@@ -754,7 +754,7 @@ struct ExperienceItemDetailScreen: View {
                 if model.canGenerateListeningMap {
                     Button(model.episodeMapPreparationStatus == "Preparing" ? "Preparing Listening Map…" : "Prepare Listening Map", systemImage: "sparkles") {
                         model.startPublicSourceCheck(itemId: model.activeItemId) // the tap itself, not the shared function a finished transcript also calls (#3449)
-                        model.generateListeningMap()
+                        model.generateListeningMapFromTap()
                     }
                     .disabled(model.isGeneratingListeningMap || model.episodeMapPreparationStatus == "Preparing")
                     .accessibilityIdentifier("item.generateMap.button")
@@ -1022,9 +1022,10 @@ private struct ItemDescriptionPreview: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("item.description.text")
             if ItemMetadata.needsExpansion(text) {
-                Button(expanded ? "Less" : "More") { expanded.toggle() }
+                Button { expanded.toggle() } label: {
+                    Text(expanded ? "Less" : "More").frame(minHeight: 44, alignment: .leading).contentShape(Rectangle())
+                }
                     .font(.subheadline.weight(.semibold))
-                    .frame(minHeight: 44, alignment: .leading)
                     .accessibilityHint(expanded ? "Shows fewer lines of the description." : "Shows the whole description.")
                     .accessibilityIdentifier("item.description.more")
             }

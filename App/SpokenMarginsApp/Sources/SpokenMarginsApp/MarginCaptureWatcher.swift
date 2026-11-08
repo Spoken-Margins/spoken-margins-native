@@ -13,7 +13,8 @@ import AVFoundation
 final class MarginCaptureWatcher {
     typealias HealthChange = (_ health: MarginCaptureSupervisor.Health, _ restarts: Int) -> Void
 
-    static let pollIntervalMs = 250
+    /// The steady rate; the start polls faster until the ready cue has sounded (`MarginCapturePollCadence`, #1506).
+    static let pollIntervalMs = MarginCapturePollCadence.steadyMs
 
     private var supervisor: MarginCaptureSupervisor?
     private let retryOrder = MarginCaptureRetryOrder()
@@ -63,6 +64,14 @@ final class MarginCaptureWatcher {
     var elapsedMs: Int { supervisor == nil ? 0 : max(0, nowMs() - startedAtMs) }
     /// Milliseconds since the audio route last changed during this recording, nil when it has not (#1708).
     var msSinceRouteChange: Int? { lastRouteChangeAtMs.map { max(0, nowMs() - $0) } }
+    /// The headphone-event monitor for this watcher's recordings, made by the model on first use (#3650). It lives here so
+    /// the model's own file does not grow.
+    var headphoneMonitor: HeadphoneEndGestureMonitor?
+    /// A fresh reading of the recorder, for the headphone log (#3650): the peak level now says whether the
+    /// recording went silent after a press. Nil when no recording is being watched.
+    func currentReading() -> RecordingCaptureReading? {
+        supervisor == nil ? nil : reading()
+    }
     /// The final diagnostics line for this recording is written (once per recording).
     var finalRecorded = false
 
@@ -92,11 +101,17 @@ final class MarginCaptureWatcher {
         guard autoPoll else { return }
         pollTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(for: .milliseconds(Self.pollIntervalMs))
+                let wait = self?.nextPollIntervalMs ?? Self.pollIntervalMs
+                try? await Task.sleep(for: .milliseconds(wait))
                 guard !Task.isCancelled, let self else { return }
                 self.tick()
             }
         }
+    }
+
+    /// The wait before the next poll: short until the cue has sounded, so the cue follows the first audio closely.
+    private var nextPollIntervalMs: Int {
+        MarginCapturePollCadence.intervalMs(elapsedMs: elapsedMs, cueSounded: readyCueGate.hasCued)
     }
 
     /// One poll: read the recorder, ask the supervisor, and carry out a restart if it asks for one.

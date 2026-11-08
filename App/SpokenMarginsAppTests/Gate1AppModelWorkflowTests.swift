@@ -129,6 +129,50 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.snapshot.sessionId, session)
     }
 
+    /// #3211: "Share this Margin" on Margin details is Share, so it opens the friend sheet with only that Margin on its
+    /// review (a packet, not a Markdown file), and leaves the playing session and the current screen alone.
+    func testShareThisMarginOpensTheFriendSheetWithOnlyThatMargin() throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        model.beginWrittenMargin()
+        model.saveWrittenMargin(text: "First private thought")
+        model.beginWrittenMargin()
+        model.saveWrittenMargin(text: "Second selected thought")
+        model.refreshMarginRows()
+        let row = try XCTUnwrap(model.marginRows.first { $0.preview.contains("Second selected") })
+        let session = model.snapshot.sessionId
+        let screen = model.screen
+
+        model.openMarginShare(row.interjection)
+
+        XCTAssertTrue(model.isSharingInterjectionsPresented)
+        XCTAssertEqual(model.sharingState.drafts.map(\.interjection.id), [row.interjection.id], "only the opened Margin is offered")
+        XCTAssertTrue(model.sharingState.drafts.allSatisfy(\.isIncluded))
+        XCTAssertEqual(model.sharingState.entry, .reviewDefaults)
+        XCTAssertTrue(model.sharingState.draftsPreparedForExport, "the sheet keeps the one-Margin list when it opens")
+        XCTAssertEqual(model.selectedItem.id, row.interjection.itemId)
+        XCTAssertEqual(model.screen, screen)
+        XCTAssertEqual(model.snapshot.sessionId, session)
+    }
+
+    /// #3211: a Margin the sheet can't send (not active) never opens an empty sheet.
+    func testShareThisMarginRefusesAMarginTheSheetCannotSend() throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        model.beginWrittenMargin()
+        model.saveWrittenMargin(text: "A thought that was removed")
+        model.refreshMarginRows()
+        var margin = try XCTUnwrap(model.marginRows.first).interjection
+        margin.status = "deleted"
+
+        model.openMarginShare(margin)
+
+        XCTAssertFalse(model.isSharingInterjectionsPresented)
+        XCTAssertTrue(model.sharingState.drafts.isEmpty)
+    }
+
     /// #147: when the newest session has no Margins, Share still opens the sheet with the Margins of the
     /// session that has them, as the Share/Export screen did.
     func testItemMarginsShareUsesTheSessionWithMarginsWhenTheNewestHasNone() throws {
@@ -191,7 +235,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
 
         XCTAssertFalse(model.isSharingInterjectionsPresented)
         XCTAssertEqual(model.screen, screen)
-        XCTAssertEqual(model.lastError, "Record at least one Margin on this item before sharing.")
+        XCTAssertEqual(model.lastError, "Record at least one Margin on it before sharing.")
     }
 
     /// #1254: Settings is a tab, so every route to it (the Offline Storage back button) lands
@@ -1810,7 +1854,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
     /// #1043 APM-10: the practice-Margin step was checked once, before any tap. It must stay open through Add
     /// Margin (button and compact control), through Cancel, and through a Finish whose save fails; only a saved
     /// Margin completes it.
-    func testGuidedOnboardingAdvancesOnlyFromCompletedProductActions() throws {
+    func testGuidedOnboardingAdvancesOnlyFromCompletedProductActions() async throws {
         let priorTermsVersion = UserDefaults.standard.object(forKey: SpokenMarginsTerms.acceptanceVersionKey)
         let priorTermsDate = UserDefaults.standard.object(forKey: SpokenMarginsTerms.acceptanceDateKey)
         defer {
@@ -1872,6 +1916,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
 
         XCTAssertTrue(model.isOnboardingStepComplete(.firstInterjection))
         XCTAssertEqual(model.guidedOnboardingStage, .reviewTimeline)
+        await model.settleItemReload() // the item detail reloads off the main thread after the save (#2505)
         let interjection = try XCTUnwrap(model.selectedItem.interjections.first)
 
         model.recordTimelineInterjectionViewed(interjectionId: interjection.id)
@@ -2007,6 +2052,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(saved.itemId, "item-pill")
         XCTAssertEqual(saved.sessionId, aSessionID)
         XCTAssertTrue(try store.loadInterjections(sessionId: bSession.id).isEmpty)
+        await model.settleItemReload() // so a late item reload that leaked A's Margin into B would show here (#2505)
         XCTAssertEqual(model.selectedItem.id, b.id)
         XCTAssertTrue(model.selectedItem.interjections.isEmpty, "B's open detail never receives A's Margin")
         XCTAssertEqual(model.selectedItem.sessionRows.map(\.interjectionCount), [0])
@@ -2063,7 +2109,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.dispatchGate2CompactCommand(.cancelInterjection)
     }
 
-    func testFinishAndCancelAreTheOnlyRecordingExits() throws {
+    func testFinishAndCancelAreTheOnlyRecordingExits() async throws {
         let restoreTerms = acceptTerms()
         defer { restoreTerms() }
         let recorder = try CountingToneRecordingClient()
@@ -2084,6 +2130,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.dispatchGate2CompactCommand(.finishInterjection)
         XCTAssertEqual(recorder.finishCount, 1)
         XCTAssertEqual(recorder.cancelCount, 0)
+        await model.settleItemReload() // the item detail reloads off the main thread after the save (#2505)
         XCTAssertEqual(model.selectedItem.interjections.first?.audioPath, recorder.savedPaths.first)
 
         XCTAssertFalse(model.recordingNavigationIsLocked)
@@ -3950,6 +3997,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.startItem(id: "item-pill")
         model.dispatchGate2CompactCommand(.beginInterjection)
         model.dispatchGate2CompactCommand(.finishInterjection)
+        await model.settleItemReload() // the item detail reloads off the main thread after the save (#2505)
         XCTAssertEqual(model.selectedItem.interjections.count, 1)
         XCTAssertTrue(model.canSummarizeInterjections)
 
@@ -4033,6 +4081,10 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.pause()
         model.dispatchGate2CompactCommand(.beginInterjection)
         model.dispatchGate2CompactCommand(.finishInterjection)
+        // Summarize reads the item detail, which reloads off the main thread after the save (#2505). Tapping before
+        // that lands finds no unsummarized note, refuses with "already exists" and never starts a summary (#3688).
+        await model.settleItemReload()
+        XCTAssertTrue(model.canSummarizeInterjections)
         model.summarize()
         try await waitFor("first local summary completion") {
             model.selectedItem.turns.filter { $0.turnType == "interjection_summary" && $0.status == "complete" }.count == 1
@@ -4046,6 +4098,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.dispatchGate2CompactCommand(.beginInterjection)
         model.dispatchGate2CompactCommand(.finishInterjection)
         await model.settleSummaryRecords()
+        await model.settleItemReload() // the item detail reloads off the main thread after the save (#2505)
 
         XCTAssertTrue(model.canSummarizeInterjections)
         XCTAssertFalse(model.isSummarizingInterjections)

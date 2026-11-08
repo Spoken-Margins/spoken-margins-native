@@ -19,6 +19,8 @@ import XCTest
 /// - #1937 (PR #2018): the Library row's play circle grows with the text.
 /// - #1969 (PR #2013): a Library this build can't open says so, never "Your Library is ready".
 /// - #2900: the Margins pane's unselected filter chips and a Margin's play button take a tap over 44 × 44 pt.
+/// - #3723: the share review's Cancel preparation button stacks under its progress line at accessibility sizes.
+/// - #3724: the Supertonic download notice keeps Open Voices and Not Now on screen at accessibility5.
 ///
 /// SwiftUI builds its accessibility tree only when an assistive client is running, and an app-hosted test has none:
 /// an earlier mounted test found the tree empty (PlaybackDockLayoutTests, #1666) and UIKit's own traits missing
@@ -144,6 +146,64 @@ final class AccessibilityFixProofTests: XCTestCase {
                 XCTAssertLessThan(paste.frame.minX, 60, "\(size): the Paste button sits beside the text at x \(paste.frame.minX)")
             } else {
                 XCTAssertGreaterThan(paste.frame.minX, width / 2, "\(size): the Paste button is not beside the text")
+            }
+        }
+    }
+
+    // MARK: - #3723 share-review button rows stack at accessibility sizes
+
+    /// The batch-preparation card's progress line and its Cancel button share one row. Side by side by default, the
+    /// button sits under the words at accessibility sizes (the other rows of #3723 use the same `AdaptiveStack`).
+    func testBatchPreparationCancelSitsUnderItsProgressAtAccessibilitySizes() async throws {
+        for (size, stacked) in [(DynamicTypeSize.large, false), (.accessibility5, true)] {
+            let mounted = try mount(AnyView(Build23BatchPreparationCard(
+                isPreparing: true, completed: 1, total: 3, failures: 0, canPrepare: false, onPrepare: {}, onCancel: {})),
+                textSize: size)
+            defer { mounted.close() }
+            let progress = try await mounted.waitForNode("the progress line") { $0.label?.contains("1 of 3 prepared") == true }
+            let cancel = try await mounted.waitForNode("the Cancel button") {
+                $0.identifier == "build23.sender.preparation.cancel" || $0.label == "Cancel preparation"
+            }
+            if stacked {
+                XCTAssertGreaterThanOrEqual(cancel.frame.minY, progress.frame.maxY - 1, "\(size): Cancel is beside the progress line, not under it")
+            } else {
+                XCTAssertGreaterThanOrEqual(cancel.frame.minX, progress.frame.maxX - 1, "\(size): Cancel is not beside the progress line")
+            }
+        }
+    }
+
+    // MARK: - #3724 the Supertonic download notice keeps its buttons on screen
+
+    /// At accessibility5 the notice's words are taller than the screen. Squeezed into one stack, SwiftUI would cut the
+    /// text short to keep the buttons in view; now the words keep their full height inside a ScrollView and the buttons
+    /// stay pinned on screen. At the default size the words and buttons sit together, as before.
+    func testSupertonicNoticeKeepsFullTextAndOnScreenButtonsAtTheLargestTextSize() async throws {
+        let screenHeight: CGFloat = 844  // the height `mount` gives its window
+        for size in [DynamicTypeSize.large, .accessibility5] {
+            let mounted = try mount(AnyView(SupertonicDownloadNoticeCard(openVoices: {}, notNow: {})), textSize: size)
+            defer { mounted.close() }
+            let open = try await mounted.waitForNode("the Open Voices button") {
+                $0.identifier == "supertonicNotice.openVoices" || $0.label == "Open Voices"
+            }
+            let notNow = try await mounted.waitForNode("the Not Now button") {
+                $0.identifier == "supertonicNotice.notNow" || $0.label == "Not Now"
+            }
+            let sentence = try await mounted.waitForNode("the download sentence") {
+                $0.label?.hasPrefix("James and Lily use the Supertonic voice") == true
+            }
+            let callout = try await mounted.waitForNode("the backup-voice line") {
+                $0.label?.hasPrefix("Until then, the app") == true
+            }
+            for (name, button) in [("Open Voices", open), ("Not Now", notNow)] {
+                XCTAssertGreaterThanOrEqual(button.frame.minY, 0, "\(size): \(name) starts above the screen")
+                XCTAssertLessThanOrEqual(button.frame.maxY, screenHeight + 0.5,
+                                         "\(size): \(name) ends at y \(button.frame.maxY), below the screen's \(screenHeight)")
+            }
+            XCTAssertLessThanOrEqual(open.frame.maxY, notNow.frame.minY + 1, "\(size): Not Now is not under Open Voices")
+            if size == .accessibility5 {
+                // Full-height words, not words cut short to fit: the two paragraphs alone are taller than the screen.
+                XCTAssertGreaterThan(sentence.frame.height + callout.frame.height, screenHeight,
+                                     "\(size): the words were squeezed to fit instead of scrolling")
             }
         }
     }

@@ -732,13 +732,15 @@ RUNNER_TEST_READERS = ('test_filled_button_contrast', 'test_filled_button_labels
                        'test_sessionkit_pass', 'test_mini_player_keep_out', 'test_package_resolved',
                        'test_building_md', 'test_third_party_notices', 'test_main_thread_reads',
                        'test_repeat_trigger_scan', 'test_ordered_store_requests', 'test_system_callback_isolation',
-                       'test_listener_words',
+                       'test_listener_words', 'test_recorder_failed_start',
                        'test_starter_catalog',
                        # The accessibility source scans read App/ Swift files (#2041).
                        'test_screen_change_cue', 'test_selected_trait', 'test_screen_title_heading',
                        'test_row_accessibility_actions', 'test_voiceover_label_nits',
                        'test_increase_contrast_wiring', 'test_reduce_motion', 'test_tap_target_styles',
                        'test_dynamic_type_live_activity',
+                       # The outer-tap-frame scan reads App/ Swift files (#3727).
+                       'test_outer_tap_frame',
                        # The article-entry inventory reads App/ Swift files (#2363).
                        'test_article_entry_followups',
                        # The task-cost map checks its controls against App/ Swift files (#2396).
@@ -756,7 +758,9 @@ RUNNER_TEST_READERS = ('test_filled_button_contrast', 'test_filled_button_labels
                        # The public-source caller scan reads App/ and SessionKit Swift files (#3449).
                        'test_public_source_check_callers',
                        # The server-contact guard scans App/ and SessionKit Swift files (#2842).
-                       'test_server_contact_consent')
+                       'test_server_contact_consent',
+                       # The benchmark's filter must name a test in SharingTests.swift (#2133).
+                       'test_podcast_anchor_benchmark.FilterNameTests')
 RUNNER_TEST_INPUTS = ('App/', 'Packages/', 'Contracts/', 'TestPlans/', 'validation/', 'research/', 'project.yml',
                       'docs/sharing-test-kit/', 'docs/task-cost-map.json', 'BUILDING.md', 'README.md', 'package.json', '.gitattributes',
                       # test_third_party_notices reads the dependency manifests and its own list (#1823).
@@ -784,10 +788,10 @@ def on_hosted_runner(environ=None):
     return environ.get('RUNNER_ENVIRONMENT') == 'github-hosted'
 
 
-PORTABLE_STEPS = ('runner-tests', 'ops', 'contracts', 'public-tree', 'surfaces', 'inventory', 'main-thread-reads', 'repeat-trigger-scan', 'ordered-store-requests', 'system-callback-isolation', 'listener-words', 'browser', 'share-link', 'web', 'research')
+PORTABLE_STEPS = ('runner-tests', 'ops', 'contracts', 'public-tree', 'surfaces', 'inventory', 'main-thread-reads', 'repeat-trigger-scan', 'ordered-store-requests', 'system-callback-isolation', 'listener-words', 'recorder-failed-start', 'browser', 'share-link', 'web', 'research')
 PORTABLE_LEFT_OUT = {
-    'package-build': 'needs the Swift toolchain on macOS; hosted-sessionkit-linux.yml builds the Foundation-only modules on Linux',
-    'package-core': 'needs the Swift toolchain on macOS (SessionKitCoreTests also run in hosted-sessionkit-linux.yml)',
+    'package-build': 'needs the Swift toolchain on macOS; hosted-portable.yml builds the Foundation-only modules on Linux, outside this plan',
+    'package-core': 'needs the Swift toolchain on macOS (hosted-portable.yml also runs SessionKitCoreTests on Linux, #3529, outside this plan)',
     'package-core-serial': 'needs the Swift toolchain on macOS',
     'package': 'needs the Swift toolchain, AVFoundation and a sound output; only the Mac lane runs the whole package',
     'shipped-compat': 'builds SessionKit and Build 29\'s persistence code with Swift on macOS; only the Mac lane runs it',
@@ -2031,6 +2035,8 @@ class Run:
         self.command('system-callback-isolation', [sys.executable, 'scripts/system_callback_isolation.py'])
         # A listener-facing string that says "item" fails here, in seconds, instead of on the phone (#3599).
         self.command('listener-words', [sys.executable, 'scripts/listener_words.py'])
+        # A recorder freed while its audio queue runs, after a failed start, crashes the app (#3633).
+        self.command('recorder-failed-start', [sys.executable, 'scripts/recorder_failed_start.py'])
         if not (ROOT / 'node_modules').exists():
             raise RuntimeError('node_modules is missing in this worktree; run scripts/setup-worktree.sh')
         # A lockfile that moved since node_modules was installed can fail the bundle check with "is stale". The
@@ -2401,6 +2407,10 @@ class Run:
                         step = self.manifest['steps'][-1]
                         step['audio_windows'] = lane_audio_window.attachments(audio)
                         step.setdefault('attachments', []).extend(step['audio_windows'])
+                        self.save()
+                    # A hosted Mac cannot listen and starts no window (#3604): its skipped AudioLoopback tests are
+                    # recorded as not run, for the report, instead of failing the step.
+                    if lane_audio_window.record_not_run(self.manifest['steps']):
                         self.save()
         finally:
             if scheme == 'SpokenMarginsAppBehavior':

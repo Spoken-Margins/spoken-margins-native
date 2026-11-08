@@ -75,7 +75,7 @@ extension Gate1AppModel {
         let undo = TrashUndoState(itemId: itemId, title: title)
         trashUndo = undo
         // VoiceOver and Switch Control listeners keep the banner until they act on it (#1926).
-        guard !TrashUndoPolicy.staysUntilDismissed(assistiveTechnologyRunning: Self.assistiveTechnologyIsRunning) else {
+        guard !TrashUndoPolicy.staysUntilDismissed(assistiveTechnologyRunning: AssistiveTechnology.isRunning) else {
             trashUndoDismissTask = nil
             return
         }
@@ -88,14 +88,6 @@ extension Gate1AppModel {
                 // Manual dismissal, Undo, replacement, and teardown cancel this timer.
             }
         }
-    }
-
-    private static var assistiveTechnologyIsRunning: Bool {
-        #if canImport(UIKit)
-        UIAccessibility.isVoiceOverRunning || UIAccessibility.isSwitchControlRunning
-        #else
-        false
-        #endif
     }
 
     private func dismissTrashUndo(id: UUID?) {
@@ -134,7 +126,7 @@ extension Gate1AppModel {
             let store = try requireStore()
             guard let item = try store.loadItemSummary(id: id) else { throw SessionKitError.missingFixture("item:\(id)") }
             guard item.deletedAt != nil else {
-                reportFailure("Move the item to Recently Deleted before deleting it permanently.")
+                reportFailure("Move it to Recently Deleted before deleting it permanently.")
                 return
             }
             let recordings = try store.loadInterjections(itemId: id)
@@ -196,7 +188,7 @@ extension Gate1AppModel {
                 dismissTrashUndo()
             }
             withdrawFeedback(aboutItems: ids)
-            reportSuccess("Permanently deleted \(ids.count) item\(ids.count == 1 ? "" : "s") from Recently Deleted.")
+            reportSuccess("Permanently deleted \(ids.count) from Recently Deleted.")
         } catch {
             reportFailure(error, context: "Empty Recently Deleted failed")
         }

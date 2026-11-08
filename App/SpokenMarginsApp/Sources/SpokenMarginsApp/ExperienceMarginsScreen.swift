@@ -147,7 +147,7 @@ struct ExperienceMarginsScreen: View {
         }
     }
 
-    /// The item heading, then Share and Share as Markdown. At accessibility sizes the buttons take their own
+    /// The item heading, then Share and Export as Markdown. At accessibility sizes the buttons take their own
     /// row under the title instead of squeezing it (#1938).
     @ViewBuilder
     private func groupHeading(_ group: MarginGroup) -> some View {
@@ -243,7 +243,7 @@ struct ExperienceMarginsScreen: View {
         }
         .disabled(preparingMarkdownItemID != nil || isPreparingExportAll)
         .buttonStyle(.borderless)
-        .accessibilityLabel("Share Margins from \(group.itemTitle) as Markdown")
+        .accessibilityLabel("Export Margins from \(group.itemTitle) as Markdown")
         .accessibilityIdentifier("margins.shareItemMarkdown.\(group.itemID)")
     }
 
@@ -270,7 +270,7 @@ struct ExperienceMarginsScreen: View {
                     ForEach(group.rows) { row in
                       HStack(alignment: .center, spacing: 0) {
                         // The row plays the Margin's moment; the chevron beside it opens details (#1866).
-                        Button { _ = model.playMarginMoment(row) } label: {
+                        Button { MarginMomentTap.start(row, model: model) } label: {
                             HStack(alignment: .top, spacing: 12) {
                                 Image(systemName: row.interjection.isStarredForSharing == true ? "star.fill" : (row.needsAttention ? "exclamationmark.bubble.fill" : (row.isWritten ? "square.and.pencil" : "quote.bubble")))
                                     .foregroundStyle(row.needsAttention ? AppColors.coral : AppColors.evergreen)
@@ -343,7 +343,7 @@ struct ExperienceMarginsScreen: View {
 
     @ViewBuilder
     private func ownMarginActions(_ row: MarginRow) -> some View {
-        Button("Play this moment", systemImage: "play.fill") { _ = model.playMarginMoment(row) }
+        Button("Play this moment", systemImage: "play.fill") { MarginMomentTap.start(row, model: model) }
         Button("Copy with Context", systemImage: "doc.on.doc") { model.copyInterjectionWithContext(row.interjection) }
         Button(row.interjection.isStarredForSharing == true ? "Unstar" : "Star", systemImage: "star") {
             model.setInterjectionStarredForSharing(row.interjection.id, sessionId: row.interjection.sessionId, starred: row.interjection.isStarredForSharing != true)
@@ -718,7 +718,7 @@ struct MarginsSearchField: View {
     var body: some View {
         // A single-line field stays about 34 pt tall inside the 44 pt frame, so a tap catcher behind it focuses
         // the field when the tap lands in the extra room above or below. Taps on the field itself never reach it.
-        TextField("Search your notes or an item", text: $text)
+        AppTextField("Search your notes or an item", text: $text)
             .textFieldStyle(.roundedBorder)
             .focused($isFocused)
             .frame(minHeight: TapTarget.minimum)

@@ -1,5 +1,7 @@
+import AVFoundation
 import SessionKit
 import XCTest
+@testable import SessionKitAudio
 @testable import SpokenMarginsApp
 
 /// #2511: a Margin's tap switches the audio session for recording off the main thread before the recorder starts.
@@ -94,5 +96,41 @@ final class RecordingSessionPreparationAppTests: XCTestCase {
         XCTAssertFalse(recorder.log.contains("prepare"))
         XCTAssertEqual(recorder.log, ["begin"])
         XCTAssertTrue(model.snapshot.isRecording)
+    }
+
+    /// #3633: `playAndRecord` drops AirPlay outputs unless it allows them, which moved a HomePod's playback to the phone
+    /// speaker when the owner tapped record in the app. Both microphone choices keep AirPlay.
+    func testRecordingSessionAllowsAirPlayForEveryMicrophoneChoice() {
+        for choice in [RecordingInputChoice.headsetMicrophoneAllowed, .phoneMicrophoneKeepingA2DP] {
+            XCTAssertTrue(SystemRecordingClient.recordingOptions(for: choice).contains(.allowAirPlay), "\(choice)")
+        }
+        XCTAssertTrue(SystemRecordingClient.recordingOptions(for: .headsetMicrophoneAllowed).contains(.allowBluetoothHFP))
+        XCTAssertFalse(SystemRecordingClient.recordingOptions(for: .phoneMicrophoneKeepingA2DP).contains(.allowBluetoothHFP),
+                       "the A2DP choice must keep leaving the hands-free profile out (#1506)")
+    }
+
+    /// #3633 audit: the option sets must be ones iOS accepts on a real `AVAudioSession`, and must read back as set, or
+    /// `startRecorder` would redo `setCategory` on the main thread at every start and undo #2511. Only the HomePod
+    /// itself can show that the route stays on AirPlay; this shows the sets are accepted and settle.
+    func testTheRecordingSessionOptionsAreAcceptedByARealSessionAndReadBackAsSet() throws {
+        let session = AVAudioSession.sharedInstance()
+        defer { try? session.setActive(false, options: .notifyOthersOnDeactivation) }
+        for choice in [RecordingInputChoice.headsetMicrophoneAllowed, .phoneMicrophoneKeepingA2DP] {
+            let outcome = SystemRecordingClient.applyRecordingSession(for: choice)
+            XCTAssertNil(outcome.failure, "\(choice): the session refused the recording options")
+            XCTAssertTrue(outcome.applied, "\(choice)")
+            XCTAssertEqual(
+                SystemRecordingClient.currentConfiguration(session), SystemRecordingClient.recordingConfiguration(for: choice),
+                "\(choice): the session must read back what was set"
+            )
+            XCTAssertFalse(
+                AudioSessionConfiguration.needsCategoryChange(
+                    current: SystemRecordingClient.currentConfiguration(session),
+                    wanted: SystemRecordingClient.recordingConfiguration(for: choice)),
+                "\(choice): a second preparation must find nothing to change"
+            )
+        }
+        try session.setCategory(.playAndRecord, mode: .spokenAudio, options: SystemSpokenNoteTakeRecorder.recordingOptions)
+        XCTAssertTrue(session.categoryOptions.contains(.allowAirPlay), "the spoken-note take keeps AirPlay")
     }
 }
