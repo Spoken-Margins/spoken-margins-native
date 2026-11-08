@@ -52,7 +52,10 @@ def parse_notice(body):
         files = [name.strip().strip('`') for name in re.split(r',\s*', text) if name.strip().strip('`')]
         if not files:
             return None
-        return found.group('base'), found.group('sha')[:7], files, capped or len(files) >= CAP
+        # The hosted notice says "and N more" past the cap; the runner's report just cuts the list at it.
+        if pattern is RUNNER:
+            capped = capped or len(files) >= CAP
+        return found.group('base'), found.group('sha')[:7], files, capped
     return None
 
 

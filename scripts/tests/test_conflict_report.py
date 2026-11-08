@@ -48,6 +48,10 @@ class ParseNoticeTests(unittest.TestCase):
         names = tuple(f'f{i}.swift' for i in range(10))
         self.assertTrue(report.parse_notice(runner(files=names))[3])
 
+    def test_a_hosted_notice_with_exactly_ten_files_is_not_capped(self):
+        names = tuple(f'f{i}.swift' for i in range(10))
+        self.assertFalse(report.parse_notice(hosted(files=names))[3])
+
     def test_a_file_name_with_dots_and_spaces_is_kept_whole(self):
         _, _, files, _ = report.parse_notice(hosted(files=('docs/a.b.md', 'App/My File.swift')))
         self.assertEqual(files, ['docs/a.b.md', 'App/My File.swift'])
@@ -127,8 +131,19 @@ class ChurnTests(unittest.TestCase):
                 git('add', name)
                 git('commit', '-q', '-m', day, env=dict(os.environ, GIT_AUTHOR_DATE=f'{day}T12:00:00',
                                                          GIT_COMMITTER_DATE=f'{day}T12:00:00'))
+            git('switch', '-q', '-c', 'side')
+            Path(root, 'a.txt').write_text('side')
+            git('commit', '-q', '-am', 'side', env=dict(os.environ, GIT_AUTHOR_DATE='2026-10-20T12:00:00',
+                                                         GIT_COMMITTER_DATE='2026-10-20T12:00:00'))
+            git('switch', '-q', 'main')
+            Path(root, 'c.txt').write_text('c')
+            git('add', 'c.txt')
+            git('commit', '-q', '-m', 'c', env=dict(os.environ, GIT_AUTHOR_DATE='2026-10-21T12:00:00',
+                                                     GIT_COMMITTER_DATE='2026-10-21T12:00:00'))
+            git('merge', '-q', '--no-ff', '-m', 'merge', 'side',
+                env=dict(os.environ, GIT_AUTHOR_DATE='2026-10-22T12:00:00', GIT_COMMITTER_DATE='2026-10-22T12:00:00'))
             counted = report.churn(Path(root), date(2026, 9, 28), 'main')
-            self.assertEqual(dict(counted['a.txt']), {date(2026, 10, 5): 2})
+            self.assertEqual(dict(counted['a.txt']), {date(2026, 10, 5): 2, date(2026, 10, 19): 1})
             self.assertEqual(dict(counted['b.txt']), {date(2026, 10, 12): 1})
 
 
