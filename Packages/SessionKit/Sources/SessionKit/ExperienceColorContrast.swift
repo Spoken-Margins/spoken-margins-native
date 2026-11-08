@@ -33,6 +33,46 @@ public struct AppDynamicRGB: Equatable, Sendable {
     }
 }
 
+extension AppColorRGB {
+    /// This colour drawn at `alpha` over `base`: the straight-alpha blend SwiftUI's `.opacity` makes, in the same
+    /// colour space the other numbers here are in. The audit needs it because a tint is never read alone; the text
+    /// sits on the tint over whatever is behind it (#3739).
+    public func composited(over base: AppColorRGB, alpha: Double) -> AppColorRGB {
+        let a = min(max(alpha, 0), 1)
+        return AppColorRGB(
+            red: red * a + base.red * (1 - a),
+            green: green * a + base.green * (1 - a),
+            blue: blue * a + base.blue * (1 - a)
+        )
+    }
+}
+
+extension AppDynamicRGB {
+    /// `AppColorRGB.composited(over:alpha:)` in each appearance.
+    public func composited(over base: AppDynamicRGB, alpha: Double) -> AppDynamicRGB {
+        AppDynamicRGB(
+            light: light.composited(over: base.light, alpha: alpha),
+            dark: dark.composited(over: base.dark, alpha: alpha)
+        )
+    }
+}
+
+/// The system colours the app draws with directly, as Apple publishes them (the sRGB values of the system palette as
+/// the audit issues quote them; iOS 26 may have shifted some, which would move a ratio and not the fact that it fails). They are
+/// here so the audit can measure a pair that names one, instead of the pair being invisible to it (#3739). A new use
+/// of a system colour outside the allowlist in the guard tests fails; the way out is a token in `AppSemanticColorRGB`.
+public enum AppSystemColorRGB {
+    public static let red = AppDynamicRGB(light: .init(red: 1, green: 0.231, blue: 0.188), dark: .init(red: 1, green: 0.271, blue: 0.227))
+    public static let orange = AppDynamicRGB(light: .init(red: 1, green: 0.584, blue: 0), dark: .init(red: 1, green: 0.624, blue: 0.039))
+    public static let yellow = AppDynamicRGB(light: .init(red: 1, green: 0.8, blue: 0), dark: .init(red: 1, green: 0.839, blue: 0.039))
+    public static let green = AppDynamicRGB(light: .init(red: 0.204, green: 0.78, blue: 0.349), dark: .init(red: 0.188, green: 0.82, blue: 0.345))
+    public static let blue = AppDynamicRGB(light: .init(red: 0, green: 0.478, blue: 1), dark: .init(red: 0.039, green: 0.518, blue: 1))
+
+    /// watchOS has one appearance, and it draws the dark values.
+    public static let watchOrange = AppDynamicRGB(light: orange.dark, dark: orange.dark)
+    public static let watchBlue = AppDynamicRGB(light: blue.dark, dark: blue.dark)
+}
+
 public enum AppSemanticColorRGB {
     private static func fixed(_ red: Double, _ green: Double, _ blue: Double) -> AppDynamicRGB {
         let color = AppColorRGB(red: red, green: green, blue: blue)
@@ -253,7 +293,49 @@ public enum AppColorContrastAudit {
         .init(name: "playback accent mark on watch control", foreground: AppSemanticColorRGB.accent, background: AppSemanticColorRGB.watchControl, minimumRatio: 3)
     ]
 
-    public static var allPairs: [Pair] { textBackgroundPairs + nonTextPairs + increasedContrastEdgePairs }
+    /// A tint drawn at `alpha` over `base`, with the text that sits on it. The name carries the tint, its alpha and the
+    /// base's name, which is how the tint guard finds the pairs that audit a tint.
+    private static func onTint(
+        _ label: String, foreground: AppDynamicRGB, tint: String, tintColor: AppDynamicRGB, alpha: Double,
+        over base: AppDynamicRGB, baseName: String, minimumRatio: Double = 4.5
+    ) -> Pair {
+        Pair(
+            name: "\(label) on \(tint) at \(alpha) over \(baseName)",
+            foreground: foreground,
+            background: tintColor.composited(over: base, alpha: alpha),
+            minimumRatio: minimumRatio
+        )
+    }
+
+    /// The Timeline rail's rows, which sit on bone: each row is a tint over bone, and the row's own words are drawn
+    /// on it (`PlaybackTimelineListView.swift`). The tints are the row fills there (#3734).
+    public static let timelineRowPairs: [Pair] = {
+        let rows: [(tint: String, color: AppDynamicRGB, alpha: Double, label: (name: String, color: AppDynamicRGB))] = [
+            ("evergreen", AppSemanticColorRGB.evergreen, 0.12, ("current row label", AppSemanticColorRGB.evergreen)),
+            ("evergreen", AppSemanticColorRGB.evergreen, 0.07, ("map row label", AppSemanticColorRGB.evergreen)),
+            ("coral", AppSemanticColorRGB.coral, 0.08, ("my Margin row label", AppSemanticColorRGB.coral)),
+            ("ochre", AppSemanticColorRGB.ochre, 0.08, ("response row label", AppSemanticColorRGB.ochreText)),
+            ("plum", AppSemanticColorRGB.plum, 0.07, ("shared Margin row label", AppSemanticColorRGB.plum))
+        ]
+        return rows.flatMap { row in
+            [
+                onTint("row title", foreground: AppSemanticColorRGB.text, tint: row.tint, tintColor: row.color, alpha: row.alpha, over: AppSemanticColorRGB.bone, baseName: "bone"),
+                onTint("row detail", foreground: AppSemanticColorRGB.secondaryText, tint: row.tint, tintColor: row.color, alpha: row.alpha, over: AppSemanticColorRGB.bone, baseName: "bone"),
+                onTint(row.label.name, foreground: row.label.color, tint: row.tint, tintColor: row.color, alpha: row.alpha, over: AppSemanticColorRGB.bone, baseName: "bone")
+            ]
+        }
+    }()
+
+    /// The Watch's plates: white label text on the system orange and blue (`WatchPlateButtonStyle` forces `.white`).
+    /// The colours are not tokens, so these pairs name the system values (#3731).
+    public static let watchPlatePairs: [Pair] = [
+        .init(name: "watch session plate label", foreground: AppSemanticColorRGB.white, background: AppSystemColorRGB.watchOrange, minimumRatio: 4.5),
+        .init(name: "watch episode and Record plate label", foreground: AppSemanticColorRGB.white, background: AppSystemColorRGB.watchBlue, minimumRatio: 4.5)
+    ]
+
+    public static var allPairs: [Pair] {
+        textBackgroundPairs + nonTextPairs + increasedContrastEdgePairs + timelineRowPairs + watchPlatePairs
+    }
 
     /// A pair that fails today, in an appearance, with the issue that fixes it. The audit prints these
     /// instead of hiding them, and fails when one starts to pass so the entry gets removed (#1921).
@@ -272,7 +354,20 @@ public enum AppColorContrastAudit {
         .init(pair: "input fill on panel", appearance: "light", since: "2026-10-17", fixedBy: "#1922"),
         .init(pair: "input fill on panel", appearance: "dark", since: "2026-10-17", fixedBy: "#1922"),
         .init(pair: "input fill on app background", appearance: "light", since: "2026-10-17", fixedBy: "#1922"),
-        .init(pair: "input fill on app background", appearance: "dark", since: "2026-10-17", fixedBy: "#1922")
+        .init(pair: "input fill on app background", appearance: "dark", since: "2026-10-17", fixedBy: "#1922"),
+        // Found by hand in the 2026-11-08 audit, and measured here once the audit could composite a tint (#3739).
+        // The Timeline rows' tints are too strong for the secondary text on them in light mode (#3734).
+        .init(pair: "row detail on evergreen at 0.12 over bone", appearance: "light", since: "2026-11-08", fixedBy: "#3734"),
+        .init(pair: "row detail on evergreen at 0.07 over bone", appearance: "light", since: "2026-11-08", fixedBy: "#3734"),
+        .init(pair: "row detail on coral at 0.08 over bone", appearance: "light", since: "2026-11-08", fixedBy: "#3734"),
+        .init(pair: "my Margin row label on coral at 0.08 over bone", appearance: "light", since: "2026-11-08", fixedBy: "#3734"),
+        .init(pair: "row detail on ochre at 0.08 over bone", appearance: "light", since: "2026-11-08", fixedBy: "#3734"),
+        .init(pair: "row detail on plum at 0.07 over bone", appearance: "light", since: "2026-11-08", fixedBy: "#3734"),
+        // The Watch's plates force white text on the system orange and blue (#3731). One appearance, listed twice.
+        .init(pair: "watch session plate label", appearance: "light", since: "2026-11-08", fixedBy: "#3731"),
+        .init(pair: "watch session plate label", appearance: "dark", since: "2026-11-08", fixedBy: "#3731"),
+        .init(pair: "watch episode and Record plate label", appearance: "light", since: "2026-11-08", fixedBy: "#3731"),
+        .init(pair: "watch episode and Record plate label", appearance: "dark", since: "2026-11-08", fixedBy: "#3731")
     ]
 
 
