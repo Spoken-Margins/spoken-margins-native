@@ -875,7 +875,7 @@ struct ExperienceItemDetailScreen: View {
 
     private func sectionHeading(_ title: String, detail: String) -> some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(title).font(.system(.title3, design: .serif).weight(.bold))
+            Text(title).font(.system(.title3, design: .serif).weight(.bold)).accessibilityAddTraits(.isHeader)
             Text(detail).font(.caption).foregroundStyle(AppColors.secondaryText)
         }
     }
@@ -959,7 +959,7 @@ private struct ExperienceListeningMapSection: View, Equatable {
 
     private func sectionHeading(_ title: String, detail: String) -> some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(title).font(.system(.title3, design: .serif).weight(.bold))
+            Text(title).font(.system(.title3, design: .serif).weight(.bold)).accessibilityAddTraits(.isHeader)
             Text(detail).font(.caption).foregroundStyle(AppColors.secondaryText)
         }
     }

@@ -354,6 +354,7 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
         // Wraps at the largest text sizes instead of truncating (#1941).
         titleLabel.numberOfLines = 0
         titleLabel.textColor = .label
+        titleLabel.accessibilityTraits.insert(.header)
 
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
         statusLabel.textAlignment = .left
