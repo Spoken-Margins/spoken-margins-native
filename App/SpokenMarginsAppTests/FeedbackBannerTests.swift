@@ -13,7 +13,7 @@ final class FeedbackBannerTests: XCTestCase {
 
         // Reports a failure: the item isn't in Recently Deleted.
         model.permanentlyDeleteItem(id: "item-pill")
-        let message = "Move the item to Recently Deleted before deleting it permanently."
+        let message = "Move it to Recently Deleted before deleting it permanently."
         XCTAssertEqual(model.feedbackEvent?.kind, .error)
         XCTAssertEqual(model.itemFailures.lastFailure(itemId: "item-pill")?.message, message)
 

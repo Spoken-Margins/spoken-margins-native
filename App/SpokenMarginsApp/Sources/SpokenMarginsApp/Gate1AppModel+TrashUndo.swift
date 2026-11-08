@@ -134,7 +134,7 @@ extension Gate1AppModel {
             let store = try requireStore()
             guard let item = try store.loadItemSummary(id: id) else { throw SessionKitError.missingFixture("item:\(id)") }
             guard item.deletedAt != nil else {
-                reportFailure("Move the item to Recently Deleted before deleting it permanently.")
+                reportFailure("Move it to Recently Deleted before deleting it permanently.")
                 return
             }
             let recordings = try store.loadInterjections(itemId: id)
@@ -196,7 +196,7 @@ extension Gate1AppModel {
                 dismissTrashUndo()
             }
             withdrawFeedback(aboutItems: ids)
-            reportSuccess("Permanently deleted \(ids.count) item\(ids.count == 1 ? "" : "s") from Recently Deleted.")
+            reportSuccess("Permanently deleted \(ids.count) from Recently Deleted.")
         } catch {
             reportFailure(error, context: "Empty Recently Deleted failed")
         }
