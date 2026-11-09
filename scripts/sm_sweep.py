@@ -11,7 +11,7 @@ act on what it prints, then reply:
   scripts/sm_sweep.py --json           the same facts for scripts
   scripts/sm_sweep.py --status-json F  use a saved `scripts/sm_status.py --json` output (F or - for stdin)
 
-It looks for eleven things:
+It looks for thirteen things:
   1. free Claude slots against the Dial (#589): its Threads box less the Claude threads active from their claim
      and stop notes (ops/dial/dial_gate.py's own reading), with the ready issues to start; Codex workers are
      counted against Codex's box and never against Claude's
@@ -36,6 +36,8 @@ It looks for eleven things:
      is frozen (#1612's newest note held it on #1154, merged into `next` on 2026-10-20)
   12. an open issue with a milestone other than Later and no state label (#3521: rule 7 reads only no-milestone, and
      threads take only `ready`, so #3391 sat unseen for 39 hours); triage gives it a state, and only a person picks `ready`
+  13. a `needs-owner` issue filed by a person or agent since 2026-11-10 with no `Checked:` line in its body or newest
+     comments (#3872: on 2026-11-08 a stale record became a phone test the owner had already done)
   Silent `in-progress` claims (#3247, #1507) are rule 3.
 
 --apply also closes those (rule 8), commenting once and removing only `ready` and `in-progress`. Every other label,
@@ -86,6 +88,8 @@ USAGE_WINDOW = dt.timedelta(hours=12)         # dial_gate.main reads #337 this f
 SNAPSHOT_MAX_AGE = dt.timedelta(minutes=10)  # --apply refuses a saved snapshot older than this
 FINISHER_BUSY = 30                           # minutes: a finisher active more recently than this means the Mac is working
 COMMENT_WINDOW = dt.timedelta(hours=24)      # the Dial gate's own window for claim and stop notes
+CARD_RULE_FROM = '2026-11-10T00:00:00Z'    # rule 13 starts here; older cards were written before it existed
+CHECKED_LINE = re.compile(r'^\W*checked:', re.I | re.M)
 SKIP_LABELS = {'in-progress', 'needs-owner', 'deferred', 'blocked'}
 OUTSIDE_LABEL = 'needs-triage-review'          # an issue by an untrusted author; only a collaborator can make it `ready`
 HOLD_LABELS = {'blocked', 'needs-owner', 'deferred', 'validate-by-use', 'agent-verify',
@@ -313,7 +317,8 @@ OPEN_ISSUES = """query($owner: String!, $name: String!, $after: String) {
     issues(states: OPEN, first: 100, after: $after, orderBy: {field: CREATED_AT, direction: ASC}) {
       pageInfo { hasNextPage endCursor }
       nodes {
-        number title
+        number title body createdAt
+        author { __typename }
         milestone { title }
         labels(first: 30) { nodes { name } }
         timelineItems(last: 1, itemTypes: [REOPENED_EVENT]) { nodes { ... on ReopenedEvent { createdAt } } }
@@ -336,7 +341,8 @@ def open_issues(api):
         page = api.graphql(OPEN_ISSUES, dict(owner_name(api), after=after))['repository']['issues']
         for node in page['nodes']:
             reopened = [n.get('createdAt') for n in node['timelineItems']['nodes'] if n.get('createdAt')]
-            rows.append({'number': node['number'], 'title': node.get('title') or '',
+            rows.append({'number': node['number'], 'title': node.get('title') or '', 'body': node.get('body') or '',
+                         'created_at': node.get('createdAt') or '', 'by_bot': (node.get('author') or {}).get('__typename') == 'Bot',
                          'labels': sorted(l['name'] for l in node['labels']['nodes']),
                          'milestone': (node.get('milestone') or {}).get('title'),
                          'reopened_at': max(reopened) if reopened else None,
@@ -469,9 +475,18 @@ def unlabelled(issues):
             if row['milestone'] and row['milestone'] != PARKED_MILESTONE and not STATE_LABELS.intersection(row['labels'])]
 
 
+def unchecked_cards(issues):
+    """Rule 13: cards for the owner that don't say where their facts came from. Scripts' own notices aren't cards."""
+    def checked(row):
+        return any(CHECKED_LINE.search(text or '') for text in [row['body']] + [c.get('body') for c in row['comments']])
+    return [row for row in issues if 'needs-owner' in row['labels'] and not row['by_bot']
+            and row['created_at'] >= CARD_RULE_FROM and not checked(row)]
+
+
 def drift(api, now, pulls, skip=()):
     """Rules 9 to 12. Each part is None when its read failed, so a failure reads as unreadable, never as clean."""
-    out = {'merged_open': None, 'reverts': None, 'reverts_unchecked': [], 'holds': None, 'unlabelled': None, 'errors': []}
+    out = {'merged_open': None, 'reverts': None, 'reverts_unchecked': [], 'holds': None, 'unlabelled': None,
+           'unchecked_cards': None, 'errors': []}
     try:
         issues = open_issues(api)
     except (sm_status.GitHubError, KeyError, TypeError) as error:
@@ -479,6 +494,7 @@ def drift(api, now, pulls, skip=()):
         out['errors'].append(f'open issues: {error}')
     if issues is not None:
         out['unlabelled'] = unlabelled(issues)
+        out['unchecked_cards'] = unchecked_cards(issues)
     if issues is not None and pulls is not None:
         out['merged_open'] = merged_but_open(pulls, issues, skip)
     if pulls is not None:
@@ -699,6 +715,11 @@ def decide(facts, window=STALE_AFTER):
         act('unlabelled', LOOK, f'{len(bare)} open issue(s) have a milestone and no state label (oldest #{bare[0]["number"]} '
             f'{bare[0]["title"][:60]}), so no thread will take them: give each `ready`, `needs-owner`, `deferred` or '
             '`tracker`, or close it (#3521)', issues=[row['number'] for row in bare[:10]])
+    cards = gone.get('unchecked_cards') or []
+    if cards:
+        act('unchecked-card', LOOK, f'{len(cards)} `needs-owner` issue(s) have no `Checked:` line (oldest #{cards[0]["number"]} '
+            f'{cards[0]["title"][:60]}): check each fact (scripts/sm_live.py, docs/decisions.md), then add where it came from, '
+            'or drop the ask if he has already answered (#3872)', issues=[row['number'] for row in cards[:10]])
     if gone.get('errors'):
         act('drift-unreadable', LOOK, 'rules 9 to 12 could not read everything, so missing findings are not a clean '
             'bill: ' + '; '.join(gone['errors']))

@@ -13,6 +13,7 @@ Every thread and the coordinator follow these.
 - **Technical calls are ours (2026-10-09).** Take the default, post **Default taken**, keep going. What he is asked is in "Decide reversible and technical things yourself".
 - **The coordinator follows through (2026-10-09).** When a hold lifts, the coordinator tells every affected thread and re-arms held PRs in the same turn, without asking him, and clears stale or technical "waiting on you" items when woken.
 - **Check before you report (2026-10-14).** Any "armed", "merged", "waiting on…" or "nothing needs you" rests on a live read in the same turn: the PR's head checks, its latest lane report, its audit and its mergeable state. Name what you checked.
+- **What's true comes from a command, not a comment (2026-11-09, #3872).** Before telling him what is deployed, uploaded or switched on, run `scripts/sm_live.py`; `unknown` stays unknown. A card for him names each fact's source on a **Checked:** line. An issue whose truth lives outside GitHub carries a **How to check** command, never a status line. Comments stay for discussion and coordination.
 - **His answers stick (2026-10-14).** Before asking him anything, search [docs/decisions.md](docs/decisions.md) and the issue; if an earlier answer covers it, act on it. An answer that will recur goes into the record the same day, quoting him with the date, in a PR with no app code. A tap on a decision card is his answer: quote the question and his pick.
 - **Fix a broken rule or routine; don't just report it (2026-10-14).** A routine, notice or rule that no longer matches the code: take a **Default taken**, fix it, and say so once. His standing calls and the stop list in "Decide reversible and technical things yourself" are not yours to change; a clash between two goes to him as one question.
 - **How to talk to him.** He is dyslexic and listens to replies: lead with the answer, use short plain sentences and numbered points, and list issue numbers at the end. He is red-green colorblind: red and green alone never carry meaning. When he must act, give numbered steps, the full link, what to tap and type, and what happens after.
@@ -149,7 +150,7 @@ Apple build numbers identify uploads, not milestones: each replacement upload ne
    The PATH prefix matters: Homebrew's rsync breaks Xcode's packaging step.
    Check App Store Connect does not mark the uploaded build `Internal`, and confirm its version, build number and group assignment before calling the upload complete.
    Before external assignment, run `scripts/release_gate.py` (#2236).
-5. Tag the archived commit `testflight/0.1-build-N`, and push the tag.
+5. Tag the archived commit: `git tag -a testflight/0.1-build-N -m "$(scripts/sm_live.py --tag-message <archive>)" <commit>`, and push the tag.
 6. Delete the archive and export folders unless the owner wants them kept.
 
 Give the owner a short test checklist: journeys to try, what changed, known issues.

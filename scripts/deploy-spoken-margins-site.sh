@@ -91,6 +91,13 @@ rsync \
   "${site_directory}/" \
   "${vps_remote}:${web_root}/"
 
+# What scripts/sm_live.py reads to say which commit is live and when it went up (#3872). The rsync above deletes it, so it
+# is written after. Site/ is copied from the working tree, so a checkout with local edits says so.
+site_commit="$(git -C "${repository_root}" rev-parse --short HEAD)"
+if [[ -n "$(git -C "${repository_root}" status --porcelain -- Site)" ]]; then site_commit="${site_commit}-dirty"; fi
+printf '{"commit":"%s","deployed_at":"%s"}\n' "${site_commit}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" |
+  ssh -S "${control_socket}" "${vps_remote}" "umask 022 && cat > '${web_root}/deploy.json'"
+
 echo "Configuring and validating Caddy."
 ssh -S "${control_socket}" "${vps_remote}" bash -s -- "${site_host}" "${web_root}" <<'REMOTE_SCRIPT'
 set -euo pipefail

@@ -51,6 +51,14 @@ import (
 // Version is reported by the health check.
 const Version = "0.1.0-m1"
 
+// Commit and Built are set at build time by deploy.sh and reported by the
+// health check, so "what is the server running" has an answer that doesn't
+// depend on anyone's notes (#3872). Empty in a build made any other way.
+var (
+	Commit = ""
+	Built  = ""
+)
+
 const (
 	HeaderKeyID     = "X-SM-Key-Id"
 	HeaderAssertion = "X-SM-Assertion"
@@ -396,7 +404,7 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 		}
 		services[name] = state
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "version": Version, "services": services})
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "version": Version, "commit": Commit, "built": Built, "services": services})
 }
 
 // public serves one of the documents every install gets identically. The
