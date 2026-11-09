@@ -96,6 +96,31 @@ class HelperTable(unittest.TestCase):
             with self.subTest(name):
                 self.assertEqual(sm_paths.repo(anchor, default=default, env=env), expected)
 
+    def test_owner_overlay(self):
+        dev = checkout(self.tmp / 'cloud' / 'spoken-margins-native')
+        anchor = dev / 'scripts' / 'anchor.py'
+        ops = self.home / 'SpokenMarginsOps' / 'ops' / 'OWNER.md'
+        sibling = self.tmp / 'cloud' / 'ops-private' / 'OWNER.md'
+        loose = self.tmp / 'loose-overlay.md'
+        rows = [
+            ('nowhere on this machine', {}, [], None),
+            ('the owner Mac path', {}, [ops], ops),
+            ('the sibling ops-private checkout', {}, [sibling], sibling),
+            ('the Mac path beats the sibling', {}, [ops, sibling], ops),
+            ('SM_OWNER_OVERLAY beats both', {'SM_OWNER_OVERLAY': str(loose)}, [ops, sibling, loose], loose),
+            ('SM_OWNER_OVERLAY naming a missing file is no overlay, not a fallback',
+             {'SM_OWNER_OVERLAY': str(loose)}, [ops, sibling], None),
+            ('an empty SM_OWNER_OVERLAY is unset', {'SM_OWNER_OVERLAY': ''}, [sibling], sibling),
+        ]
+        for name, env, files, expected in rows:
+            with self.subTest(name):
+                for path in (ops, sibling, loose):
+                    path.unlink(missing_ok=True)
+                for path in files:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text('overlay')
+                self.assertEqual(sm_paths.owner_overlay(anchor, env=env, home=self.home), expected)
+
     def test_a_copied_script_outside_any_checkout_is_its_own_root(self):
         loose = self.tmp / 'loose'
         loose.mkdir()
