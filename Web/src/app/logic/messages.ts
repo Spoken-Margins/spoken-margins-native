@@ -24,6 +24,8 @@ export const MESSAGES = Object.freeze({
   relayUnreachable: 'This feed needs our server, and our server couldn’t be reached. Try again later.',
   offline: 'No connection. Check you’re online, then try again.',
   paidPost: 'This post is for paid subscribers. The web app reads posts without your Substack sign-in, so it can’t play this one.',
+  newestSkipped: 'Its newest post can’t be played here, so this is the newest one that can.',
+  noVoice: 'This post has no voice to play: neither the writer nor Substack offers one.',
   searchFailed: 'Search isn’t answering right now. Try again, or paste the show’s feed address.',
   micBlocked: 'The microphone is blocked for this site. Allow it in your browser’s site settings, then try again. Written Margins still work.',
   micMissing: 'No microphone was found. Connect one, then try again. Written Margins still work.',

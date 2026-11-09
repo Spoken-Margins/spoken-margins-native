@@ -110,9 +110,9 @@ export function Following({ onPlay, followOpen, setFollowOpen }: { onPlay: () =>
                 <button
                   type="button"
                   className="icon-button play-newest"
-                  aria-label={`Play the newest episode of ${row.show.title}: ${row.newest.title}`}
+                  aria-label={`Play the newest episode of ${row.show.title} that can play`}
                   onClick={() => {
-                    if (row.newest) void player.open(row.newest.id);
+                    void player.openNewestPlayable(row.episodes);
                     onPlay();
                   }}
                 >

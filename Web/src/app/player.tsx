@@ -7,10 +7,12 @@ import { useData } from './data.tsx';
 import { friendMargins, readsAloud } from './logic/arrival.ts';
 import { clipRejection, EPISODE_FAILED, failureNoticeShown, nextFailure, type FailureEvent } from './logic/episode-failure.ts';
 import { CrossingClock } from './logic/margin-autoplay.ts';
-import { plainError } from './logic/messages.ts';
+import { MESSAGES, plainError } from './logic/messages.ts';
+import { newestPlayableMessage, playCandidates, playNewestAvailable, type PlayAttempt } from './logic/newest-playable.ts';
 import { NotSavedError } from './logic/storage.ts';
 import { FINISHED_WITHIN_SECONDS } from './logic/library.ts';
 import { services } from './services.ts';
+import { PaidPostNoVoice } from '../sources/read.ts';
 import { readWrittenMargin, type Reading } from './speech.ts';
 import { useRelay, useUi } from './ui.tsx';
 
@@ -39,6 +41,8 @@ export interface PlayerApi {
    * is the episode itself, for one just stored that this render does not show yet (an opened Margin file).
    */
   open(episodeId: string, options?: { at?: number; episode?: Episode }): Promise<void>;
+  /** A show's play button: starts the newest of these (newest first) that can actually play, and says so if it isn't the first. */
+  openNewestPlayable(newestFirst: readonly Episode[]): Promise<void>;
   toggle(): void;
   skip(seconds: number): void;
   seek(seconds: number): void;
@@ -302,19 +306,20 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     if (margin) playClip(margin, done);
   }, [arrived, playClip]);
 
-  const open = useCallback(
-    async (id: string, options: { at?: number; episode?: Episode } = {}) => {
+  /** Opens an episode and says how it went. `paid` and `no-voice` are left for the caller to tell the listener. */
+  const attemptOpen = useCallback(
+    async (id: string, options: { at?: number; episode?: Episode } = {}): Promise<PlayAttempt> => {
       const audio = audioRef.current;
       let target = options.episode?.id === id ? options.episode : dataRef.current.episodes.find((e) => e.id === id);
-      if (!audio || !target) return;
+      if (!audio || !target) return 'stopped';
       if (id === loadedId.current && audio.src) {
         if (failedRef.current) {
           retry(audio);
-          return;
+          return 'played';
         }
         if (options.at !== undefined) audio.currentTime = options.at;
         await audio.play().catch(() => undefined);
-        return;
+        return 'played';
       }
       save();
       stopClip();
@@ -330,18 +335,16 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
             await dataRef.current.updateEpisode(target);
           }
         } catch (error) {
+          if (error instanceof PaidPostNoVoice) return 'paid';
           // The relay pop-up's "Not now", a dead page: one message, not a second "no voice" on top of it. A
           // storage failure has already shown its own.
           if (!(error instanceof NotSavedError)) toast(plainError(error), 'problem');
-          return;
+          return 'stopped';
         } finally {
           setLoading(false);
         }
       }
-      if (!target.audioUrl) {
-        toast('This post has no voice to play: neither the writer nor Substack offers one.', 'problem');
-        return;
-      }
+      if (!target.audioUrl) return 'no-voice';
       const resume = dataRef.current.positions.find((p) => p.episodeId === id)?.seconds;
       const finished = target.durationSeconds && resume && resume >= target.durationSeconds - FINISHED_WITHIN_SECONDS;
       pendingSeek.current = options.at ?? (finished ? 0 : resume);
@@ -355,8 +358,27 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       audio.playbackRate = dataRef.current.settings.playbackRate;
       setLoading(true);
       await audio.play().catch(onPlayRejected);
+      return 'played';
     },
     [relay, save, toast, stopClip, apply, retry, onPlayRejected],
+  );
+
+  const open = useCallback(
+    async (id: string, options: { at?: number; episode?: Episode } = {}) => {
+      const result = await attemptOpen(id, options);
+      if (result === 'paid') toast(MESSAGES.paidPost, 'problem');
+      if (result === 'no-voice') toast(MESSAGES.noVoice, 'problem');
+    },
+    [attemptOpen, toast],
+  );
+
+  const openNewestPlayable = useCallback(
+    async (newestFirst: readonly Episode[]) => {
+      const result = await playNewestAvailable(playCandidates(newestFirst), (episode) => attemptOpen(episode.id));
+      const message = newestPlayableMessage(result);
+      if (message) toast(message.text, message.tone);
+    },
+    [attemptOpen, toast],
   );
 
   const toggle = useCallback(() => {
@@ -443,8 +465,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   }, [episode, playing, duration, rate, time]);
 
   const api = useMemo<PlayerApi>(
-    () => ({ episode, playing, loading, time, duration, rate, open, toggle, skip, seek, setRate, now, arrived, playArrived, failed, withoutEpisode, playWithoutEpisode, registerFailureCard }),
-    [episode, playing, loading, time, duration, rate, open, toggle, skip, seek, setRate, now, arrived, playArrived, failed, withoutEpisode, playWithoutEpisode, registerFailureCard],
+    () => ({ episode, playing, loading, time, duration, rate, open, openNewestPlayable, toggle, skip, seek, setRate, now, arrived, playArrived, failed, withoutEpisode, playWithoutEpisode, registerFailureCard }),
+    [episode, playing, loading, time, duration, rate, open, openNewestPlayable, toggle, skip, seek, setRate, now, arrived, playArrived, failed, withoutEpisode, playWithoutEpisode, registerFailureCard],
   );
 
   return (
