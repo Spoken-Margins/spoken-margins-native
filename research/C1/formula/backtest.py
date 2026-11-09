@@ -6,7 +6,7 @@ import collections, json, re, subprocess, sys, pathlib
 
 cache, base, new, lex, tok, work = map(pathlib.Path, sys.argv[1:7])
 rows = json.load(open(cache / "sample.json"))
-vocab = {c for k in json.load(open(tok))["model"]["vocab"] if not k.startswith("<") for c in k}
+vocab = {c for piece, _ in json.load(open(tok))["model"]["vocab"] if not piece.startswith("<") for c in piece}
 SPELLED = set("αβγδεζηθικλμνξοπρστυφχψωΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡΣΤΥΦΧΨΩ×÷≤≥=±π")
 PUNCT = set("’‘“”—–…•−")
 
