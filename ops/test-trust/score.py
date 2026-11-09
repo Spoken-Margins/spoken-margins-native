@@ -13,7 +13,9 @@ Output: episodes.jsonl (one per failing test per PR failure run, with its class)
 
 Classes, per failing test at head H on PR P:
 - mutation: the change between fail and pass reverts a deliberate MUTATION / PROOF ONLY commit
-- catch-candidate: a later run on P passed the test and P's own commits H..pass changed product code
+- catch-candidate: a later run on P passed the test and P's own commits after the failing run (never a merge from
+  `next`/`main`, #3900) changed product code and no test file (product-only fix)
+- mixed-fix: ... changed product code and test files together; reported apart, not counted as a catch
 - wrong-test: ... changed only test files
 - rerun-pass: the same head (or no own change) passed later, same next
 - next-moved: the same head passed later, next moved in between
@@ -40,6 +42,8 @@ FAILED_PATTERNS = [
 FAULT = re.compile(r'exit 124|ran past its|ran out of its own|Missing \d+ tests|no host-test slot|'
                    r'Build before simulator boot: Process exit|Not in any app test plan|printed no test output|lane error', re.I)
 MUTATION = re.compile(r'MUTATION|PROOF ONLY|intended[- ]failure|intended to fail', re.I)
+THREAD_MOVE = re.compile(r'Task\.detached|DispatchQueue|@MainActor|nonisolated|\bMainActor\b|\bqos:|\.background\b|'
+                         r'priority: \.(?:low|utility|background)|OperationQueue|\bactor\s+\w+', re.I)
 NEXT_RED = re.compile(r're-run on plain next ([0-9a-f]{7,}): (.*)')
 
 
@@ -99,6 +103,81 @@ def ran_test(r, t):
     return False
 
 
+def _git(repo, *args, stdin=None):
+    r = subprocess.run(['git', '-C', str(repo), *args], capture_output=True, text=True, input=stdin, timeout=120)
+    return r.stdout if r.returncode == 0 else None
+
+
+def _own_commits(repo, head, nxt):
+    """The PR's own commits at <head>: reachable from it, not from the `next` it was tested against, no merges.
+    None when git can't say (an unknown sha, no `next` recorded)."""
+    if not head or not nxt:
+        return None
+    out = _git(repo, 'rev-list', '--no-merges', head, '^' + nxt)
+    return None if out is None else out.split()
+
+
+def _patch_ids(repo, shas):
+    """sha -> stable patch id, so a rebased copy of a commit is the same commit."""
+    ids = {}
+    for sha in shas:
+        shown = _git(repo, 'show', '--format=', '-p', sha)
+        out = _git(repo, 'patch-id', '--stable', stdin=shown or '')
+        ids[sha] = out.split()[0] if out and out.split() else sha
+    return ids
+
+
+def own_change(repo, fail_head, fail_next, pass_head, pass_next):
+    """(files, shas) of the PR's own commits that appear after the failing run: the commits own to <pass_head> whose
+    patch is not among those own to <fail_head>. Merges from `next` and the commits `next` brought in are never
+    counted (#3900). None when either side's own commits can't be listed."""
+    after, before = _own_commits(repo, pass_head, pass_next), _own_commits(repo, fail_head, fail_next)
+    if after is None or before is None:
+        return None
+    seen = set(_patch_ids(repo, before).values())
+    new = [sha for sha, pid in _patch_ids(repo, after).items() if pid not in seen]
+    files = set()
+    for sha in new:
+        files.update(f for f in (_git(repo, 'show', '--format=', '--name-only', sha) or '').split('\n') if f)
+    return sorted(files), new
+
+
+def fix_kind(files):
+    """product-only, mixed, test-only, or other, for a list of changed files."""
+    prod = [f for f in files if f.split('/')[0] in lane_ledger.PRODUCT_ROOTS and not lane_ledger._is_test_path(f)]
+    tests = [f for f in files if lane_ledger._is_test_path(f)]
+    if prod and tests:
+        return 'mixed'
+    if prod:
+        return 'product-only'
+    if files and len(tests) == len(files):
+        return 'test-only'
+    return 'other'
+
+
+def pr_kind(repo, head, nxt):
+    """thread-move when the PR's own product diff adds threading constructs (moves work between threads), else other."""
+    if not _own_commits(repo, head, nxt):
+        return 'unknown'
+    diff = _git(repo, 'log', '--no-merges', '-p', '--format=', '-U0', head, '^' + nxt, '--', *lane_ledger.PRODUCT_ROOTS)
+    added = [x for x in (diff or '').split('\n') if x.startswith('+') and not x.startswith('+++')]
+    return 'thread-move' if any(THREAD_MOVE.search(x) for x in added) else 'other'
+
+
+def classify_change(repo, fail_head, fail_next, pass_head, pass_next):
+    """(class, fix kind) for the change between a failing run and the passing one, judged by the PR's own commits.
+    class is catch (product-only), mixed, wrong-test, flake (nothing of its own changed) or other. When the own
+    commits can't be listed, falls back to lane_ledger.classify, which skips merges but compares trees after a rebase."""
+    changed = own_change(repo, fail_head, fail_next, pass_head, pass_next)
+    if changed is None:
+        return lane_ledger.classify(repo, fail_head, pass_head), 'unscoped'
+    files, shas = changed
+    if not shas:
+        return 'flake', 'none'
+    kind = fix_kind(files)
+    return {'product-only': 'catch', 'mixed': 'mixed', 'test-only': 'wrong-test'}.get(kind, 'other'), kind
+
+
 def trunk_red_from_issues(episodes, windows):
     """Re-class `next-moved` episodes as `trunk-red` where a regression issue names `main` red for the test (#3702).
 
@@ -131,7 +210,7 @@ def main(argv):
     for r in rs:
         by_key[r['key']].append(r)
     episodes, faults, seen_red = [], collections.Counter(), set()
-    kinds = {}
+    kinds, pr_kinds = {}, {}
     for key, runs in by_key.items():
         for i, r in enumerate(runs):
             if r['fault']:
@@ -159,16 +238,21 @@ def main(argv):
                     if r['head'] == closer['head'] or not r['head']:
                         ep['class'] = 'next-moved' if r['next'] != closer['next'] else 'rerun-pass'
                     else:
-                        k = (r['head'], closer['head'])
+                        k = (r['head'], r['next'], closer['head'], closer['next'])
                         if k not in kinds:
-                            kinds[k] = lane_ledger.classify(REPO, r['head'], closer['head'])
-                        c = kinds[k]
+                            kinds[k] = classify_change(REPO, *k)
+                        c, ep['fix'] = kinds[k]
                         if c == 'catch' and MUTATION.search(subprocess.run(
                                 ['git', '-C', str(REPO), 'log', '--format=%s', f"{r['head']}~1..{closer['head']}"],
                                 capture_output=True, text=True).stdout):
                             c = 'mutation'
-                        ep['class'] = {'catch': 'catch-candidate', 'flake': (
+                        ep['class'] = {'catch': 'catch-candidate', 'mixed': 'mixed-fix', 'flake': (
                             'next-moved' if r['next'] != closer['next'] else 'rerun-pass')}.get(c, c)
+                        if ep['class'] in ('catch-candidate', 'mixed-fix'):
+                            pk = (closer['head'], closer['next'])
+                            if pk not in pr_kinds:
+                                pr_kinds[pk] = pr_kind(REPO, *pk)
+                            ep['pr_kind'] = pr_kinds[pk]
                 # a failing run with the same failure set on the same head twice is one episode
                 if any(e['test'] == t and e['key'] == key and e['from'] == r['head'] and e.get('class') == ep['class']
                        for e in episodes):
@@ -181,7 +265,7 @@ def main(argv):
     per = collections.defaultdict(collections.Counter)
     for e in episodes:
         per[e['test']][e['class']] += 1
-    cols = ['catch-candidate', 'mutation', 'wrong-test', 'rerun-pass', 'next-moved', 'trunk-red', 'other', 'unresolved']
+    cols = ['catch-candidate', 'mixed-fix', 'mutation', 'wrong-test', 'rerun-pass', 'next-moved', 'trunk-red', 'other', 'unresolved']
     with (HERE / 'per-test.tsv').open('w') as f:
         f.write('test\t' + '\t'.join(cols) + '\ttotal\n')
         for t, c in sorted(per.items(), key=lambda kv: -sum(kv[1].values())):
@@ -197,6 +281,12 @@ def main(argv):
             first[kind, 'test-fail'] += bool(r['failed'])
     print('reports', len(rs), 'episodes', len(episodes), 'tests', len(per))
     print('classes', collections.Counter(e['class'] for e in episodes))
+    cand = [e for e in episodes if e['class'] in ('catch-candidate', 'mixed-fix', 'wrong-test')]
+    print('fixes after a failing run (product-only / mixed / test-only):',
+          sum(e['class'] == 'catch-candidate' for e in cand), sum(e['class'] == 'mixed-fix' for e in cand),
+          sum(e['class'] == 'wrong-test' for e in cand))
+    by_kind = collections.Counter(e.get('pr_kind', 'unknown') for e in episodes if e['class'] == 'catch-candidate')
+    print('product-only catches by kind of PR', dict(by_kind))
     print('fault reports by tier', dict(faults))
     print('runs with a named test failure', dict(first))
 
