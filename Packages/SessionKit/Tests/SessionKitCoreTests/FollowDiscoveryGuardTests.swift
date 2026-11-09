@@ -120,8 +120,22 @@ final class FollowDiscoveryGuardTests: XCTestCase {
         DiscoveryStubProtocol.serve("https://feedsize.example/at-limit.xml", .feed(atLimit))
         DiscoveryStubProtocol.serve("https://feedsize.example/over-limit.xml", .feed(overLimit))
 
+        #if canImport(FoundationNetworking)
+        // swift-corelibs-foundation's XML parser (libxml2) refuses any document over about 10 MB whatever it holds, so on
+        // Linux the 16 MB feed reaches the parser and is rejected there. The size guard must still have let it through.
+        let atLimitCoordinator = coordinator()
+        do {
+            _ = try await atLimitCoordinator.discover(urlString: "https://feedsize.example/at-limit.xml")
+            XCTFail("the Linux XML parser is expected to refuse a 16 MB document")
+        } catch {
+            let atLimitLine = await atLimitCoordinator.failureDiagnostic(for: error)
+            XCTAssertTrue(atLimitLine.contains("direct: not a feed (feed_malformed)"), "at the limit the parser, not the size guard, speaks: \(atLimitLine)")
+            XCTAssertFalse(atLimitLine.contains("not a feed (response_too_large)"), atLimitLine)
+        }
+        #else
         let candidates = try await coordinator().discover(urlString: "https://feedsize.example/at-limit.xml")
         XCTAssertEqual(candidates.map(\.relation), ["direct"])
+        #endif
 
         // The coordinator refuses the body before the parser sees it; its own code names the 16 MB limit.
         let coordinator = coordinator()
