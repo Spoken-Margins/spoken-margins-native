@@ -151,6 +151,38 @@ final class AudioPreparationRunSummaryTests: XCTestCase {
         XCTAssertEqual(line, "chunks=0;renderMsMedian=none;renderMsP90=none;heatPauses=1;peakThermal=serious;wallClockS=0")
     }
 
+    // MARK: Which jobs count as work left
+
+    private func job(_ id: String, _ policy: PreparationJobPolicy, cancelled: Bool = false) -> AudioPreparationJob {
+        AudioPreparationJob(id: id, itemId: "item-\(id)", manifestId: "manifest-\(id)", policy: policy, isCancelled: cancelled)
+    }
+
+    func testAnEmptyTableIsDrained() {
+        XCTAssertTrue(AudioPreparationRunTracker.isDrained(remainingJobs: [], automaticPolicy: .off))
+        XCTAssertTrue(AudioPreparationRunTracker.isDrained(remainingJobs: [], automaticPolicy: .whileCharging))
+    }
+
+    func testAJobTheListenerStoppedIsNotWorkLeft() {
+        // Stop keeps the job with isCancelled; a table holding only that is drained.
+        for policy in [AutomaticAudioPreparationPolicy.off, .whileCharging] {
+            XCTAssertTrue(AudioPreparationRunTracker.isDrained(remainingJobs: [job("x", .explicit, cancelled: true)], automaticPolicy: policy))
+        }
+    }
+
+    func testAnExplicitJobStillQueuedIsWorkLeftWhateverTheAutomaticPolicy() {
+        for policy in [AutomaticAudioPreparationPolicy.off, .whileCharging] {
+            XCTAssertFalse(AudioPreparationRunTracker.isDrained(
+                remainingJobs: [job("x", .explicit, cancelled: true), job("y", .explicit)], automaticPolicy: policy))
+        }
+    }
+
+    func testAnAutomaticJobIsWorkLeftOnlyWhileAutomaticPreparationIsOn() {
+        for policy in [PreparationJobPolicy.whileCharging, .demandWindow] {
+            XCTAssertTrue(AudioPreparationRunTracker.isDrained(remainingJobs: [job("a", policy)], automaticPolicy: .off), "nothing will pick it up")
+            XCTAssertFalse(AudioPreparationRunTracker.isDrained(remainingJobs: [job("a", policy)], automaticPolicy: .whileCharging))
+        }
+    }
+
     // MARK: The export
 
     func testTheLineIsInTheBasicExportAndHoldsNothingPrivate() throws {

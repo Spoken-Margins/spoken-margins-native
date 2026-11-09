@@ -88,7 +88,16 @@ public struct AudioPreparationRunTracker: Equatable, Sendable {
 
     public init() {}
 
-    /// The queue held no job after a committed chunk: whatever comes next is a new request, not this run.
+    /// Whether the jobs left in the table after a committed chunk are all jobs the passes will never pick up:
+    /// stopped ones (Stop keeps the job with `isCancelled`), and automatic ones while automatic preparation is
+    /// off. A table that still holds those is as good as empty; counting them kept the drain from ever firing
+    /// for a listener who had once tapped Stop (audit on 5c12116).
+    public static func isDrained(remainingJobs: [AudioPreparationJob], automaticPolicy: AutomaticAudioPreparationPolicy) -> Bool {
+        OfflinePreparationRecovery.backgroundJobs(remainingJobs, automaticPolicy: automaticPolicy).isEmpty
+    }
+
+    /// The queue held no job the passes could still pick up after a committed chunk: whatever comes next is a
+    /// new request, not this run.
     public mutating func queueDrained() {
         isDrained = true
     }

@@ -329,7 +329,8 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
                 )
             }
             let remainingJobs = try await AudioPreparationPassReads.audioJobs(store)
-            if remainingJobs.isEmpty { runtimeDiagnostics.preparationQueueDrained() } // whoever rendered the last chunk: the run is over (#3816)
+            // Whoever rendered the last chunk: with no job left that a pass could pick up (a stopped job stays in the table), the run is over (#3816).
+            if AudioPreparationRunTracker.isDrained(remainingJobs: remainingJobs, automaticPolicy: automaticAudioPreparationPolicy) { runtimeDiagnostics.preparationQueueDrained() }
             applyPreparedChunkProgress(item: item, manifest: updated, remainingJobs: remainingJobs)
             let hasMore = try await hasMoreMatchingJobs()
             diagnostics["backgroundAudioPreparation"] = hasMore ? "chunk_committed" : "complete"
