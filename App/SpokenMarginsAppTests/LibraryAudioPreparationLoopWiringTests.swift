@@ -61,6 +61,27 @@ final class LibraryAudioPreparationLoopWiringTests: XCTestCase {
         return Fixture(model: model, store: store, manifestId: manifest.id, renderer: renderer)
     }
 
+    /// #3816: the real pass, stopped at the heat gate before any render, leaves the run's summary with the pause counted.
+    func testAPassStoppedForHeatLeavesTheRunSummaryWithOneHeatPause() async throws {
+        let fixture = try await makeFixture()
+        let model = fixture.model
+        model.preparationSeams = PreparationPassSeams(
+            deviceConditions: { SpeechEngineConditions(thermal: .serious) },
+            renderer: { fixture.renderer },
+            memoryBackoffActive: { false }
+        )
+
+        let hasMoreWork = await model.performBackgroundAudioPreparationPass()
+
+        XCTAssertFalse(hasMoreWork)
+        XCTAssertEqual(model.diagnostics["backgroundAudioPreparation"], "pause_for_heat", "precondition: the pass stopped at the heat gate")
+        let started = await fixture.renderer.started
+        XCTAssertEqual(started, 0, "nothing rendered")
+        let line = try XCTUnwrap(model.diagnostics[AudioPreparationRunSummary.diagnosticsKey], "a run that paused for heat leaves a summary")
+        XCTAssertTrue(line.hasPrefix("chunks=0;"), line)
+        XCTAssertTrue(line.contains("heatPauses=1;peakThermal=serious;"), line)
+    }
+
     /// The model reaches the loop's two stop operations from the right places: a plain stop and clearing the queue
     /// invalidate the run, while a snapshot change that forbids preparation only cancels it.
     func testTheModelStopsTheLoopFromEachCallSite() async throws {

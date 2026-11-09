@@ -93,6 +93,7 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
     /// The background task stopped: its item stops showing progress, and the foreground loop picks its own work again (#534).
     func libraryAudioBackgroundDrainEnded() {
         libraryAudioLoop.turns.stopped(.background)
+        runtimeDiagnostics.preparationRunEnded() // the background task's run is over; its summary stays (#3816)
         refreshLibraryRowsInBackground()
         if canPrepareLibraryAudio, UIApplication.shared.applicationState == .active { startForegroundAudioPreparationIfNeeded() }
     }
@@ -112,7 +113,7 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
         let caller: LibraryAudioPreparationCaller = foregroundDemandOnly ? .foreground : .background
         // Live speech owns the serial renderer while the listener has active
         // demand. A stale/background job must not queue ahead of its next chunk.
-        guard canPrepareLibraryAudio else { libraryAudioLoop.turns.stopped(caller); runtimeDiagnostics.preparationRunEnded(); return false }
+        guard canPrepareLibraryAudio else { libraryAudioLoop.turns.stopped(caller); return false }
         guard hasAcceptedCurrentTerms,
               let preparationVoice = PreparationVoice.current(for: ttsVoiceSelection, model: self) else { libraryAudioLoop.turns.blocked(caller); return false } // settles until these change (#647)
         let voice = preparationVoice.renderVoice
@@ -153,7 +154,7 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
                 ).isEmpty
             }
             let previous = libraryAudioPreparingItemId // nil job: nothing to do, or the foreground loop waits for the background task (#534)
-            guard let job = libraryAudioLoop.turns.select(queuedJobs, activeItemId: activePlaybackItemId, for: caller) else { libraryAudioLoop.turns.stopped(caller); runtimeDiagnostics.preparationRunEnded(); return false }
+            guard let job = libraryAudioLoop.turns.select(queuedJobs, activeItemId: activePlaybackItemId, for: caller) else { libraryAudioLoop.turns.stopped(caller); return false }
             if let previous, previous != job.itemId,
                libraryItems.first(where: { $0.id == previous })?.startupAudioState == .preparing { updateLibraryStartupAudioState(itemId: previous, state: .waiting) }
             if libraryItems.first(where: { $0.id == job.itemId })?.startupAudioState == .waiting { updateLibraryStartupAudioState(itemId: job.itemId, state: .preparing) }
@@ -306,7 +307,7 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
             }
             let needsAssembly = decision?.needsAssembly
             if let decision {
-                let thermalAfterRender = SupertonicResourcePolicy.currentConditions().thermal
+                let thermalAfterRender = preparationSeams.deviceConditions().thermal
                 recordDeveloperDiagnostic("preparation.committed", ["item": DeveloperDiagnosticRecording.token(item.id), "chunks": String(updated.chunks.count),
                                                                     "renderMs": String(renderMs), "thermal": thermalAfterRender.rawValue])
                 runtimeDiagnostics.preparationChunkCommitted(renderMs: renderMs, thermalAtStart: atRender.thermal, thermalAtEnd: thermalAfterRender) // the basic export, always (#3816)
