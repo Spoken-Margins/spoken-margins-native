@@ -107,6 +107,17 @@ final class PlaybackProjectionPrewarmTests: XCTestCase {
         XCTAssertTrue(SpeechTextNormalizer.projectionMemo.remembers(text, kind: .systemSpeech))
     }
 
+    /// A book too big for the memo to hold twice keeps the chosen voice's projection, not the fallback's pushing it out.
+    /// (Projecting a real 3 MB book takes tens of seconds, so the budget rule is tested directly.)
+    func testABookTooBigToKeepTwiceIsOnlyProjectedForTheFirstKind() {
+        let article = longArticle().utf8.count
+        XCTAssertTrue(SpeechProjectionMemo.fits(utf8Count: article, copies: 2), "a long article is kept for both players")
+        let book = 3_500_000
+        XCTAssertTrue(SpeechProjectionMemo.holds(utf8Count: book))
+        XCTAssertTrue(SpeechProjectionMemo.fits(utf8Count: book, copies: 1))
+        XCTAssertFalse(SpeechProjectionMemo.fits(utf8Count: book, copies: 2), "the second copy would push the first out")
+    }
+
     func testASystemVoiceSelectionProjectsOnlyForTheSystemVoice() {
         let text = longArticle()
         let item = Item(id: "item-system", title: "System", mediaType: "text", text: text, externalReference: nil, status: "ready")

@@ -81,8 +81,15 @@ public enum SpeechTextNormalizer {
     /// off the main thread; the call is the whole cost, and a text too short or too long for the memo is left alone.
     public static func prewarm(_ source: String, kinds: PrewarmVoiceKinds = .onDevice) {
         guard SpeechProjectionMemo.holds(utf8Count: source.utf8.count) else { return }
-        if kinds.contains(.onDevice) { _ = normalizeWithSourceOffsets(source) }
-        if kinds.contains(.system) { _ = projectForSystemSpeech(source) }
+        // The memo's byte budget counts each kind's copy of the text. A book that would fit once but not twice keeps
+        // only the first kind, never the second pushing the first out (the first is the chosen voice's own).
+        let wanted = [(PrewarmVoiceKinds.onDevice, { _ = normalizeWithSourceOffsets(source) }),
+                      (PrewarmVoiceKinds.system, { _ = projectForSystemSpeech(source) })]
+            .filter { kinds.contains($0.0) }
+        for (index, kind) in wanted.enumerated() {
+            guard SpeechProjectionMemo.fits(utf8Count: source.utf8.count, copies: index + 1) else { return }
+            kind.1()
+        }
     }
 
     /// Produces the conservative plain-text representation handed to Apple's
@@ -622,6 +629,9 @@ final class SpeechProjectionMemo: @unchecked Sendable {
     private var entries: [Entry] = [] // oldest first
 
     static func holds(utf8Count: Int) -> Bool { utf8Count >= minimumBytes && utf8Count <= maximumBytes }
+
+    /// Whether `copies` projections of one text stay inside the byte budget together.
+    static func fits(utf8Count: Int, copies: Int) -> Bool { utf8Count * copies <= totalBytes }
 
     private static func same(_ a: String, _ b: String) -> Bool {
         a.utf8.count == b.utf8.count && a.utf8.elementsEqual(b.utf8)
