@@ -774,7 +774,10 @@ class Untriaged(unittest.TestCase):
         self.assertEqual(self.found(issue(1, labels=['area: groundwork', 'ready'])), [])
 
     def test_a_milestone_does_not_make_an_issue_triaged(self):
-        found = self.found(issue(2, milestone='0.2', labels=['ready']))
+        self.assertEqual(self.found(issue(2, milestone='0.2', labels=['area: groundwork', 'ready'])), [])
+
+    def test_a_milestone_with_an_area_but_no_state_is_listed(self):
+        found = self.found(issue(2, milestone='0.2', labels=['area: groundwork']))
         self.assertEqual([a['issues'] for a in found], [[2]])
 
     def test_no_area_label_is_listed_even_with_a_state(self):
@@ -833,10 +836,11 @@ class Untriaged(unittest.TestCase):
         self.assertIn('2 open issue(s)', found[0]['detail'])
         self.assertIn('oldest #1256, filed 2026-10-10', found[0]['detail'])
 
-    def test_ten_are_named_and_the_rest_counted(self):
-        found = self.found(*[issue(n, created=f'2026-10-{n - 99:02d}T00:00:00Z') for n in range(100, 115)])
+    def test_the_ten_named_are_the_oldest_even_though_rest_lists_newest_first(self):
+        rows = [issue(n, created=f'2026-10-{n - 99:02d}T00:00:00Z') for n in range(114, 99, -1)]   # newest first
+        found = self.found(*rows)
         self.assertIn('15 open issue(s)', found[0]['detail'])
-        self.assertEqual(len(found[0]['issues']), 10)
+        self.assertEqual(found[0]['issues'], list(range(100, 110)))
 
     def test_nothing_untriaged_says_nothing(self):
         actions, _ = sweep.decide(facts_of(world()))

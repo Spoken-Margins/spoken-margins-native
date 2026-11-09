@@ -57,7 +57,7 @@ Anything it can't read is reported as unreadable and never turned into a release
 
 Exit codes: 0 the sweep ran (actions or none), 2 GitHub unreachable or unreadable (nothing partial is printed as
 "nothing to do"). Needs GH_TOKEN or GITHUB_TOKEN (or `gh auth token`); --apply needs write access to issues.
-About 40 to 80 GitHub calls a run, none of them model tokens. Rules 9 to 13 add about 6: GraphQL pages of the open
+About 40 to 85 GitHub calls a run, none of them model tokens. Rules 9 to 13 add about 6: GraphQL pages of the open
 issues with their last three comments (100 a page), one page of PRs merged into `next`, one GraphQL lookup of the PRs
 a hold names, and at most DRIFT_READ_CAP issue-comment reads for reverts; what the cap leaves out is printed.
 """
@@ -312,7 +312,7 @@ def merged_fixes(pulls, ready, ctx):
     return found
 
 
-# ---- Drift between GitHub and the code (rules 9 to 12, report only) --------------------------------------------
+# ---- Drift between GitHub and the code (rules 9 to 11 and 13, report only) --------------------------------------------
 
 OPEN_ISSUES = """query($owner: String!, $name: String!, $after: String) {
   repository(owner: $owner, name: $name) {
@@ -474,12 +474,13 @@ def stale_holds(api, issues, pulls):
 def needs_triage(issues):
     """Rule 7: an open issue without exactly one `area:` label, or without a state (a state label, or the Later
     milestone). The milestone itself says nothing, because most triaged issues keep none (#3885). Issues awaiting a
-    collaborator's review (OUTSIDE_LABEL) are listed apart. Oldest first, as the scan reads them."""
+    collaborator's review (OUTSIDE_LABEL) are listed apart. Oldest first: REST returns newest first."""
     def untriaged(row):
         areas = [label for label in row['labels'] if label.startswith(AREA_PREFIX)]
         stateless = row['milestone'] != PARKED_MILESTONE and not STATE_LABELS.intersection(row['labels'])
         return len(areas) != 1 or stateless
-    return [row for row in issues if OUTSIDE_LABEL not in row['labels'] and untriaged(row)]
+    return sorted((row for row in issues if OUTSIDE_LABEL not in row['labels'] and untriaged(row)),
+                  key=lambda row: (row['created_at'], row['number']))
 
 
 def unchecked_cards(issues):
@@ -723,7 +724,7 @@ def decide(facts, window=STALE_AFTER):
             f'{cards[0]["title"][:60]}): check each fact (scripts/sm_live.py, docs/decisions.md), then add where it came from, '
             'or drop the ask if he has already answered (#3872)', issues=[row['number'] for row in cards[:10]])
     if gone.get('errors'):
-        act('drift-unreadable', LOOK, 'rules 9 to 12 could not read everything, so missing findings are not a clean '
+        act('drift-unreadable', LOOK, 'rules 9 to 11 and 13 could not read everything, so missing findings are not a clean '
             'bill: ' + '; '.join(gone['errors']))
 
     for claim in claims:
