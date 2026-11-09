@@ -106,4 +106,23 @@ final class VoiceOverAnnouncementsTests: XCTestCase {
         XCTAssertNotNil(VoiceOverAnnouncements.marginCard(from: key(cole, "a"), to: key(cole, "b")))
         XCTAssertNil(VoiceOverAnnouncements.marginCard(from: key(cole, "a"), to: key(cole, "a")))
     }
+
+    func testASharingStageChangeSaysTheNewStagesHeading() {
+        XCTAssertEqual(VoiceOverAnnouncements.sharingStage(from: .select, to: .review), "Review selected Margins")
+        XCTAssertEqual(VoiceOverAnnouncements.sharingStage(from: .review, to: .recipientPreview), "Recipient preview")
+        XCTAssertEqual(VoiceOverAnnouncements.sharingStage(from: .recipientPreview, to: .share), "Share your Margins")
+        XCTAssertEqual(VoiceOverAnnouncements.sharingStage(from: .review, to: .select), "Choose Margins")
+    }
+
+    func testTheSameSharingStageIsSilent() {
+        for step in VoiceOverAnnouncements.SharingStep.allCases {
+            XCTAssertNil(VoiceOverAnnouncements.sharingStage(from: step, to: step))
+        }
+    }
+
+    func testEverySharingStageHasADistinctNonEmptyHeading() {
+        let titles = VoiceOverAnnouncements.SharingStep.allCases.map(\.title)
+        XCTAssertEqual(Set(titles).count, titles.count)
+        XCTAssertFalse(titles.contains(where: \.isEmpty))
+    }
 }

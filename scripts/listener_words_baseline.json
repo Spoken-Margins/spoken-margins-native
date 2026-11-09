@@ -4,12 +4,6 @@
  "entries": [
   {
    "kind": "voiceover",
-   "text": "Item",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "voiceover",
    "text": "Item options",
    "count": 1,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
@@ -17,30 +11,6 @@
   {
    "kind": "voiceover",
    "text": "Opens item details and listening-session history",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "voiceover",
-   "text": "Opens the item.",
-   "count": 3,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "voiceover",
-   "text": "Opens the review of this item's Margins with Share ready",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "voiceover",
-   "text": "Shows their items.",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "voiceover",
-   "text": "When disabled, Margins can still be sent without embedding the item; the recipient supplies the source",
    "count": 1,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
   },
@@ -58,49 +28,13 @@
   },
   {
    "kind": "words",
-   "text": "Adding a map never starts playback. It sets this item's chapters and keeps each chapter's summary. Your own Margins stay as they are.",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "All items",
-   "count": 3,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
    "text": "Can't restore this Margin: its item was deleted.",
    "count": 1,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
   },
   {
    "kind": "words",
-   "text": "Choose an item",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "Couldn’t import these Margins. Try again, or add the item to your Library first.",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
    "text": "Current item",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "Full listened-to item: included",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "Full listened-to item: not included",
    "count": 1,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
   },
@@ -113,24 +47,12 @@
   {
    "kind": "words",
    "text": "Item",
-   "count": 4,
+   "count": 2,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
   },
   {
    "kind": "words",
    "text": "Item audio is not included.",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "Item being listened to",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "Item being shared",
    "count": 1,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
   },
@@ -172,27 +94,9 @@
   },
   {
    "kind": "words",
-   "text": "Items",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "I’m sharing this privately and have the right to share this item",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
    "text": "Library Item",
    "count": 1,
    "reason": "Existing when the guard arrived (#3599): the Shortcuts type name for the Add Margin action's Item parameter (LibraryItemEntity); rename it with the Shortcuts words slice."
-  },
-  {
-   "kind": "words",
-   "text": "Linked item",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
   },
   {
    "kind": "words",
@@ -202,37 +106,7 @@
   },
   {
    "kind": "words",
-   "text": "Only a short quote around each Margin is sent. Full item text is sent only when the item disclosure above says it is included.",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "Only the Margins you picked go: their text and voice, the words around each one, and which item they belong to. The podcast audio and the rest of your phone stay put.",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
    "text": "Open Item",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "Open item and shared controls",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "Opening the item after adding a Listening Map failed",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "Opening the item after the Margin was saved failed",
    "count": 1,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
   },
@@ -250,12 +124,6 @@
   },
   {
    "kind": "words",
-   "text": "Pause playback first. This Listening Map is for the item that’s playing.",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
    "text": "Player item Mark",
    "count": 1,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
@@ -263,18 +131,6 @@
   {
    "kind": "words",
    "text": "Player item spoken Margin",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "Search your notes or an item",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "Sets the item's chapters from this map without starting playback",
    "count": 1,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
   },
@@ -292,103 +148,13 @@
   },
   {
    "kind": "words",
-   "text": "Spoken Margins found this item in your library and will place the shared Margins in it. Nothing will play automatically.",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "Spoken Margins will reconstruct this linked item and then place the shared Margins in it. Nothing will play automatically.",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
    "text": "Teams, Zoom, Webex, Google Meet and Otter transcripts work. With a recording, the item plays it; without one, the item is the transcript's text.",
    "count": 1,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
   },
   {
    "kind": "words",
-   "text": "That source does not match the item described by this package yet. Add the same item or cancel the import.",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "That source does not match the item this map was made for yet. Add the same item or cancel.",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "That source doesn’t match the item these Margins were made on. Add the same item, or cancel the import.",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "The full listened-to text will be included so the recipient can add and listen to the item.",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "The item is not included. Add the same text, PDF, or EPUB to your library, then reopen this .spokenmargins file so its Margins can be attached safely.",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "The item itself cannot be included. Make sure the recipient already has the same item.",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "The item these Margins belong to isn’t available. Add it to your Library, then open the Margins again.",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "The recipient will reconstruct the item from this reference. The full item is not included.",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "The source is omitted; the recipient must supply a matching item.",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
    "text": "There are no new Margins to review on this item.",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "These Margins belong to an item that isn’t in your Library. Add it, then open the Margins again.",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "These Margins don't match what is in your Library. Check you have the same item and edition, then open them again. If it still fails, ask your friend to send them again.",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "These Margins stay ready while you add the same item. You can add them once it is in your Library.",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "This Listening Map doesn’t fit your copy of the item, so it wasn’t added. If your copy is a different edition, ask for a map made on it.",
    "count": 1,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
   },
@@ -406,31 +172,7 @@
   },
   {
    "kind": "words",
-   "text": "This item already has a shared map. Adding this one replaces it. ",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
    "text": "This item does not have text that can be prepared for offline listening.",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "This item has no public web page, so the file goes in the same message as the link.",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "This map stays ready while you add your copy of the item. It can't be added until the item is in your Library.",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "This package does not include the item. Add the matching source, then return to this pending import.",
    "count": 1,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
   },
@@ -442,43 +184,7 @@
   },
   {
    "kind": "words",
-   "text": "Using the app's backup voice after an iOS memory warning. It reads the rest of this item. Your voice comes back with the next item.",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "Using the app's backup voice for the rest of this item. Your voice comes back with the next item.",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "Using the app's backup voice while this iPhone is too warm. It reads the rest of this item, so the voice doesn't keep changing. Your voice comes back with the next item.",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "Using the iOS voice because the on-device voice wasn't ready for the next passage while the app was in the background. It reads the rest of this item. Your voice comes back with the next item.",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "Using the iOS voice while this iPhone is too warm. It reads the rest of this item, so the voice doesn't keep changing. Your voice comes back with the next item.",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
    "text": "You haven't made a Margin on this item since you opened your friend's.",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "Your reply is saved at this moment and goes out with the item. Their recording is not sent again.",
    "count": 1,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
   },

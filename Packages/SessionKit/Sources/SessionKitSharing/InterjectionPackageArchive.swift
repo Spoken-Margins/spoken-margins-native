@@ -66,7 +66,7 @@ extension SpokenMarginsPackageArchiveError {
             case .needsNewerApp: "Your friend made this with a newer Spoken Margins. Update the app to hear it."
             case .tooLarge: "This file is bigger than Spoken Margins can open. Ask your friend to send fewer Margins at a time."
             case .damaged: "This file couldn't be opened. It may have been damaged on the way. Ask your friend to send it again."
-            case .doesNotMatchLibrary: "These Margins don't match what is in your Library. Check you have the same item and edition, then open them again. If it still fails, ask your friend to send them again."
+            case .doesNotMatchLibrary: "These Margins don't match what is in your Library. Check you have the same copy and edition, then open them again. If it still fails, ask your friend to send them again."
             }
         }
     }
