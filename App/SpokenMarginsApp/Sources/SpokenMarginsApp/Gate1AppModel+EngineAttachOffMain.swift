@@ -143,6 +143,53 @@ extension Gate1AppModel {
         return finishAttachingPreparedTextAudio(prepared, itemId: itemId, preparedStatus: preparedStatus, diagnosticStatus: diagnosticStatus, attached: attached)
     }
 
+    /// How a finished assembly of chunks ended (#2256).
+    enum PreparedAssemblyOutcome { case attached, dropped, failed }
+
+    /// Saves a finished assembly's audio with the whole transaction off the main thread: the check that the preparation is
+    /// still live and still for this text, and the item and timeline writes (7.7 s to 9.9 s on a 1.1 MB book). Only the
+    /// engine half, which reads no store row, and the screen updates run on the main actor. `.dropped` means a Stop, a new
+    /// voice or an edit landed meanwhile: nothing was written and the caller discards the audio, with no failure.
+    func attachAssembledPreparedAudioOffMain(
+        _ prepared: PreparedTextAudio,
+        itemId: String,
+        manifest: PreparedAudioManifest,
+        itemText: String?,
+        sourceText: String
+    ) async -> PreparedAssemblyOutcome {
+        let persister: PreparedTextAudioPersister
+        do {
+            if engine == nil, let store { // a background pass can finish before any screen made the engine
+                installEngine(try makeEngine(store: store))
+            }
+            guard let engine else { return .failed }
+            persister = try engine.preparedTextAudioPersister(itemId: itemId)
+        } catch {
+            // Reported as the synchronous attach reported it: the status and the diagnostics key say it failed.
+            return finishAttachingPreparedTextAudio(prepared, itemId: itemId, preparedStatus: "ready", diagnosticStatus: "ready", attached: .failure(error)) ? .attached : .failed
+        }
+        let saved: Result<PreparedAudioAssemblyAttach, Error>
+        do {
+            saved = .success(try await Self.offMain {
+                try persister.persistAssembly(itemId: itemId, prepared: prepared, manifest: manifest, itemText: itemText, sourceText: sourceText)
+            })
+        } catch {
+            saved = .failure(error)
+        }
+        // Back on the main actor, on the engine it has now. The engine half reads no store row (EngineAttachPersistersTests).
+        let attached: Result<SessionSnapshot, Error>
+        switch saved {
+        case .success(.dropped):
+            return .dropped
+        case .success(.attached(let persisted)):
+            guard let current = self.engine else { return .failed }
+            do { attached = .success(try current.attachPreparedTextAudio(persisted, replaceActivePlayback: false)) } catch { attached = .failure(error) }
+        case .failure(let error):
+            attached = .failure(error)
+        }
+        return finishAttachingPreparedTextAudio(prepared, itemId: itemId, preparedStatus: "ready", diagnosticStatus: "ready", attached: attached) ? .attached : .failed
+    }
+
     private func finishAttachingPreparedTextAudio(
         _ prepared: PreparedTextAudio,
         itemId: String,
