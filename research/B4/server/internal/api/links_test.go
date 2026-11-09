@@ -416,3 +416,46 @@ func TestLinkServiceMissingConfigurationFailsClosed(t *testing.T) {
 		})
 	}
 }
+
+// A failure page offers "Get Spoken Margins" only to a browser that can use it (#3799). The link goes to
+// TestFlight or the App Store, which are Apple-only, so an Android browser gets the failure words alone. The table
+// has the neighbours that must keep the link: iPhone, iPad, desktop, no header at all, and a lookalike that only
+// contains "droid".
+func TestLinkUnavailablePageOffersInstallOnlyWhereItWorks(t *testing.T) {
+	s, _ := enabledLinks(t)
+	h := s.Handler()
+	const offer = `>Get Spoken Margins</a>`
+	for _, row := range []struct {
+		name, agent string
+		offered     bool
+	}{
+		{"Pixel Chrome", "Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Mobile Safari/537.36", false},
+		{"lowercase android", "mozilla/5.0 (linux; android 13)", false},
+		{"Android Firefox", "Mozilla/5.0 (Android 14; Mobile; rv:127.0) Gecko/127.0 Firefox/127.0", false},
+		{"iPhone Safari", "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1", true},
+		{"iPad Safari", "Mozilla/5.0 (iPad; CPU OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1", true},
+		{"Mac Chrome", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/126.0 Safari/537.36", true},
+		{"no header", "", true},
+		{"lookalike", "Droidcast/1.0", true},
+	} {
+		id := strings.Repeat("a", 32)
+		r := httptest.NewRequest("GET", "/l/"+id, nil)
+		r.RemoteAddr = "203.0.113.7:12345"
+		r.Header.Del("User-Agent")
+		if row.agent != "" {
+			r.Header.Set("User-Agent", row.agent)
+		}
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		body := w.Body.String()
+		if w.Code != 404 || !strings.Contains(body, "Ask your friend to share it again.") {
+			t.Fatalf("%s: want the failure page, got %d %s", row.name, w.Code, body)
+		}
+		if got := strings.Contains(body, offer); got != row.offered {
+			t.Errorf("%s: install link offered=%v, want %v", row.name, got, row.offered)
+		}
+		if strings.Contains(body, "testflight.apple.com") != row.offered {
+			t.Errorf("%s: TestFlight address on the page does not match the link", row.name)
+		}
+	}
+}

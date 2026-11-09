@@ -101,6 +101,14 @@ var unavailable = template.Must(template.New("unavailable").Parse(`<!doctype htm
 <footer><p>{{range $i, $l := .Policies}}{{if $i}} · {{end}}<a href="{{$l.Path}}">{{$l.Title}}</a>{{end}}</p></footer>
 </main></body></html>`))
 
+// OffersIPhoneInstall says whether a browser whose User-Agent header is userAgent is offered the install link on
+// the unavailable page. The link goes to TestFlight or the App Store, which work only on Apple devices, so a
+// browser that says it is Android is not offered it (#3799). The header is read for this one answer and never
+// kept.
+func OffersIPhoneInstall(userAgent string) bool {
+	return !strings.Contains(strings.ToLower(userAgent), "android")
+}
+
 // RenderUnavailable writes the plain page a browser gets when a share link can't be shown. The install link
 // is left out when it isn't a valid one, as it is when the service is off for that reason.
 func RenderUnavailable(w io.Writer, reason Unavailable, installURL string) error {
