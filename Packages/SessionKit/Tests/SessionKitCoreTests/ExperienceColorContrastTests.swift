@@ -5,8 +5,8 @@ import SessionKitTestInputs
 /// Moved from the app test target (#318): the contrast audit is Foundation only, so it runs on the host.
 final class ExperienceColorContrastTests: XCTestCase {
     /// Not every registered pair: `AppColorContrastAudit.knownFailures` lists the pairs exempt until their own issue
-    /// fixes them (the faint default border and input fills on purpose, #1922; the Timeline, Watch and Live Activity
-    /// findings, #3734, #3731, #3739). The guard tests prove each entry still fails and that no new failure is unlisted.
+    /// fixes them (the faint default border and input fills on purpose, #1922; the Timeline and Watch
+    /// findings, #3734, #3731). The guard tests prove each entry still fails and that no new failure is unlisted.
     func testEveryPairNotListedAsAKnownFailureMeetsItsContrastFloorInLightAndDark() {
         XCTAssertEqual(
             AppColorContrastAudit.failures(),

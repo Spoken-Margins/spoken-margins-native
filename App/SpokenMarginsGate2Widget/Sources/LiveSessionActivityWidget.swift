@@ -142,7 +142,7 @@ private struct LiveSessionResumeButton: View {
                     .font(.headline)
                     .frame(minWidth: 88, minHeight: 44)
             }
-            .tint(.blue)
+            .tint(LiveSessionActivityStyle.buttonTint)
             .accessibilityLabel("Resume the session")
         }
     }
@@ -155,7 +155,7 @@ private struct LiveSessionMarkButton: View {
                 .font(.headline)
                 .frame(minWidth: 88, minHeight: 44)
         }
-        .tint(.blue)
+        .tint(LiveSessionActivityStyle.buttonTint)
         .accessibilityLabel("Mark this moment")
     }
 }
@@ -168,7 +168,7 @@ private struct LiveSessionFinishButton: View {
                 .font(.headline)
                 .frame(minWidth: 88, minHeight: 44)
         }
-        .tint(.blue)
+        .tint(LiveSessionActivityStyle.buttonTint)
         .accessibilityLabel("Finish and save the spoken Margin")
     }
 }
@@ -192,4 +192,11 @@ private struct LiveSessionMarginLinks: View {
                 .background(Color.white.opacity(0.16), in: Capsule())
         }
     }
+}
+
+/// The live session card's button tint. A fixed sky blue, the same literal as the progress mark on the shared-Margin card
+/// (`Gate2LiveActivityWidget`), not `.blue`: the widget sets no colour scheme, and the system blue measures 4.46:1 on the
+/// plate when it resolves to its light value (#3739). `AppColorContrastAudit.liveActivityPairs` measures this colour.
+private enum LiveSessionActivityStyle {
+    static let buttonTint = Color(red: 0.34, green: 0.71, blue: 0.91)
 }
