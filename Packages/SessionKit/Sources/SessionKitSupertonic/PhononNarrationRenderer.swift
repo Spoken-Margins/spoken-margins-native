@@ -92,7 +92,7 @@ public actor PhononNarrationRenderer {
         let phonon = try await loadIfNeeded()
         let wallStart = ProcessInfo.processInfo.systemUptime
         let cpuStart = OnDeviceVoiceGovernor.processCPUTime()
-        let samples = try await phonon.synthesize(spoken)
+        let samples = try await phonon.synthesize(PDFMathSpeech.voiceSafe(spoken))
         try Task.checkCancellation()
         let cpu = OnDeviceVoiceGovernor.processCPUTime() - cpuStart
         let cost = OnDeviceVoiceGovernor.InferenceCost(wall: max(0, ProcessInfo.processInfo.systemUptime - wallStart), cpu: cpu > 0 ? cpu : nil)

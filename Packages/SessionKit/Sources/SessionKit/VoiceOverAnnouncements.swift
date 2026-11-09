@@ -48,6 +48,30 @@ public enum VoiceOverAnnouncements {
         }
     }
 
+    /// The sender's sharing sheet swaps its stage in place (choose, review, recipient preview, share) while focus can stay
+    /// on the bottom button, whose meaning changes with the stage (#3728). The stages are named here, not by the app's own
+    /// enum, so the words can be tested on the host; the view shows the same `title` as the stage's heading.
+    public enum SharingStep: String, CaseIterable, Sendable {
+        case select, review, recipientPreview, share
+
+        /// The stage's heading on screen, and what VoiceOver says when the sheet arrives at it.
+        public var title: String {
+            switch self {
+            case .select: "Choose Margins"
+            case .review: "Review selected Margins"
+            case .recipientPreview: "Recipient preview"
+            case .share: "Share your Margins"
+            }
+        }
+    }
+
+    /// What to say when the sharing sheet moves from one stage to another: the new stage's heading. Nil when the stage
+    /// did not change (the sheet redrew), so nothing repeats. The first stage is not announced here: the sheet opening is
+    /// a screen change in itself.
+    public static func sharingStage(from previous: SharingStep, to step: SharingStep) -> String? {
+        previous == step ? nil : step.title
+    }
+
     /// The Reader's chapter step (Previous or Next chapter replaces the text and the heading under the pressed button):
     /// "Chapter 2 of 7, The Method". Without a position (no chapters, or a chapter that can't be placed) the title alone;
     /// nil when there is nothing to say. A position of "1 of 1" is never spoken, as on screen.
