@@ -272,6 +272,34 @@ extension Gate1AppModel {
         return preparer
     }
 
+    /// #2511: a Margin started from a compact control (headphone double press, Live Activity, widget, URL) switches the
+    /// session off the main thread too, as the on-screen tap does. The owner's headphone start still froze for the
+    /// switch on the main thread (2026-11-09). With the app in front and nothing sounding, the source is paused, the
+    /// switch runs, and `begin` (the ordinary compact start) runs once it is done. Every other case runs `begin` now,
+    /// in the order the start always had. A Cancel, or a newer request, while the switch runs makes `begin` stale: it
+    /// then starts nothing, and whoever cancelled has already let the session and the source go.
+    func startCompactMarginPreparingSession(request: CurrentRequest.Token, begin: @escaping @MainActor @Sendable () -> Void) {
+        let situation = CompactMarginStartPolicy.Situation(
+            appInForeground: !Gate2AppState.isInBackground(),
+            marginVoiceInvolved: heldMarginVoice != nil || marginVoiceHeldForRecording != nil || playingImportedCommentary != nil
+                || marginMomentConductor?.isPlayingVoice == true || ownMarginVoiceHasTransport,
+            skimOrRecordingActive: snapshot.skimBridgeState != nil || snapshot.isRecording,
+            recorderCanPrepare: engine?.recordingSessionPreparer != nil
+        )
+        guard CompactMarginStartPolicy.preparesSessionAhead(situation) else { return begin() }
+        pauseSourceOnTap(requestedAt: Date())
+        guard let preparer = recordingSessionPreparerForTap() else { return begin() } // speech still sounds: the engine pauses it itself
+        preparer.prepareRecordingSession { [weak self] in
+            guard let self, marginCapture.isCurrentCompactRequest(request) else { return }
+            begin()
+            guard !snapshot.isRecording else { return }
+            // The start returned without a recording (a guard, or the engine put the source back itself): let the
+            // switched session go and play on a source the tap paused.
+            abandonRecordingSessionPreparation()
+            resumeSourcePausedOnTap()
+        }
+    }
+
     /// No recording is coming from a tap whose session switch may have run (#2511): let the session go, after the
     /// switch if it is still running, before anything else touches it.
     private func abandonRecordingSessionPreparation() {

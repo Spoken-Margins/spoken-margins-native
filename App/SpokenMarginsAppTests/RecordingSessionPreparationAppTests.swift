@@ -98,6 +98,42 @@ final class RecordingSessionPreparationAppTests: XCTestCase {
         XCTAssertTrue(model.snapshot.isRecording)
     }
 
+    /// #2511, the headphone path: a Margin started from a compact control (headphone double press, Live Activity,
+    /// widget) switched the session on the main thread, so the owner's headphone start still froze (2026-11-09).
+    func testACompactStartWithNothingSoundingStartsTheRecorderOnlyAfterTheSessionSwitch() {
+        let recorder = PreparingRecorder()
+        let model = pausedModel(recorder)
+        model.dispatchGate2CompactCommand(.beginInterjection, origin: "headphone_next_track")
+        XCTAssertEqual(recorder.log, ["prepare"], "the compact start asks for the switch and returns without starting the recorder")
+        XCTAssertFalse(model.snapshot.isRecording)
+        recorder.finishSwitch()
+        XCTAssertEqual(recorder.log, ["prepare", "begin"])
+        XCTAssertTrue(model.snapshot.isRecording, "the Margin records once the switch is done")
+    }
+
+    func testCancelWhileACompactStartSwitchesTheSessionLetsItGoAndStartsNothing() {
+        let recorder = PreparingRecorder()
+        let model = pausedModel(recorder)
+        model.dispatchGate2CompactCommand(.beginInterjection, origin: "headphone_next_track")
+        model.cancelInterjection()
+        XCTAssertEqual(recorder.log, ["prepare", "abandon"], "Cancel lets the switched session go")
+        recorder.finishSwitch()
+        XCTAssertFalse(recorder.log.contains("begin"), "a switch that finishes after Cancel starts no recording")
+        XCTAssertFalse(model.snapshot.isRecording)
+    }
+
+    /// Speech still playing is paused by the engine itself; the compact start keeps the old order for it, as the tap does.
+    func testACompactStartOnASourceStillPlayingKeepsTheSwitchInsideTheRecorderStart() {
+        let recorder = PreparingRecorder()
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), recordingClient: recorder)
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        XCTAssertTrue(model.snapshot.status.isPlaybackActive, "precondition: the seeded item is playing")
+        model.dispatchGate2CompactCommand(.beginInterjection, origin: "headphone_next_track")
+        XCTAssertEqual(recorder.log, ["begin"])
+        XCTAssertTrue(model.snapshot.isRecording)
+    }
+
     /// #3633: `playAndRecord` drops AirPlay outputs unless it allows them, which moved a HomePod's playback to the phone
     /// speaker when the owner tapped record in the app. Both microphone choices keep AirPlay.
     func testRecordingSessionAllowsAirPlayForEveryMicrophoneChoice() {
