@@ -84,18 +84,35 @@ final class RecordingSessionPreparationAppTests: XCTestCase {
         XCTAssertFalse(recorder.log.contains("begin"))
     }
 
-    /// Speech that is still playing is paused by the engine itself, just before the recorder; switching the session
-    /// first would let the listener hear it move to the hands-free profile. So it keeps the old order.
-    func testASourceStillPlayingKeepsTheSwitchInsideTheRecorderStart() {
+    /// Text read aloud used to be paused by the engine just before the recorder, so its switch stayed on the main thread
+    /// (the most common Margin: one on an article being read). The tap now reads its place and pauses it first, as for a
+    /// podcast, so the switch runs ahead of the recorder and the listener never hears it move to the hands-free profile.
+    func testTextReadAloudIsPausedOnTheTapAndTheSwitchRunsAheadOfTheRecorder() {
         let recorder = PreparingRecorder()
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), recordingClient: recorder)
         model.resetAndSeed()
         model.startItem(id: "item-pill")
         XCTAssertTrue(model.snapshot.status.isPlaybackActive, "precondition: the seeded item is playing")
         model.beginInterjection()
-        XCTAssertFalse(recorder.log.contains("prepare"))
-        XCTAssertEqual(recorder.log, ["begin"])
+        XCTAssertFalse(model.snapshot.status.isPlaybackActive, "the tap paused the reading")
+        XCTAssertEqual(recorder.log, ["prepare"], "the switch is asked for before the recorder, which has not started")
+        XCTAssertFalse(model.snapshot.isRecording)
+        recorder.finishSwitch()
+        XCTAssertEqual(recorder.log, ["prepare", "begin"])
         XCTAssertTrue(model.snapshot.isRecording)
+    }
+
+    func testCancelWhileTextReadAloudWaitsOnTheSessionSwitchLetsItGoAndStartsNothing() {
+        let recorder = PreparingRecorder()
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), recordingClient: recorder)
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        model.beginInterjection()
+        model.cancelInterjection()
+        XCTAssertEqual(recorder.log, ["prepare", "abandon"], "Cancel lets the switched session go")
+        recorder.finishSwitch()
+        XCTAssertFalse(recorder.log.contains("begin"), "a switch that finishes after Cancel starts no recording")
+        XCTAssertFalse(model.snapshot.isRecording)
     }
 
     /// #2511, the headphone path: a Margin started from a compact control (headphone double press, Live Activity,
@@ -122,15 +139,18 @@ final class RecordingSessionPreparationAppTests: XCTestCase {
         XCTAssertFalse(model.snapshot.isRecording)
     }
 
-    /// Speech still playing is paused by the engine itself; the compact start keeps the old order for it, as the tap does.
-    func testACompactStartOnASourceStillPlayingKeepsTheSwitchInsideTheRecorderStart() {
+    /// Text read aloud is paused by the compact start too, so its switch runs ahead of the recorder as the tap's does.
+    func testACompactStartOnTextReadAloudPausesItAndStartsTheRecorderOnlyAfterTheSessionSwitch() {
         let recorder = PreparingRecorder()
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), recordingClient: recorder)
         model.resetAndSeed()
         model.startItem(id: "item-pill")
         XCTAssertTrue(model.snapshot.status.isPlaybackActive, "precondition: the seeded item is playing")
         model.dispatchGate2CompactCommand(.beginInterjection, origin: "headphone_next_track")
-        XCTAssertEqual(recorder.log, ["begin"])
+        XCTAssertEqual(recorder.log, ["prepare"])
+        XCTAssertFalse(model.snapshot.isRecording)
+        recorder.finishSwitch()
+        XCTAssertEqual(recorder.log, ["prepare", "begin"])
         XCTAssertTrue(model.snapshot.isRecording)
     }
 

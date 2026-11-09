@@ -1688,24 +1688,42 @@ public final class SessionEngine {
         }
     }
 
-    /// Add a Margin on a playing podcast: pause it now, on the tap, before the permission check, the deferred start
-    /// and the anchor work (#1696). On a phone that took 16 s to get to the pause, the listener talked over a
-    /// podcast that kept playing. Only the pause happens here: the position is read, and the anchor made, by
-    /// `beginInterjection` once the source is quiet, as before. Does nothing for a source that isn't playing, text
-    /// that is read aloud (its position has to be read before it is paused), or one that has already ended.
-    /// `abandonPendingInterjection` puts the podcast back; `beginInterjection` and `beginWrittenInterjection` take it over.
+    /// Add a Margin on a playing podcast or on text read aloud: pause it now, on the tap, before the permission check,
+    /// the deferred start and the anchor work (#1696). On a phone that took 16 s to get to the pause, the listener
+    /// talked over a podcast that kept playing. For a podcast only the pause happens here: the position is read, and the
+    /// anchor made, by `beginInterjection` once the source is quiet, as before. Text read aloud has its place read first
+    /// and kept (as `pause()` does, and `beginInterjection` always did: a speech pause can report a reset offset), so the
+    /// pause makes no difference to the anchor; with the source quiet, the app can switch the audio session for the
+    /// recording off the main thread, as it does for a podcast (#2511). Does nothing for a source that isn't playing,
+    /// or one that has already ended.
+    /// `abandonPendingInterjection` puts the source back; `beginInterjection` and `beginWrittenInterjection` take it over.
     @discardableResult
     public func pauseSourceForInterjection(request: MarginCaptureRequest) -> SessionSnapshot {
         guard !captureResume.isSourcePausedOnTap, pendingWrittenInterjection == nil,
               snapshot.status.isPlaybackActive,
               let session = currentSession,
-              session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia,
               !isFinishedAtEnd(session),
               profile.hasAny("interjection", ["record_audio", "delegate_interjection_to_canonical_runtime"]) else {
             return snapshot
         }
+        let readsAloud = session.currentTargetType == .itemTextTTS
+        guard readsAloud || session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia else {
+            return snapshot
+        }
         var timing = MarginCaptureTiming(request: request)
+        var placed = session
+        if readsAloud {
+            // Before the pause, so a pause callback cannot move the place the Margin is anchored at.
+            guard let synced = try? syncCurrentPositionFromAudio(session) else { return snapshot }
+            placed = synced
+        }
         do { try audio.pause() } catch { return snapshot } // `beginInterjection` pauses again and reports it
+        if readsAloud {
+            currentSession = placed
+            // The player's own offset is not read again until playback is confirmed: the start, Cancel and the resume
+            // all use this place (`syncCurrentPositionFromAudio` returns a session whose position is held as it is).
+            protectPlaybackPosition(for: placed)
+        }
         timing.sourcePaused(at: ProcessInfo.processInfo.systemUptime)
         captureResume.tapPaused(timing)
         publish(status: .paused, phase: session.phase)
