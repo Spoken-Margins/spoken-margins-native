@@ -42,7 +42,7 @@ class VoiceOverLabelNitTests(unittest.TestCase):
             self.assertIn(".accessibilityHidden(true)", _read(name), name)
 
     def test_the_written_margin_placeholder_is_not_a_second_element(self):
-        text = _read("ExperienceWrittenMarginScreen.swift")
+        text = _read("MarginWritingSheet.swift")
         placeholder = text[text.index('Text("What do you want to remember?")'):]
         self.assertIn(".accessibilityHidden(true)", placeholder[:400])
         self.assertIn('.accessibilityHint("What do you want to remember?")', text)
