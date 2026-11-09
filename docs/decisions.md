@@ -486,6 +486,12 @@ How it is used:
   - The invite on spokenmargins.com/join is the same one the share-link page offers, so a friend who installs from either gets Build 36. Build 36 opens share links.
   - Don't ask him to test share links on his phone, or which build the invite serves. Search this file, then look at what is live.
 
+## 2026-11-09
+
+- **No image-removal process: share links carry voice and text, never images (#3867).** He asked: "We don't have an ability to see or upload images, and so why are you suggesting that we have that policy?" The "Take It Down" removal page proposed on 2026-10-20 (D21, `docs/legal/attorney-questions.md`) is removed, with its report category and its links on the site and in Settings. This replaces the "posted Take It Down process" in the 2026-10-20 entry about the Report this link form; the form and the content policy stay.
+  - Bring it back only if image sharing ships (photo Margins, #2708) or the lawyer says so. Whether we are a "covered platform" stays lawyer question 5.
+  - Don't propose a process for content the product cannot carry. Check what the code can carry first.
+
 ## Background moved out of the guide (2026-11-06)
 - **From the guide.** Explanations that stood next to rules in `AGENTS.md`, moved here to keep it under its 4,000-word cap (the rules themselves are unchanged):
   - Verification layers: tests that pass while the app is broken usually fake the boundary that broke, such as audio sessions, players, file paths across containers and network responses.
