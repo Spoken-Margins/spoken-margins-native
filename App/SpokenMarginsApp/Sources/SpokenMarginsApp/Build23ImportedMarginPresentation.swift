@@ -87,7 +87,7 @@ private struct Build23ImportedLayerList: View, Equatable {
             if layers.isEmpty {
                 emptyState
             } else {
-                // A plain stack: the item screen hosts this inside its own lazy stack, and lazy inside lazy froze the screen (#3781).
+                // A plain stack: nothing on the item screen is lazy; a lazy stack there froze the screen on scroll (#3781).
                 VStack(alignment: .leading, spacing: 16) {
                     ForEach(layers) { layer in
                         layerCard(layer)
