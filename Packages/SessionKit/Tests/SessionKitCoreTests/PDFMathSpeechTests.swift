@@ -197,7 +197,7 @@ final class PDFPlainLetterMathTests: XCTestCase {
         }
         XCTAssertNil(cut(["Yt = θ", "0Tt + µ", "where the shocks are independent of the state"]))
         XCTAssertNil(cut(["some words here", "1Ab = c", "more words after this line"]))
-        XCTAssertEqual(cut(["body words on this line", "16We control for the probability that it was"]), 24)
-        XCTAssertEqual(cut(["body words on this line", "1Sandberg (2013) presented this argument first"]), 24)
+        XCTAssertEqual(cut(["body words on this line", "16We note that this sample is small enough"]), 24)
+        XCTAssertEqual(cut(["body words on this line", "1Smith (2013) made this same argument first"]), 24)
     }
 }
