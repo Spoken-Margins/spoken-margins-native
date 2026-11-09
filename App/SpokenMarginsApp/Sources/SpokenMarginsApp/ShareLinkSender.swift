@@ -34,7 +34,7 @@ final class ShareLinkSender: ObservableObject {
     private let bridge = BridgeService.makeStore()
     /// Only the newest request's answer reaches the screen; `reset` voids the one in flight (#3751 audit).
     private var requests = ShareLinkRequests()
-    private static let companionLine = "This item has no public web page, so the file goes in the same message as the link."
+    private static let companionLine = "This has no public web page, so the file goes in the same message as the link."
 
     /// Whether to show the button at all. The cached config decides; with none, or a stale one, the sender's own
     /// screen asks the server once (our server, no one else's) so a fresh install can offer the button.
