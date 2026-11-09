@@ -263,7 +263,8 @@ extension Gate1AppModel {
     /// #2511: switching the audio session to `playAndRecord` moves Bluetooth headphones to the hands-free profile, and
     /// that wait (about 1 s on AirPods in the owner's Diagnostics) froze the screen on every Margin's tap. When nothing
     /// is sounding (the tap paused the podcast, or nothing played), the switch runs off the main thread first and the
-    /// recorder starts once it is done. A source still playing (speech, which the engine pauses itself) keeps the old
+    /// recorder starts once it is done. Text read aloud is paused by the tap too, after its place is read (#2511). A
+    /// source still playing after that (a generated summary or reply read aloud, or a pause that failed) keeps the old
     /// order, so it is never heard moving to the hands-free profile.
     private func recordingSessionPreparerForTap() -> RecordingSessionPreparing? {
         guard let engine, let preparer = engine.recordingSessionPreparer,
@@ -288,7 +289,7 @@ extension Gate1AppModel {
         )
         guard CompactMarginStartPolicy.preparesSessionAhead(situation) else { return begin() }
         pauseSourceOnTap(requestedAt: Date())
-        guard let preparer = recordingSessionPreparerForTap() else { return begin() } // speech still sounds: the engine pauses it itself
+        guard let preparer = recordingSessionPreparerForTap() else { return begin() } // something still sounds (a generated turn read aloud, or a pause that failed): the engine pauses it itself
         preparer.prepareRecordingSession { [weak self] in
             guard let self, marginCapture.isCurrentCompactRequest(request) else { return }
             begin()

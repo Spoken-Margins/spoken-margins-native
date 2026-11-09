@@ -227,13 +227,114 @@ final class MarginCapturePauseOnTapTests: XCTestCase {
         XCTAssertTrue(rig.audio.playing)
     }
 
-    func testTextReadAloudIsLeftToTheEngineStartAsBefore() throws {
+    // MARK: Text read aloud (#2511): paused on the tap too, so the session switch can go off the main thread
+
+    func testTheTapPausesTextReadAloudAndAsksForNoRecorder() throws {
         let rig = try rig(item: article)
         rig.audio.charOffset = 16
+        XCTAssertTrue(rig.engine.snapshot.status.isPlaybackActive)
 
+        let snapshot = rig.engine.pauseSourceForInterjection(request: MarginCaptureRequest())
+
+        XCTAssertEqual(rig.audio.events, ["pause"], "the pause is the only thing that happened")
+        XCTAssertEqual(snapshot.status, .paused)
+        XCTAssertTrue(rig.engine.isSourcePausedOnTap)
+        XCTAssertEqual(rig.recorder.begins, 0)
+        XCTAssertEqual(try rig.journal.load().drafts.count, 0)
+    }
+
+    /// The reason the engine start used to be the only pause for speech: its place is read before the pause, because a
+    /// speech pause can report another offset. Pausing on the tap must anchor the Margin exactly where the old order did.
+    func testAMarginOnTextReadAloudIsAnchoredWhereItWasWhetherOrNotTheTapPausedIt() throws {
+        let direct = try rig(item: article)
+        direct.audio.charOffset = 16
+        _ = try direct.engine.beginInterjection(request: MarginCaptureRequest())
+        let expected = try XCTUnwrap(try direct.journal.load().drafts.first).anchor
+
+        let tapped = try rig(item: article)
+        tapped.audio.charOffset = 16
+        tapped.engine.pauseSourceForInterjection(request: MarginCaptureRequest())
+        tapped.audio.charOffset = 41 // what a speech pause may report afterwards
+        _ = try tapped.engine.beginInterjection(request: MarginCaptureRequest())
+
+        let anchor = try XCTUnwrap(try tapped.journal.load().drafts.first).anchor
+        XCTAssertEqual(anchor.startChar, expected.startChar)
+        XCTAssertEqual(anchor.endChar, expected.endChar)
+        XCTAssertEqual(anchor.anchorBefore, expected.anchorBefore)
+        XCTAssertEqual(anchor.anchorAfter, expected.anchorAfter)
+        XCTAssertFalse(tapped.engine.isSourcePausedOnTap, "the start took the pause over")
+        XCTAssertEqual(tapped.recorder.begins, 1)
+    }
+
+    func testCancelBeforeTheRecorderStartsPlaysTextReadAloudOnFromWhereItStopped() throws {
+        let rig = try rig(item: article)
+        rig.audio.charOffset = 16
+        rig.engine.pauseSourceForInterjection(request: MarginCaptureRequest())
+        let placed = try XCTUnwrap(rig.engine.currentSession?.position.charOffset)
+        rig.audio.charOffset = 41
+        rig.audio.events.removeAll()
+
+        let snapshot = try rig.engine.abandonPendingInterjection()
+
+        XCTAssertEqual(rig.audio.events, ["play"], "it plays on")
+        XCTAssertEqual(rig.audio.charOffset, placed, "from the place it stopped at, not the offset a pause reported")
+        XCTAssertTrue(snapshot.status.isPlaybackActive)
+        XCTAssertFalse(rig.engine.isSourcePausedOnTap)
+        XCTAssertEqual(rig.recorder.begins, 0)
+        XCTAssertEqual(try rig.journal.load().drafts.count, 0)
+    }
+
+    func testAStartThatFailsAfterTheTapPausePlaysTextReadAloudOnToo() throws {
+        let rig = try rig(item: article)
+        rig.audio.charOffset = 16
+        rig.recorder.failsToStart = true
         rig.engine.pauseSourceForInterjection(request: MarginCaptureRequest())
 
-        XCTAssertFalse(rig.engine.isSourcePausedOnTap, "its position is read before it is paused, so only the engine start does both")
+        XCTAssertThrowsError(try rig.engine.beginInterjection(request: MarginCaptureRequest()))
+
+        XCTAssertTrue(rig.audio.playing, "the microphone wouldn't start, so the reading goes on")
+        XCTAssertFalse(rig.engine.isSourcePausedOnTap)
+    }
+
+    func testSwitchingToAWrittenMarginAfterTheTapPauseOnTextKeepsTheReadingOwed() throws {
+        let rig = try rig(item: article)
+        rig.audio.charOffset = 16
+        rig.engine.pauseSourceForInterjection(request: MarginCaptureRequest())
+
+        let capture = try rig.engine.beginWrittenInterjection()
+
+        XCTAssertTrue(capture.wasPlaying, "it was reading before the tap, so saving the written Margin resumes it")
+        XCTAssertFalse(rig.engine.isSourcePausedOnTap)
+        _ = try rig.engine.saveWrittenInterjection(captureId: capture.id, text: "A thought")
+        XCTAssertTrue(rig.audio.playing)
+    }
+
+    /// Review of #3888: the tap's pause holds the place under the item's own target id, so a new session on the same
+    /// item (the Margin left the source paused, then the listener played the item again) must not inherit the hold or the pause.
+    func testANewSessionOnTheSameTextDoesNotInheritTheTapPauseOrItsHeldPlace() throws {
+        let rig = try rig(item: article)
+        rig.audio.charOffset = 16
+        rig.engine.pauseSourceForInterjection(request: MarginCaptureRequest())
+        XCTAssertTrue(rig.engine.isSourcePausedOnTap)
+
+        _ = try rig.engine.startSession(itemId: article.id)
+
+        XCTAssertFalse(rig.engine.isSourcePausedOnTap, "a stale tap pause would make the next tap skip its own pause")
+        XCTAssertEqual(rig.engine.currentSession?.position.charOffset, 0)
+        rig.audio.charOffset = 33 // the new reading has moved on; a held old place would hide it
+        let fresh = try XCTUnwrap(rig.engine.currentSession)
+        _ = try rig.engine.pause()
+        XCTAssertEqual(rig.engine.currentSession?.position.charOffset, 33, "the new session reads its own place from the player (was \(fresh.position.charOffset))")
+    }
+
+    func testTextReadAloudThatIsAlreadyPausedIsNotPausedAgainByTheTap() throws {
+        let rig = try rig(item: article, playing: false)
+        rig.audio.charOffset = 16
+        rig.audio.events.removeAll()
+
+        XCTAssertFalse(rig.engine.pauseSourceForInterjection(request: MarginCaptureRequest()).status.isPlaybackActive)
+
+        XCTAssertFalse(rig.engine.isSourcePausedOnTap)
         XCTAssertEqual(rig.audio.events, [])
     }
 

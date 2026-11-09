@@ -30,7 +30,7 @@ public enum CompactMarginStartPolicy {
     }
 
     /// True when the start should pause the source and switch the session off the main thread before the recorder starts.
-    /// Whether the source is quiet after the pause is checked by the caller: speech the engine pauses itself keeps the old order.
+    /// Whether the source is quiet after the pause is checked by the caller: a source the tap could not pause keeps the old order.
     public static func preparesSessionAhead(_ situation: Situation) -> Bool {
         situation.appInForeground
             && situation.recorderCanPrepare
