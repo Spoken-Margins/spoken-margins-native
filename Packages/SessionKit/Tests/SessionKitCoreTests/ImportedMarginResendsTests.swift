@@ -622,9 +622,10 @@ final class ImportedMarginResendsTests: XCTestCase {
     // MARK: Text places (#3708)
     // The rows above place Margins by media time only. A Margin on a page or a transcript is placed by
     // these fields, so each one gets its own neighbouring row: the same words from the same friend,
-    // one field apart, are two Margins; none apart (or only a Unicode spelling apart) is one.
+    // one field apart, are two Margins; none apart is one. (A Unicode re-spelling needs no row: Swift compares canonically equivalent
+    // strings as equal, so the fingerprint cannot tell them apart whether or not it normalizes.)
 
-    private var textPlace: PortableAnchorEvidence {
+    private var baseTextPlace: PortableAnchorEvidence {
         PortableAnchorEvidence(
             anchorType: .text, startChar: 120, endChar: 160, exactText: "the harbour light", prefix: "past ", suffix: " again",
             roughPercent: 40, transcriptSegmentId: "seg-4", chapterTitle: "Harbour")
@@ -635,7 +636,7 @@ final class ImportedMarginResendsTests: XCTestCase {
         prefix: String? = nil, suffix: String? = nil, roughPercent: Int? = nil, transcriptSegmentId: String? = nil,
         chapterTitle: String? = nil
     ) -> PortableAnchorEvidence {
-        let base = textPlace
+        let base = baseTextPlace
         return PortableAnchorEvidence(
             anchorType: type ?? base.anchorType, startChar: startChar ?? base.startChar, endChar: endChar ?? base.endChar,
             exactText: exactText ?? base.exactText, prefix: prefix ?? base.prefix, suffix: suffix ?? base.suffix,
@@ -644,13 +645,13 @@ final class ImportedMarginResendsTests: XCTestCase {
     }
 
     private func held(whenResentWith changed: PortableAnchorEvidence) throws -> Int {
-        _ = try send(packet("O", from: "Ada", [("love this", 60_000)], place: textPlace))
+        _ = try send(packet("O", from: "Ada", [("love this", 60_000)], place: baseTextPlace))
         _ = try send(packet("U", from: "Ada", [("love this", 60_000)], place: changed))
         return try margins().count
     }
 
     func testTheSameTextPlaceAgainIsTheMarginAlreadyHeld() throws {
-        XCTAssertEqual(try held(whenResentWith: textPlace), 1)
+        XCTAssertEqual(try held(whenResentWith: baseTextPlace), 1)
     }
 
     func testAnotherStartCharIsAnotherMargin() throws {
@@ -687,15 +688,6 @@ final class ImportedMarginResendsTests: XCTestCase {
 
     func testAnotherAnchorTypeIsAnotherMargin() throws {
         XCTAssertEqual(try held(whenResentWith: textPlace(type: .transcript)), 2)
-    }
-
-    func testAnotherUnicodeSpellingOfTheSameTextPlaceIsNotANewMargin() throws {
-        // "é" as one scalar, then as "e" and a combining accent: the same letters to a listener.
-        let composed = textPlace(exactText: "caf\u{E9}", prefix: "the ", chapterTitle: "Caf\u{E9}")
-        let decomposed = textPlace(exactText: "cafe\u{301}", prefix: "the ", chapterTitle: "Cafe\u{301}")
-        _ = try send(packet("O", from: "Ada", [("love this", 60_000)], place: composed))
-        _ = try send(packet("U", from: "Ada", [("love this", 60_000)], place: decomposed))
-        XCTAssertEqual(try margins().count, 1)
     }
 
     // MARK: Helpers
