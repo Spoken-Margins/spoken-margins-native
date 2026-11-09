@@ -22,7 +22,7 @@ The key technical move: the weekly episode is **rendered to one audio file with 
 | Surface | What it does | Where |
 |---|---|---|
 | Margins tab | Search field, a scope picker listing every item, chips for Mine · Starred · Shared, then every Margin grouped by item. Rows show 3 lines of the transcript and "Source · 42%". Long-press offers Play this moment, Copy with Context, Star. | `ExperienceMarginsScreen.swift` |
-| Margin detail | A sheet: full words, "Attached to: Source", position, context (collapsed), Copy with Context, Play Margin, Retry, Open Item. "Play this moment" is pinned at the bottom. | `ExperienceMarginDetailView.swift` |
+| Margin detail | A sheet: full words, "Attached to: Source", position, context (collapsed), Copy with Context, Play Margin, Retry, Open the source. "Play this moment" is pinned at the bottom. | `ExperienceMarginDetailView.swift` |
 | Item page | "Recent Margins" (first 3), a "Review Margins" button that jumps to the Margins tab filtered to the item, the Listening Map scenes, and a session list with a share button per session. | `ExperienceItemDetailScreen.swift` |
 | Timeline | One session in listening order, with "Reflect on this session" (on-device Summarize, or paste in another chatbot's answer). | `ExperienceTimelineRailScreen.swift` |
 | Export | Five routes: Export Session (AI Handoff Markdown or JSON, three scopes, five toggles), Export Sessions to a folder, automatic notes folder (one note per Margin; per item on completion is coming in #587/#766), Share as Markdown (#493, in progress), Copy with Context. Readwise (#172) and Zotero (#206) await your check. | `ExportScreen.swift`, `BatchExportScreen.swift`, `MarginOutputCoordinator.swift` |

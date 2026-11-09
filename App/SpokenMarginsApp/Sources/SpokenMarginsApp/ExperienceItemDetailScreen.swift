@@ -81,7 +81,7 @@ struct ExperienceItemDetailScreen: View {
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("item.screen")
             .announcesScreenChange()
-            .navigationTitle("Item")
+            .navigationTitle(model.selectedItem.sourceNoun.capitalized)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -127,7 +127,7 @@ struct ExperienceItemDetailScreen: View {
                         Image(systemName: "ellipsis.circle")
                             .frame(width: 44, height: 44)
                     }
-                    .accessibilityLabel("Item options")
+                    .accessibilityLabel("\(model.selectedItem.sourceNoun.capitalized) options")
                 }
             }
             .task(id: model.selectedItem.id) { await refreshEpisodeLinkStatus() }
@@ -570,7 +570,7 @@ struct ExperienceItemDetailScreen: View {
     private var recentMargins: some View {
         if !model.selectedItem.interjections.isEmpty {
             VStack(alignment: .leading, spacing: 12) {
-                sectionHeading("Recent Margins", detail: "Your thoughts on this item")
+                sectionHeading("Recent Margins", detail: "Your thoughts on this \(model.selectedItem.sourceNoun.inSentence)")
                 ExperienceSurface(tint: AppColors.coral.opacity(0.34)) {
                     VStack(spacing: 0) {
                         ForEach(Array(itemMargins.prefix(3).enumerated()), id: \.element.id) { index, row in

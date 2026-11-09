@@ -71,7 +71,7 @@ final class ListeningEditionBatchTests: XCTestCase {
     }
 
     func testAFailureWhileImportingOneFileIsThatFilesLineOnly() throws {
-        struct Refused: LocalizedError { var errorDescription: String? { "Pause playback before importing a map for the current item." } }
+        struct Refused: LocalizedError { var errorDescription: String? { "Pause playback before importing a map for what is playing." } }
         let store = Store()
         let playing = edition("Playing", text: "Currently playing source")
         let other = edition("Other", text: "Some other source")
@@ -79,7 +79,7 @@ final class ListeningEditionBatchTests: XCTestCase {
             [.init(id: 0, name: "playing.json", edition: playing), .init(id: 1, name: "other.json", edition: other)],
             existing: store.existing,
             importOne: { if $0.title == "Playing" { throw Refused() }; store.importOne($0) })
-        XCTAssertEqual(lines[0].outcome, .failed("Pause playback before importing a map for the current item."))
+        XCTAssertEqual(lines[0].outcome, .failed("Pause playback before importing a map for what is playing."))
         XCTAssertEqual(lines[1].outcome, .imported)
         XCTAssertEqual(store.imported, ["Other"])
         // A throw while looking up the existing edition is also only that file's failure.

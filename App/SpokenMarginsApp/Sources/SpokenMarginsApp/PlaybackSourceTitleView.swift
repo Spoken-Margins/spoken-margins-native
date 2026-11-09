@@ -20,7 +20,7 @@ struct PlaybackSourceTitleView: View {
             .buttonStyle(.plain)
             .contentShape(Rectangle())
             .frame(maxWidth: .infinity, alignment: .leading)
-            .accessibilityHint("Opens item details and listening-session history")
+            .accessibilityHint("Opens details and listening-session history")
             .accessibilityIdentifier("playback.itemTitle.button")
 
             PlaybackSleepTagView(state: sleepTimerState, remainingSeconds: sleepTimerRemainingSeconds)

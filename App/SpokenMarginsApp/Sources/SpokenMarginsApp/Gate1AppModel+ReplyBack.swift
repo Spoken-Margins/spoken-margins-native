@@ -23,7 +23,7 @@ extension Gate1AppModel {
     func openReplyBackExport(itemID: String) {
         guard !rejectNavigationOrSessionMutationWhileRecording("open_reply_back") else { return }
         guard let offer = replyBackOffer(itemID: itemID) else {
-            return reportFailure("You haven't made a Margin on this item since you opened your friend's.")
+            return reportFailure("You haven't made a Margin here since you opened your friend's.")
         }
         do {
             selectedItem = try loadItemDetail(id: itemID, store: requireStore())

@@ -173,7 +173,7 @@ struct ExperienceMarginDetailView: View {
                         }
                         .disabled(model.isRetryingAnchorContext(current.interjection))
                     }
-                    Button("Open Item", systemImage: "doc.text.magnifyingglass") {
+                    Button("Open the source", systemImage: "doc.text.magnifyingglass") {
                         pendingNavigation = .item
                         dismiss()
                     }
