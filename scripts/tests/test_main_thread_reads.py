@@ -183,6 +183,15 @@ class FileAndAudioWork(unittest.TestCase):
         self.assertEqual(sorted({r['class'] for r in rows}), ['av-sync', 'file-io'])
         self.assertEqual(len(rows), 6)
 
+    def test_a_wrapper_around_store_work_is_a_row_at_its_call_and_not_after_offmain(self):
+        # `ActivePlaybackProtection.move` reads and writes the ledger inside SessionKit, so the store pattern can't see it (#3752).
+        on_main = MODEL % '    func f(_ id: String) { ActivePlaybackProtection.move(in: store!, toItem: id, activePath: nil) }'
+        rows = scan(Model=on_main)
+        self.assertEqual([(r['class'], r['api']) for r in rows], [('store-write', 'ActivePlaybackProtection.move')])
+        off = MODEL % ('    func f(_ id: String) { Task.detached { ActivePlaybackProtection.move(in: self.store!, '
+                       'toItem: id, activePath: nil) } }')
+        self.assertEqual(scan(Model=off), [])
+
     def test_hashing_an_in_memory_string_is_not_file_io_but_every_other_hash_still_is(self):
         def hashes(body):
             src = MODEL % ('    func f(_ id: String, _ url: URL) throws {\n        ' + body + '\n    }')

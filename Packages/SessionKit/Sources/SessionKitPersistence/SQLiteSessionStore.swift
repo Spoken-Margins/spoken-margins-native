@@ -1437,6 +1437,34 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         try loadByItem(kind: "owned_offline_asset", itemId: itemId)
     }
 
+    /// The ledger rows a change of the playing item may have to touch: rows of `category` that belong to `itemId`, sit at
+    /// `relativePath`, or already carry `reason`. SQLite does the filtering, so a Library of hundreds of ledger rows
+    /// decodes only the few that match, not all of them (#3752). A row the filter leaves out is one the change would have
+    /// left alone: it is neither the new active row nor one holding the protection to take off.
+    ///
+    /// The `reason` match is a text search of the stored row, so it can return a row that does not hold the protection
+    /// (never the other way round); the caller still compares each row's `protections`.
+    public func loadOwnedOfflineAssets(
+        category: OfflineAssetCategory, itemId: String?, relativePath: String?, holding reason: OfflineProtectionReason
+    ) throws -> [OwnedOfflineAsset] {
+        try query(
+            """
+            SELECT kind, id, payload FROM records
+            WHERE kind = 'owned_offline_asset'
+              AND CASE WHEN json_valid(payload) THEN
+                    json_extract(payload, '$.category') = ?1
+                    AND ((?5 = '1' AND item_id = ?2)
+                         OR (?6 = '1' AND json_extract(payload, '$.relativePath') = ?3)
+                         OR instr(payload, ?4) > 0)
+                  ELSE 0 END
+            ORDER BY updated_at, id;
+            """,
+            // A nil `itemId` or `relativePath` matches nothing; an empty one matches an empty one, as `==` does.
+            [category.rawValue, itemId ?? "", relativePath ?? "", reason.rawValue,
+             itemId == nil ? "0" : "1", relativePath == nil ? "0" : "1"]
+        )
+    }
+
     public func deleteOwnedOfflineAsset(id: String) throws { try deleteRecord(kind: "owned_offline_asset", id: id) }
 
     @discardableResult
