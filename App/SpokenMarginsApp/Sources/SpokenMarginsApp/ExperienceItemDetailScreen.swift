@@ -32,7 +32,9 @@ struct ExperienceItemDetailScreen: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 22) {
+                // A plain stack, not a lazy one: on a friend's item the lazy stack's placement and its on-screen
+                // bookkeeping fed each other and never settled, freezing the screen on scroll (#3781). The sections are short.
+                VStack(alignment: .leading, spacing: 22) {
                     // A friend's waiting Margins lead: who sent them, then the title, then how many and what a
                     // Margin is (#3219). Mark complete stays in the options menu until they're heard (2026-11-02).
                     let friendIntro = FriendMarginsIntro(unheardFriendMargins: newSharedMargins.map(\.waitingMargin))
@@ -903,7 +905,7 @@ private struct ExperienceListeningMapSection: View, Equatable {
     }
 
     var body: some View {
-        // Plain stacks: the item screen's own lazy stack hosts this section (#3781).
+        // Plain stacks: nothing on the item screen is lazy (#3781).
         VStack(alignment: .leading, spacing: 12) {
             sectionHeading(
                 isCommunityMap ? "Community map" : "Listening Map",
