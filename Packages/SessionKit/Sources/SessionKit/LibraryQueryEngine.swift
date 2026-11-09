@@ -117,7 +117,7 @@ public enum LibraryQueryEngine {
         if libraryQuery.sharedMargins != .all {
             selections.append(libraryQuery.sharedMargins.title)
         }
-        return selections.isEmpty ? "All items" : selections.joined(separator: " · ")
+        return selections.isEmpty ? "Everything" : selections.joined(separator: " · ")
     }
 
     public static func librarySortDescription(query libraryQuery: LibraryQuery) -> String {

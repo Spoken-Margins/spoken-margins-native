@@ -284,7 +284,7 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertFalse(row.exists)
         app.buttons["Include in search"].tap()
         XCTAssertTrue(row.waitForExistence(timeout: 4))
-        XCTAssertTrue(app.staticTexts["All items"].exists)
+        XCTAssertTrue(app.staticTexts["Everything"].exists)
         captureScreen(named: "library-completed-search-and-undo")
         app.buttons["Clear search"].tap()
         element("library.filters.reset").tap()
@@ -778,6 +778,53 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(start.waitForExistence(timeout: 6))
         start.tap()
         XCTAssertTrue(app.buttons["liveSession.addMargin.button"].waitForExistence(timeout: 6), "The session did not start")
+    }
+
+    /// #3727: the live session's Edit and Remove Margin buttons have a 44 x 44 pt target. Edit's 44 pt frame sat
+    /// outside its Button and Remove Margin was a bare 22 pt glyph. A frame can report a size the button doesn't take
+    /// taps in (#430), so each control's element frame is checked and then tapped 2 pt inside each of its edges.
+    func testLiveSessionEditAndRemoveMarginTakeTapsAcrossA44PointTarget() throws {
+        app.buttons["home.addSource.button"].tap()
+        scrollToElement("addSource.route.liveSession").tap()
+        let start = app.buttons["liveSession.start"]
+        XCTAssertTrue(start.waitForExistence(timeout: 6))
+        start.tap()
+        let field = element("liveSession.marginText")
+        XCTAssertTrue(field.waitForExistence(timeout: 6), "The session did not start")
+
+        XCTContext.runActivity(named: "Edit toggles from each edge") { _ in
+            let edit = app.buttons["liveSession.editDetails"]
+            XCTAssertTrue(edit.waitForExistence(timeout: 4), "Edit is missing")
+            for edge in 0..<4 {
+                let before = edit.label
+                tapInsideEdge(edge, of: edit, named: before)
+                XCTAssertTrue(waitUntil(edit, "label != %@", before),
+                              "A tap at the \(Self.edgeNames[edge]) edge of \(before) did not toggle it")
+            }
+            XCTAssertEqual(edit.label, "Edit", "Four taps did not bring Edit back")
+        }
+
+        XCTContext.runActivity(named: "Remove Margin removes one Margin from each edge") { _ in
+            for number in 1...4 {
+                field.tap()
+                field.typeText("Margin \(number) for the hit area check.")
+                let add = element("liveSession.addMargin.keyboard.button")
+                XCTAssertTrue(add.waitForExistence(timeout: 4), "No Add Margin on the keyboard")
+                add.tap()
+                XCTAssertTrue(waitForDisappearance(app.keyboards.firstMatch, timeout: 4), "Add Margin left the keyboard up")
+            }
+            let removes = app.buttons.matching(NSPredicate(format: "label == %@", "Remove Margin"))
+            XCTAssertTrue(waitUntil(removes, "count == 4"), "Four Margins did not each get a Remove Margin button")
+            for edge in 0..<4 {
+                let remove = removes.firstMatch
+                for _ in 0..<6 where !isReadyToTap(remove) {
+                    if remove.exists && remove.frame.midY < app.windows.firstMatch.frame.midY { app.swipeDown() } else { app.swipeUp() }
+                }
+                tapInsideEdge(edge, of: remove, named: "Remove Margin")
+                XCTAssertTrue(waitUntil(removes, "count == %d", 3 - edge),
+                              "A tap at the \(Self.edgeNames[edge]) edge of Remove Margin did not remove a Margin")
+            }
+        }
     }
 
     func testWrittenMarginSaveSearchStarAndDiscardPreserveTheSource() throws {
@@ -1488,6 +1535,27 @@ final class Gate1FlowUITests: XCTestCase {
             object: element
         )
         return XCTWaiter().wait(for: [expectation], timeout: timeout) == .completed
+    }
+
+    private func waitUntil(_ object: Any, _ format: String, _ args: Any..., timeout: TimeInterval = 5) -> Bool {
+        let expectation = XCTNSPredicateExpectation(predicate: NSPredicate(format: format, argumentArray: args), object: object)
+        return XCTWaiter().wait(for: [expectation], timeout: timeout) == .completed
+    }
+
+    private static let edgeNames = ["leading", "trailing", "top", "bottom"]
+
+    /// #3727: checks the control's element frame is at least 44 x 44 pt, then taps 2 pt inside one of its edges
+    /// (0 leading, 1 trailing, 2 top, 3 bottom). The tap is placed from the control's centre when it is made, so a
+    /// row that moved since the frame was read still gets the tap where the control is.
+    private func tapInsideEdge(_ edge: Int, of control: XCUIElement, named name: String) {
+        let size = control.frame.size
+        XCTAssertGreaterThanOrEqual(size.width, 43.5, "\(name) is \(size.width) pt wide; its target needs 44")
+        XCTAssertGreaterThanOrEqual(size.height, 43.5, "\(name) is \(size.height) pt tall; its target needs 44")
+        let halfWidth = size.width / 2 - 2
+        let halfHeight = size.height / 2 - 2
+        let offsets = [CGVector(dx: -halfWidth, dy: 0), CGVector(dx: halfWidth, dy: 0),
+                       CGVector(dx: 0, dy: -halfHeight), CGVector(dx: 0, dy: halfHeight)]
+        control.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).withOffset(offsets[edge]).tap()
     }
 
     private static let manualListeningMapJSON = """
