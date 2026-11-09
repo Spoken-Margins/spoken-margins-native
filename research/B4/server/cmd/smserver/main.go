@@ -641,7 +641,7 @@ func listReports(args []string, out io.Writer, now time.Time) error {
 		return errors.New("usage: smserver reports -state DIR [-since DURATION] [-category CATEGORY]")
 	}
 	if *category != "" {
-		if _, err := reportrules.ParseCategory(*category); err != nil {
+		if _, err := reportrules.ParseStoredCategory(*category); err != nil {
 			return fmt.Errorf("unknown category %q (one of %v)", *category, reportrules.Categories())
 		}
 	}

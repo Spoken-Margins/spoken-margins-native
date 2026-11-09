@@ -15,13 +15,9 @@ enum AppLinks {
         URL(string: "https://spokenmargins.proximitytoprogress.com/copyright/") ?? URL(fileURLWithPath: "/")
     }
 
-    /// The content policy and the intimate-image removal page for share links (#2238). Settings links to both.
+    /// The content policy for share links (#2238). Settings links to it.
     static var contentPolicy: URL {
         URL(string: "https://spokenmargins.proximitytoprogress.com/content-policy/") ?? URL(fileURLWithPath: "/")
-    }
-
-    static var intimateImageRemoval: URL {
-        URL(string: "https://spokenmargins.proximitytoprogress.com/intimate-images/") ?? URL(fileURLWithPath: "/")
     }
 
     static var versionDescription: String {
