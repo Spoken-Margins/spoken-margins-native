@@ -7,6 +7,8 @@ import SwiftUI
 struct LiveSessionView: View {
     @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.dismiss) private var dismiss
+    /// The big session clock: 44 pt at the default text size, growing with the listener's setting (#3726).
+    @ScaledMetric(relativeTo: .largeTitle) private var clockFontSize: CGFloat = 44
     @StateObject private var controller: LiveSessionController
     @ObservedObject private var links = LiveSessionLinkRouter.shared
 
@@ -200,7 +202,7 @@ struct LiveSessionView: View {
                 .accessibilityIdentifier("liveSession.setup.title")
             if kind != .paper {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Where are you now?").font(.headline)
+                    Text("Where are you now?").font(.headline) // a field label, not a section title
                     AppTextField(kind == .meeting ? "Meeting clock, like 2:00" : "Time in the book, like 0:00", text: $startPosition)
                         .textFieldStyle(.roundedBorder)
                         .keyboardType(.numbersAndPunctuation)
@@ -238,7 +240,7 @@ struct LiveSessionView: View {
     private func sessionHeader(_ session: LiveSession) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline) {
-                Text(session.title.isEmpty ? "\(session.kind.label) session" : session.title).font(.headline)
+                Text(session.title.isEmpty ? "\(session.kind.label) session" : session.title).font(.headline).accessibilityAddTraits(.isHeader)
                 Spacer()
                 if controller.isRunning {
                     Button { toggleDetails(session) } label: { Text(showsDetails ? "Done" : "Edit").minimumTapTarget() }
@@ -278,7 +280,9 @@ struct LiveSessionView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(AppColors.secondaryText)
                 Text(LiveSessionPositionMap.clock(position.ms))
-                    .font(.system(size: 44, weight: .semibold, design: .rounded).monospacedDigit())
+                    .font(.system(size: clockFontSize, weight: .semibold, design: .rounded).monospacedDigit())
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.5)
                     .accessibilityLabel("\(title) \(LiveSessionPositionMap.clock(position.ms))")
                 Text("Session time \(sessionTime)").font(.subheadline.monospacedDigit()).foregroundStyle(AppColors.secondaryText)
                 if session.kind == .meeting {
@@ -289,7 +293,9 @@ struct LiveSessionView: View {
         } else {
             VStack(alignment: .leading, spacing: 6) {
                 Text(sessionTime)
-                    .font(.system(size: 44, weight: .semibold, design: .rounded).monospacedDigit())
+                    .font(.system(size: clockFontSize, weight: .semibold, design: .rounded).monospacedDigit())
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.5)
                     .accessibilityLabel("Session time \(sessionTime)")
                 if let position = controller.predictedPosition(at: date) {
                     Text("Source: \(position.label)").font(.subheadline).foregroundStyle(AppColors.secondaryText)
@@ -365,7 +371,7 @@ struct LiveSessionView: View {
 
     private func marginComposer(_ session: LiveSession) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Add Margin").font(.headline)
+            Text("Add Margin").font(.headline).accessibilityAddTraits(.isHeader)
             AppTextField(guidance(session.kind), text: $marginText, axis: .vertical)
                 .lineLimit(2...5)
                 .textFieldStyle(.roundedBorder)
@@ -424,7 +430,7 @@ struct LiveSessionView: View {
     private func marginList(_ session: LiveSession) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             if !session.margins.isEmpty {
-                Text("Margins (\(session.margins.count))").font(.headline)
+                Text("Margins (\(session.margins.count))").font(.headline).accessibilityAddTraits(.isHeader)
             }
             ForEach(session.margins) { margin in
                 VStack(alignment: .leading, spacing: 4) {
@@ -542,7 +548,7 @@ struct LiveSessionView: View {
 
     private func finishCard(_ session: LiveSession) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(session.isQuick == true ? "Quick session" : "Session ended").font(.headline)
+            Text(session.isQuick == true ? "Quick session" : "Session ended").font(.headline).accessibilityAddTraits(.isHeader)
             resumeButton
             ForEach(Array(LiveSessionPlaceMap.conflicts(in: session).enumerated()), id: \.offset) { _, conflict in
                 Text(conflict.description()).font(.caption).foregroundStyle(AppColors.secondaryText)
@@ -640,7 +646,7 @@ private struct LiveSessionEndCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("End Session").font(.headline)
+            Text("End Session").font(.headline).accessibilityAddTraits(.isHeader)
             VStack(alignment: .leading, spacing: 4) {
                 Picker("When did it end?", selection: $whenIndex) {
                     ForEach(Array(choices.enumerated()), id: \.offset) { index, choice in

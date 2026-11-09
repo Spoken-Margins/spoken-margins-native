@@ -61,6 +61,116 @@ final class SpokenNoteExportTests: XCTestCase {
         XCTAssertEqual(SpokenNoteExport.transcriptText(of: SpokenNote(id: "empty")), "")
     }
 
+    // MARK: text only
+
+    func testTextOnlyPutsTheTitleOnTopAndEveryTakesWordsInOrder() throws {
+        let folder = try noteFolder()
+        var note = SpokenNote(id: "n")
+        note.appendTake(try take("a", sentences: ["First idea.", "Second idea."], in: folder))
+        note.appendTake(try take("b", sentences: ["Third idea."], in: folder))
+        note.appendTake(try take("c", sentences: ["Fourth idea."], in: folder))
+
+        let export = try SpokenNoteExport.prepareText(note: note, title: "Shop plans", into: exports)
+
+        let expected = "Shop plans\n\nFirst idea. Second idea.\n\nThird idea.\n\nFourth idea."
+        XCTAssertEqual(export.text, expected)
+        XCTAssertEqual(export.fileURL.lastPathComponent, "Shop plans.txt")
+        XCTAssertEqual(try String(contentsOf: export.fileURL, encoding: .utf8), expected)
+        XCTAssertFalse(export.isPartial)
+    }
+
+    func testTextOnlyNeedsNoAudioOnThisPhone() throws {
+        let folder = try noteFolder()
+        var note = SpokenNote(id: "n")
+        note.appendTake(try take("a", sentences: ["Still here."], writeAudio: false, in: folder))
+        XCTAssertEqual(try SpokenNoteExport.prepareText(note: note, title: "Gone", into: exports).text, "Gone\n\nStill here.")
+    }
+
+    func testTextOnlySaysSoWhenATakeHasNoWords() throws {
+        let folder = try noteFolder()
+        var note = SpokenNote(id: "n")
+        note.appendTake(try take("a", sentences: ["Heard."], in: folder))
+        note.appendTake(try take("b", sentences: [], in: folder))
+        let export = try SpokenNoteExport.prepareText(note: note, title: "Half", into: exports)
+        XCTAssertEqual(export.takesWithoutWordsCount, 1)
+        XCTAssertTrue(export.isPartial)
+    }
+
+    func testANoteWithNoWordsIsNeverAnEmptyShare() throws {
+        let folder = try noteFolder()
+        var silent = SpokenNote(id: "n")
+        silent.appendTake(try take("a", sentences: [], in: folder))
+        var blank = SpokenNote(id: "b")
+        blank.appendTake(try take("b", sentences: ["  \n "], in: folder))
+
+        for note in [SpokenNote(id: "empty"), silent, blank] {
+            XCTAssertNil(SpokenNoteExport.plainText(of: note, title: "Title"))
+            XCTAssertThrowsError(try SpokenNoteExport.prepareText(note: note, title: "Title", into: exports)) {
+                XCTAssertEqual($0 as? SpokenNoteExportError, .noWordsYet)
+            }
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: exports.path), "no folder is left behind")
+    }
+
+    /// The title at the top of the text and the name of the file are held to different rules: the text keeps every word,
+    /// the file name has to be one a file system can hold.
+    func testTextOnlyTitlesAndFileNames() throws {
+        let folder = try noteFolder()
+        var note = SpokenNote(id: "n")
+        note.appendTake(try take("a", sentences: ["Words."], in: folder))
+        let long = String(repeating: "Très long titre ", count: 40).trimmingCharacters(in: .whitespaces)
+        let rows: [(title: String, top: String, file: String)] = [
+            ("Café 日本語 🎧", "Café 日本語 🎧", "Café 日本語 🎧.txt"),
+            ("a/b:c?d", "a/b:c?d", "a b c d.txt"),
+            ("../../etc/passwd", "../../etc/passwd", "etc passwd.txt"),
+            ("  two   spaces\n\nand lines\t", "two spaces and lines", "two spaces and lines.txt"),
+            ("", SpokenNoteItem.defaultTitle, "\(SpokenNoteItem.defaultTitle).txt"),
+            ("   \n", SpokenNoteItem.defaultTitle, "\(SpokenNoteItem.defaultTitle).txt"),
+            ("???", "???", "\(SpokenNoteItem.defaultTitle).txt"),
+        ]
+        for row in rows {
+            let export = try SpokenNoteExport.prepareText(note: note, title: row.title, into: exports)
+            XCTAssertEqual(export.text, "\(row.top)\n\nWords.", "title: \(row.title)")
+            XCTAssertEqual(export.title, row.top, "title: \(row.title)")
+            XCTAssertEqual(export.fileURL.lastPathComponent, row.file, "title: \(row.title)")
+            XCTAssertEqual(export.fileURL.deletingLastPathComponent(), export.folderURL, "a title never leaves the export's folder")
+            XCTAssertTrue(FileManager.default.fileExists(atPath: export.fileURL.path), "title: \(row.title)")
+        }
+
+        let export = try SpokenNoteExport.prepareText(note: note, title: long, into: exports)
+        XCTAssertEqual(export.text, "\(long)\n\nWords.", "the text keeps the whole title")
+        XCTAssertLessThanOrEqual(export.fileURL.deletingPathExtension().lastPathComponent.count, SpokenNoteExport.maxBaseNameCharacters)
+    }
+
+    func testTextOnlyLeavesTheNoteAloneAndDiscardRemovesOnlyItsOwnFolder() throws {
+        let folder = try noteFolder()
+        var note = SpokenNote(id: "n")
+        note.appendTake(try take("a", sentences: ["Keep me."], in: folder))
+        let export = try SpokenNoteExport.prepareText(note: note, title: "T", into: exports)
+        XCTAssertTrue(export.folderURL.lastPathComponent.hasPrefix(SpokenNoteExport.exportFolderPrefix), "the stale-folder sweep can find it")
+        export.discard()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: export.folderURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: folder.appendingPathComponent("a.m4a").path))
+    }
+
+    func testEachShareDestinationGetsAFormItCanUse() {
+        let rows: [(activity: String?, expected: SpokenNoteTextDelivery)] = [
+            ("com.apple.UIKit.activity.CopyToPasteboard", .text),
+            ("com.apple.UIKit.activity.Message", .text),
+            ("com.apple.UIKit.activity.Mail", .text),
+            ("com.apple.mobilenotes.SharingExtension", .text),
+            ("com.apple.DocumentManagerUICore.SaveToFiles", .file),
+            ("com.apple.UIKit.activity.AirDrop", .file),
+            // Anything not on the lists must still get something it can use.
+            ("com.example.some-third-party.share", .textAndFile),
+            ("", .textAndFile),
+            (nil, .textAndFile),
+        ]
+        for row in rows {
+            XCTAssertEqual(SpokenNoteTextDelivery.forActivity(row.activity), row.expected, "activity: \(row.activity ?? "nil")")
+        }
+    }
+
     // MARK: file names, a table of neighbouring titles
 
     func testFileBaseNames() {

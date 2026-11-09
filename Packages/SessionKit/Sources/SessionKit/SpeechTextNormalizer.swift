@@ -105,8 +105,17 @@ public enum SpeechTextNormalizer {
         rendered = removeLinks(in: rendered)
         if speakIdentifiers {
             rendered = speakLinkAndEmailFragments(in: rendered)
+            rendered = speakMathAlphabet(in: rendered)
         }
         return rendered
+    }
+
+    /// Math letters and private-use glyphs in any text (a PDF on the old reader, a pasted equation) are said as words:
+    /// a voice has no tokens for them and makes noise instead. Everything else passes through untouched.
+    private static func speakMathAlphabet(in input: [MappedCharacter]) -> [MappedCharacter] {
+        guard PDFMathSpeech.containsMathAlphabet(String(input.map(\.character))) else { return input }
+        let spoken = PDFMathSpeech.speakingInlineMath(input.map(\.character), offsets: input.map(\.sourceOffset))
+        return zip(spoken.characters, spoken.offsets).map { MappedCharacter(character: $0, sourceOffset: $1) }
     }
 
     /// Characters that can be part of one URL or address token. Brackets and quotes end it, so

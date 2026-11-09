@@ -40,7 +40,7 @@ struct FollowingFriendRowView: View {
         .background(AppColors.panel)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(friend.name), \(friend.summary)")
-        .accessibilityHint(friend.items.count == 1 ? "Opens the item." : "Shows their items.")
+        .accessibilityHint(friend.items.count == 1 ? "Opens it." : "Shows what they shared.")
         .accessibilityIdentifier("sources.friend")
     }
 }
@@ -100,7 +100,7 @@ struct FollowingFriendItemsScreen: View {
                 .buttonStyle(.plain)
                 .accessibilityElement(children: .combine)
                 .accessibilityLabel(accessibilityLabel(for: item))
-                .accessibilityHint("Opens the item.")
+                .accessibilityHint("Opens it.")
                 .accessibilityIdentifier("sources.friend.item")
                 .listRowInsets(EdgeInsets(top: 0, leading: horizontalSizeClass == .regular ? 28 : 16, bottom: 0, trailing: horizontalSizeClass == .regular ? 28 : 16))
                 .listRowSeparator(.hidden)

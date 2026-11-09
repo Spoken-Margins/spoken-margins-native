@@ -64,14 +64,18 @@ A device can be named by UID, by exact name, or by the start of its name (`Black
 
 ## Safety
 
-- **The default output always comes back.** `route` writes the previous device to `~/SpokenMarginsOps/audio-loopback/previous-default-output.txt` before switching, and restores it when the command ends, fails, or gets Ctrl-C, TERM, HUP, QUIT or ALRM. Only `kill -9` or a power cut can skip that, and then the next `route`, or `loopback restore`, puts the saved device back first.
+- **The default output always comes back.** `route` writes the previous device to `~/SpokenMarginsOps/audio-loopback/previous-default-output.txt` before switching, and restores it when the command ends, fails, or gets Ctrl-C, TERM, HUP, QUIT or ALRM. An audio window skips `route` altogether when `sim-audio-pin` has every booted Simulator on BlackHole. Only `kill -9` or a power cut can skip that restore, and then the next `route`, or `loopback restore`, puts the saved device back first.
 - **Inputs are never changed.** `record` points only its own audio engine at BlackHole; the Mac's default input (the owner's microphone) stays as it is. The system alert sound device is never touched.
 - **When BlackHole is already the default output, don't route.** Use `capture --no-route`; there's nothing to switch.
 - **Prefer no switching at all.** When the source can play to BlackHole itself (`loopback play --device`, `say -a "BlackHole 2ch"`, or a Simulator set to BlackHole in its menu), use `capture --no-route`.
 
 ### Routing only the Simulator
 
-Simulator has its own output choice: **I/O → Audio Output** in the Simulator app's menu bar. Its default, "System Default", follows the Mac's default output, which is what `route` switches. Picking BlackHole 2ch there sends only the Simulator's sound to BlackHole and leaves the Mac alone. That menu item has no command-line or `simctl` equivalent we could find; `defaults read com.apple.iphonesimulator` only keeps a list of recently used devices. Scripting the menu would need Accessibility access for the script, so the lane uses `route` for now, which is safe because it always restores.
+Simulator has its own output choice: **I/O → Audio Output** in the Simulator app's menu bar. Its default, "System Default", follows the Mac's default output, so test runs play through the speakers whenever the owner picks them. `sim-audio-pin` makes the same choice as that menu for every booted Simulator: it checks every 2 seconds and sets the output to BlackHole, so the owner can use his speakers while tests run. It never reads or sets the Mac's default devices, and it leaves the Simulator's microphone alone. Install it once with `ops/audio-loopback/install-sim-audio-pin.sh`; `~/SpokenMarginsOps/audio-loopback/sim-audio-pin --status` shows each booted Simulator's output, and the log is beside it.
+
+There is no `simctl` command for this, so it calls CoreSimulator's private routing call. An Xcode update can break that: `--status` then shows `__sim__hostUseSystemDefaultDeviceUID`, which means "follows the Mac". Each Simulator saves its choice in `data/var/run/com.apple.coresimulator.audio.plist`. An audio window reads that file: when every booted Simulator is pinned it records without `route`, and otherwise it falls back to `route`, which is what makes BlackHole the Mac's default for the window.
+
+Don't disassemble Simulator programs to find such calls: `otool -oV` on `SimAudioProcessorService` grew to 187 GB on 2026-11-08 and forced a quit. `strings` and a small program that lists what an Objective-C protocol offers found everything needed.
 
 ## Permissions
 

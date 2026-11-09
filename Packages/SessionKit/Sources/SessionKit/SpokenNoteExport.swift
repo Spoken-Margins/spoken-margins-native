@@ -36,6 +36,8 @@ public struct SpokenNoteExportFiles: Equatable, Sendable {
 public enum SpokenNoteExportError: Error, Equatable {
     /// No take has audio on this phone and none has a transcript: there is nothing to export.
     case nothingToExport
+    /// "Text only" on a note with no words written down yet. Its audio may still be there to offer instead.
+    case noWordsYet
 }
 
 /// Export for a spoken note (#3660, #3658): the Export door of #3211 ("Export means yourself"), so a listener can get

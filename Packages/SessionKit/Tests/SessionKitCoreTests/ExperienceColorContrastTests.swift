@@ -187,9 +187,7 @@ final class AppColorContrastCoverageTests: XCTestCase {
         XCTAssertEqual(dark, AppSemanticColorRGB.green.dark)
 
         // iOS's secondarySystemBackground: #F2F2F7 in light, #1C1C1E in dark. Label is black / white on it.
-        let card = AppDynamicRGB(
-            light: .init(red: 242 / 255, green: 242 / 255, blue: 247 / 255),
-            dark: .init(red: 28 / 255, green: 28 / 255, blue: 30 / 255))
+        let card = AppSystemColorRGB.secondarySystemBackground
         let ratios = [
             AppColorContrastAudit.contrastRatio(foreground: light, background: card.light),
             AppColorContrastAudit.contrastRatio(foreground: dark, background: card.dark)

@@ -109,9 +109,9 @@ struct ExperienceMarginsScreen: View {
             return collections.first { $0.id == scope.collectionID }?.name ?? "Collection"
         }
         if let itemID = query.itemID {
-            return model.marginScopeItems.first { $0.id == itemID }?.title ?? "Item"
+            return model.marginScopeItems.first { $0.id == itemID }?.title ?? "Untitled"
         }
-        return "All items"
+        return "Everything"
     }
 
     /// The scope picker's choice: one item, one collection (#490) or all items.
@@ -211,8 +211,8 @@ struct ExperienceMarginsScreen: View {
         .buttonStyle(.plain)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(group.isNewest ? "Newest. " : "")\(group.itemTitle), \(group.rows.count) Margins")
-        .accessibilityHint("Opens the item.")
-        .accessibilityAddTraits(.isButton)
+        .accessibilityHint("Opens it.")
+        .accessibilityAddTraits([.isButton, .isHeader])
         .accessibilityIdentifier("margins.openItem.\(group.itemID)")
     }
 
@@ -254,7 +254,7 @@ struct ExperienceMarginsScreen: View {
                 systemImage: "quote.bubble",
                 title: model.marginRows.isEmpty ? "No Margins yet" : "Nothing in this view",
                 detail: model.marginRows.isEmpty ? "While listening, record or write what you want to remember." : "Try a different search or filter.",
-                actionTitle: model.marginRows.isEmpty ? (model.hasActiveSession ? "Open Now Playing" : "Choose an item") : "Clear search & filters"
+                actionTitle: model.marginRows.isEmpty ? (model.hasActiveSession ? "Open Now Playing" : "Choose something to play") : "Clear search & filters"
             ) {
                 if model.marginRows.isEmpty {
                     if model.hasActiveSession { model.openPlayback() } else { model.openLibrary() }
@@ -572,7 +572,7 @@ struct SharedMarginDetailView: View {
                         Button("Reply in writing", systemImage: "square.and.pencil") { reply(inWriting: true) }
                             .accessibilityIdentifier("sharedMargin.replyWritten.button")
                     } footer: {
-                        Text("Your reply is saved at this moment and goes out with the item. Their recording is not sent again.")
+                        Text("Your reply is saved at this moment and goes out with the Margins. Their recording is not sent again.")
                     }
                 }
                 Section {
@@ -585,7 +585,7 @@ struct SharedMarginDetailView: View {
                     Text(row.itemTitle)
                     Text(current.positionDescription)
                     if row.layer.itemId != nil {
-                        Button("Open item and shared controls", systemImage: "doc.text") {
+                        Button("Open it with the shared controls", systemImage: "doc.text") {
                             shouldOpenItem = true
                             dismiss()
                         }
@@ -682,7 +682,7 @@ struct MarginsScopeRow: View {
     private var scopeMenu: some View {
         Menu {
             Picker("Scope", selection: $selection) {
-                Text("All items").tag(String?.none)
+                Text("Everything").tag(String?.none)
                 if !collections.isEmpty {
                     Section("Collections") {
                         ForEach(collections) { collection in
@@ -690,7 +690,7 @@ struct MarginsScopeRow: View {
                         }
                     }
                 }
-                Section("Items") {
+                Section("In your Library") {
                     ForEach(items) { item in Text(item.title).tag(Optional(item.id)) }
                 }
             }
@@ -718,7 +718,7 @@ struct MarginsSearchField: View {
     var body: some View {
         // A single-line field stays about 34 pt tall inside the 44 pt frame, so a tap catcher behind it focuses
         // the field when the tap lands in the extra room above or below. Taps on the field itself never reach it.
-        AppTextField("Search your notes or an item", text: $text)
+        AppTextField("Search your notes or a title", text: $text)
             .textFieldStyle(.roundedBorder)
             .focused($isFocused)
             .frame(minHeight: TapTarget.minimum)
