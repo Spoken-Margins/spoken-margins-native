@@ -6235,6 +6235,50 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertNil(try store.loadSourceSuggestionDecision(sourceId: source.id), "a failed follow records no decision")
     }
 
+    /// #3817: a page offering two feeds with the same title puts both on the suggestion card, each with its
+    /// address so the listener can tell them apart. Nothing is followed until one is tapped, and the tap follows
+    /// that feed only. Discovery runs for real over a stubbed network.
+    func testTwoFeedsWithOneTitleAreBothOfferedAndOnlyTheTappedOneIsFollowed() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let databaseURL = root.appending(path: "library.sqlite")
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: databaseURL)
+        model.resetAndSeed()
+        let store = try model.libraryStoreForTesting()
+        addTeardownBlock { [weak model, weak store] in
+            // Never unlink an open SQLite/WAL file; see testFollowDiscoveryRechecksSubscriptionsBeforePublishing.
+            if model == nil, store == nil {
+                try FileManager.default.removeItem(at: root)
+            }
+        }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [SameTitleFeedsURLProtocol.self]
+        model.followedSourceCoordinator = FollowedSourceCoordinator(repository: store, session: URLSession(configuration: configuration), signals: nil)
+        try store.saveItem(Item(id: "article", title: "Article", mediaType: "text", text: "Source text.", externalReference: SameTitleFeedsURLProtocol.article, status: "ready", externalReferenceType: "url"))
+        try store.saveSession(Session(id: "session-article", itemId: "article", status: "in_progress", phase: .itemPlayback, currentTargetType: .itemTextTTS, currentTargetId: "article", position: Position(charOffset: 4), completionPercent: 40, playbackRate: 1))
+        model.openHome()
+        model.openItem(id: "article")
+
+        model.offerFollowSuggestionIfEligible(itemId: "article", store: store)
+        try await waitFor("the suggestion check finished") {
+            model.sourceFollowSuggestionCandidates.count == 2 || model.diagnostics["sourceFollowSuggestion"] != nil
+        }
+
+        let candidates = model.sourceFollowSuggestionCandidates
+        XCTAssertEqual(candidates.count, 2, "outcome: \(model.diagnostics["sourceFollowSuggestion"] ?? "none")")
+        XCTAssertEqual(candidates.map(\.source.canonicalURL), [SameTitleFeedsURLProtocol.news, SameTitleFeedsURLProtocol.essays])
+        XCTAssertEqual(candidates.map(\.displayName), ["Same Title", "Same Title"])
+        XCTAssertEqual(candidates.map { $0.showsFeedURL(among: candidates) }, [true, true], "the card shows each address under the shared name")
+        XCTAssertTrue(try store.loadFeedSubscriptions().isEmpty, "offering a feed is not following it")
+        XCTAssertTrue(model.feedSubscriptions.isEmpty)
+
+        model.acceptSourceFollowSuggestion(candidates[1])
+
+        try await waitFor("the tapped feed is followed") { !model.feedSubscriptions.isEmpty && model.sourceFollowSuggestionCandidates.isEmpty }
+        XCTAssertEqual(try store.loadFeedSubscriptions().map(\.source.canonicalURL), [SameTitleFeedsURLProtocol.essays])
+        XCTAssertEqual(model.feedSubscriptions.map(\.source.canonicalURL), [SameTitleFeedsURLProtocol.essays])
+    }
+
     /// #539: diagnostics showed a Follow failure for Noahpinion, which the owner follows. Its
     /// article on www.noahpinion.blog wasn't matched to the followed www.noahpinion.blog/feed, so
     /// opening it ran discovery again and recorded an error.
@@ -7036,6 +7080,46 @@ private final class GuidedTourRequestCountingURLProtocol: URLProtocol, @unchecke
     override func startLoading() {
         Self.lock.withLock { Self.urls.append(request.url?.absoluteString ?? "") }
         client?.urlProtocol(self, didFailWithError: URLError(.notConnectedToInternet))
+    }
+
+    override func stopLoading() {}
+}
+
+/// An article page linking two RSS feeds with the same title and different entries, both listing the article (#3817).
+private final class SameTitleFeedsURLProtocol: URLProtocol, @unchecked Sendable {
+    static let article = "https://sametitle.example/article"
+    static let news = "https://sametitle.example/news.xml"
+    static let essays = "https://sametitle.example/essays.xml"
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        guard let url = request.url else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badURL)); return
+        }
+        func feed(_ other: String) -> String {
+            #"<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"><channel><title>Same Title</title><link>https://sametitle.example</link>"#
+                + "<item><title>Article</title><link>\(Self.article)</link><guid>\(Self.article)</guid></item>"
+                + "<item><title>\(other)</title><link>https://sametitle.example/\(other)</link><guid>https://sametitle.example/\(other)</guid></item>"
+                + "</channel></rss>"
+        }
+        let reply: (status: Int, type: String, body: String)
+        switch url.absoluteString {
+        case Self.article:
+            reply = (200, "text/html", #"<html><head><link rel="alternate" type="application/rss+xml" href="/news.xml"><link rel="alternate" type="application/rss+xml" href="/essays.xml"></head><body>Article</body></html>"#)
+        case Self.news: reply = (200, "application/rss+xml", feed("news-1"))
+        case Self.essays: reply = (200, "application/rss+xml", feed("essay-1"))
+        default: reply = (404, "text/plain", "")
+        }
+        let body = Data(reply.body.utf8)
+        guard let response = HTTPURLResponse(url: url, statusCode: reply.status, httpVersion: "HTTP/1.1",
+                                             headerFields: ["Content-Type": reply.type, "Content-Length": "\(body.count)"]) else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse)); return
+        }
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: body)
+        client?.urlProtocolDidFinishLoading(self)
     }
 
     override func stopLoading() {}
