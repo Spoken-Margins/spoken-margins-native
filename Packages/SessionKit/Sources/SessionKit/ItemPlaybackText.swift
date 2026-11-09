@@ -19,13 +19,13 @@ public enum ItemPlaybackText {
         preface(item: item, map: map, listenable: listenable) + (listenable?.text ?? item.text ?? "")
     }
 
-    /// Reads what a play of `itemId` will speak and projects it for the voice, so the play itself finds the projection
+    /// Reads what a play of `itemId` will speak and projects it for the voices in `kinds`, so the play itself finds the projection
     /// ready. Runs on the calling thread: call it off the main actor. Nothing is written, and an item with no text, a
     /// item that plays a recording or a short text does nothing.
     public static func prewarmProjection(
         itemId: String,
         repository: SessionRepository,
-        forSystemSpeech: Bool
+        kinds: SpeechTextNormalizer.PrewarmVoiceKinds
     ) {
         guard let item = try? repository.loadItem(id: itemId),
               item.mediaType != TargetType.transcriptBackedMedia.rawValue,
@@ -38,6 +38,6 @@ public enum ItemPlaybackText {
             let document = try? (repository as? StructuredDocumentRepository)?.loadStructuredDocument(itemId: itemId)
             listenable = StructuredDocumentSpeech.listenableProjection(item: item, document: document)
         }
-        SpeechTextNormalizer.prewarm(text(item: item, map: map, listenable: listenable), forSystemSpeech: forSystemSpeech)
+        SpeechTextNormalizer.prewarm(text(item: item, map: map, listenable: listenable), kinds: kinds)
     }
 }

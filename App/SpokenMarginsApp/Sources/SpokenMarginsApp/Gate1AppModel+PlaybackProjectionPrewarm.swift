@@ -9,13 +9,13 @@ import SessionKitPersistence
 extension Gate1AppModel {
     func prewarmPlaybackProjection(itemId: String, store: SQLiteSessionStore) {
         guard audioPlaybackClientOverride == nil else { return } // a test's own player projects what it likes
-        let forSystemSpeech = !ttsVoiceSelection.isOnDeviceVoice
+        let kinds = SpeechTextNormalizer.PrewarmVoiceKinds.forSelection(onDeviceVoice: ttsVoiceSelection.isOnDeviceVoice)
         Task(priority: .utility) {
             // The store is read and the text projected on the reader's own thread, never on the main actor.
             try? await StoreReader(store).read(priority: .utility) { store in
                 // An item with its publisher's recording may play that, not the text: nothing to project ahead.
                 guard (try? store.loadPublisherAudio(itemId: itemId)) == nil else { return }
-                ItemPlaybackText.prewarmProjection(itemId: itemId, repository: store, forSystemSpeech: forSystemSpeech)
+                ItemPlaybackText.prewarmProjection(itemId: itemId, repository: store, kinds: kinds)
             }
         }
     }

@@ -85,12 +85,37 @@ final class PlaybackProjectionPrewarmTests: XCTestCase {
 
     func testEachVoiceKindKeepsItsOwnProjection() {
         let text = longArticle()
-        SpeechTextNormalizer.prewarm(text, forSystemSpeech: true)
+        SpeechTextNormalizer.prewarm(text, kinds: .system)
         XCTAssertTrue(SpeechTextNormalizer.projectionMemo.remembers(text, kind: .systemSpeech))
         XCTAssertFalse(SpeechTextNormalizer.projectionMemo.remembers(text, kind: .speech))
         SpeechTextNormalizer.prewarm(text)
         XCTAssertTrue(SpeechTextNormalizer.projectionMemo.remembers(text, kind: .systemSpeech))
         XCTAssertTrue(SpeechTextNormalizer.projectionMemo.remembers(text, kind: .speech))
+    }
+
+    /// An on-device voice hands over to the system voice mid-play (Low Power Mode, no model, a render failure), and
+    /// the system voice projects the text its own way: a prewarm for the on-device kind alone left that play to
+    /// project 282 ms of text on the main thread.
+    func testAnOnDeviceSelectionAlsoProjectsForTheSystemVoiceItMayFallBackTo() {
+        let text = longArticle()
+        let item = Item(id: "item-fallback", title: "Fallback", mediaType: "text", text: text, externalReference: nil, status: "ready")
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        ItemPlaybackText.prewarmProjection(
+            itemId: item.id, repository: repo, kinds: .forSelection(onDeviceVoice: true)
+        )
+        XCTAssertTrue(SpeechTextNormalizer.projectionMemo.remembers(text, kind: .speech))
+        XCTAssertTrue(SpeechTextNormalizer.projectionMemo.remembers(text, kind: .systemSpeech))
+    }
+
+    func testASystemVoiceSelectionProjectsOnlyForTheSystemVoice() {
+        let text = longArticle()
+        let item = Item(id: "item-system", title: "System", mediaType: "text", text: text, externalReference: nil, status: "ready")
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        ItemPlaybackText.prewarmProjection(
+            itemId: item.id, repository: repo, kinds: .forSelection(onDeviceVoice: false)
+        )
+        XCTAssertTrue(SpeechTextNormalizer.projectionMemo.remembers(text, kind: .systemSpeech))
+        XCTAssertFalse(SpeechTextNormalizer.projectionMemo.remembers(text, kind: .speech), "no hand-over goes that way")
     }
 
     func testShortAndHugeTextsAreNotKept() {
@@ -116,7 +141,7 @@ final class PlaybackProjectionPrewarmTests: XCTestCase {
         ])
         let repo = InMemorySessionRepository(items: [item.id: item], mapsByItemId: [item.id: map])
 
-        ItemPlaybackText.prewarmProjection(itemId: item.id, repository: repo, forSystemSpeech: false)
+        ItemPlaybackText.prewarmProjection(itemId: item.id, repository: repo, kinds: .onDevice)
         let spoken = ItemPlaybackText.text(item: item, map: map, listenable: nil)
         XCTAssertTrue(SpeechTextNormalizer.projectionMemo.remembers(spoken, kind: .speech))
 
@@ -131,7 +156,7 @@ final class PlaybackProjectionPrewarmTests: XCTestCase {
         let text = longArticle()
         let item = Item(id: "item-plain", title: "Plain", mediaType: "text", text: text, externalReference: nil, status: "ready")
         let repo = InMemorySessionRepository(items: [item.id: item])
-        ItemPlaybackText.prewarmProjection(itemId: item.id, repository: repo, forSystemSpeech: false)
+        ItemPlaybackText.prewarmProjection(itemId: item.id, repository: repo, kinds: .onDevice)
         XCTAssertTrue(SpeechTextNormalizer.projectionMemo.remembers(text, kind: .speech))
     }
 
@@ -143,7 +168,7 @@ final class PlaybackProjectionPrewarmTests: XCTestCase {
         let empty = Item(id: "item-empty", title: "Empty", mediaType: "text", text: nil, externalReference: nil, status: "ready")
         let repo = InMemorySessionRepository(items: [recording.id: recording, empty.id: empty])
         for id in [recording.id, empty.id, "item-missing"] {
-            ItemPlaybackText.prewarmProjection(itemId: id, repository: repo, forSystemSpeech: false)
+            ItemPlaybackText.prewarmProjection(itemId: id, repository: repo, kinds: .onDevice)
         }
         XCTAssertFalse(SpeechTextNormalizer.projectionMemo.remembers(longArticle(), kind: .speech))
     }

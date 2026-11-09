@@ -59,11 +59,30 @@ public enum SpeechTextNormalizer {
     /// thread when something off it already has (#2256). Short texts, such as streamed chunks, never use it.
     static let projectionMemo = SpeechProjectionMemo()
 
-    /// Projects `source` for the player of the given kind and keeps the result for the play that follows. Call it off
-    /// the main thread; the call is the whole cost, and a text too short or too long for the memo is left alone.
-    public static func prewarm(_ source: String, forSystemSpeech: Bool = false) {
+    /// Which players a text may be spoken by, so the projection can be made ahead for each of them.
+    public struct PrewarmVoiceKinds: OptionSet, Sendable {
+        public let rawValue: Int
+        public init(rawValue: Int) { self.rawValue = rawValue }
+        /// The on-device voices' own projection (`normalizeWithSourceOffsets`).
+        public static let onDevice = PrewarmVoiceKinds(rawValue: 1)
+        /// Apple's system speech (`projectForSystemSpeech`).
+        public static let system = PrewarmVoiceKinds(rawValue: 2)
+
+        /// The kinds a play may use when the listener picked an on-device voice or a system one. An on-device voice
+        /// hands over to the system voice mid-play (Low Power Mode, a missing model, a render failure), and that voice
+        /// projects the text its own way, so both are made ahead (#2256). The system voice never hands over the
+        /// other way.
+        public static func forSelection(onDeviceVoice: Bool) -> PrewarmVoiceKinds {
+            onDeviceVoice ? [.onDevice, .system] : [.system]
+        }
+    }
+
+    /// Projects `source` for the players of the given kinds and keeps the results for the play that follows. Call it
+    /// off the main thread; the call is the whole cost, and a text too short or too long for the memo is left alone.
+    public static func prewarm(_ source: String, kinds: PrewarmVoiceKinds = .onDevice) {
         guard SpeechProjectionMemo.holds(utf8Count: source.utf8.count) else { return }
-        _ = forSystemSpeech ? projectForSystemSpeech(source) : normalizeWithSourceOffsets(source)
+        if kinds.contains(.onDevice) { _ = normalizeWithSourceOffsets(source) }
+        if kinds.contains(.system) { _ = projectForSystemSpeech(source) }
     }
 
     /// Produces the conservative plain-text representation handed to Apple's
