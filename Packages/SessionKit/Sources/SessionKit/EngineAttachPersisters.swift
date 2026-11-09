@@ -26,6 +26,14 @@ public enum PreparedTextAudioRefusal: Error, Equatable, Sendable {
     case preparationRetired
 }
 
+/// What `PreparedTextAudioPersister.persistAssembly` did.
+public enum PreparedAudioAssemblyAttach: Sendable {
+    /// Saved, or the item is one that takes no generated audio (`updated` is nil); either way the engine half runs next.
+    case attached(PersistedPreparedTextAudio)
+    /// The preparation was retired, replaced or made for other text meanwhile; nothing was written.
+    case dropped
+}
+
 public struct PreparedTextAudioPersister: Sendable {
     let repository: any SessionRepository
     let profile: RuntimeCapabilityProfile
@@ -44,6 +52,28 @@ public struct PreparedTextAudioPersister: Sendable {
         }
         let updated = try write(prepared, to: item, manifestId: manifestId)
         return PersistedPreparedTextAudio(stored: item, updated: updated, prepared: prepared)
+    }
+
+    /// The save a finished assembly of chunks makes (#2256, #2509): one transaction that re-checks the preparation is still
+    /// the item's, still live (no Stop, failure or new voice since the render began, #2134) and still for the text it
+    /// was made from, then writes the audio. It reads and writes the store, so a caller runs it off the main thread and
+    /// hands an `.attached` result to `SessionEngine.attachPreparedTextAudio(_:replaceActivePlayback:)` on it. Anything
+    /// that moved on answers `.dropped` with nothing written, and the caller discards the audio without a failure.
+    public func persistAssembly(
+        itemId: String,
+        prepared: PreparedTextAudio,
+        manifest: PreparedAudioManifest,
+        itemText: String?,
+        sourceText: String
+    ) throws -> PreparedAudioAssemblyAttach {
+        let result = try PreparedAudioEnqueue.withCurrentManifest(manifest, repository: repository) { saved, current -> PersistedPreparedTextAudio? in
+            guard PreparedAudioEnqueue.mayComplete(saved.state) else { return nil }
+            guard current.text == itemText,
+                  try PreparedAudioEnqueue.preparedText(item: current, repository: repository) == sourceText else { return nil }
+            return try persist(itemId: itemId, prepared: prepared)
+        }
+        if let inner = result, let persisted = inner { return .attached(persisted) }
+        return .dropped
     }
 
     /// Checks the source text is still what the audio was made from, then writes it (one transaction when the store has them).
