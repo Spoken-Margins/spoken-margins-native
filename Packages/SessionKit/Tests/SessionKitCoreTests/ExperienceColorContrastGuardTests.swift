@@ -101,9 +101,12 @@ final class AppLiveActivityPairsTests: XCTestCase {
         XCTAssertTrue(text.contains("Color(red: 0.08, green: 0.09, blue: 0.12)"), "the plate")
         XCTAssertTrue(text.contains("Color(red: 0.34, green: 0.71, blue: 0.91)"), "the progress blue")
         XCTAssertTrue(text.contains("Color(red: 0.27, green: 0.78, blue: 0.43)"), "the second green")
-        for alpha in ["0.74", "0.78", "0.8", "0.84", "0.86"] {
+        for alpha in ["0.74", "0.8", "0.84", "0.86"] {
             XCTAssertTrue(text.contains(".white.opacity(\(alpha))"), "white at \(alpha) is no longer drawn: drop its pair")
         }
+        // The chapter line is 0.78 white, drawn through a ternary since the paused prompt shares the line (#3692); the
+        // paused prompt itself is plain white, which the title pair covers.
+        XCTAssertTrue(text.contains(".white.opacity(offersResume ? 1 : 0.78)"), "white at 0.78 is no longer drawn: drop its pair")
         for alpha in ["0.16", "0.12", "0.14"] {
             XCTAssertTrue(text.contains("Color.white.opacity(\(alpha))"), "the white chip at \(alpha) is no longer drawn: drop its pair")
         }
