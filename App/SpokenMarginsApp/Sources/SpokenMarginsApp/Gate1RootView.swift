@@ -204,7 +204,6 @@ struct ManualSourceFollowButton: View {
         if model.canManuallyFollowSelectedSource {
             Button(action: model.followSelectedSource) {
                 HStack {
-                    // Pictures: the title says what the button does, so the spinner and the symbol stay silent (#3730).
                     if model.isFollowingSelectedSource {
                         ProgressView().accessibilityHidden(true)
                     } else {
