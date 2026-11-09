@@ -75,6 +75,9 @@ struct MiniPlayerBar: View {
     /// near-miss on record started a recording (#151); 12 pt is the gap the issue's default picked.
     static let controlSpacing: CGFloat = 12
 
+    /// What the open area does. nil opens Now Playing; a screen drawn over the root view passes its own.
+    var openNowPlaying: (() -> Void)? = nil
+
     @EnvironmentObject private var model: Gate1AppModel
     @State private var playbackTick = 0 // bumped by each progress tick: the chapter line can follow the playhead (#2074)
 
@@ -89,7 +92,7 @@ struct MiniPlayerBar: View {
     var body: some View {
         let _ = playbackTick
         layout {
-            Button(action: model.openPlayback) {
+            Button(action: openNowPlaying ?? model.openPlayback) {
                 HStack(spacing: 11) {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(model.playbackItemHeaderTitle)

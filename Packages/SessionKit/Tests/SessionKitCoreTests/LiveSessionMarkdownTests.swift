@@ -43,11 +43,20 @@ final class LiveSessionMarkdownTests: XCTestCase {
 
     func testMarkdownShowsEveryPositionAndTheMatchedLine() {
         let markdown = LiveSessionMarkdown.render(record(), timeZone: utc)
-        XCTAssertTrue(markdown.hasPrefix("# Budget sync\n\n- Kind: Meeting\n- Date: 2026-03-04 10:00 to 10:15\n- Started at: 0:00\n"), markdown)
+        XCTAssertTrue(markdown.hasPrefix("# Budget sync\n\n- Kind: Meeting\n- Date: 2026-03-04 10:00 to 10:15\n- Source clock at start: 0:00\n"), markdown)
         XCTAssertTrue(markdown.contains("## 1. 2:00\n\nJohnny was just talking about the travel budget\n\nPosition: Transcript match 100% at 2:00 · you set 2:30 · estimate about 2:50 · 2:50 into the session\n\n> Johnny Rivera: The travel budget is over by a third."), markdown)
         XCTAssertTrue(markdown.contains("## 2. About 6:40\n\n_Mark, no words._\n\nPosition: Estimate about 6:40 · 6:40 into the session"), markdown)
         XCTAssertTrue(markdown.contains("## Appendix: transcript\n\n[0:00] **Alice:** Welcome everyone."), markdown)
         XCTAssertFalse(LiveSessionMarkdown.render(record(), includeTranscript: false, timeZone: utc).contains("Appendix"))
+    }
+
+    func testDescriptionAndStatedStartAreExportedAndTheSourceClockLineIsRenamed() {
+        var rec = record()
+        rec.session.sessionDescription = "Quarterly budget review"
+        rec.session.statedStartedAt = rec.session.startedAt.addingTimeInterval(-30 * 60)
+        let markdown = LiveSessionMarkdown.render(rec, timeZone: utc)
+        XCTAssertTrue(markdown.hasPrefix("# Budget sync\n\n- Kind: Meeting\n- About: Quarterly budget review\n- Date: 2026-03-04 09:30 to 10:15\n- Source clock at start: 0:00\n"), markdown)
+        XCTAssertFalse(markdown.contains("- Started at:"), markdown)
     }
 
     func testRecordRoundTrips() throws {
