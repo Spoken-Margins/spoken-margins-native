@@ -164,13 +164,8 @@ public enum PDFMathSpeech {
             digits += 1
         }
         guard (1...2).contains(digits), position + 2 < line.endIndex else { return false }
-        guard line[position].isUppercase && line[position + 1].isLowercase else { return false }
-        // A footnote opens with words. An equation can look the same: "0Tt + µ" silenced the rest of a page.
-        let measured = facts(line)
-        return measured.prose >= minimumFootnoteOpeningWords && !measured.isDisplay
+        return line[position].isUppercase && line[position + 1].isLowercase
     }
-
-    private static let minimumFootnoteOpeningWords = 3
 
     // MARK: - Display equations
 
@@ -180,11 +175,6 @@ public enum PDFMathSpeech {
         var prose: Int
         var isFragment: Bool
         var isDisplay: Bool
-        var isNumbered: Bool
-        /// No prose, and not a number, list marker or capitalized title: only math is left.
-        var isMathOnly: Bool
-        /// A math symbol or an equation's ASCII sign.
-        var hasMathEvidence: Bool
     }
 
     private static let mathFunctionWords: Set<String> = ["lim", "log", "exp", "max", "min", "sin", "cos", "tan", "sup", "inf", "det", "arg", "mod", "var", "cov", "argmax", "argmin", "sgn", "diag", "tanh", "sinh", "cosh"]
@@ -235,44 +225,7 @@ public enum PDFMathSpeech {
         }
         let fragment = prose == 0 && tokens.count <= 3 && line.count <= 14
             && !line.contains { $0.isLetter && $0.isASCII && line.filter(\.isLetter).count >= 3 }
-        var mathOnly = false
-        if prose == 0, !tokens.isEmpty, text.range(of: #"[A-Z]{4,}"#, options: .regularExpression) == nil,
-           text.range(of: #"^[0-9\s.,()%$*-]+$"#, options: .regularExpression) == nil,
-           text.range(of: #"^\(?[A-Za-z0-9]{1,3}[.)]$"#, options: .regularExpression) == nil {
-            mathOnly = true
-        }
-        let evidence = strong > 0 || text.range(of: #"[=<>+^_|]"#, options: .regularExpression) != nil
-        return LineFacts(
-            tokens: tokens.count, strong: strong, prose: prose, isFragment: fragment, isDisplay: display,
-            isNumbered: numbered, isMathOnly: mathOnly, hasMathEvidence: evidence
-        )
-    }
-
-    /// LaTeX papers lose their math font: PDFKit gives plain letters, one sub- or superscript to a line. A run of lines
-    /// with no words in it is one equation when at least two carry a sign of math. Nothing with a word in it is touched,
-    /// beyond a numbered line with "=" and a few words.
-    private static func markMathRuns(_ measured: inout [LineFacts], lines: [Range<Int>], characters: [Character]) {
-        var start = 0
-        while start < measured.count {
-            guard measured[start].isMathOnly else { start += 1; continue }
-            var end = start
-            while end + 1 < measured.count, measured[end + 1].isMathOnly { end += 1 }
-            let evidence = measured[start...end].filter { $0.hasMathEvidence || $0.isDisplay }.count
-            let isEquation: Bool
-            if end > start {
-                isEquation = evidence >= 2 || (evidence >= 1 && measured[start...end].contains(where: \.isDisplay))
-            } else {
-                isEquation = measured[start].hasMathEvidence && measured[start].tokens >= 2
-            }
-            if isEquation {
-                for index in start...end { measured[index].isDisplay = true }
-            }
-            start = end + 1
-        }
-        for index in measured.indices where !measured[index].isDisplay && measured[index].isNumbered && measured[index].prose <= 3
-            && characters[lines[index]].contains("=") {
-            measured[index].isDisplay = true
-        }
+        return LineFacts(tokens: tokens.count, strong: strong, prose: prose, isFragment: fragment, isDisplay: display)
     }
 
     /// The character ranges of `range` (lines split at "\n") that are display equations and aren't read.
@@ -292,7 +245,6 @@ public enum PDFMathSpeech {
         }
         lines.append(start..<range.upperBound)
         var measured = lines.map { facts(characters[$0]) }
-        markMathRuns(&measured, lines: lines, characters: characters)
         // A fragment ("1", ">", ", (4)", "𝜃") touching a display line is part of it. Works outward until nothing changes.
         var changed = true
         while changed {
