@@ -332,6 +332,33 @@ final class ItemDetailLoaderTests: XCTestCase {
         }
     }
 
+    /// #3599: the Item screen titles itself and speaks of the source by the listener's word, not the app's "item".
+    /// The loader works the word out once, from the same facts the Library row reads, so `body` never scans the Library.
+    func testTheDetailNamesTheSourceTheWayTheLibraryRowDoes() throws {
+        try withFixture { fixture, store, _ in
+            let rows: [(id: String, mediaType: String, reference: String?, type: String?, expected: SourceNoun)] = [
+                ("podcast", "podcast", nil, nil, .episode),
+                ("transcript", "transcript_backed_media", nil, nil, .episode),
+                ("pdf", "pdf", nil, nil, .pdf),
+                ("article", "article", nil, nil, .article),
+                ("linked-text", "text", "https://example.com/a", "url", .article),
+                ("pasted", "text", nil, nil, .text),
+                ("unknown-kind", "something-new", nil, nil, .text)
+            ]
+            for row in rows {
+                var saved = item(row.id)
+                saved.mediaType = row.mediaType
+                saved.externalReference = row.reference
+                saved.externalReferenceType = row.type
+                try store.saveItem(saved)
+                let detail = try fixture.load(row.id, store)
+                XCTAssertEqual(detail.sourceNoun, row.expected, row.id)
+                XCTAssertFalse(detail.sourceNoun.capitalized.lowercased().contains("item"), row.id)
+            }
+            XCTAssertEqual(ItemDetailState().sourceNoun, .text, "an empty detail, before anything loads, says text, never item")
+        }
+    }
+
     /// #1167: the Item screen's "Open Original Source" shows for an item added by link and not for one
     /// imported from a file, a feed link that may hold a secret, or an item with no address.
     func testOriginalSourceIsOfferedOnlyForAPublicWebAddress() throws {

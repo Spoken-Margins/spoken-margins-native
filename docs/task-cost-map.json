@@ -70,7 +70,7 @@
             {
               "do": "tap",
               "label": "Item options menu",
-              "marker": "Item options",
+              "marker": "sourceNoun.capitalized) options",
               "file": "ExperienceItemDetailScreen.swift"
             },
             {

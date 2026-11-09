@@ -74,12 +74,11 @@ final class AppLiveActivityPairsTests: XCTestCase {
         pairs.map { .init(name: $0.name, foreground: $0.foreground, background: AppSemanticColorRGB.white, minimumRatio: $0.minimumRatio) }
     }
 
-    func testTheLiveActivityPairsPassTodayExceptTheListedBlue() {
+    func testTheLiveActivityPairsAllPassToday() {
         XCTAssertFalse(AppColorContrastAudit.liveActivityPairs.isEmpty)
         let failing = AppColorContrastAudit.failures(for: AppColorContrastAudit.liveActivityPairs)
-        XCTAssertEqual(failing.count, 1, "\(failing)")
-        XCTAssertTrue(failing[0].hasPrefix("live activity button label tint (blue) [light]"), "\(failing)")
-        XCTAssertTrue(AppColorContrastAudit.knownFailures.contains { $0.pair == "live activity button label tint (blue)" && $0.appearance == "light" })
+        XCTAssertEqual(failing, [], "every Live Activity pair passes since the buttons left the system blue (#3739)")
+        XCTAssertFalse(AppColorContrastAudit.knownFailures.contains { $0.pair.hasPrefix("live activity") })
     }
 
     func testTheLiveActivityPairsCanFail() {
@@ -112,7 +111,9 @@ final class AppLiveActivityPairsTests: XCTestCase {
         }
         XCTAssertTrue(text.contains("Color.green.opacity(0.28)"), "the system green chip")
         XCTAssertTrue(text.contains("? .red : .orange"), "the recording tint")
-        XCTAssertTrue(text.contains(".tint(.blue)"), "the blue button tint")
+        XCTAssertFalse(text.contains(".tint(.blue)"), "the system blue tint is back: it measures 4.46:1 on the plate in light (#3739)")
+        XCTAssertEqual(text.components(separatedBy: "static let buttonTint = Color(red: 0.34, green: 0.71, blue: 0.91)").count - 1, 1, "the button tint literal")
+        XCTAssertEqual(text.components(separatedBy: ".tint(LiveSessionActivityStyle.buttonTint)").count - 1, 3, "Resume, Mark and Finish Margin")
         XCTAssertTrue(text.contains(".foregroundStyle(.secondary)"), "the Dynamic Island's secondary line")
     }
 }

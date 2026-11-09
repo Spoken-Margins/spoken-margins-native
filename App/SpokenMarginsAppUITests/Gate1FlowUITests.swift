@@ -655,7 +655,7 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(savedMargin.waitForExistence(timeout: 4))
         savedMargin.tap()
         XCTAssertTrue(element("marginDetail.screen").waitForExistence(timeout: 4), "Tapping the saved Margin row did not open its detail")
-        let timelineAction = app.buttons["Open Item"]
+        let timelineAction = app.buttons["Open the source"]
         let pinnedMoment = app.buttons["marginDetail.playMoment.button"]
         let detailList = element("marginDetail.screen").collectionViews.firstMatch
         for _ in 0..<5 {

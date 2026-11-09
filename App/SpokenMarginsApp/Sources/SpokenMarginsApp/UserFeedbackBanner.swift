@@ -33,13 +33,23 @@ struct UserFeedbackEvent: Identifiable, Equatable {
     /// the event is a one-line tag at its top instead of this banner (#430).
     var origin: FeedbackOrigin? = nil
 
+    /// The news that a Margin was saved. It may cover a Retry about a voice Margin's transcript, so a
+    /// saved Margin is never left looking like the failed one (#3793).
+    var savesMargin = false
+
     /// Each event is new, so its id decides equality; the retry action can't be compared.
     static func == (lhs: UserFeedbackEvent, rhs: UserFeedbackEvent) -> Bool {
         lhs.id == rhs.id
     }
 
     func mayBeReplaced(by newer: UserFeedbackEvent) -> Bool {
-        FeedbackBannerPolicy.mayReplace(currentKind: kind, currentOffersRetry: retry != nil, with: newer.kind)
+        FeedbackBannerPolicy.mayReplace(
+            currentKind: kind,
+            currentOffersRetry: retry != nil,
+            with: newer.kind,
+            currentIsMarginTranscription: origin?.work == .marginTranscription,
+            newSavesMargin: newer.savesMargin
+        )
     }
 }
 

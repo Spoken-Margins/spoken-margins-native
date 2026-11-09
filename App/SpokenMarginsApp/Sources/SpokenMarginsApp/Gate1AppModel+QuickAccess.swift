@@ -65,6 +65,11 @@ extension Gate1AppModel {
             reportFailure("Choose a quick folder before importing recent files.")
             return
         }
+        // A `.json` file in the Quick Folder is a structured link list: its links are added, it is never read as text (#3767).
+        if Self.isQuickFolderLinkList(file) {
+            importQuickFolderLinkLists([file], folderURL: urls.folderURL)
+            return
+        }
         beginObsidianMarkdownImport(
             urls: [urls.fileURL],
             securityScopedURLs: [urls.folderURL],

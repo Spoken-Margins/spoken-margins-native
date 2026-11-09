@@ -1,4 +1,5 @@
 import AVFoundation
+import SessionKit
 import SessionKitPersistence
 import SessionKitSupertonic
 import XCTest
@@ -120,6 +121,13 @@ final class LibraryAudioPreparationTests: XCTestCase {
         XCTAssertEqual(mostAtOnce, 1, "never two renders at once")
         let committed = try XCTUnwrap(try store.loadPreparedAudioManifest(id: manifest.id)).chunks.map(\.index)
         XCTAssertEqual(Array(committed.sorted().prefix(2)), [0, 1], "each pass committed its own chunk, one after the other")
+
+        // #3816: the run's cost is in the basic export with detailed recording off, with no item id in it.
+        XCTAssertFalse(model.developerDiagnosticRecordingEnabled)
+        let line = try XCTUnwrap(model.diagnostics[AudioPreparationRunSummary.diagnosticsKey], "a run leaves its summary")
+        let chunks = try XCTUnwrap(line.split(separator: ";").first.flatMap { $0.dropFirst("chunks=".count) }.flatMap { Int($0) })
+        XCTAssertGreaterThanOrEqual(chunks, 2, line)
+        XCTAssertFalse(line.contains(itemId), "the line holds no item id")
     }
 
     private func waitFor(_ renderer: HeldRenderer, toStart count: Int, within limit: Duration) async throws {

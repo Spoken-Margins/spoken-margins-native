@@ -36,7 +36,13 @@ extension Gate1AppModel {
         guard gate != .render else { return nil }
         try? await ledger.release(reservationId: reservationId)
         if try await coordinator.applyGate(gate, manifestId: manifestId).changed { refreshLibraryRowsInBackground() }
+        notePreparationHeatPause(gate, thermal: device.thermal)
         diagnostics["backgroundAudioPreparation"] = gate.rawValue
         return gate
+    }
+
+    /// A pass stopped before a chunk because the phone was too warm: one of the run's numbers (#3816).
+    func notePreparationHeatPause(_ gate: PreparationChunkDecision, thermal: SpeechThermalLevel) {
+        if gate == .pauseForHeat { runtimeDiagnostics.preparationHeatPaused(thermal: thermal) }
     }
 }

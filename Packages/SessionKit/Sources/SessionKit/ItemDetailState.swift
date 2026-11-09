@@ -59,6 +59,10 @@ public struct ItemDetailState: Equatable, Sendable {
     /// detail loads, so the Item screen doesn't read the store to decide whether to offer a run.
     public var textSceneSummaries: TextSceneSummaryProgress.State = .notApplicable
     public var turns: [ConversationTurn] = []
+    /// What the listener calls this source: "Episode", "Article", "PDF" (#3599). Worked out when the detail loads, from
+    /// the same stored facts the Library row reads, so the screen's title and sentences never say "item" and `body`
+    /// never scans the Library for it.
+    public var sourceNoun: SourceNoun = .text
 
     public init(
         id: String = "",
@@ -88,7 +92,8 @@ public struct ItemDetailState: Equatable, Sendable {
         sharedMarginPlacement: SharedMarginPlacementPasses.Pass? = nil,
         sharedMapRefusalReason: String? = nil,
         textSceneSummaries: TextSceneSummaryProgress.State = .notApplicable,
-        turns: [ConversationTurn] = []
+        turns: [ConversationTurn] = [],
+        sourceNoun: SourceNoun = .text
     ) {
         self.id = id
         self.title = title
@@ -118,6 +123,7 @@ public struct ItemDetailState: Equatable, Sendable {
         self.sharedMapRefusalReason = sharedMapRefusalReason
         self.textSceneSummaries = textSceneSummaries
         self.turns = turns
+        self.sourceNoun = sourceNoun
     }
 }
 
