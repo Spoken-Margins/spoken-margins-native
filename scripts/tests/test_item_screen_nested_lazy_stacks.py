@@ -7,7 +7,8 @@ own `LazyVStack`, over `.fixedSize` text. Lazy containers ask their parent how f
 itself lazy and the children change size the answer can chase itself. The card lists are short (a few layers, a few
 Margins, tens of scenes), so only the screen's outer stack stays lazy and everything under it is a plain `VStack`.
 
-This scan fails when a lazy container comes back under the item screen. It is a source scan because the hang needs a
+This scan fails when a lazy container comes back in the item screen's own file or the friend's layer list file. A new
+hosted view in another file is not covered; add its file here when one is added. It is a source scan because the hang needs a
 simulator to see; the fix itself is checked by the Test Desk (#3781).
 """
 import re
