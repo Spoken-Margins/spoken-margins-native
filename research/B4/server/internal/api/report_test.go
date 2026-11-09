@@ -73,6 +73,23 @@ func TestReportInEveryOtherCategoryTakesTheLinkDownAndStoresNoKey(t *testing.T) 
 	}
 }
 
+// The form keeps the category, worded for what share links carry (voice and text, never images), and there is
+// no separate removal page (#3867). It gets the normal handling: the link comes down at once.
+func TestFormOffersIntimateContentWithoutAnImagePage(t *testing.T) {
+	s, _ := enabledLinks(t)
+	h := s.Handler()
+	id := createdLink(t, h)
+	page := linkRequest(h, "GET", "/l/"+id, "", nil, "198.51.100.1").Body.String()
+	if !strings.Contains(page, `<option value="intimate_images">Intimate content shared without consent</option>`) {
+		t.Error("the form lost its intimate-content category")
+	}
+	for _, gone := range []string{"Intimate images shared", "/intimate-images/", "Removing intimate images"} {
+		if strings.Contains(page, gone) {
+			t.Errorf("the share page still says %q", gone)
+		}
+	}
+}
+
 func TestAbuseMaterialReportHoldsBeforeTakedown(t *testing.T) {
 	s, _ := enabledLinks(t)
 	h := s.Handler()
@@ -439,7 +456,7 @@ func TestSharePageAndReportPagesLinkThePublishedPolicies(t *testing.T) {
 	s, _ := enabledLinks(t)
 	h := s.Handler()
 	first, second := createdLink(t, h), createdLink(t, h)
-	wants := []string{`href="/content-policy/"`, `href="/intimate-images/"`, `href="/copyright/"`, `href="/privacy/"`, `href="/terms/"`}
+	wants := []string{`href="/content-policy/"`, `href="/copyright/"`, `href="/privacy/"`, `href="/terms/"`}
 	check := func(name, page string) {
 		for _, want := range wants {
 			if !strings.Contains(page, want) {

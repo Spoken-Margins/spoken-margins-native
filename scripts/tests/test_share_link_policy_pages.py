@@ -1,8 +1,10 @@
-"""The content policy and intimate-image removal pages for share links, and where they are linked (#2238).
+"""The content policy page for share links, and where it is linked (#2238).
 
-Take It Down Act (47 U.S.C. § 223a) asks for a clear and conspicuous notice-and-removal process. Both pages are static
-pages under Site/, linked from every static page's footer, every share page (research/B4/server/internal/links) and the
-app's Settings. The pages repeat the owner's 2026-10-20 report rules, so a rule changed in one place shows up here.
+The page is a static page under Site/, linked from every static page's footer, every share page
+(research/B4/server/internal/links) and the app's Settings. It repeats the owner's 2026-10-20 report rules, so a rule
+changed in one place shows up here. There is no intimate-image removal page: share links carry voice and text, never
+images (#3867), and a test below keeps it, and every link to it, gone. The report form and the policy keep a line
+against non-consensual intimate content, worded for recordings, text and faked voices.
 """
 import re
 import unittest
@@ -11,7 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 SITE = ROOT / "Site"
 HOST = "https://spokenmargins.proximitytoprogress.com"
-PAGES = {"content-policy": "/content-policy/", "intimate-images": "/intimate-images/"}
+PAGES = {"content-policy": "/content-policy/"}
 
 
 def text(path: Path) -> str:
@@ -43,18 +45,34 @@ class PolicyPageTests(unittest.TestCase):
         ):
             self.assertIn(needed, html, f"the content policy lost {needed!r}")
 
-    def test_intimate_image_page_promises_48_hours(self):
-        html = text(SITE / "intimate-images" / "index.html")
-        self.assertIn("48 hours", html)
-        self.assertIn("reference number", html)
-        self.assertIn("report.cybertip.org", html)
+    def test_no_intimate_image_page_and_nothing_links_to_one(self):
+        """Share links carry voice and text, never images (#3867): the removal page and every pointer to it are gone."""
+        self.assertFalse((SITE / "intimate-images").exists())
+        sources = ROOT / "App" / "SpokenMarginsApp" / "Sources" / "SpokenMarginsApp"
+        server = ROOT / "research" / "B4" / "server"
+        offenders = []
+        for path in [*SITE.rglob("*.html"), ROOT / "scripts" / "voice_catalog.py", sources / "AppLinks.swift",
+                     sources / "SettingsScreen.swift", server / "internal" / "links" / "preview.go"]:
+            if re.search(r"intimate-images/|removing intimate images|intimateImageRemoval", text(path), re.IGNORECASE):
+                offenders.append(str(path.relative_to(ROOT)))
+        self.assertEqual(offenders, [])
+
+    def test_policy_and_form_keep_a_line_against_intimate_content_worded_for_what_we_carry(self):
+        html = text(SITE / "content-policy" / "index.html")
+        self.assertIn("Sexual or intimate content about a real person shared without their consent, including "
+                      "recordings, text, and faked or altered voices.", html)
+        # Nothing promises the 48-hour image process that was removed.
+        self.assertNotIn("48 hours", html)
+        form = text(ROOT / "research" / "B4" / "server" / "internal" / "links" / "preview.go")
+        self.assertIn('<option value="intimate_images">Intimate content shared without consent</option>', form)
+        self.assertNotIn("Intimate images shared", form)
 
     def test_pages_ask_emailers_to_leave_off_the_key(self):
         for name in PAGES:
             html = text(SITE / name / "index.html")
             self.assertRegex(html, r"Leave off everything after the <code>#</code> sign", name)
 
-    def test_every_static_page_footer_links_to_both(self):
+    def test_every_static_page_footer_links_to_the_content_policy(self):
         missing = []
         for page in SITE.rglob("index.html"):
             html = text(page)
@@ -70,13 +88,12 @@ class PolicyPageTests(unittest.TestCase):
             for href in re.findall(r'href="(\.\./[a-z-]+/)"', text(page)):
                 self.assertTrue((SITE / href[3:] / "index.html").exists(), f"{page.parent.name} links to missing {href}")
 
-    def test_app_settings_links_to_both(self):
+    def test_app_settings_links_to_the_content_policy(self):
         sources = ROOT / "App" / "SpokenMarginsApp" / "Sources" / "SpokenMarginsApp"
         links, settings = text(sources / "AppLinks.swift"), text(sources / "SettingsScreen.swift")
         for name, path in PAGES.items():
             self.assertIn(HOST + path, links)
         self.assertIn("AppLinks.contentPolicy", settings)
-        self.assertIn("AppLinks.intimateImageRemoval", settings)
 
 
 if __name__ == "__main__":

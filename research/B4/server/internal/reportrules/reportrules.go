@@ -31,7 +31,9 @@ import (
 type Category string
 
 const (
-	// IntimateImages is intimate images shared without consent (Take It Down Act).
+	// IntimateImages is intimate content shared without consent: recordings, text and faked or altered
+	// voices (#3867). The stored value stays "intimate_images" so reports filed earlier read unchanged;
+	// the form shows it as "Intimate content shared without consent". Share links carry no images.
 	IntimateImages Category = "intimate_images"
 	// AbuseMaterial is child sexual abuse material. It is the only category whose
 	// report carries the full link, key included (D21), so it can be forwarded

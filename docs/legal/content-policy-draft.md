@@ -2,7 +2,7 @@
 
 > **DRAFT. Not legal advice. Not published.** Written for the attorney meeting (#173) as step 2 of #2238. Nothing here is on the live site: `Site/` is unchanged. **The attorney meeting hasn't happened yet**, so this carries no mark-up.
 
-Read with [intimate-image-removal-draft.md](intimate-image-removal-draft.md), [terms-draft.md](terms-draft.md) (sections 5A to 5C), [attorney-questions.md](attorney-questions.md) (D18, D21, questions 3 to 5) and [cybertipline-runbook.md](cybertipline-runbook.md) (the hold behind the child-safety paragraph; it is on PR #3115 until that merges).
+Read with [terms-draft.md](terms-draft.md) (sections 5A to 5C), [attorney-questions.md](attorney-questions.md) (D18, D21, questions 3 to 5) and [cybertipline-runbook.md](cybertipline-runbook.md) (the hold behind the child-safety paragraph; it is on PR #3115 until that merges).
 
 ## Notes for review (not part of the page)
 
@@ -12,7 +12,7 @@ Read with [intimate-image-removal-draft.md](intimate-image-removal-draft.md), [t
 4. **Open question (copyright):** the Terms draft has a bracketed counter-notice sentence, and `Site/copyright/index.html` already offers one. This page links to that page and doesn't repeat the process.
 5. **Strike numbers** (two reported links in 90 days; 1 week, 1 month, permanent) are starting points for counsel (attorney question 4). The page uses them as owner-decided (2026-10-20).
 6. **Reporter wording is deliberately gentle.** The page says that people who give reasons are welcome and that a block follows only from written reasons that show misuse, by a manual decision. It says nothing a reporter could read as a threat.
-7. **Response time.** "Within 48 hours" is only promised for intimate images. The page says the link is disabled at once and a person answers "within [[3 business days]]". Cole to choose the number; he is the only person who answers.
+7. **Response time.** The page makes no 48-hour promise (the intimate-image page that made one was removed, #3867). It says the link is disabled at once and a person answers "within [[3 business days]]". Cole to choose the number; he is the only person who answers.
 8. **Key in the link (check against #2239).** The page asks emailers to leave off the part after `#`, because D21 says reports carry no key outside the abuse-material category. This assumes the link id sits before the `#`; `Site/copyright/index.html` says the full link is needed. Align the two.
 9. **Blanks** are marked `[[like this]]`.
 
@@ -27,7 +27,7 @@ A share link lets you send a Margin to a friend. This page says what may not be 
 
 ### What may not be shared
 
-- Intimate images of someone without their consent. See [Removing intimate images]([[intimate-image removal page URL]]).
+- Sexual or intimate content about a real person shared without their consent, including recordings, text, and faked or altered voices.
 - Child sexual abuse material. It is never allowed.
 - Harassment, threats, or sharing someone's private information.
 - Hateful conduct: content that attacks people for who they are, such as their race, religion, ethnicity, disability, sex, sexual orientation or gender identity.
@@ -50,7 +50,7 @@ Anyone can report, with no account. Use **Report this link** on the link's page 
 - **Nobody reads the content.** Spoken Margins can't read what a link holds, and we don't open it. We act on the report, not on a judgment about the content.
 - **The sender sees one notice:** "A link you shared was taken down after a report". It is the same for every category and doesn't say who reported or why. We don't contact the sender about the report.
 - **Strikes.** Two reported links from the same installation within 90 days make a strike. Strike 1 pauses link sharing for 1 week. Strike 2 pauses it for 1 month. Strike 3 ends it for good on that device. This applies to every category, copyright included. Listening, opening links and sending `.spokenmargins` files directly always keep working.
-- **A person answers your report** within [[3 business days]]. Intimate-image requests are handled within 48 hours.
+- **A person answers your report** within [[3 business days]].
 - **Child sexual abuse material.** We forward these reports unread to the National Center for Missing & Exploited Children's CyberTipline, and keep the reported link in restricted storage for one year, as federal law asks. Nobody opens it.
 
 ### Reporters

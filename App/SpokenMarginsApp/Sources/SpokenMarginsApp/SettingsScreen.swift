@@ -349,7 +349,6 @@ struct SettingsScreen: View {
                     Link("Support", destination: AppLinks.support)
                     Link("Copyright and DMCA", destination: AppLinks.copyright)
                     Link("Content Policy", destination: AppLinks.contentPolicy)
-                    Link("Removing Intimate Images", destination: AppLinks.intimateImageRemoval)
                     Toggle(isOn: $helpsMakeListeningMaps) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Help make listening maps")

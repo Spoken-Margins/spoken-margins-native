@@ -42,7 +42,7 @@ var landing = template.Must(template.New("landing").Parse(`<!doctype html>
 <body><main><header><p>Spoken Margins</p><h1>Shared Margins</h1><p>These Margins are available for 30 days. Source audio is not served here.</p></header>
 <section id="margins" data-link="{{.ID}}"{{if .WebURL}} data-web="{{.WebURL}}"{{end}}><p id="status" role="status"></p><noscript><p>Turn on JavaScript to read these Margins. They are sealed, and only your browser can open them with the key in the link.</p></noscript></section>
 <p><a href="{{.InstallURL}}" rel="noreferrer noopener">Get Spoken Margins</a></p>
-<details id="report"><summary>Report this link</summary><form method="post" action="/l/{{.ID}}/report"><h2>Report this link</h2><p>Anyone can report this link. It is taken down at once and nobody reads what it held.</p><p><label for="category">What is wrong?</label> <select id="category" name="category" required><option value="" selected disabled>Choose one</option><option value="intimate_images">Intimate images shared without consent</option><option value="abuse_material">Child sexual abuse material</option><option value="harassment">Harassment or defamation</option><option value="hateful_conduct">Hateful conduct</option><option value="copyright">Copyright (see the copyright page for a formal notice)</option><option value="other">Other</option></select></p><p><label for="link">Only for child sexual abuse material: paste the full link from the address bar, including the part after the #. Leave this empty for everything else.</label> <input id="link" name="link" type="text" maxlength="2048" autocomplete="off"></p> <button type="submit">Report this link</button></form></details>
+<details id="report"><summary>Report this link</summary><form method="post" action="/l/{{.ID}}/report"><h2>Report this link</h2><p>Anyone can report this link. It is taken down at once and nobody reads what it held.</p><p><label for="category">What is wrong?</label> <select id="category" name="category" required><option value="" selected disabled>Choose one</option><option value="intimate_images">Intimate content shared without consent</option><option value="abuse_material">Child sexual abuse material</option><option value="harassment">Harassment or defamation</option><option value="hateful_conduct">Hateful conduct</option><option value="copyright">Copyright (see the copyright page for a formal notice)</option><option value="other">Other</option></select></p><p><label for="link">Only for child sexual abuse material: paste the full link from the address bar, including the part after the #. Leave this empty for everything else.</label> <input id="link" name="link" type="text" maxlength="2048" autocomplete="off"></p> <button type="submit">Report this link</button></form></details>
 <footer><p>{{range $i, $l := .Policies}}{{if $i}} · {{end}}<a href="{{$l.Path}}">{{$l.Title}}</a>{{end}}</p></footer>
 </main></body></html>`))
 
@@ -52,7 +52,6 @@ type PolicyLink struct{ Title, Path string }
 
 var PolicyLinks = []PolicyLink{
 	{"Content policy", "/content-policy/"},
-	{"Removing intimate images", "/intimate-images/"},
 	{"Copyright and DMCA", "/copyright/"},
 	{"Privacy Policy", "/privacy/"},
 	{"Terms of Use", "/terms/"},
