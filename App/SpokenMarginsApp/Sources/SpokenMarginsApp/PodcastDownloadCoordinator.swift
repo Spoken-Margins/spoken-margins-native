@@ -206,17 +206,8 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
         // Stays on the main actor on purpose: the protection must be in the ledger before any eviction that
         // follows this call (#287, #530; testAnEpisodeThatStartsPlayingDuringEvictionIsNotDeleted). A queued
         // write could land after the ledger had already chosen this episode to delete.
-        for asset in (try? store.loadOwnedOfflineAssets()) ?? [] where asset.category == .podcast {
-            let isActive = itemId != nil && (asset.itemId == itemId
-                || (activePath != nil && asset.relativePath == activePath))
-            let wasActive = asset.protections.contains(.activePlayback)
-            guard isActive != wasActive else { continue }
-            // One atomic row update, so a ledger reconcile can't write back a copy without it (#287).
-            _ = try? store.updateOwnedOfflineAsset(id: asset.id) { current in
-                if isActive { current.protections.insert(.activePlayback) }
-                else { current.protections.remove(.activePlayback) }
-            }
-        }
+        // Reads only the rows that can change, not the whole ledger (#3752).
+        ActivePlaybackProtection.move(in: store, toItem: itemId, activePath: activePath)
         guard let itemId, var record = recordsByItemId[itemId] else { return }
         record.lastPlayedAt = Date()
         record.updatedAt = Date()

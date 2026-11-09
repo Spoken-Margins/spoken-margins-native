@@ -451,6 +451,8 @@ def patterns(apis: dict):
         ('file-io', 'write(to:)', re.compile(r'\.\s*write\s*\(\s*to\s*:')),
         ('file-io', 'FileHandle', re.compile(r'\bFileHandle\s*\(\s*for(?:Reading|Writing|Updating)')),
         ('file-io', 'SHA256', re.compile(r'\b(?:SHA256|SHA512|Insecure\s*\.\s*(?:MD5|SHA1))\s*\.\s*hash\s*\((?!\s*data\s*:\s*Data\s*\(\s*[A-Za-z_]\w*(?:\s*[?!]?\s*\.\s*[A-Za-z_]\w*)*\s*\.\s*utf8\s*\)\s*\))|\bCC_SHA\d+\s*\(')),  # `hash(data: Data(<name>.utf8))` hashes a short in-memory string, no file read (#1120, #3373)
+        # A helper that wraps store reads and writes would hide them from the store pattern above (#3752).
+        ('store-write', 'ActivePlaybackProtection.move', re.compile(r'\bActivePlaybackProtection\s*\.\s*move\s*\(')),
         ('store-read', 'SQLiteSessionStore.init', re.compile(r'\bSQLiteSessionStore\s*\(\s*path\s*:')),
         ('av-sync', 'AVAudioFile', re.compile(r'\bAVAudioFile\s*\(\s*forReading')),
         ('av-sync', 'AVAudioPlayer', re.compile(r'\bAVAudioPlayer\s*\(\s*contentsOf')),
