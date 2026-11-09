@@ -512,6 +512,10 @@ How it is used:
   - Probation stays for a new or changed script's first runs. A script red at two cuts in a row must end: fix the app, fix the script, or delete the test.
   - Not chosen: blocking the phone build on every script from day one. 21 probation tests were red that day, so his builds would have stopped until each was sorted.
   - What would show this was wrong: the same scripts still red at a third cut, or scripts deleted in bulk to clear the list without anyone reading why they failed.
+- **Three defaults he accepted: the reply window, the saved card, and "A friend".** An audit of his asks against `main` found three taste calls that had gone to a Default taken before taste left the stop list. He was asked: "Three taste calls from the asked-versus-shipped report: the 20-second reply window, the 45-second saved card and its words, and the 'A friend' fallback name. Keep each or change it." He said: "I'm good with the default". So these stay, and are not asked again:
+  - A Margin made within 20 seconds after a friend's Margin ends is saved as a reply (the 2026-10-31 default).
+  - The "Your Margin is saved" card after a friend saves an answer stays about 45 seconds, with its words as shipped (#3563).
+  - "A friend" is the stand-in sender name on the Lock Screen and Live Activity (#3563).
 
 ## Background moved out of the guide (2026-11-06)
 - **From the guide.** Explanations that stood next to rules in `AGENTS.md`, moved here to keep it under its 4,000-word cap (the rules themselves are unchanged):
