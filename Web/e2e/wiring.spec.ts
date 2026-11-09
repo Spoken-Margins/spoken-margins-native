@@ -116,6 +116,40 @@ test('follow, play, write and record Margins, export them, and open the file in 
   await friend.close();
 });
 
+test('the play button on a show passes over a paid newest post and starts the newest item that plays (#3610)', async ({ page }, info) => {
+  const POST = 'https://thezvi.substack.com/p/leaked-anthropic-draft-ai-regulatory';
+  const OLDER = 'An older free episode';
+  const cors = { 'access-control-allow-origin': '*' };
+  const pageReads: string[] = [];
+  const olderItem = `<item><title>${OLDER}</title><guid>older-free</guid><pubDate>Mon, 06 Jan 2020 10:00:00 GMT</pubDate><enclosure url="https://audio.example/older.mp3" type="audio/mpeg" length="1000"/></item>`;
+  await page.route('https://thezvi.substack.com/feed', (route) =>
+    route.fulfill({
+      status: 200,
+      body: feedFixture('substack-zvi-generated-voice.rss').toString().replace('</channel>', `${olderItem}</channel>`),
+      headers: { ...cors, 'content-type': 'application/rss+xml' },
+    })
+  );
+  await page.route(`${POST}*`, (route) => {
+    pageReads.push(route.request().url());
+    return route.fulfill({ status: 200, body: feedFixture('substack-paid-post-page.html'), headers: { ...cors, 'content-type': 'text/html' } });
+  });
+  await serveAudio(page, 'https://audio.example/**');
+
+  await follow(page, 'https://thezvi.substack.com/feed');
+  await expect(page.getByText(/Following .*2 episodes/)).toBeVisible();
+  await tab(page, 'Following');
+  expect(pageReads).toHaveLength(0);
+
+  await page.locator('.play-newest').click();
+  const nowPlaying = page.getByRole('dialog', { name: OLDER });
+  await expect(nowPlaying).toBeVisible();
+  await expect.poll(() => elapsed(page), { timeout: 10_000 }).toBeGreaterThanOrEqual(2);
+  expect(pageReads).toHaveLength(1);
+  await expect(page.getByText('Its newest post can’t be played here, so this is the newest one that can.')).toBeVisible();
+  await expect(page.getByText(/This post is for paid subscribers/)).toHaveCount(0);
+  await shot(page, info, '26-play-newest-skips-paid');
+});
+
 test('a Substack post with only the automatic voice plays it after a tap, reading the page only then', async ({ page }, info) => {
   const POST = 'https://thezvi.substack.com/p/leaked-anthropic-draft-ai-regulatory';
   const TITLE = 'Leaked Anthropic Draft AI Regulatory Bill Is Unacceptable and Troubling';

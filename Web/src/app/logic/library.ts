@@ -73,6 +73,8 @@ export function libraryRows(
 export interface FollowingRow {
   show: Show;
   newest: Episode | undefined;
+  /** All of the show's episodes, newest first. */
+  episodes: Episode[];
   /** Episodes the listener hasn't started. */
   newCount: number;
 }
@@ -86,7 +88,7 @@ export function followingRows(
   const started = new Set(positions.filter((p) => p.seconds > 0).map((p) => p.episodeId));
   const rows = shows.map((show) => {
     const own = newestFirst(episodes.filter((e) => e.showId === show.id));
-    return { show, newest: own[0], newCount: own.filter((e) => !started.has(e.id)).length };
+    return { show, newest: own[0], episodes: own, newCount: own.filter((e) => !started.has(e.id)).length };
   });
   return rows.sort((a, b) => {
     const d = time(b.newest?.publishedAt) - time(a.newest?.publishedAt);
