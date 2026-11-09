@@ -230,21 +230,31 @@ final class EngineAttachPersistersTests: XCTestCase {
         XCTAssertEqual(try rig.store.loadItem(id: "item-1"), before)
     }
 
-    func testAssemblySaveRunsOffTheMainThread() async throws {
+    private final class ThreadProbe: @unchecked Sendable {
+        var onMain = true
+        var attached = false
+    }
+
+    func testAssemblySaveRunsOffTheMainThread() throws {
         let rig = try rig(seed: [textItem()])
         try rig.engine.prepareSpeechText(itemId: "item-1", targetType: .itemTextTTS)
         let live = manifest(.preparing)
         try rig.store.savePreparedAudioManifest(live)
         let persister = try rig.engine.preparedTextAudioPersister(itemId: "item-1")
-        let prepared = prepared()
+        let audio = prepared()
         let sourceText = text
-        let (onMain, attached) = try await Task.detached { () throws -> (Bool, Bool) in
-            let outcome = try persister.persistAssembly(itemId: "item-1", prepared: prepared, manifest: live, itemText: sourceText, sourceText: sourceText)
-            if case .attached = outcome { return (Thread.isMainThread, true) }
-            return (Thread.isMainThread, false)
-        }.value
-        XCTAssertFalse(onMain)
-        XCTAssertTrue(attached)
+        let probe = ThreadProbe()
+        let done = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async {
+            probe.onMain = Thread.isMainThread
+            if case .attached? = try? persister.persistAssembly(itemId: "item-1", prepared: audio, manifest: live, itemText: sourceText, sourceText: sourceText) {
+                probe.attached = true
+            }
+            done.signal()
+        }
+        XCTAssertEqual(done.wait(timeout: .now() + 10), .success)
+        XCTAssertFalse(probe.onMain)
+        XCTAssertTrue(probe.attached)
     }
 
     func testTextAudioPersisterNeedsTheCapability() throws {
