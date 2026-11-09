@@ -149,7 +149,10 @@ struct ExperienceSourcesScreen: View {
                 // Finishing an episode moves its show's row to the next unread one, so a change in what the Library
                 // holds or has finished re-reads the rows.
                 libraryCount: model.libraryItems.count,
-                finishedCount: model.libraryItems.filter(\.isCompleted).count
+                finishedCount: model.libraryItems.filter(\.isCompleted).count,
+                // An episode counts as heard before the Library calls it finished (95%, or its last two minutes;
+                // `FollowingHeardRule`), so each 1% of listening re-reads the rows too (#3691).
+                listeningSteps: model.libraryItems.reduce(0) { $0 + ($1.continuationProgressPercent ?? 0) }
             )) {
                 await model.reloadFollowingShowEntries()
             }
@@ -285,6 +288,7 @@ struct ExperienceSourcesScreen: View {
         var isRefreshing: Bool
         var libraryCount: Int
         var finishedCount: Int
+        var listeningSteps: Int
     }
 
     private struct ArtworkKey: Equatable {

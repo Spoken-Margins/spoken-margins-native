@@ -66,6 +66,7 @@ Times are UTC unless a zone is named. "Pause" is the way to stop that one job wi
 | `hosted-portable.yml` | `pull_request` into `main` | GitHub-hosted `ubuntu-latest` | The portable fast checks, then the `owner-tap-alert` job (`linux-t1.yml` was retired in #2442) |
 | `shipped-build-compat.yml` | `pull_request` into `next` touching persistence, sharing or stored types | Mac `sm-lane` | Build 29 can still open the database this PR writes |
 | `verify-tests.py` step `shipped-compat` (#1899) | Every automerge run of `--plan fast` or `--plan fast-mac-rest` whose diff matches that workflow's `paths` | Mac `sm-lane` | The same two checks, inside the plan the runner merges on, because a required check can't stand on the merge commit the runner pushes |
+| `live-state.yml` (#3872) | Every 6 hours, and on request | GitHub-hosted `ubuntu-latest`, environment `phone-build` | Saves App Store Connect's build list as the `asc-builds` artifact for `scripts/sm_live.py` |
 | `merge-audit.yml` | `push` to `next` | `ubuntu-latest` | Labels merges that skipped the merge check |
 
 No workflow has a `schedule:`. GitHub runs scheduled workflows only from the default branch, and `main` doesn't carry them. Repo secrets `SM_LANE_OPEN_URL` and `SM_LANE_OPEN_TOKEN` (`ops/lane/README.md`) and runner status **could not be checked**: the cloud proxy blocks the Actions secrets and runners endpoints.
