@@ -493,6 +493,15 @@ How it is used:
   - **Design is Opus's job, not his.** "That does not mean that I need to do design. That means that a opus medium or high that is actually read into the design documents of the repo and understands the user flows is doing the design." He also said "Things that require design taste, I am skeptical that you truly need my input." Design work blocks an issue from Sonnet until it is done: the issue carries `needs-design` instead of `ready` until an Opus pass posts its **Design** comment.
   - **No slice may degrade the app.** He never asked for slices: "we need to make sure that we never write slices in a way that leaves a feature worse than if we had just not added the feature in the first place." And: "if the function of the app is going to be degraded or the overall quality is gonna be degraded, then they should be sub PRs. And that's totally fine to have sub PRs." Hidden pieces may merge alone; what a listener sees merges whole.
   - **Nothing waits on him without a full card.** "I would hope that no issue is ever blocked because of me without having the decision painted out in necessary detail for me to review."
+- **His answers to the decision walk-through.**
+  - **Hiding a sender (#2846):** yes, a friend's older Margins are linked to their sender ID only when the share token also matches.
+  - **In-app reporting (#2239):** "I think we need inapp reporting. I don't think that we should wait on that." Share links are already live for external testers in Build 36, so reporting ships with links in the next upload. It is not "behind a flag", and nothing is switched on remotely.
+  - **A true privacy sentence goes in, without asking (#3548):** "If it needs to be added to the privacy docs, and it's true, then why don't we add it?"
+  - **Community Listening Maps wait for the lawyer (#2068):** "I am fine not doing community listening maps and waiting for the lawyer to respond."
+  - **Site deploys:** "I am also fine doing a website deploy. No one has asked me to do one, so I have not done it." The deploy is on #2086.
+  - **No policy for content the product can't carry (#3867):** "We don't have an ability to see or upload images, and so why are you suggesting that we have that policy?" The intimate-image page goes.
+  - **Reports get an answer within 3 business days (#2238):** "I'm fine with three days."
+  - **A phone check needs a reason (#2168, #2846):** "If it's waiting on a test, then there should be a separate issue for just testing it. And there should be a justification for why it needs to be tested and why we don't trust our own simulators." Hide this sender is checked in the simulator with a generated packet, not on two phones.
 
 ## Background moved out of the guide (2026-11-06)
 - **From the guide.** Explanations that stood next to rules in `AGENTS.md`, moved here to keep it under its 4,000-word cap (the rules themselves are unchanged):
