@@ -221,6 +221,51 @@ class HandOffAfterTheT3PassTests(RealGitLaneTests):
         self.assertIs(run.call_args.kwargs['hosted'], True)
         self.assertNotIn('rest_wait', run.call_args.kwargs)
 
+    def release_with_playwright(self, web, **job):
+        """#3535 audit: the three hosted checks stand and Playwright is in the state <web>."""
+        github = self.github()
+        self.held_run(github)
+        self.move_next_by_a_build_input()
+        self.t3_passes(github)
+        github.hand_off_release = mock.Mock(return_value='https://example.test/runs')
+        with mock.patch.object(lane, 'hosted_rest_checks', return_value=({}, '')), \
+                mock.patch.dict('os.environ', {'LANE_HOSTED_FAST': 'on', 'LANE_HOSTED_MAC_REST': 'on'}), \
+                mock.patch.object(lane, 'hosted_web_check', return_value=(web, 'playwright')) as look, \
+                mock.patch.object(lane, 'run_auto', return_value=('PASS', 'hosted checks', 'x', [])) as run, \
+                mock.patch.object(lane, 'hosted_check_set', return_value=({}, '')):
+            released = lane.merge_after_t3(github, 5, 'main', self.head, 'pr5-r43-auto', self.evidence / 'hosted',
+                                           self.rev(self.tree, 'origin/main'), 'started by the T3 PASS', hosted=True,
+                                           **job)
+        self.assertEqual((look.call_args.kwargs['wait'], look.call_args.kwargs['note']), (0, False))
+        return github, run, released
+
+    def test_an_unfinished_playwright_run_is_handed_to_the_release_run(self):
+        github, run, released = self.release_with_playwright('INCONCLUSIVE')
+        github.hand_off_release.assert_called_once()
+        run.assert_not_called()
+        self.assertIn('goes to hosted Linux', released)
+
+    def test_the_release_run_waits_for_an_unfinished_playwright_run(self):
+        github, run, released = self.release_with_playwright('INCONCLUSIVE', waits_here=True)
+        github.hand_off_release.assert_not_called()
+        self.assertIs(run.call_args.kwargs['hosted'], True)
+        self.assertNotIn('rest_wait', run.call_args.kwargs)
+
+    def settled(self, web):
+        github, run, released = self.release_with_playwright(web, waits_here=True)
+        self.assertTrue(run.call_args.kwargs['rest_hosted'])
+        self.assertEqual(run.call_args.kwargs['rest_wait'], 0)
+
+    def test_no_playwright_run_needed_goes_straight_to_the_merge_decision(self):
+        self.settled(None)
+
+    def test_a_passed_playwright_run_goes_straight_to_the_merge_decision(self):
+        self.settled('PASS')
+
+    def test_a_failed_playwright_run_goes_straight_to_the_merge_decision(self):
+        self.settled('FAIL')
+
+
     def test_the_hosted_automerge_job_still_hands_the_wait_to_the_release_run(self):
         github = self.github()
         self.held_run(github)

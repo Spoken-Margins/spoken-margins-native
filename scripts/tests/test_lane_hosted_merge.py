@@ -581,6 +581,7 @@ class MergeAfterT3Tests(unittest.TestCase):
                 mock.patch.object(lane, 'TESTED_RECORD', Path(temporary) / 'tested.json'), \
                 mock.patch.object(lane, 'clean_tree'), \
                 mock.patch.object(lane, 'fetch_base', return_value=MERGE), \
+                mock.patch.object(lane, 'hosted_web_check', return_value=(None, '')), \
                 mock.patch.object(lane, 'hosted_rest_checks', return_value=(STOOD, '')), \
                 mock.patch.object(lane, 'run_auto', return_value=('PASS', 'host only', 'x',
                                                                    [f'merged into main as {MERGE[:7]}'])) as auto:

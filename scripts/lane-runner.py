@@ -1570,7 +1570,7 @@ HOSTED_WEB_STEP = 'hosted web'
 HOSTED_WEB_FAILED = ('failure', 'timed_out')
 
 
-def hosted_web_check(github, tree: Path, base: str, head: str, alive=lambda: None, env=None, paths=None,
+def hosted_web_check(github, tree: Path, base: str, head: str, alive=lambda: None, env=None, paths=None, note=True,
                      wait: float | None = None, poll: float = HOSTED_FAST_POLL, grace: float = HOSTED_MISSING_GRACE,
                      clock=time.monotonic, sleep=time.sleep, out=sys.stdout) -> tuple[str | None, str]:
     """(None, '') when this diff doesn't start hosted web's job (test-scope.py web_check_required, from the base
@@ -1593,7 +1593,8 @@ def hosted_web_check(github, tree: Path, base: str, head: str, alive=lambda: Non
     started = clock()
 
     def done(verdict: str, line: str) -> tuple[str, str]:
-        note_step(HOSTED_WEB_STEP, verdict, clock() - started)
+        if note:  # a first look (note=False) is not a run of the step
+            note_step(HOSTED_WEB_STEP, verdict, clock() - started)
         return verdict, line
     while True:
         stop = alive()
@@ -2423,7 +2424,9 @@ def merge_after_t3(github, pr: int, base: str, head: str, request_id: str, evide
             found, _ = hosted_rest_checks(github, ROOT, base, head, base_sha, alive=lambda: None,
                                           dispatch=lambda: 'not from here', wait=0,
                                           checks=hosted_check_set(ROOT, base)[0])
-            rest = found is not None
+            # A Playwright run with no verdict yet doesn't stand either: it is handed off or waited for like the others.
+            rest = found is not None and hosted_web_check(github, ROOT, base, head, wait=0, note=False)[0] in (
+                None, 'PASS', 'FAIL')
             reason = None if rest else reason
         if reason and hosted and not waits_here:  # the automerge job has reported: the release run does the waiting
             hand_off = hand_off or (lambda: github.hand_off_release(base, head, ''))
