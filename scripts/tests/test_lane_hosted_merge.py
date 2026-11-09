@@ -352,11 +352,13 @@ class MacRestIsAHardConditionTests(unittest.TestCase):
 class HostedRunAutoTests(unittest.TestCase):
     T3_ASKED = comment('/lane T3\ncommit: ' + HEAD[:7] + '\ntests: SourceLinkImportTests')
 
+    # GITHUB_ACTIONS is set here as it is in hosted CI, where an unset wait means an hour: rest_wait=0 is what keeps these
+    # tests from sleeping through the Playwright hold (#3535). A local run now hangs the same way CI would without it.
     def run_auto(self, comments=(), found=(STOOD, ''), paths=('Packages/SessionKit/Sources/SessionKit/A.swift',),
                  env=ON, wait_effect=None, builds=None):
         github = FakeGitHub(labels=('automerge',), comments=comments)
         with tempfile.TemporaryDirectory() as temporary, \
-                mock.patch.dict(lane.os.environ, env), \
+                mock.patch.dict(lane.os.environ, {**env, 'GITHUB_ACTIONS': 'true'}), \
                 mock.patch.object(lane, 'TESTED_RECORD', Path(temporary) / 'tested.json'), \
                 mock.patch.object(lane, 'build_merge_commit',
                                   side_effect=builds or [(MERGE, [])] * 3) as self.build, \
@@ -377,7 +379,7 @@ class HostedRunAutoTests(unittest.TestCase):
                 mock.patch.object(lane, 'run_ops') as ops, \
                 mock.patch.object(lane, 'push_merge', return_value=(True, '')) as push:
             result = lane.run_auto(github, {'head': {'ref': 'ws/1-x'}}, 5, 'main', HEAD, MERGE, Path(temporary),
-                                   list(comments), labels=('automerge',), hosted=True)
+                                   list(comments), labels=('automerge',), hosted=True, rest_wait=0)
         for runner in (folders, pair, fast, rest, ops):  # no Mac setup and no test of its own, ever
             runner.assert_not_called()
         return result, github, wait, push
@@ -421,6 +423,11 @@ class HostedRunAutoTests(unittest.TestCase):
                 paths=('Packages/SessionKit/Sources/SessionKit/A.swift', 'Web/src/a.ts'))
         self.assertEqual(verdict, 'INCONCLUSIVE')
         push.assert_not_called()
+
+    def test_the_web_hold_uses_the_diff_it_is_given_not_the_checkout(self):
+        with mock.patch.object(lane, 'base_policy', return_value=scope), \
+                mock.patch.object(lane, 'committed_changes', side_effect=AssertionError('read the checkout')):
+            self.assertEqual(lane.hosted_web_check(None, Path('.'), 'main', HEAD, paths=['docs/a.md'], env={}), (None, ''))
 
     def test_a_pr_with_no_web_path_never_reads_the_web_check(self):
         with mock.patch.object(lane, 'hosted_web_check', wraps=lane.hosted_web_check) as check, \

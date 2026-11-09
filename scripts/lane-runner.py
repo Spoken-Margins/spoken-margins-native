@@ -1570,7 +1570,7 @@ HOSTED_WEB_STEP = 'hosted web'
 HOSTED_WEB_FAILED = ('failure', 'timed_out')
 
 
-def hosted_web_check(github, tree: Path, base: str, head: str, alive=lambda: None, env=None,
+def hosted_web_check(github, tree: Path, base: str, head: str, alive=lambda: None, env=None, paths=None,
                      wait: float | None = None, poll: float = HOSTED_FAST_POLL, grace: float = HOSTED_MISSING_GRACE,
                      clock=time.monotonic, sleep=time.sleep, out=sys.stdout) -> tuple[str | None, str]:
     """(None, '') when this diff doesn't start hosted web's job (test-scope.py web_check_required, from the base
@@ -1584,7 +1584,9 @@ def hosted_web_check(github, tree: Path, base: str, head: str, alive=lambda: Non
     try:
         policy = base_policy(tree, base, 'scripts/test-scope.py')
         required = getattr(policy, 'web_check_required', None)
-        if required is None or not required(committed_changes(tree, base)[0]):
+        # The caller's diff when it has one: reading the checkout made run_auto's tests wait on GitHub for any PR that
+        # itself changed a path starting hosted web's job (#3535).
+        if required is None or not required(committed_changes(tree, base)[0] if paths is None else paths):
             return None, ''
     except (OSError, subprocess.SubprocessError, ValueError) as error:
         return 'INCONCLUSIVE', f'the runner could not tell whether {name} applies ({error!r})'
@@ -1692,10 +1694,14 @@ OWNER_TAP_FILES = {'scripts/lane-runner.py'}
 OWNER_TAP_PREFIXES = ('.github/',)
 
 
+def scope_paths(scope: dict) -> list[str]:
+    """Every path test-scope.py saw in the PR's diff."""
+    return sorted({f.get('path') or '' for f in scope.get('files', [])} | set(scope.get('lane_paths') or []))
+
+
 def owner_tap_paths(scope: dict) -> list[str]:
     """The PR's changed paths only the owner merges, whatever an audit says (OWNER_TAP_FILES, OWNER_TAP_PREFIXES)."""
-    paths = {f.get('path') or '' for f in scope.get('files', [])} | set(scope.get('lane_paths') or [])
-    return sorted(p for p in paths if p in OWNER_TAP_FILES or p.startswith(OWNER_TAP_PREFIXES))
+    return [p for p in scope_paths(scope) if p in OWNER_TAP_FILES or p.startswith(OWNER_TAP_PREFIXES)]
 
 
 def owner_tap_note(paths: list[str]) -> str:
@@ -2285,7 +2291,8 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
                 f'not merged by the runner: {b}. It merges once a Codex or Claude audit '
                 'of its head says "No blocking findings".' for b in blockers] + (
                 [owner_tap_note(tap)] if tap else [])
-        web, line = hosted_web_check(github, ROOT, base, head, alive=lambda: pr_moved_on(github, head), wait=rest_wait)
+        web, line = hosted_web_check(github, ROOT, base, head, alive=lambda: pr_moved_on(github, head), wait=rest_wait,
+                                     paths=scope_paths(scope))
         if web == 'FAIL':
             return 'FAIL', 'hosted checks', 'hosted web check: failed', details + [f'not merged: {line}']
         if web and web != 'PASS':
