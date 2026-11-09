@@ -7,8 +7,9 @@ import unittest
 
 SCRIPTS = Path(__file__).resolve().parents[1]
 INSTALL = SCRIPTS / 'install-lane-guard.py'
-SOURCES = ('lane_guard.py', 'toolchain_guard.py', 'context_handoff_hook.py')
-INSTALLED = ('spoken-margins-lane-guard.py', 'spoken-margins-toolchain-guard.py', 'spoken-margins-context-handoff.py')
+SOURCES = ('lane_guard.py', 'toolchain_guard.py', 'context_handoff_hook.py', 'worktree_write_guard.py')
+INSTALLED = ('spoken-margins-lane-guard.py', 'spoken-margins-toolchain-guard.py', 'spoken-margins-context-handoff.py',
+             'spoken-margins-worktree-write-guard.py')
 
 
 class InstallLaneGuardTests(unittest.TestCase):
@@ -33,8 +34,10 @@ class InstallLaneGuardTests(unittest.TestCase):
         self.assertTrue((self.hooks / INSTALLED[0]).exists())
         self.assertTrue((self.hooks / INSTALLED[1]).exists())
         self.assertFalse((self.hooks / INSTALLED[2]).exists())
+        self.assertTrue((self.hooks / INSTALLED[3]).exists())
         self.assertEqual(self.run_install('--check').returncode, 1)
         self.assertIn('is missing', result.stdout)
+        self.assertIn('spoken-margins-worktree-write-guard.py --repo', result.stdout)
 
     def test_a_plain_install_does_not_overwrite_a_different_live_handoff_hook(self):
         self.hooks.mkdir(parents=True)
