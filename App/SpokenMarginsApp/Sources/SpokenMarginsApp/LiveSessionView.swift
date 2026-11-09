@@ -7,6 +7,8 @@ import SwiftUI
 struct LiveSessionView: View {
     @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.dismiss) private var dismiss
+    /// The big session clock: 44 pt at the default text size, growing with the listener's setting (#3726).
+    @ScaledMetric(relativeTo: .largeTitle) private var clockFontSize: CGFloat = 44
     @StateObject private var controller: LiveSessionController
     @ObservedObject private var links = LiveSessionLinkRouter.shared
 
@@ -69,7 +71,7 @@ struct LiveSessionView: View {
                 .onChange(of: controller.isRunning) { _, running in if !running { showsDetails = false } }
                 .onChange(of: showsEndCard) { _, shown in
                     if shown {
-                        DispatchQueue.main.async { withAnimation { scroller.scrollTo(Self.endCardId, anchor: .bottom) } }
+                        DispatchQueue.main.async { withMotion { scroller.scrollTo(Self.endCardId, anchor: .bottom) } }
                     }
                 }
                 // Typing a Margin: bring the composer to the top of the visible area, so the field and the buttons under it sit
@@ -78,7 +80,7 @@ struct LiveSessionView: View {
                     guard focused else { return }
                     Task {
                         try? await Task.sleep(for: .milliseconds(350)) // after the keyboard has finished rising
-                        withAnimation { scroller.scrollTo(Self.composerId, anchor: .top) }
+                        withMotion { scroller.scrollTo(Self.composerId, anchor: .top) }
                     }
                 }
             }
@@ -195,13 +197,13 @@ struct LiveSessionView: View {
                 ForEach(ElsewhereKind.allCases, id: \.self) { Text($0.label).tag($0) }
             }
             .pickerStyle(.segmented)
-            TextField(kind == .meeting ? "Meeting name" : "Title", text: $title)
+            AppTextField(kind == .meeting ? "Meeting name" : "Title", text: $title)
                 .textFieldStyle(.roundedBorder)
                 .accessibilityIdentifier("liveSession.setup.title")
             if kind != .paper {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Where are you now?").font(.headline)
-                    TextField(kind == .meeting ? "Meeting clock, like 2:00" : "Time in the book, like 0:00", text: $startPosition)
+                    Text("Where are you now?").font(.headline) // a field label, not a section title
+                    AppTextField(kind == .meeting ? "Meeting clock, like 2:00" : "Time in the book, like 0:00", text: $startPosition)
                         .textFieldStyle(.roundedBorder)
                         .keyboardType(.numbersAndPunctuation)
                     Text(kind == .meeting ? "Leave blank if you don't know. You can set it later with Edit." : "The time your audiobook app shows.")
@@ -238,12 +240,11 @@ struct LiveSessionView: View {
     private func sessionHeader(_ session: LiveSession) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline) {
-                Text(session.title.isEmpty ? "\(session.kind.label) session" : session.title).font(.headline)
+                Text(session.title.isEmpty ? "\(session.kind.label) session" : session.title).font(.headline).accessibilityAddTraits(.isHeader)
                 Spacer()
                 if controller.isRunning {
-                    Button(showsDetails ? "Done" : "Edit") { toggleDetails(session) }
+                    Button { toggleDetails(session) } label: { Text(showsDetails ? "Done" : "Edit").minimumTapTarget() }
                         .buttonStyle(.bordered)
-                        .frame(minHeight: 44)
                         .accessibilityIdentifier("liveSession.editDetails")
                         .accessibilityHint("Change the kind, name, clock or chapter while the session runs.")
                 }
@@ -279,7 +280,9 @@ struct LiveSessionView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(AppColors.secondaryText)
                 Text(LiveSessionPositionMap.clock(position.ms))
-                    .font(.system(size: 44, weight: .semibold, design: .rounded).monospacedDigit())
+                    .font(.system(size: clockFontSize, weight: .semibold, design: .rounded).monospacedDigit())
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.5)
                     .accessibilityLabel("\(title) \(LiveSessionPositionMap.clock(position.ms))")
                 Text("Session time \(sessionTime)").font(.subheadline.monospacedDigit()).foregroundStyle(AppColors.secondaryText)
                 if session.kind == .meeting {
@@ -290,7 +293,9 @@ struct LiveSessionView: View {
         } else {
             VStack(alignment: .leading, spacing: 6) {
                 Text(sessionTime)
-                    .font(.system(size: 44, weight: .semibold, design: .rounded).monospacedDigit())
+                    .font(.system(size: clockFontSize, weight: .semibold, design: .rounded).monospacedDigit())
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.5)
                     .accessibilityLabel("Session time \(sessionTime)")
                 if let position = controller.predictedPosition(at: date) {
                     Text("Source: \(position.label)").font(.subheadline).foregroundStyle(AppColors.secondaryText)
@@ -321,25 +326,26 @@ struct LiveSessionView: View {
                 ForEach(ElsewhereKind.allCases, id: \.self) { Text($0.label).tag($0) }
             }
             .pickerStyle(.segmented)
-            TextField(session.kind == .meeting ? "Meeting name" : "Title", text: $titleDraft)
+            AppTextField(session.kind == .meeting ? "Meeting name" : "Title", text: $titleDraft)
                 .textFieldStyle(.roundedBorder)
                 .onSubmit { commitDrafts() }
             if session.kind != .paper {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Where are you now?").font(.subheadline.weight(.semibold))
                     HStack {
-                        TextField(session.kind == .meeting ? "What the meeting's clock shows, like 12:30" : "Time in the book, like 1:23:10", text: $clockDraft)
+                        AppTextField(session.kind == .meeting ? "What the meeting's clock shows, like 12:30" : "Time in the book, like 1:23:10", text: $clockDraft)
                             .textFieldStyle(.roundedBorder)
                             .keyboardType(.numbersAndPunctuation)
-                        Button("Set") {
+                        Button {
                             guard let ms = LiveSessionPositionMap.parse(clockDraft) else {
                                 controller.errorMessage = "Enter a time like 12:30 or 1:23:10."
                                 return
                             }
                             if controller.setSourceClock(positionMs: ms) { clockDraft = "" }
+                        } label: {
+                            Text("Set").minimumTapTarget()
                         }
                         .buttonStyle(.bordered)
-                        .frame(minHeight: 44)
                         .disabled(clockDraft.trimmingCharacters(in: .whitespaces).isEmpty)
                     }
                     Text("Type it once and the clock runs from there. Margins you've already taken move with it.")
@@ -365,8 +371,8 @@ struct LiveSessionView: View {
 
     private func marginComposer(_ session: LiveSession) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Add Margin").font(.headline)
-            TextField(guidance(session.kind), text: $marginText, axis: .vertical)
+            Text("Add Margin").font(.headline).accessibilityAddTraits(.isHeader)
+            AppTextField(guidance(session.kind), text: $marginText, axis: .vertical)
                 .lineLimit(2...5)
                 .textFieldStyle(.roundedBorder)
                 .focused($marginFieldFocused)
@@ -424,7 +430,7 @@ struct LiveSessionView: View {
     private func marginList(_ session: LiveSession) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             if !session.margins.isEmpty {
-                Text("Margins (\(session.margins.count))").font(.headline)
+                Text("Margins (\(session.margins.count))").font(.headline).accessibilityAddTraits(.isHeader)
             }
             ForEach(session.margins) { margin in
                 VStack(alignment: .leading, spacing: 4) {
@@ -433,12 +439,12 @@ struct LiveSessionView: View {
                             .font(.caption.monospacedDigit())
                             .foregroundStyle(AppColors.secondaryText)
                         Spacer()
-                        Button { controller.removeMargin(id: margin.id) } label: { Image(systemName: "xmark.circle") }
+                        Button { controller.removeMargin(id: margin.id) } label: { Image(systemName: "xmark.circle").minimumTapTarget() }
                             .buttonStyle(.borderless)
                             .accessibilityLabel("Remove Margin")
                     }
                     if margin.isBlindMark {
-                        TextField("Mark: add words to help place it (optional)", text: Binding(
+                        AppTextField("Mark: add words to help place it (optional)", text: Binding(
                             get: { margin.text }, set: { controller.updateText(id: margin.id, text: $0) }
                         ))
                         .textFieldStyle(.roundedBorder)
@@ -486,13 +492,11 @@ struct LiveSessionView: View {
             Text("Heard \u{201C}\(heard.label)\u{201D}. Keep it as a checkpoint?")
                 .font(.caption).foregroundStyle(AppColors.secondaryText)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            Button("Keep") { controller.keepHeardPlace(id: margin.id) }
+            Button { controller.keepHeardPlace(id: margin.id) } label: { Text("Keep").minimumTapTarget() }
                 .buttonStyle(.bordered)
-                .frame(minHeight: 44)
                 .accessibilityHint("Uses \(heard.label) to place the Margins around this one.")
-            Button("No") { controller.declineHeardPlace(id: margin.id) }
+            Button { controller.declineHeardPlace(id: margin.id) } label: { Text("No").minimumTapTarget() }
                 .buttonStyle(.borderless)
-                .frame(minHeight: 44)
         }
     }
 
@@ -544,16 +548,15 @@ struct LiveSessionView: View {
 
     private func finishCard(_ session: LiveSession) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(session.isQuick == true ? "Quick session" : "Session ended").font(.headline)
+            Text(session.isQuick == true ? "Quick session" : "Session ended").font(.headline).accessibilityAddTraits(.isHeader)
             resumeButton
             ForEach(Array(LiveSessionPlaceMap.conflicts(in: session).enumerated()), id: \.offset) { _, conflict in
                 Text(conflict.description()).font(.caption).foregroundStyle(AppColors.secondaryText)
             }
             if let check = LiveSessionPlaceMap.clockCheck(for: session) {
                 Text(check.note).font(.caption).foregroundStyle(AppColors.secondaryText)
-                Button("Use the start the clock shows") { controller.useImpliedStart() }
+                Button { controller.useImpliedStart() } label: { Text("Use the start the clock shows").frame(minHeight: 44).contentShape(Rectangle()) }
                     .buttonStyle(.bordered)
-                    .frame(minHeight: 44)
             }
             if session.kind == .meeting {
                 Text("Line it up with the meeting's transcript (.vtt, .srt, .docx or .txt) to place your Margins on what was said. You can add the recording too.")
@@ -605,10 +608,9 @@ struct PositionNudgeRow: View {
     }
 
     private func nudge(_ title: String, _ delta: Int, _ accessibility: String) -> some View {
-        Button(title) { adjustmentMs += delta }
+        Button { adjustmentMs += delta } label: { Text(title).minimumTapTarget() }
             .buttonStyle(.bordered)
             .font(.caption.monospacedDigit())
-            .frame(minHeight: 44)
             .accessibilityLabel(accessibility)
     }
 }
@@ -644,7 +646,7 @@ private struct LiveSessionEndCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("End Session").font(.headline)
+            Text("End Session").font(.headline).accessibilityAddTraits(.isHeader)
             VStack(alignment: .leading, spacing: 4) {
                 Picker("When did it end?", selection: $whenIndex) {
                     ForEach(Array(choices.enumerated()), id: \.offset) { index, choice in
@@ -662,7 +664,7 @@ private struct LiveSessionEndCard: View {
             if kind != .paper {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Where are you now?").font(.subheadline.weight(.semibold))
-                    TextField(kind == .meeting ? "Meeting clock, like 47:30" : "Time in the book, like 1:23:10", text: $endPosition)
+                    AppTextField(kind == .meeting ? "Meeting clock, like 47:30" : "Time in the book, like 1:23:10", text: $endPosition)
                         .textFieldStyle(.roundedBorder)
                         .keyboardType(.numbersAndPunctuation)
                     Text(kind == .audiobook
@@ -679,12 +681,12 @@ private struct LiveSessionEndCard: View {
             }
             .filledActionButton()
             .accessibilityIdentifier("liveSession.confirmEnd")
-            Button("It's still going. Remind me in 15 minutes", action: onStillGoing)
+            Button(action: onStillGoing) {
+                Text("It's still going. Remind me in 15 minutes").frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+            }
                 .buttonStyle(.bordered)
-                .frame(maxWidth: .infinity, minHeight: 44)
                 .accessibilityIdentifier("liveSession.stillGoing")
-            Button("Cancel", action: onCancel)
-                .frame(maxWidth: .infinity, minHeight: 44)
+            Button(action: onCancel) { Text("Cancel").frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle()) }
                 .accessibilityIdentifier("liveSession.cancelEnd")
         }
         .padding(16)
@@ -705,7 +707,7 @@ struct LiveSessionPlaceField: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            TextField(prompt, text: $text)
+            AppTextField(prompt, text: $text)
                 .textFieldStyle(.roundedBorder)
             if let read {
                 Text("Reads as \(read.label)").font(.caption).foregroundStyle(AppColors.secondaryText)

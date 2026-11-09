@@ -5,13 +5,15 @@ import SwiftUI
 /// shows' row style. The rows come from `FollowingFriends`.
 struct FollowingFriendRowView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    /// The avatar grows with the text but stops at 80 pt, so a row never becomes all picture (#3723).
+    @ScaledMetric(relativeTo: .headline) private var artworkSize: CGFloat = 56
     let friend: FollowingFriends.Friend
     let open: () -> Void
 
     var body: some View {
         Button(action: open) {
             HStack(alignment: .center, spacing: 12) {
-                ShowArtworkView(url: nil, title: friend.name, size: 56)
+                ShowArtworkView(url: nil, title: friend.name, size: min(artworkSize, 80))
                 VStack(alignment: .leading, spacing: 4) {
                     Text(friend.name)
                         .font(.headline)
@@ -27,7 +29,7 @@ struct FollowingFriendRowView: View {
                 Image(systemName: "chevron.right")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(AppColors.secondaryText)
-                    .frame(width: 44, height: 44)
+                    .frame(width: dynamicTypeSize.isAccessibilitySize ? nil : 44, height: 44)
                     .accessibilityHidden(true)
             }
             .contentShape(Rectangle())
@@ -38,7 +40,7 @@ struct FollowingFriendRowView: View {
         .background(AppColors.panel)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(friend.name), \(friend.summary)")
-        .accessibilityHint(friend.items.count == 1 ? "Opens the item." : "Shows their items.")
+        .accessibilityHint(friend.items.count == 1 ? "Opens it." : "Shows what they shared.")
         .accessibilityIdentifier("sources.friend")
     }
 }
@@ -98,7 +100,7 @@ struct FollowingFriendItemsScreen: View {
                 .buttonStyle(.plain)
                 .accessibilityElement(children: .combine)
                 .accessibilityLabel(accessibilityLabel(for: item))
-                .accessibilityHint("Opens the item.")
+                .accessibilityHint("Opens it.")
                 .accessibilityIdentifier("sources.friend.item")
                 .listRowInsets(EdgeInsets(top: 0, leading: horizontalSizeClass == .regular ? 28 : 16, bottom: 0, trailing: horizontalSizeClass == .regular ? 28 : 16))
                 .listRowSeparator(.hidden)

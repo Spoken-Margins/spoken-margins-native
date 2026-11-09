@@ -27,6 +27,7 @@ NOT_HEADINGS = {
     ("ExperienceStorageScreen.swift", 'Text("\\(Int(usageFraction * 100))%")'): "a value readout",
     ("PlaybackScreen.swift", "Text(model.compactPlaybackRateDescription)"): "a value readout",
     ("SharingExperience.swift", "Text(review.contents.manifest.item.title)"): "the item named under the screen title",
+    ("SpokenNoteRecordingView.swift", "Text(title)"): "the note's name inside the rename button, which carries the heading trait itself (#3663)",
 }
 
 

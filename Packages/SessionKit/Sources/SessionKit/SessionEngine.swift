@@ -183,6 +183,11 @@ public final class SessionEngine {
             let loaded = try discardUnavailableGeneratedTextAudio(from: repository.loadItem(id: itemId))
             return adoptingPublisherAudio(for: loaded)
         }
+        // A spoken note is the listener's own audio, never text to read aloud: until its Play has made its audio ready (#3662)
+        // there is nothing to start.
+        if SpokenNoteItem.isSpokenNote(mediaType: item.mediaType), item.media?.url == nil {
+            throw SessionKitError.invalidCommandForState("This note isn't ready to play yet. Open it and tap Play.")
+        }
         currentItem = item
         currentMap = try labels.scoped("start.loadMap") { try repository.loadListeningMap(itemId: itemId) }
         item = try labels.scoped("start.prepareAudio") { try prepareGeneratedTextAudioIfAvailable(for: item) }
@@ -1185,19 +1190,30 @@ public final class SessionEngine {
 
     @discardableResult
     public func generateListeningMap(itemId: String) throws -> SessionSnapshot {
+        try generateListeningMap(try listeningMapGenerationPersister(itemId: itemId).generate(itemId: itemId))
+    }
+
+    /// The store half of `generateListeningMap` (#2256): load the item, cut its text into chapters, save the map and
+    /// flip the status. The item may hold megabytes of text. It holds the repository and the publisher's recording
+    /// plan, no other engine state, so a caller may run it off the main thread and hand the result to
+    /// `generateListeningMap(_ generated:)` on it.
+    public func listeningMapGenerationPersister(itemId: String) throws -> ListeningMapGenerationPersister {
         try require("generateListeningMap", category: "ai", capabilities: ["generate_listening_map"])
-        if let existing = try repository.loadListeningMap(itemId: itemId) {
+        return ListeningMapGenerationPersister(repository: repository, publisher: publisherPlayback[itemId])
+    }
+
+    /// The engine half of `generateListeningMap`: updates what the engine has open to match what was just saved, judged
+    /// by where the listener is now, not where they were when the save began.
+    @discardableResult
+    public func generateListeningMap(_ generated: GeneratedListeningMapResult) throws -> SessionSnapshot {
+        try require("generateListeningMap", category: "ai", capabilities: ["generate_listening_map"])
+        let map = generated.map
+        let itemId = map.itemId
+        guard let item = generated.item else {
             if currentItem?.id == itemId || currentSession?.itemId == itemId {
-                currentMap = existing
+                currentMap = map
             }
             return snapshot
-        }
-        var item = try repository.loadItem(id: itemId)
-        let map = generatedListeningMap(for: item)
-        try repository.saveListeningMap(map)
-        if item.status == "needs_listening_map" {
-            item.status = "ready"
-            try saveItem(item)
         }
         if currentItem?.id == itemId || currentSession?.itemId == itemId {
             currentItem = item
@@ -1225,6 +1241,26 @@ public final class SessionEngine {
     public func listeningMapPersister() throws -> ListeningMapPersister {
         try require("attachListeningMap", category: "sync", capabilities: ["canonical_persistence"])
         return ListeningMapPersister(repository: repository)
+    }
+
+    /// The listener renamed an item that is open here (a spoken note, #3663): the playing title (Now, the Lock Screen)
+    /// follows at once, not at the next time the item is opened. Nothing else about the item or its session changes, and an
+    /// item that is not the open one is left alone.
+    @discardableResult
+    public func applyItemTitle(itemId: String, title: String) -> SessionSnapshot {
+        guard currentItem?.id == itemId else { return snapshot }
+        currentItem?.title = title
+        if let session = currentSession, session.itemId == itemId {
+            // The Lock Screen card is built from the audio client's media context, not the snapshot: hand it the new title the
+            // way a pause does (same target, so playback does not restart).
+            if session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia {
+                try? audio.configureMediaContext(playbackMediaContext(for: session))
+            }
+            publish(status: snapshot.status, phase: session.phase)
+        } else {
+            snapshot.title = title
+        }
+        return snapshot
     }
 
     /// The engine half of `attachListeningMap`: updates what the engine has open to match what was just saved.
@@ -1716,6 +1752,7 @@ public final class SessionEngine {
 
     /// The cue has started, or did not play (0 seconds): the recorder listens again after `seconds`.
     public func resumeRecordingAfterReadyCue(after seconds: TimeInterval) {
+        if seconds > 0 { marginCaptureTiming?.readyCueSounded(at: ProcessInfo.processInfo.systemUptime) } // #1506: tap to the cue
         recorder.resumeAfterReadyCue(after: seconds)
     }
 
@@ -2006,9 +2043,13 @@ public final class SessionEngine {
             session.currentTargetId = itemPlaybackTargetId(for: playingItem, targetType: targetType)
             session.phase = .itemPlayback
             if targetType == .transcriptBackedMedia || targetType == .browserOwnedMedia {
+                // A spoken note's Margin names its sentence, not a time: the note's joined audio is made again when a take is
+                // added, so the time is read from the timeline now (#3664). Any other item keeps the time it was recorded at.
+                let noteSentenceTimeMs = SpokenNoteItem.isSpokenNote(mediaType: playingItem.mediaType)
+                    ? SpokenNoteMargins.mediaTimeMs(of: stored.anchor, in: storedTranscriptTimeline(itemId: item.id)) : nil
                 let anchorMediaTimeMs = publisher.flatMap {
                     $0.mediaTimeMs(textOffset: stored.anchor.startChar)
-                } ?? narrationMediaTimeMs ?? stored.anchor.mediaTimeMs
+                } ?? narrationMediaTimeMs ?? noteSentenceTimeMs ?? stored.anchor.mediaTimeMs
                 guard let mediaTimeMs = anchorMediaTimeMs,
                       mediaTimeMs >= 0 else {
                     throw SessionKitError.invalidCommandForState("playInterjectionAnchor")
@@ -5857,40 +5898,6 @@ public final class SessionEngine {
         return projection
     }
 
-    private func generatedListeningMap(for item: Item) -> ListeningMap {
-        let text = listeningMapText(for: item)
-        let starts = generatedChapterStarts(for: text)
-        let chapters = starts.enumerated().map { index, start in
-            let end = index + 1 < starts.count ? starts[index + 1] : text.count
-            let title = generatedChapterTitle(text: text, start: start, end: end, index: index)
-            return Chapter(
-                id: "ch-generated-\(String(format: "%02d", index + 1))",
-                title: title,
-                startChar: start,
-                endChar: max(start, end),
-                percent: percent(for: start, text: text)
-            )
-        }
-        return ListeningMap(
-            id: "map-\(item.id)-generated",
-            itemId: item.id,
-            overview: generatedOverview(for: item, chapters: chapters),
-            chapters: chapters
-        )
-    }
-
-    private func listeningMapText(for item: Item) -> String {
-        if let text = item.text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return text
-        }
-        guard let timeline = sourceTranscriptTimeline(itemId: item.id) else { return "" }
-        return timeline.segments
-            .sorted { $0.startMs < $1.startMs }
-            .map(\.text)
-            .joined(separator: " ")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
     static func normalizedSourceTranscriptTimeline(_ timeline: TranscriptTimeline) -> (text: String, timeline: TranscriptTimeline) {
         let sortedSegments = timeline.segments.sorted { $0.startMs < $1.startMs }
         var fullText = ""
@@ -5955,50 +5962,6 @@ public final class SessionEngine {
 
     static func isSyntheticTranscriptChapter(_ chapter: MediaTimelineChapter) -> Bool {
         chapter.id.hasPrefix("ch-transcript-") || chapter.id.contains("-ch-transcript-")
-    }
-
-    private func generatedChapterStarts(for text: String) -> [Int] {
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return [0] }
-        let sentenceStarts = sentenceStartOffsets(in: text)
-        guard sentenceStarts.count > 8 else { return sentenceStarts }
-        let targetCount = min(12, max(5, Int((Double(text.count) / 900.0).rounded(.up))))
-        let stride = max(1, Int((Double(sentenceStarts.count) / Double(targetCount)).rounded(.up)))
-        var starts = sentenceStarts.enumerated().compactMap { index, start in
-            index % stride == 0 ? start : nil
-        }
-        if starts.first != 0 { starts.insert(0, at: 0) }
-        return Array(starts.prefix(12))
-    }
-
-    private func sentenceStartOffsets(in text: String) -> [Int] {
-        let chars = Array(text)
-        var starts = [0]
-        var index = 0
-        while index < chars.count {
-            if ".!?".contains(chars[index]) {
-                let next = index + 1 + consumeSpaces(chars, from: index + 1)
-                if next < chars.count {
-                    starts.append(next)
-                }
-            }
-            index += 1
-        }
-        return Array(NSOrderedSet(array: starts)) as? [Int] ?? starts
-    }
-
-    private func generatedChapterTitle(text: String, start: Int, end: Int, index: Int) -> String {
-        let raw = slice(text, start: start, end: min(end, nextBoundary(after: start, unit: "sentence", text: text)))
-        let words = raw
-            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
-            .split(separator: " ")
-            .prefix(6)
-            .joined(separator: " ")
-            .trimmingCharacters(in: CharacterSet(charactersIn: ".!?;:,"))
-        return words.isEmpty ? "Chapter \(index + 1)" : words
-    }
-
-    private func generatedOverview(for item: Item, chapters: [Chapter]) -> String {
-        ListeningMapOverviewText.appGenerated(title: item.title, chapterCount: chapters.count)
     }
 
     private func percent(for charOffset: Int, text: String) -> Int {

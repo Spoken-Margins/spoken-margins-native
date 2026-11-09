@@ -372,6 +372,9 @@ class TickOps(w.Ops):
         self.pr_links += 1
         return 'exit 0: fake'
 
+    def ready_guard_sync(self):
+        return 'exit 0: fake'
+
     def dial_body(self): return self.dial
     def status_comments(self, now): return self.tick
     def repo_comments(self, now): return self.thread_comments
@@ -488,6 +491,22 @@ class TickTests(unittest.TestCase):
             self.assertEqual(sent[-1][1:], [str(root / 'scripts' / 'pr_issue_link.py'), '--apply'])
             ops.run = lambda cmd, cwd=None, timeout=300: (_ for _ in ()).throw(OSError('gone'))
             self.assertEqual(ops.pr_link_sync(), 'error: gone')
+
+    def test_ready_guard_sync_runs_the_script_and_summarises_its_report(self):
+        with tempfile.TemporaryDirectory() as d:
+            root, sent = Path(d), []
+            def run(cmd, cwd=None, timeout=300):
+                sent.append([str(x) for x in cmd])
+                return w.Result(0, json.dumps({'flagged': [4, 5], 'unknown': []}))
+            ops = w.Ops(home=root / 'home', repo_root=root, own_root=root, run=run, echo=False)
+            self.assertIn('skipped', ops.ready_guard_sync())
+            self.assertEqual(sent, [])
+            (root / 'scripts').mkdir()
+            (root / 'scripts' / 'ready_owner_only.py').write_text('')
+            self.assertEqual(ops.ready_guard_sync(), 'exit 0: 2 flagged, 0 unknown')
+            self.assertEqual(sent[-1][1:], [str(root / 'scripts' / 'ready_owner_only.py'), '--apply'])
+            ops.run = lambda cmd, cwd=None, timeout=300: (_ for _ in ()).throw(OSError('gone'))
+            self.assertEqual(ops.ready_guard_sync(), 'error: gone')
 
     def test_idle_when_nothing_is_eligible(self):
         decision, started, _ = self.tick(issues=[issue(7, labels=('ready',))])

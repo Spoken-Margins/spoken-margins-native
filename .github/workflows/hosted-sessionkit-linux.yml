@@ -1,7 +1,6 @@
 # Hosted T1 on Linux: SessionKit's Foundation-only modules and their tests (SessionKitCoreTests) on a
-# GitHub-hosted ubuntu runner (#1389). By hand only: linux-t1.yml, which ran it per PR on the owner's VPS, was
-# retired in #2442, because the lane takes SessionKitCoreTests from hosted-portable.yml (macOS) and a per-PR check
-# that blocks no merge is not kept (owner, 2026-10-21). Run it when a change may break the Linux build.
+# GitHub-hosted ubuntu runner (#1389). By hand, with an optional filter: hosted-portable.yml runs them per PR in the
+# same image (#3529). Run this for one suite on a branch, or when a change may break the Linux build.
 #
 # #1384's benchmark: `swift:6.2` on ubuntu-latest clean-built and tested a package of this shape in about
 # 3.5 minutes. The toolchain is pinned to 6.2.4, the same as substack-canary.yml.

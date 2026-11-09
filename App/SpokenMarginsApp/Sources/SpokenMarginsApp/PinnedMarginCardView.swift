@@ -9,6 +9,13 @@ struct PinnedMarginCardView: View {
     @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var playbackTick = 0 // bumped by each progress tick: the countdown follows the playhead (#2074)
+    @AccessibilityFocusState private var focusedPart: Part?
+
+    /// The parts VoiceOver or Switch Control can focus, so the tone-only card's timer waits while one has focus (#3720).
+    private enum Part: Hashable {
+        case headline, detail
+        case button(PinnedMarginCard.Action.Job)
+    }
 
     private var moment: MarginMomentSequence? { model.marginMoment }
     private var isReview: Bool { moment?.isReview == true }
@@ -25,6 +32,22 @@ struct PinnedMarginCardView: View {
             }
         }
         .followsPlaybackClock(model.playbackClock, tick: $playbackTick)
+        // A Margin that waits for a tap, or could not play, appears at the top of Now while VoiceOver's focus is elsewhere:
+        // say so once, when the card enters that stage or another Margin replaces it (#3728). `VoiceOverAnnouncements`
+        // decides; the stages that play aloud, and a guided Margin's 420 ms beat, stay silent. The key carries the Margin's
+        // id because two single-Margin packets from one sender make equal cards, and `onChange` ignores equal values.
+        .onChange(of: announcementKey) { previous, key in
+            let guided = model.pendingImportedCommentary?.layer.revealMode == .guided
+            if let text = VoiceOverAnnouncements.marginCard(from: previous, to: key, playsByItself: guided) {
+                AccessibilityNotification.Announcement(text).post()
+            }
+        }
+    }
+
+    private var announcementKey: VoiceOverAnnouncements.CardKey {
+        VoiceOverAnnouncements.CardKey(
+            card: model.pinnedMarginCard,
+            marginID: model.pendingImportedCommentary?.interjection.id ?? model.playingImportedCommentary?.interjection.id)
     }
 
     /// At the accessibility text sizes the headline and the buttons wrap and stack instead of clipping (#1933).
@@ -38,6 +61,7 @@ struct PinnedMarginCardView: View {
                     .accessibilityHidden(true)
                 Text(card.headline)
                     .font(.headline)
+                    .accessibilityAddTraits(.isHeader)
                     .foregroundStyle(.white)
                     // One line at regular sizes, shrunk before it is cut, so a long name does not make the card taller
                     // when a lead-in becomes a voice. It wraps at the larger sizes (#3597).
@@ -45,6 +69,7 @@ struct PinnedMarginCardView: View {
                     .minimumScaleFactor(isLargeText ? 1 : 0.8)
                     .fixedSize(horizontal: false, vertical: true)
                     .numericTextTransition()
+                    .accessibilityFocused($focusedPart, equals: .headline)
                     .accessibilityIdentifier(headlineIdentifier(card))
                 Spacer(minLength: 8)
                 if let position = card.position {
@@ -61,6 +86,7 @@ struct PinnedMarginCardView: View {
                 .lineLimit(card.stage == .waitingForTap ? (isLargeText ? 4 : 2) : (isLargeText ? nil : 2))
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
+                .accessibilityFocused($focusedPart, equals: .detail)
                 .accessibilityIdentifier("marginCard.detail")
             buttons(card)
         }
@@ -69,6 +95,13 @@ struct PinnedMarginCardView: View {
         .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 16))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("marginCard")
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { _ in FeedbackBannerHold.marginCard.setTouched(true) }
+                .onEnded { _ in FeedbackBannerHold.marginCard.setTouched(false) }
+        )
+        .onChange(of: focusedPart) { _, part in FeedbackBannerHold.marginCard.setFocused(part != nil) }
+        .onDisappear { FeedbackBannerHold.marginCard.reset() }
         .padding(.horizontal, 22)
         .padding(.vertical, 8)
         .frame(maxWidth: 620)
@@ -133,6 +166,7 @@ struct PinnedMarginCardView: View {
         return styledButton(action)
             .disabled(held)
             .opacity(held ? 0.45 : 1)
+            .accessibilityFocused($focusedPart, equals: .button(action.job))
             .accessibilityHint(action.hint)
             .accessibilityIdentifier(identifier(action.job))
     }
@@ -147,10 +181,9 @@ struct PinnedMarginCardView: View {
             Button { perform(action.job) } label: { wide(action.title, symbol(action.job), shares: action.job != .retry) }
                 .buttonStyle(SecondaryButtonStyle())
         case .quiet:
-            Button(action.title) { perform(action.job) }
+            Button { perform(action.job) } label: { Text(action.title).minimumTapTarget() }
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.white.opacity(0.85))
-                .frame(minHeight: 44)
         }
     }
 

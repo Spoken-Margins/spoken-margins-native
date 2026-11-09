@@ -122,7 +122,7 @@ final class SpokenNoteStarterTests: XCTestCase {
         try Data("not json".utf8).write(to: started.store.fileURL)
         let reopened = SpokenNoteStarter.reopen(noteId: "n1", title: nil, in: support, now: Date())
         XCTAssertEqual(reopened?.note.isEmpty, true)
-        XCTAssertEqual(reopened?.item.title, "Spoken note")
+        XCTAssertEqual(reopened?.item.title, SpokenNoteTitle.automatic(createdAt: reopened?.item.createdAt, text: ""))
     }
 
     func testARowOpensAsANoteOnlyWhenItIsOne() {

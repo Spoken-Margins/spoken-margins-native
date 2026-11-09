@@ -44,13 +44,14 @@ public enum SpokenNoteItem {
         isSpokenNote(mediaType: item.mediaType) ? defaultTitle : nil
     }
 
-    /// The Library item for a note. Its text is the note's transcript so far (empty until a take is transcribed), and
+    /// The Library item for a note. Without a title it is named for the day and words (`SpokenNoteTitle`). Its text is the note's transcript so far (empty until a take is transcribed), and
     /// it holds nothing else of the note, so rebuilding it from the store loses nothing.
     public static func makeItem(note: SpokenNote, title: String? = nil, createdAt: Date) -> Item {
         let trimmed = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return Item(
             id: itemId(forNoteId: note.id),
-            title: trimmed.isEmpty ? defaultTitle : trimmed,
+            // No title given: the made-up one for the day and words (#3663). A given title is the row's own and is kept.
+            title: trimmed.isEmpty ? SpokenNoteTitle.automatic(createdAt: createdAt, text: note.text) : trimmed,
             mediaType: mediaType,
             text: note.text,
             externalReference: reference(forNoteId: note.id),

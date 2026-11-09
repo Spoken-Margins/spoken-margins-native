@@ -38,21 +38,98 @@ extension Gate1AppModel: TextSceneMapPreparerHost {
 }
 
 extension Gate1AppModel {
+    func generateListeningMap() {
+        guard beginListeningMapGeneration() else { return }
+        generateLocalListeningMap(confirmation: "Generated Listening Map.")
+        isGeneratingListeningMap = false
+    }
+
+    /// The Prepare Listening Map tap (#2256): the same request with the item's load, its chapter cutting and the save
+    /// off the main thread, which took 787 ms on a 1.1 MB book. `isGeneratingListeningMap` holds the button until it ends.
+    func generateListeningMapFromTap() {
+        guard beginListeningMapGeneration() else { return }
+        Task {
+            await generateLocalListeningMapOffMain(confirmation: "Generated Listening Map.")
+            isGeneratingListeningMap = false
+            // A transcript that finished during the wait asked for its map while this one held the flag: it is made now.
+            if let pending = pendingMapGenerationItemId, pending == activeItemId {
+                pendingMapGenerationItemId = nil
+                generateListeningMap()
+            }
+        }
+    }
+
+    /// The checks both entry points share. True when a local map is to be made now, with `isGeneratingListeningMap` set
+    /// for the caller to clear; false when the request ended here (already generating, already has a map, an episode
+    /// that goes to the episode map, or a source that has no on-device map).
+    func beginListeningMapGeneration() -> Bool {
+        guard !isGeneratingListeningMap else { return false }
+        guard selectedItem.chapters.isEmpty, selectedItem.mediaChapters.isEmpty else {
+            reportSuccess("This item already has a Listening Map.")
+            return false
+        }
+        isGeneratingListeningMap = true
+        let selectedItemRecord = try? store?.loadItemSummary(id: activeItemId)
+        if let item = selectedItemRecord,
+           item.media?.sourceType == .nativeMediaFile || item.media?.sourceType == .remoteStream {
+            isGeneratingListeningMap = false
+            prepareEpisodeMap(itemId: item.id, policy: .explicit)
+            return false
+        }
+        guard selectedItemRecord?.media == nil else {
+            diagnostics["lastListeningMapMode"] = "on_device_generation_disabled"
+            isGeneratingListeningMap = false
+            reportFailure("Publisher chapters appear when available. AI-generated podcast maps are reserved for a future server-hosted option.")
+            return false
+        }
+        return true
+    }
+
     /// Prepare Listening Map on an article or PDF: the rule-based chapters first, then the on-device model writes each
     /// scene's summary for Skim, or the listener is told it can't and keeps the chapters (#3450). Moved from the
     /// model unchanged except for that last step.
     func generateLocalListeningMap(confirmation: String) {
+        let itemId = activeItemId
         run { engine in
-            snapshot = try engine.generateListeningMap(itemId: activeItemId)
+            snapshot = try engine.generateListeningMap(itemId: itemId)
             if let store {
                 libraryItems = try loadLibraryRows(store: store)
             }
-            refreshSelectedItemInBackground()
-            diagnostics["lastGeneratedMapItem"] = activeItemId
-            diagnostics["lastListeningMapMode"] = "local_deterministic"
-            schedulePrewarmAfterPreparedTextChange(itemId: activeItemId)
-            reportConfirmation("\(confirmation) \(textSceneMapPreparer.prepare(itemId: activeItemId).note)")
+            finishLocalListeningMap(itemId: itemId, confirmation: confirmation)
         }
+    }
+
+    /// The same map with its store work off the main thread (#2256): the item is loaded, cut into chapters and saved
+    /// by `ListeningMapGenerationPersister`, and only the engine half and the screen updates run here. With no engine
+    /// yet, or one that cannot generate, it takes the synchronous path, which installs the engine or reports the failure.
+    /// Everything after the wait uses the item the tap was made on, not whichever the listener has open by then.
+    func generateLocalListeningMapOffMain(confirmation: String) async {
+        let itemId = activeItemId
+        guard let engine, let persister = try? engine.listeningMapGenerationPersister(itemId: itemId) else {
+            generateLocalListeningMap(confirmation: confirmation)
+            return
+        }
+        let generated: Result<GeneratedListeningMapResult, Error>
+        do {
+            generated = .success(try await Self.offMain { try persister.generate(itemId: itemId) })
+        } catch {
+            generated = .failure(error)
+        }
+        hangTelemetry.labels.scoped("listeningMapGenerate") {
+            _ = run { engine in
+                snapshot = try engine.generateListeningMap(try generated.get())
+                refreshLibraryRowsInBackground(mustPublish: true) // #2505, as a finished transcript does
+                finishLocalListeningMap(itemId: itemId, confirmation: confirmation)
+            }
+        }
+    }
+
+    private func finishLocalListeningMap(itemId: String, confirmation: String) {
+        refreshSelectedItemInBackground()
+        diagnostics["lastGeneratedMapItem"] = itemId
+        diagnostics["lastListeningMapMode"] = "local_deterministic"
+        schedulePrewarmAfterPreparedTextChange(itemId: itemId)
+        reportConfirmation("\(confirmation) \(textSceneMapPreparer.prepare(itemId: itemId).note)")
     }
 }
 

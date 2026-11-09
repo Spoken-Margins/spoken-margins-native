@@ -589,15 +589,13 @@ struct CatalogDrawerRow: View, Equatable {
                 .frame(minWidth: 96, minHeight: 44)
                 .accessibilityIdentifier("catalog.followed.\(entry.id)")
         case .failed:
-            Button("Retry", action: toggleFollow)
+            Button(action: toggleFollow) { Text("Retry").frame(minWidth: 96, minHeight: 44).contentShape(Rectangle()) }
                 .buttonStyle(.bordered)
-                .frame(minWidth: 96, minHeight: 44)
                 .accessibilityLabel("Retry following \(entry.title)")
                 .accessibilityIdentifier("catalog.follow.\(entry.id)")
         case nil:
-            Button("Follow", action: toggleFollow)
+            Button(action: toggleFollow) { Text("Follow").frame(minWidth: 96, minHeight: 44).contentShape(Rectangle()) }
                 .filledActionButton()
-                .frame(minWidth: 96, minHeight: 44)
                 .accessibilityLabel("Follow \(entry.title)")
                 .accessibilityIdentifier("catalog.follow.\(entry.id)")
         }
@@ -660,15 +658,13 @@ private struct CatalogSearchResultRow: View {
                 .frame(minWidth: 96, minHeight: 44)
                 .accessibilityIdentifier("catalog.search.followed.\(show.id)")
         case .failed:
-            Button("Retry", action: toggleFollow)
+            Button(action: toggleFollow) { Text("Retry").frame(minWidth: 96, minHeight: 44).contentShape(Rectangle()) }
                 .buttonStyle(.bordered)
-                .frame(minWidth: 96, minHeight: 44)
                 .accessibilityLabel("Retry following \(show.title)")
                 .accessibilityIdentifier("catalog.search.follow.\(show.id)")
         case nil:
-            Button("Follow", action: toggleFollow)
+            Button(action: toggleFollow) { Text("Follow").frame(minWidth: 96, minHeight: 44).contentShape(Rectangle()) }
                 .filledActionButton()
-                .frame(minWidth: 96, minHeight: 44)
                 .accessibilityLabel("Follow \(show.title)")
                 .accessibilityIdentifier("catalog.search.follow.\(show.id)")
         }

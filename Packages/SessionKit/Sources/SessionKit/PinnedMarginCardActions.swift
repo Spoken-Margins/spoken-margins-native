@@ -16,7 +16,7 @@ extension PinnedMarginCard {
             case playMomentNow
             /// Ends a plain moment's lead-in; the source keeps its play state (`MarginMomentConductor.cancel`).
             case keepListening
-            /// Stops a review: the voice stops and the source PAUSES. If no Margin of the review has played yet it goes back
+            /// Stops a review (from its lead-in, or while a can't-play listening's voice plays): the source PAUSES. If no Margin of the review has played yet it goes back
             /// to where the listener was; after that it stays where it is, unless the listener's own place was ahead
             /// (`MarginMomentSequence.placeToReturnToWhenStopped`).
             case stopReview
@@ -51,8 +51,10 @@ extension PinnedMarginCard {
             // The one button while a voice sounds skips it: the episode plays on from where the Margin ended. It never says
             // "Next Margin", because stopping a voice does not move the listener to the next one; the next Margin's own
             // lead-in button ("Jump to 20 sec before it") comes once the voice is over (audit on #3623).
-            // A review has no lead-in to leave from while its Margins chain (a can't-play listening), so Stop is here too.
-            return run == .review ? [skip, stop] : [skip]
+            // Never a Stop beside it: three exits for one short voice (#3597 proposal: "No Stop button; the pause control
+            // already does that job"). The one exception is a can't-play listening: its Margins chain with no lead-in, so
+            // the lead-in's Stop never comes and pause leaves the review armed. Stop stays there as the way out.
+            return run == .review && chainsWithoutLeadIn ? [skip, stop] : [skip]
         case .failed:
             let retry = Action(job: .retry, title: "Retry", hint: "Tries to play this Margin again.", prominence: .secondary)
             return [retry, skip]

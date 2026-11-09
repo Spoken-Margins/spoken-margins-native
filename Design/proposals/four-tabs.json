@@ -148,15 +148,15 @@
    "id": "p011",
    "from": "ExperienceMarginDetailView",
    "to": "SHARE_SHEET",
-   "control": "Share this Margin (square.and.arrow.up)",
+   "control": "Share this Margin (person.wave.2)",
    "control_kind": "button",
-   "presentation": "system",
+   "presentation": "sheet",
    "file": null,
    "line": null,
    "anchor": null,
    "present_line": null,
    "condition": "",
-   "notes": "A one-Margin .spokenmargins packet. Share as Markdown stays beside it.",
+   "notes": "A one-Margin .spokenmargins packet, built in the friend sheet (built, #3211). Export this Margin as Markdown stays beside it.",
    "proposed": true
   },
   {
@@ -622,14 +622,16 @@
    "target": "SHARE_SHEET",
    "final_cost": 0,
    "final": "Choosing the friend in the share sheet is not counted.",
-   "note": "Margins, chevron on the row, Share this Margin.",
+   "note": "Margins, chevron on the row, More, Share this Margin opens the friend sheet with that one Margin on its review (#3211), then Share N.",
    "taps": {
-    "as_built": 5,
-    "proposed": 3,
+    "as_built": 6,
+    "proposed": 4,
     "route": [
      "Margins tab",
      "chevron on a Margin row (details)",
-     "Share this Margin (square.and.arrow.up)"
+     "More",
+     "Share this Margin (person.wave.2)",
+     "Share N"
     ]
    }
   },

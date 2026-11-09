@@ -13,7 +13,8 @@ import AVFoundation
 final class MarginCaptureWatcher {
     typealias HealthChange = (_ health: MarginCaptureSupervisor.Health, _ restarts: Int) -> Void
 
-    static let pollIntervalMs = 250
+    /// The steady rate; the start polls faster until the ready cue has sounded (`MarginCapturePollCadence`, #1506).
+    static let pollIntervalMs = MarginCapturePollCadence.steadyMs
 
     private var supervisor: MarginCaptureSupervisor?
     private let retryOrder = MarginCaptureRetryOrder()
@@ -100,11 +101,17 @@ final class MarginCaptureWatcher {
         guard autoPoll else { return }
         pollTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(for: .milliseconds(Self.pollIntervalMs))
+                let wait = self?.nextPollIntervalMs ?? Self.pollIntervalMs
+                try? await Task.sleep(for: .milliseconds(wait))
                 guard !Task.isCancelled, let self else { return }
                 self.tick()
             }
         }
+    }
+
+    /// The wait before the next poll: short until the cue has sounded, so the cue follows the first audio closely.
+    private var nextPollIntervalMs: Int {
+        MarginCapturePollCadence.intervalMs(elapsedMs: elapsedMs, cueSounded: readyCueGate.hasCued)
     }
 
     /// One poll: read the recorder, ask the supervisor, and carry out a restart if it asks for one.

@@ -24,6 +24,9 @@ public enum AutomaticEpisodeMapJobs {
             // A map this build can't decode still counts as a map, so it is kept and not rebuilt over (#2506).
             guard (try? store.hasEditionFingerprintSpine(itemId: id)) != true,
                   let item = try? store.loadItemSummary(id: id) else { return false }
+            // A spoken note has its own audio since #3662, but it is the listener's dictation, not an episode: no map is
+            // made of it on its own.
+            guard !SpokenNoteItem.isSpokenNote(mediaType: item.mediaType) else { return false }
             return item.media?.sourceType == .nativeMediaFile || item.media?.sourceType == .remoteStream
         }
     }

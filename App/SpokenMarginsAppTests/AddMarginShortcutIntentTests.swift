@@ -253,7 +253,7 @@ final class AddMarginShortcutIntentTests: XCTestCase {
             XCTFail("The action must not create a session just to write on it.")
         } catch let error as AddMarginShortcutError {
             XCTAssertEqual(error, .itemNotStarted)
-            XCTAssertEqual(error.localizedDescription, "Start this item once before adding a Margin to it.")
+            XCTAssertEqual(error.localizedDescription, "Start this once before adding a Margin to it.")
         }
 
         model.refreshMarginRows()

@@ -234,12 +234,12 @@ struct SettingsScreen: View {
                     Text("Chapters and scenes for podcasts are prepared on your device and are off by default. While Charging only prepares episodes that are already downloaded; the full transcript and temporary audio are deleted once the chapters and scenes are saved.")
                         .font(.caption)
                         .foregroundStyle(AppColors.secondaryText)
-                    Text("While Charging uses durable jobs and pauses between parts of an item when power, thermal, or storage safety changes. Completion timing is not guaranteed.")
+                    Text("While Charging uses durable jobs and pauses between parts of what it is preparing when power, thermal, or storage safety changes. Completion timing is not guaranteed.")
                         .font(.caption)
                         .foregroundStyle(AppColors.secondaryText)
                     DisclosureGroup("Recently Deleted\(model.recentlyDeletedItems.isEmpty ? "" : " (\(model.recentlyDeletedItems.count))")") {
                         if model.recentlyDeletedItems.isEmpty {
-                            Text("Items moved here can be restored. Nothing is deleted automatically.")
+                            Text("Anything moved here can be restored. Nothing is deleted automatically.")
                                 .foregroundStyle(AppColors.secondaryText)
                         } else {
                             Button("Empty Recently Deleted", role: .destructive) {
@@ -278,10 +278,11 @@ struct SettingsScreen: View {
                                 }
                             }
                             if list.showsToggle {
-                                Button(list.toggleTitle) {
-                                    withAnimation { showsAllRecentlyDeleted.toggle() }
+                                Button {
+                                    withMotion { showsAllRecentlyDeleted.toggle() }
+                                } label: {
+                                    Text(list.toggleTitle).frame(minHeight: 44).contentShape(Rectangle())
                                 }
-                                .frame(minHeight: 44)
                                 .accessibilityHint(list.toggleHint)
                                 .accessibilityIdentifier("recentlyDeleted.toggle.button")
                             }
@@ -353,7 +354,7 @@ struct SettingsScreen: View {
                             Text("Help make listening maps")
                             Text("Send transcripts of public episodes to the Spoken Margins server, which turns them into maps and then deletes them.")
                                 .font(.footnote)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(AppColors.secondaryText)
                         }
                     }
                     .accessibilityIdentifier("settings.communityMaps.toggle")
@@ -362,7 +363,7 @@ struct SettingsScreen: View {
                             Text("Look up community maps")
                             Text("When you open or play a public podcast episode with no chapters, ask the Spoken Margins server for a map other listeners helped make. This tells the server which episode you opened, and it can see your IP address.")
                                 .font(.caption)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(AppColors.secondaryText)
                         }
                     }
                     .accessibilityIdentifier("settings.communityMapLookup.toggle")
@@ -395,7 +396,7 @@ struct SettingsScreen: View {
                             ShareFileActivityView(fileURL: diagnosticsExportURL)
                         }
                     }
-                    Text("App state and recent playback events, as a file for a bug report. It includes the titles and links of items in your Library. It stays on this device unless you share it.")
+                    Text("App state and recent playback events, as a file for a bug report. It includes the titles and links of what is in your Library. It stays on this device unless you share it.")
                         .font(.footnote)
                         .foregroundStyle(AppColors.secondaryText)
                     Button {
@@ -463,7 +464,7 @@ struct SettingsScreen: View {
                         Text("Basic playback events are saved locally automatically (latest 300 events, no source text or audio). For detailed sampling, turn on, reproduce, then turn off and Share Diagnostics. Detailed recording keeps 1,200 events and is off after restart.")
                             .font(.caption)
                         Text(model.developerDiagnosticBuild).font(.caption.monospaced())
-                        Button("Add Sample Item", action: model.addSampleItem)
+                        Button("Add Sample Source", action: model.addSampleItem)
                         Picker("Runtime Profile", selection: $model.selectedProfileId) {
                             Text("Phone/Tablet Online").tag("phone-tablet-online")
                             Text("Phone/Tablet Offline").tag("phone-tablet-offline")
@@ -488,7 +489,7 @@ struct SettingsScreen: View {
                     }
                     Text("Listening Map JSON")
                         .font(.headline)
-                    Text("Developer diagnostic for \(model.selectedItem.title.isEmpty ? "the selected item" : model.selectedItem.title).")
+                    Text("Developer diagnostic for \(model.selectedItem.title.isEmpty ? "what is selected" : model.selectedItem.title).")
                         .font(.caption)
                         .foregroundStyle(AppColors.secondaryText)
                     TextEditor(text: $model.listeningMapJSON)
@@ -541,7 +542,7 @@ struct SettingsScreen: View {
                 Text("\(item.title) and all of its sessions, notes, and transcripts will be deleted. This cannot be undone.")
             }
             .confirmationDialog(
-                "Delete this shared item?",
+                "Delete this?",
                 isPresented: Binding(
                     get: { pendingInboxDeletion != nil },
                     set: { if !$0 { pendingInboxDeletion = nil } }
@@ -563,13 +564,13 @@ struct SettingsScreen: View {
                     model.permanentlyDeleteRecentlyDeletedItems()
                 }
             } message: {
-                Text("All \(model.recentlyDeletedItems.count) recently deleted item\(model.recentlyDeletedItems.count == 1 ? "" : "s") and their sessions, notes, transcripts, and downloaded audio will be permanently deleted. This cannot be undone.")
+                Text("All \(model.recentlyDeletedItems.count) recently deleted \(model.recentlyDeletedItems.count == 1 ? "entry" : "entries") and their sessions, notes, transcripts, and downloaded audio will be permanently deleted. This cannot be undone.")
             }
             .alert("Reset the entire library?", isPresented: $isResetConfirmationPresented) {
                 Button("Cancel", role: .cancel) {}
                 Button("Reset Library", role: .destructive, action: model.resetAndSeed)
             } message: {
-                Text("This permanently deletes every item and its related records, then loads the sample.")
+                Text("This permanently deletes everything in your Library and its related records, then loads the sample.")
             }
             .miniPlayerKeepOut()
         }

@@ -43,7 +43,7 @@ struct ExperienceTimelineRailScreen: View {
                     Text(model.selectedItem.title)
                         .font(.subheadline)
                         .foregroundStyle(AppColors.secondaryText)
-                        .lineLimit(1)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 1)
                         .truncationMode(.tail)
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.bottom, 12)
@@ -83,11 +83,12 @@ struct ExperienceTimelineRailScreen: View {
                 if onReturnToPlayback != nil && !followsPlayback && !responseEditorFocused {
                     HStack {
                         Spacer()
-                        Button("Follow playback", systemImage: "location.fill") {
+                        Button {
                             followsPlayback = true
                             focusTimeline(using: proxy)
+                        } label: {
+                            Label("Follow playback", systemImage: "location.fill").frame(minHeight: 44).contentShape(Rectangle())
                         }
-                        .frame(minHeight: 44)
                         .accessibilityIdentifier("timeline.followPlayback.button")
                     }
                     .padding(.horizontal, 18)

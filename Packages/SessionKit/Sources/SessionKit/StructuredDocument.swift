@@ -724,18 +724,28 @@ public enum StructuredDocumentSpeech {
         var markerIndex = 0
         var result: [Unit] = []
         var lastNotice: String?
-        for segment in document.segments {
+        let equationNotice = "Equation not read."
+        // Segments whose text is read or announced: page furniture between two doesn't separate them.
+        let spokenSegments = document.segments.filter { treatment(for: $0.role) != .skip }
+        var spokenIndex = -1
+        // The last unit ended on a line-end hyphen with only silent text since, as at a page break: "Nev-" + "ertheless".
+        var openHyphen = false
+        for (segmentIndex, segment) in document.segments.enumerated() {
             let range = segment.range.start..<min(segment.range.end, characters.count)
-            switch treatment(for: segment.role) {
+            let treatment = treatment(for: segment.role)
+            if treatment != .skip { spokenIndex += 1 }
+            switch treatment {
             case .skip:
                 continue
             case .announceAndSkip(let notice):
+                openHyphen = false
                 // Two tables in a row, split only by a page header, get one notice.
                 if lastNotice != notice {
                     result.append(announcement(notice, at: range.lowerBound))
                 }
                 lastNotice = notice
             case .skipWithNoticeOnce(let notice):
+                openHyphen = false
                 if lastNotice != notice {
                     result.append(announcement(notice, at: range.lowerBound))
                 }
@@ -745,11 +755,45 @@ public enum StructuredDocumentSpeech {
                 // read an Appendix heading between the columns of a reference page, and
                 // "References skipped." shouldn't play again after it (#220 T4). Body text
                 // does, so a separate list is still announced.
-                if segment.role != .heading { lastNotice = nil }
                 var unit = Unit(characters: [], offsets: [])
+                func finishUnit() {
+                    guard !unit.characters.isEmpty else { return }
+                    let spoken = PDFMathSpeech.speakingInlineMath(unit.characters, offsets: unit.offsets)
+                    result.append(Unit(characters: spoken.characters, offsets: spoken.offsets))
+                    unit = Unit(characters: [], offsets: [])
+                }
+                // The whole segment's math lines come from its text, so stored documents get this without a new import.
+                let isProse = segment.role == .body || segment.role == .abstract || segment.role == .unknown
+                let displayLines = isProse
+                    ? PDFMathSpeech.displayLines(
+                        in: characters,
+                        range: range,
+                        equationBefore: spokenIndex > 0 && spokenSegments[spokenIndex - 1].role == .equation,
+                        equationAfter: spokenIndex + 1 < spokenSegments.count && spokenSegments[spokenIndex + 1].role == .equation
+                    )
+                    : []
+                var displayIndex = 0
                 var index = range.lowerBound
+                let endsAtPageBreak = segmentIndex + 1 < document.segments.count && isPageFurniture(document.segments[segmentIndex + 1].role)
+                let readEnd = segment.role == .body
+                    ? PDFMathSpeech.footnoteBlockStart(in: characters, range: range, endsAtPageBreak: endsAtPageBreak) ?? range.upperBound
+                    : range.upperBound
                 while markerIndex < silent.count, silent[markerIndex].range.end <= range.lowerBound { markerIndex += 1 }
-                while index < range.upperBound {
+                while index < readEnd {
+                    if displayIndex < displayLines.count, displayLines[displayIndex].lowerBound == index {
+                        finishUnit()
+                        openHyphen = false
+                        if lastNotice != equationNotice {
+                            result.append(announcement(equationNotice, at: index))
+                        }
+                        lastNotice = equationNotice
+                        // The line and the break after it, so reading resumes on the next line's first character.
+                        index = displayLines[displayIndex].upperBound
+                        if index < range.upperBound, characters[index] == "\n" { index += 1 }
+                        displayIndex += 1
+                        while markerIndex < silent.count, silent[markerIndex].range.end <= index { markerIndex += 1 }
+                        continue
+                    }
                     if markerIndex < silent.count, silent[markerIndex].range.start == index {
                         let end = min(silent[markerIndex].range.end, range.upperBound)
                         // "reading [3], but" → "reading, but": drop the space the marker leaves.
@@ -773,14 +817,31 @@ public enum StructuredDocumentSpeech {
                         index += 2
                         continue
                     }
+                    if segment.role != .heading { lastNotice = nil }
+                    // A word carried over a page break joins the unit before it, without its hyphen.
+                    if openHyphen, unit.characters.isEmpty, characters[index].isLowercase, segment.role == .body,
+                       let last = result.indices.last, result[last].characters.last == "-" {
+                        unit = result.removeLast()
+                        unit.characters.removeLast()
+                        unit.offsets.removeLast()
+                    }
+                    openHyphen = false
                     unit.characters.append(characters[index])
                     unit.offsets.append(index)
                     index += 1
                 }
-                if !unit.characters.isEmpty { result.append(unit) }
+                if segment.role == .body, unit.characters.last == "-", unit.characters.count >= 2,
+                   unit.characters[unit.characters.count - 2].isLetter {
+                    openHyphen = true
+                }
+                finishUnit()
             }
         }
         return result
+    }
+
+    private static func isPageFurniture(_ role: StructuredDocument.Role) -> Bool {
+        role == .pageHeader || role == .pageFooter
     }
 
     private static func announcement(_ notice: String, at offset: Int) -> Unit {

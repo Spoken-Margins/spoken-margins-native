@@ -340,6 +340,8 @@ extension Gate1AppModel {
             }
         }
         guard !snapshot.isRecording else { return }
+        // The route and session switch of a start that failed, so an AirPlay or Bluetooth cause shows (#3633).
+        if let engine { recordDeveloperDiagnostic("margin.capture.startFailed", engine.recordingCaptureDiagnostics()) }
         abandonRecordingSessionPreparation() // a start that failed before the recorder claimed the switch
         resumeSourcePausedOnTap() // a start that failed before the engine took over the pause
         clearRecordingPresentation()

@@ -363,8 +363,8 @@
             },
             {
               "do": "tap",
-              "label": "Share as Markdown",
-              "marker": "\"marginDetail.shareMarkdown.button",
+              "label": "Export as Markdown",
+              "marker": "\"marginDetail.exportMarkdown.button",
               "file": "ExperienceMarginDetailView.swift"
             },
             {

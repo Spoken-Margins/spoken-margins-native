@@ -216,7 +216,7 @@ class TestScopeTests(unittest.TestCase):
         self.assertEqual(result['app_tests'], ['Gate1AppModelWorkflowTests'])  # the lane runner adds these (#351)
 
     def test_ui_test_scripts_are_compile_only_and_add_nothing_to_t3(self):
-        # #445: scripted journeys run in the integration run, never as a per-PR gate. Before, a UI test file
+        # #445, #3669: scripted journeys run when a phone build is cut and before an upload, never as a per-PR gate. Before, a UI test file
         # fell through to the app rules, so a name with "Playback" in it asked for a T3.
         ui = 'App/SpokenMarginsAppUITests/'
         for path in (ui + 'EmojiArticlePlaybackUITests.swift', ui + 'SharePacketJourneyUITests.swift',
@@ -228,7 +228,7 @@ class TestScopeTests(unittest.TestCase):
                 self.assertIsNone(result['lane_request'])
                 self.assertEqual(result['app_tests'], [])
                 self.assertEqual(sum('scripts/xcodebuild-lane' in c for c in result['run']), 2)
-                self.assertTrue(any('integration run' in note for note in result['notes']))
+                self.assertTrue(any('phone build is cut' in note and 'never per PR' in note for note in result['notes']))
         (self.root / ui).mkdir(parents=True)
         (self.root / ui / 'MixedPlaybackAudioSessionJourneyUITests.swift').write_text(
             'import XCTest\nfinal class MixedPlaybackAudioSessionJourneyUITests: XCTestCase {}\n')

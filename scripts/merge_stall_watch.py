@@ -10,12 +10,14 @@ It alarms when both hold:
     STALL_AFTER. Moved means a new commit, a trusted comment, or a check other than the merge jobs running on its head.
     The merge jobs don't count, because they may only be waiting.
 
-A PR that needs its own author, rather than the pipeline, is not stuck: a merge conflict, or a FAIL or a blocking audit
-as the newest verdict on its head. Comments from outsiders count for nothing (scripts/comment_trust.py, #1822), so a
+A PR that needs its own author, rather than the pipeline, is not stuck: a merge conflict, a blocking newest audit of its
+head, or a FAIL as the newest lane report or the newest T3 report on its head. Each is judged on its own, as the runner
+judges them, whatever order the comments came in. Comments from outsiders count for nothing (scripts/comment_trust.py, #1822), so a
 stranger's comment can't hide a stall or fake a verdict.
 
 The alarm is one issue from the project's bot that @mentions the owner, and the GitHub mobile app pushes mentions. While
-that issue is open the watch says nothing more. When something reaches the trunk, it closes the issue with a note.
+that issue is open the watch says nothing more. When something reaches the trunk after the issue opened, it closes the
+issue with a note.
 """
 from __future__ import annotations
 
@@ -43,7 +45,11 @@ BOT = 'github-actions[bot]'
 WAITING_CHECKS = {'automerge', 'automerge-mac'}
 LANE_VERDICT = re.compile(r'^\s*Lane report\b.*?(?:—|--|-)\s*(PASS|FAIL|INCONCLUSIVE)\b')
 LANE_COMMIT = re.compile(r'\bcommit\s+`?([0-9a-f]{7,40})\b')
-AUDIT_HEADING = re.compile(r'^\*\*Claude audit on `([0-9a-f]{7,40})`\*\*\s*$')
+LANE_TIER = re.compile(r'^commit\b.*\btier\s+(T\d)\b', re.M)
+# As in merge_audit.py, which a test holds these to. The hosted job checks out only this script and its two imports.
+AUDIT_HEADINGS = ('**Codex audit (Astra)', '## Codex audit')
+CLAUDE_AUDIT_HEADING = re.compile(r'\*\*Claude audit on `[0-9a-f]{7,40}`\*\*')
+AUDIT_SHA = re.compile(r'`([0-9a-f]{7,40})`')
 CLEAN_AUDIT = re.compile(r'no (blocking )?findings\b', re.I)
 
 
@@ -60,19 +66,26 @@ def needs_its_author(pr: dict, comments: list[dict]) -> str:
     head = pr['head']['sha']
     if pr.get('mergeable_state') == 'dirty':
         return 'has a merge conflict'
-    for comment in reversed(comments):
+    audit, lane, t3 = None, None, None  # the newest of each on this head; comments come oldest first
+    for comment in comments:
         body = (comment.get('body') or '').lstrip()
         first, _, rest = body.partition('\n')
-        audit = AUDIT_HEADING.match(first.rstrip())
-        if audit and head.startswith(audit.group(1)):
-            verdict = next((line.strip() for line in rest.splitlines() if line.strip()), '')
-            if not CLEAN_AUDIT.match(verdict):
-                return 'has a blocking audit on its head'
+        if body.startswith(AUDIT_HEADINGS) or CLAUDE_AUDIT_HEADING.fullmatch(first.rstrip()):
+            if any(head.startswith(sha) for sha in AUDIT_SHA.findall(first)):
+                audit = next((line.strip() for line in rest.splitlines() if line.strip()), '')
             continue
-        lane = LANE_VERDICT.match(first)
-        commit = LANE_COMMIT.search(body)
-        if lane and commit and head.startswith(commit.group(1)):
-            return 'has a lane FAIL on its head' if lane.group(1) == 'FAIL' else ''
+        verdict, commit = LANE_VERDICT.match(first), LANE_COMMIT.search(body)
+        if verdict and commit and head.startswith(commit.group(1)):
+            lane = verdict.group(1)
+            tier = LANE_TIER.search(body)
+            if tier and tier.group(1) == 'T3':
+                t3 = lane
+    if audit is not None and not CLEAN_AUDIT.match(audit):
+        return 'has a blocking audit on its head'
+    if lane == 'FAIL':
+        return 'has a lane FAIL on its head'
+    if t3 == 'FAIL':
+        return 'has a T3 FAIL on its head'
     return ''
 
 
@@ -158,11 +171,11 @@ def read_armed(repo: str, base: str) -> list[dict]:
     return armed
 
 
-def open_alarm(repo: str) -> int | None:
+def open_alarm(repo: str) -> dict | None:
     issues = flat(api(f'repos/{repo}/issues?state=open&creator={BOT.replace("[", "%5B").replace("]", "%5D")}&per_page=100'))
     for issue in issues:
         if author_login(issue) == BOT and MARKER in (issue.get('body') or '') and 'pull_request' not in issue:
-            return issue['number']
+            return issue
     return None
 
 
@@ -175,13 +188,13 @@ def main(argv: list[str] | None = None) -> int:
     now = datetime.datetime.now(datetime.timezone.utc)
     last_merge = parse_time(api(f'repos/{repo}/commits/{base}')['commit']['committer']['date'])
     alarm = open_alarm(repo)
-    if alarm and now - last_merge < STALL_AFTER:
-        print(f'Something merged {minutes(now - last_merge)} minutes ago: closing #{alarm}.')
+    if alarm and last_merge > parse_time(alarm['created_at']):  # not "within the hour": a scheduled run can come late
+        print(f'Something merged {minutes(now - last_merge)} minutes ago: closing #{alarm["number"]}.')
         if not args.dry_run:
-            gh('issue', 'close', str(alarm), '--repo', repo, '--comment', 'Merging is moving again.')
+            gh('issue', 'close', str(alarm['number']), '--repo', repo, '--comment', 'Merging is moving again.')
         return 0
     if alarm:
-        print(f'Still stalled; #{alarm} already says so.')
+        print(f'Still stalled; #{alarm["number"]} already says so.')
         return 0
     lines = stall(now, last_merge, read_armed(repo, base))
     if not lines:

@@ -33,12 +33,7 @@ struct AppFeedbackPresentation: ViewModifier {
         do {
             try await effects.sleep(.seconds(seconds))
             // A listener still touching the banner, or with VoiceOver on it, keeps it (#1927).
-            // At most 30 more seconds, so a touch that SwiftUI never reports as ended can't keep it forever.
-            var heldSeconds = 0
-            while hold.isHeld, heldSeconds < 30 {
-                try await effects.sleep(.seconds(1))
-                heldSeconds += 1
-            }
+            try await hold.waitWhileHeld(sleep: effects.sleep)
             try Task.checkCancellation()
             model.dismissFeedback(id: event.id)
         } catch {}

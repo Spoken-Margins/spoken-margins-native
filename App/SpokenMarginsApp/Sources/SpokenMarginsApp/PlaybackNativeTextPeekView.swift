@@ -77,21 +77,30 @@ struct NativeTextPeekView: View {
 }
 
 extension NativeTextPeekView {
+    /// Changes the shown chapter, then says which one it is: the text and heading are replaced in place and focus stays
+    /// on the pressed button, so VoiceOver would otherwise say nothing (#3728).
+    private func stepChapter(_ change: () -> Void) {
+        change()
+        if let text = VoiceOverAnnouncements.readerChapter(position: browser.position, title: reader.chapterTitle) {
+            AccessibilityNotification.Announcement(text).post()
+        }
+    }
+
     private var chapterControls: some View {
         HStack(spacing: 12) {
-            Button { browser.step(.previous) } label: {
+            Button { stepChapter { browser.step(.previous) } } label: {
                 Label("Previous chapter", systemImage: "chevron.left").labelStyle(.iconOnly)
             }
             .disabled(!browser.canStep(.previous))
             .accessibilityIdentifier(NativeTextPeekView.previousIdentifier)
             Spacer(minLength: 0)
             if !browser.isAtOpening {
-                Button("Playing chapter") { browser.returnToOpening() }
+                Button("Playing chapter") { stepChapter { browser.returnToOpening() } }
                     .lineLimit(2)
                     .accessibilityIdentifier(NativeTextPeekView.playingIdentifier)
                 Spacer(minLength: 0)
             }
-            Button { browser.step(.next) } label: {
+            Button { stepChapter { browser.step(.next) } } label: {
                 Label("Next chapter", systemImage: "chevron.right").labelStyle(.iconOnly)
             }
             .disabled(!browser.canStep(.next))

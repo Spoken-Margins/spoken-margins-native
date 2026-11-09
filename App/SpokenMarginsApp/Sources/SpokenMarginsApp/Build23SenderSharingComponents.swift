@@ -173,7 +173,7 @@ struct Build23PlaceholderWordsEditor: View {
                     Build23PlaceholderTag()
                 }
             }
-            TextField(
+            AppTextField(
                 placeholder,
                 text: Binding(
                     get: { margin.isShowingPlaceholder ? "" : margin.reviewedText },
@@ -258,31 +258,36 @@ struct Build23TransportConsequenceCard: View {
     }
 }
 
-/// The recipient preview's share actions: back to the selection, "Share your Margins", and under them what else
-/// the build offers to send ("Share as link", #487). One view, so a test can render the real buttons in each state.
-struct Build23VerifiedShareActions<LinkRow: View>: View {
+/// The recipient preview's share actions: back to the selection and the file share. In a build that makes links the
+/// pinned Share button makes the link, and the file share here becomes the second choice, "Send as a file" (#3750).
+/// One view, so a test can render the real buttons in each state.
+struct Build23VerifiedShareActions: View {
     let isFileShareEnabled: Bool
+    var fileIsSecondChoice = false
     let onEdit: () -> Void
     let onShareFile: () -> Void
-    @ViewBuilder let linkRow: () -> LinkRow
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            AdaptiveStack(spacing: 12) {
-                Button("Edit selection", systemImage: "arrow.left", action: onEdit)
+        AdaptiveStack(spacing: 12) {
+            Button("Edit selection", systemImage: "arrow.left", action: onEdit)
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("build23.sender.preview.edit")
+
+            Spacer()
+
+            if fileIsSecondChoice {
+                Button("Send as a file", systemImage: "doc", action: onShareFile)
                     .buttonStyle(.bordered)
-                    .accessibilityIdentifier("build23.sender.preview.edit")
-
-                Spacer()
-
+                    .disabled(!isFileShareEnabled)
+                    .accessibilityHint("Opens the share sheet with your Margins as a file")
+                    .accessibilityIdentifier("build23.sender.share.present")
+            } else {
                 Button("Share your Margins", systemImage: "square.and.arrow.up", action: onShareFile)
                     .filledActionButton()
                     .disabled(!isFileShareEnabled)
                     .accessibilityHint("Opens the system share sheet with your Margins")
                     .accessibilityIdentifier("build23.sender.share.present")
             }
-
-            linkRow()
         }
     }
 }
@@ -527,7 +532,7 @@ struct Build23MarginEditor: View {
                         Text("These excerpts help place the Margin for the recipient. Most people do not need to edit them.")
                             .font(.footnote)
                             .foregroundStyle(AppColors.secondaryText)
-                        TextField(
+                        AppTextField(
                             "Words before this Margin",
                             text: Binding(
                                 get: { margin.anchorBefore },
@@ -539,7 +544,7 @@ struct Build23MarginEditor: View {
                         .accessibilityLabel("Words before this Margin")
                         .accessibilityIdentifier("build23.sender.anchor.before.\(margin.id)")
 
-                        TextField(
+                        AppTextField(
                             "Words after this Margin",
                             text: Binding(
                                 get: { margin.anchorAfter },
@@ -555,7 +560,7 @@ struct Build23MarginEditor: View {
                 }
                 .font(.headline)
 
-                HStack(spacing: 10) {
+                AdaptiveStack(spacing: 10) {
                     Button("Undo", systemImage: "arrow.uturn.backward") {
                         send(.undo(id: margin.id))
                     }
@@ -569,7 +574,7 @@ struct Build23MarginEditor: View {
                     .accessibilityIdentifier("build23.sender.editor.redo.\(margin.id)")
 
                     if margin.canUndo || margin.automaticCleanupEnabled || margin.hasCleanedVoice {
-                        Spacer()
+                        AdaptiveSpacer()
                         Button("Undo all edits") {
                             send(.restoreOriginal(id: margin.id))
                         }
@@ -676,13 +681,13 @@ struct Build23BatchPreparationCard: View {
                     .accessibilityLabel("Voice preparation progress")
                     .accessibilityValue("\(completed) of \(total) complete")
 
-                    HStack {
+                    AdaptiveStack {
                         Build23StatusLabel(
                             icon: "hourglass",
                             title: "\(completed) of \(total) prepared",
                             tint: AppColors.evergreen
                         )
-                        Spacer()
+                        AdaptiveSpacer()
                         Button("Cancel preparation", role: .cancel, action: onCancel)
                             .buttonStyle(.bordered)
                             .accessibilityIdentifier("build23.sender.preparation.cancel")

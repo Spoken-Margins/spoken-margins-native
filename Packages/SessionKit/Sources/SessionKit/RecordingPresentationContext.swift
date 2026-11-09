@@ -11,7 +11,7 @@ public struct RecordingPresentationContext: Equatable, Sendable {
 
     public init(snapshot: SessionSnapshot, startedAt: Date) {
         let title = snapshot.title ?? ""
-        itemTitle = title.isEmpty ? "Current item" : title
+        itemTitle = title.isEmpty ? "Current" : title
         locationTitle = snapshot.chapterTitle ?? "Current listening position"
         progressPercent = snapshot.currentPlaybackProgressPercent
         self.startedAt = startedAt

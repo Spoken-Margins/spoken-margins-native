@@ -482,6 +482,31 @@ class T3Tests(unittest.TestCase):
         stopped = lane.summarize_manifest({'steps': []})
         self.assertEqual(lane.t3_verdict([stopped], ['failed_or_incomplete']), 'INCONCLUSIVE')
 
+    def test_a_hosted_audio_loopback_class_that_could_not_listen_is_not_a_fail_or_an_inconclusive(self):
+        """#3604: a hosted Mac has no BlackHole, so the AudioLoopback skip is recorded as not run; the rest decides."""
+        ran = {'status': 'verified', 'steps': [{'name': 'xcode-tests', 'tests': {'T/A/test1': {'status': 'passed'}}}]}
+        audio = 'T/AudioLoopbackPlaybackTests/testVoice'
+        only_audio = {'status': 'verified', 'steps': [{'name': 'xcode-tests', 'audio_not_run': [audio],
+                                                       'tests': {audio: {'status': 'skipped'}}}]}
+        nothing = {'status': 'verified', 'steps': [{'name': 'xcode-tests', 'tests': {}}]}
+        loopback, other = ['T/AudioLoopbackPlaybackTests'], ['T/A']
+        # (plan: (manifest, the selectors it was asked for)), the verdict, whether the report says the audio check is owed
+        for plans, verdict, owed in (
+                ({'app': (ran, other), 'adapters': (only_audio, loopback)}, 'PASS', True),
+                ({'adapters': (only_audio, loopback)}, 'INCONCLUSIVE', True),
+                ({'app': (ran, other), 'adapters': (nothing, other)}, 'FAIL', False),
+                # The audit on d223d47: another requested class in the same plan that ran nothing is still #2596's FAIL.
+                ({'app': (ran, other), 'adapters': (only_audio, loopback + ['T/Foo'])}, 'FAIL', True),
+                ({'adapters': (only_audio, loopback + ['T/Foo'])}, 'FAIL', True)):
+            with self.subTest(plans=list(plans), verdict=verdict):
+                grouped = {plan: selectors for plan, (_, selectors) in plans.items()}
+                summaries, statuses, _, details = lane.run_plans(grouped, lambda plan, *_: plans[plan][0], Path('/e'))
+                self.assertEqual(lane.t3_verdict(summaries, statuses), verdict)
+                self.assertEqual(any('not run on the hosted Mac' in line and 'still owed' in line for line in details), owed)
+                self.assertEqual(any('ran 0 of the requested tests' in line for line in details), verdict == 'FAIL')
+                audio_only_plan = any(selectors == loopback for _, selectors in plans.values())
+                self.assertEqual(any('only AudioLoopback tests were requested' in line for line in details), audio_only_plan)
+
     def test_only_a_deliberate_wait_is_a_hold(self):
         held = ['not merged: held for T3: this PR\'s newest /lane T3 request has no lane report yet.']
         self.assertTrue(lane.is_hold('INCONCLUSIVE', ['tested nothing'] + held))

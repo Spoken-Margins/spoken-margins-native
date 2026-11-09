@@ -36,10 +36,28 @@ extension Gate1AppModel {
         guard !rejectNavigationOrSessionMutationWhileRecording("open_export") else { return }
         do {
             selectedItem = try loadItemDetail(id: itemID, store: requireStore())
-            guard let sessionId = try ItemShareSessionSelection.sessionId(newestFirst: selectedItem.sessionRows.map(\.id), margins: { try requireStore().loadInterjections(sessionId: $0) }) else { return reportFailure("Record at least one Margin on this item before sharing.") }
+            guard let sessionId = try ItemShareSessionSelection.sessionId(newestFirst: selectedItem.sessionRows.map(\.id), margins: { try requireStore().loadInterjections(sessionId: $0) }) else { return reportFailure("Record at least one Margin on it before sharing.") }
             exportSessionId = sessionId; prepareExportShareInterjections() // #147: straight to the Share Margins sheet, not the Share/Export screen.
             if isSharingInterjectionsPresented { sharingState.entry = entry }
-        } catch { reportFailure(error, context: "Open item export failed") }
+        } catch { reportFailure(error, context: "Open export failed") }
+    }
+
+    /// "Share this Margin" on Margin details (#3211): the friend sheet with only that Margin, starting on the review.
+    /// Share always means another listener, so this makes a packet and never a Markdown file. Like the Margins tab's
+    /// Share it leaves the playing session and the current screen alone; only `selectedItem` follows the Margin's item.
+    func openMarginShare(_ margin: Interjection) {
+        guard !rejectNavigationOrSessionMutationWhileRecording("open_margin_share") else { return }
+        guard ItemShareSessionSelection.isShareable(margin) else {
+            return reportFailure("This Margin can't be shared with a friend yet.")
+        }
+        do {
+            selectedItem = try loadItemDetail(id: margin.itemId, store: requireStore())
+            prepareShareInterjections(candidates: [margin])
+            if isSharingInterjectionsPresented {
+                sharingState.draftsPreparedForExport = true
+                sharingState.entry = .reviewDefaults
+            }
+        } catch { reportFailure(error, context: "Share this Margin failed") }
     }
 
     func prepareShareInterjections() {
@@ -54,7 +72,7 @@ extension Gate1AppModel {
             $0.status == "active" && $0.targetType == .item
         }
         guard !candidates.isEmpty else {
-            reportFailure("Record at least one Margin on this item before sharing.")
+            reportFailure("Record at least one Margin on it before sharing.")
             return
         }
         let hasStarredCandidates = replyBack == nil && candidates.contains { $0.isStarredForSharing == true }

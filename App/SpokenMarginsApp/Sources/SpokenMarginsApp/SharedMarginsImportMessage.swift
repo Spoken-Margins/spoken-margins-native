@@ -26,19 +26,19 @@ enum SharedMarginsImportMessage {
             case "shared_article_unreadable":
                 return "Couldn’t read the article these Margins belong to. Open it in Safari and share it to Spoken Margins, then open the Margins again."
             case "shared_item_not_in_library":
-                return "These Margins belong to an item that isn’t in your Library. Add it, then open the Margins again."
+                return "These Margins belong to something that isn’t in your Library. Add it, then open the Margins again."
             case "shared_embedded_item_is_unavailable", "shared_package_repair_item_is_unavailable":
-                return "The item these Margins belong to isn’t available. Add it to your Library, then open the Margins again."
+                return "What these Margins belong to isn’t available. Add it to your Library, then open the Margins again."
             case "shared_map_not_found_in_item":
-                return "This Listening Map doesn’t fit your copy of the item, so it wasn’t added. If your copy is a different edition, ask for a map made on it."
+                return "This Listening Map doesn’t fit your copy, so it wasn’t added. If your copy is a different edition, ask for a map made on it."
             case "shared_map_article_unreadable":
                 return "Couldn’t read the article this Listening Map belongs to. Open it in Safari and share it to Spoken Margins, then open the map again."
             case "shared_map_item_is_playing":
-                return "Pause playback first. This Listening Map is for the item that’s playing."
+                return "Pause playback first. This Listening Map is for what’s playing."
             case "shared_map_is_unavailable":
                 return "This file has no Listening Map that this version can read."
             case "shared_package_repair_source_did_not_match":
-                return "That source doesn’t match the item these Margins were made on. Add the same item, or cancel the import."
+                return "That source doesn’t match what these Margins were made on. Add the same one, or cancel the import."
             default:
                 return genericMessage
             }
@@ -60,5 +60,5 @@ enum SharedMarginsImportMessage {
         return SafeErrorText.decodingDetail(decoding)
     }
 
-    static let genericMessage = "Couldn’t import these Margins. Try again, or add the item to your Library first."
+    static let genericMessage = "Couldn’t import these Margins. Try again, or add it to your Library first."
 }

@@ -33,6 +33,101 @@ public struct AppDynamicRGB: Equatable, Sendable {
     }
 }
 
+extension AppColorRGB {
+    /// This colour drawn at `alpha` over `base`: the straight-alpha blend SwiftUI's `.opacity` makes, in the same
+    /// colour space the other numbers here are in. The audit needs it because a tint is never read alone; the text
+    /// sits on the tint over whatever is behind it (#3739).
+    public func composited(over base: AppColorRGB, alpha: Double) -> AppColorRGB {
+        let a = min(max(alpha, 0), 1)
+        return AppColorRGB(
+            red: red * a + base.red * (1 - a),
+            green: green * a + base.green * (1 - a),
+            blue: blue * a + base.blue * (1 - a)
+        )
+    }
+}
+
+extension AppDynamicRGB {
+    /// `AppColorRGB.composited(over:alpha:)` in each appearance.
+    public func composited(over base: AppDynamicRGB, alpha: Double) -> AppDynamicRGB {
+        AppDynamicRGB(
+            light: light.composited(over: base.light, alpha: alpha),
+            dark: dark.composited(over: base.dark, alpha: alpha)
+        )
+    }
+}
+
+/// The system colours the app draws with directly, as Apple publishes them (the sRGB values of the system palette as
+/// the audit issues quote them; iOS 26 may have shifted some, which would move a ratio and not the fact that it fails). They are
+/// here so the audit can measure a pair that names one, instead of the pair being invisible to it (#3739). A new use
+/// of a system colour outside the allowlist in the guard tests fails; the way out is a token in `AppSemanticColorRGB`.
+public enum AppSystemColorRGB {
+    public static let red = AppDynamicRGB(light: .init(red: 1, green: 0.231, blue: 0.188), dark: .init(red: 1, green: 0.271, blue: 0.227))
+    public static let orange = AppDynamicRGB(light: .init(red: 1, green: 0.584, blue: 0), dark: .init(red: 1, green: 0.624, blue: 0.039))
+    public static let yellow = AppDynamicRGB(light: .init(red: 1, green: 0.8, blue: 0), dark: .init(red: 1, green: 0.839, blue: 0.039))
+    public static let green = AppDynamicRGB(light: .init(red: 0.204, green: 0.78, blue: 0.349), dark: .init(red: 0.188, green: 0.82, blue: 0.345))
+    public static let blue = AppDynamicRGB(light: .init(red: 0, green: 0.478, blue: 1), dark: .init(red: 0.039, green: 0.518, blue: 1))
+
+    /// watchOS has one appearance, and it draws the dark values.
+    public static let watchOrange = AppDynamicRGB(light: orange.dark, dark: orange.dark)
+    public static let watchBlue = AppDynamicRGB(light: blue.dark, dark: blue.dark)
+
+    /// The Live Activity draws on one fixed dark plate in both appearances (`activityBackgroundTint`). The progress blue and the
+    /// second green are literals in the widget.
+    private static func fixed(_ red: Double, _ green: Double, _ blue: Double) -> AppDynamicRGB {
+        let color = AppColorRGB(red: red, green: green, blue: blue)
+        return AppDynamicRGB(light: color, dark: color)
+    }
+    public static let liveActivityPlate = fixed(0.08, 0.09, 0.12)
+    public static let liveActivityProgress = fixed(0.34, 0.71, 0.91)
+    public static let liveActivityGreen = fixed(0.27, 0.78, 0.43)
+    /// Neither widget sets a colour scheme, so a system colour may resolve to either of its values on the Lock Screen: these are the
+    /// system colours as they are, light and dark, and the audit measures both.
+    public static let liveActivityRed = red
+    public static let liveActivityOrange = orange
+    public static let liveActivityGreenSystem = green
+    public static let liveActivityBlue = blue
+    /// The Dynamic Island is always black, and its secondary label is the system's dark secondary: white-grey at 60%.
+    public static let dynamicIslandBlack = fixed(0, 0, 0)
+    public static let darkSecondaryLabel = fixed(0.922, 0.922, 0.961)
+
+    /// UIKit's own surface and label colours, as the share extension draws them (#3739 slice 4): the card is
+    /// `secondarySystemBackground` (#F2F2F7 light, #1C1C1E dark) and its words are `label` (black, white).
+    public static let secondarySystemBackground = AppDynamicRGB(
+        light: .init(red: 242.0 / 255, green: 242.0 / 255, blue: 247.0 / 255),
+        dark: .init(red: 28.0 / 255, green: 28.0 / 255, blue: 30.0 / 255)
+    )
+    public static let label = AppDynamicRGB(light: .init(red: 0, green: 0, blue: 0), dark: .init(red: 1, green: 1, blue: 1))
+}
+
+/// The colours of the Safari extension's popup (`popup.css`): one fixed palette, written as hex in the stylesheet, which
+/// the popup draws in both appearances. The guard tests read every hex literal in the stylesheet and fail on one that is
+/// not listed here, so a new colour needs a pair in `AppColorContrastAudit.safariPopupPairs` (#3739 slice 4).
+public enum AppSafariPopupRGB {
+    /// The six-digit hex (lower case, no `#`) of each colour the stylesheet may use, and the colour it is.
+    public static let palette: [String: AppDynamicRGB] = {
+        let hexes = ["f6f6f6", "101312", "57d696", "07110d", "aeb8b3", "111111", "bdbdbd"]
+        return Dictionary(uniqueKeysWithValues: hexes.map { ($0, fixed(hex: $0)) })
+    }()
+
+    public static func fixed(hex: String) -> AppDynamicRGB {
+        precondition(hex.count == 6, "a six-digit hex")
+        let value = UInt32(hex, radix: 16) ?? 0
+        let color = AppColorRGB(
+            red: Double((value >> 16) & 0xff) / 255, green: Double((value >> 8) & 0xff) / 255, blue: Double(value & 0xff) / 255
+        )
+        return AppDynamicRGB(light: color, dark: color)
+    }
+
+    public static var text: AppDynamicRGB { fixed(hex: "f6f6f6") }
+    public static var plate: AppDynamicRGB { fixed(hex: "101312") }
+    public static var accent: AppDynamicRGB { fixed(hex: "57d696") }
+    public static var markText: AppDynamicRGB { fixed(hex: "07110d") }
+    public static var caption: AppDynamicRGB { fixed(hex: "aeb8b3") }
+    public static var buttonText: AppDynamicRGB { fixed(hex: "111111") }
+    public static var status: AppDynamicRGB { fixed(hex: "bdbdbd") }
+}
+
 public enum AppSemanticColorRGB {
     private static func fixed(_ red: Double, _ green: Double, _ blue: Double) -> AppDynamicRGB {
         let color = AppColorRGB(red: red, green: green, blue: blue)
@@ -226,6 +321,9 @@ public enum AppColorContrastAudit {
         .init(name: "listening secondary on watch background", foreground: AppSemanticColorRGB.listeningSecondary, background: AppSemanticColorRGB.watchBackground, minimumRatio: 4.5),
         .init(name: "danger label on watch control", foreground: AppSemanticColorRGB.watchDanger, background: AppSemanticColorRGB.watchControl, minimumRatio: 4.5),
         .init(name: "danger label on watch background", foreground: AppSemanticColorRGB.watchDanger, background: AppSemanticColorRGB.watchBackground, minimumRatio: 4.5),
+        // The follow-a-source card's two quiet buttons and its caption sit on a panel (#3732).
+        .init(name: "evergreen text on panel", foreground: AppSemanticColorRGB.evergreen, background: AppSemanticColorRGB.panel, minimumRatio: 4.5),
+        .init(name: "danger text on panel", foreground: AppSemanticColorRGB.dangerText, background: AppSemanticColorRGB.panel, minimumRatio: 4.5),
         .init(name: "NOW badge label", foreground: AppSemanticColorRGB.text, background: AppSemanticColorRGB.accentSoft, minimumRatio: 4.5)
     ]
 
@@ -253,7 +351,156 @@ public enum AppColorContrastAudit {
         .init(name: "playback accent mark on watch control", foreground: AppSemanticColorRGB.accent, background: AppSemanticColorRGB.watchControl, minimumRatio: 3)
     ]
 
-    public static var allPairs: [Pair] { textBackgroundPairs + nonTextPairs + increasedContrastEdgePairs }
+    /// A tint drawn at `alpha` over `base`, with the text that sits on it. The name carries the tint, its alpha and the
+    /// base's name, which is how the tint guard finds the pairs that audit a tint.
+    private static func onTint(
+        _ label: String, foreground: AppDynamicRGB, tint: String, tintColor: AppDynamicRGB, alpha: Double,
+        over base: AppDynamicRGB, baseName: String, minimumRatio: Double = 4.5
+    ) -> Pair {
+        Pair(
+            name: "\(label) on \(tint) at \(alpha) over \(baseName)",
+            foreground: foreground,
+            background: tintColor.composited(over: base, alpha: alpha),
+            minimumRatio: minimumRatio
+        )
+    }
+
+    /// The Timeline rail's rows, which sit on bone: each row is a tint over bone, and the row's own words are drawn
+    /// on it (`PlaybackTimelineListView.swift`). The tints are the row fills there (#3734).
+    public static let timelineRowPairs: [Pair] = {
+        let rows: [(tint: String, color: AppDynamicRGB, alpha: Double, label: (name: String, color: AppDynamicRGB))] = [
+            ("evergreen", AppSemanticColorRGB.evergreen, 0.12, ("current row label", AppSemanticColorRGB.evergreen)),
+            ("evergreen", AppSemanticColorRGB.evergreen, 0.07, ("map row label", AppSemanticColorRGB.evergreen)),
+            ("coral", AppSemanticColorRGB.coral, 0.08, ("my Margin row label", AppSemanticColorRGB.coral)),
+            ("ochre", AppSemanticColorRGB.ochre, 0.08, ("response row label", AppSemanticColorRGB.ochreText)),
+            ("plum", AppSemanticColorRGB.plum, 0.07, ("shared Margin row label", AppSemanticColorRGB.plum))
+        ]
+        return rows.flatMap { row in
+            [
+                onTint("row title", foreground: AppSemanticColorRGB.text, tint: row.tint, tintColor: row.color, alpha: row.alpha, over: AppSemanticColorRGB.bone, baseName: "bone"),
+                onTint("row detail", foreground: AppSemanticColorRGB.secondaryText, tint: row.tint, tintColor: row.color, alpha: row.alpha, over: AppSemanticColorRGB.bone, baseName: "bone"),
+                onTint(row.label.name, foreground: row.label.color, tint: row.tint, tintColor: row.color, alpha: row.alpha, over: AppSemanticColorRGB.bone, baseName: "bone")
+            ]
+        }
+    }()
+
+    /// The Watch's plates: white label text on the system orange and blue (`WatchPlateButtonStyle` forces `.white`).
+    /// The colours are not tokens, so these pairs name the system values (#3731).
+    public static let watchPlatePairs: [Pair] = [
+        .init(name: "watch session plate label", foreground: AppSemanticColorRGB.white, background: AppSystemColorRGB.watchOrange, minimumRatio: 4.5),
+        .init(name: "watch episode and Record plate label", foreground: AppSemanticColorRGB.white, background: AppSystemColorRGB.watchBlue, minimumRatio: 4.5)
+    ]
+
+    /// Fills that carry an icon or a label and are not Timeline rows (#3739): the round icon
+    /// badges, the library row icon tiles, the selected subject chip and the live passage's current sentence. Each is a tint over the surface it is
+    /// drawn on (the badges sit in a panel card, the row tiles and chips on bone), and the mark on it is read as an icon (3:1) or as text (4.5:1).
+    public static let tintedFillPairs: [Pair] = [
+        onTint("round icon badge", foreground: AppSemanticColorRGB.ochreText, tint: "ochre", tintColor: AppSemanticColorRGB.ochre, alpha: 0.12, over: AppSemanticColorRGB.panel, baseName: "panel", minimumRatio: 3),
+        onTint("library row icon", foreground: AppSemanticColorRGB.evergreen, tint: "softGreen", tintColor: AppSemanticColorRGB.softGreen, alpha: 0.85, over: AppSemanticColorRGB.bone, baseName: "bone", minimumRatio: 3),
+        onTint("library row icon", foreground: AppSemanticColorRGB.evergreen, tint: "softGreen", tintColor: AppSemanticColorRGB.softGreen, alpha: 0.55, over: AppSemanticColorRGB.bone, baseName: "bone", minimumRatio: 3),
+        onTint("selected chip label", foreground: AppSemanticColorRGB.text, tint: "evergreen", tintColor: AppSemanticColorRGB.evergreen, alpha: 0.16, over: AppSemanticColorRGB.bone, baseName: "bone"),
+        onTint("current sentence text", foreground: AppSemanticColorRGB.white, tint: "listeningAccent", tintColor: AppSemanticColorRGB.listeningAccent, alpha: 0.18, over: AppSemanticColorRGB.listeningBackground, baseName: "listening background")
+    ]
+
+    /// The button and card fills drawn at a lower alpha, which is how a pressed state or a dimmed card is drawn (#3739):
+    /// each is read as the fill over the surface it sits on, with the label the button draws. The pressed state is the
+    /// alpha, so a button label has to hold up on the dimmed fill too. The playback screen is always dark, so its
+    /// buttons sit on the listening background; the light buttons sit on bone or on the app background.
+    public static let pressedFillPairs: [Pair] = {
+        let listening = (color: AppSemanticColorRGB.listeningBackground, name: "listening background")
+        let light = [(color: AppSemanticColorRGB.bone, name: "bone"), (color: AppSemanticColorRGB.background, name: "app background")]
+        var pairs: [Pair] = []
+        // The Listening options card and the on-device generation card: white and the dim listening grey on the plate.
+        for alpha in [0.72, 0.8] {
+            pairs.append(onTint("plate label", foreground: AppSemanticColorRGB.white, tint: "watchControl", tintColor: AppSemanticColorRGB.watchControl, alpha: alpha, over: listening.color, baseName: listening.name))
+            pairs.append(onTint("plate caption", foreground: AppSemanticColorRGB.listeningSecondary, tint: "watchControl", tintColor: AppSemanticColorRGB.watchControl, alpha: alpha, over: listening.color, baseName: listening.name))
+        }
+        // The on-device voice card (0.8) also draws the accent for its icons and spinner, and a Stop button tinted `watchDanger`.
+        pairs.append(onTint("voice card icon", foreground: AppSemanticColorRGB.accent, tint: "watchControl", tintColor: AppSemanticColorRGB.watchControl, alpha: 0.8, over: listening.color, baseName: listening.name, minimumRatio: 3))
+        pairs.append(onTint("voice card Stop label", foreground: AppSemanticColorRGB.watchDanger, tint: "watchControl", tintColor: AppSemanticColorRGB.watchControl, alpha: 0.8, over: listening.color, baseName: listening.name))
+        pairs.append(onTint("main play icon", foreground: AppSemanticColorRGB.captureText, tint: "listeningAccent", tintColor: AppSemanticColorRGB.listeningAccent, alpha: 0.75, over: listening.color, baseName: listening.name, minimumRatio: 3))
+        pairs.append(onTint("Add a Margin label", foreground: AppSemanticColorRGB.captureText, tint: "captureBackground", tintColor: AppSemanticColorRGB.captureBackground, alpha: 0.78, over: listening.color, baseName: listening.name))
+        for base in light {
+            pairs.append(onTint("light button label", foreground: AppSemanticColorRGB.text, tint: "panel", tintColor: AppSemanticColorRGB.panel, alpha: 0.75, over: base.color, baseName: base.name))
+            pairs.append(onTint("primary button label", foreground: AppSemanticColorRGB.white, tint: "primaryAction", tintColor: AppSemanticColorRGB.primaryAction, alpha: 0.78, over: base.color, baseName: base.name))
+            pairs.append(onTint("secondary button label", foreground: AppSemanticColorRGB.text, tint: "softGreen", tintColor: AppSemanticColorRGB.softGreen, alpha: 0.7, over: base.color, baseName: base.name))
+        }
+        return pairs
+    }()
+
+    /// The Live Activity (`Gate2LiveActivityWidget.swift`, `LiveSessionActivityWidget.swift`): white text at several alphas, the
+    /// progress blue, red and orange marks, and the chips, all on the fixed dark plate (#3739 slice 3). White at an alpha is a tint,
+    /// so each is composited over the plate; a chip is white or green at an alpha over the plate with white text on it.
+    public static let liveActivityPairs: [Pair] = {
+        let plate = AppSystemColorRGB.liveActivityPlate
+        let white = AppSemanticColorRGB.white
+        var pairs: [Pair] = [
+            .init(name: "live activity title", foreground: white, background: plate, minimumRatio: 4.5),
+            .init(name: "live activity progress mark", foreground: AppSystemColorRGB.liveActivityProgress, background: plate, minimumRatio: 3),
+            // The state words are bold caption text (`recordingTint`), so they need the text ratio.
+            .init(name: "live activity recording state text (red)", foreground: AppSystemColorRGB.liveActivityRed, background: plate, minimumRatio: 4.5),
+            .init(name: "live activity paused state text (orange)", foreground: AppSystemColorRGB.liveActivityOrange, background: plate, minimumRatio: 4.5),
+            // `.tint(.blue)` on the headline buttons of the shared-Margin card is text too.
+            .init(name: "live activity button label tint (blue)", foreground: AppSystemColorRGB.liveActivityBlue, background: plate, minimumRatio: 4.5),
+            // The Dynamic Island's `Next:` line is `.secondary` on its black.
+            .init(
+                name: "dynamic island secondary text",
+                foreground: AppSystemColorRGB.darkSecondaryLabel.composited(over: AppSystemColorRGB.dynamicIslandBlack, alpha: 0.6),
+                background: AppSystemColorRGB.dynamicIslandBlack, minimumRatio: 4.5
+            )
+        ]
+        for alpha in [0.74, 0.78, 0.8, 0.84, 0.86] {
+            pairs.append(.init(name: "live activity white text at \(alpha)", foreground: white.composited(over: plate, alpha: alpha), background: plate, minimumRatio: 4.5))
+        }
+        let chips: [(String, AppDynamicRGB, Double)] = [
+            ("white", white, 0.16), ("white", white, 0.12), ("white", white, 0.14),
+            ("green", AppSystemColorRGB.liveActivityGreenSystem, 0.28), ("green (literal)", AppSystemColorRGB.liveActivityGreen, 0.28)
+        ]
+        for chip in chips {
+            pairs.append(onTint("live activity chip label", foreground: white, tint: chip.0, tintColor: chip.1, alpha: chip.2, over: plate, baseName: "live activity plate"))
+        }
+        pairs.append(.init(
+            name: "live activity chip label at 0.86 on white at 0.12 over live activity plate",
+            foreground: white.composited(over: plate, alpha: 0.86),
+            background: white.composited(over: plate, alpha: 0.12),
+            minimumRatio: 4.5
+        ))
+        return pairs
+    }()
+
+    /// The share extension's status card (`SourceLinkShareViewController.swift`): UIKit's `label` on `secondarySystemBackground`, with
+    /// the app's `green` for the icon and the Done button. The extension doesn't link SessionKit, so it carries a copy of the
+    /// green; the guard tests keep the copy equal to the token (#3739 slice 4).
+    public static let shareExtensionPairs: [Pair] = [
+        .init(name: "share extension title", foreground: AppSystemColorRGB.label, background: AppSystemColorRGB.secondarySystemBackground, minimumRatio: 4.5),
+        .init(name: "share extension status line", foreground: AppSystemColorRGB.label, background: AppSystemColorRGB.secondarySystemBackground, minimumRatio: 4.5),
+        .init(name: "share extension Done label (app green)", foreground: AppSemanticColorRGB.green, background: AppSystemColorRGB.secondarySystemBackground, minimumRatio: 4.5),
+        .init(name: "share extension icon (app green)", foreground: AppSemanticColorRGB.green, background: AppSystemColorRGB.secondarySystemBackground, minimumRatio: 3)
+    ]
+
+    /// The Safari popup (`popup.css`): every colour is a fixed hex on one dark plate. The disabled button is the whole
+    /// button at 55% over the plate; a disabled control is exempt from WCAG 1.4.3, and it is held to 3:1 here so it stays
+    /// legible as a control.
+    public static let safariPopupPairs: [Pair] = {
+        let plate = AppSafariPopupRGB.plate
+        return [
+            .init(name: "safari popup body and title", foreground: AppSafariPopupRGB.text, background: plate, minimumRatio: 4.5),
+            .init(name: "safari popup brand mark", foreground: AppSafariPopupRGB.markText, background: AppSafariPopupRGB.accent, minimumRatio: 4.5),
+            .init(name: "safari popup caption", foreground: AppSafariPopupRGB.caption, background: plate, minimumRatio: 4.5),
+            .init(name: "safari popup button label", foreground: AppSafariPopupRGB.buttonText, background: AppSafariPopupRGB.accent, minimumRatio: 4.5),
+            .init(
+                name: "safari popup disabled button label (exempt, kept above 3:1)",
+                foreground: AppSafariPopupRGB.buttonText.composited(over: plate, alpha: 0.55),
+                background: AppSafariPopupRGB.accent.composited(over: plate, alpha: 0.55), minimumRatio: 3
+            ),
+            .init(name: "safari popup status line", foreground: AppSafariPopupRGB.status, background: plate, minimumRatio: 4.5)
+        ]
+    }()
+
+    public static var allPairs: [Pair] {
+        textBackgroundPairs + nonTextPairs + increasedContrastEdgePairs + timelineRowPairs + watchPlatePairs + tintedFillPairs + pressedFillPairs + liveActivityPairs
+            + shareExtensionPairs + safariPopupPairs
+    }
 
     /// A pair that fails today, in an appearance, with the issue that fixes it. The audit prints these
     /// instead of hiding them, and fails when one starts to pass so the entry gets removed (#1921).
@@ -272,7 +519,23 @@ public enum AppColorContrastAudit {
         .init(pair: "input fill on panel", appearance: "light", since: "2026-10-17", fixedBy: "#1922"),
         .init(pair: "input fill on panel", appearance: "dark", since: "2026-10-17", fixedBy: "#1922"),
         .init(pair: "input fill on app background", appearance: "light", since: "2026-10-17", fixedBy: "#1922"),
-        .init(pair: "input fill on app background", appearance: "dark", since: "2026-10-17", fixedBy: "#1922")
+        .init(pair: "input fill on app background", appearance: "dark", since: "2026-10-17", fixedBy: "#1922"),
+        // Found by hand in the 2026-11-08 audit, and measured here once the audit could composite a tint (#3739).
+        // The Timeline rows' tints are too strong for the secondary text on them in light mode (#3734).
+        .init(pair: "row detail on evergreen at 0.12 over bone", appearance: "light", since: "2026-11-08", fixedBy: "#3734"),
+        .init(pair: "row detail on evergreen at 0.07 over bone", appearance: "light", since: "2026-11-08", fixedBy: "#3734"),
+        .init(pair: "row detail on coral at 0.08 over bone", appearance: "light", since: "2026-11-08", fixedBy: "#3734"),
+        .init(pair: "my Margin row label on coral at 0.08 over bone", appearance: "light", since: "2026-11-08", fixedBy: "#3734"),
+        .init(pair: "row detail on ochre at 0.08 over bone", appearance: "light", since: "2026-11-08", fixedBy: "#3734"),
+        .init(pair: "row detail on plum at 0.07 over bone", appearance: "light", since: "2026-11-08", fixedBy: "#3734"),
+        // The Live Activity's `.tint(.blue)` button labels are the system blue, 4.46:1 on the plate when the system draws its light value
+        // (#3739 slice 3). The widgets set no colour scheme. The fix is a token for the tint, or a forced dark scheme on the activity.
+        .init(pair: "live activity button label tint (blue)", appearance: "light", since: "2026-11-08", fixedBy: "#3739"),
+        // The Watch's plates force white text on the system orange and blue (#3731). One appearance, listed twice.
+        .init(pair: "watch session plate label", appearance: "light", since: "2026-11-08", fixedBy: "#3731"),
+        .init(pair: "watch session plate label", appearance: "dark", since: "2026-11-08", fixedBy: "#3731"),
+        .init(pair: "watch episode and Record plate label", appearance: "light", since: "2026-11-08", fixedBy: "#3731"),
+        .init(pair: "watch episode and Record plate label", appearance: "dark", since: "2026-11-08", fixedBy: "#3731")
     ]
 
 

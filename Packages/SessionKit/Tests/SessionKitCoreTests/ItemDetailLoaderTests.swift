@@ -186,6 +186,41 @@ final class ItemDetailLoaderTests: XCTestCase {
         }
     }
 
+    /// #3664: a Margin on a spoken note's sentence keeps the words and id it was made on when the note's audio is joined
+    /// again with the sentence at another time. An episode's Margin is still placed by its time.
+    func testASpokenNoteMarginKeepsItsSentenceWhenTheJoinedAudioMovesAndAnEpisodeMarginStillFollowsItsTime() throws {
+        try withFixture { fixture, store, _ in
+            func seed(_ id: String, mediaType: String) throws {
+                var media = item(id)
+                media.mediaType = mediaType
+                media.media = ItemMedia(sourceType: .nativeMediaFile, url: "file:///\(id).m4a", durationMs: 600_000)
+                try store.saveItem(media)
+                try store.saveSession(Session(id: "S-\(id)", itemId: id,
+                    createdAt: Date(timeIntervalSince1970: 1), updatedAt: Date(timeIntervalSince1970: 1),
+                    status: "in_progress", phase: .itemPlayback, currentTargetType: .transcriptBackedMedia,
+                    currentTargetId: id, position: Position(), completionPercent: 0, playbackRate: 1))
+                var margin = note("m-\(id)", session: "S-\(id)", item: id, time: 10)
+                margin.anchor = Anchor(anchorType: .transcript, startChar: 0, endChar: 6, anchorBefore: "Made on", anchorAfter: "",
+                    mediaTimeMs: 4_200, transcriptSegmentId: SpokenNoteMargins.segmentId(takeId: "b", sentenceIndex: 0))
+                try store.saveInterjection(margin)
+                // The audio was joined again: the sentence's time now holds other words.
+                try store.saveTranscriptTimeline(SourceTranscriptTimeline(id: "t-\(id)", itemId: id,
+                    createdAt: Date(timeIntervalSince1970: 5),
+                    timeline: TranscriptTimeline(segments: [
+                        MediaTimelineSegment(id: "other", startMs: 0, endMs: 9_000, startChar: 20, endChar: 30, text: "Other words")
+                    ], chapters: [], durationMs: 600_000)))
+            }
+            try seed("note", mediaType: SpokenNoteItem.mediaType)
+            try seed("episode", mediaType: "podcast")
+
+            let noteAnchor = try XCTUnwrap(try fixture.load("note", store).interjections.first?.anchor)
+            XCTAssertEqual(noteAnchor.anchorBefore, "Made on", "the note's Margin keeps the words it was made on")
+            XCTAssertEqual(noteAnchor.transcriptSegmentId, SpokenNoteMargins.segmentId(takeId: "b", sentenceIndex: 0))
+            let episodeAnchor = try XCTUnwrap(try fixture.load("episode", store).interjections.first?.anchor)
+            XCTAssertEqual(episodeAnchor.transcriptSegmentId, "other", "an episode's Margin is still read from its time")
+        }
+    }
+
     /// #2506: the Item screen's `body` asked the store three questions on every render (the layers, the proposal ids,
     /// the timeline's chapters) to decide whether to show "A shared map couldn't be placed". The loader works the
     /// answer out once, and the screen reads it from the detail. Each row ends in what the old three reads said.

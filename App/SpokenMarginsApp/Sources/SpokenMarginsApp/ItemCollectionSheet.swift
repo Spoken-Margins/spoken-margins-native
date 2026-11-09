@@ -49,14 +49,14 @@ struct ItemCollectionSheet: View {
                 } header: {
                     Text(item.title)
                 } footer: {
-                    Text("Deleting a collection keeps its items and their Margins.")
+                    Text("Deleting a collection keeps everything in it, and all Margins.")
                 }
                 Section("New Collection") {
-                    TextField("Name, such as HIST 210", text: $newName)
+                    AppTextField("Name, such as HIST 210", text: $newName)
                         .submitLabel(.done)
                         .onSubmit(create)
                         .accessibilityIdentifier("collection.new.field")
-                    Button("Add Collection and This Item", systemImage: "plus.circle", action: create)
+                    Button("Create Collection and Add This", systemImage: "plus.circle", action: create)
                         .disabled(ItemCollectionEditing.normalizedName(newName) == nil)
                         .accessibilityIdentifier("collection.new.button")
                 }

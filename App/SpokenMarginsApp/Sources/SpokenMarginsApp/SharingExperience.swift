@@ -175,7 +175,7 @@ struct SpokenMarginsPackageImportView: View {
                             Text("Voice recordings: \(review.contents.manifest.assets.filter { [SpokenMarginsAssetRole.originalVoice, SpokenMarginsAssetRole.cleanedVoice].contains($0.role) }.count)")
                             Text("Podcast matching signatures: \(review.contents.manifest.assets.filter { $0.role == SpokenMarginsAssetRole.acousticSignature }.count)")
                             Text("Listening Map proposals: \(review.contents.listeningMapProposals.count) (stored as proposals; not activated)")
-                            Text(review.includesEmbeddedItem ? "Full listened-to item: included" : "Full listened-to item: not included")
+                            Text(review.includesEmbeddedItem ? "Full listened-to text: included" : "Full listened-to text: not included")
                             Text("Podcast audio: not included")
                         }
                         .font(.caption)
@@ -213,18 +213,18 @@ struct SpokenMarginsPackageImportView: View {
 
     private var importExplanation: String {
         if review.matchingItemId != nil {
-            return "Spoken Margins found this item in your library and will place the shared Margins in it. Nothing will play automatically."
+            return "Spoken Margins found this in your library and will place the shared Margins in it. Nothing will play automatically."
         }
         switch review.contents.manifest.itemTransport.kind {
         case .embeddedText:
             return "The sender included the exact text they listened to. Spoken Margins will add it to your library and resolve the Margins. Nothing will play automatically."
         case .reference:
-            return "Spoken Margins will reconstruct this linked item and then place the shared Margins in it. Nothing will play automatically."
+            return "Spoken Margins will rebuild this from its link and then place the shared Margins in it. Nothing will play automatically."
         case .recipientSupplied:
             if SharedEpisodeFeedMatcher.isPrivatePodcastSource(review.contents.manifest) {
                 return "These Margins came from a private podcast feed, so the episode is not included. Add the same episode to your library, for example by pasting your own feed link in the import screen, then reopen this .spokenmargins file."
             }
-            return "The item is not included. Add the same text, PDF, or EPUB to your library, then reopen this .spokenmargins file so its Margins can be attached safely."
+            return "The source is not included. Add the same text, PDF, or EPUB to your library, then reopen this .spokenmargins file so its Margins can be attached safely."
         }
     }
 }
@@ -253,13 +253,13 @@ struct InterjectionSharingView: View {
                                 VStack(alignment: .leading, spacing: 8) {
                                     Text("Review what you are sending")
                                         .font(.headline)
-                                    Text("Only the Margins you picked go: their text and voice, the words around each one, and which item they belong to. The podcast audio and the rest of your phone stay put.")
+                                    Text("Only the Margins you picked go: their text and voice, the words around each one, and what they belong to. The podcast audio and the rest of your phone stay put.")
                                         .font(.callout)
                                         .foregroundStyle(AppColors.secondaryText)
                                 }
                             }
 
-                            TextField("Your display label (optional)", text: $model.sharingState.senderDisplayLabel)
+                            AppTextField("Your display label (optional)", text: $model.sharingState.senderDisplayLabel)
                                 .textFieldStyle(.roundedBorder)
 
                             itemTransportReview
@@ -424,20 +424,20 @@ struct InterjectionSharingView: View {
     private var itemTransportReview: some View {
         ProductPanel {
             VStack(alignment: .leading, spacing: 8) {
-                Text("Item being listened to")
+                Text("What you’re listening to")
                     .font(.headline)
                 if let reference = model.sharingState.itemReferenceURL {
-                    Label("Linked item", systemImage: "link")
+                    Label("Linked from the web", systemImage: "link")
                         .font(.subheadline.weight(.semibold))
                     Text(reference)
                         .font(.caption)
                         .foregroundStyle(AppColors.secondaryText)
-                    Text("The recipient will reconstruct the item from this reference. The full item is not included.")
+                    Text("The recipient will rebuild it from this link. The full text is not included.")
                         .font(.footnote)
                         .foregroundStyle(AppColors.secondaryText)
                 } else if model.sharingState.canEmbedLinklessItem {
                     Toggle(
-                        "I’m sharing this privately and have the right to share this item",
+                        "I’m sharing this privately and have the right to share this",
                         isOn: $model.sharingState.confirmsPrivateSharingRights
                     )
                     .disabled(model.sharingState.isAppAuthoredItem)
@@ -446,7 +446,7 @@ struct InterjectionSharingView: View {
                             .font(.footnote)
                             .foregroundStyle(AppColors.secondaryText)
                     } else if model.sharingState.confirmsPrivateSharingRights {
-                        Text("The full listened-to text will be included so the recipient can add and listen to the item.")
+                        Text("The full listened-to text will be included so the recipient can add and listen to it.")
                             .font(.footnote)
                             .foregroundStyle(AppColors.secondaryText)
                     } else {
@@ -459,7 +459,7 @@ struct InterjectionSharingView: View {
                     }
                 } else {
                     Label {
-                        Text("The item itself cannot be included. Make sure the recipient already has the same item.")
+                        Text("This cannot be included. Make sure the recipient already has the same one.")
                             .font(.footnote)
                     } icon: {
                         Image(systemName: "exclamationmark.triangle")
@@ -696,15 +696,15 @@ struct InterjectionSharingView: View {
 
                 DisclosureGroup("Words around the Margin") {
                     VStack(alignment: .leading, spacing: 8) {
-                        TextField("Context before", text: Binding(
+                        AppTextField("Context before", text: Binding(
                             get: { model.sharingState.drafts.first(where: { $0.id == draft.id })?.anchorBefore ?? "" },
                             set: { model.setShareDraftAnchorBefore(draft.id, value: $0) }
                         ), axis: .vertical)
-                        TextField("Context after", text: Binding(
+                        AppTextField("Context after", text: Binding(
                             get: { model.sharingState.drafts.first(where: { $0.id == draft.id })?.anchorAfter ?? "" },
                             set: { model.setShareDraftAnchorAfter(draft.id, value: $0) }
                         ), axis: .vertical)
-                        Text("Only a short quote around each Margin is sent. Full item text is sent only when the item disclosure above says it is included.")
+                        Text("Only a short quote around each Margin is sent. The full text is sent only when the section above says it is included.")
                             .font(.footnote)
                             .foregroundStyle(AppColors.secondaryText)
                         Text("The quote after the Margin is capped at \(ExcerptCapRule.afterMaximum) characters. The quote before it is capped at up to \(ExcerptCapRule.beforeMaximum), depending on the length of your comment.")

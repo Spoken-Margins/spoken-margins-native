@@ -372,7 +372,7 @@ struct PlaybackScreen: View {
         }
         .fixedSize(horizontal: true, vertical: false)
         .accessibilityLabel("Share Margins")
-        .accessibilityHint("Opens the review of this item's Margins with Share ready")
+        .accessibilityHint("Opens the review of the Margins here, with Share ready")
         .accessibilityIdentifier("playback.shareMargins.button")
     }
 
@@ -438,10 +438,11 @@ struct PlaybackScreen: View {
             .disabled(!model.canSummarizeInterjections || model.isSummarizingInterjections)
             .accessibilityIdentifier("playback.summary.button")
         }
-        Button("Margins", systemImage: "quote.bubble") {
+        Button {
             closeOptions(to: .margins)
+        } label: {
+            Label("Margins", systemImage: "quote.bubble").frame(minHeight: 44).contentShape(Rectangle())
         }
-        .frame(minHeight: 44)
     }
 
     private var sessionActionDock: some View {
@@ -452,7 +453,7 @@ struct PlaybackScreen: View {
                 Image(systemName: "doc.text")
                     .frame(width: 48, height: 48)
             }
-            .accessibilityLabel("Item")
+            .accessibilityLabel("Details")
             .accessibilityIdentifier("playback.item.button")
 
             Button(action: openTimeline) {

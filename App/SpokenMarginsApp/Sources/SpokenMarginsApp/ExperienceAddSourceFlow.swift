@@ -139,8 +139,7 @@ struct ExperienceAddSourceFlow: View {
             if focusedField != nil {
                 HStack {
                     Spacer()
-                    Button("Done") { focusedField = nil }
-                        .frame(minWidth: 44, minHeight: 44)
+                    Button { focusedField = nil } label: { Text("Done").minimumTapTarget() }
                 }
                 .tint(AppColors.evergreen)
             }
@@ -292,7 +291,7 @@ struct ExperienceAddSourceFlow: View {
         ExperienceSurface(tint: AppColors.evergreen) {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Link or Podcast").font(.headline)
-                TextField("Podcast, RSS, audio, or web URL", text: $model.sourceLinkURL)
+                AppTextField("Podcast, RSS, audio, or web URL", text: $model.sourceLinkURL)
                     .textFieldStyle(.roundedBorder)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
@@ -323,7 +322,7 @@ struct ExperienceAddSourceFlow: View {
                     .accessibilityIdentifier("sourceLink.import.button")
                 }
                 SourceLinkImportStatusView()
-                Text("Adding a source never replaces the item already in Now Playing.")
+                Text("Adding a source never replaces what is already in Now Playing.")
                     .font(.caption)
                     .foregroundStyle(AppColors.secondaryText)
             }
@@ -333,7 +332,7 @@ struct ExperienceAddSourceFlow: View {
     private var pastedTextSource: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 12) {
-                TextField("Title (optional)", text: $model.importTitle)
+                AppTextField("Title (optional)", text: $model.importTitle)
                     .textFieldStyle(.roundedBorder)
                     .focused($focusedField, equals: .title)
                     .accessibilityIdentifier("create.title.field")
@@ -378,11 +377,12 @@ struct ExperienceAddSourceFlow: View {
     private var filesSource: some View {
         ExperienceSurface {
             VStack(alignment: .leading, spacing: 12) {
-                Button("Choose Files", systemImage: "folder.badge.plus") {
+                Button {
                     presentFileImporter(.files)
+                } label: {
+                    Label("Choose Files", systemImage: "folder.badge.plus").frame(minHeight: 44).contentShape(Rectangle())
                 }
                 .filledActionButton()
-                .frame(minHeight: 44)
                 .accessibilityIdentifier("files.import.button")
                 Text("Documents and books stay local and retain authored structure when the format provides it. Audiobooks are copied into app-owned storage and protected from automatic eviction. A Listening Edition collection (.json) or a Margins packet (.spokenmargins) can be chosen here too.")
                     .font(.caption)
@@ -462,8 +462,7 @@ struct ExperienceAddSourceFlow: View {
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("sourceLink.candidate.\(index)")
             }
-            Button("Cancel", role: .cancel, action: model.cancelSourceLinkCandidateReview)
-                .frame(minHeight: 44)
+            Button(role: .cancel, action: model.cancelSourceLinkCandidateReview) { Text("Cancel").minimumTapTarget() }
         }
     }
 
