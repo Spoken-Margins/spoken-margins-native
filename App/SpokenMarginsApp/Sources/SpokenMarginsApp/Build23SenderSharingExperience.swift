@@ -837,7 +837,6 @@ struct Build23SenderSharingExperience: View {
         if case .failed = coordinator.previewState { pendingShare = nil }
     }
 
-    /// A share asked for, or a link being made, for a packet the screen no longer shows is dropped (#3751 audit).
     /// The stage is replaced in place and focus can stay on the bottom button, so say where the sheet is now (#3728).
     /// `onCompatibleChange` hands over only the new value, so the previous stage is kept in `announcedStage`.
     private func announceStage(_ stage: Build23SharingStage) {
@@ -857,6 +856,7 @@ struct Build23SenderSharingExperience: View {
         }
     }
 
+    /// A share asked for, or a link being made, for a packet the screen no longer shows is dropped (#3751 audit).
     private func dropStaleShareRequests(stage: Build23SharingStage, previewState: Build23SharingPreviewState) {
         if !Build23ShareRequestPolicy.keepsPendingShare(stage: stage, previewState: previewState) {
             pendingShare = nil
