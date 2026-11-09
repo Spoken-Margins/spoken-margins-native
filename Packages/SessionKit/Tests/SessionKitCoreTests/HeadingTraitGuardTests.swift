@@ -27,10 +27,11 @@ final class HeadingTraitGuardTests: XCTestCase {
     }
 
     /// Every headline on the Live session screens is a section title, except the one marked as a field label.
+    /// The screen drawn like playback (#3491) keeps three: the setup field label, "Session ended" and "End Session".
     func testEveryLiveSessionHeadlineCarriesTheHeaderTrait() throws {
         let lines = try source(.appSources, "LiveSessionView.swift")
         let headlines = lines.indices.filter { lines[$0].contains(".font(.headline)") }
-        XCTAssertGreaterThanOrEqual(headlines.count, 5, "the scan must see the headlines")
+        XCTAssertGreaterThanOrEqual(headlines.count, 3, "the scan must see the headlines")
         for index in headlines where !lines[index].contains("a field label") {
             XCTAssertTrue(lines[index].contains(".isHeader"), "LiveSessionView.swift:\(index + 1) is a headline without the heading trait")
         }

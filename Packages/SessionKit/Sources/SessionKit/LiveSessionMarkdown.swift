@@ -121,14 +121,15 @@ public enum LiveSessionMarkdown {
         formatter.timeZone = timeZone
         formatter.dateFormat = "yyyy-MM-dd HH:mm"
         lines.append("- Kind: \(session.kind.label)")
-        var when = "- Date: \(formatter.string(from: session.startedAt))"
+        if let about = session.sessionDescription, !about.isEmpty { lines.append("- About: \(about)") }
+        var when = "- Date: \(formatter.string(from: session.statedStartedAt ?? session.startedAt))"
         if let end = session.endedAt {
             formatter.dateFormat = "HH:mm"
             when += " to \(formatter.string(from: end))"
             if let tapped = session.endTappedAt { when += ", told us at \(formatter.string(from: tapped))" }
         }
         lines.append(when)
-        if let start = session.startPositionMs { lines.append("- Started at: \(LiveSessionPositionMap.clock(start))") }
+        if let start = session.startPositionMs { lines.append("- Source clock at start: \(LiveSessionPositionMap.clock(start))") }
         if let end = session.endPositionMs { lines.append("- Ended at: \(LiveSessionPositionMap.clock(end))") }
         if let bracket = session.bracket { lines.append("- Where: \(bracket)") }
         // Evidence that disagrees is said, never settled silently (#2707).
