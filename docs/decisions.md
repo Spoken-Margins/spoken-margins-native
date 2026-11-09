@@ -502,6 +502,9 @@ How it is used:
   - **No policy for content the product can't carry (#3867):** "We don't have an ability to see or upload images, and so why are you suggesting that we have that policy?" The intimate-image page goes.
   - **Reports get an answer within 3 business days (#2238):** "I'm fine with three days."
   - **A phone check needs a reason (#2168, #2846):** "If it's waiting on a test, then there should be a separate issue for just testing it. And there should be a justification for why it needs to be tested and why we don't trust our own simulators." Hide this sender is checked in the simulator with a generated packet, not on two phones.
+- **No image-removal process: share links carry voice and text, never images (#3867).** He asked: "We don't have an ability to see or upload images, and so why are you suggesting that we have that policy?" The "Take It Down" removal page proposed on 2026-10-20 (D21, `docs/legal/attorney-questions.md`) is removed, with its report category and its links on the site and in Settings. This replaces the "posted Take It Down process" in the 2026-10-20 entry about the Report this link form; the form and the content policy stay.
+  - Bring it back only if image sharing ships (photo Margins, #2708) or the lawyer says so. Whether we are a "covered platform" stays lawyer question 5.
+  - Don't propose a process for content the product cannot carry. Check what the code can carry first.
 
 ## Background moved out of the guide (2026-11-06)
 - **From the guide.** Explanations that stood next to rules in `AGENTS.md`, moved here to keep it under its 4,000-word cap (the rules themselves are unchanged):
