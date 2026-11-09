@@ -25,6 +25,9 @@ final class RuntimeDiagnostics: ObservableObject {
             renderMs: renderMs, thermalAtStart: thermalAtStart, thermalAtEnd: thermalAtEnd, at: now.timeIntervalSinceReferenceDate))
     }
 
+    /// The queue is empty after a committed chunk, so the next chunk is a new request, not this run (#3816).
+    func preparationQueueDrained() { preparationRun.queueDrained() }
+
     func preparationHeatPaused(thermal: SpeechThermalLevel, at now: Date = Date()) {
         keep(AudioPreparationRunSummary.diagnosticsKey, preparationRun.heatPaused(thermal: thermal, at: now.timeIntervalSinceReferenceDate))
     }

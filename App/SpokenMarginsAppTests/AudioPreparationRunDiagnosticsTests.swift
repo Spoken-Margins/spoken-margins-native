@@ -30,6 +30,15 @@ final class AudioPreparationRunDiagnosticsTests: XCTestCase {
         XCTAssertEqual(diagnostics.values[key], "chunks=1;renderMsMedian=1000;renderMsP90=1000;heatPauses=0;peakThermal=nominal;wallClockS=1")
     }
 
+    func testAChunkAfterTheQueueDrainedStartsANewRunEvenWithinTheQuietGap() {
+        let diagnostics = RuntimeDiagnostics()
+        let first = Date(timeIntervalSinceReferenceDate: 1_000)
+        diagnostics.preparationChunkCommitted(renderMs: 9_000, thermalAtStart: .nominal, thermalAtEnd: .nominal, at: first)
+        diagnostics.preparationQueueDrained()
+        diagnostics.preparationChunkCommitted(renderMs: 1_000, thermalAtStart: .nominal, thermalAtEnd: .nominal, at: first + 15 * 60)
+        XCTAssertEqual(diagnostics.values[key], "chunks=1;renderMsMedian=1000;renderMsP90=1000;heatPauses=0;peakThermal=nominal;wallClockS=1")
+    }
+
     func testAHeatPauseAtTheGateIsCountedAndAnyOtherGateIsNot() throws {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(),
                                   databaseURLOverride: FileManager.default.temporaryDirectory

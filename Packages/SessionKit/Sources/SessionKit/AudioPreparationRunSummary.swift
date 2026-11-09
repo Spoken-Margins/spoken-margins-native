@@ -73,19 +73,25 @@ public struct AudioPreparationRunSummary: Equatable, Sendable {
     }
 }
 
-/// Which run an event belongs to. Nothing says when a run ends: the foreground loop, the background task and
-/// the pause wait all take turns on one queue, and each can stop while another goes on, so any "the run is
-/// over" call from one of them can cut another's run in two (found twice in review and audit of #3835). A run
-/// is instead the events that follow one another closely: the first event after a quiet spell longer than
-/// `idleGap` starts a new run, which replaces the last summary. The gap is longer than the longest heat wait
-/// (`OfflinePreparationRun.maximumHeatWaitSeconds`), so a pause that is being waited out doesn't split its run.
-/// Two runs started less than that apart count as one.
+/// Which run an event belongs to. No loop, task or wait ends a run: the foreground loop, the background task and
+/// the pause wait take turns on one queue, and each can stop while another goes on, so an "I'm done" call from
+/// one of them cut another's run in two (found at three places in review and audit of #3835). A run is the
+/// events that follow one another on one queue, and it ends in one of two ways, neither tied to who is running:
+/// the queue is empty after a committed chunk (`queueDrained()`), or nothing happens for longer than `idleGap`,
+/// which is longer than the longest heat wait (`OfflinePreparationRun.maximumHeatWaitSeconds`) so a pause being
+/// waited out doesn't split its run. The next event after either starts a new run and replaces the last summary.
 public struct AudioPreparationRunTracker: Equatable, Sendable {
     public static let idleGap = TimeInterval(OfflinePreparationRun.maximumHeatWaitSeconds + 5 * 60)
 
     public private(set) var current: AudioPreparationRunSummary?
+    private var isDrained = false
 
     public init() {}
+
+    /// The queue held no job after a committed chunk: whatever comes next is a new request, not this run.
+    public mutating func queueDrained() {
+        isDrained = true
+    }
 
     /// The summary line after `event`, for Diagnostics.
     @discardableResult
@@ -103,13 +109,14 @@ public struct AudioPreparationRunTracker: Equatable, Sendable {
 
     private mutating func update(startingAt start: TimeInterval, at: TimeInterval, _ change: (inout AudioPreparationRunSummary) -> Void) -> String {
         var summary: AudioPreparationRunSummary
-        if let current, at - current.lastActivityAt <= Self.idleGap {
+        if let current, !isDrained, at - current.lastActivityAt <= Self.idleGap {
             summary = current
         } else {
             summary = AudioPreparationRunSummary(startedAt: start)
         }
         change(&summary)
         current = summary
+        isDrained = false
         return summary.line
     }
 }

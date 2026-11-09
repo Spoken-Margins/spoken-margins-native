@@ -103,6 +103,41 @@ final class AudioPreparationRunSummaryTests: XCTestCase {
         XCTAssertEqual(line, "chunks=1;renderMsMedian=1000;renderMsP90=1000;heatPauses=0;peakThermal=nominal;wallClockS=1")
     }
 
+    func testARunThenAnEmptyQueueThenAChunkWithinTheGapStartsAFreshLine() {
+        // Article A finishes at 10:05, the listener starts article B at 10:20: 15 minutes, inside the idle gap.
+        var tracker = AudioPreparationRunTracker()
+        tracker.chunkCommitted(renderMs: 4_000, thermalAtStart: .fair, thermalAtEnd: .fair, at: 600)
+        tracker.heatPaused(thermal: .serious, at: 601)
+        tracker.queueDrained()
+        XCTAssertEqual(tracker.current?.chunks, 1, "the finished run's line stays until the next run replaces it")
+        let line = tracker.chunkCommitted(renderMs: 1_000, thermalAtStart: .nominal, thermalAtEnd: .nominal, at: 600 + 15 * 60)
+        XCTAssertEqual(line, "chunks=1;renderMsMedian=1000;renderMsP90=1000;heatPauses=0;peakThermal=nominal;wallClockS=1")
+    }
+
+    func testAChunkAfterAnEmptyQueueIsNotTheRunsChunkEvenAfterAHeatPause() {
+        var tracker = AudioPreparationRunTracker()
+        tracker.heatPaused(thermal: .critical, at: 10)
+        tracker.queueDrained()
+        let line = tracker.heatPaused(thermal: .nominal, at: 20)
+        XCTAssertTrue(line.contains("heatPauses=1;peakThermal=nominal;"), line)
+    }
+
+    func testAnEmptyQueueBeforeAnyEventChangesNothing() {
+        var tracker = AudioPreparationRunTracker()
+        tracker.queueDrained()
+        XCTAssertNil(tracker.current)
+        let line = tracker.heatPaused(thermal: .serious, at: 5)
+        XCTAssertTrue(line.contains("heatPauses=1;"), line)
+    }
+
+    func testTheQueueStillHoldingJobsKeepsTheRunOpen() {
+        // The caller reports a drain only when the queue is empty; a chunk then another chunk is one run.
+        var tracker = AudioPreparationRunTracker()
+        tracker.chunkCommitted(renderMs: 1_000, thermalAtStart: .nominal, thermalAtEnd: .nominal, at: 100)
+        let line = tracker.chunkCommitted(renderMs: 1_000, thermalAtStart: .nominal, thermalAtEnd: .nominal, at: 110)
+        XCTAssertTrue(line.hasPrefix("chunks=2;"), line)
+    }
+
     func testAnEventExactlyAtTheGapStillJoinsTheRun() {
         var tracker = AudioPreparationRunTracker()
         tracker.chunkCommitted(renderMs: 1_000, thermalAtStart: .nominal, thermalAtEnd: .nominal, at: 100)
