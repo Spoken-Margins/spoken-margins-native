@@ -76,6 +76,9 @@ struct ExperienceItemDetailScreen: View {
                     .background(AppColors.bone)
             }
             .background(AppColors.bone)
+            // A container, not a stamp: a bare identifier here is copied onto the pinned Play and "Hear only"
+            // buttons in the inset above and replaces their own, so tests and journeys can't find them (#3818).
+            .accessibilityElement(children: .contain)
             .accessibilityIdentifier("item.screen")
             .announcesScreenChange()
             .navigationTitle("Item")
