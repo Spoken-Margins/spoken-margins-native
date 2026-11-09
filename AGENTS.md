@@ -9,7 +9,7 @@ This file holds the rules that change what an agent does. The owner's dated deci
 
 Every thread and the coordinator follow these.
 
-- **A question he can answer (2026-10-09).** A thread that waits on him ends with a `reply`, never only a status line. The reply stands alone: what this is in one sentence, the question, your pick, the other options on short lines with their cost, and what it blocks.
+- **A question he can answer (2026-11-09).** A thread that waits on him ends its reply and issue comment with a `**Decision for Cole**` or `**Step for Cole**` heading, never an app prompt: what this is, the question, your pick, the options with their cost, what it blocks. `scripts/sm_owner_queue.py` lists them.
 - **Technical calls are ours (2026-10-09).** Take the default, post **Default taken**, keep going. What he is asked is in "Decide reversible and technical things yourself".
 - **The coordinator follows through (2026-10-09).** When a hold lifts, the coordinator tells every affected thread and re-arms held PRs in the same turn, without asking him, and clears stale or technical "waiting on you" items when woken.
 - **Check before you report (2026-10-14).** Any "armed", "merged", "waiting on…" or "nothing needs you" rests on a live read in the same turn: the PR's head checks, its latest lane report, its audit and its mergeable state. Name what you checked.

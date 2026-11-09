@@ -362,7 +362,7 @@ class TickOps(w.Ops):
                      f'- pace: Claude {usage_pct}% used, 60% of the week gone\n'
                      '- advice for dispatch: ' + ('HALT (usage breaker: Claude)' if halted else 'go'))
         self.tick = [rest(tick_line, ago(minutes=40), 337)]
-        self.boards, self.pr_links = [], 0
+        self.boards, self.pr_links, self.owner_cards = [], 0, 0
 
     def area_sync(self, ledger=None):
         self.boards.append(None)
@@ -373,6 +373,10 @@ class TickOps(w.Ops):
         return 'exit 0: fake'
 
     def ready_guard_sync(self):
+        return 'exit 0: fake'
+
+    def owner_card_sync(self):
+        self.owner_cards += 1
         return 'exit 0: fake'
 
     def dial_body(self): return self.dial
@@ -447,6 +451,7 @@ class TickTests(unittest.TestCase):
             ops = TickOps(d, dial=off, issues=[issue(7)])
             self.assertIn('Dial is Off', w.tick(ops, spawn=spawn)['why'])
             self.assertEqual((ops.boards, ops.pr_links), ([None], 1))   # the PR issue-link check rides along (#2167)
+            self.assertEqual(ops.owner_cards, 1)           # so does the owner card guard (#3898)
             w.tick(ops, spawn=spawn)                       # the next tick inside the hour
             self.assertEqual((ops.boards, ops.pr_links), ([None], 1))
             with contextlib.redirect_stdout(io.StringIO()):
@@ -507,6 +512,19 @@ class TickTests(unittest.TestCase):
             self.assertEqual(sent[-1][1:], [str(root / 'scripts' / 'ready_owner_only.py'), '--apply'])
             ops.run = lambda cmd, cwd=None, timeout=300: (_ for _ in ()).throw(OSError('gone'))
             self.assertEqual(ops.ready_guard_sync(), 'error: gone')
+
+    def test_owner_card_sync_runs_the_script_and_summarises_its_report(self):
+        with tempfile.TemporaryDirectory() as d:
+            root, sent = Path(d), []
+            def run(cmd, cwd=None, timeout=300):
+                sent.append([str(x) for x in cmd])
+                return w.Result(0, json.dumps({'card_missing': [4, 5], 'labelled': [6], 'unknown': []}))
+            ops = w.Ops(home=root / 'home', repo_root=root, own_root=root, run=run, echo=False)
+            self.assertIn('skipped', ops.owner_card_sync())
+            (root / 'scripts').mkdir()
+            (root / 'scripts' / 'owner_card_guard.py').write_text('')
+            self.assertEqual(ops.owner_card_sync(), 'exit 0: 2 card missing, 1 labelled, 0 unknown')
+            self.assertEqual(sent[-1][1:], [str(root / 'scripts' / 'owner_card_guard.py'), '--apply'])
 
     def test_idle_when_nothing_is_eligible(self):
         decision, started, _ = self.tick(issues=[issue(7, labels=('ready',))])
