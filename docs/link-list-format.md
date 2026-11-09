@@ -30,4 +30,10 @@ The app knows a link list only by its `schemaVersion`. A `.txt`, `.md` or `.mark
 
 In a picked folder, the app reads every `.json` file it finds (up to 4 levels deep, 200 files) and adds the link lists; it recognizes them by `schemaVersion` alone, so the file can have any name. Other `.json` files in the folder go to the Listening Edition import as before.
 
-Not yet: a link list in the Quick Folder, batches over eight files there, and a list becoming a Library folder (#3769).
+## Quick Folder
+
+A link list saved in the Quick Folder shows in the Quick Add list like any other file, and adding it adds its links. The scan offers a `.json` file there only when the file itself says it is a link list (the same `schemaVersion` rule, read off the main thread); a Listening Edition or any other `.json` file never shows. A list the app refuses (a newer version, say) does show, so tapping it names the reason. The scan reads at most 40 `.json` files newest first, each at most 1 MB; a bigger file is read only as far as its first 512 bytes and shows only if it announces the link-list format, so adding it can say why it is refused.
+
+With the Quick Folder feeding the play queue, a new link list is added to the Library the same way, ahead of the text files that arrived with it. Its links are not queued yet.
+
+Not yet: a batch of more than eight new files arriving whole, and a list becoming a Library folder (#3769).

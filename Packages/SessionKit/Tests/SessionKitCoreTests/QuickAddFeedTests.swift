@@ -368,9 +368,9 @@ final class QuickAddFeedTests: XCTestCase {
         return directory
     }
 
-    private func write(_ name: String, in directory: URL, modifiedAt: TimeInterval? = nil) throws {
+    private func write(_ name: String, in directory: URL, modifiedAt: TimeInterval? = nil, contents: String = "content") throws {
         let url = directory.appendingPathComponent(name)
-        try "content".write(to: url, atomically: true, encoding: .utf8)
+        try contents.write(to: url, atomically: true, encoding: .utf8)
         if let modifiedAt {
             try FileManager.default.setAttributes(
                 [.modificationDate: Date(timeIntervalSince1970: modifiedAt)],
@@ -436,5 +436,94 @@ final class QuickAddFeedTests: XCTestCase {
         let scan = QuickAccessFolderScanner.scan(try makeFolder())
         XCTAssertTrue(scan.files.isEmpty)
         XCTAssertNil(scan.errorDescription)
+    }
+
+    // MARK: Folder scan and link lists (#3767)
+
+    private let linkListJSON = #"{"schemaVersion":"spoken-margins.link-list.v1","entries":[{"url":"https://example.com/a"}]}"#
+
+    func testScanOffersAJSONFileOnlyWhenItsOwnSchemaVersionSaysItIsALinkList() throws {
+        let directory = try makeFolder()
+        try write("Morning.json", in: directory, contents: linkListJSON)
+        // A refused list (a newer version of the format) shows, so the listener can read why when they add it.
+        try write("Newer.json", in: directory, contents: #"{"schemaVersion":"spoken-margins.link-list.v2","entries":[]}"#)
+        // Listening Edition, other JSON, broken JSON, an empty file and a list under a different extension never show.
+        try write("Edition.json", in: directory, contents: #"{"schemaVersion":"spoken-margins.listening-edition.v1","items":[]}"#)
+        try write("Settings.json", in: directory, contents: #"{"theme":"dark"}"#)
+        try write("Array.json", in: directory, contents: "[1, 2, 3]")
+        try write("Broken.json", in: directory, contents: #"{"schemaVersion": "spoken-margins.link-list.v1""#)
+        try write("Empty.json", in: directory, contents: "")
+        try write("List.txt", in: directory, contents: linkListJSON)
+        let scan = QuickAccessFolderScanner.scan(directory)
+        XCTAssertNil(scan.errorDescription)
+        XCTAssertEqual(Set(scan.files.map(\.relativePath)), ["Morning.json", "Newer.json", "List.txt"])
+    }
+
+    func testScanNeverTakesATextFileForALinkListByItsContent() throws {
+        let directory = try makeFolder()
+        try write("OnlyAURL.txt", in: directory, contents: "https://example.com/article")
+        try write("Links.md", in: directory, contents: "- https://example.com/a\n- https://example.com/b\n")
+        try write("Note.markdown", in: directory, contents: linkListJSON)
+        let scan = QuickAccessFolderScanner.scan(directory)
+        // They are offered exactly as before: as text files for the ordinary import, none of them as a list.
+        XCTAssertEqual(Set(scan.files.map(\.relativePath)), ["OnlyAURL.txt", "Links.md", "Note.markdown"])
+    }
+
+    func testScanMatchesJSONExtensionCaseInsensitivelyAndNamesTheListWithoutItsExtension() throws {
+        let directory = try makeFolder()
+        try write("Brief.JSON", in: directory, contents: linkListJSON)
+        let scan = QuickAccessFolderScanner.scan(directory)
+        let brief = try XCTUnwrap(scan.files.first)
+        XCTAssertEqual(brief.id, "Brief.JSON")
+        XCTAssertEqual(brief.name, "Brief")
+    }
+
+    func testScanShowsAnOversizeLinkListSoTheListenerIsToldToSplitItButSkipsOversizeOtherJSON() throws {
+        let directory = try makeFolder()
+        let filler = String(repeating: " ", count: LinkListFile.maxFileBytes)
+        // Announces itself within its first bytes: shown, and adding it names the 1 MB limit (LinkListFile.recognize).
+        try write("Huge-list.json", in: directory, contents: linkListJSON + filler)
+        // A big Listening Edition or any other JSON never shows, and is not read past its first bytes.
+        try write("Huge-edition.json", in: directory, contents: #"{"schemaVersion":"spoken-margins.listening-edition.v1"}"# + filler)
+        let scan = QuickAccessFolderScanner.scan(directory)
+        XCTAssertEqual(scan.files.map(\.id), ["Huge-list.json"])
+    }
+
+    func testEditionsDoNotCrowdLinkListsOutOfTheEightNewest() throws {
+        let directory = try makeFolder()
+        for index in 0..<12 {
+            try write("edition-\(index).json", in: directory, modifiedAt: 2_000 + Double(index), contents: #"{"schemaVersion":"spoken-margins.listening-edition.v1"}"#)
+        }
+        try write("older-list.json", in: directory, modifiedAt: 1_000, contents: linkListJSON)
+        let scan = QuickAccessFolderScanner.scan(directory)
+        XCTAssertEqual(scan.files.map(\.id), ["older-list.json"])
+    }
+
+    func testScanKeepsTheEightNewestAcrossTextAndLinkListsAndReadsNoMoreJSONThanItNeeds() throws {
+        let directory = try makeFolder()
+        for index in 0..<6 {
+            try write("note-\(index).md", in: directory, modifiedAt: 1_000 + Double(index))
+        }
+        try write("list-new.json", in: directory, modifiedAt: 5_000, contents: linkListJSON)
+        try write("list-mid.json", in: directory, modifiedAt: 3_000, contents: linkListJSON)
+        try write("list-old.json", in: directory, modifiedAt: 10, contents: linkListJSON)
+        let scan = QuickAccessFolderScanner.scan(directory)
+        XCTAssertEqual(scan.files.count, 8)
+        XCTAssertEqual(scan.files.first?.id, "list-new.json")
+        XCTAssertEqual(scan.files[1].id, "list-mid.json")
+        XCTAssertFalse(scan.files.map(\.id).contains("list-old.json"))
+    }
+
+    func testScanReadsAtMostTheJSONReadCapSoAFolderOfEditionsStaysCheap() throws {
+        let directory = try makeFolder()
+        let extra = 5
+        for index in 0..<(QuickAccessFolderScanner.maxJSONReads + extra) {
+            try write("e-\(index).json", in: directory, modifiedAt: 5_000 + Double(index), contents: "{}")
+        }
+        // The list is older than every non-list JSON, and the cap is reached before it: not offered this scan.
+        try write("hidden-by-cap.json", in: directory, modifiedAt: 1, contents: linkListJSON)
+        try write("note.md", in: directory, modifiedAt: 2)
+        let scan = QuickAccessFolderScanner.scan(directory)
+        XCTAssertEqual(scan.files.map(\.id), ["note.md"])
     }
 }
