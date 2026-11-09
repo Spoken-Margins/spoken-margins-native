@@ -284,7 +284,7 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertFalse(row.exists)
         app.buttons["Include in search"].tap()
         XCTAssertTrue(row.waitForExistence(timeout: 4))
-        XCTAssertTrue(app.staticTexts["All items"].exists)
+        XCTAssertTrue(app.staticTexts["Everything"].exists)
         captureScreen(named: "library-completed-search-and-undo")
         app.buttons["Clear search"].tap()
         element("library.filters.reset").tap()

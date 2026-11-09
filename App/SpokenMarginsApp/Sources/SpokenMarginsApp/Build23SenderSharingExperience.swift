@@ -1,4 +1,5 @@
 import Foundation
+import SessionKit
 import SessionKitSharing
 import SwiftUI
 
@@ -14,6 +15,8 @@ struct Build23SenderSharingExperience: View {
     /// What the listener asked for while the packet was still being made; delivered once it is ready.
     @State private var pendingShare: Build23PendingShare?
     @State private var showsSharingOptions = false
+    /// The stage last announced to VoiceOver, so a stage change says its heading once (#3728).
+    @State private var announcedStage: VoiceOverAnnouncements.SharingStep = .select
     #if SM_SHARE_LINK_CREATION
     @StateObject private var linkSender = ShareLinkSender()
     /// The server's `links` switch, asked once when the screen opens. Off, Share sends the file as before.
@@ -141,6 +144,7 @@ struct Build23SenderSharingExperience: View {
         }
         .onCompatibleChange(of: snapshot.stage) { stage in
             dropStaleShareRequests(stage: stage, previewState: coordinator.snapshot.previewState)
+            announceStage(stage)
         }
         .alert("Clean selected Margins automatically?", isPresented: $isAutoCleanChoicePresented) {
             Button("Clean selected") {
@@ -288,7 +292,7 @@ struct Build23SenderSharingExperience: View {
         return ExperienceSurface(tint: AppColors.softGreen) {
             VStack(alignment: .leading, spacing: 14) {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("Choose Margins")
+                    Text(VoiceOverAnnouncements.SharingStep.select.title)
                         .font(.title3.weight(.semibold))
                         .screenTitle()
                     Text("\(includedCount) of \(snapshot.margins.count) selected")
@@ -357,7 +361,7 @@ struct Build23SenderSharingExperience: View {
     private func senderDetails(_ snapshot: Build23SharingSnapshot) -> some View {
         ExperienceSurface {
             VStack(alignment: .leading, spacing: 14) {
-                Text("Item being shared")
+                Text("What you’re sharing")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(AppColors.secondaryText)
                 Text(snapshot.itemTitle)
@@ -406,7 +410,7 @@ struct Build23SenderSharingExperience: View {
                             set: { coordinator.send(.setPrivateSharingRightsConfirmed($0)) }
                         )
                     )
-                    .accessibilityHint("When disabled, Margins can still be sent without embedding the item; the recipient supplies the source")
+                    .accessibilityHint("When disabled, Margins can still be sent without including it; the recipient supplies the source")
                     .accessibilityIdentifier("build23.sender.confirm-rights")
                 }
             }
@@ -591,9 +595,10 @@ struct Build23SenderSharingExperience: View {
         VStack(alignment: .leading, spacing: 20) {
             reviewComposition(snapshot)
 
-            Text("Review selected Margins")
+            Text(VoiceOverAnnouncements.SharingStep.review.title)
                 .font(.headline)
                 .foregroundStyle(AppColors.text)
+                .screenTitle()
                 .accessibilityIdentifier("build23.sender.stage.review")
 
             DisclosureGroup("Details") {
@@ -640,9 +645,10 @@ struct Build23SenderSharingExperience: View {
 
     private func recipientPreviewStage(_ snapshot: Build23SharingSnapshot) -> some View {
         VStack(alignment: .leading, spacing: 20) {
-            Text("Recipient preview")
+            Text(VoiceOverAnnouncements.SharingStep.recipientPreview.title)
                 .font(.headline)
                 .foregroundStyle(AppColors.text)
+                .screenTitle()
                 .accessibilityIdentifier("build23.sender.stage.recipient-preview")
             switch snapshot.previewState {
             case .building:
@@ -721,9 +727,10 @@ struct Build23SenderSharingExperience: View {
 
     private func shareStage(_ snapshot: Build23SharingSnapshot) -> some View {
         VStack(alignment: .leading, spacing: 20) {
-            Text("Share your Margins")
+            Text(VoiceOverAnnouncements.SharingStep.share.title)
                 .font(.headline)
                 .foregroundStyle(AppColors.text)
+                .screenTitle()
                 .accessibilityIdentifier("build23.sender.stage.share")
             if coordinator.verifiedShareFileURL != nil, snapshot.canShareVerifiedFile {
                 ExperienceSurface(tint: AppColors.softGreen) {
@@ -828,6 +835,25 @@ struct Build23SenderSharingExperience: View {
         coordinator.send(.buildRecipientPreview)
         // Export can fail synchronously, before SwiftUI observes .building.
         if case .failed = coordinator.previewState { pendingShare = nil }
+    }
+
+    /// The stage is replaced in place and focus can stay on the bottom button, so say where the sheet is now (#3728).
+    /// `onCompatibleChange` hands over only the new value, so the previous stage is kept in `announcedStage`.
+    private func announceStage(_ stage: Build23SharingStage) {
+        let step = Self.step(for: stage)
+        if let text = VoiceOverAnnouncements.sharingStage(from: announcedStage, to: step) {
+            AccessibilityNotification.Announcement(text).post()
+        }
+        announcedStage = step
+    }
+
+    private static func step(for stage: Build23SharingStage) -> VoiceOverAnnouncements.SharingStep {
+        switch stage {
+        case .select: .select
+        case .review: .review
+        case .recipientPreview: .recipientPreview
+        case .share: .share
+        }
     }
 
     /// A share asked for, or a link being made, for a packet the screen no longer shows is dropped (#3751 audit).

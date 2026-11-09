@@ -33,6 +33,11 @@ struct Options {
     var v2 = false
 }
 
+func dumpDirectory() -> URL? {
+    guard let flag = CommandLine.arguments.firstIndex(of: "--dump"), flag + 1 < CommandLine.arguments.count else { return nil }
+    return URL(fileURLWithPath: CommandLine.arguments[flag + 1], isDirectory: true)
+}
+
 func parseOptions() -> Options {
     var arguments = Array(CommandLine.arguments.dropFirst())
     var root: URL?
@@ -92,11 +97,19 @@ func write(_ object: [String: Any], to url: URL) throws {
     try data.write(to: url, options: .atomic)
 }
 
-let options = parseOptions()
+let dumping = dumpDirectory() != nil
+let options = dumping ? Options(root: URL(fileURLWithPath: ".")) : parseOptions()
 let manifestURL = options.root.appendingPathComponent("corpus/manifest.json")
 // The app's bundled Kitten lexicon, which the glued-text spacer splits with (#2370).
 let wordListURL = options.root.appendingPathComponent("../../App/SpokenMarginsApp/Resources/Kitten/lexicon.tsv").standardizedFileURL
 let pdfDirectory = options.root.appendingPathComponent("cache/pdf", isDirectory: true)
+// Any PDFs, outside the corpus: roles, spoken lines and the speech path's chunks, for the formula backtest.
+//   c1-extract --root <repo>/research/C1 --dump <out dir> a.pdf b.pdf ...
+if let dump = dumpDirectory() {
+    runDump(to: dump)
+    exit(0)
+}
+
 let extractorName = options.v2 ? "app-v2" : "app-baseline"
 let outDirectory = options.root.appendingPathComponent("cache/candidates/\(extractorName)", isDirectory: true)
 let resultsDirectory = options.root.appendingPathComponent("results/\(extractorName)", isDirectory: true)

@@ -175,8 +175,19 @@ class WindowAppTests(Isolated):
         self.assertEqual(record, ['record', '--device', 'BlackHole 2ch', '--seconds', '6.7', '--out',
                                   '{job}/recording.wav'])
 
+    def test_a_pinned_simulator_records_without_touching_the_macs_output(self):
+        command = window.Recorder(Path('/evidence/w1.wav'), 5, FAKE_APP, binary='/bin/loopback',
+                                  pinned=lambda: True).command
+        self.assertNotIn('route', command)
+        self.assertEqual(command[1:3], [str(HERE / 'loopback.py'), 'app-run'])
+
+    def test_an_unpinned_simulator_still_routes(self):
+        command = window.Recorder(Path('/evidence/w1.wav'), 5, FAKE_APP, binary='/bin/loopback',
+                                  pinned=lambda: False).command
+        self.assertEqual(command[:2], ['/bin/loopback', 'route'])
+
     def test_a_recorder_that_ends_without_recording_is_read_at_once(self):
-        recorder = window.Recorder(Path('/tmp/x.wav'), 5, FAKE_APP, binary='/bin/loopback')
+        recorder = window.Recorder(Path('/tmp/x.wav'), 5, FAKE_APP, binary='/bin/loopback', pinned=lambda: False)
         recorder.command = [sys.executable, '-c', 'import sys; print("loopback: Microphone denied", file=sys.stderr);'
                             ' sys.exit(1)']
         recorder.start()
