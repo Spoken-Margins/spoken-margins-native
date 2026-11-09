@@ -629,9 +629,13 @@ MAC_SCRIPT_NAME = re.compile(r'lane|verif|test-scope|test_scope|phone|sim[_-]|se
 MAC_SCRIPT_FILES = {'sm_paths.py', 'sm_build_cache.py', 'comment_trust.py', 'setup-worktree.sh', 'merge_audit.py',
                     'simctl_preflight.py', 'test_inventory.py', 'third_party_notices.py', 'node_modules_drift.py',
                     'check_posterboard_repair.py', 'ops_checkout.py', 'workflow_yaml.py', 'test_workflow_files.py'}
+# Web/ (#3535): no Mac check reads it. Its tests run in --plan fast-portable and in hosted web's Playwright job, which the
+# runner waits for (web_check_required). A Swift file under Web/ still needs the Mac, by the suffix test below.
 MAC_NOT_NEEDED_PREFIXES = ('docs/', 'Design/', 'references/', 'tmp/', '.claude/', 'research/', 'Site/', 'ops/',
-                           '.github/', 'Tools/BrowserExtraction/', 'Contracts/docs/')
+                           '.github/', 'Tools/BrowserExtraction/', 'Contracts/docs/') + WEB_PREFIXES
 MAC_NOT_NEEDED_FILES = T0_FILES | BROWSER_FILES | {'AGENTS.md', 'CLAUDE.md'}
+# What starts hosted-web.yml's job (its `paths:`; test_mac_checks_scope.py keeps them equal).
+HOSTED_WEB_PREFIXES = WEB_PREFIXES + ('research/B4/server/internal/links/', '.github/workflows/hosted-web.yml')
 
 
 def mac_check_reason(path):
@@ -657,6 +661,11 @@ def mac_checks_required(paths):
         if why:
             return True, why
     return False, 'Mac checks not required: no Swift inputs'
+
+
+def web_check_required(paths):
+    """Whether the merge waits for hosted web's Playwright job (#3535): the diff is one that starts it."""
+    return any(path.startswith(HOSTED_WEB_PREFIXES) for path in paths)
 
 
 def app_build_required(paths):

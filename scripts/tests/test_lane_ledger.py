@@ -474,6 +474,7 @@ class CatchClassTests(unittest.TestCase):
                 lane.run_fast(Path(evidence), runner=manifest(statuses))
             lane.flush_ledger(7, head, mock.Mock())
 
+        lane.STEP_RUNS.clear()  # a shared list: steps other tests noted in this process would flush with these jobs (#3535)
         state = Path(self.tmp.name) / 'state'
         state.mkdir()
         bad = self.repo.git('rev-parse', 'HEAD')

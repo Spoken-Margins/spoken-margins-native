@@ -5,6 +5,7 @@ touched no Swift input and spent 23% of the Mac minutes, with a queue p90 of abo
 sent the runner to the build Mac after its 5-minute grace.
 """
 import ast
+import io
 import json
 from pathlib import Path
 import re
@@ -128,6 +129,34 @@ class MacChecksRequiredTests(unittest.TestCase):
             path = read + 'x' if read.endswith('/') else read
             with self.subTest(read=read):
                 self.assertTrue(self.required(path)[0])
+
+    def test_a_web_diff_needs_no_mac_check(self):
+        # #3389's own paths, and the rest of what lives in the folder.
+        for paths in (('Web/e2e/playwright.config.ts', 'Web/e2e/silence/silence-script.js', 'Web/vite.config.ts'),
+                      ('Web/src/app/screens/NowPlaying.tsx',), ('Web/package.json', 'Web/package-lock.json'),
+                      ('Web/android/app/build.gradle',), ('Web/README.md',), ('Web/public/icon.png',),
+                      ('Web/src/a.ts', 'docs/a.md', 'scripts/sm_project_sync.py'), ('Web/App.Swift/index.ts',)):
+            with self.subTest(paths=paths):
+                self.assertEqual(self.required(*paths), (False, 'Mac checks not required: no Swift inputs'))
+
+    def test_a_swift_input_or_a_lookalike_of_web_still_needs_them(self):
+        for paths in (('Web/ios/App/AppDelegate.swift',), ('Web/a.swift',), ('Web/ios/App.xcodeproj',),
+                      ('Web/src/a.ts', 'Web/ios/App/AppDelegate.swift'), ('Web/src/a.ts', 'project.yml'),
+                      ('Web/src/a.ts', 'App/SpokenMarginsApp/Sources/SpokenMarginsApp/A.tsx'),
+                      ('Web/src/a.ts', 'Contracts/fixtures/web-packets/a.spokenmargins'),
+                      ('web/src/a.ts',), ('WEB/src/a.ts',), ('Web',), ('Webby/a.ts',), ('WebKit/a.ts',), (' Web/a.ts',)):
+            with self.subTest(paths=paths):
+                self.assertTrue(self.required(*paths)[0])
+
+    def test_no_mac_test_reads_web_by_path(self):
+        # Why Web/ can leave the Mac checks. The Swift tests may name it in a comment, as WebPacketImportTests does.
+        import sessionkit_pass
+        self.assertEqual([read for read in sessionkit_pass.READS if read.lower().startswith('web')], [])
+        code = re.compile(r'"Web["/]')
+        found = [str(path.relative_to(ROOT)) for folder in ('Packages/SessionKit/Tests', 'App/SpokenMarginsAppTests')
+                 for path in (ROOT / folder).rglob('*.swift')
+                 if any(code.search(line.partition('//')[0]) for line in path.read_text(errors='ignore').splitlines())]
+        self.assertEqual(found, [])
 
     def test_the_cli_prints_what_the_workflow_writes_to_its_outputs(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -370,6 +399,141 @@ class HostedCheckSetTests(unittest.TestCase):
         self.assertIn('not required: no Swift inputs', ran)
         self.assertIn('none on the Mac', ran)
         self.assertNotIn('Mac: --plan fast-mac-rest', ran)
+
+
+class HostedWebCheckTests(unittest.TestCase):
+    """#3535: a diff that starts hosted web's Playwright job merges only once that job passed on its head."""
+
+    class Checks:
+        repo = 'o/r'
+
+        def __init__(self, *polls):  # each poll: the check runs GitHub answers with; the last one repeats
+            self.polls, self.calls = list(polls), []
+
+        def api(self, path):
+            self.calls.append(path)
+            polls = self.polls.pop(0) if len(self.polls) > 1 else self.polls[0]
+            if isinstance(polls, Exception):
+                raise polls
+            return json.dumps({'check_runs': polls})
+
+    @staticmethod
+    def run(conclusion='success', status='completed', **changes):
+        return {'id': 1, 'status': status, 'conclusion': conclusion, 'app': {'slug': 'github-actions'},
+                'started_at': '2026-11-06T10:00:00Z', 'html_url': 'https://example.test/web', **changes}
+
+    def check(self, github, paths=('Web/src/a.ts',), policy=scope, wait=0, alive=lambda: None, **kwargs):
+        now = {'t': 0.0}
+
+        def sleep(seconds):
+            now['t'] += seconds
+        self.slept = now
+        lane.STEP_RUNS.clear()
+        self.addCleanup(lane.STEP_RUNS.clear)
+        with mock.patch.object(lane, 'base_policy', return_value=policy), \
+                mock.patch.object(lane, 'committed_changes', return_value=(list(paths), {})):
+            return lane.hosted_web_check(github, Path('.'), 'main', HEAD, alive=alive, env={}, wait=wait,
+                                         clock=lambda: now['t'], sleep=sleep, out=io.StringIO(), **kwargs)
+
+    def test_a_diff_that_starts_no_web_job_asks_github_nothing(self):
+        for paths in (('docs/a.md',), ('Packages/SessionKit/Sources/SessionKit/X.swift',), ('research/B4/server/x.go',),
+                      ('Webby/a.ts',), ('web/a.ts',)):
+            with self.subTest(paths=paths):
+                github = self.Checks([])
+                self.assertEqual(self.check(github, paths), (None, ''))
+                self.assertEqual(github.calls, [])
+                self.assertEqual(lane.STEP_RUNS, [])
+
+    def test_a_base_without_the_rule_asks_github_nothing(self):
+        github = self.Checks([])
+        self.assertEqual(self.check(github, policy=None), (None, ''))
+        self.assertEqual(self.check(github, policy=object()), (None, ''))
+        self.assertEqual(github.calls, [])
+
+    def test_every_diff_that_starts_the_job_waits_for_it(self):
+        for paths in (('Web/src/a.ts',), ('Web/README.md',), ('docs/a.md', 'Web/src/a.ts'),
+                      ('Packages/SessionKit/Sources/SessionKit/X.swift', 'Web/src/a.ts'),
+                      ('research/B4/server/internal/links/page.go',), ('.github/workflows/hosted-web.yml',)):
+            with self.subTest(paths=paths):
+                self.assertEqual(self.check(self.Checks([self.run()]), paths)[0], 'PASS')
+
+    def test_only_a_pass_passes(self):
+        table = {'success': 'PASS', 'failure': 'FAIL', 'timed_out': 'FAIL', 'cancelled': 'INCONCLUSIVE',
+                 'skipped': 'INCONCLUSIVE', 'neutral': 'INCONCLUSIVE', 'action_required': 'INCONCLUSIVE',
+                 'stale': 'INCONCLUSIVE', None: 'INCONCLUSIVE'}
+        for conclusion, verdict in table.items():
+            with self.subTest(conclusion=conclusion):
+                found, line = self.check(self.Checks([self.run(conclusion)]))
+                self.assertEqual(found, verdict)
+                self.assertIn(lane.HOSTED_WEB_CHECK, line)
+                self.assertEqual([(r['step'], r['verdict']) for r in lane.STEP_RUNS], [(lane.HOSTED_WEB_STEP, verdict)])
+
+    def test_it_waits_while_the_job_queues_and_runs_then_takes_the_verdict(self):
+        for last, verdict in ((self.run(), 'PASS'), (self.run('failure'), 'FAIL')):
+            with self.subTest(verdict=verdict):
+                github = self.Checks([], [self.run(None, 'queued')], [self.run(None, 'in_progress')], [last])
+                self.assertEqual(self.check(github, wait=3600)[0], verdict)
+                self.assertEqual(len(github.calls), 4)
+
+    def test_it_holds_when_the_job_never_finishes_or_never_shows_up(self):
+        found, line = self.check(self.Checks([self.run(None, 'in_progress')]), wait=120, poll=30)
+        self.assertEqual(found, 'INCONCLUSIVE')
+        self.assertIn(lane.NOT_FINISHED, line)
+        self.assertEqual(self.slept['t'], 120)
+        found, line = self.check(self.Checks([]), wait=3600, poll=30, grace=300)
+        self.assertEqual(found, 'INCONCLUSIVE')
+        self.assertIn('no "hosted web: build and Playwright" check ran', line)
+        self.assertEqual(self.slept['t'], 300)
+        self.assertEqual(self.check(self.Checks([]))[0], 'INCONCLUSIVE')
+
+    def test_a_run_from_another_app_is_not_the_job(self):
+        forged = self.run(app={'slug': 'someone-else'})
+        self.assertEqual(self.check(self.Checks([forged]))[0], 'INCONCLUSIVE')
+
+    def test_the_newest_run_decides(self):
+        old, new = self.run('failure', id=1, started_at='2026-11-06T10:00:00Z'), self.run(id=2, started_at='2026-11-06T11:00:00Z')
+        self.assertEqual(self.check(self.Checks([old, new]))[0], 'PASS')
+        self.assertEqual(self.check(self.Checks([new, old]))[0], 'PASS')
+        old, new = self.run(id=1, started_at='2026-11-06T10:00:00Z'), self.run('failure', id=2, started_at='2026-11-06T11:00:00Z')
+        self.assertEqual(self.check(self.Checks([old, new]))[0], 'FAIL')
+
+    def test_a_failed_read_holds_and_never_passes(self):
+        self.assertEqual(self.check(self.Checks(OSError('network')))[0], 'INCONCLUSIVE')
+        github = self.Checks(subprocess.SubprocessError('gh'), [self.run()])  # a passing blip is waited out
+        self.assertEqual(self.check(github, wait=3600)[0], 'PASS')
+        with mock.patch.object(lane, 'base_policy', side_effect=OSError('git')):
+            found, line = lane.hosted_web_check(self.Checks([]), Path('.'), 'main', HEAD, env={}, wait=0)
+        self.assertEqual(found, 'INCONCLUSIVE')
+        self.assertIn('could not tell', line)
+
+    def test_it_stops_waiting_when_the_pr_moves_on(self):
+        github = self.Checks([self.run(None, 'in_progress')])
+        found, line = self.check(github, wait=3600, alive=lambda: f'{lane.MOVED_ON}the PR is closed')
+        self.assertEqual(found, 'INCONCLUSIVE')
+        self.assertIn('the PR is closed', line)
+        self.assertEqual(github.calls, [])
+
+    def test_only_a_lane_job_waits(self):
+        github = self.Checks([self.run(None, 'in_progress')])
+        with mock.patch.object(lane, 'base_policy', return_value=scope), \
+                mock.patch.object(lane, 'committed_changes', return_value=(['Web/a.ts'], {})), \
+                mock.patch.object(lane, 'HOSTED_REST_WAIT', 60):
+            slept = []
+            lane.hosted_web_check(github, Path('.'), 'main', HEAD, env={'GITHUB_ACTIONS': 'true'}, poll=30,
+                                  clock=lambda: 30.0 * len(slept), sleep=slept.append, out=io.StringIO())
+            self.assertEqual(slept, [30, 30])
+            slept.clear()
+            lane.hosted_web_check(github, Path('.'), 'main', HEAD, env={}, poll=30, clock=lambda: 0.0,
+                                  sleep=slept.append, out=io.StringIO())
+            self.assertEqual(slept, [])
+        lane.STEP_RUNS.clear()
+
+    def test_the_rule_names_what_the_workflow_runs_on(self):
+        import yaml
+        workflow = yaml.safe_load((ROOT / '.github/workflows/hosted-web.yml').read_text())
+        paths = workflow[True]['pull_request']['paths']  # YAML reads `on:` as true
+        self.assertEqual({path.removesuffix('**') for path in paths}, set(scope.HOSTED_WEB_PREFIXES))
+        self.assertEqual(workflow['jobs']['web']['name'], lane.HOSTED_WEB_CHECK)
 
 
 class WorkflowScopeTests(unittest.TestCase):
