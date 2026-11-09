@@ -28,7 +28,7 @@ extension Gate1AppModel {
         let itemIds = itemIds.filter { seen.insert($0).inserted }
         guard let first = itemIds.first else { return }
         if itemIds.count == 1 {
-            let title = libraryItems.first { $0.id == first }?.title ?? "Shared item"
+            let title = libraryItems.first { $0.id == first }?.title ?? "Shared source"
             reportAddedToLibrary(title: title, itemId: first)
         } else {
             reportConfirmation(AddedToLibraryConfirmation.message(addedCount: itemIds.count, nowPlayingIsEmpty: nowPlayingIsEmpty))

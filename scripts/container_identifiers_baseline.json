@@ -20,7 +20,7 @@
    "why": "no identified child in its braces today; a new one fails the guard"
   },
   {
-   "key": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/ExperienceRecordingScreen.swift::recording.starting.label",
+   "key": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/MarginRecordingScreen.swift::recording.starting.label",
    "container": "HStack",
    "hidden": 0,
    "why": "no identified child in its braces today; a new one fails the guard"

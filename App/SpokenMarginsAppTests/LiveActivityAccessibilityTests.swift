@@ -61,4 +61,15 @@ final class LiveActivityAccessibilityTests: XCTestCase {
     func testTheStateLabelNeverLeaksASenderName() {
         XCTAssertFalse(state("playing", sender: "Sam").stateAccessibilityLabel(isStale: false).contains("Sam"))
     }
+
+    /// #3722: the live session card's state glyphs (stop, waveform, bookmark) read their symbol names to VoiceOver.
+    func testTheLiveSessionCardStateGlyphsSayTheirStateInWords() {
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        typealias CardState = LiveSessionActivityAttributes.ContentState
+        XCTAssertEqual(CardState(markCount: 0).stateAccessibilityLabel, "Session running")
+        XCTAssertEqual(CardState(markCount: 2, isRecordingMargin: true).stateAccessibilityLabel, "Recording")
+        XCTAssertEqual(CardState(markCount: 2, endedAt: start).stateAccessibilityLabel, "Session ended")
+        // An ended card never says it records, even if the flag was left on.
+        XCTAssertEqual(CardState(markCount: 2, endedAt: start, isRecordingMargin: true).stateAccessibilityLabel, "Session ended")
+    }
 }

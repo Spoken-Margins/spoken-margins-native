@@ -74,12 +74,11 @@ final class AppLiveActivityPairsTests: XCTestCase {
         pairs.map { .init(name: $0.name, foreground: $0.foreground, background: AppSemanticColorRGB.white, minimumRatio: $0.minimumRatio) }
     }
 
-    func testTheLiveActivityPairsPassTodayExceptTheListedBlue() {
+    func testTheLiveActivityPairsAllPassToday() {
         XCTAssertFalse(AppColorContrastAudit.liveActivityPairs.isEmpty)
         let failing = AppColorContrastAudit.failures(for: AppColorContrastAudit.liveActivityPairs)
-        XCTAssertEqual(failing.count, 1, "\(failing)")
-        XCTAssertTrue(failing[0].hasPrefix("live activity button label tint (blue) [light]"), "\(failing)")
-        XCTAssertTrue(AppColorContrastAudit.knownFailures.contains { $0.pair == "live activity button label tint (blue)" && $0.appearance == "light" })
+        XCTAssertEqual(failing, [], "every Live Activity pair passes since the buttons left the system blue (#3739)")
+        XCTAssertFalse(AppColorContrastAudit.knownFailures.contains { $0.pair.hasPrefix("live activity") })
     }
 
     func testTheLiveActivityPairsCanFail() {
@@ -101,15 +100,20 @@ final class AppLiveActivityPairsTests: XCTestCase {
         XCTAssertTrue(text.contains("Color(red: 0.08, green: 0.09, blue: 0.12)"), "the plate")
         XCTAssertTrue(text.contains("Color(red: 0.34, green: 0.71, blue: 0.91)"), "the progress blue")
         XCTAssertTrue(text.contains("Color(red: 0.27, green: 0.78, blue: 0.43)"), "the second green")
-        for alpha in ["0.74", "0.78", "0.8", "0.84", "0.86"] {
+        for alpha in ["0.74", "0.8", "0.84", "0.86"] {
             XCTAssertTrue(text.contains(".white.opacity(\(alpha))"), "white at \(alpha) is no longer drawn: drop its pair")
         }
+        // The chapter line is 0.78 white, drawn through a ternary since the paused prompt shares the line (#3692); the
+        // paused prompt itself is plain white, which the title pair covers.
+        XCTAssertTrue(text.contains(".white.opacity(offersResume ? 1 : 0.78)"), "white at 0.78 is no longer drawn: drop its pair")
         for alpha in ["0.16", "0.12", "0.14"] {
             XCTAssertTrue(text.contains("Color.white.opacity(\(alpha))"), "the white chip at \(alpha) is no longer drawn: drop its pair")
         }
         XCTAssertTrue(text.contains("Color.green.opacity(0.28)"), "the system green chip")
         XCTAssertTrue(text.contains("? .red : .orange"), "the recording tint")
-        XCTAssertTrue(text.contains(".tint(.blue)"), "the blue button tint")
+        XCTAssertFalse(text.contains(".tint(.blue)"), "the system blue tint is back: it measures 4.46:1 on the plate in light (#3739)")
+        XCTAssertEqual(text.components(separatedBy: "static let buttonTint = Color(red: 0.34, green: 0.71, blue: 0.91)").count - 1, 1, "the button tint literal")
+        XCTAssertEqual(text.components(separatedBy: ".tint(LiveSessionActivityStyle.buttonTint)").count - 1, 3, "Resume, Mark and Finish Margin")
         XCTAssertTrue(text.contains(".foregroundStyle(.secondary)"), "the Dynamic Island's secondary line")
     }
 }
@@ -311,7 +315,7 @@ final class AppColorUsageGuardTests: XCTestCase {
         // The empty track of the storage bar: the swatches on it carry the meaning. The artwork tile fills
         // (`SMExperienceTypeCover`) are drawn by a view nothing uses yet, so they are left out until it is.
         "ochre@0.20": .noText, "plum@0.16": .noText,
-        "border@0.45": .noText,
+        "border@0.45": .noText, "watchSecondary@0.24": .noText,
         // The playback card's plates and the pressed states of the buttons: `pressedFillPairs` (#3739 slice 3).
         "watchControl@0.8": .audited, "watchControl@0.72": .audited, "panel@0.75": .audited,
         "listeningAccent@0.75": .audited, "captureBackground@0.78": .audited,
@@ -374,7 +378,7 @@ final class AppColorUsageGuardTests: XCTestCase {
     /// Lower a number, or delete the line, when a use goes. There is no test for slack, so two PRs that each remove or
     /// add a use never turn each other red.
     private static let systemColorBaseline: [String: Int] = [
-        "AppTopBanners.swift": 1, "EdgeSwipeBackTransition.swift": 1, "ExperienceRecordingScreen.swift": 1,
+        "AppTopBanners.swift": 1, "EdgeSwipeBackTransition.swift": 1, "MarginRecordingScreen.swift": 1,
         "FirstMarginPromptCard.swift": 2, "Gate1RootView.swift": 1, "Gate2LiveActivityWidget.swift": 13,
         "LiveActivityTourPreview.swift": 1, "LiveSessionActivityWidget.swift": 8, "MiniPlayer.swift": 1,
         "PinnedMarginCardView.swift": 4, "PlaybackFeedbackTagView.swift": 3, "PlaybackLivePassageView.swift": 1,

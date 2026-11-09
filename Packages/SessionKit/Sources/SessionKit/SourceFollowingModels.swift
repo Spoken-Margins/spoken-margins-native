@@ -281,4 +281,10 @@ public extension SourceCandidateEvidence {
 
     /// Confirm before following, even as the only candidate.
     var needsConfirmation: Bool { relation == Self.substackProfileRelation }
+
+    /// The suggestion card shows this feed's address under its name when another candidate has the
+    /// same title, so the listener can tell the two apart (#3817).
+    func showsFeedURL(among candidates: [SourceCandidateEvidence]) -> Bool {
+        candidates.filter { $0.source.title == source.title }.count > 1
+    }
 }

@@ -159,6 +159,40 @@ final class LiveSessionController: ObservableObject {
 
     func setStartWhere(_ text: String) { edit { LiveSessionEdit.setStartWhere(text, on: &$0) } }
 
+    /// What the session is about (#3491). Allowed while it runs and after it ends, until it is saved.
+    func setDescription(_ text: String) { editUnsaved { LiveSessionEdit.setDescription(text, on: &$0) } }
+
+    /// The start time the listener says it had (#3491), display and export only. Returns false, with
+    /// `errorMessage` set, for a time in the future or after the end. Allowed until the session is saved.
+    @discardableResult
+    func setStatedStart(_ date: Date?) -> Bool {
+        guard canEditUnsaved, var edited = session else { return false }
+        do {
+            try LiveSessionEdit.setStatedStart(date, now: Date(), on: &edited)
+        } catch {
+            errorMessage = ListenerErrorText.message(for: error)
+            return false
+        }
+        commitUnsaved(edited)
+        return true
+    }
+
+    private var canEditUnsaved: Bool { session != nil && session?.savedItemId == nil }
+
+    private func editUnsaved(_ change: (inout LiveSession) -> Void) {
+        guard canEditUnsaved, var edited = session else { return }
+        change(&edited)
+        commitUnsaved(edited)
+    }
+
+    private func commitUnsaved(_ edited: LiveSession) {
+        guard edited != session else { return }
+        session = edited
+        save()
+        refreshActivities()
+        sessionChanged()
+    }
+
     /// "The source is at `positionMs` now." Returns false, with `errorMessage` set, when that can't be.
     @discardableResult
     func setSourceClock(positionMs: Int) -> Bool {
@@ -188,10 +222,9 @@ final class LiveSessionController: ObservableObject {
 
     /// Adds a Margin now. `adjustmentMs` is the listener's slide of the predicted position; nonzero stores it as
     /// their own position.
-    func addMargin(text: String, whereNote: String?, adjustmentMs: Int) {
+    func addMargin(text: String, whereNote: String?, adjustmentMs: Int, markedAt: Date = Date()) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard isRunning, let current = session, !trimmed.isEmpty else { return }
-        let markedAt = Date()
         var margin = current.margin(id: UUID().uuidString.lowercased(), text: trimmed, markedAt: markedAt, whereNote: whereNote)
         // "page 118" typed with the Margin is the listener's own place, in their unit (#2707).
         if let whereNote {

@@ -105,6 +105,35 @@ class PortableStepTable(unittest.TestCase):
             self.assertIn(name, printed)
         self.assertEqual(slots, [], 'the Mac-wide host-test slot is not for a hosted job')
 
+    def test_the_portable_plan_runs_the_exact_command_of_each_node_and_research_step(self):
+        # Names alone let a step's command become `true` unnoticed (#3706): pin the argv, and the options that
+        # change how it runs (`web` needs the newer Node, `research` and `main-thread-reads` carry timeouts).
+        calls = {}
+        with tempfile.TemporaryDirectory() as temporary:
+            (Path(temporary) / 'node_modules').mkdir()
+            run = verification.Run(Path(temporary) / 'run', 'fast-portable')
+            with patch.object(run, 'command', side_effect=lambda name, args, **kw: calls.__setitem__(name, (args, kw))), \
+                    patch.object(run, 'ops_steps'), \
+                    patch.object(verification, 'ROOT', Path(temporary)), \
+                    patch.object(verification, 'swift_tests', return_value=set()), \
+                    patch.object(verification, 'in_codex_sandbox', return_value=False), \
+                    patch.object(verification, 'host_test_slot'), \
+                    patch.object(verification, 'input_identity', return_value=run.manifest['input_sha256']), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                run.fast()
+        self.assertEqual(calls['browser'], (['npm', 'run', 'test:browser-extraction'], {}))
+        self.assertEqual(calls['share-link'], (['npm', 'run', 'test:share-link'], {}))
+        self.assertEqual(calls['web'], (['npm', 'run', 'test:web'], {'node': True}))
+        self.assertEqual(calls['research'], ([sys.executable, 'scripts/research_tests.py'], {'timeout': 300}))
+        for name, script in (('public-tree', 'check-public-tree.py'), ('surfaces', 'validate-surface-contracts.py'),
+                             ('inventory', 'test_inventory.py'), ('main-thread-reads', 'main_thread_reads.py'),
+                             ('repeat-trigger-scan', 'repeat_trigger_scan.py'),
+                             ('ordered-store-requests', 'ordered_store_requests.py'),
+                             ('system-callback-isolation', 'system_callback_isolation.py'),
+                             ('listener-words', 'listener_words.py'), ('recorder-failed-start', 'recorder_failed_start.py')):
+            self.assertEqual(calls[name][0], [sys.executable, f'scripts/{script}'], name)
+        self.assertEqual(calls['main-thread-reads'][1], {'timeout': 120})
+
     def test_the_portable_plan_drops_the_apple_tests_and_checks_lfs_pointers(self):
         calls = dict(self.run_portable()[0])
         runner = calls['runner-tests']

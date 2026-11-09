@@ -52,7 +52,7 @@ final class PlaybackFeedbackTagTests: XCTestCase {
     func testTranscriptionFailureAndSpeechRecognitionOffReadDifferently() throws {
         let origin = FeedbackOrigin(itemId: "item-a", sessionId: "session-a", work: .marginTranscription)
         let failure = try XCTUnwrap(tag(kind: .error, origin: origin))
-        XCTAssertEqual(failure.text, "Margin transcript failed")
+        XCTAssertEqual(failure.text, "Saved · transcript failed")
         XCTAssertTrue(failure.isFailure)
         let off = try XCTUnwrap(tag(kind: .warning, origin: origin, offersRetry: false))
         XCTAssertEqual(off.text, "No transcript: Speech Recognition is off")

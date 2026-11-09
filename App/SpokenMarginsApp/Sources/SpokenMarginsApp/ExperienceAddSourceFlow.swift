@@ -529,9 +529,21 @@ struct ExperienceAddSourceFlow: View {
         guard !editionURLs.isEmpty || !folders.isEmpty else { importDocuments(urls, closes: !picked.isEmpty); return }
         // The edition files are read off the main thread (#2510), so the rest waits for them.
         Task { @MainActor in
-            let editionsImported = await model.importListeningEditionFiles(editionURLs, folders: folders)
-            if !editionsImported { fileImportError = model.lastError }
-            model.hangTelemetry.labels.scoped("addSheet.documentImport") { importDocuments(urls, closes: editionsImported) }
+            // A `.json` file that says it is a structured link list (#3767) adds its links; any other `.json` file
+            // goes to the edition import as before. Only the file's own `schemaVersion` decides, never its name.
+            // The same goes for the `.json` files inside a picked folder: link lists there are added, and the edition
+            // import skips them and takes the rest.
+            let picks = await model.splitLinkLists(from: editionURLs, folders: folders)
+            let editionImportRuns = picks.needsEditionImport(foldersPicked: !folders.isEmpty)
+            var linkResult: (allImported: Bool, message: String?) = (true, nil)
+            if !picks.isEmpty { linkResult = await model.importLinkLists(picks, noteFolderTruncation: !editionImportRuns) }
+            var editionsImported = true
+            if editionImportRuns {
+                editionsImported = await model.importListeningEditionFiles(picks.others, folders: folders, skipping: picks.folderFilePaths)
+            }
+            let allImported = linkResult.allImported && editionsImported
+            if !allImported { fileImportError = editionsImported ? linkResult.message : (model.lastError ?? linkResult.message) }
+            model.hangTelemetry.labels.scoped("addSheet.documentImport") { importDocuments(urls, closes: allImported) }
         }
     }
 

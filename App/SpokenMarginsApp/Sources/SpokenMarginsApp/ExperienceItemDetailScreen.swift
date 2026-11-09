@@ -76,9 +76,12 @@ struct ExperienceItemDetailScreen: View {
                     .background(AppColors.bone)
             }
             .background(AppColors.bone)
+            // A container, not a stamp: a bare identifier here is copied onto the pinned Play and "Hear only"
+            // buttons in the inset above and replaces their own, so tests and journeys can't find them (#3818).
+            .accessibilityElement(children: .contain)
             .accessibilityIdentifier("item.screen")
             .announcesScreenChange()
-            .navigationTitle("Item")
+            .navigationTitle(model.selectedItem.sourceNoun.capitalized)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -124,7 +127,7 @@ struct ExperienceItemDetailScreen: View {
                         Image(systemName: "ellipsis.circle")
                             .frame(width: 44, height: 44)
                     }
-                    .accessibilityLabel("Item options")
+                    .accessibilityLabel("\(model.selectedItem.sourceNoun.capitalized) options")
                 }
             }
             .task(id: model.selectedItem.id) { await refreshEpisodeLinkStatus() }
@@ -567,7 +570,7 @@ struct ExperienceItemDetailScreen: View {
     private var recentMargins: some View {
         if !model.selectedItem.interjections.isEmpty {
             VStack(alignment: .leading, spacing: 12) {
-                sectionHeading("Recent Margins", detail: "Your thoughts on this item")
+                sectionHeading("Recent Margins", detail: "Your thoughts on this \(model.selectedItem.sourceNoun.inSentence)")
                 ExperienceSurface(tint: AppColors.coral.opacity(0.34)) {
                     VStack(spacing: 0) {
                         ForEach(Array(itemMargins.prefix(3).enumerated()), id: \.element.id) { index, row in
@@ -640,13 +643,13 @@ struct ExperienceItemDetailScreen: View {
                                     Image(systemName: "play.fill").frame(width: 44, height: 44)
                                 }
                                 .buttonStyle(.bordered)
-                                .accessibilityLabel("Resume this session")
+                                .accessibilityLabel(RowAccessibilityLabel.label("Resume this session", row: sessionTitle(row.session, index: index), "\(row.session.completionPercent)%"))
                                 .accessibilityIdentifier("session.resume.\(row.session.id)")
                                 Button { model.openExport(sessionId: row.session.id) } label: {
                                     Image(systemName: "square.and.arrow.up").frame(width: 44, height: 44)
                                 }
                                 .buttonStyle(.plain)
-                                .accessibilityLabel("Export this session")
+                                .accessibilityLabel(RowAccessibilityLabel.label("Export this session", row: sessionTitle(row.session, index: index), "\(row.session.completionPercent)%"))
                                 .accessibilityIdentifier("session.export.\(row.session.id)")
                             }
                         }
@@ -900,7 +903,8 @@ private struct ExperienceListeningMapSection: View, Equatable {
     }
 
     var body: some View {
-        LazyVStack(alignment: .leading, spacing: 12) {
+        // Plain stacks: the item screen's own lazy stack hosts this section (#3781).
+        VStack(alignment: .leading, spacing: 12) {
             sectionHeading(
                 isCommunityMap ? "Community map" : "Listening Map",
                 detail: isCommunityMap
@@ -909,7 +913,7 @@ private struct ExperienceListeningMapSection: View, Equatable {
             )
             .accessibilityIdentifier(isCommunityMap ? "listeningMap.heading.community" : "listeningMap.heading")
             ExperienceSurface(tint: AppColors.evergreen.opacity(0.18)) {
-                LazyVStack(spacing: 0) {
+                VStack(spacing: 0) {
                     ForEach(Array(scenes.enumerated()), id: \.element.id) { index, scene in
                         VStack(spacing: 0) {
                             if index > 0 { Divider() }

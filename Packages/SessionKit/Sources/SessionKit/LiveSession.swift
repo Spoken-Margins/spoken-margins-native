@@ -62,6 +62,13 @@ public struct LiveSession: Codable, Equatable, Sendable {
     public var endNote: String?
     /// When Resume last reopened it (DESIGN section 2 point 6).
     public var resumedAt: Date?
+    /// What the listener says this session is about (#3491), in their words. Optional, so a session from an earlier
+    /// build reads unchanged and an earlier build reading one ignores it.
+    public var sessionDescription: String?
+    /// The start time the listener says the session had, when they corrected it (#3491). For display and export
+    /// only: `startedAt` stays the tap time, because the clock, each Margin's offset, filing and store order all
+    /// run from it. Optional for the same reason as `sessionDescription`.
+    public var statedStartedAt: Date?
 
     public init(
         id: String, kind: ElsewhereKind = .meeting, title: String = "", startedAt: Date, endedAt: Date? = nil,

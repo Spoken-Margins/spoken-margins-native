@@ -838,7 +838,7 @@ final class Gate1AppModel: ObservableObject {
             return "This podcast already includes publisher chapters. A generated Listening Map is unnecessary."
         }
         if !selectedItem.chapters.isEmpty {
-            return "This item already has a Listening Map."
+            return "This \(selectedItem.sourceNoun.inSentence) already has a Listening Map."
         }
         guard let item = try? store?.loadItemSummary(id: activeItemId) else {
             return "Listening Map generation is unavailable."
@@ -1737,7 +1737,7 @@ final class Gate1AppModel: ObservableObject {
                 reportConfirmation("\(item.title) is already available offline.")
             case .some(.remoteStream):
                 guard let rawURL = item.media?.url, let remoteURL = URL(string: rawURL) else {
-                    reportFailure("This audio item does not have a downloadable source.")
+                    reportFailure("This audio does not have a downloadable source.")
                     return
                 }
                 if podcastDownloadCoordinator?.downloadNow(itemId: id) != true {
@@ -1748,7 +1748,7 @@ final class Gate1AppModel: ObservableObject {
                 reportFailure("Browser-owned audio cannot be downloaded by Spoken Margins.")
             case .none, .some(.generatedTTSRealtime), .some(.generatedTTSPrerendered):
                 guard item.hasListenableText else {
-                    reportFailure("This item does not have text that can be prepared for offline listening.")
+                    reportFailure("This source does not have text that can be prepared for offline listening.")
                     return
                 }
                 guard hasAcceptedCurrentTerms, PreparationVoice.current(for: ttsVoiceSelection, model: self) != nil else {

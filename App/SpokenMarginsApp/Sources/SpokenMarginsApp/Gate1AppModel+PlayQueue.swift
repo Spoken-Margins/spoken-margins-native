@@ -78,7 +78,7 @@ extension Gate1AppModel {
     }
 
     private func queuedTitle(_ itemId: String) -> String {
-        libraryItems.first(where: { $0.id == itemId })?.title ?? "Item"
+        libraryItems.first(where: { $0.id == itemId })?.title ?? "Untitled"
     }
 
     /// Starts the next queued item when the one that was playing reaches its end. Not while a sleep timer is running:
@@ -114,6 +114,14 @@ extension Gate1AppModel {
         }
         // One import at a time; the next refresh picks these up again because they are not marked seen yet.
         guard sourceImportTask == nil, let folderURL = quickAccess.resolvedFolderURL() else { return }
+        // Link lists (#3767) go first and alone: their links are added to the Library, in file order. The files that
+        // are not marked seen yet are picked up by the refresh that import ends with, so text files follow right after.
+        let linkLists = plan.toImport.filter(Self.isQuickFolderLinkList)
+        if !linkLists.isEmpty {
+            quickAccess.inboxSeenFileIds = (quickAccess.inboxSeenFileIds ?? []).union(linkLists.map(\.id))
+            importQuickFolderLinkLists(linkLists, folderURL: folderURL)
+            return
+        }
         quickAccess.inboxSeenFileIds = (quickAccess.inboxSeenFileIds ?? []).union(plan.newSeenKeys)
         let files = plan.toImport
         beginObsidianMarkdownImport(

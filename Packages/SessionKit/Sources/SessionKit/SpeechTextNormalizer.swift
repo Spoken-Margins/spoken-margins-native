@@ -45,16 +45,61 @@ public enum SpeechTextNormalizer {
     }
 
     public static func normalizeWithSourceOffsets(_ source: String) -> NormalizedSpeechText {
+        projectionMemo.projection(of: source, kind: .speech) { computeNormalizedWithSourceOffsets(source) }
+    }
+
+    private static func computeNormalizedWithSourceOffsets(_ source: String) -> NormalizedSpeechText {
         var rendered = source.enumerated().map { MappedCharacter(character: $0.element, sourceOffset: $0.offset) }
 
         rendered = projectAudibleContent(rendered)
         return finish(rendered, sourceLength: source.count)
     }
 
+    /// The projections of the one long text a play is about to start, so a play does not project it on the main
+    /// thread when something off it already has (#2256). Short texts, such as streamed chunks, never use it.
+    static let projectionMemo = SpeechProjectionMemo()
+
+    /// Which players a text may be spoken by, so the projection can be made ahead for each of them.
+    public struct PrewarmVoiceKinds: OptionSet, Sendable {
+        public let rawValue: Int
+        public init(rawValue: Int) { self.rawValue = rawValue }
+        /// The on-device voices' own projection (`normalizeWithSourceOffsets`).
+        public static let onDevice = PrewarmVoiceKinds(rawValue: 1)
+        /// Apple's system speech (`projectForSystemSpeech`).
+        public static let system = PrewarmVoiceKinds(rawValue: 2)
+
+        /// The kinds a play may use when the listener picked an on-device voice or a system one. An on-device voice
+        /// hands over to the system voice mid-play (Low Power Mode, a missing model, a render failure), and that voice
+        /// projects the text its own way, so both are made ahead (#2256). The system voice never hands over the
+        /// other way.
+        public static func forSelection(onDeviceVoice: Bool) -> PrewarmVoiceKinds {
+            onDeviceVoice ? [.onDevice, .system] : [.system]
+        }
+    }
+
+    /// Projects `source` for the players of the given kinds and keeps the results for the play that follows. Call it
+    /// off the main thread; the call is the whole cost, and a text too short or too long for the memo is left alone.
+    public static func prewarm(_ source: String, kinds: PrewarmVoiceKinds = .onDevice) {
+        guard SpeechProjectionMemo.holds(utf8Count: source.utf8.count) else { return }
+        // The memo's byte budget counts each kind's copy of the text. A book that would fit once but not twice keeps
+        // only the first kind, never the second pushing the first out (the first is the chosen voice's own).
+        let wanted = [(PrewarmVoiceKinds.onDevice, { _ = normalizeWithSourceOffsets(source) }),
+                      (PrewarmVoiceKinds.system, { _ = projectForSystemSpeech(source) })]
+            .filter { kinds.contains($0.0) }
+        for (index, kind) in wanted.enumerated() {
+            guard SpeechProjectionMemo.fits(utf8Count: source.utf8.count, copies: index + 1) else { return }
+            kind.1()
+        }
+    }
+
     /// Produces the conservative plain-text representation handed to Apple's
     /// system speech APIs. The source remains unchanged; every retained spoken
     /// character maps back to its original Character offset.
     public static func projectForSystemSpeech(_ source: String) -> NormalizedSpeechText {
+        projectionMemo.projection(of: source, kind: .systemSpeech) { computeProjectionForSystemSpeech(source) }
+    }
+
+    private static func computeProjectionForSystemSpeech(_ source: String) -> NormalizedSpeechText {
         var rendered = source.enumerated().map { MappedCharacter(character: $0.element, sourceOffset: $0.offset) }
 
         rendered = projectAudibleContent(rendered)
@@ -92,7 +137,8 @@ public enum SpeechTextNormalizer {
         let unspokenStandalonePattern = #"(?is)<\s*(?:source|img|video|audio|iframe)\b[^>]*>"#
         rendered = replace(pattern: unspokenStandalonePattern, in: rendered, replacement: spaceReplacement)
 
-        let remainingTagPattern = #"(?s)<[^>]*>"#
+        // Import cleaning keeps the old pattern: stored text stays byte-identical, so no Margin moves (I13 rule 1a).
+        let remainingTagPattern = speakIdentifiers ? markupTagPattern : #"(?s)<[^>]*>"#
         rendered = replace(pattern: remainingTagPattern, in: rendered, replacement: spaceReplacement)
 
         let markdownImagePattern = #"!\[[^\]]*\]\([^)]*\)"#
@@ -109,6 +155,11 @@ public enum SpeechTextNormalizer {
         }
         return rendered
     }
+
+    /// Real markup only. Speech normalizes a whole document at once, and a bare `<[^>]*>` ran from a table note's
+    /// "p<0.05" to the next ">" pages later: one match took 107,043 characters, more than half of a paper's words (#3813).
+    /// Comparisons keep their words: a tag's name follows the "<" directly, and anything after the name is attributes.
+    private static let markupTagPattern = #"(?s)<!--.*?-->|<![A-Za-z][^<>]*>|<\?[A-Za-z][^<>]*\?>|</?[A-Za-z][-A-Za-z0-9:_]*(?:\s+[-A-Za-z0-9_:.@]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+)(?:\s+[-A-Za-z0-9_:.@]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?)*)?\s*/?>"#
 
     /// Math letters and private-use glyphs in any text (a PDF on the old reader, a pasted equation) are said as words:
     /// a voice has no tokens for them and makes noise instead. Everything else passes through untouched.
@@ -555,5 +606,80 @@ public enum SpeechTextNormalizer {
     private struct MappedCharacter: Equatable {
         var character: Character
         var sourceOffset: Int
+    }
+}
+
+/// The latest few projections per kind, for texts long enough that projecting them is felt (282 ms for a long
+/// article, #2256). A text is matched by its exact UTF-8 bytes, never by Swift's canonical equivalence, so a changed
+/// or re-normalised text is never served another text's projection. Several slots, because the text a play speaks
+/// (preface and text) is not the one a background render projects, and the render must not push the play's out.
+final class SpeechProjectionMemo: @unchecked Sendable {
+    enum Kind { case speech, systemSpeech }
+
+    /// About 20 KB of text and up: below it the projection takes a few milliseconds, and streamed chunks come through here.
+    static let minimumBytes = 20_000
+    /// Above this the projection's offsets alone would be tens of megabytes, so it is computed and not kept.
+    static let maximumBytes = 4_000_000
+    static let slotsPerKind = 3
+    /// All kinds together, newest kept: a few long articles, never several books.
+    static let totalBytes = 6_000_000
+
+    private struct Entry { let kind: Kind; let source: String; let projection: NormalizedSpeechText }
+    private let lock = NSLock()
+    private var entries: [Entry] = [] // oldest first
+
+    static func holds(utf8Count: Int) -> Bool { utf8Count >= minimumBytes && utf8Count <= maximumBytes }
+
+    /// Whether `copies` projections of one text stay inside the byte budget together.
+    static func fits(utf8Count: Int, copies: Int) -> Bool { utf8Count * copies <= totalBytes }
+
+    private static func same(_ a: String, _ b: String) -> Bool {
+        a.utf8.count == b.utf8.count && a.utf8.elementsEqual(b.utf8)
+    }
+
+    private func find(_ source: String, _ kind: Kind) -> Int? {
+        entries.firstIndex { $0.kind == kind && Self.same($0.source, source) }
+    }
+
+    func projection(of source: String, kind: Kind, compute: () -> NormalizedSpeechText) -> NormalizedSpeechText {
+        guard Self.holds(utf8Count: source.utf8.count) else { return compute() }
+        lock.lock()
+        if let index = find(source, kind) {
+            let entry = entries.remove(at: index)
+            entries.append(entry) // used last
+            lock.unlock()
+            return entry.projection
+        }
+        lock.unlock()
+        let projection = compute()
+        lock.lock()
+        if find(source, kind) == nil { entries.append(Entry(kind: kind, source: source, projection: projection)) }
+        trim()
+        lock.unlock()
+        return projection
+    }
+
+    private func trim() {
+        for kind in [Kind.speech, .systemSpeech] {
+            while entries.filter({ $0.kind == kind }).count > Self.slotsPerKind,
+                  let oldest = entries.firstIndex(where: { $0.kind == kind }) {
+                entries.remove(at: oldest)
+            }
+        }
+        while entries.count > 1, entries.reduce(0, { $0 + $1.source.utf8.count }) > Self.totalBytes {
+            entries.removeFirst()
+        }
+    }
+
+    func forget() {
+        lock.lock()
+        entries.removeAll()
+        lock.unlock()
+    }
+
+    func remembers(_ source: String, kind: Kind) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return find(source, kind) != nil
     }
 }

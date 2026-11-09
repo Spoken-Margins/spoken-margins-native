@@ -655,7 +655,7 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(savedMargin.waitForExistence(timeout: 4))
         savedMargin.tap()
         XCTAssertTrue(element("marginDetail.screen").waitForExistence(timeout: 4), "Tapping the saved Margin row did not open its detail")
-        let timelineAction = app.buttons["Open Item"]
+        let timelineAction = app.buttons["Open the source"]
         let pinnedMoment = app.buttons["marginDetail.playMoment.button"]
         let detailList = element("marginDetail.screen").collectionViews.firstMatch
         for _ in 0..<5 {
@@ -722,75 +722,62 @@ final class Gate1FlowUITests: XCTestCase {
         let start = app.buttons["liveSession.start"]
         XCTAssertTrue(start.isHittable, "Start Session is behind the keyboard")
         start.tap()
-        XCTAssertTrue(element("liveSession.marginText").waitForExistence(timeout: 6), "One tap did not start the session")
+        XCTAssertTrue(app.buttons["liveSession.addMargin.button"].waitForExistence(timeout: 6), "One tap did not start the session")
     }
 
-    /// #2963: typing a Margin in a Live session, Add Margin is reachable above the keyboard without scrolling.
-    func testLiveSessionAddMarginIsAboveTheKeyboardWhileTyping() throws {
+    /// #3491: the pencil opens the normal writing sheet with the keyboard up, and Save puts a row on the Margins pane.
+    func testLiveSessionPencilOpensTheWritingSheetAndSaveAddsARow() throws {
+        startLiveSession()
+        app.buttons["liveSession.write.button"].tap()
+        let editor = element("writtenMargin.text")
+        XCTAssertTrue(editor.waitForExistence(timeout: 6), "The pencil did not open the writing sheet")
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 4), "The writing sheet opened with the keyboard down")
+        editor.tap()
+        editor.typeText("Johnny moved on to the budget.")
+        let save = element("writtenMargin.save.keyboard.button")
+        XCTAssertTrue(save.waitForExistence(timeout: 4) && save.isHittable, "Save is not reachable with the keyboard up")
+        save.tap()
+        let row = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'liveSession.margin.row.'")).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 6), "Save did not add a Margin row")
+        XCTAssertTrue(waitForDisappearance(element("writtenMargin.screen"), timeout: 4), "Save left the writing sheet up")
+    }
+
+    /// #3491: End is in the dock, so it is hittable without scrolling however many Margins the session has.
+    func testLiveSessionEndIsHittableWithoutScrollingAfterManyMargins() throws {
+        startLiveSession()
+        for index in 0..<8 {
+            app.buttons["liveSession.write.button"].tap()
+            let editor = element("writtenMargin.text")
+            XCTAssertTrue(editor.waitForExistence(timeout: 6))
+            editor.tap()
+            editor.typeText("Margin number \(index) with enough words to fill about two lines of the row on a phone.")
+            element("writtenMargin.save.keyboard.button").tap()
+            XCTAssertTrue(waitForDisappearance(element("writtenMargin.screen"), timeout: 4))
+        }
+        let end = app.buttons["liveSession.endSession"]
+        XCTAssertTrue(end.waitForExistence(timeout: 4))
+        XCTAssertTrue(end.isHittable, "End is not reachable without scrolling")
+        let window = app.windows.firstMatch.frame
+        XCTAssertLessThanOrEqual(end.frame.maxY, window.maxY, "End is below the screen")
+    }
+
+    /// #2831: the End sheet stays up until its own End or Cancel closes it; nothing on the screen redraws it away.
+    func testLiveSessionEndSheetStaysUpForThreeSeconds() throws {
+        startLiveSession()
+        app.buttons["liveSession.endSession"].tap()
+        let confirm = app.buttons["liveSession.confirmEnd"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 6), "End did not open its sheet")
+        Thread.sleep(forTimeInterval: 3)
+        XCTAssertTrue(confirm.exists && app.buttons["liveSession.cancelEnd"].exists, "The End sheet closed by itself")
+    }
+
+    private func startLiveSession() {
         app.buttons["home.addSource.button"].tap()
         scrollToElement("addSource.route.liveSession").tap()
         let start = app.buttons["liveSession.start"]
         XCTAssertTrue(start.waitForExistence(timeout: 6))
         start.tap()
-        let field = element("liveSession.marginText")
-        XCTAssertTrue(field.waitForExistence(timeout: 6))
-        field.tap()
-        field.typeText("Johnny moved on to the budget.")
-        let keyboard = app.keyboards.firstMatch
-        XCTAssertTrue(keyboard.waitForExistence(timeout: 4))
-        let add = element("liveSession.addMargin.keyboard.button")
-        XCTAssertTrue(add.waitForExistence(timeout: 4), "No Add Margin on the keyboard")
-        XCTAssertTrue(add.isEnabled && add.isHittable, "Add Margin on the keyboard can't be tapped")
-        captureScreen(named: "live-session-add-margin-keyboard")
-        add.tap()
-        XCTAssertTrue(waitForDisappearance(app.keyboards.firstMatch, timeout: 4), "Add Margin left the keyboard up")
-    }
-
-    /// #3727: the live session's Edit and Remove Margin buttons have a 44 x 44 pt target. Edit's 44 pt frame sat
-    /// outside its Button and Remove Margin was a bare 22 pt glyph. A frame can report a size the button doesn't take
-    /// taps in (#430), so each control's element frame is checked and then tapped 2 pt inside each of its edges.
-    func testLiveSessionEditAndRemoveMarginTakeTapsAcrossA44PointTarget() throws {
-        app.buttons["home.addSource.button"].tap()
-        scrollToElement("addSource.route.liveSession").tap()
-        let start = app.buttons["liveSession.start"]
-        XCTAssertTrue(start.waitForExistence(timeout: 6))
-        start.tap()
-        let field = element("liveSession.marginText")
-        XCTAssertTrue(field.waitForExistence(timeout: 6), "The session did not start")
-
-        XCTContext.runActivity(named: "Edit toggles from each edge") { _ in
-            let edit = app.buttons["liveSession.editDetails"]
-            XCTAssertTrue(edit.waitForExistence(timeout: 4), "Edit is missing")
-            for edge in 0..<4 {
-                let before = edit.label
-                tapInsideEdge(edge, of: edit, named: before)
-                XCTAssertTrue(waitUntil(edit, "label != %@", before),
-                              "A tap at the \(Self.edgeNames[edge]) edge of \(before) did not toggle it")
-            }
-            XCTAssertEqual(edit.label, "Edit", "Four taps did not bring Edit back")
-        }
-
-        XCTContext.runActivity(named: "Remove Margin removes one Margin from each edge") { _ in
-            for number in 1...4 {
-                field.tap()
-                field.typeText("Margin \(number) for the hit area check.")
-                let add = element("liveSession.addMargin.keyboard.button")
-                XCTAssertTrue(add.waitForExistence(timeout: 4), "No Add Margin on the keyboard")
-                add.tap()
-                XCTAssertTrue(waitForDisappearance(app.keyboards.firstMatch, timeout: 4), "Add Margin left the keyboard up")
-            }
-            let removes = app.buttons.matching(NSPredicate(format: "label == %@", "Remove Margin"))
-            XCTAssertTrue(waitUntil(removes, "count == 4"), "Four Margins did not each get a Remove Margin button")
-            for edge in 0..<4 {
-                let remove = removes.firstMatch
-                for _ in 0..<6 where !isReadyToTap(remove) {
-                    if remove.exists && remove.frame.midY < app.windows.firstMatch.frame.midY { app.swipeDown() } else { app.swipeUp() }
-                }
-                tapInsideEdge(edge, of: remove, named: "Remove Margin")
-                XCTAssertTrue(waitUntil(removes, "count == %d", 3 - edge),
-                              "A tap at the \(Self.edgeNames[edge]) edge of Remove Margin did not remove a Margin")
-            }
-        }
+        XCTAssertTrue(app.buttons["liveSession.addMargin.button"].waitForExistence(timeout: 6), "The session did not start")
     }
 
     func testWrittenMarginSaveSearchStarAndDiscardPreserveTheSource() throws {
@@ -1506,22 +1493,6 @@ final class Gate1FlowUITests: XCTestCase {
     private func waitUntil(_ object: Any, _ format: String, _ args: Any..., timeout: TimeInterval = 5) -> Bool {
         let expectation = XCTNSPredicateExpectation(predicate: NSPredicate(format: format, argumentArray: args), object: object)
         return XCTWaiter().wait(for: [expectation], timeout: timeout) == .completed
-    }
-
-    private static let edgeNames = ["leading", "trailing", "top", "bottom"]
-
-    /// #3727: checks the control's element frame is at least 44 x 44 pt, then taps 2 pt inside one of its edges
-    /// (0 leading, 1 trailing, 2 top, 3 bottom). The tap is placed from the control's centre when it is made, so a
-    /// row that moved since the frame was read still gets the tap where the control is.
-    private func tapInsideEdge(_ edge: Int, of control: XCUIElement, named name: String) {
-        let size = control.frame.size
-        XCTAssertGreaterThanOrEqual(size.width, 43.5, "\(name) is \(size.width) pt wide; its target needs 44")
-        XCTAssertGreaterThanOrEqual(size.height, 43.5, "\(name) is \(size.height) pt tall; its target needs 44")
-        let halfWidth = size.width / 2 - 2
-        let halfHeight = size.height / 2 - 2
-        let offsets = [CGVector(dx: -halfWidth, dy: 0), CGVector(dx: halfWidth, dy: 0),
-                       CGVector(dx: 0, dy: -halfHeight), CGVector(dx: 0, dy: halfHeight)]
-        control.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).withOffset(offsets[edge]).tap()
     }
 
     private static let manualListeningMapJSON = """

@@ -270,7 +270,7 @@ extension Gate1AppModel {
                 self.diagnostics["localAudioSkim:\(itemId)"] = "ready"
             } catch {
                 self.diagnostics["localAudioSkim:\(itemId)"] = "failed:\(SafeErrorText.describe(error))"
-                self.reportWarning("Some Skim summaries are not ready. Reopen the item to retry, or reimport the package to restore its supplied voices.")
+                self.reportWarning("Some Skim summaries are not ready. Reopen it to retry, or reimport the package to restore its supplied voices.")
             }
             // A pass that stops early may still have adopted supplied summaries; Skim reads what was committed (#2184),
             // and reloads only when what it loaded lacks one of them.

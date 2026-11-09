@@ -55,7 +55,7 @@ public struct PlaybackFeedbackTag: Equatable, Sendable {
         case (.summary, _):
             "Summary couldn’t finish"
         case (.marginTranscription, true):
-            "Margin transcript failed"
+            "Saved · transcript failed" // the Margin is kept; only its words didn't come (#3793)
         case (.marginTranscription, false):
             "No transcript: Speech Recognition is off"
         }

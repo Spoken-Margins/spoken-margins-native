@@ -70,7 +70,7 @@
             {
               "do": "tap",
               "label": "Item options menu",
-              "marker": "Item options",
+              "marker": "sourceNoun.capitalized) options",
               "file": "ExperienceItemDetailScreen.swift"
             },
             {
@@ -109,7 +109,7 @@
               "do": "tap",
               "label": "Save & resume",
               "marker": "\"recording.finish.button",
-              "file": "ExperienceRecordingScreen.swift"
+              "file": "MarginRecordingScreen.swift"
             }
           ]
         },
@@ -133,7 +133,7 @@
               "do": "tap",
               "label": "Save",
               "marker": "\"writtenMargin.save.button",
-              "file": "ExperienceWrittenMarginScreen.swift"
+              "file": "MarginWritingSheet.swift"
             }
           ]
         },
@@ -157,7 +157,7 @@
               "do": "tap",
               "label": "Save & resume",
               "marker": "\"recording.finish.button",
-              "file": "ExperienceRecordingScreen.swift"
+              "file": "MarginRecordingScreen.swift"
             }
           ]
         },
@@ -187,7 +187,7 @@
               "do": "tap",
               "label": "Save",
               "marker": "\"writtenMargin.save.button",
-              "file": "ExperienceWrittenMarginScreen.swift"
+              "file": "MarginWritingSheet.swift"
             }
           ],
           "note": "The mini player has no pencil."
