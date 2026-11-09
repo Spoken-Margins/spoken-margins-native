@@ -159,57 +159,93 @@ final class AudioPreparationRunSummaryTests: XCTestCase {
             maximumChunkCount: maximumChunkCount, isCancelled: cancelled)
     }
 
+    /// The drain under the passes' own rules. `foreign` marks job ids filed under another voice's engine.
+    private func drained(
+        _ jobs: [AudioPreparationJob], automatic: AutomaticAudioPreparationPolicy,
+        thermal: SpeechThermalLevel = .nominal, lowPower: Bool = false, foreign: Set<String> = []
+    ) -> Bool {
+        AudioPreparationPickRules(
+            ownJobs: { $0.filter { !foreign.contains($0.id) } },
+            thermal: thermal, isLowPowerModeEnabled: lowPower, automaticPolicy: automatic
+        ).isDrained(jobs)
+    }
+
     func testAnEmptyTableIsDrained() {
-        XCTAssertTrue(AudioPreparationRunTracker.isDrained(remainingJobs: [], automaticPolicy: .off))
-        XCTAssertTrue(AudioPreparationRunTracker.isDrained(remainingJobs: [], automaticPolicy: .whileCharging))
+        XCTAssertTrue(drained([], automatic: .off))
+        XCTAssertTrue(drained([], automatic: .whileCharging))
     }
 
     func testAJobTheListenerStoppedIsNotWorkLeft() {
         // Stop keeps the job with isCancelled; a table holding only that is drained.
         for policy in [AutomaticAudioPreparationPolicy.off, .whileCharging] {
-            XCTAssertTrue(AudioPreparationRunTracker.isDrained(remainingJobs: [job("x", .explicit, cancelled: true)], automaticPolicy: policy))
+            XCTAssertTrue(drained([job("x", .explicit, cancelled: true)], automatic: policy))
         }
     }
 
     func testAnExplicitJobStillQueuedIsWorkLeftWhateverTheAutomaticPolicy() {
         for policy in [AutomaticAudioPreparationPolicy.off, .whileCharging] {
-            XCTAssertFalse(AudioPreparationRunTracker.isDrained(
-                remainingJobs: [job("x", .explicit, cancelled: true), job("y", .explicit)], automaticPolicy: policy))
+            XCTAssertFalse(drained([job("x", .explicit, cancelled: true), job("y", .explicit)], automatic: policy))
         }
     }
 
     func testAnAutomaticJobIsWorkLeftOnlyWhileAutomaticPreparationIsOn() {
         for policy in [PreparationJobPolicy.whileCharging, .demandWindow] {
-            XCTAssertTrue(AudioPreparationRunTracker.isDrained(remainingJobs: [job("a", policy)], automaticPolicy: .off), "nothing will pick it up")
-            XCTAssertFalse(AudioPreparationRunTracker.isDrained(remainingJobs: [job("a", policy)], automaticPolicy: .whileCharging))
+            XCTAssertTrue(drained([job("a", policy)], automatic: .off), "nothing will pick it up")
+            XCTAssertFalse(drained([job("a", policy)], automatic: .whileCharging))
         }
     }
 
     func testAnOpeningBufferWaitingForTheForegroundLoopIsWorkLeftWithAutomaticPreparationOff() {
         // Every added article gets one (.demandWindow, two chunks) and the default policy is off.
         let buffer = job("b", .demandWindow, maximumChunkCount: 2)
-        XCTAssertFalse(AudioPreparationRunTracker.isDrained(remainingJobs: [buffer], automaticPolicy: .off))
-        XCTAssertFalse(AudioPreparationRunTracker.isDrained(remainingJobs: [buffer], automaticPolicy: .whileCharging))
-        XCTAssertTrue(AudioPreparationRunTracker.isDrained(
-            remainingJobs: [job("b", .demandWindow, cancelled: true, maximumChunkCount: 2)], automaticPolicy: .off), "a stopped one is not")
+        XCTAssertFalse(drained([buffer], automatic: .off))
+        XCTAssertFalse(drained([buffer], automatic: .whileCharging))
+        XCTAssertTrue(drained([job("b", .demandWindow, cancelled: true, maximumChunkCount: 2)], automatic: .off), "a stopped one is not")
     }
 
-    func testTheDrainAgreesWithWhatEachPassWouldPickForEveryKindOfJob() {
-        // The drain must never say "empty" while either pass has something to take, and never "work left"
-        // when neither does: compared against the passes' own rules over every policy, cap and stop.
-        let policies = [PreparationJobPolicy.explicit, .demandWindow, .whileCharging]
-        for policy in policies {
+    func testAnotherEnginesJobIsNotWorkLeft() {
+        // Filed under another voice's engine, it waits for that voice: neither pass picks it (audit on fba8a46).
+        for policy in [PreparationJobPolicy.explicit, .demandWindow, .whileCharging] {
+            XCTAssertTrue(drained([job("f", policy, maximumChunkCount: 2)], automatic: .whileCharging, foreign: ["f"]), "\(policy)")
+        }
+        XCTAssertFalse(drained([job("f", .explicit), job("o", .explicit)], automatic: .off, foreign: ["f"]), "this voice's own job still is")
+    }
+
+    func testLowPowerModeHoldsEveryJobButTheExplicitOneUnlessThePhoneIsTooWarm() {
+        // An opening buffer is never picked in Low Power Mode, so it is not work left (audit on 60dec51); once the
+        // phone is too warm the pass keeps every job in line so it can pause for heat, and it is work left again.
+        let buffer = job("b", .demandWindow, maximumChunkCount: 2)
+        XCTAssertTrue(drained([buffer], automatic: .off, lowPower: true))
+        XCTAssertTrue(drained([job("c", .whileCharging)], automatic: .whileCharging, lowPower: true))
+        XCTAssertFalse(drained([job("e", .explicit)], automatic: .off, lowPower: true), "explicit jobs still render in Low Power Mode")
+        XCTAssertFalse(drained([buffer], automatic: .off, thermal: .serious, lowPower: true))
+        XCTAssertFalse(drained([buffer], automatic: .off, lowPower: false))
+    }
+
+    func testTheDrainAgreesWithAnIndependentStatementOfWhatEachPassPicks() {
+        // The oracle is the rules in words, not a call into the rules: a job is picked unless it is stopped, another
+        // voice's, or held by Low Power Mode while the phone is cool; then the foreground loop takes explicit jobs
+        // and opening buffers, and the background task takes explicit jobs, or any job with automatic preparation on.
+        for policy in [PreparationJobPolicy.explicit, .demandWindow, .whileCharging] {
             for cap in [nil, 2] as [Int?] {
                 for cancelled in [false, true] {
                     for automatic in [AutomaticAudioPreparationPolicy.off, .whileCharging] {
-                        let jobs = [job("j", policy, cancelled: cancelled, maximumChunkCount: cap)]
-                        let foregroundHasWork = !LibraryAudioPreparationTurns.eligible(jobs, for: .foreground).isEmpty
-                        let backgroundHasWork = !LibraryAudioPreparationTurns.eligible(
-                            OfflinePreparationRecovery.backgroundJobs(jobs, automaticPolicy: automatic), for: .background).isEmpty
-                        XCTAssertEqual(
-                            AudioPreparationRunTracker.isDrained(remainingJobs: jobs, automaticPolicy: automatic),
-                            !(foregroundHasWork || backgroundHasWork),
-                            "\(policy) cap \(String(describing: cap)) cancelled \(cancelled) automatic \(automatic)")
+                        for lowPower in [false, true] {
+                            for thermal in [SpeechThermalLevel.nominal, .serious] {
+                                for foreign in [false, true] {
+                                    let heldByLowPower = lowPower && policy != .explicit && !PreparationChunkGate.isTooWarm(thermal)
+                                    let reachable = !cancelled && !foreign && !heldByLowPower
+                                    let foregroundTakes = policy == .explicit || (policy == .demandWindow && cap != nil)
+                                    let backgroundTakes = policy == .explicit || automatic == .whileCharging
+                                    let workLeft = reachable && (foregroundTakes || backgroundTakes)
+                                    XCTAssertEqual(
+                                        drained([job("j", policy, cancelled: cancelled, maximumChunkCount: cap)], automatic: automatic,
+                                                thermal: thermal, lowPower: lowPower, foreign: foreign ? ["j"] : []),
+                                        !workLeft,
+                                        "\(policy) cap \(String(describing: cap)) cancelled \(cancelled) automatic \(automatic) lowPower \(lowPower) thermal \(thermal) foreign \(foreign)")
+                                }
+                            }
+                        }
                     }
                 }
             }

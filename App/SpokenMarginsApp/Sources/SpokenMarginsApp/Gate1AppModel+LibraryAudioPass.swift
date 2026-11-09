@@ -133,24 +133,22 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
             let ownJobs: ([AudioPreparationJob]) -> [AudioPreparationJob] = { jobs in
                 preparationVoice.jobsFiledUnderItsEngine(jobs, manifestEngines: manifestEngines)
             }
-            var queuedJobs = ownJobs(try await AudioPreparationPassReads.audioJobs(store))
-                .filter({ !PreparationChunkGate.setsAsideForLowPowerMode($0.policy, thermal: device.thermal, isLowPowerModeEnabled: device.isLowPowerModeEnabled) })
-            if !foregroundDemandOnly {
-                queuedJobs = OfflinePreparationRecovery.backgroundJobs(queuedJobs, automaticPolicy: automaticAudioPreparationPolicy)
+            // One statement of which jobs a pass can pick: this pass's candidates, its "is there more" question and the run
+            // summary's drain all read it, so a filter can't be added to one and left out of the others (#3816).
+            let pickRules = { (conditions: SpeechEngineConditions) in
+                AudioPreparationPickRules(
+                    ownJobs: ownJobs, thermal: conditions.thermal, isLowPowerModeEnabled: conditions.isLowPowerModeEnabled,
+                    automaticPolicy: self.automaticAudioPreparationPolicy)
             }
+            var queuedJobs = pickRules(device).candidates(try await AudioPreparationPassReads.audioJobs(store), for: caller)
             if !foregroundDemandOnly, !queuedJobs.contains(where: { !$0.isCancelled }),
                PreparationChunkGate.allowsAutomaticWork(thermal: device.thermal, isLowPowerModeEnabled: device.isLowPowerModeEnabled) {
                 await enqueueAutomaticAudioPreparationJobs()
-                queuedJobs = OfflinePreparationRecovery.backgroundJobs(
-                    ownJobs(try await AudioPreparationPassReads.audioJobs(store)), automaticPolicy: automaticAudioPreparationPolicy
-                )
+                queuedJobs = pickRules(device).candidates(try await AudioPreparationPassReads.audioJobs(store), for: caller)
             }
             let hasMoreMatchingJobs = { () async throws -> Bool in
-                let jobs = ownJobs(try await AudioPreparationPassReads.audioJobs(store))
-                return !LibraryAudioPreparationTurns.eligible(
-                    foregroundDemandOnly ? jobs : OfflinePreparationRecovery.backgroundJobs(jobs, automaticPolicy: self.automaticAudioPreparationPolicy),
-                    for: caller
-                ).isEmpty
+                let jobs = try await AudioPreparationPassReads.audioJobs(store)
+                return pickRules(self.preparationSeams.deviceConditions()).hasWork(jobs, for: caller)
             }
             let previous = libraryAudioPreparingItemId // nil job: nothing to do, or the foreground loop waits for the background task (#534)
             guard let job = libraryAudioLoop.turns.select(queuedJobs, activeItemId: activePlaybackItemId, for: caller) else { libraryAudioLoop.turns.stopped(caller); return false }
@@ -329,10 +327,8 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
                 )
             }
             let remainingJobs = try await AudioPreparationPassReads.audioJobs(store)
-            // Whoever rendered the last chunk: with no job left that a pass could pick up, the run is over (#3816). A stopped job
-            // and another engine's job stay in the table but no pass picks them, so the drain reads the same `ownJobs` list
-            // the loop's own "is there more" question does (`hasMoreMatchingJobs`), and only then applies the shared rules.
-            if AudioPreparationRunTracker.isDrained(remainingJobs: ownJobs(remainingJobs), automaticPolicy: automaticAudioPreparationPolicy) { runtimeDiagnostics.preparationQueueDrained() }
+            // Whoever rendered the last chunk: with no job left that either pass could pick up, the run is over (#3816).
+            if pickRules(preparationSeams.deviceConditions()).isDrained(remainingJobs) { runtimeDiagnostics.preparationQueueDrained() }
             applyPreparedChunkProgress(item: item, manifest: updated, remainingJobs: remainingJobs)
             let hasMore = try await hasMoreMatchingJobs()
             diagnostics["backgroundAudioPreparation"] = hasMore ? "chunk_committed" : "complete"

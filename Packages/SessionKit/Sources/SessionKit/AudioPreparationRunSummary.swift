@@ -88,21 +88,6 @@ public struct AudioPreparationRunTracker: Equatable, Sendable {
 
     public init() {}
 
-    /// Whether the jobs left in the table after a committed chunk are all jobs no pass will pick up. It asks the
-    /// passes' own questions, not a copy of them: what the foreground loop may take
-    /// (`LibraryAudioPreparationTurns.eligible(for: .foreground)`, which includes the opening-buffer jobs of a
-    /// newly added article) and what the background task may take (`OfflinePreparationRecovery.backgroundJobs`,
-    /// then `eligible(for: .background)`). Stop keeps a job with `isCancelled`, and an automatic job stays while
-    /// automatic preparation is off; both are as good as gone. Counting the raw table kept the drain from ever
-    /// firing for a listener who had once tapped Stop (audit on 5c12116); counting only the background rule
-    /// declared the queue empty while an opening buffer was waiting for the foreground loop (audit on 6a934f5).
-    public static func isDrained(remainingJobs: [AudioPreparationJob], automaticPolicy: AutomaticAudioPreparationPolicy) -> Bool {
-        let foreground = LibraryAudioPreparationTurns.eligible(remainingJobs, for: .foreground)
-        let background = LibraryAudioPreparationTurns.eligible(
-            OfflinePreparationRecovery.backgroundJobs(remainingJobs, automaticPolicy: automaticPolicy), for: .background)
-        return foreground.isEmpty && background.isEmpty
-    }
-
     /// The queue held no job the passes could still pick up after a committed chunk: whatever comes next is a
     /// new request, not this run.
     public mutating func queueDrained() {
