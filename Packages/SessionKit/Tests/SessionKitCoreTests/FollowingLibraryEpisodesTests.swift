@@ -94,7 +94,8 @@ final class FollowingLibraryEpisodesTests: XCTestCase {
         XCTAssertTrue(result.isEmpty)
     }
 
-    func testAReImportedEpisodeIsJudgedByItsLaterCopy() {
+    func testAFinishedOlderCopyBesideAnUnstartedNewerOneCountsAsHeard() {
+        // #3691: the later copy still names the item, but the episode was heard, so the row shows no ▶ on it.
         let result = FollowingLibraryEpisodes.resolve(
             entries: [entry("e1")],
             items: [
@@ -102,7 +103,108 @@ final class FollowingLibraryEpisodesTests: XCTestCase {
                 item("new", reference: "https://example.com/e1", createdAt: t0.addingTimeInterval(60)),
             ],
             sessions: [])
+        XCTAssertEqual(result["e1"], FollowingLibraryEpisode(itemID: "new", isFinished: true))
+    }
+
+    func testAnOlderCopyHeardInASessionBesideAnUnstartedNewerOneCountsAsHeard() {
+        let result = FollowingLibraryEpisodes.resolve(
+            entries: [entry("e1")],
+            items: [
+                item("old", reference: "https://example.com/e1", createdAt: t0),
+                item("new", reference: "https://example.com/e1", createdAt: t0.addingTimeInterval(60)),
+            ],
+            sessions: [session("old", percent: 100, status: "finished", phase: .finished)])
+        XCTAssertEqual(result["e1"], FollowingLibraryEpisode(itemID: "new", isFinished: true))
+    }
+
+    func testTwoUnfinishedCopiesAreNotHeardAndTheLaterOneNamesTheItem() {
+        let result = FollowingLibraryEpisodes.resolve(
+            entries: [entry("e1")],
+            items: [
+                item("old", reference: "https://example.com/e1", createdAt: t0),
+                item("new", reference: "https://example.com/e1", createdAt: t0.addingTimeInterval(60)),
+            ],
+            sessions: [session("old", percent: 40), session("new", percent: 10)])
         XCTAssertEqual(result["e1"], FollowingLibraryEpisode(itemID: "new", isFinished: false))
+    }
+
+    // MARK: The heard rule (#3691): 95%, or the last two minutes, whichever comes first.
+
+    private func podcast(_ id: String, durationMs: Int?) -> LibraryItemSummary {
+        LibraryItemSummary(
+            id: id, title: id, mediaType: "podcast", status: "ready", externalReference: "https://example.com/\(id)",
+            media: ItemMedia(sourceType: .remoteStream, url: "https://cdn.example.com/\(id).mp3", durationMs: durationMs),
+            hasListenableText: false, textCharacterCount: nil)
+    }
+
+    private func mediaSession(_ itemId: String, percent: Int, positionMs: Int?) -> Session {
+        var made = session(itemId, percent: percent)
+        made.position = Position(mediaTimeMs: positionMs)
+        return made
+    }
+
+    private func isFinished(_ item: LibraryItemSummary, _ sessions: [Session], entryDurationMs: Int? = nil) -> Bool? {
+        var entry = entry("e1", page: item.externalReference)
+        entry.audioDurationMs = entryDurationMs
+        return FollowingLibraryEpisodes.resolve(entries: [entry], items: [item], sessions: sessions)["e1"]?.isFinished
+    }
+
+    func testAnEpisodeAt96PercentIsHeardAndOneAt94IsNot() {
+        let ep = podcast("ep", durationMs: 3_600_000)
+        XCTAssertEqual(isFinished(ep, [mediaSession("ep", percent: 96, positionMs: 3_456_000)]), true)
+        XCTAssertEqual(isFinished(ep, [mediaSession("ep", percent: 95, positionMs: 3_420_000)]), true)
+        XCTAssertEqual(isFinished(ep, [mediaSession("ep", percent: 94, positionMs: 3_384_000)]), false)
+    }
+
+    func testAnEpisodeNinetySecondsFromTheEndIsHeardEvenBelow95Percent() {
+        // 20 minutes: 90 seconds left is 92.5%, short of 95 but inside the last two minutes.
+        let ep = podcast("ep", durationMs: 1_200_000)
+        XCTAssertEqual(isFinished(ep, [mediaSession("ep", percent: 92, positionMs: 1_110_000)]), true)
+        // 3 minutes 10 seconds left is not.
+        XCTAssertEqual(isFinished(ep, [mediaSession("ep", percent: 84, positionMs: 1_010_000)]), false)
+    }
+
+    func testTheLastTwoMinutesAreReadFromTheFeedsDurationWhenTheItemHasNone() {
+        let ep = podcast("ep", durationMs: nil)
+        let late = [mediaSession("ep", percent: 91, positionMs: 1_100_000)]
+        XCTAssertEqual(isFinished(ep, late, entryDurationMs: 1_200_000), true)
+        XCTAssertEqual(isFinished(ep, late, entryDurationMs: nil), false, "no duration anywhere: only the percent can say")
+    }
+
+    func testAFeedDurationShorterThanTheRealAudioDoesNotMakeAnUnheardEpisodeHeard() {
+        // The feed says 30 minutes but the real audio runs longer (inserted ads). Near the feed's end the player's
+        // own percent is still low, so the last-two-minutes rule must not fire; nor past the feed's end.
+        let ep = podcast("ep", durationMs: 1_800_000)
+        XCTAssertEqual(isFinished(ep, [mediaSession("ep", percent: 40, positionMs: 1_740_000)]), false)
+        XCTAssertEqual(isFinished(ep, [mediaSession("ep", percent: 40, positionMs: 1_900_000)]), false, "past the feed's end")
+    }
+
+    func testAnItemDurationOfZeroFallsBackToTheFeedsDuration() {
+        let ep = podcast("ep", durationMs: 0)
+        XCTAssertEqual(isFinished(ep, [mediaSession("ep", percent: 92, positionMs: 1_110_000)], entryDurationMs: 1_200_000), true)
+    }
+
+    func testTheNewerCopyHeardBesideAnUnstartedOlderOneCountsAsHeard() {
+        let result = FollowingLibraryEpisodes.resolve(
+            entries: [entry("e1")],
+            items: [
+                item("old", reference: "https://example.com/e1", createdAt: t0),
+                item("new", reference: "https://example.com/e1", completedAt: t0, createdAt: t0.addingTimeInterval(60)),
+            ],
+            sessions: [])
+        XCTAssertEqual(result["e1"], FollowingLibraryEpisode(itemID: "new", isFinished: true))
+    }
+
+    func testAShortClipIsNotHeardAtItsFirstMinute() {
+        // A 3-minute clip is within two minutes of its end after the first minute; the half-way guard stops that.
+        let clip = podcast("clip", durationMs: 180_000)
+        XCTAssertEqual(isFinished(clip, [mediaSession("clip", percent: 33, positionMs: 60_000)]), false)
+        XCTAssertEqual(isFinished(clip, [mediaSession("clip", percent: 60, positionMs: 108_000)]), true)
+    }
+
+    func testAnArticleHasNoMediaTimeSoOnlyThePercentCounts() {
+        XCTAssertEqual(isFinished(item("a", reference: "https://example.com/a"), [session("a", percent: 96)]), true)
+        XCTAssertEqual(isFinished(item("a", reference: "https://example.com/a"), [session("a", percent: 80)]), false)
     }
 
     func testAnItemOfNoFollowedEpisodeIsIgnoredAndNoEntriesIsEmpty() {
