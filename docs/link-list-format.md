@@ -28,4 +28,10 @@ The app knows a link list only by its `schemaVersion`. A `.txt`, `.md` or `.mark
 7. One file holds at most 50 entries and is at most 1 MB. A bigger file is refused whole, so a long list never half arrives.
 8. A link the app can't resolve is named after the list is read, and the other entries still arrive.
 
-Not yet: a link list inside a picked folder or the Quick Folder, and a list becoming a Library folder (#3769).
+## Quick Folder
+
+A link list saved in the Quick Folder shows in the Quick Add list like any other file, and adding it adds its links. The scan offers a `.json` file there only when the file itself says it is a link list (the same `schemaVersion` rule, read off the main thread); a Listening Edition or any other `.json` file never shows. A list the app refuses (a newer version, say) does show, so tapping it names the reason. The scan reads at most 40 `.json` files newest first, each at most 1 MB; a bigger file is read only as far as its first 512 bytes and shows only if it announces the link-list format, so adding it can say why it is refused.
+
+With the Quick Folder feeding the play queue, a new link list is added to the Library the same way, ahead of the text files that arrived with it. Its links are not queued yet.
+
+Not yet: a link list inside a picked folder, a batch of more than eight new files arriving whole, and a list becoming a Library folder (#3769).
