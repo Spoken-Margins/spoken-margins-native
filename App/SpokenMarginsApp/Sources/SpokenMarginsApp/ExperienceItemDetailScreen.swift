@@ -903,7 +903,8 @@ private struct ExperienceListeningMapSection: View, Equatable {
     }
 
     var body: some View {
-        LazyVStack(alignment: .leading, spacing: 12) {
+        // Plain stacks: the item screen's own lazy stack hosts this section (#3781).
+        VStack(alignment: .leading, spacing: 12) {
             sectionHeading(
                 isCommunityMap ? "Community map" : "Listening Map",
                 detail: isCommunityMap
@@ -912,7 +913,7 @@ private struct ExperienceListeningMapSection: View, Equatable {
             )
             .accessibilityIdentifier(isCommunityMap ? "listeningMap.heading.community" : "listeningMap.heading")
             ExperienceSurface(tint: AppColors.evergreen.opacity(0.18)) {
-                LazyVStack(spacing: 0) {
+                VStack(spacing: 0) {
                     ForEach(Array(scenes.enumerated()), id: \.element.id) { index, scene in
                         VStack(spacing: 0) {
                             if index > 0 { Divider() }

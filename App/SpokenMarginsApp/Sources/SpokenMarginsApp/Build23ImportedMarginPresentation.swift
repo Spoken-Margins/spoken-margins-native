@@ -87,7 +87,8 @@ private struct Build23ImportedLayerList: View, Equatable {
             if layers.isEmpty {
                 emptyState
             } else {
-                LazyVStack(alignment: .leading, spacing: 16) {
+                // A plain stack: the item screen hosts this inside its own lazy stack, and lazy inside lazy froze the screen (#3781).
+                VStack(alignment: .leading, spacing: 16) {
                     ForEach(layers) { layer in
                         layerCard(layer)
                     }
@@ -246,7 +247,7 @@ private struct Build23ImportedLayerList: View, Equatable {
 
     @ViewBuilder
     private func marginRail(_ layer: Build23ImportedLayerSnapshot) -> some View {
-        LazyVStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 10) {
             Text("Margin placement")
                 .font(.headline)
                 .foregroundStyle(AppColors.text)
