@@ -495,3 +495,7 @@ How it is used:
   - The rolling phone build's plan is one walkthrough of several fixes, each step naming a real control.
   - A warning that onnxruntime.framework has no dSYM during upload is expected and harmless.
   - Current focus, Showcase: the solo app at its best.
+  - 2026-11-09 trim (the rules are unchanged): `scripts/xcodebuild-lane` takes xcodebuild's own arguments, and `.build/dd` is the folder the disk-relief job ([ops/disk](../ops/disk/README.md)) can clear; a hook blocks raw `xcodebuild` builds in this repo.
+  - `scripts/verify-tests.py` records an isolated simulator crash as a warning and stops only on a flood.
+  - Scripted journeys don't cover audible content, the Lock Screen, Bluetooth, or anything that only looks wrong; those stay on the owner's phone pass.
+  - A priority issue is an order of work, never a hold, which is also why the backlog behind it is never held.
