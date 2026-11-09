@@ -3572,6 +3572,9 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
     )
     /// How the last start's session switch went, for the capture diagnostics (#2511).
     private var sessionSwitchFields: [String: String] = [:]
+    /// The microphone route, read off the main thread for the capture poll (#2511). The poll ran every 50 ms for the
+    /// first seconds and read `AVAudioSession.currentRoute` on main each time, while Bluetooth headphones were settling.
+    private let inputRouteCache = CaptureInputRouteCache(label: "com.spokenmargins.recording-input-route")
     #endif
     private let fileManager: FileManager
     private let baseDirectory: URL?
@@ -3813,6 +3816,8 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
         shouldNotifyOtherAudioOnFinish = context.otherAudioMixed
         inputChoice = context.inputChoice
         sessionSwitchFields = Self.preparationFields(prepared)
+        // A preparation seeded the route after its switch; without one, nothing known is the last Margin's.
+        if prepared == nil { inputRouteCache.clear() }
         #elseif os(watchOS)
         shouldNotifyOtherAudioOnFinish = session.categoryOptions.contains(.mixWithOthers)
         inputChoice = .headsetMicrophoneAllowed
@@ -3828,6 +3833,7 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
         recordingStartedAt = Date()
         awaitsInterruptionEnd = false
         installAudioSessionObservers()
+        refreshInputRouteOffMain() // the headphones may still be moving to the hands-free profile
         #else
         throw SessionKitError.persistenceFailed("recording_unavailable")
         #endif
@@ -3858,7 +3864,10 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
                 durationKnown = false
             }
         }
-        #if os(iOS) || os(watchOS)
+        #if os(iOS)
+        // The poll never asks the audio server on main (#2511): the route comes from the cache, refreshed off main.
+        let inputRoute: String? = inputRouteCache.value
+        #elseif os(watchOS)
         let inputRoute: String? = AVAudioSession.sharedInstance().currentRoute.inputs.map(\.portType.rawValue).joined(separator: "+")
         #else
         let inputRoute: String? = nil
@@ -3912,6 +3921,7 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
         let started = try startRecorder(cycleSession: captureRestarts >= 2)
         recorder = started.recorder
         currentURL = started.url
+        refreshInputRouteOffMain() // a second restart retook the session, which settles the route again
         #else
         throw SessionKitError.persistenceFailed("recording_restart_unsupported")
         #endif
@@ -3928,7 +3938,12 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
 
     public func captureInputRoute() -> String? {
         #if os(iOS)
-        return AVAudioSession.sharedInstance().currentRoute.inputs.map(\.portType.rawValue).joined(separator: "+")
+        // The preparation's own read, or the refresh the start queued, when it has landed; else the one read on main
+        // that a start with no preparation (speech still sounding) always made.
+        if let cached = inputRouteCache.value { return cached }
+        let route = Self.currentInputRoute()
+        inputRouteCache.set(route)
+        return route
         #else
         return nil
         #endif
@@ -3953,7 +3968,7 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
         if let recorderDelegate { fields.merge(recorderDelegate.fields) { current, _ in current } }
         #if os(iOS)
         // The session fields name only the output route; a silent microphone is about the input.
-        fields["inputs"] = AVAudioSession.sharedInstance().currentRoute.inputs.map(\.portType.rawValue).joined(separator: "+")
+        fields["inputs"] = captureInputRoute() ?? "" // the cache, kept fresh by route changes: no audio-server read on main (#2511)
         fields.merge(sessionSwitchFields) { current, _ in current }
         #endif
         return fields.merging(AudioSessionDiagnostics.fields()) { current, _ in current }
@@ -4111,6 +4126,7 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
             object: AVAudioSession.sharedInstance(),
             queue: .main
         ) { [weak self] notification in
+            self?.refreshInputRouteOffMain() // the poll reads the cache, so a changed route must reach it (#2511)
             // Also while a call that stopped a Margin is on: lost headphones cancel its resume.
             guard let self, self.recordingStartedAt != nil || self.awaitsInterruptionEnd,
                   let reasonValue = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
@@ -4120,7 +4136,22 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
         #endif
     }
 
+    #if canImport(AVFoundation)
+    /// Reads the input route off the main thread for the poll's cache (#2511). Nothing to read off iOS.
+    private func refreshInputRouteOffMain() {
+        #if os(iOS)
+        inputRouteCache.refreshOffMain { Self.currentInputRoute() }
+        #endif
+    }
+    #endif
+
     #if canImport(AVFoundation) && os(iOS)
+    /// The input port types as the audio server reports them, joined with "+". Waits on the audio server: never call it
+    /// from the capture poll or any main-thread path (#2511).
+    static func currentInputRoute() -> String? {
+        AVAudioSession.sharedInstance().currentRoute.inputs.map(\.portType.rawValue).joined(separator: "+")
+    }
+
     /// By name: AirPods change port (and UID) between music and a call's two-way profile.
     private static func headphoneOutputs() -> Set<String> {
         let headphoneTypes: Set<AVAudioSession.Port> = [.headphones, .bluetoothA2DP, .bluetoothLE, .bluetoothHFP, .usbAudio]
@@ -4175,9 +4206,14 @@ extension SystemRecordingClient: RecordingSessionPreparing {
             Task { @MainActor in then() }
             return
         }
+        let routeCache = inputRouteCache
         sessionPreparation.prepare(
             readContext: { Self.readRecordingContext(AVAudioSession.sharedInstance()) },
-            applyReportingFailure: { context in Self.applyRecordingSession(for: context.inputChoice) },
+            applyReportingFailure: { context in
+                let outcome = Self.applyRecordingSession(for: context.inputChoice)
+                routeCache.set(Self.currentInputRoute()) // read here, off main, so the start and the poll need not (#2511)
+                return outcome
+            },
             then: then
         )
         #else
