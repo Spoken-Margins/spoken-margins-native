@@ -19,36 +19,18 @@ func TestEveryCategoryIsParsedAndNothingElseIs(t *testing.T) {
 			t.Errorf("ParseCategory(%q) = %q, %v", c, got, err)
 		}
 	}
-	if len(Categories()) != 5 {
-		t.Errorf("the form has five categories, got %d", len(Categories()))
+	if len(Categories()) != 6 {
+		t.Errorf("the form has six categories, got %d", len(Categories()))
 	}
 	if _, err := ParseCategory(""); !errors.Is(err, ErrCategoryRequired) {
 		t.Errorf("empty: %v, want ErrCategoryRequired", err)
 	}
 	// Neighbouring inputs: case, whitespace, lookalikes, long values.
 	for _, s := range []string{"Copyright", "COPYRIGHT", " copyright", "copyright ", "copyright\n", "copy right",
-		"abuse-material", "csam", "intimate", "intimate_images", "0", "other,copyright", "other\x00", string(make([]byte, 5000))} {
+		"abuse-material", "csam", "intimate", "0", "other,copyright", "other\x00", string(make([]byte, 5000))} {
 		if got, err := ParseCategory(s); !errors.Is(err, ErrCategoryUnknown) || got != "" {
 			t.Errorf("ParseCategory(%q) = %q, %v; want ErrCategoryUnknown", s, got, err)
 		}
-	}
-}
-
-// Reports filed before #3867 removed the category stay on disk and the owner can still list them.
-func TestRemovedIntimateImagesCategoryStillReadsFromDisk(t *testing.T) {
-	if got, err := ParseStoredCategory("intimate_images"); err != nil || got != LegacyIntimateImages {
-		t.Errorf("ParseStoredCategory(intimate_images) = %q, %v", got, err)
-	}
-	if _, err := ParseCategory("intimate_images"); !errors.Is(err, ErrCategoryUnknown) {
-		t.Errorf("the form must refuse intimate_images, got %v", err)
-	}
-	for _, c := range Categories() {
-		if got, err := ParseStoredCategory(string(c)); err != nil || got != c {
-			t.Errorf("ParseStoredCategory(%q) = %q, %v", c, got, err)
-		}
-	}
-	if _, err := ParseStoredCategory("spam"); !errors.Is(err, ErrCategoryUnknown) {
-		t.Errorf("an unknown stored category should still be refused, got %v", err)
 	}
 }
 
@@ -88,7 +70,7 @@ func TestSecondReportWithinSevenDaysOwesAReasonInEveryCategory(t *testing.T) {
 	for _, c := range Categories() {
 		d := cfg.Intake(Submission{Category: string(c)}, prior, t0)
 		if !d.ReasonRequired || !d.ReasonOutstanding {
-			t.Errorf("%s: %+v, want a reason required and outstanding (abuse_material included)", c, d)
+			t.Errorf("%s: %+v, want a reason required and outstanding (abuse_material and intimate_images included)", c, d)
 		}
 		// The takedown does not wait for the reason.
 		if !d.DisableLink {

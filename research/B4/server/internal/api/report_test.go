@@ -47,7 +47,7 @@ func everythingUnder(t *testing.T, dir string) map[string][]byte {
 }
 
 func TestReportInEveryOtherCategoryTakesTheLinkDownAndStoresNoKey(t *testing.T) {
-	for _, cat := range []string{"harassment", "hateful_conduct", "copyright", "other"} {
+	for _, cat := range []string{"intimate_images", "harassment", "hateful_conduct", "copyright", "other"} {
 		t.Run(cat, func(t *testing.T) {
 			s, _ := enabledLinks(t)
 			h := s.Handler()
@@ -73,23 +73,20 @@ func TestReportInEveryOtherCategoryTakesTheLinkDownAndStoresNoKey(t *testing.T) 
 	}
 }
 
-// Share links carry voice and text, never images, so the form has no intimate-images category and the
-// server refuses it (#3867). The link stays up: nothing was filed.
-func TestIntimateImagesCategoryIsGoneFromTheFormAndRefusedByTheServer(t *testing.T) {
+// The form keeps the category, worded for what share links carry (voice and text, never images), and there is
+// no separate removal page (#3867). It gets the normal handling: the link comes down at once.
+func TestFormOffersIntimateContentWithoutAnImagePage(t *testing.T) {
 	s, _ := enabledLinks(t)
 	h := s.Handler()
 	id := createdLink(t, h)
 	page := linkRequest(h, "GET", "/l/"+id, "", nil, "198.51.100.1").Body.String()
-	for _, gone := range []string{"intimate_images", "ntimate images", "/intimate-images/"} {
+	if !strings.Contains(page, `<option value="intimate_images">Intimate content shared without consent</option>`) {
+		t.Error("the form lost its intimate-content category")
+	}
+	for _, gone := range []string{"Intimate images shared", "/intimate-images/", "Removing intimate images"} {
 		if strings.Contains(page, gone) {
-			t.Errorf("the share page still mentions %q", gone)
+			t.Errorf("the share page still says %q", gone)
 		}
-	}
-	if code, _ := postReport(h, id, "category=intimate_images", "203.0.113.7"); code == 200 {
-		t.Error("a report in the removed category was accepted")
-	}
-	if linkIsDown(h, id) {
-		t.Error("a refused report took the link down")
 	}
 }
 

@@ -31,6 +31,10 @@ import (
 type Category string
 
 const (
+	// IntimateImages is intimate content shared without consent: recordings, text and faked or altered
+	// voices (#3867). The stored value stays "intimate_images" so reports filed earlier read unchanged;
+	// the form shows it as "Intimate content shared without consent". Share links carry no images.
+	IntimateImages Category = "intimate_images"
 	// AbuseMaterial is child sexual abuse material. It is the only category whose
 	// report carries the full link, key included (D21), so it can be forwarded
 	// unread to the CyberTipline.
@@ -41,15 +45,11 @@ const (
 	// takes the link down at once, like every other category.
 	Copyright Category = "copyright"
 	Other     Category = "other"
-
-	// LegacyIntimateImages is a category the form no longer offers (#3867): share links carry voice and text,
-	// never images. Reports already filed under it stay on disk and still list; no new report can use it.
-	LegacyIntimateImages Category = "intimate_images"
 )
 
 // Categories lists every category in form order.
 func Categories() []Category {
-	return []Category{AbuseMaterial, Harassment, Hateful, Copyright, Other}
+	return []Category{IntimateImages, AbuseMaterial, Harassment, Hateful, Copyright, Other}
 }
 
 var (
@@ -71,15 +71,6 @@ func ParseCategory(s string) (Category, error) {
 		}
 	}
 	return "", ErrCategoryUnknown
-}
-
-// ParseStoredCategory is ParseCategory for reading what is already on disk: it also accepts
-// LegacyIntimateImages, so the owner can still list the reports filed under it.
-func ParseStoredCategory(s string) (Category, error) {
-	if Category(s) == LegacyIntimateImages {
-		return LegacyIntimateImages, nil
-	}
-	return ParseCategory(s)
 }
 
 // CarriesKey reports whether a report in this category sends the full link,

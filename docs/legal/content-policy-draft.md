@@ -27,6 +27,7 @@ A share link lets you send a Margin to a friend. This page says what may not be 
 
 ### What may not be shared
 
+- Sexual or intimate content about a real person shared without their consent, including recordings, text, and faked or altered voices.
 - Child sexual abuse material. It is never allowed.
 - Harassment, threats, or sharing someone's private information.
 - Hateful conduct: content that attacks people for who they are, such as their race, religion, ethnicity, disability, sex, sexual orientation or gender identity.

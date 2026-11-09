@@ -378,31 +378,6 @@ func TestReportsCommandShowsWhatWasReportedAndWhatIsStillServed(t *testing.T) {
 	}
 }
 
-// The form no longer offers the intimate-images category (#3867), but a report filed under it before
-// that stays on disk and the owner can still list it, by category too.
-func TestReportsCommandStillListsAReportFiledUnderTheRemovedCategory(t *testing.T) {
-	dir := t.TempDir()
-	rs, err := reports.Open(filepath.Join(dir, "reports"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	now := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
-	for ref, cat := range map[string]reportrules.Category{"LEGACYAAAAAAA": reportrules.LegacyIntimateImages, "OTHERBBBBBBBB": reportrules.Other} {
-		if err := rs.Add(reports.Record{Ref: ref, LinkID: strings.Repeat("a", 32), Category: cat, At: now.Add(-time.Hour)}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	var out bytes.Buffer
-	if err := listReports([]string{"-state", dir}, &out, now); err != nil || !strings.Contains(out.String(), "LEGACYAAAAAAA") || !strings.Contains(out.String(), "2 report(s)") {
-		t.Fatalf("an old report vanished: %v\n%s", err, out.String())
-	}
-	out.Reset()
-	if err := listReports([]string{"-state", dir, "-category", "intimate_images"}, &out, now); err != nil ||
-		!strings.Contains(out.String(), "LEGACYAAAAAAA") || strings.Contains(out.String(), "OTHERBBBBBBBB") || !strings.Contains(out.String(), "1 report(s)") {
-		t.Fatalf("-category intimate_images: %v\n%s", err, out.String())
-	}
-}
-
 func TestReportsCommandWithNoReportsSaysSoAndMakesNoRecords(t *testing.T) {
 	dir := t.TempDir()
 	var out bytes.Buffer
