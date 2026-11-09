@@ -121,6 +121,23 @@ test('saving a Margin on a friend\u2019s item says what Share does with it, unti
   await expect(card).toContainText('Your Margin is saved. Share sends it to Web fixture. You pick which of your Margins go.');
   await expect(card.getByRole('button')).toHaveCount(0);
   await expect(card.getByTestId('margin-cue-clock')).toHaveCount(0);
+  // #3784: the Margin just written starts ticked, so Save is not greyed out with no reason, and saving says what to do next.
+  const reply = playing.locator('.reply-back');
+  await expect(reply.getByRole('checkbox', { name: /My answer\./ })).toBeChecked();
+  const save = playing.getByRole('button', { name: 'Save as a file' });
+  await expect(save).toBeEnabled();
+  await expect(playing.getByText(/Tick at least one Margin/)).toHaveCount(0);
+  await reply.getByRole('checkbox', { name: /My answer\./ }).uncheck();
+  await expect(save).toBeDisabled();
+  await expect(playing.getByRole('status').filter({ hasText: 'Tick at least one Margin above to send it.' })).toBeVisible();
+  await expect(save).toHaveAttribute('aria-describedby', 'share-why-not');
+  await reply.getByRole('checkbox', { name: /My answer\./ }).check();
+  const downloading = page.waitForEvent('download');
+  await save.click();
+  expect((await downloading).suggestedFilename()).toMatch(/\.spokenmargins$/);
+  await expect(page.getByText(/Saved 1 Margin as .*\. Send this file to Web fixture in a message\./)).toBeVisible();
+  // The instruction stays on the panel after the toast is gone.
+  await expect(playing.locator('#share-why-not')).toHaveText('Send this file to Web fixture in a message.');
   // Playing on to the friend's Margin (0:30) clears it. Move the clock to just before it rather than sitting through
   // half a minute of real playback, which used up the whole 45 s test budget on a slow hosted runner.
   await page.getByTestId('audio').evaluate((a: HTMLAudioElement) => { a.currentTime = 28; });

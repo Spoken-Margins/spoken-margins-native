@@ -2,6 +2,8 @@
 // Packages/SessionKit/Sources/SessionKit/ReplyBack.swift (`ReplyBackOffer`): Share on an episode that holds a friend's
 // Margins offers "Send replies to <friend>", the listener's replies pre-picked and their other new Margins offered
 // unpicked, and nothing the friend sent goes back. Plain TypeScript with no DOM, so `npm run test:web` covers it.
+// One more difference (#3784): the web records no reply link, so it also starts the listener's Margins made since the
+// page opened picked (`preselected`).
 //
 // What the web does differently from the app, because its store is smaller:
 // - The app compares a Margin's `createdAt` with the layer's `importedAt` ("since you opened your friend's", Swift
@@ -16,9 +18,9 @@ import type { Margin } from '../../shared/model.ts';
 import { senderName, type MarginCue } from './arrival.ts';
 
 export interface ReplyBackOffer {
-  /** The listener's replies to a friend's Margins: picked at the start. */
+  /** The listener's replies to a friend's Margins. */
   replies: Margin[];
-  /** The listener's other Margins made since the friend's: offered, not picked. */
+  /** The listener's other Margins made since the friend's: offered; picked at the start only if made since the page opened. */
   others: Margin[];
   /** Whose Margins the replies answer; with no replies, every friend on the episode. */
   friendLabels: string[];
@@ -104,9 +106,40 @@ export function replyBackOffer(margins: readonly Margin[]): ReplyBackOffer | und
   };
 }
 
-/** The Margins the listener starts with picked: the replies (Swift :19 `isPreselected`). */
-export function preselected(offer: ReplyBackOffer): Set<string> {
-  return new Set(offer.replies.map((m) => m.id));
+/**
+ * The Margins the listener starts with picked: the replies (Swift :19 `isPreselected`), and the other new Margins made
+ * at or after `since`, the moment this page was opened. The app knows which friend's Margin each Margin answers; the web
+ * never records that (no Margin it makes carries `replyToId`), so with replies only every box started unticked and Send
+ * was greyed out with no reason (#3784). A Margin made since the page opened was made while listening to the friend's, so
+ * it starts picked. An older note, which `others` can hold because the web stores no moment of opening, stays unpicked,
+ * so a private note is never ticked for the listener.
+ */
+export function preselected(offer: ReplyBackOffer, since: number = Number.POSITIVE_INFINITY): Set<string> {
+  const picked = new Set(offer.replies.map((m) => m.id));
+  for (const margin of offer.others) if (time(margin) >= since) picked.add(margin.id);
+  return picked;
+}
+
+/** Why Send and Save are greyed, in words. Undefined when something is picked. */
+export function nothingPickedReason(offer: ReplyBackOffer | undefined, toWriteCount: number): string | undefined {
+  if (toWriteCount > 0) return undefined;
+  return offer ? 'Tick at least one Margin above to send it.' : 'There is nothing to share yet.';
+}
+
+/**
+ * What to say after the file is saved, when it is saved and not handed to a share sheet: the file goes nowhere until
+ * the listener sends it. With a friend's Margins on the episode it names them (#3784). Nothing else is promised: the
+ * sharer is never told when the file arrives.
+ */
+export function savedFileNextStep(offer: ReplyBackOffer): string {
+  return `Send this file to ${friendNames(offer.friendLabels)} in a message.`;
+}
+
+/** One row of the reply list: the Margin's words, or "Voice Margin" with its length only when it has one. */
+export function candidateLabel(margin: Margin, clock: (seconds: number) => string): string {
+  if (margin.text) return margin.text;
+  const seconds = margin.voice?.durationSeconds ?? 0;
+  return seconds > 0 ? `Voice Margin, ${clock(seconds)}` : 'Voice Margin';
 }
 
 /**

@@ -9,7 +9,9 @@ import { BackIcon, DownIcon, DownloadIcon, ForwardIcon, MicIcon, PauseIcon, PenI
 import { cueFor, friendMargins, leading, possessive, readsAloud, senderName, speakingLine } from '../logic/arrival.ts';
 import { landingOffer, type Landing } from '../logic/import.ts';
 import { nextSpeed, timelineFraction, timelinePosts } from '../logic/library.ts';
-import { pickedMargins, preselected, replyBackOffer, savedMarginCard } from '../logic/reply-back.ts';
+import {
+  candidateLabel, nothingPickedReason, pickedMargins, preselected, replyBackOffer, savedFileNextStep, savedMarginCard,
+} from '../logic/reply-back.ts';
 import { plainError } from '../logic/messages.ts';
 import { NotSavedError } from '../logic/storage.ts';
 import { shareNativePacket } from '../logic/native-packets.ts';
@@ -370,6 +372,9 @@ export function NowPlaying({ onClose, landing }: { onClose: () => void; landing?
   );
 }
 
+/** When this page opened: a Margin made since is one the listener made while listening to the friend's (#3784). */
+const PAGE_OPENED_AT = Date.now();
+
 const PACKET_TYPE = 'application/vnd.spokenmargins.package+zip';
 
 /** Whether this browser can hand a file to the system share sheet (Android, iPhone, some desktops). */
@@ -391,15 +396,19 @@ function ShareMargins({ episode, margins, show }: { episode: Episode; margins: M
   const [sendable] = useState(canSendFiles);
   // Inside the Android app (#3009) one button writes the file and opens Android's share sheet, which can also save it.
   const [bridge] = useState(() => capacitorBridge());
-  // After a friend's Margins, Share offers "Send replies to <friend>" (#2168, as the app's #3221): the replies picked,
-  // the listener's other new Margins unpicked, the friend's own never listed. With no offer Share is as before.
+  // After a friend's Margins, Share offers "Send replies to <friend>" (#2168, as the app's #3221): the replies and the
+  // Margins made since this page opened picked, older notes unpicked, the friend's own never listed. With no offer Share is as before.
   const offer = replyBackOffer(margins);
   // The listener's own changes sit over the starting picks, so a reply made while this is open starts picked too.
   const [changed, setChanged] = useState<Readonly<Record<string, boolean>>>({});
-  const starting = offer ? preselected(offer) : new Set<string>();
+  const starting = offer ? preselected(offer, PAGE_OPENED_AT) : new Set<string>();
   const picked = new Set([...(offer?.candidates ?? [])].map((m) => m.id).filter((id) => changed[id] ?? starting.has(id)));
   const toWrite = offer ? pickedMargins(offer, picked) : margins;
   const nothingPicked = toWrite.length === 0;
+  // Greyed buttons say why (#3784), and point at the sentence so a screen reader reads it too.
+  const whyNot = nothingPickedReason(offer, toWrite.length);
+  // What to do with a saved file, kept on the panel: a toast is gone in six seconds.
+  const [nextStep, setNextStep] = useState<string>();
 
   const share = async (how: 'save' | 'send') => {
     setBusy(true);
@@ -423,7 +432,9 @@ function ShareMargins({ episode, margins, show }: { episode: Episode; margins: M
         downloadFile(file);
       }
       const count = written.included.length === 1 ? '1 Margin' : `${written.included.length} Margins`;
-      toast(`${how === 'save' ? 'Saved' : 'Shared'} ${count} as ${written.fileName}.${written.notice ? ` ${written.notice}` : ''}`);
+      const next = how === 'save' && offer ? savedFileNextStep(offer) : undefined;
+      setNextStep(next);
+      toast(`${how === 'save' ? 'Saved' : 'Shared'} ${count} as ${written.fileName}.${written.notice ? ` ${written.notice}` : ''}${next ? ` ${next}` : ''}`);
     } catch (error) {
       toast(`These Margins weren’t shared. ${plainError(error)}`, 'problem');
     } finally {
@@ -446,28 +457,32 @@ function ShareMargins({ episode, margins, show }: { episode: Episode; margins: M
                     onChange={(event) => setChanged({ ...changed, [margin.id]: event.target.checked })}
                   />
                   <span className="margin-time">{formatClock(margin.atSeconds)}</span>
-                  <span className="margin-text">{margin.text ? margin.text : `Voice Margin, ${formatClock(margin.voice?.durationSeconds ?? 0)}`}</span>
+                  <span className="margin-text">{candidateLabel(margin, formatClock)}</span>
                 </label>
               </li>
             ))}
           </ul>
         </fieldset>
       )}
-      <p className="muted">Share them as a .spokenmargins file. A friend opens it in Spoken Margins and hears each one at its moment.</p>
+      <p className="muted">Share them as a file. Your friend opens it in Spoken Margins and hears each one at its moment.</p>
+      {/* The live region stays mounted and only its words change, so a screen reader announces them. */}
+      <div role="status" id="share-why-not">
+        {whyNot ? <p className="muted">{whyNot}</p> : nextStep ? <p className="muted">{nextStep}</p> : null}
+      </div>
       <div className="share-actions">
         {bridge ? (
-          <button type="button" className="button" disabled={busy || nothingPicked} onClick={() => void share('send')}>
+          <button type="button" className="button" disabled={busy || nothingPicked} aria-describedby={whyNot ? 'share-why-not' : undefined} onClick={() => void share('send')}>
             <ShareIcon />
             Save or send
           </button>
         ) : (
-          <button type="button" className="button" disabled={busy || nothingPicked} onClick={() => void share('save')}>
+          <button type="button" className="button" disabled={busy || nothingPicked} aria-describedby={whyNot ? 'share-why-not' : undefined} onClick={() => void share('save')}>
             <DownloadIcon />
             Save as a file
           </button>
         )}
         {!bridge && sendable && (
-          <button type="button" className="button" disabled={busy || nothingPicked} onClick={() => void share('send')}>
+          <button type="button" className="button" disabled={busy || nothingPicked} aria-describedby={whyNot ? 'share-why-not' : undefined} onClick={() => void share('send')}>
             <ShareIcon />
             Send
           </button>
