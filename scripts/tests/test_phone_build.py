@@ -3364,9 +3364,9 @@ class CurrentFocusTests(unittest.TestCase):
         self.assertIn(module.CURRENT_MILESTONE, named, line)
         self.assertEqual(named.index(module.CURRENT_MILESTONE), min(
             named.index(m) for m in named if m != 'priority'), 'the current milestone is the first one named')
-        never_held = re.findall(r'`([^`]+)`,? which is never held', line)
-        for milestone in never_held:
-            self.assertNotIn(milestone, module.HELD_MILESTONES, line)
+        # AGENTS.md no longer says which milestones are held, so phone-build's own list is pinned here: changing it is
+        # a decision to make in this test too (#3707). The held ones are never the order of work's.
+        self.assertEqual(module.HELD_MILESTONES, frozenset({'Later', 'Public beta'}))
         for milestone in module.HELD_MILESTONES:
             self.assertNotIn(milestone, named, f'{milestone} is in the order of work, so it is not held')
 

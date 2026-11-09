@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import test_lane_runner  # noqa: E402
 from test_lane_runner import FakeGitHub, HEAD, MERGE, comment, lane, runner_report  # noqa: E402
 from test_lane_t3_first import RealGitLaneTests  # noqa: E402
+import workflow_yaml  # noqa: E402
 
 PASSED = ('PASS', 'no simulator (compile only)', 'host tests (--plan fast): passed', [])
 WORKFLOW = (Path(__file__).resolve().parents[2] / '.github/workflows/lane.yml').read_text()
@@ -474,7 +475,13 @@ class VerdictOnThePrHeadTests(unittest.TestCase):
         self.assertIn('::warning', out)
 
     def test_the_job_may_post_statuses(self):
-        self.assertIn('\n  statuses: write\n', WORKFLOW.split('\njobs:\n')[0])
+        # The job's token, not the workflow's: a `permissions:` block on the release job replaces the workflow's, and
+        # the verdict-on-PR-head step would then 403 on a real run (#3704).
+        workflow = workflow_yaml.load('lane.yml')
+        self.assertEqual(workflow_yaml.effective_permissions(workflow, 'release').get('statuses'), 'write')
+        step = next(step for step in workflow['jobs']['release']['steps']
+                    if step.get('name') == "Put the verdict on the PR's head")
+        self.assertIn('statuses/', step['run'])
 
 
 class WorkflowTests(unittest.TestCase):
@@ -531,17 +538,19 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(tidy.get('id'), 'tidy')
 
     def test_the_lane_job_may_dispatch(self):
-        lane_job = WORKFLOW.split('\n  lane:\n')[1].split('\n  automerge:\n')[0]
-        self.assertIn('actions: write', lane_job)
-        for permission in ('contents: write', 'pull-requests: write', 'issues: write'):
-            self.assertIn(permission, lane_job)  # a job's permissions replace the workflow's
+        # A job's permissions replace the workflow's, so what counts is the lane job's effective block.
+        granted = workflow_yaml.effective_permissions(workflow_yaml.load('lane.yml'), 'lane')
+        for permission in ('actions', 'contents', 'pull-requests', 'issues'):
+            self.assertEqual(granted.get(permission), 'write', permission)
 
     def test_dispatched_runs_keep_a_name_dedupe_ignores(self):
-        name = WORKFLOW.split('run-name: >-\n')[1].split('\non:')[0]
+        name = workflow_yaml.load('lane.yml')['run-name']
         # A pull_request run's number and head come first, so its name, which lane_dedupe.py parses, is unchanged.
         self.assertIn('pr=${{ github.event.pull_request.number || inputs.pr }}', name)
         self.assertIn('head=${{ github.event.pull_request.head.sha || inputs.head }}', name)
-        # Dedupe and the audit's re-arm check list only pull_request runs, so a release run never counts as one.
+        # Dedupe and the audit's re-arm check list only pull_request runs, so a release run never counts as one. This
+        # one stays a source check (#3704): the line is the query string of dedupe's own `gh api` call, and running it
+        # would need a stand-in for GitHub that answers whatever the string says.
         dedupe = (Path(__file__).resolve().parents[1] / 'lane_dedupe.py').read_text()
         self.assertIn('lane.yml/runs?event=pull_request&', dedupe)
 

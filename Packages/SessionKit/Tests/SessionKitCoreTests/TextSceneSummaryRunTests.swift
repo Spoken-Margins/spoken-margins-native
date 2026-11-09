@@ -278,19 +278,24 @@ final class TextSceneSummaryRunTests: XCTestCase {
         XCTAssertEqual(TextSceneSummaryProgress.state(proposals: [latest]), .complete)
     }
 
+    /// A scene counts only if it still covers the same characters: moving either edge of its range, alone, drops it
+    /// (#3709: the start was unguarded and the test moved only the end).
     func testAProposalWrittenForOtherChaptersCarriesNothingOver() {
         let (drafts, characters) = drafts(paragraphs: 3)
-        var scenes = drafts.map { TextSceneAssembly.scene(draft: $0, label: sampleLabel($0), characters: characters) }
-        let moved = TextSceneDraft(
-            id: drafts[0].id, order: 0, startChar: drafts[0].startChar, endChar: drafts[0].endChar - 5,
-            fallbackTitle: "x", modelText: drafts[0].modelText, isSummarizable: true)
-        scenes[0] = TextSceneAssembly.scene(draft: moved, label: sampleLabel(moved), characters: characters)
-        let saved = TextSceneAssembly.proposal(safeItemComponent: "item", scenes: scenes)
+        for (what, startMove, endMove) in [("end moved", 0, -5), ("start moved", 5, 0), ("both moved", 5, -5)] {
+            var scenes = drafts.map { TextSceneAssembly.scene(draft: $0, label: sampleLabel($0), characters: characters) }
+            let moved = TextSceneDraft(
+                id: drafts[0].id, order: 0, startChar: drafts[0].startChar + startMove, endChar: drafts[0].endChar + endMove,
+                fallbackTitle: "x", modelText: drafts[0].modelText, isSummarizable: true)
+            scenes[0] = TextSceneAssembly.scene(draft: moved, label: sampleLabel(moved), characters: characters)
+            let saved = TextSceneAssembly.proposal(safeItemComponent: "item", scenes: scenes)
+            XCTAssertTrue(scenes[0].startAnchor.startChar != drafts[0].startChar || scenes[0].endAnchor.endChar != drafts[0].endChar, what)
 
-        let carried = TextSceneSummaryRun.carriedScenes(drafts: drafts, saved: saved)
+            let carried = TextSceneSummaryRun.carriedScenes(drafts: drafts, saved: saved)
 
-        XCTAssertNil(carried[drafts[0].id], "same id but different characters")
-        XCTAssertEqual(Set(carried.keys), Set(drafts.dropFirst().map(\.id)))
+            XCTAssertNil(carried[drafts[0].id], "same id but different characters: \(what)")
+            XCTAssertEqual(Set(carried.keys), Set(drafts.dropFirst().map(\.id)), what)
+        }
     }
 
     func testAFriendsOrForeignProposalIsNeverCarriedOverOrContinued() {

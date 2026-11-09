@@ -1855,7 +1855,7 @@ private struct TimelineInterjectionRow: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Open Margin")
+                .accessibilityLabel(RowAccessibilityLabel.label("Open Margin", row: percent, subtitle))
                 .accessibilityIdentifier("timeline.interjection.open.\(interjectionID)")
 
                 Button(action: toggleStar) {

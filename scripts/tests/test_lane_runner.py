@@ -23,6 +23,8 @@ from unittest import mock
 
 SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
+sys.path.insert(0, str(SCRIPTS / 'tests'))
+import workflow_yaml  # noqa: E402
 spec = importlib.util.spec_from_file_location('lane_runner', SCRIPTS / 'lane-runner.py')
 lane = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(lane)
@@ -2506,16 +2508,18 @@ class MainFlowTests(unittest.TestCase):
 
     def test_the_workflow_fails_its_verdict_step_and_tidies_only_when_nothing_was_reported(self):
         workflow = (Path(__file__).resolve().parents[2] / '.github/workflows/lane.yml').read_text()
+        checkouts = [options for _, options in workflow_yaml.checkout_steps(workflow_yaml.load('lane.yml'))]
         # Every Mac job checks out the Git LFS models: --plan fast's contracts check reads them (#301). The third is
         # the release job a T3 PASS hands to a build runner (#1209). The lane job checks them out on the Mac, and on a
         # GitHub-hosted Mac fetches them from a cache instead (#1389 phase 2, test_lane_hosted_app.py).
-        self.assertEqual(workflow.count('lfs: true'), 1)  # the automerge-mac fallback (#2459)
-        # The release job takes them only on the build runner (#3501).
-        self.assertIn("lfs: ${{ !(vars.LANE_HOSTED_FAST == 'on' && vars.LANE_HOSTED_MAC_REST == 'on') }}", workflow)
-        self.assertIn("lfs: ${{ runner.environment != 'github-hosted' }}", workflow)
-        self.assertIn("lfs: ${{ !contains(fromJSON(needs.route.outputs.automerge || '[]'), 'ubuntu-latest') }}", workflow)
-        # hosted routing plus the four Mac jobs (automerge-mac, #2459)
-        self.assertEqual(workflow.count('persist-credentials: false'), 5)
+        self.assertEqual([options['lfs'] for options in checkouts if options.get('lfs') is True], [True])  # automerge-mac (#2459)
+        # The others take them only where a Mac builds: the release job on the build runner (#3501).
+        self.assertEqual(sorted(str(options['lfs']) for options in checkouts if 'lfs' in options and options['lfs'] is not True), [
+            "${{ !(vars.LANE_HOSTED_FAST == 'on' && vars.LANE_HOSTED_MAC_REST == 'on') }}",
+            "${{ !contains(fromJSON(needs.route.outputs.automerge || '[]'), 'ubuntu-latest') }}",
+            "${{ runner.environment != 'github-hosted' }}"])
+        # hosted routing plus the four Mac jobs (automerge-mac, #2459): none keeps the token in .git/config
+        self.assertEqual([options.get('persist-credentials') for options in checkouts], [False] * 5)
         self.assertIn("if: steps.run.outputs.reported == 'true'", workflow)
         self.assertIn("if: (failure() || cancelled()) && steps.run.outputs.reported != 'true'", workflow)
 

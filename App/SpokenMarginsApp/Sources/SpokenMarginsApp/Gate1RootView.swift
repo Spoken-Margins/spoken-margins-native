@@ -205,9 +205,9 @@ struct ManualSourceFollowButton: View {
             Button(action: model.followSelectedSource) {
                 HStack {
                     if model.isFollowingSelectedSource {
-                        ProgressView()
+                        ProgressView().accessibilityHidden(true)
                     } else {
-                        Image(systemName: model.manualFollowButtonSymbol)
+                        Image(systemName: model.manualFollowButtonSymbol).accessibilityHidden(true)
                     }
                     Text(model.manualFollowButtonTitle)
                 }

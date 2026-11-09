@@ -41,6 +41,11 @@ struct ItemCollectionSheet: View {
                             Button("Rename", systemImage: "pencil") { beginRename(collection) }
                             Button("Delete Collection", systemImage: "trash", role: .destructive) { delete(collection) }
                         }
+                        // The same actions for VoiceOver and Switch Control, which can't long-press (#1917, #3730).
+                        .accessibilityActions {
+                            Button("Rename") { beginRename(collection) }
+                            Button("Delete Collection") { delete(collection) }
+                        }
                         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                             Button("Delete", role: .destructive) { delete(collection) }
                             Button("Rename") { beginRename(collection) }.tint(AppColors.ochreText)
