@@ -7,14 +7,14 @@ through files in that folder (the Simulator writes straight to the Mac's disk):
 
 1. The server writes `ready.json` when it is listening.
 2. The test writes `<id>.request.json`: how long to record, the text it expects, and the limits.
-3. The server takes the Mac-wide audio lock (one window at a time, like the simulator slot), makes BlackHole
-   the default output through `loopback route` (which always puts the old one back), starts recording, listens
-   to a second of pre-roll, and plays a short pilot tone straight to BlackHole. When the recorder runs it
-   writes `<id>.recording`.
+3. The server takes the Mac-wide audio lock (one window at a time, like the simulator slot), starts recording,
+   listens to a second of pre-roll, and plays a short pilot tone straight to BlackHole. When the recorder runs it
+   writes `<id>.recording`. If a booted Simulator isn't already pinned to BlackHole (sim-audio-pin.m), the recording
+   runs inside `loopback route`, which makes BlackHole the Mac's default output and always puts the old one back.
    The recorder, and the transcriber, run as SpokenMarginsLaneRecorder.app, started through LaunchServices, so
    macOS charges Microphone and Speech Recognition to that app, which the owner allowed once, and not to the
    runner's node, which it refuses without asking (README, The recorder app).
-4. The test plays its item. The Simulator's audio follows the Mac's default output, so it lands in BlackHole.
+4. The test plays its item, and its sound lands in BlackHole.
 5. When the window ends the default output is restored and the lock released. The server cuts the pilot off,
    runs loopback.py's check on the rest, and writes `<id>.result.json`.
 
@@ -36,12 +36,14 @@ import fcntl
 import json
 import math
 import os
+import plistlib
 import signal
 import subprocess
 import sys
 import threading
 import time
 from pathlib import Path
+from xml.parsers.expat import ExpatError
 
 import loopback
 
@@ -49,6 +51,10 @@ LOCK_NAME = 'audio-window.lock'
 LOCK_WAIT = 900          # a lane test waits this long for another window to finish (s)
 READY = 'ready.json'
 DEVICE = 'BlackHole 2ch'
+DEVICE_UID = 'BlackHole2ch_UID'
+SIMULATOR_ROOTS = (Path.home() / 'Library/Developer/CoreSimulator/Devices', Path.home() / 'Library/Developer/XCTestDevices')
+AUDIO_SETTINGS = 'data/var/run/com.apple.coresimulator.audio.plist'  # each Simulator's own saved audio routing
+BOOTED = 3               # `state` in a Simulator's device.plist
 PILOT_SECONDS = 0.3      # a 1 kHz tone, played straight to BlackHole, proves the recorder can hear
 PILOT_GUARD = 0.4        # cut this much after the pilot's end, so its tail isn't counted as the app's
 PREROLL_SECONDS = 1.0    # recorded before the pilot; sound here is not the app's, so the window can't judge it
@@ -133,23 +139,49 @@ def parse_request(raw):
     return float(seconds), expected, min(float(lock_wait), LOCK_WAIT), options
 
 
-def recorder_command(binary, app, wav, seconds, device=DEVICE, python=sys.executable):
-    """`loopback route --to BlackHole -- loopback.py app-run … -- record …`. route needs no permission, so it runs
-    here; record runs as the recorder app. app-run waits for the app, passes its stderr through, and copies the
-    recording and the app's own log (`<wav>.recorder.log`) back into the evidence folder."""
+def simulators_pinned(roots=SIMULATOR_ROOTS):
+    """True when a Simulator is booted and every booted one has its own output on BlackHole (sim-audio-pin.m). Then
+    the window records without touching the Mac's default output, so the owner keeps his speakers. Anything unreadable
+    counts as not pinned: the window falls back to route, which works either way."""
+    booted = []
+    try:
+        for root in roots:
+            for path in Path(root).glob('*/device.plist'):
+                with path.open('rb') as file:
+                    if plistlib.load(file).get('state') == BOOTED:
+                        booted.append(path.parent)
+        if not booted:
+            return False
+        for device in booted:
+            with (device / AUDIO_SETTINGS).open('rb') as file:
+                settings = plistlib.load(file)
+            if settings.get('useHostDefaultOutputDevice') is not False or settings.get('sim_output_device_uid') != DEVICE_UID:
+                return False
+    except (OSError, ValueError, plistlib.InvalidFileException, ExpatError):
+        return False
+    return True
+
+
+def recorder_command(binary, app, wav, seconds, device=DEVICE, python=sys.executable, route=True):
+    """`loopback route --to BlackHole -- loopback.py app-run … -- record …`, without the route part when `route` is
+    false. route needs no permission, so it runs here; record runs as the recorder app. app-run waits for the app,
+    passes its stderr through, and copies the recording and the app's own log (`<wav>.recorder.log`) back into the
+    evidence folder."""
     wav = Path(wav)
-    return [binary, 'route', '--to', device, '--', python, str(Path(loopback.__file__).resolve()), 'app-run',
-            '--app', str(app), '--timeout', str(round(seconds * 2 + 20)),
-            '--collect', f'recording.wav={wav}', '--collect', f'stderr={wav.with_suffix(".recorder.log")}',
-            '--', 'record', '--device', device, '--seconds', str(seconds), '--out', '{job}/recording.wav']
+    routing = [binary, 'route', '--to', device, '--'] if route else []
+    return routing + [python, str(Path(loopback.__file__).resolve()), 'app-run',
+                      '--app', str(app), '--timeout', str(round(seconds * 2 + 20)),
+                      '--collect', f'recording.wav={wav}', '--collect', f'stderr={wav.with_suffix(".recorder.log")}',
+                      '--', 'record', '--device', device, '--seconds', str(seconds), '--out', '{job}/recording.wav']
 
 
 class Recorder:
     """`loopback route --to BlackHole -- (the recorder app) record …`: route restores the old default output
-    however record ends, and a route killed with -9 is undone by the next route or `loopback restore`."""
+    however record ends, and a route killed with -9 is undone by the next route or `loopback restore`. When every
+    booted Simulator is already on BlackHole there is nothing to route, and the Mac's output is left alone."""
 
-    def __init__(self, wav, seconds, app, device=DEVICE, binary=None):
-        self.command = recorder_command(binary or loopback.tool(), app, wav, seconds, device)
+    def __init__(self, wav, seconds, app, device=DEVICE, binary=None, pinned=simulators_pinned):
+        self.command = recorder_command(binary or loopback.tool(), app, wav, seconds, device, route=not pinned())
         self.lines = []
         self.started = threading.Event()
         self.process = None
