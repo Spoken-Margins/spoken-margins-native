@@ -60,7 +60,7 @@ final class LiveSessionRecordingScreenAppTests: XCTestCase {
         let capture = LiveSessionSpokenCapture(files: LiveSessionFileWorker(root: root))
         capture.start(sessionId: "s")
         let view = LiveSessionRecordingView(
-            capture: capture, sessionId: "s", anchorTitle: "Budget meeting", anchorSubtitle: { "12:30" }, onWriteInstead: {}
+            capture: capture, sessionId: "s", anchorTitle: "Budget meeting", anchorSubtitle: { "12:30" }, onWriteInstead: { _ in }
         )
         XCTAssertEqual(view.state.phase, .starting)
         XCTAssertEqual(view.state.anchorTitle, "Budget meeting")
@@ -82,12 +82,30 @@ final class LiveSessionRecordingScreenAppTests: XCTestCase {
         capture.start(sessionId: "s")
         var wrote = 0
         let view = LiveSessionRecordingView(
-            capture: capture, sessionId: "s", anchorTitle: "t", anchorSubtitle: { "" }, onWriteInstead: { wrote += 1 }
+            capture: capture, sessionId: "s", anchorTitle: "t", anchorSubtitle: { "" }, onWriteInstead: { _ in wrote += 1 }
         )
         view.actions.writeInstead(true)
         XCTAssertNil(capture.sessionId)
         XCTAssertEqual(wrote, 1)
         try await settle()
         XCTAssertEqual(filedItems(in: root), [])
+    }
+
+    /// The audit on 17f2ffa: cancel clears the recording's start, so writing instead used the moment of the change
+    /// of mind and filed the Margin a recording's length too late.
+    @MainActor
+    func testWriteInsteadHandsOverWhenTheRecordingBeganNotWhenTheListenerChangedTheirMind() async throws {
+        let root = makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let capture = LiveSessionSpokenCapture(files: LiveSessionFileWorker(root: root))
+        capture.start(sessionId: "s")
+        let began = try XCTUnwrap(capture.recordingStartedAt)
+        var handedOver: Date??
+        let view = LiveSessionRecordingView(
+            capture: capture, sessionId: "s", anchorTitle: "t", anchorSubtitle: { "" }, onWriteInstead: { handedOver = .some($0) }
+        )
+        view.actions.writeInstead(true)
+        XCTAssertNil(capture.recordingStartedAt, "cancel clears it, which is why it is read first")
+        XCTAssertEqual(handedOver, .some(.some(began)))
     }
 }

@@ -280,7 +280,7 @@ struct LiveSessionView: View {
             clock: { dockClock($0, session: session) },
             end: { dismissKeyboard(); showsEndCard = true },
             resume: { controller.resume() },
-            record: beginRecording, write: beginWriting,
+            record: beginRecording, write: { beginWriting() },
             addIsDisabled: model.recordingNavigationIsLocked)
     }
 
@@ -344,35 +344,58 @@ struct LiveSessionView: View {
     }
 
     private func startRecordingIfIdle() {
-        guard controller.isRunning, !controller.isRecordingSpoken else { return }
+        // A Margin being written is not interrupted by a Lock Screen link: its screen can't give way to a recording.
+        guard controller.isRunning, !controller.isRecordingSpoken, cover != .liveWriting else { return }
         dismissKeyboard()
         pauseSource()
         controller.startSpokenMargin()
     }
 
-    /// For a link or a return to the screen: a cover asked for while this screen is itself still being presented
-    /// would be dropped, leaving a recording with no screen. The microphone doesn't wait for this.
+    /// Closes the sheets this screen can have open (a Margin's screen, the End sheet). A full-screen cover can't
+    /// present over a sheet, so a link that needs one closes them first. Returns whether any was open.
+    private func closeSheets() -> Bool {
+        let hadSheet = openMargin != nil || showsEndCard
+        openMargin = nil
+        showsEndCard = false
+        return hadSheet
+    }
+
+    /// For a link or a return to the screen: a cover asked for while this screen is itself still being presented, or
+    /// while a sheet is up, would be dropped, leaving a recording with no screen. The microphone doesn't wait for this.
     private func showRecordingAfterPresenting() {
         Task {
             try? await Task.sleep(for: .milliseconds(400))
+            guard controller.isRecordingSpoken, cover == nil else { return }
+            if closeSheets() { try? await Task.sleep(for: .milliseconds(400)) } // after the sheet has gone
             if controller.isRecordingSpoken && cover == nil { cover = .liveRecording }
         }
     }
 
-    private func beginWriting() {
-        guard controller.isRunning else { return }
+    /// `startedAt` is when the listener began, when they began by recording: writing instead keeps that place.
+    private func beginWriting(startedAt: Date? = nil) {
+        // A spoken Margin still recording keeps its screen; a Write link can't swap it for the writing sheet and
+        // leave the microphone on.
+        guard controller.isRunning, !controller.isRecordingSpoken else { return }
         dismissKeyboard()
         pauseSource()
-        writingStartedAt = Date()
-        cover = .liveWriting
+        writingStartedAt = startedAt ?? Date()
+        guard closeSheets() else {
+            cover = .liveWriting
+            return
+        }
+        Task {
+            try? await Task.sleep(for: .milliseconds(400)) // after the sheet has gone
+            if controller.isRunning && !controller.isRecordingSpoken && cover == nil { cover = .liveWriting }
+        }
     }
 
     private var recordingScreen: some View {
         LiveSessionRecordingView(
             capture: capture, sessionId: controller.session?.id ?? "", anchorTitle: anchorTitle,
             anchorSubtitle: { anchorSubtitle(at: Date()) },
-            onWriteInstead: {
-                writingStartedAt = Date()
+            onWriteInstead: { began in
+                // The recording is already discarded, so nothing is recording and the writing screen can replace it.
+                writingStartedAt = began ?? Date()
                 cover = .liveWriting
             }
         )
@@ -457,7 +480,8 @@ struct LiveSessionView: View {
                 isSaving = true
                 Task {
                     do {
-                        try await model.saveLiveSession(session, transcript: nil, placed: [], recordingURL: nil)
+                        // The session as it is when saved, not as this card was drawn: words typed a moment ago are in it.
+                        try await model.saveLiveSession(controller.session ?? session, transcript: nil, placed: [], recordingURL: nil)
                         model.hangTelemetry.labels.scoped("liveSessionSavedAsNotes") {
                             controller.close()
                             dismiss()

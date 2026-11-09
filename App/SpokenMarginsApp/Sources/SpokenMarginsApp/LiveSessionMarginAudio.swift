@@ -35,7 +35,10 @@ actor LiveSessionMarginAudioPlayer {
 /// recording ends, when the screen goes away, or when something else interrupts the audio.
 @MainActor
 final class LiveSessionMarginAudioModel: ObservableObject {
-    @Published private(set) var isPlaying = false
+    /// The Margin whose recording is playing or starting. One model serves a whole pane, so a tap on another Margin
+    /// stops this one and starts that one, and only the playing row says "Stop playing".
+    @Published private(set) var playingId: String?
+    var isPlaying: Bool { playingId != nil }
     @Published private(set) var message: String?
 
     private var player: AVAudioPlayer?
@@ -47,9 +50,10 @@ final class LiveSessionMarginAudioModel: ObservableObject {
     /// We have started, or are starting, the audio session, so it must be handed back when we stop.
     private var holdsSession = false
 
-    /// Plays the recording, or stops it when it is playing. `prepare` pauses whatever else the app is playing.
-    func toggle(audioPath: String, prepare: () -> Void) {
-        if isPlaying {
+    /// Plays the recording, or stops it when this Margin's is the one playing. A tap on a different Margin stops the
+    /// one playing and plays that one. `prepare` pauses whatever else the app is playing.
+    func toggle(id: String = "", audioPath: String, prepare: () -> Void) {
+        if playingId == id {
             stop()
             return
         }
@@ -58,7 +62,7 @@ final class LiveSessionMarginAudioModel: ObservableObject {
         prepare()
         let mine = generation
         holdsSession = true
-        isPlaying = true // shows at once; the audio follows
+        playingId = id // shows at once; the audio follows
         starting = Task { [weak self] in
             do {
                 let started = try await LiveSessionMarginAudioPlayer.shared.start(audioPath: audioPath)
@@ -82,7 +86,7 @@ final class LiveSessionMarginAudioModel: ObservableObject {
         ticker = nil
         player?.stop()
         player = nil
-        if isPlaying { isPlaying = false }
+        if playingId != nil { playingId = nil }
         if let interruptionObserver {
             NotificationCenter.default.removeObserver(interruptionObserver)
             self.interruptionObserver = nil

@@ -3,8 +3,9 @@ import SwiftUI
 
 /// The Session pane of the live session screen (#3491): what the session is. Kind, name, a description, the time it
 /// started, and where the source is now. The kind and name change only while it runs; the description and the start
-/// time stay editable until the session is saved. Words are kept when the listener finishes with a field, not on
-/// every keystroke, so the Lock Screen card isn't rewritten as they type.
+/// time stay editable until the session is saved. While it runs, words are kept when the listener finishes with a
+/// field, not on every keystroke, so the Lock Screen card isn't rewritten as they type; after it ends, the
+/// description is kept on every change, so saving the session never misses it.
 struct LiveSessionSessionPane<Header: View>: View {
     let session: LiveSession
     let isRunning: Bool
@@ -110,6 +111,11 @@ struct LiveSessionSessionPane<Header: View>: View {
         .onAppear(perform: load)
         .onChange(of: session.id) { _, _ in load() }
         .onChange(of: focus) { old, _ in if old != nil { commit() } }
+        // Once the session has ended, the Lock Screen has no card to rewrite and the buttons that save it (Save as
+        // Notes, Line Up) are one tap away from a field still holding focus: a tap on a button doesn't end the
+        // field's editing, so words are kept as they are typed. While it runs they wait for the field to be left (#3491).
+        .onChange(of: descriptionDraft) { _, text in if !isRunning { setDescription(text) } }
+        .onChange(of: isRunning) { _, running in if !running { commit() } }
         .onChange(of: startedDraft) { _, date in
             guard date != shownStart else { return }
             if !setStatedStart(date) { startedDraft = shownStart }

@@ -8,8 +8,10 @@ struct LiveSessionRecordingView: View {
     let sessionId: String
     let anchorTitle: String
     let anchorSubtitle: () -> String
-    /// Called after the recording has been thrown away, when the listener chose to write instead.
-    let onWriteInstead: () -> Void
+    /// Called after the recording has been thrown away, when the listener chose to write instead. It is given the
+    /// moment the recording began: the written Margin belongs to the place the listener was when they tapped Add a
+    /// Margin, not to the moment they changed their mind.
+    let onWriteInstead: (Date?) -> Void
 
     var state: MarginRecordingScreenState {
         let subtitle = anchorSubtitle()
@@ -35,8 +37,9 @@ struct LiveSessionRecordingView: View {
             finish: { capture.stopAndFile() },
             cancel: { capture.cancel(sessionId: sessionId) },
             writeInstead: { _ in
+                let began = capture.recordingStartedAt // cancel clears it
                 capture.cancel(sessionId: sessionId)
-                onWriteInstead()
+                onWriteInstead(began)
             },
             continuePrimer: {},
             retry: {},

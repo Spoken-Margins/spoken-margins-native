@@ -52,12 +52,16 @@ struct LiveSessionMarginsPane: View {
             title: title(of: margin), detail: detail,
             isShared: false, identifier: "liveSession.margin.row.\(margin.id)",
             canPlay: margin.isSpoken,
-            playLabel: audio.isPlaying ? "Stop playing" : "Hear my recording",
+            playLabel: audio.playingId == margin.id ? "Stop playing" : "Hear my recording",
             playHint: margin.isSpoken ? "Plays your recording of this Margin" : "Only a spoken Margin has a recording. Open it to read or edit it.",
-            showDetails: { select(margin) },
+            // The Margin screen has its own player, so this pane's stops first: two recordings never play together.
+            showDetails: {
+                audio.stop()
+                select(margin)
+            },
             play: {
                 guard let path = margin.audioPath else { return }
-                audio.toggle(audioPath: path, prepare: pauseOtherAudio)
+                audio.toggle(id: margin.id, audioPath: path, prepare: pauseOtherAudio)
             })
     }
 

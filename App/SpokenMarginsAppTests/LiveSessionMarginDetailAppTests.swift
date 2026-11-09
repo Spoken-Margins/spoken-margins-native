@@ -109,4 +109,19 @@ final class LiveSessionMarginDetailAppTests: XCTestCase {
         XCTAssertNotNil(model.message)
         XCTAssertFalse(model.isPlaying)
     }
+
+    /// The audit on 17f2ffa: the Margins pane shares one model across its rows. A tap on B while A plays stopped A
+    /// and started nothing, and every row said "Stop playing" while A played.
+    func testATapOnAnotherMarginMovesPlaybackToIt() async throws {
+        let model = LiveSessionMarginAudioModel()
+        var paused = 0
+        model.toggle(id: "a", audioPath: "SpokenMargins/interjections/not-there-a.m4a", prepare: { paused += 1 })
+        XCTAssertEqual(model.playingId, "a")
+        model.toggle(id: "b", audioPath: "SpokenMargins/interjections/not-there-b.m4a", prepare: { paused += 1 })
+        XCTAssertEqual(model.playingId, "b", "B plays; the tap doesn't just stop A")
+        XCTAssertEqual(paused, 2)
+        model.toggle(id: "b", audioPath: "SpokenMargins/interjections/not-there-b.m4a", prepare: { paused += 1 })
+        XCTAssertNil(model.playingId, "a second tap on the playing Margin stops it")
+        XCTAssertEqual(paused, 2, "stopping pauses nothing")
+    }
 }
