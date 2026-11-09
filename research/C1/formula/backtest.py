@@ -8,7 +8,7 @@ cache, base, new, lex, tok, work = map(pathlib.Path, sys.argv[1:7])
 rows = json.load(open(cache / "sample.json"))
 vocab = {c for piece, _ in json.load(open(tok))["model"]["vocab"] if not piece.startswith("<") for c in piece}
 SPELLED = set("αβγδεζηθικλμνξοπρστυφχψωΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡΣΤΥΦΧΨΩ×÷≤≥=±π")
-PUNCT = set("’‘“”—–…•−")
+PUNCT = set("’‘“”—–…•−()[]{}:;+*_")  # Phonon's normalize_text turns these into pauses or words
 
 
 def run(binary, out, pdfs):
@@ -75,10 +75,15 @@ for r in rows:
     wb, wn = words(b["chunks"]), words(n["chunks"])
     gone = sum((wb - wn).values())
     perpaper.append((round(gone / max(1, sum(wb.values())), 4), stem, r["split"]))
-    newtext = " ".join(n["chunks"])
-    for line in b.get("spoken_lines") or []:
-        if len(re.findall(r"[a-z]{3,}", line)) >= 5 and line[:40] not in newtext:
-            lost.append((r["split"], stem, line))
+    tokens = [w.lower() for c in n["chunks"] for w in re.findall(r"[A-Za-z]{4,}", c)]
+    grams = {tuple(tokens[i:i + 3]) for i in range(len(tokens))}
+    for chunk in b["chunks"]:
+        w = [x.lower() for x in re.findall(r"[A-Za-z]{4,}", chunk)]
+        if len(w) >= 6:
+            tot[r["split"]]["prose_chunks_before"] += 1
+            if not any(tuple(w[i:i + 3]) in grams for i in range(len(w) - 2)):
+                tot[r["split"]]["prose_chunks_gone"] += 1
+                lost.append((r["split"], stem, chunk))
 for key in sorted(tot):
     print(key, dict(sorted(tot[key].items())))
 perpaper.sort(reverse=True)

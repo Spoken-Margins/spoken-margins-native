@@ -27,7 +27,7 @@ func runDump(to directory: URL) {
                 let spoken = SpeechTextNormalizer.normalize(listenable)
                 record["spoken_lines"] = StructuredDocumentSpeech.spokenLines(document)
                 record["chunks"] = NarrationChunkPlanner.spokenPlan(spokenText: spoken, articleText: nil, articleSpokenStart: 0, budget: RenderedSpeechChunker.spokenCostBudget)
-                    .chunks.map(\.text)
+                    .chunks.map { PDFMathSpeech.voiceSafe($0.text) }
             } catch {
                 record["error"] = String(describing: error)
             }

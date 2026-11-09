@@ -96,6 +96,37 @@ public enum PDFMathSpeech {
         }
     }
 
+    // MARK: - The last check before a voice
+
+    private static let unspokenMarks = Set("ˆ¯˜˘´˚˙¨ˇ¸∥®™†‡§·")
+    private static let namedSymbols: [Character: String] = ["∆": "delta", "Ω": "omega", "µ": "mu"]
+
+    /// `text` with nothing left that Phonon would feed its model as raw bytes: ligatures opened, accents folded,
+    /// stray marks dropped. Only the audio is affected; plans and anchors keep the text as it was.
+    public static func voiceSafe(_ text: String) -> String {
+        let characters = Array(text)
+        let spoken = speakingInlineMath(characters, offsets: Array(characters.indices)).characters
+        var output = ""
+        output.reserveCapacity(spoken.count)
+        for character in spoken {
+            if character.isASCII {
+                output.append(character)
+            } else if unspokenMarks.contains(character) {
+                continue
+            } else if let name = namedSymbols[character] ?? greekNames[character] {
+                if output.last?.isLetter == true || output.last?.isNumber == true { output.append(" ") }
+                output += name
+            } else if character.isLetter {
+                let plain = String(character).precomposedStringWithCompatibilityMapping
+                    .folding(options: .diacriticInsensitive, locale: nil)
+                output += plain
+            } else {
+                output.append(character)
+            }
+        }
+        return output
+    }
+
     // MARK: - Footnotes in the body
 
     /// Where a block of footnotes starts in a body segment that runs up to a page break, or nil. Older imports stored

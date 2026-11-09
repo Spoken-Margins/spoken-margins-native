@@ -98,6 +98,14 @@ final class PDFMathSpeechTests: XCTestCase {
         XCTAssertTrue(text.contains("Sandberg"), text)
     }
 
+    func testVoiceSafeLeavesNothingPhononWouldReadAsBytes() {
+        XCTAssertEqual(PDFMathSpeech.voiceSafe("the eﬀective oﬃce"), "the effective office")
+        XCTAssertEqual(PDFMathSpeech.voiceSafe("Göttingen moiré"), "Gottingen moire")
+        XCTAssertEqual(PDFMathSpeech.voiceSafe("xˆ ∥ y™"), "x  y")
+        XCTAssertEqual(PDFMathSpeech.voiceSafe("∆t and ϕ"), "deltat and phi")
+        XCTAssertEqual(PDFMathSpeech.voiceSafe("Plain text, “quoted” — 3.5%."), "Plain text, “quoted” — 3.5%.")
+    }
+
     func testPastedMathInAnyTextIsSaidInWords() {
         let text = SpeechTextNormalizer.normalize("the share 𝛼 falls")
         XCTAssertTrue(text.contains("alpha"), text)
