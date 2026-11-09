@@ -297,7 +297,9 @@ def write_asc(path, now):
     if missing:
         raise ReadError('missing ' + ', '.join(missing))
     token = asc_token(os.environ['ASC_KEY_ID'], os.environ['ASC_ISSUER_ID'], os.environ['ASC_KEY_P8'], now)
-    apps = asc_get(f'/v1/apps?filter%5BbundleId%5D={BUNDLE_ID}&limit=2', token).get('data', [])
+    # Apple's filter is looser than an exact match: it returned a second app on this job's first real run.
+    apps = asc_get(f'/v1/apps?filter%5BbundleId%5D={BUNDLE_ID}&limit=200', token).get('data', [])
+    apps = [app for app in apps if app.get('attributes', {}).get('bundleId') == BUNDLE_ID]
     if len(apps) != 1:
         raise ReadError(f'expected one app for {BUNDLE_ID}, found {len(apps)}')
     document = asc_get(f'/v1/builds?filter%5Bapp%5D={apps[0]["id"]}&sort=-uploadedDate&limit=10'

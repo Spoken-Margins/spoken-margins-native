@@ -321,6 +321,43 @@ class Signing(unittest.TestCase):
         self.assertIn('missing ASC_KEY_ID', out.getvalue())
 
 
+class FindsTheApp(unittest.TestCase):
+    """Apple's bundle ID filter also returned a second app on the job's first real run, 2026-11-09 (#3872)."""
+
+    @staticmethod
+    def app(ident, bundle):
+        return {'id': ident, 'attributes': {'bundleId': bundle}}
+
+    def builds_path(self, apps):
+        asked = []
+
+        def fake_get(path, _token):
+            asked.append(path)
+            return {'data': apps} if path.startswith('/v1/apps') else {'data': []}
+
+        settings = {'ASC_KEY_ID': 'K', 'ASC_ISSUER_ID': 'I', 'ASC_KEY_P8': 'P'}
+        with tempfile.TemporaryDirectory() as folder, unittest.mock.patch.dict('os.environ', settings), \
+                unittest.mock.patch.object(live, 'asc_token', return_value='T'), \
+                unittest.mock.patch.object(live, 'asc_get', fake_get):
+            live.write_asc(Path(folder) / 'out.json', NOW)
+        return asked[-1]
+
+    def test_the_exact_bundle_id_wins_in_either_order(self):
+        ours, other = self.app('1', live.BUNDLE_ID), self.app('2', live.BUNDLE_ID + '.other')
+        for apps in ([ours, other], [other, ours]):
+            self.assertIn('filter%5Bapp%5D=1&', self.builds_path(apps))
+
+    def test_no_exact_match_is_an_error_not_a_guess(self):
+        rows = {'lookalike': [self.app('2', live.BUNDLE_ID + '.other')],
+                'other case': [self.app('2', live.BUNDLE_ID.upper())],
+                'empty': [],
+                'no attributes': [{'id': '2'}],
+                'two exact': [self.app('1', live.BUNDLE_ID), self.app('2', live.BUNDLE_ID)]}
+        for name, apps in rows.items():
+            with self.subTest(name), self.assertRaises(live.ReadError):
+                self.builds_path(apps)
+
+
 class Summary(unittest.TestCase):
     DOCUMENT = {'data': [{'type': 'builds', 'id': 'b1',
                           'attributes': {'version': '36', 'uploadedDate': 'T', 'processingState': 'VALID', 'expired': False},
