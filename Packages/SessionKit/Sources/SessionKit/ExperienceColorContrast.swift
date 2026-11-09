@@ -86,7 +86,6 @@ public enum AppSystemColorRGB {
     public static let liveActivityRed = red
     public static let liveActivityOrange = orange
     public static let liveActivityGreenSystem = green
-    public static let liveActivityBlue = blue
     /// The Dynamic Island is always black, and its secondary label is the system's dark secondary: white-grey at 60%.
     public static let dynamicIslandBlack = fixed(0, 0, 0)
     public static let darkSecondaryLabel = fixed(0.922, 0.922, 0.961)
@@ -440,8 +439,9 @@ public enum AppColorContrastAudit {
             // The state words are bold caption text (`recordingTint`), so they need the text ratio.
             .init(name: "live activity recording state text (red)", foreground: AppSystemColorRGB.liveActivityRed, background: plate, minimumRatio: 4.5),
             .init(name: "live activity paused state text (orange)", foreground: AppSystemColorRGB.liveActivityOrange, background: plate, minimumRatio: 4.5),
-            // `.tint(.blue)` on the headline buttons of the shared-Margin card is text too.
-            .init(name: "live activity button label tint (blue)", foreground: AppSystemColorRGB.liveActivityBlue, background: plate, minimumRatio: 4.5),
+            // The headline buttons of the live session card (Resume, Mark, Finish Margin) are tinted with the progress blue, a fixed
+            // literal, not the system blue that resolved to its 4.46:1 light value on the plate (#3739). Their label is text too.
+            .init(name: "live activity button label tint (progress blue)", foreground: AppSystemColorRGB.liveActivityProgress, background: plate, minimumRatio: 4.5),
             // The Dynamic Island's `Next:` line is `.secondary` on its black.
             .init(
                 name: "dynamic island secondary text",
@@ -528,9 +528,6 @@ public enum AppColorContrastAudit {
         .init(pair: "my Margin row label on coral at 0.08 over bone", appearance: "light", since: "2026-11-08", fixedBy: "#3734"),
         .init(pair: "row detail on ochre at 0.08 over bone", appearance: "light", since: "2026-11-08", fixedBy: "#3734"),
         .init(pair: "row detail on plum at 0.07 over bone", appearance: "light", since: "2026-11-08", fixedBy: "#3734"),
-        // The Live Activity's `.tint(.blue)` button labels are the system blue, 4.46:1 on the plate when the system draws its light value
-        // (#3739 slice 3). The widgets set no colour scheme. The fix is a token for the tint, or a forced dark scheme on the activity.
-        .init(pair: "live activity button label tint (blue)", appearance: "light", since: "2026-11-08", fixedBy: "#3739"),
         // The Watch's plates force white text on the system orange and blue (#3731). One appearance, listed twice.
         .init(pair: "watch session plate label", appearance: "light", since: "2026-11-08", fixedBy: "#3731"),
         .init(pair: "watch session plate label", appearance: "dark", since: "2026-11-08", fixedBy: "#3731"),
