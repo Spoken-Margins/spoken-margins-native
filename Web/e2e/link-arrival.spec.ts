@@ -129,6 +129,25 @@ test('saving a Margin on a friend\u2019s item says what Share does with it, unti
   await context.close();
 });
 
+test('after the last Margin has been heard, the card stops saying the sender is speaking and the cue says it was the last (#3797)', async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'block' });
+  const page = await friendPage(context);
+  await page.goto(LINK);
+  await page.getByTestId('arrival').getByRole('button', { name: 'Play' }).click();
+  const playing = page.getByRole('dialog', { name: EPISODE });
+  await expect(playing.getByTestId('margin-cue')).toContainText('Web fixture\u2019s first Margin in');
+  // Just before the second Margin (spoken, at 2:05), rather than sitting through two minutes of playback.
+  await page.getByTestId('audio').evaluate((a: HTMLAudioElement) => { a.currentTime = 124; });
+  const arrived = playing.getByTestId('arrived-margin');
+  await expect(arrived).toContainText('Web fixture is speaking', { timeout: 30_000 });
+  await expect(arrived).toContainText('2 of 2');
+  // The clip ends: nothing is speaking any more, and the cue is the one the app shows after a last Margin.
+  await expect(arrived).toHaveCount(0, { timeout: 30_000 });
+  await expect(playing.getByText('is speaking')).toHaveCount(0);
+  await expect(playing.getByTestId('margin-cue')).toContainText('That was Web fixture\u2019s last Margin.');
+  await context.close();
+});
+
 test('on a laptop: the link opens on its page, Play starts the episode, Skip reaches Cole’s Margin', async ({ browser }, info) => {
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'block' });
   const page = await friendPage(context);

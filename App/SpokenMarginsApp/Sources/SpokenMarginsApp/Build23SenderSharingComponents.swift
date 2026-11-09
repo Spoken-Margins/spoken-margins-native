@@ -340,7 +340,6 @@ struct Build23MarginSelectionRow: View {
                 .buttonStyle(.plain)
                 .disabled(!isEnabled)
                 .accessibilityLabel("\(margin.isStarred ? "Starred " : "")Margin, \(margin.spokenWordsDescription), \(margin.shareStatusDescription)")
-                .accessibilityHint("Double tap to \(margin.isIncluded ? "exclude" : "include") this Margin")
                 .accessibilityIdentifier("build23.sender.margin.row.\(margin.id)")
 
                 Toggle(
@@ -352,8 +351,9 @@ struct Build23MarginSelectionRow: View {
                 )
                 .font(.caption.weight(.semibold))
                 .fixedSize(horizontal: true, vertical: false)
-                .accessibilityLabel("Include this Margin")
-                .accessibilityValue(margin.isLeftOutForMissingText ? "Included, but left out: no transcript yet" : (margin.isIncluded ? "Included" : "Not included"))
+                // The row's own button above already says "included" or "not included" and toggles on a double tap, so
+                // the switch beside it would be a second, identical control to swipe past (#3730).
+                .accessibilityHidden(true)
                 .accessibilityIdentifier("build23.sender.margin.include.\(margin.id)")
                 .disabled(!isEnabled)
             }

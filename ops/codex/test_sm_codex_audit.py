@@ -21,6 +21,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import sm_codex_audit as A  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts" / "tests"))
+import workflow_yaml as W  # noqa: E402
 
 HEAD = "68fc3337b3e0e95b75bde01c7c94130e22b62226"
 OLD = "1ec94f3f0000000000000000000000000000abcd"
@@ -961,11 +963,20 @@ class HostedAudit(unittest.TestCase):
         self.assertEqual(dry, [])
 
     def test_a_skipped_lane_run_starts_no_audit_and_can_t_replace_a_waiting_one(self):
-        # 141 of 1,272 lane runs in the week to 2026-11-07 skipped every job and posted no report.
-        job = self.workflow().split("\njobs:\n")[1]
-        self.assertIn("github.event.workflow_run.conclusion != 'skipped'", job)
-        self.assertIn("concurrency:", job)
-        self.assertNotIn("concurrency:", self.workflow().split("\njobs:\n")[0])
+        # 141 of 1,272 lane runs in the week to 2026-11-07 skipped every job and posted no report. The job's own `if:`
+        # is run for each way the workflow starts, so a guard turned into a comment or into `true` fails (#3704).
+        workflow = W.load("claude-audit.yml")
+        job = workflow["jobs"]["audit"]
+        for event, conclusion, runs in (("workflow_run", "skipped", False), ("workflow_run", "success", True),
+                                        ("workflow_run", "failure", True), ("workflow_run", "cancelled", True),
+                                        ("workflow_dispatch", "", True), ("schedule", "", True)):
+            with self.subTest(event=event, conclusion=conclusion):
+                self.assertEqual(W.evaluate_condition(
+                    job.get("if", True), github_event_name=event,
+                    github_event_workflow_run_conclusion=conclusion), runs)
+        # The group is the job's own, so the skipped run is dropped before it can replace the run waiting in it.
+        self.assertEqual(job["concurrency"], {"group": "claude-audit", "cancel-in-progress": False})
+        self.assertNotIn("concurrency", workflow)
 
     def test_on_the_mac_the_label_event_starts_it_and_nothing_is_dispatched(self):
         with patch.dict(os.environ):
@@ -1012,11 +1023,20 @@ class HostedAudit(unittest.TestCase):
 
     def test_the_workflow_keeps_no_git_credentials_and_gives_the_secret_to_one_step(self):
         text = self.workflow()
-        self.assertIn("persist-credentials: false", text)
-        self.assertEqual(text.count("secrets."), 1)
+        workflow = W.load("claude-audit.yml")
+        checkouts = W.checkout_steps(workflow)
+        self.assertTrue(checkouts)
+        for job, options in checkouts:
+            self.assertIs(options.get("persist-credentials"), False, job)
+        # The parsed file, not its text: `secrets[...]` and `toJSON(secrets)` count, and a comment does not (#3704).
+        named = W.mentions_of(workflow, "secrets")
+        self.assertEqual(len(named), 1, named)
         # Its token is an environment secret only main may use: a repository secret reaches any branch's workflow.
-        self.assertIn("environment: claude-audit", text)
-        self.assertIn("CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}", text.split("name: Audit")[1])
+        self.assertEqual(workflow["jobs"]["audit"]["environment"], "claude-audit")
+        audit = next(step for step in workflow["jobs"]["audit"]["steps"] if step.get("name") == "Audit")
+        self.assertEqual(audit["env"]["CLAUDE_CODE_OAUTH_TOKEN"], "${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}")
+        self.assertNotIn("uses", audit)  # the repository's own script, never a third party's action
+        self.assertTrue(named[0].endswith("/Audit.env/CLAUDE_CODE_OAUTH_TOKEN"), named)
         # One exact version, so a new release can't change the merge gate unannounced.
         self.assertRegex(text, r"@anthropic-ai/claude-code@\d+\.\d+\.\d+")
 
