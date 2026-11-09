@@ -88,8 +88,14 @@ public actor FollowedSourceCoordinator {
             configuration.timeoutIntervalForRequest = 20
             configuration.timeoutIntervalForResource = 30
             configuration.urlCache = nil
-            self.session = URLSession(configuration: configuration, delegate: BoundedRedirectDelegate(maximumRedirects: 5), delegateQueue: nil)
+            self.session = Self.boundedSession(configuration: configuration)
         }
+    }
+
+    /// The session `init` makes when none is passed: at most five redirects, each to an https address.
+    /// Internal so tests can run the same rule over a stub protocol in `configuration` (#3817).
+    static func boundedSession(configuration: URLSessionConfiguration) -> URLSession {
+        URLSession(configuration: configuration, delegate: BoundedRedirectDelegate(maximumRedirects: 5), delegateQueue: nil)
     }
 
     public func follow(urlString: String) async throws -> FeedSubscription {
