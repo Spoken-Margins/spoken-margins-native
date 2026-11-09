@@ -68,11 +68,6 @@
       "journey": "Live session setup: Done closes the keyboard and Start Session is tappable with it up (#3547)"
     },
     {
-      "test": "SpokenMarginsAppUITests/Gate1FlowUITests/testLiveSessionEditAndRemoveMarginTakeTapsAcrossA44PointTarget",
-      "journey": "Live session: Edit and Remove Margin have a 44 pt frame and take a tap inside each edge (#3727)",
-      "batch": 2
-    },
-    {
       "test": "SpokenMarginsAppUITests/J12SharingLoopJourneyUITests",
       "journey": "J12 steps 2-5: record two Margins, send, a friend's Margin on the Margins tab and heard first (#3222)"
     },
