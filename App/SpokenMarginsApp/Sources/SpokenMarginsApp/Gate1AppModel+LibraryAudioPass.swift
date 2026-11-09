@@ -112,7 +112,7 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
         let caller: LibraryAudioPreparationCaller = foregroundDemandOnly ? .foreground : .background
         // Live speech owns the serial renderer while the listener has active
         // demand. A stale/background job must not queue ahead of its next chunk.
-        guard canPrepareLibraryAudio else { libraryAudioLoop.turns.stopped(caller); return false }
+        guard canPrepareLibraryAudio else { libraryAudioLoop.turns.stopped(caller); runtimeDiagnostics.preparationRunEnded(); return false }
         guard hasAcceptedCurrentTerms,
               let preparationVoice = PreparationVoice.current(for: ttsVoiceSelection, model: self) else { libraryAudioLoop.turns.blocked(caller); return false } // settles until these change (#647)
         let voice = preparationVoice.renderVoice
@@ -153,7 +153,7 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
                 ).isEmpty
             }
             let previous = libraryAudioPreparingItemId // nil job: nothing to do, or the foreground loop waits for the background task (#534)
-            guard let job = libraryAudioLoop.turns.select(queuedJobs, activeItemId: activePlaybackItemId, for: caller) else { libraryAudioLoop.turns.stopped(caller); return false }
+            guard let job = libraryAudioLoop.turns.select(queuedJobs, activeItemId: activePlaybackItemId, for: caller) else { libraryAudioLoop.turns.stopped(caller); runtimeDiagnostics.preparationRunEnded(); return false }
             if let previous, previous != job.itemId,
                libraryItems.first(where: { $0.id == previous })?.startupAudioState == .preparing { updateLibraryStartupAudioState(itemId: previous, state: .waiting) }
             if libraryItems.first(where: { $0.id == job.itemId })?.startupAudioState == .waiting { updateLibraryStartupAudioState(itemId: job.itemId, state: .preparing) }
@@ -213,7 +213,7 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
                 diagnostics["automaticAudioPreparation:\(item.id)"] = "cancelled_existing_progress"
                 return try await hasMoreMatchingJobs()
             }
-            guard gate == .render else { diagnostics["backgroundAudioPreparation"] = gate.rawValue; return false }
+            guard gate == .render else { notePreparationHeatPause(gate, thermal: atRender.thermal); diagnostics["backgroundAudioPreparation"] = gate.rawValue; return false }
             // After the heat gate, so a hot phone pauses the manifest as it always did (#2857).
             guard preparationVoice.allowedNow() else { diagnostics["backgroundAudioPreparation"] = "voice_not_allowed_now"; return false }
             manifest = try await coordinator.droppingMissingChunks(manifestId: manifest.id) ?? manifest // a lost chunk is rendered again, not assembled (#645)
@@ -306,8 +306,10 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
             }
             let needsAssembly = decision?.needsAssembly
             if let decision {
+                let thermalAfterRender = SupertonicResourcePolicy.currentConditions().thermal
                 recordDeveloperDiagnostic("preparation.committed", ["item": DeveloperDiagnosticRecording.token(item.id), "chunks": String(updated.chunks.count),
-                                                                    "renderMs": String(renderMs), "thermal": SupertonicResourcePolicy.currentConditions().thermal.rawValue])
+                                                                    "renderMs": String(renderMs), "thermal": thermalAfterRender.rawValue])
+                runtimeDiagnostics.preparationChunkCommitted(renderMs: renderMs, thermalAtStart: atRender.thermal, thermalAtEnd: thermalAfterRender) // the basic export, always (#3816)
                 if let note = decision.note { diagnostics["startupAudioPreparation:\(item.id)"] = note }
             }
             guard let needsAssembly else { return try await hasMoreMatchingJobs() }
