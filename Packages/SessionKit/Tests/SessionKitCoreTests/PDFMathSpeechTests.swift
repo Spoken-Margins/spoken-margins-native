@@ -157,3 +157,47 @@ final class SpeechMarkupRemovalTests: XCTestCase {
         XCTAssertEqual(projection.sourceOffset(atSpokenCharacterOffset: at), 7)
     }
 }
+
+/// LaTeX math that reaches the text as plain letters, a sub- or superscript to a line.
+final class PDFPlainLetterMathTests: XCTestCase {
+    private func silenced(_ lines: [String]) -> [String] {
+        let text = lines.joined(separator: "\n")
+        let characters = Array(text)
+        return PDFMathSpeech.displayLines(in: characters, range: 0..<characters.count).map { String(characters[$0]) }
+    }
+
+    func testARunOfFragmentsIsOneEquation() {
+        XCTAssertEqual(silenced(["where the rate of change is given by", "u0 = 1, u1 = x1,", "t :=", "x"]), ["u0 = 1, u1 = x1,", "t :=", "x"])
+        XCTAssertEqual(silenced(["The result is below", "γ", "=", "m", "and this holds for each one"]), ["γ", "=", "m"])
+    }
+
+    func testLinesWithWordsOrNoMathStayRead() {
+        let kept: [[String]] = [
+            ["the agent solves this problem with care", "and then moves on to the next one"],
+            ["INTRODUCTION", "THE MODEL AND DATA"],
+            ["12", "3.5 (0.2)", "4.1 (0.3)"],
+            ["(a)", "2.", "(b)"],
+            ["x", "y"],
+            ["see the table"],
+        ]
+        for lines in kept {
+            XCTAssertEqual(silenced(lines), [], "\(lines)")
+        }
+    }
+
+    func testNumberedEquationWithAFewWordsIsAnEquation() {
+        XCTAssertEqual(silenced(["ker J = span of all a. (3)"]), ["ker J = span of all a. (3)"])
+        XCTAssertEqual(silenced(["as we show in the next part of this (3)"]), [])
+    }
+
+    func testFootnoteDetectorIgnoresAnEquationThatLooksGlued() {
+        func cut(_ lines: [String]) -> Int? {
+            let characters = Array(lines.joined(separator: "\n"))
+            return PDFMathSpeech.footnoteBlockStart(in: characters, range: 0..<characters.count, endsAtPageBreak: true)
+        }
+        XCTAssertNil(cut(["Yt = θ", "0Tt + µ", "where the shocks are independent of the state"]))
+        XCTAssertNil(cut(["some words here", "1Ab = c", "more words after this line"]))
+        XCTAssertEqual(cut(["body words on this line", "16We control for the probability that it was"]), 24)
+        XCTAssertEqual(cut(["body words on this line", "1Sandberg (2013) presented this argument first"]), 24)
+    }
+}
