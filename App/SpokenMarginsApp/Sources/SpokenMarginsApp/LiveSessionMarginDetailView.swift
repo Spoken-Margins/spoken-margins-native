@@ -114,6 +114,7 @@ struct LiveSessionMarginDetailView: View {
             .confirmationDialog("Delete this Margin?", isPresented: $asksToDelete, titleVisibility: .visible) {
                 Button("Delete Margin", role: .destructive) {
                     audio.stop()
+                    isEditing = false // a deleted Margin has no words left to keep
                     delete()
                     dismiss()
                 }
@@ -133,7 +134,12 @@ struct LiveSessionMarginDetailView: View {
                     Button("Done") { dismiss() }.accessibilityIdentifier("marginDetail.done.button")
                 }
             }
-            .onDisappear { audio.stop() }
+            .onDisappear {
+                audio.stop()
+                // The screen can close without Save or Cancel: Done, a swipe down, or a Lock Screen link that needs the
+                // screen. Words being edited are kept then; Cancel has already left editing, so it still discards.
+                if isEditing && draft != margin.text { saveText(draft) }
+            }
         }
     }
 }

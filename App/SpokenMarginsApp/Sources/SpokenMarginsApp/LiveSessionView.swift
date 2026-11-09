@@ -106,6 +106,10 @@ struct LiveSessionView: View {
             wantsWrite = false
             beginWriting()
         }
+        // An alert over the screen can't be closed by a link: once it is answered, a recording still going gets its screen.
+        .onChange(of: controller.errorMessage) { _, message in
+            if message == nil && controller.isRecordingSpoken && cover == nil { showRecordingAfterPresenting() }
+        }
         .onChange(of: controller.isRecordingSpoken) { _, recording in
             if !recording && cover == .liveRecording { cover = nil }
         }
@@ -376,6 +380,9 @@ struct LiveSessionView: View {
         // A spoken Margin still recording keeps its screen; a Write link can't swap it for the writing sheet and
         // leave the microphone on.
         guard controller.isRunning, !controller.isRecordingSpoken else { return }
+        // A Margin already being written keeps its words and the moment it was begun: a second Write link must not
+        // re-date it.
+        guard cover != .liveWriting else { return }
         dismissKeyboard()
         pauseSource()
         writingStartedAt = startedAt ?? Date()
