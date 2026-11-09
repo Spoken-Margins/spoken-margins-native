@@ -208,6 +208,10 @@ public final class SessionEngine {
             completionPercent: 0,
             playbackRate: 1
         )
+        // A tap's pause and the place it held belong to the session before this one (#2511). Text's target id is the item's, so a
+        // held place would otherwise match this session of the same item and pin its start to the old offset.
+        captureResume.takeOverTapPause()
+        protectedPosition.release()
         currentSession = session
         try labels.scoped("start.persist") { try persistSession(session) }
         try labels.scoped("start.play") { try playCurrentTarget(session) }

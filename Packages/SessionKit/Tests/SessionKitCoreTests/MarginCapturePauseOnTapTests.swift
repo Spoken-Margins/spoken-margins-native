@@ -309,6 +309,24 @@ final class MarginCapturePauseOnTapTests: XCTestCase {
         XCTAssertTrue(rig.audio.playing)
     }
 
+    /// Review of #3888: the tap's pause holds the place under the item's own target id, so a new session on the same
+    /// item (the Margin left the source paused, then the listener played the item again) must not inherit the hold or the pause.
+    func testANewSessionOnTheSameTextDoesNotInheritTheTapPauseOrItsHeldPlace() throws {
+        let rig = try rig(item: article)
+        rig.audio.charOffset = 16
+        rig.engine.pauseSourceForInterjection(request: MarginCaptureRequest())
+        XCTAssertTrue(rig.engine.isSourcePausedOnTap)
+
+        _ = try rig.engine.startSession(itemId: article.id)
+
+        XCTAssertFalse(rig.engine.isSourcePausedOnTap, "a stale tap pause would make the next tap skip its own pause")
+        XCTAssertEqual(rig.engine.currentSession?.position.charOffset, 0)
+        rig.audio.charOffset = 33 // the new reading has moved on; a held old place would hide it
+        let fresh = try XCTUnwrap(rig.engine.currentSession)
+        _ = try rig.engine.pause()
+        XCTAssertEqual(rig.engine.currentSession?.position.charOffset, 33, "the new session reads its own place from the player (was \(fresh.position.charOffset))")
+    }
+
     func testTextReadAloudThatIsAlreadyPausedIsNotPausedAgainByTheTap() throws {
         let rig = try rig(item: article, playing: false)
         rig.audio.charOffset = 16
