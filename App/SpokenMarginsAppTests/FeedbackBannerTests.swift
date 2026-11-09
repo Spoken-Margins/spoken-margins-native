@@ -177,6 +177,17 @@ final class FeedbackBannerTests: XCTestCase {
         XCTAssertTrue(plain.mayBeReplaced(by: confirmation))
     }
 
+    /// #3793: the saved-Margin news wasn't shown while a voice Margin's transcript Retry was up.
+    func testASavedMarginCoversATranscriptRetryButAnotherConfirmationDoesNot() {
+        let origin = FeedbackOrigin(itemId: "item", sessionId: "session", work: .marginTranscription)
+        let transcriptRetry = UserFeedbackEvent(kind: .error, message: "Audio saved. Transcript failed.", retry: .init(key: "t") {}, origin: origin)
+        let saved = UserFeedbackEvent(kind: .success, message: "Written Margin saved.", savesMargin: true)
+        let copied = UserFeedbackEvent(kind: .success, message: "Copied.")
+
+        XCTAssertTrue(transcriptRetry.mayBeReplaced(by: saved))
+        XCTAssertFalse(transcriptRetry.mayBeReplaced(by: copied))
+    }
+
     func testFailedTimelineSummaryStaysOnItsItemAfterBannerCloses() async throws {
         try await withPendingLocalSummary { model, summarizer in
             XCTAssertEqual(model.screen, .timeline)

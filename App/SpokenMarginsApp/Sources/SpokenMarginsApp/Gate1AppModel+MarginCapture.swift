@@ -201,7 +201,7 @@ extension Gate1AppModel {
         labels.scoped("marginSave.haptic") { AppHaptics.play(haptic) }
         labels.scoped("marginSave.cue") { startOutcomeCue(cue) }
         labels.scoped("marginSave.status") {
-            if isWarning { reportWarning(message) } else { reportConfirmation(message) }
+            if isWarning { reportWarning(message, savesMargin: true) } else { reportConfirmation(message, savesMargin: true) }
         }
     }
 
@@ -520,10 +520,10 @@ extension Gate1AppModel {
             refreshMarginRowsInBackground(forItem: draft.capture.itemId)
             if draft.priorWasPlaying && snapshot.status == .paused {
                 AppHaptics.play(.warning)
-                reportWarning("Margin saved. Playback is paused; tap Play to continue.")
+                reportWarning("Margin saved. Playback is paused; tap Play to continue.", savesMargin: true)
             } else {
                 AppHaptics.play(.saved)
-                reportConfirmation("Written Margin saved.")
+                reportConfirmation("Written Margin saved.", savesMargin: true)
             }
         } catch {
             marginCapture.setDraftText(text)

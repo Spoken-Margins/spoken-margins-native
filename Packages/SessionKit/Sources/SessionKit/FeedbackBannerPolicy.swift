@@ -45,9 +45,21 @@ public enum FeedbackBannerPolicy {
     /// Whether a new banner may take the place of the one on screen. Another error always may, so
     /// the newest failure is the one shown. A confirmation or warning may not cover an error that
     /// offers Retry: the listener hasn't acted on it yet.
-    public static func mayReplace(currentKind: Kind, currentOffersRetry: Bool, with newKind: Kind) -> Bool {
+    ///
+    /// One exception (#3793): the news that a Margin was saved may cover a Retry about a voice
+    /// Margin's transcript. That transcript's Retry stays on the Margin and its row, but a refused
+    /// "saved" leaves the old "transcript failed" as the last word, which reads as if the new
+    /// Margin were the one that failed.
+    public static func mayReplace(
+        currentKind: Kind,
+        currentOffersRetry: Bool,
+        with newKind: Kind,
+        currentIsMarginTranscription: Bool = false,
+        newSavesMargin: Bool = false
+    ) -> Bool {
         guard currentKind == .error, currentOffersRetry else { return true }
-        return newKind == .error
+        if newKind == .error { return true }
+        return currentIsMarginTranscription && newSavesMargin
     }
 }
 
