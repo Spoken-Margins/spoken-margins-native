@@ -4,12 +4,18 @@ import SessionKitTestInputs
 
 /// Moved from the app test target (#318): the contrast audit is Foundation only, so it runs on the host.
 final class ExperienceColorContrastTests: XCTestCase {
-    func testSemanticTextBackgroundPairsMeetWCAGAAInLightAndDarkAppearances() {
+    /// Not every registered pair: `AppColorContrastAudit.knownFailures` lists the pairs exempt until their own issue
+    /// fixes them (the faint default border and input fills on purpose, #1922; the Timeline, Watch and Live Activity
+    /// findings, #3734, #3731, #3739). The guard tests prove each entry still fails and that no new failure is unlisted.
+    func testEveryPairNotListedAsAKnownFailureMeetsItsContrastFloorInLightAndDark() {
         XCTAssertEqual(
             AppColorContrastAudit.failures(),
             [],
-            "Every registered foreground/background pair must meet its deterministic contrast floor"
+            "Every registered pair that is not a known failure must meet its deterministic contrast floor"
         )
+        for known in AppColorContrastAudit.knownFailures {
+            XCTAssertFalse(known.fixedBy.isEmpty, "\(known.pair) [\(known.appearance)] is exempt with no issue to fix it")
+        }
     }
 
     func testIncreasedContrastEdgesReachThreeToOneInLightAndDark() {
@@ -126,23 +132,57 @@ final class AppColorContrastCoverageTests: XCTestCase {
         let enumerator = try XCTUnwrap(FileManager.default.enumerator(at: directory, includingPropertiesForKeys: nil))
         let files = enumerator.compactMap { $0 as? URL }.filter { $0.pathExtension == "swift" }
         XCTAssertGreaterThan(files.count, 100)
-        // Whitespace is collapsed first, so a modifier split over lines is still seen. A mark drawn in ochre or the
-        // system orange: as a foreground or tint, or as an arm of a ternary or switch that returns a colour. A fill
-        // (`.opacity` tints, a shape's `.overlay`) is allowed.
-        let banned: [(String, String)] = [
-            (#"(foregroundStyle|foregroundColor|tint)\(\s*(AppColors\.ochre(?!Text)\b(?!\.(?:opacity|overlay))|\.orange\b|Color\.orange\b)"#, "foreground or tint"),
-            (#"[?:]\s*AppColors\.ochre(?!Text)\b(?!\.(?:opacity|overlay))"#, "ternary or switch arm"),
-            (#"[?:]\s*(Color)?\.orange\b"#, "ternary or switch arm")
-        ]
         var found: [String] = []
         for file in files where !allowedBecauseTheyAreAlwaysDark.contains(file.lastPathComponent) {
             let text = try String(contentsOf: file, encoding: .utf8)
-            let collapsed = text.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
-            for (pattern, what) in banned where collapsed.range(of: pattern, options: .regularExpression) != nil {
-                found.append("\(file.lastPathComponent): \(what)")
-            }
+            found += Self.ochreOrOrangeMarks(in: text).map { "\(file.lastPathComponent): \($0)" }
         }
         XCTAssertEqual(found, [], "use AppColors.ochreText or AppColors.warningText for text and icons")
+    }
+
+    /// What the guard calls a mark drawn in ochre or the system orange, in Swift source: as a foreground or tint however
+    /// the colour is modified (`.opacity` and `.overlay` included, #3711), or as an arm of a ternary or switch that
+    /// returns a colour. Whitespace is collapsed first, so a modifier split over lines is still seen. A fill (a
+    /// `.background` or a surface's `tint:` argument) is allowed, and so is an `.opacity` tint on a switch arm: those
+    /// are the Timeline row fills.
+    static func ochreOrOrangeMarks(in text: String) -> [String] {
+        let banned: [(String, String)] = [
+            (#"(foregroundStyle|foregroundColor|tint)\([^)]*(AppColors\.ochre(?!Text)\b|(?<!\w)\.orange\b|Color\.orange\b)"#, "foreground or tint"),
+            (#"[?:]\s*AppColors\.ochre(?!Text)\b(?!\.(?:opacity|overlay))"#, "ternary or switch arm"),
+            (#"[?:]\s*(Color)?\.orange\b"#, "ternary or switch arm")
+        ]
+        let collapsed = text.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+        return banned.compactMap { pattern, what in
+            collapsed.range(of: pattern, options: .regularExpression) == nil ? nil : what
+        }
+    }
+
+    func testTheOchreGuardSeesEveryWayToDrawAMarkInIt() {
+        let drawn = [
+            "Text(\"x\").foregroundStyle(AppColors.ochre)",
+            "Text(\"x\").foregroundStyle(AppColors.ochre.opacity(0.9))",
+            "Image(systemName: \"star\").foregroundColor(AppColors.ochre.opacity(0.9))",
+            "Button(\"x\") {}.tint(AppColors.ochre.opacity(0.5))",
+            "Text(\"x\").foregroundStyle(AppColors.ochre.overlay { Color.white })",
+            "Text(\"x\").foregroundStyle(isOn ? AppColors.ochre.opacity(0.9) : .primary)",
+            "Text(\"x\")\n    .foregroundStyle(\n        AppColors.ochre\n            .opacity(0.9)\n    )",
+            "Text(\"x\").foregroundStyle(.orange)",
+            "Text(\"x\").foregroundStyle(Color.orange.opacity(0.8))"
+        ]
+        for source in drawn {
+            XCTAssertFalse(Self.ochreOrOrangeMarks(in: source).isEmpty, "the guard missed: \(source)")
+        }
+        let fills = [
+            "Text(\"x\").foregroundStyle(AppColors.ochreText)",
+            "Circle().background(AppColors.ochre.opacity(0.12), in: Circle())",
+            "ExperienceSurface(tint: AppColors.ochre.opacity(0.16)) { Text(\"x\") }",
+            "case .userResponse: AppColors.ochre.opacity(0.08)",
+            "Text(\"x\").foregroundStyle(.primary).background(AppColors.ochre.opacity(0.1))",
+            "Text(\"x\").foregroundStyle(AppColors.warningText)"
+        ]
+        for source in fills {
+            XCTAssertEqual(Self.ochreOrOrangeMarks(in: source), [], "the guard flagged a fill: \(source)")
+        }
     }
 
     /// #3732: the follow-a-source card put the dark `watchControl` tint behind light-mode text (secondary text 2.5:1,
