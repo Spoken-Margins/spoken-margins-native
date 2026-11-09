@@ -146,15 +146,38 @@ final class AppColorContrastCoverageTests: XCTestCase {
     /// `.background` or a surface's `tint:` argument) is allowed, and so is an `.opacity` tint on a switch arm: those
     /// are the Timeline row fills.
     static func ochreOrOrangeMarks(in text: String) -> [String] {
-        let banned: [(String, String)] = [
-            (#"(foregroundStyle|foregroundColor|tint)\([^)]*(AppColors\.ochre(?!Text)\b|(?<!\w)\.orange\b|Color\.orange\b)"#, "foreground or tint"),
-            (#"[?:]\s*AppColors\.ochre(?!Text)\b(?!\.(?:opacity|overlay))"#, "ternary or switch arm"),
-            (#"[?:]\s*(Color)?\.orange\b"#, "ternary or switch arm")
-        ]
         let collapsed = text.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
-        return banned.compactMap { pattern, what in
-            collapsed.range(of: pattern, options: .regularExpression) == nil ? nil : what
+        var found: [String] = []
+        let mark = #"AppColors\.ochre(?!Text)\b|(?<!\w)\.orange\b|Color\.orange\b"#
+        if foregroundOrTintArguments(in: collapsed).contains(where: { $0.range(of: mark, options: .regularExpression) != nil }) {
+            found.append("foreground or tint")
         }
+        let arms: [String] = [
+            #"[?:]\s*AppColors\.ochre(?!Text)\b(?!\.(?:opacity|overlay))"#,
+            #"[?:]\s*(Color)?\.orange\b"#
+        ]
+        if arms.contains(where: { collapsed.range(of: $0, options: .regularExpression) != nil }) {
+            found.append("ternary or switch arm")
+        }
+        return found
+    }
+
+    /// The text inside each `foregroundStyle(`, `foregroundColor(` or `tint(` call, closed by matching parentheses, so a
+    /// nested call such as `Color(white: 1) : AppColors.ochre.opacity(0.9)` does not end the search early.
+    private static func foregroundOrTintArguments(in text: String) -> [String] {
+        var arguments: [String] = []
+        var searchRange = text.startIndex..<text.endIndex
+        while let match = text.range(of: #"(?<![A-Za-z0-9_])(foregroundStyle|foregroundColor|tint)\("#, options: .regularExpression, range: searchRange) {
+            var depth = 1
+            var index = match.upperBound
+            while index < text.endIndex, depth > 0 {
+                if text[index] == "(" { depth += 1 } else if text[index] == ")" { depth -= 1 }
+                index = text.index(after: index)
+            }
+            arguments.append(String(text[match.upperBound..<index]))
+            searchRange = match.upperBound..<text.endIndex
+        }
+        return arguments
     }
 
     func testTheOchreGuardSeesEveryWayToDrawAMarkInIt() {
@@ -167,7 +190,9 @@ final class AppColorContrastCoverageTests: XCTestCase {
             "Text(\"x\").foregroundStyle(isOn ? AppColors.ochre.opacity(0.9) : .primary)",
             "Text(\"x\")\n    .foregroundStyle(\n        AppColors.ochre\n            .opacity(0.9)\n    )",
             "Text(\"x\").foregroundStyle(.orange)",
-            "Text(\"x\").foregroundStyle(Color.orange.opacity(0.8))"
+            "Text(\"x\").foregroundStyle(Color.orange.opacity(0.8))",
+            "Text(\"x\").foregroundStyle(isOn ? Color(white: 1) : AppColors.ochre.opacity(0.9))",
+            "Text(\"x\").foregroundStyle(Color(white: 0.2).mix(with: AppColors.ochre.opacity(0.5)))"
         ]
         for source in drawn {
             XCTAssertFalse(Self.ochreOrOrangeMarks(in: source).isEmpty, "the guard missed: \(source)")
@@ -178,7 +203,8 @@ final class AppColorContrastCoverageTests: XCTestCase {
             "ExperienceSurface(tint: AppColors.ochre.opacity(0.16)) { Text(\"x\") }",
             "case .userResponse: AppColors.ochre.opacity(0.08)",
             "Text(\"x\").foregroundStyle(.primary).background(AppColors.ochre.opacity(0.1))",
-            "Text(\"x\").foregroundStyle(AppColors.warningText)"
+            "Text(\"x\").foregroundStyle(AppColors.warningText)",
+            "Text(\"x\").foregroundStyle(Color(white: 1)).background(AppColors.ochre.opacity(0.1))"
         ]
         for source in fills {
             XCTAssertEqual(Self.ochreOrOrangeMarks(in: source), [], "the guard flagged a fill: \(source)")
