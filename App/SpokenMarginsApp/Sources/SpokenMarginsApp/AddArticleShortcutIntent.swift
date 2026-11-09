@@ -170,7 +170,7 @@ struct AssembleListeningEditionIntent: AppIntent {
 
 struct ImportListeningEditionIntent: AppIntent {
     static let title: LocalizedStringResource = "Import Listening Edition"
-    static let description = IntentDescription("Opens Spoken Margins to import an item and its supplied map. Does not regenerate the map or start playback. Pass the Assemble Listening Edition result straight in, with no Save step, or give the edition's JSON as text. A saved file works too.")
+    static let description = IntentDescription("Opens Spoken Margins to import an article or episode and its supplied map. Does not regenerate the map or start playback. Pass the Assemble Listening Edition result straight in, with no Save step, or give the edition's JSON as text. A saved file works too.")
     static let supportedModes: IntentModes = .foreground(.immediate)
     static var parameterSummary: some ParameterSummary {
         Summary("Import \(\.$file)") { \.$json }

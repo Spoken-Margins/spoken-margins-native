@@ -74,7 +74,7 @@ enum LiveSessionActivities {
         // the session runs; `Gate2LiveActivityController` holds it back and puts it up again after the session.
         Task {
             let ended = await endItemCards()
-            noteStartOutcome("started; ended \(ended) item card(s)")
+            noteStartOutcome("started; ended \(ended) player card(s)")
         }
     }
 

@@ -5,7 +5,7 @@ import SessionKit
 
 /// A Library item a shortcut can name (#1073): what the Add Margin action's Item parameter picks from.
 struct LibraryItemEntity: AppEntity, Identifiable {
-    static let typeDisplayRepresentation = TypeDisplayRepresentation(name: "Library Item")
+    static let typeDisplayRepresentation = TypeDisplayRepresentation(name: "Library Source")
     static var defaultQuery: LibraryItemEntityQuery { LibraryItemEntityQuery() }
 
     let id: String

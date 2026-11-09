@@ -218,6 +218,13 @@ final class TextListeningMapPacketTests: XCTestCase {
         }
     }
 
+    /// A listener can read the refusal, and "item" is our word, not theirs (#3599).
+    func testTheRefusalForAnUnshareableSourceDoesNotSayItem() {
+        let words = ListeningMapPacketBuilder.BuildError.itemNotShareable.description
+        XCTAssertFalse(words.lowercased().contains("item"), words)
+        XCTAssertEqual(words, "a map packet needs a text, PDF or EPUB with a title")
+    }
+
     // MARK: The builder checks the map before it leaves
 
     func testASummaryThatCopiesTheTextIsRefused() throws {

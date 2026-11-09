@@ -58,19 +58,7 @@
   },
   {
    "kind": "words",
-   "text": "Library Item",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599): the Shortcuts type name for the Add Margin action's Item parameter (LibraryItemEntity); rename it with the Shortcuts words slice."
-  },
-  {
-   "kind": "words",
    "text": "Loaded UI test item ….",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "Opens Spoken Margins to import an item and its supplied map. Does not regenerate the map or start playback. Pass the Assemble Listening Edition result straight in, with no Save step, or give the edition's JSON as text. A saved file works too.",
    "count": 1,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
   },
@@ -88,12 +76,6 @@
   },
   {
    "kind": "words",
-   "text": "Teams, Zoom, Webex, Google Meet and Otter transcripts work. With a recording, the item plays it; without one, the item is the transcript's text.",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
    "text": "Use itemAudioOmitted; a source is a feed, while this flag describes the listened-to item's audio.",
    "count": 1,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
@@ -101,12 +83,6 @@
   {
    "kind": "words",
    "text": "a completed … item",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "a map packet needs a text, PDF or EPUB item with a title",
    "count": 1,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
   },
@@ -185,24 +161,6 @@
   {
    "kind": "words",
    "text": "referenced item transport is inconsistent",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "started; ended … item card(s)",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "the shared item is not a regular file",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "withdrawn from … item(s)",
    "count": 1,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
   },
