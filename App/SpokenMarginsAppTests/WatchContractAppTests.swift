@@ -110,6 +110,51 @@ final class WatchContractAppTests: XCTestCase {
         XCTAssertEqual(reply.answers.first?.filedWords, "Filed in a quick session")
     }
 
+    /// #3494: a fresh fast-lane transport command reaches the player at once, a stale one or a sure-lane copy never does, and the reply board names the
+    /// item the player has loaded.
+    func testAFreshTransportRunsAStaleOneDoesNotAndTheReplyBoardNamesTheItem() async throws {
+        let receiver = makeReceiver(LiveSessionFileWorker(root: root))
+        var ran: [WatchTransport] = []
+        receiver.runTransport = { ran.append($0) }
+        let playing = WatchNowPlaying(itemId: "ep", title: "Episode", isPlaying: true, positionMs: 5_000, positionAt: Date())
+        receiver.nowPlayingChanged(playing)
+
+        let fresh = try await receiver.handle(try overTheWire(envelope(.transport(.pause), sentAt: Date()))).value
+        XCTAssertEqual(ran, [.pause])
+        XCTAssertEqual(fresh.board.nowPlaying, playing)
+
+        let stale = try await receiver.handle(try overTheWire(envelope(.transport(.skipForward), sentAt: Date().addingTimeInterval(-60)))).value
+        XCTAssertEqual(ran, [.pause], "a skip that arrives a minute late is dropped")
+        XCTAssertEqual(stale.board.nowPlaying, playing)
+
+        _ = await receiver.handle(try overTheWire(envelope(.transport(.skipBack), sentAt: Date())), fastLane: false).value
+        XCTAssertEqual(ran, [.pause], "the sure lane never runs a transport command")
+
+        receiver.nowPlayingChanged(nil)
+        let none = await receiver.handle(try overTheWire(envelope(.hello(holding: [])))).value
+        XCTAssertNil(none.board.nowPlaying, "nothing loaded: the Watch goes back to its single Record")
+    }
+
+    /// #3494: a command the player refuses changes nothing that would send a board, yet the Watch has already flipped its
+    /// button. The board still goes out once more after the command, so the Watch ends up with the player's real state.
+    func testTheBoardGoesOutOnceMoreAfterATransportCommandEvenWhenNothingChanged() async throws {
+        let receiver = makeReceiver(LiveSessionFileWorker(root: root))
+        receiver.transportSettle = .milliseconds(50)
+        receiver.runTransport = { _ in } // the player refuses it
+        let paused = WatchNowPlaying(itemId: "ep", title: "Episode", isPlaying: false, positionMs: 5_000, positionAt: Date())
+        receiver.nowPlayingChanged(paused)
+
+        _ = try await receiver.handle(try overTheWire(envelope(.transport(.play), sentAt: Date()))).value
+        let afterReply = try XCTUnwrap(receiver.lastBoard).phoneTime
+
+        for _ in 0..<60 where receiver.lastBoard?.phoneTime == afterReply {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        let settled = try XCTUnwrap(receiver.lastBoard)
+        XCTAssertGreaterThan(settled.phoneTime, afterReply, "a board goes out after the command, with nothing changed")
+        XCTAssertEqual(settled.nowPlaying?.isPlaying, false, "and it says the item is still paused")
+    }
+
     /// Hello after a lost answer: the reply answers what the phone filed; the rest gets nothing and is sent again.
     func testHelloClearsAStuckWaitingList() async throws {
         let files = LiveSessionFileWorker(root: root)

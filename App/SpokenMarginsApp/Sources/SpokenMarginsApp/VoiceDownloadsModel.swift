@@ -166,6 +166,11 @@ final class VoiceDownloadsModel: ObservableObject {
     func cancel(_ voiceId: String) {
         // The listener said no: a new listener's Phonon is not started again at the next launch (#2858).
         if voiceId == ReadingVoiceChoice.phononVoiceId { defaults.removeObject(forKey: FirstRunVoiceDefault.downloadDueKey) }
+        // Stop is the listener's no, now: the task's cancellation lands later, and until `finish` runs the voice would
+        // still be pending, so a model made in that gap (a relaunch) would start it again (#2250). `finish` clears
+        // the same keys again, which does nothing.
+        pending.remove(voiceId)
+        automatic.remove(voiceId)
         downloads[voiceId]?.cancel()
     }
 

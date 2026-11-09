@@ -6,6 +6,10 @@ public struct SharedMarginOfferQueue: Equatable {
     public private(set) var announcedIDs: Set<String> = []
     public private(set) var waitingIDs: [String] = []
 
+    /// The prompt whose card is tone-only (`SharedMarginPromptStyle.isToneOnly`): a newer crossed Margin may replace
+    /// it, so a card with no timer (assistive technology, #3720) can't hide every later Margin.
+    public var toneOnlyCardID: String?
+
     public init() {}
 
     public var isEmpty: Bool { waitingIDs.isEmpty }
@@ -17,6 +21,8 @@ public struct SharedMarginOfferQueue: Equatable {
     /// and queued behind any already waiting (Margins in `fresh` reveal mode are announced but never
     /// offered), and the first waiting Margin that can still be offered is returned. `prompts` is
     /// every current prompt, announced or not; it is only read when something may be offered.
+    /// `canReplaceCard` is true while a card with no timer (a tone-only card, with VoiceOver or Switch Control, #3720)
+    /// is up and nothing else is: a newly crossed Margin may then replace it, and nothing else does.
     /// It runs while this queue is being modified, so it must not read the queue (a stored property
     /// of a class would trap on overlapping access).
     public mutating func nextOffer(
@@ -24,18 +30,23 @@ public struct SharedMarginOfferQueue: Equatable {
         current: SessionSnapshot,
         selectedItemID: String,
         canOffer: Bool,
+        canReplaceCard: Bool = false,
         prompts: @autoclosure () -> [ImportedCommentaryPrompt]
     ) -> ImportedCommentaryPrompt? {
         if current.itemId != selectedItemID || Self.isPlayheadJump(previous: previous, current: current) {
             waitingIDs.removeAll()
         }
-        guard canOffer, current.itemId == selectedItemID else { return nil }
+        guard canOffer || canReplaceCard, current.itemId == selectedItemID else { return nil }
         let all = prompts()
         let crossed = SharedMarginPrompts.crossed(
             prompts: all.filter { !announcedIDs.contains($0.id) }, previous: previous, current: current
         )
         announcedIDs.formUnion(crossed.map(\.id))
-        append(crossed.filter { $0.layer.revealMode != .fresh })
+        let offerableCrossed = crossed.filter { $0.layer.revealMode != .fresh }
+        append(offerableCrossed)
+        // A card that is still up only gives way to a Margin the source just crossed. The Margins already waiting
+        // keep waiting behind it, so Margins crossed together are not shown over one another every tick (#918, #3720).
+        if !canOffer, offerableCrossed.isEmpty { return nil }
         return next(from: all.filter { $0.layer.revealMode != .fresh })
     }
 

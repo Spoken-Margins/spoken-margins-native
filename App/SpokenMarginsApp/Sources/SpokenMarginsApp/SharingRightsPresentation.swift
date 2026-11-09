@@ -32,7 +32,7 @@ enum SharingRightsPresentation {
         }
         switch manifest.itemTransport.kind {
         case .reference: lines.append("The recipient acquires the referenced source separately.")
-        case .recipientSupplied: lines.append("The source is omitted; the recipient must supply a matching item.")
+        case .recipientSupplied: lines.append("The source is omitted; the recipient must supply the same one.")
         case .embeddedText:
             for text in package.embeddedTextItems {
                 lines.append("Complete source text included: \(text.text.count) characters. This is the full listened-to text, not just the words around each Margin.")

@@ -17,7 +17,12 @@ final class ListeningSignalSubscriptionChangeTests: XCTestCase {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         store = try SQLiteSessionStore(path: root.appendingPathComponent("library.sqlite").path)
         recorder = ListeningSignalRecorder(fileURL: root.appendingPathComponent("signals.jsonl"), flushDelay: 60)
-        try store.saveItem(Item(id: "item", title: "One", mediaType: "article", text: "Words", externalReference: "https://example.com/posts/1", status: "ready"))
+        // The item's own source fields are set before the first tick and never change: following or unfollowing edits
+        // only the subscription and its entry, so the collector's subscription check is the only thing that can notice
+        // it (#3710; an edit to the item's source fields changes its key and triggers re-resolution by itself).
+        var item = Item(id: "item", title: "One", mediaType: "article", text: "Words", externalReference: "https://example.com/posts/1", status: "ready")
+        item.sourceURL = "https://example.com/feed"; item.sourceTitle = "Notes"
+        try store.saveItem(item)
     }
     override func tearDownWithError() throws {
         recorder.flush(); store = nil; recorder = nil
@@ -26,10 +31,6 @@ final class ListeningSignalSubscriptionChangeTests: XCTestCase {
     private func follow() throws {
         try store.saveFeedSubscription(FeedSubscription(id: "subscription", source: SourceIdentity(id: "source", kind: .articleFeed, canonicalURL: "https://example.com/feed", host: "example.com", title: "Notes")))
         try store.saveFeedEntry(FeedEntry(id: "entry", subscriptionId: "subscription", canonicalURL: "https://example.com/posts/1", title: "One", publishedAt: epoch, state: .imported))
-        var item = try store.loadItem(id: "item")
-        // These are the same persistent relationship writes as accepted follow suggestion.
-        item.sourceURL = "https://example.com/feed"; item.sourceTitle = "Notes"
-        try store.saveItem(item)
     }
     private func ticks(_ seconds: [Int], _ collector: ListeningSignalCollector, repository: SQLiteSessionStore? = nil) {
         for second in seconds { collector.playbackProgress(itemId: "item", status: .playing, repository: repository ?? store, at: epoch.addingTimeInterval(Double(second))) }

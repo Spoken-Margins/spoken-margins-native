@@ -45,8 +45,9 @@ public struct MarginMomentAnchor: Sendable, Equatable {
 /// playback reaches it, then keep listening and play the listener's other Margins on the item as they come up.
 ///
 /// "Review new Margins" (#474) runs the same machine over an ordered list of shared Margins: a short lead-in, the
-/// Margin, then a hop to the next Margin's lead-in (no hop when the next one is close), and at the end the source
-/// goes back to where the listener left off.
+/// Margin, then the episode plays on from where the Margin was (between Margins the listener's Next Margin button hops to
+/// the next lead-in; nothing hops by itself, and "Skip this Margin" while a voice sounds only ends the voice). At the end the episode keeps playing from the last Margin, unless the
+/// listener's own place was beyond it, and then the source goes back there.
 ///
 /// This is the whole state machine. The app supplies progress ticks and plays the voices.
 public struct MarginMomentSequence: Sendable, Equatable {
@@ -75,15 +76,16 @@ public struct MarginMomentSequence: Sendable, Equatable {
         public let leadInMs: Int
     }
 
-    /// What the source does once a Margin's voice is done.
+    /// What the source does once a Margin's voice is done. It never hops ahead on its own: the listener plays on from
+    /// where the Margin was, and a button takes them to the next Margin's lead-in (owner, 2026-11-06).
     public enum Advance: Sendable, Equatable {
-        /// Carry on playing: nothing is left, or the next lead-in is already under way.
+        /// Carry on playing from here. The next Margin, if there is one, plays when the episode reaches it.
         case continueSource
-        /// The next Margin is further off than its lead-in: skip ahead to where the lead-in starts, then play.
-        case seek(toMediaTimeMs: Int)
         /// The next Margin sits at the place the source stopped. Play it now, with the source still paused.
         case playNow(MarginMomentAnchor)
-        /// The last Margin has played: go back to where the listener left off, and play on if `resumes`.
+        /// The last Margin has played. `returnToMediaTimeMs` is set only when the listener's own place is beyond that
+        /// Margin (a catch-up on Margins behind them): go back there, and play on if `resumes`. Nil means they were
+        /// not past it, so the source plays on from here.
         case reviewDone(returnToMediaTimeMs: Int?, resumes: Bool)
     }
 
@@ -179,6 +181,18 @@ public struct MarginMomentSequence: Sendable, Equatable {
 
     public var isReview: Bool { review != nil }
 
+    /// A Margin of this review has had the floor, so the source is no longer at the spot the review first took it to.
+    public var hasReachedAMargin: Bool { review.map { unplayed.count < $0.count } ?? false }
+
+    /// Where the source goes when the listener stops the review, nil to leave it where it is. A review stopped before
+    /// any Margin played undoes its hop, back to the listener's place. After that the listener has heard something and
+    /// stays put, unless their own place is ahead of where the source stands (they were pulled back to catch up).
+    public func placeToReturnToWhenStopped(sourceAtMediaTimeMs sourceAt: Int?) -> Int? {
+        guard let place = review?.returnToMediaTimeMs else { return nil }
+        guard hasReachedAMargin, let sourceAt else { return place }
+        return place > sourceAt ? place : nil
+    }
+
     /// A review that hasn't played its last Margin. The source is somewhere in the middle of it, so a review that ends
     /// now (another item, a Timeline jump, Stop) owes the listener the way back to `Review.returnToMediaTimeMs`. One that
     /// played its last Margin has already gone back.
@@ -255,23 +269,22 @@ public struct MarginMomentSequence: Sendable, Equatable {
             phase = unplayed.contains(target) ? .leadIn : .listening
             return .continueSource
         }
+        let stoppedAt = sourceAt ?? finished?.mediaTimeMs ?? 0
         guard let next = unplayed.first else {
             phase = .listening
-            return .reviewDone(returnToMediaTimeMs: review.returnToMediaTimeMs, resumes: review.resumesAtEnd)
+            // Back to the listener's own place only when it lies beyond this Margin. A listener who had not got that far
+            // (the episode just opened, the Margin ahead) carries on from the Margin, never back to the start.
+            if let place = review.returnToMediaTimeMs, place > stoppedAt {
+                return .reviewDone(returnToMediaTimeMs: place, resumes: review.resumesAtEnd)
+            }
+            // The episode plays on from the Margin. A can't-play listening (no lead-in, `CantPlayListening.leadInMs`) has an
+            // episode that cannot play, so it keeps its own `resumesAtEnd` (false) and never asks it to.
+            return .reviewDone(returnToMediaTimeMs: nil, resumes: review.leadInMs == 0 ? review.resumesAtEnd : true)
         }
         target = next
-        let stoppedAt = sourceAt ?? finished?.mediaTimeMs ?? 0
         if next.mediaTimeMs <= stoppedAt { return .playNow(play(next)) }
         phase = .leadIn
-        // The lead-in never starts before the Margin just heard, so two close Margins need no hop between them.
-        let leadIn = ListeningMoment(
-            use: .reviewNewMargins,
-            margin: ListeningMoment.Margin(id: next.marginId, position: next.mediaTimeMs),
-            source: .media(),
-            previousMargin: finished.map { ListeningMoment.Margin(id: $0.marginId, position: $0.mediaTimeMs) },
-            leadInMs: review.leadInMs
-        )
-        return leadIn.sourceStartPosition > stoppedAt ? .seek(toMediaTimeMs: leadIn.sourceStartPosition) : .continueSource
+        return .continueSource
     }
 
     private mutating func play(_ margin: MarginMomentAnchor) -> MarginMomentAnchor {

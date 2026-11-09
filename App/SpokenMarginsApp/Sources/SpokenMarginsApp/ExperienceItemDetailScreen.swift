@@ -76,9 +76,12 @@ struct ExperienceItemDetailScreen: View {
                     .background(AppColors.bone)
             }
             .background(AppColors.bone)
+            // A container, not a stamp: a bare identifier here is copied onto the pinned Play and "Hear only"
+            // buttons in the inset above and replaces their own, so tests and journeys can't find them (#3818).
+            .accessibilityElement(children: .contain)
             .accessibilityIdentifier("item.screen")
             .announcesScreenChange()
-            .navigationTitle("Item")
+            .navigationTitle(model.selectedItem.sourceNoun.capitalized)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -124,7 +127,7 @@ struct ExperienceItemDetailScreen: View {
                         Image(systemName: "ellipsis.circle")
                             .frame(width: 44, height: 44)
                     }
-                    .accessibilityLabel("Item options")
+                    .accessibilityLabel("\(model.selectedItem.sourceNoun.capitalized) options")
                 }
             }
             .task(id: model.selectedItem.id) { await refreshEpisodeLinkStatus() }
@@ -567,7 +570,7 @@ struct ExperienceItemDetailScreen: View {
     private var recentMargins: some View {
         if !model.selectedItem.interjections.isEmpty {
             VStack(alignment: .leading, spacing: 12) {
-                sectionHeading("Recent Margins", detail: "Your thoughts on this item")
+                sectionHeading("Recent Margins", detail: "Your thoughts on this \(model.selectedItem.sourceNoun.inSentence)")
                 ExperienceSurface(tint: AppColors.coral.opacity(0.34)) {
                     VStack(spacing: 0) {
                         ForEach(Array(itemMargins.prefix(3).enumerated()), id: \.element.id) { index, row in
@@ -640,13 +643,13 @@ struct ExperienceItemDetailScreen: View {
                                     Image(systemName: "play.fill").frame(width: 44, height: 44)
                                 }
                                 .buttonStyle(.bordered)
-                                .accessibilityLabel("Resume this session")
+                                .accessibilityLabel(RowAccessibilityLabel.label("Resume this session", row: sessionTitle(row.session, index: index), "\(row.session.completionPercent)%"))
                                 .accessibilityIdentifier("session.resume.\(row.session.id)")
                                 Button { model.openExport(sessionId: row.session.id) } label: {
                                     Image(systemName: "square.and.arrow.up").frame(width: 44, height: 44)
                                 }
                                 .buttonStyle(.plain)
-                                .accessibilityLabel("Export this session")
+                                .accessibilityLabel(RowAccessibilityLabel.label("Export this session", row: sessionTitle(row.session, index: index), "\(row.session.completionPercent)%"))
                                 .accessibilityIdentifier("session.export.\(row.session.id)")
                             }
                         }
@@ -753,7 +756,8 @@ struct ExperienceItemDetailScreen: View {
                 }
                 if model.canGenerateListeningMap {
                     Button(model.episodeMapPreparationStatus == "Preparing" ? "Preparing Listening Map…" : "Prepare Listening Map", systemImage: "sparkles") {
-                        model.generateListeningMap()
+                        model.startPublicSourceCheck(itemId: model.activeItemId) // the tap itself, not the shared function a finished transcript also calls (#3449)
+                        model.generateListeningMapFromTap()
                     }
                     .disabled(model.isGeneratingListeningMap || model.episodeMapPreparationStatus == "Preparing")
                     .accessibilityIdentifier("item.generateMap.button")
@@ -763,6 +767,8 @@ struct ExperienceItemDetailScreen: View {
                             .foregroundStyle(AppColors.secondaryText)
                             .accessibilityIdentifier("item.episodeMap.status")
                     }
+                } else if model.selectedItem.textSceneSummaries.offersRun, !model.selectedItem.chapters.isEmpty {
+                    sceneSummariesControl
                 } else {
                     Text(model.listeningMapGenerationAvailabilityDescription)
                         .font(.caption)
@@ -775,6 +781,34 @@ struct ExperienceItemDetailScreen: View {
         .padding(16)
         .background(AppColors.panel, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay { RoundedRectangle(cornerRadius: 18).stroke(AppColors.border) }
+    }
+
+    /// An article or PDF that has chapters but not all of its scene summaries: write them, or pick up where a run that
+    /// failed, was cancelled or paused stopped (#3461). The scenes already written are kept.
+    private var sceneSummariesControl: some View {
+        let state = model.selectedItem.textSceneSummaries
+        let writing = model.isWritingSceneSummaries
+        return VStack(alignment: .leading, spacing: 6) {
+            Button(writing ? "Writing Scene Summaries…" : (state == .notStarted ? "Write Scene Summaries" : "Continue Scene Summaries"),
+                   systemImage: "sparkles") {
+                model.writeSceneSummaries()
+            }
+            .disabled(writing)
+            .accessibilityIdentifier("item.writeSceneSummaries.button")
+            Text(sceneSummariesCaption(state))
+                .font(.caption)
+                .foregroundStyle(AppColors.secondaryText)
+                .accessibilityIdentifier("item.writeSceneSummaries.caption")
+        }
+    }
+
+    private func sceneSummariesCaption(_ state: TextSceneSummaryProgress.State) -> String {
+        switch state {
+        case .partial(let decided, let total):
+            return "\(decided) of \(total) scenes are done. Scenes already written are kept, and nothing leaves this device."
+        default:
+            return "The on-device model writes a short summary for each scene, for Skim. Nothing leaves this device."
+        }
     }
 
     /// `!itemMargins.isEmpty` without building and sorting the rows, for the checks `body` makes on every render.
@@ -818,7 +852,7 @@ struct ExperienceItemDetailScreen: View {
     private var readinessColor: Color {
         switch model.selectedPodcastDownloadState {
         case .failed, .evicted: AppColors.coral
-        case .downloading, .waitingForWiFi: AppColors.ochre
+        case .downloading, .waitingForWiFi: AppColors.ochreText
         case .availableOffline, .streamingOnly, .none: AppColors.evergreen
         }
     }
@@ -844,7 +878,7 @@ struct ExperienceItemDetailScreen: View {
 
     private func sectionHeading(_ title: String, detail: String) -> some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(title).font(.system(.title3, design: .serif).weight(.bold))
+            Text(title).font(.system(.title3, design: .serif).weight(.bold)).accessibilityAddTraits(.isHeader)
             Text(detail).font(.caption).foregroundStyle(AppColors.secondaryText)
         }
     }
@@ -869,7 +903,8 @@ private struct ExperienceListeningMapSection: View, Equatable {
     }
 
     var body: some View {
-        LazyVStack(alignment: .leading, spacing: 12) {
+        // Plain stacks: the item screen's own lazy stack hosts this section (#3781).
+        VStack(alignment: .leading, spacing: 12) {
             sectionHeading(
                 isCommunityMap ? "Community map" : "Listening Map",
                 detail: isCommunityMap
@@ -878,7 +913,7 @@ private struct ExperienceListeningMapSection: View, Equatable {
             )
             .accessibilityIdentifier(isCommunityMap ? "listeningMap.heading.community" : "listeningMap.heading")
             ExperienceSurface(tint: AppColors.evergreen.opacity(0.18)) {
-                LazyVStack(spacing: 0) {
+                VStack(spacing: 0) {
                     ForEach(Array(scenes.enumerated()), id: \.element.id) { index, scene in
                         VStack(spacing: 0) {
                             if index > 0 { Divider() }
@@ -928,7 +963,7 @@ private struct ExperienceListeningMapSection: View, Equatable {
 
     private func sectionHeading(_ title: String, detail: String) -> some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(title).font(.system(.title3, design: .serif).weight(.bold))
+            Text(title).font(.system(.title3, design: .serif).weight(.bold)).accessibilityAddTraits(.isHeader)
             Text(detail).font(.caption).foregroundStyle(AppColors.secondaryText)
         }
     }
@@ -991,9 +1026,10 @@ private struct ItemDescriptionPreview: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("item.description.text")
             if ItemMetadata.needsExpansion(text) {
-                Button(expanded ? "Less" : "More") { expanded.toggle() }
+                Button { expanded.toggle() } label: {
+                    Text(expanded ? "Less" : "More").frame(minHeight: 44, alignment: .leading).contentShape(Rectangle())
+                }
                     .font(.subheadline.weight(.semibold))
-                    .frame(minHeight: 44, alignment: .leading)
                     .accessibilityHint(expanded ? "Shows fewer lines of the description." : "Shows the whole description.")
                     .accessibilityIdentifier("item.description.more")
             }

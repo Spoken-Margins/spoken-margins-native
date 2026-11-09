@@ -260,3 +260,30 @@ public struct ShareLinkClient: Sendable {
         return body
     }
 }
+
+/// Which link request's answer may still reach the sender screen. A link takes seconds to make; if the listener goes
+/// back to the selection or changes it meanwhile, the answer is for a packet that no longer matches the screen, and
+/// must neither open a share sheet nor show a line (#3751 audit). `begin` hands out a ticket, `cancel` voids every
+/// ticket out, and only the newest ticket is accepted.
+public struct ShareLinkRequests: Sendable, Equatable {
+    public struct Ticket: Sendable, Equatable {
+        fileprivate let number: Int
+    }
+
+    private var newest = 0
+
+    public init() {}
+
+    public mutating func begin() -> Ticket {
+        newest += 1
+        return Ticket(number: newest)
+    }
+
+    public mutating func cancel() {
+        newest += 1
+    }
+
+    public func accepts(_ ticket: Ticket) -> Bool {
+        ticket.number == newest
+    }
+}

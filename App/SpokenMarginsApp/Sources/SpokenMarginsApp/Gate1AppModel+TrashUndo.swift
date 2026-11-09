@@ -75,7 +75,7 @@ extension Gate1AppModel {
         let undo = TrashUndoState(itemId: itemId, title: title)
         trashUndo = undo
         // VoiceOver and Switch Control listeners keep the banner until they act on it (#1926).
-        guard !TrashUndoPolicy.staysUntilDismissed(assistiveTechnologyRunning: Self.assistiveTechnologyIsRunning) else {
+        guard !TrashUndoPolicy.staysUntilDismissed(assistiveTechnologyRunning: AssistiveTechnology.isRunning) else {
             trashUndoDismissTask = nil
             return
         }
@@ -90,19 +90,21 @@ extension Gate1AppModel {
         }
     }
 
-    private static var assistiveTechnologyIsRunning: Bool {
-        #if canImport(UIKit)
-        UIAccessibility.isVoiceOverRunning || UIAccessibility.isSwitchControlRunning
-        #else
-        false
-        #endif
-    }
-
     private func dismissTrashUndo(id: UUID?) {
         guard id == nil || trashUndo?.id == id else { return }
         trashUndoDismissTask?.cancel()
         trashUndoDismissTask = nil
         trashUndo = nil
+    }
+
+    /// A permanent delete takes its rows off both lists at once and reads no table: the delete is the one change, and
+    /// the row it removes is known. The reload that follows is read off the main thread (it publishes the Preparing
+    /// Audio lists too). A row leaving either list bumps `libraryPresentationRevision` (each list's didSet does), so a
+    /// read that began before it is read again, Home's read drops its answer, and neither can put the row back (#2505).
+    private func dropPermanentlyDeletedRows(ids: Set<String>) {
+        if libraryItems.contains(where: { ids.contains($0.id) }) { libraryItems.removeAll { ids.contains($0.id) } }
+        if recentlyDeletedItems.contains(where: { ids.contains($0.id) }) { recentlyDeletedItems.removeAll { ids.contains($0.id) } }
+        refreshLibraryRowsInBackground(mustPublish: true)
     }
 
     func restoreItem(id: String) {
@@ -124,7 +126,7 @@ extension Gate1AppModel {
             let store = try requireStore()
             guard let item = try store.loadItemSummary(id: id) else { throw SessionKitError.missingFixture("item:\(id)") }
             guard item.deletedAt != nil else {
-                reportFailure("Move the item to Recently Deleted before deleting it permanently.")
+                reportFailure("Move it to Recently Deleted before deleting it permanently.")
                 return
             }
             let recordings = try store.loadInterjections(itemId: id)
@@ -135,7 +137,7 @@ extension Gate1AppModel {
             try deletingFriendRecordings(ofItems: [id], store: store) { try store.deleteItem(id: id) }
             removeLiveSessionRecord(itemId: id)
             removeMarginRecordings(recordings, quarantinedAudioPaths: quarantinedRecordings, store: store)
-            try refreshLibraryRows(store: store)
+            dropPermanentlyDeletedRows(ids: [id])
             guard !libraryItems.contains(where: { $0.id == id }),
                   !recentlyDeletedItems.contains(where: { $0.id == id }),
                   (try? store.loadItemSummary(id: id)) == nil,
@@ -177,7 +179,7 @@ extension Gate1AppModel {
             try deletingFriendRecordings(ofItems: ids, store: store) { try store.deleteItems(ids: ids) }
             ids.forEach(removeLiveSessionRecord)
             removeMarginRecordings(recordings, quarantinedAudioPaths: quarantinedRecordings, store: store)
-            try refreshLibraryRows(store: store)
+            dropPermanentlyDeletedRows(ids: Set(ids))
             guard recentlyDeletedItems.isEmpty,
                   ids.allSatisfy({ (try? store.loadItemSummary(id: $0)) == nil }) else {
                 throw SessionKitError.persistenceFailed("bulk_permanent_delete_verification_failed")
@@ -186,7 +188,7 @@ extension Gate1AppModel {
                 dismissTrashUndo()
             }
             withdrawFeedback(aboutItems: ids)
-            reportSuccess("Permanently deleted \(ids.count) item\(ids.count == 1 ? "" : "s") from Recently Deleted.")
+            reportSuccess("Permanently deleted \(ids.count) from Recently Deleted.")
         } catch {
             reportFailure(error, context: "Empty Recently Deleted failed")
         }

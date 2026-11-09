@@ -68,4 +68,27 @@ final class FeedbackBannerAssistiveTests: XCTestCase {
             }
         }
     }
+
+    /// #3793: a written Margin saved after a voice Margin's transcript failed showed nothing, because the
+    /// failed transcript's Retry refused the confirmation, so the old failure read as the new Margin's.
+    func testSavingAMarginMayCoverATranscriptRetryButNothingElse() {
+        XCTAssertTrue(FeedbackBannerPolicy.mayReplace(
+            currentKind: .error, currentOffersRetry: true, with: .success,
+            currentIsMarginTranscription: true, newSavesMargin: true
+        ))
+        XCTAssertTrue(FeedbackBannerPolicy.mayReplace(
+            currentKind: .error, currentOffersRetry: true, with: .warning,
+            currentIsMarginTranscription: true, newSavesMargin: true
+        ))
+        // Any other confirmation still waits for the Retry.
+        XCTAssertFalse(FeedbackBannerPolicy.mayReplace(
+            currentKind: .error, currentOffersRetry: true, with: .success,
+            currentIsMarginTranscription: true, newSavesMargin: false
+        ))
+        // A Retry about something else (a summary, an import) is not covered, even by a saved Margin.
+        XCTAssertFalse(FeedbackBannerPolicy.mayReplace(
+            currentKind: .error, currentOffersRetry: true, with: .success,
+            currentIsMarginTranscription: false, newSavesMargin: true
+        ))
+    }
 }

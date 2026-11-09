@@ -30,7 +30,7 @@ struct ItemCollectionSheet: View {
                                 Text(collection.name).foregroundStyle(AppColors.text)
                                 Spacer()
                                 if collection.itemIDs.contains(item.id) {
-                                    Image(systemName: "checkmark").foregroundStyle(AppColors.ochre)
+                                    Image(systemName: "checkmark").foregroundStyle(AppColors.ochreText)
                                 }
                             }
                             .contentShape(Rectangle())
@@ -41,22 +41,27 @@ struct ItemCollectionSheet: View {
                             Button("Rename", systemImage: "pencil") { beginRename(collection) }
                             Button("Delete Collection", systemImage: "trash", role: .destructive) { delete(collection) }
                         }
+                        // The same actions for VoiceOver and Switch Control, which can't long-press (#1917, #3730).
+                        .accessibilityActions {
+                            Button("Rename") { beginRename(collection) }
+                            Button("Delete Collection") { delete(collection) }
+                        }
                         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                             Button("Delete", role: .destructive) { delete(collection) }
-                            Button("Rename") { beginRename(collection) }.tint(AppColors.ochre)
+                            Button("Rename") { beginRename(collection) }.tint(AppColors.ochreText)
                         }
                     }
                 } header: {
                     Text(item.title)
                 } footer: {
-                    Text("Deleting a collection keeps its items and their Margins.")
+                    Text("Deleting a collection keeps everything in it, and all Margins.")
                 }
                 Section("New Collection") {
-                    TextField("Name, such as HIST 210", text: $newName)
+                    AppTextField("Name, such as HIST 210", text: $newName)
                         .submitLabel(.done)
                         .onSubmit(create)
                         .accessibilityIdentifier("collection.new.field")
-                    Button("Add Collection and This Item", systemImage: "plus.circle", action: create)
+                    Button("Create Collection and Add This", systemImage: "plus.circle", action: create)
                         .disabled(ItemCollectionEditing.normalizedName(newName) == nil)
                         .accessibilityIdentifier("collection.new.button")
                 }

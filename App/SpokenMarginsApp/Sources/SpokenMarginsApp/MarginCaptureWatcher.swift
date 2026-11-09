@@ -13,9 +13,11 @@ import AVFoundation
 final class MarginCaptureWatcher {
     typealias HealthChange = (_ health: MarginCaptureSupervisor.Health, _ restarts: Int) -> Void
 
-    static let pollIntervalMs = 250
+    /// The steady rate; the start polls faster until the ready cue has sounded (`MarginCapturePollCadence`, #1506).
+    static let pollIntervalMs = MarginCapturePollCadence.steadyMs
 
     private var supervisor: MarginCaptureSupervisor?
+    private let retryOrder = MarginCaptureRetryOrder()
     private var reading: () -> RecordingCaptureReading? = { nil }
     private var restart: () throws -> Void = {}
     private var changed: HealthChange = { _, _ in }
@@ -62,6 +64,14 @@ final class MarginCaptureWatcher {
     var elapsedMs: Int { supervisor == nil ? 0 : max(0, nowMs() - startedAtMs) }
     /// Milliseconds since the audio route last changed during this recording, nil when it has not (#1708).
     var msSinceRouteChange: Int? { lastRouteChangeAtMs.map { max(0, nowMs() - $0) } }
+    /// The headphone-event monitor for this watcher's recordings, made by the model on first use (#3650). It lives here so
+    /// the model's own file does not grow.
+    var headphoneMonitor: HeadphoneEndGestureMonitor?
+    /// A fresh reading of the recorder, for the headphone log (#3650): the peak level now says whether the
+    /// recording went silent after a press. Nil when no recording is being watched.
+    func currentReading() -> RecordingCaptureReading? {
+        supervisor == nil ? nil : reading()
+    }
     /// The final diagnostics line for this recording is written (once per recording).
     var finalRecorded = false
 
@@ -91,16 +101,22 @@ final class MarginCaptureWatcher {
         guard autoPoll else { return }
         pollTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(for: .milliseconds(Self.pollIntervalMs))
+                let wait = self?.nextPollIntervalMs ?? Self.pollIntervalMs
+                try? await Task.sleep(for: .milliseconds(wait))
                 guard !Task.isCancelled, let self else { return }
                 self.tick()
             }
         }
     }
 
+    /// The wait before the next poll: short until the cue has sounded, so the cue follows the first audio closely.
+    private var nextPollIntervalMs: Int {
+        MarginCapturePollCadence.intervalMs(elapsedMs: elapsedMs, cueSounded: readyCueGate.hasCued)
+    }
+
     /// One poll: read the recorder, ask the supervisor, and carry out a restart if it asks for one.
     func tick() {
-        guard var current = supervisor else { return }
+        guard var current = supervisor, !retryOrder.isWaiting else { return } // Try again goes first: see `retry(afterStopping:then:)`
         let now = nowMs()
         if current.observe(reading(), nowMs: now) == .restartCapture {
             restartNow(&current)
@@ -120,6 +136,15 @@ final class MarginCaptureWatcher {
         let result = readyCue.playReadyCue()
         readyCueResult = result
         releaseRecorder(result == "played" ? MarginReadyCueHold.seconds : 0)
+    }
+
+    /// Try again's first half: `stop` ends what must be gone before a new recorder starts, and `retry` runs once it has
+    /// landed, with no wait on the main thread. Polling holds until then, and `stop()` drops it (`MarginCaptureRetryOrder`).
+    func retry(
+        afterStopping stop: @MainActor (_ finished: @escaping @MainActor () -> Void) -> Void,
+        then retry: @escaping @MainActor () -> Void
+    ) {
+        retryOrder.begin(stop: stop, then: retry)
     }
 
     /// The listener asked to try again after the capture failed: restart now, then judge afresh.
@@ -191,6 +216,7 @@ final class MarginCaptureWatcher {
     }
 
     func stop() {
+        retryOrder.cancel()
         pollTask?.cancel()
         pollTask = nil
         removeRouteObserver()

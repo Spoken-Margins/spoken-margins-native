@@ -92,7 +92,9 @@ struct ExperienceAddSourceFlow: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Close") { dismiss() }
                 }
-                if !showsPinnedTextAction {
+                // Not while the Live Session or Spoken Note cover is up: this Done clears only this sheet's own
+                // fields, and it showed over the cover's keyboard doing nothing (#3547).
+                if !showsPinnedTextAction && !showsLiveSession && !showsSpokenNote {
                     ToolbarItemGroup(placement: .keyboard) {
                         Spacer()
                         Button("Done") { focusedField = nil }
@@ -137,8 +139,7 @@ struct ExperienceAddSourceFlow: View {
             if focusedField != nil {
                 HStack {
                     Spacer()
-                    Button("Done") { focusedField = nil }
-                        .frame(minWidth: 44, minHeight: 44)
+                    Button { focusedField = nil } label: { Text("Done").minimumTapTarget() }
                 }
                 .tint(AppColors.evergreen)
             }
@@ -290,7 +291,7 @@ struct ExperienceAddSourceFlow: View {
         ExperienceSurface(tint: AppColors.evergreen) {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Link or Podcast").font(.headline)
-                TextField("Podcast, RSS, audio, or web URL", text: $model.sourceLinkURL)
+                AppTextField("Podcast, RSS, audio, or web URL", text: $model.sourceLinkURL)
                     .textFieldStyle(.roundedBorder)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
@@ -321,7 +322,7 @@ struct ExperienceAddSourceFlow: View {
                     .accessibilityIdentifier("sourceLink.import.button")
                 }
                 SourceLinkImportStatusView()
-                Text("Adding a source never replaces the item already in Now Playing.")
+                Text("Adding a source never replaces what is already in Now Playing.")
                     .font(.caption)
                     .foregroundStyle(AppColors.secondaryText)
             }
@@ -331,7 +332,7 @@ struct ExperienceAddSourceFlow: View {
     private var pastedTextSource: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 12) {
-                TextField("Title (optional)", text: $model.importTitle)
+                AppTextField("Title (optional)", text: $model.importTitle)
                     .textFieldStyle(.roundedBorder)
                     .focused($focusedField, equals: .title)
                     .accessibilityIdentifier("create.title.field")
@@ -376,11 +377,12 @@ struct ExperienceAddSourceFlow: View {
     private var filesSource: some View {
         ExperienceSurface {
             VStack(alignment: .leading, spacing: 12) {
-                Button("Choose Files", systemImage: "folder.badge.plus") {
+                Button {
                     presentFileImporter(.files)
+                } label: {
+                    Label("Choose Files", systemImage: "folder.badge.plus").frame(minHeight: 44).contentShape(Rectangle())
                 }
                 .filledActionButton()
-                .frame(minHeight: 44)
                 .accessibilityIdentifier("files.import.button")
                 Text("Documents and books stay local and retain authored structure when the format provides it. Audiobooks are copied into app-owned storage and protected from automatic eviction. A Listening Edition collection (.json) or a Margins packet (.spokenmargins) can be chosen here too.")
                     .font(.caption)
@@ -460,8 +462,7 @@ struct ExperienceAddSourceFlow: View {
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("sourceLink.candidate.\(index)")
             }
-            Button("Cancel", role: .cancel, action: model.cancelSourceLinkCandidateReview)
-                .frame(minHeight: 44)
+            Button(role: .cancel, action: model.cancelSourceLinkCandidateReview) { Text("Cancel").minimumTapTarget() }
         }
     }
 
@@ -528,9 +529,21 @@ struct ExperienceAddSourceFlow: View {
         guard !editionURLs.isEmpty || !folders.isEmpty else { importDocuments(urls, closes: !picked.isEmpty); return }
         // The edition files are read off the main thread (#2510), so the rest waits for them.
         Task { @MainActor in
-            let editionsImported = await model.importListeningEditionFiles(editionURLs, folders: folders)
-            if !editionsImported { fileImportError = model.lastError }
-            model.hangTelemetry.labels.scoped("addSheet.documentImport") { importDocuments(urls, closes: editionsImported) }
+            // A `.json` file that says it is a structured link list (#3767) adds its links; any other `.json` file
+            // goes to the edition import as before. Only the file's own `schemaVersion` decides, never its name.
+            // The same goes for the `.json` files inside a picked folder: link lists there are added, and the edition
+            // import skips them and takes the rest.
+            let picks = await model.splitLinkLists(from: editionURLs, folders: folders)
+            let editionImportRuns = picks.needsEditionImport(foldersPicked: !folders.isEmpty)
+            var linkResult: (allImported: Bool, message: String?) = (true, nil)
+            if !picks.isEmpty { linkResult = await model.importLinkLists(picks, noteFolderTruncation: !editionImportRuns) }
+            var editionsImported = true
+            if editionImportRuns {
+                editionsImported = await model.importListeningEditionFiles(picks.others, folders: folders, skipping: picks.folderFilePaths)
+            }
+            let allImported = linkResult.allImported && editionsImported
+            if !allImported { fileImportError = editionsImported ? linkResult.message : (model.lastError ?? linkResult.message) }
+            model.hangTelemetry.labels.scoped("addSheet.documentImport") { importDocuments(urls, closes: allImported) }
         }
     }
 

@@ -130,7 +130,7 @@ enum AddSourceRoute: String, CaseIterable, Identifiable, Hashable, Sendable {
     var detail: String {
         switch self {
         case .linkOrPodcast: "Podcast episode, RSS feed, public audio, or readable web link"
-        case .pastedText: "Create a listening item from text already on your clipboard"
+        case .pastedText: "Make something to listen to from text already on your clipboard"
         case .importFromFiles: "A document, book, audiobook, or Margins packet from Files"
         case .quickFolder: "Choose a folder whose eligible files appear in Following"
         }
@@ -430,8 +430,8 @@ struct SharedMarginRow: Identifiable, Equatable, Sendable {
                                     hasPositionEvidence: interjection.carriesPositionEvidence(in: layer),
                                     awaitingPlacementPass: layer.awaitsPlacementPass)
     }
-    /// Its voice hasn't played for this listener yet (#469).
-    var isNew: Bool { interjection.isNewToListener }
+    /// Its voice hasn't played for this listener yet (#469), and it can (#3402).
+    var isNew: Bool { interjection.showsAsNew }
     /// The sender's name, or "a friend" when the file names nobody; a stand-in is never shown as a name (#3247).
     var collectionLabel: String { SharedPacketArrival.senderName(layer.displayLabel) ?? "a friend" }
     var positionDescription: String {

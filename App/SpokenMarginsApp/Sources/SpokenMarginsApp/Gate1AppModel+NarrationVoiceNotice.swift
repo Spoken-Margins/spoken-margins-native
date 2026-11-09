@@ -46,7 +46,7 @@ final class NarrationVoiceChangeChime: @unchecked Sendable {
             lock.withLock { player = chime }
             return chime.play() ? "played" : "skipped:player_refused"
         } catch {
-            return "skipped:\(error.localizedDescription)"
+            return "skipped:\(SafeErrorText.describe(error))"
         }
     }
 }

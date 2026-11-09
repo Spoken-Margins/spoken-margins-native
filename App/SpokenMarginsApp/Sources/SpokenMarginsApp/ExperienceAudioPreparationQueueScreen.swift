@@ -80,12 +80,12 @@ private struct AudioPreparationQueueContent: View, @preconcurrency Equatable {
                     }
                 } footer: {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("Use Prioritize to move an item to the top, or the arrows to adjust its position. Playback keeps priority for audio it needs immediately.")
+                        Text("Use Prioritize to move one to the top, or the arrows to adjust its position. Playback keeps priority for audio it needs immediately.")
                         if !queue.isEmpty {
                             Button("Clear Queue", role: .destructive) {
                                 isConfirmingQueueClear = true
                             }
-                            .accessibilityHint("Cancels queued audio preparation while keeping Library items and completed audio")
+                            .accessibilityHint("Cancels queued audio preparation while keeping everything in your Library and completed audio")
                         }
                     }
                 }
@@ -105,15 +105,15 @@ private struct AudioPreparationQueueContent: View, @preconcurrency Equatable {
 
                     Text(policyExplanation)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(AppColors.secondaryText)
                 } header: {
                     Text("Automatic preparation")
                 }
 
                 Section("Recently prepared") {
                     if recentlyPrepared.isEmpty {
-                        Text("Completed items will appear here after their final audio file is verified.")
-                            .foregroundStyle(.secondary)
+                        Text("Finished audio will appear here after its final file is verified.")
+                            .foregroundStyle(AppColors.secondaryText)
                     } else {
                         ForEach(recentlyPrepared) { row in
                             Button {
@@ -164,7 +164,7 @@ private struct AudioPreparationQueueContent: View, @preconcurrency Equatable {
                 }
                 Button("Keep Queue", role: .cancel) {}
             } message: {
-                Text("This keeps your Library items and audio that has already been prepared. Items will not be queued again unless you explicitly choose Prepare Offline.")
+                Text("This keeps everything in your Library and audio that has already been prepared. Nothing will be queued again unless you explicitly choose Prepare Offline.")
             }
         }
         .presentationDetents([.medium, .large])
@@ -173,15 +173,15 @@ private struct AudioPreparationQueueContent: View, @preconcurrency Equatable {
 
     private var policyExplanation: String {
         if automaticPolicy == .whileCharging {
-            return "Newly queued text items may keep preparing audio while the phone is idle, connected to power, out of Low Power Mode, and within storage and thermal limits. iOS decides when background work runs, so overnight completion is not guaranteed."
+            return "Newly queued articles and PDFs may keep preparing audio while the phone is idle, connected to power, out of Low Power Mode, and within storage and thermal limits. iOS decides when background work runs, so overnight completion is not guaranteed."
         }
         return "Automatic preparation is off. Existing automatic jobs remain visible but will wait unless you prepare one now or turn While Charging back on."
     }
 
     private var emptyQueueDescription: String {
         automaticPolicy == .whileCharging
-            ? "New text items prepare an opening buffer when added. Choose Prepare Offline on an item to queue the rest."
-            : "Choose While Charging, or use Prepare Offline on a Library item to prepare it now."
+            ? "New articles and PDFs prepare an opening buffer when added. Choose Prepare Offline on one to queue the rest."
+            : "Choose While Charging, or use Prepare Offline on something in your Library to prepare it now."
     }
 
     private func recentDetail(_ row: RecentlyPreparedAudioRow) -> String {
@@ -212,7 +212,7 @@ private struct AudioPreparationQueueItemRow: View {
                         .font(.headline)
                     Label(priorityLabel, systemImage: priorityIcon)
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(row.isActivePlaybackItem ? AppColors.ochre : AppColors.secondaryText)
+                        .foregroundStyle(row.isActivePlaybackItem ? AppColors.ochreText : AppColors.secondaryText)
                 }
                 Spacer(minLength: 8)
                 HStack(spacing: 2) {
@@ -232,7 +232,7 @@ private struct AudioPreparationQueueItemRow: View {
 
             if row.plannedChunkCount > 0 {
                 ProgressView(value: row.progress)
-                    .tint(AppColors.ochre)
+                    .tint(AppColors.ochreText)
                     .accessibilityLabel("Audio preparation progress")
             }
 
@@ -240,13 +240,13 @@ private struct AudioPreparationQueueItemRow: View {
                 .font(.caption)
                 .foregroundStyle(AppColors.secondaryText)
 
-            HStack(spacing: 8) {
+            AdaptiveStack(spacing: 8) {
                 Button("Prioritize", systemImage: "arrow.up.to.line") { prioritize() }
                     .font(.caption.weight(.semibold))
                     .buttonStyle(.bordered)
-                    .accessibilityHint("Moves this item to the top of the audio preparation queue")
+                    .accessibilityHint("Moves this one to the top of the audio preparation queue")
                     .accessibilityIdentifier("offlineRendering.prioritize.\(row.itemId)")
-                Spacer(minLength: 0)
+                AdaptiveSpacer(minLength: 0)
                 if row.policy != .explicit {
                     Button("Prepare Now") {
                         renderNow()

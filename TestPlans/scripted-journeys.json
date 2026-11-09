@@ -52,8 +52,20 @@
       "journey": "J11"
     },
     {
-      "test": "SpokenMarginsAppUITests/Gate1FlowUITests/testLiveSessionAddMarginIsAboveTheKeyboardWhileTyping",
-      "journey": "Live session: Add Margin is on the keyboard while typing a Margin (#2963)"
+      "test": "SpokenMarginsAppUITests/Gate1FlowUITests/testLiveSessionPencilOpensTheWritingSheetAndSaveAddsARow",
+      "journey": "Live session: the pencil opens the writing sheet with the keyboard up, and Save adds a row (#3491)"
+    },
+    {
+      "test": "SpokenMarginsAppUITests/Gate1FlowUITests/testLiveSessionEndIsHittableWithoutScrollingAfterManyMargins",
+      "journey": "Live session: End is in the dock, reachable without scrolling after many Margins (#3491)"
+    },
+    {
+      "test": "SpokenMarginsAppUITests/Gate1FlowUITests/testLiveSessionEndSheetStaysUpForThreeSeconds",
+      "journey": "Live session: the End sheet stays up until the listener answers it (#2831)"
+    },
+    {
+      "test": "SpokenMarginsAppUITests/Gate1FlowUITests/testLiveSessionSetupDoneClosesTheKeyboardAndStartIsReachableWithItUp",
+      "journey": "Live session setup: Done closes the keyboard and Start Session is tappable with it up (#3547)"
     },
     {
       "test": "SpokenMarginsAppUITests/J12SharingLoopJourneyUITests",

@@ -22,6 +22,9 @@ struct SpokenNoteRecorderEnvironment {
 struct SpokenNoteOpening: Identifiable, Equatable {
     let noteId: String
     let title: String
+    /// When the row was made. The recording needs it to tell a made-up title (which follows the words) from one the
+    /// listener typed (#3663). Nil keeps the title as it is.
+    var createdAt: Date? = nil
     var id: String { noteId }
 }
 
@@ -43,6 +46,9 @@ final class SpokenNoteRecorderModel: ObservableObject {
     @Published var message: String?
     /// The note's folder, once it is known (a reopened note's at once; a new note's at its first Record tap).
     @Published private(set) var noteFolder: URL?
+    /// The note's title as the screen shows it: the row's own for a reopened note, then whatever the recording reports (a
+    /// made-up title follows the words as they arrive; a rename replaces it). Nil until a note exists (#3663).
+    @Published private(set) var title: String?
 
     private var environment: SpokenNoteRecorderEnvironment?
     private var coordinator: SpokenNoteRecordingCoordinator?
@@ -64,7 +70,7 @@ final class SpokenNoteRecorderModel: ObservableObject {
         }
         guard let opening else { return }
         guard let started = SpokenNoteStarter.reopen(
-            noteId: opening.noteId, title: opening.title, in: environment.applicationSupport, now: Date()
+            noteId: opening.noteId, title: opening.title, in: environment.applicationSupport, now: opening.createdAt ?? Date()
         ) else {
             message = "This note's recordings aren't on this phone."
             return
@@ -72,6 +78,7 @@ final class SpokenNoteRecorderModel: ObservableObject {
         let coordinator = makeCoordinator(started, itemIsSaved: true, environment)
         self.coordinator = coordinator
         noteFolder = started.store.folderURL
+        title = started.item.title
         Task {
             await coordinator.setOnChange { [weak self] report in
                 Task { @MainActor in self?.apply(report) }
@@ -102,6 +109,14 @@ final class SpokenNoteRecorderModel: ObservableObject {
     /// Pauses whatever the app is playing, so it isn't mixed with a sentence being played from this note.
     func pauseOtherPlayback() {
         environment?.prepareToRecord()
+    }
+
+    /// The listener renamed the note (the row is written): this recording takes the title, so a transcript that arrives
+    /// later neither overwrites it nor shows the old one.
+    func titleChanged(to newTitle: String) {
+        title = newTitle
+        guard let coordinator else { return }
+        Task { await coordinator.adoptTitle(newTitle) }
     }
 
     func retryTranscript(forTake takeId: String) {
@@ -212,6 +227,7 @@ final class SpokenNoteRecorderModel: ObservableObject {
     private func apply(_ report: SpokenNoteRecordingSnapshot) {
         guard report.revision >= (snapshot?.revision ?? 0) else { return }
         snapshot = report
+        if title != report.title { title = report.title }
         // The system can end a take on its own; the screen goes back to ready.
         if phase == .recording, !report.isRecording {
             stopClock()

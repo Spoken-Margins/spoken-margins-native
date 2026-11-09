@@ -76,11 +76,13 @@ F1 club membership is linked by nature; a member of a club is known to that club
 | Where | What | Kept |
 | --- | --- | --- |
 | Caddy access log | Nothing. The site block has no `log` directive; keep it that way | — |
-| Caddy error log | Method, host, URI of a failed request, with listening-map paths reduced to `/api/v1/maps/*`. The IP, headers and TLS fields are stripped by the global filter in `deploy/caddy-global.caddy` (JSON, matching the box's journald format). Checked locally: without the filter, a 502 logged the request's key-id header | journald default |
+| Caddy error log | Method, host, URI of a failed request, with listening-map paths reduced to `/api/v1/maps/*`. The IP, headers and TLS fields are stripped by the global filter in `deploy/caddy-global.caddy` (JSON, matching the box's journald format). Checked locally: without the filter, a 502 logged the request's key-id header. The default logger's level is explicit INFO, so a debug-level "TLS handshake error from <ip>" message can't appear | 14 days in the main journal, once `deploy/journald-main.conf` is deployed (#2034); before that, distro defaults |
 | smserver request log | An hourly summary, written once an hour: `{"hour":"2026-09-28T12","method":"POST","route":"/api/v1/ping","status":200,"latency":"under50ms","count":4}`. Unknown paths log as `"other"`. Nothing is written per request, so even the journal's own timestamps only mark the hour | 14 days (own journal namespace, files closed daily so the limit applies, no syslog forwarding) |
 | smserver abuse log | Hour, install tag, reason, count. Only for installs over their rate limit, also written hourly | 30 days |
 | Install records | Public key, counter, environment, two day-precision dates. Written hourly, file times set to midnight | Until 90 days idle |
-| Rate limiter | IPs HMAC'd with a per-process random secret, in memory only, reset hourly | 1 hour, never on disk |
+| Rate limiter | Client network HMAC'd (`clientKey`, `server/internal/api/api.go`) with a secret that is random per process and never written. Hourly windows, in memory only. The per-day hold quota for abuse-material reports (`holdQuota`, `server/internal/api/links.go`, `tokens.go`) uses the same key and lives until the UTC day ends | 1 hour; the hold quota up to 1 day (UTC); never on disk |
+
+To check the box itself for kept addresses (journals, firewall, fail2ban, sshd; counts only, changes nothing), run `ssh root@<vps> 'bash -s' < research/B4/deploy/check-visitor-ips.sh` (#2034). The provider's own logs need its console.
 
 Why this can't reconstruct a listener's follows or reading:
 - **Follows never reach the server.** Every install downloads the same manifest bytes. Caddy's ETag is built from the file's modification time and size, so every install gets the same one and it can't act as a per-install cookie. Whether a shared link is bridgeable is matched *on the phone* against each source's `match.hosts`/`pathPrefixes`. Nothing is fetched from our server per source: no icons, no per-source feeds. The manifest gate refuses any such field.
@@ -244,6 +246,8 @@ The server does not trust the app's word that a key is genuine. `appattest.Verif
 | A challenge works once | `TestChallengeIsSingleUse` |
 | A reinstall is a new key that registers as a stranger, a block on the old key does not follow it, and the two records hold no key id (an install's file is named by the hash of its key id) and no shared public key | `TestReinstallGetsAFreshKeyThatNothingLinksToTheOldOne` |
 | An install record holds exactly the declared fields, with days not times | `TestInstallRecordFileHoldsExactlyTheDeclaredFields` |
+
+**The receipt is not checked, on purpose.** An attestation also carries a receipt (`attStmt.receipt`). Apple's nine validation steps don't use it; it exists to ask Apple for a fraud-risk metric, which counts attested keys per device and so links installs on one phone. The verifier reads only `x5c` from `attStmt` (`internal/appattest/appattest.go:148`), and `appattest.Key` holds no receipt (`appattest.go:81`), so the receipt is neither verified nor kept, matching section 2's "no receipt". If abuse ever needs the metric, it is the owner's call first, like DeviceCheck.
 
 **What this does not prove.** Every one of these tests runs against `fakeattest`, which is written from the same reading of Apple's documentation as the verifier. A misreading shared by both would pass. The one test that uses bytes Apple produced, `TestVerifierAcceptsARealDeviceCaptureUnderApplesRoot`, skips until `testdata/device-capture.json` exists (#1593, needs the owner's phone). Until it passes, section 5.2 of Apple's agreement is met in code and tests but not yet checked against a real device.
 

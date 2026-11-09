@@ -115,4 +115,33 @@ final class FollowingFeedTests: XCTestCase {
         let done = LibraryItemRow(id: "j", title: "T", status: "", canDelete: true, isCompleted: true, mediaType: "article", sourceTitle: "arxiv.org")
         XCTAssertEqual(FollowingFriends.itemDetail(done, playbackSpeed: 1).fullLine, "arxiv.org · Article · Completed")
     }
+
+    // #3753: friends alone must never be drawn before the first show load, or the shows' newer episodes push them down.
+    func testNothingIsDrawnUntilTheShowsHaveLoadedOnce() {
+        let friends = FollowingFriends.friends(from: [margin("a", from: "Ada", recorded: 10, received: 10)])
+        let list = FollowingShowRows.build(subscriptions: [show("s")], entries: [episode("e", in: "s", day: 20)], now: now)
+        XCTAssertEqual(FollowingFeed.visibleRows(friends: friends, shows: [], showsLoaded: false), [],
+                       "before the load the shows are unknown, so friends alone would be a frame that later snaps")
+        XCTAssertEqual(FollowingFeed.visibleRows(friends: friends, shows: list.rows, showsLoaded: false), [],
+                       "even a show list that is already filled waits for the first load to finish")
+        // The frame after the load is already in its final order, and is the same one a later redraw gives.
+        let first = FollowingFeed.visibleRows(friends: friends, shows: list.rows, showsLoaded: true).map(\.id)
+        XCTAssertEqual(first, ["show::s", "friend::ada"])
+        XCTAssertEqual(first, FollowingFeed.rows(friends: friends, shows: list.rows).map(\.id))
+    }
+
+    func testEmptyStateWaitsForTheLoadAndCountsFriendsShowsAndQuietShows() {
+        let friends = FollowingFriends.friends(from: [margin("a", from: "Ada", recorded: 1, received: 1)])
+        let shown = FollowingShowRows.build(subscriptions: [show("s")], entries: [], now: now)
+        var quietSub = show("q")
+        quietSub.state = .muted
+        let quiet = FollowingShowRows.build(subscriptions: [quietSub], entries: [], now: now)
+        XCTAssertFalse(quiet.quiet.isEmpty, "the fixture's show is Quiet")
+        let none = FollowingShowList()
+        XCTAssertFalse(FollowingFeed.showsEmptyState(friends: [], shows: none, showsLoaded: false), "not read yet is not empty")
+        XCTAssertTrue(FollowingFeed.showsEmptyState(friends: [], shows: none, showsLoaded: true))
+        XCTAssertFalse(FollowingFeed.showsEmptyState(friends: friends, shows: none, showsLoaded: true))
+        XCTAssertFalse(FollowingFeed.showsEmptyState(friends: [], shows: shown, showsLoaded: true))
+        XCTAssertFalse(FollowingFeed.showsEmptyState(friends: [], shows: quiet, showsLoaded: true))
+    }
 }

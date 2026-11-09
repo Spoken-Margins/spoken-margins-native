@@ -106,6 +106,48 @@ async function journey(page: Page, info: { project: { name: string } } & Paramet
   expect(page.url()).not.toContain(KEY);
 }
 
+test('saving a Margin on a friend\u2019s item says what Share does with it, until the next friend Margin plays (2026-11-06)', async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'block' });
+  const page = await friendPage(context);
+  await page.goto(LINK);
+  await page.getByTestId('arrival').getByRole('button', { name: 'Play' }).click();
+  const playing = page.getByRole('dialog', { name: EPISODE });
+  await expect(playing.getByTestId('margin-cue')).toContainText('Web fixture\u2019s first Margin in');
+  await playing.getByRole('button', { name: 'Write a Margin' }).click();
+  await playing.getByLabel(/Your Margin at/).fill('My answer.');
+  await playing.getByRole('button', { name: 'Save Margin' }).click();
+  // The card replaces the countdown, in the same place; it has no button of its own.
+  const card = playing.getByTestId('margin-cue');
+  await expect(card).toContainText('Your Margin is saved. Share sends it to Web fixture. You pick which of your Margins go.');
+  await expect(card.getByRole('button')).toHaveCount(0);
+  await expect(card.getByTestId('margin-cue-clock')).toHaveCount(0);
+  // Playing on to the friend's Margin (0:30) clears it. Move the clock to just before it rather than sitting through
+  // half a minute of real playback, which used up the whole 45 s test budget on a slow hosted runner.
+  await page.getByTestId('audio').evaluate((a: HTMLAudioElement) => { a.currentTime = 28; });
+  await expect(playing.getByTestId('arrived-margin')).toContainText('Web fixture wrote this', { timeout: 30_000 });
+  await expect(playing.getByText('Your Margin is saved.')).toHaveCount(0);
+  await context.close();
+});
+
+test('after the last Margin has been heard, the card stops saying the sender is speaking and the cue says it was the last (#3797)', async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'block' });
+  const page = await friendPage(context);
+  await page.goto(LINK);
+  await page.getByTestId('arrival').getByRole('button', { name: 'Play' }).click();
+  const playing = page.getByRole('dialog', { name: EPISODE });
+  await expect(playing.getByTestId('margin-cue')).toContainText('Web fixture\u2019s first Margin in');
+  // Just before the second Margin (spoken, at 2:05), rather than sitting through two minutes of playback.
+  await page.getByTestId('audio').evaluate((a: HTMLAudioElement) => { a.currentTime = 124; });
+  const arrived = playing.getByTestId('arrived-margin');
+  await expect(arrived).toContainText('Web fixture is speaking', { timeout: 30_000 });
+  await expect(arrived).toContainText('2 of 2');
+  // The clip ends: nothing is speaking any more, and the cue is the one the app shows after a last Margin.
+  await expect(arrived).toHaveCount(0, { timeout: 30_000 });
+  await expect(playing.getByText('is speaking')).toHaveCount(0);
+  await expect(playing.getByTestId('margin-cue')).toContainText('That was Web fixture\u2019s last Margin.');
+  await context.close();
+});
+
 test('on a laptop: the link opens on its page, Play starts the episode, Skip reaches Cole’s Margin', async ({ browser }, info) => {
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'block' });
   const page = await friendPage(context);

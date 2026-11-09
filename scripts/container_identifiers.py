@@ -6,7 +6,9 @@ not itself an accessibility element is copied onto every child and replaces the 
 inside keeps its label but answers to "x". It broke eight scripted journeys at once (#2894): the playback header's
 `playback.title` hid the Library chevron's neighbours, and `terms.screen` on a `ViewThatFits` hid Agree and Use iOS
 Voice's own identifiers. `.accessibilityElement(children: .contain)` (or `.combine` or `.ignore`) anywhere in the
-modifier chain makes the container an element, so its identifier stays on it.
+modifier chain makes the container an element, so its identifier stays on it. A `ScrollView` or `List` is an element
+on its own, but one with a `.safeAreaInset` in the chain is a row too: the inset's content sits under the identifier
+(#3818).
 
   scripts/container_identifiers.py             check: fail on a row that is not in the baseline, or whose count of
                                                hidden child identifiers grew
@@ -39,6 +41,7 @@ CONTAINERS = {'VStack', 'HStack', 'ZStack', 'Group', 'ViewThatFits', 'LazyVStack
               'Grid', 'GridRow', 'LazyVGrid', 'LazyHGrid', 'ForEach', 'GeometryReader'}
 IDENTIFIER = '.accessibilityIdentifier'
 ELEMENT = '.accessibilityElement'
+SAFE_AREA_INSET = '.safeAreaInset'
 CLOSERS = {')': '(', '}': '{', ']': '['}
 OPENERS = {v: k for k, v in CLOSERS.items()}
 
@@ -259,14 +262,20 @@ def scan_source(path: str, original: str):
         if identifier is None:
             continue
         base, start, before, brace = chain_before(code, dot)
-        if base not in CONTAINERS or brace < 0:
+        # A `.safeAreaInset` in the chain puts its content under the identified view too, so a `ScrollView` or `List`
+        # that carries one is as bare as a stack: the pinned Play button lost its identifier to `item.screen` (#3818).
+        inset = SAFE_AREA_INSET in before
+        if not inset and (base not in CONTAINERS or brace < 0):
             continue
         open_paren = dot + len(IDENTIFIER)
         after, _ = modifiers_after(code, match_forward(code, open_paren) + 1)
         if ELEMENT in before or ELEMENT in after:
             continue
-        close = match_forward(code, brace)
-        hidden = code.count(IDENTIFIER + '(', brace, close) if close > brace else 0
+        if base in CONTAINERS and brace >= 0:
+            close = match_forward(code, brace)
+            hidden = code.count(IDENTIFIER + '(', brace, close) if close > brace else 0
+        else:
+            hidden = code.count(IDENTIFIER + '(', start, dot)
         same = sum(1 for row in rows if row['identifier'] == identifier)
         rows.append({'file': path, 'line': original.count('\n', 0, dot) + 1, 'container': base,
                      'identifier': identifier, 'hidden': hidden, 'n': same + 1})

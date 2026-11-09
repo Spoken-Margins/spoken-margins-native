@@ -77,6 +77,29 @@ class WhatIsABareContainerIdentifier(unittest.TestCase):
             with self.subTest(view):
                 self.assertEqual(ids(f'{view}\n.accessibilityIdentifier("x")'), [])
 
+    def test_item_screen_as_it_was_at_275ceea_is_a_row(self):
+        # The pinned Play and Hear-only buttons sit in a safeAreaInset under the screen's identifier (#3818).
+        source = '''
+        ScrollView { LazyVStack { Text("a") } }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            VStack { Button("Play") { }.accessibilityIdentifier("item.start.button") }
+                .background(AppColors.bone)
+        }
+        .background(AppColors.bone)
+        .accessibilityIdentifier("item.screen")
+        '''
+        found = rows(source)
+        self.assertEqual([(r['container'], r['identifier'], r['hidden']) for r in found],
+                         [('ScrollView', 'item.screen', 1)])
+
+    def test_a_list_with_an_inset_is_a_row_and_a_contained_one_is_not(self):
+        chain = 'List { Text("a") }\n.safeAreaInset(edge: .bottom) { Button("b") { } }\n'
+        self.assertEqual(ids(chain + '.accessibilityIdentifier("x")'), ['x'])
+        self.assertEqual(ids(chain + '.accessibilityElement(children: .contain)\n.accessibilityIdentifier("x")'), [])
+
+    def test_a_scroll_view_without_an_inset_is_still_not_a_row(self):
+        self.assertEqual(ids('ScrollView { Text("a") }\n.background(Color.red)\n.accessibilityIdentifier("x")'), [])
+
     def test_a_container_inside_a_button_label_is_not_the_buttons_row(self):
         source = 'Button { } label: { VStack { Text("a") } }\n.accessibilityIdentifier("x")'
         self.assertEqual(ids(source), [])

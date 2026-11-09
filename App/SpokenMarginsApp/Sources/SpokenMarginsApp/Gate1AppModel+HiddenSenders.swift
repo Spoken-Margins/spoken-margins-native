@@ -44,7 +44,7 @@ extension Gate1AppModel {
     }
 
     private func reloadAfterSenderVisibilityChanged() {
-        refreshSelectedItem()
+        refreshSelectedItemInBackground()
         refreshMarginRowsInBackground()
         refreshLibraryRowsInBackground() // the Library row's shared count and New badge drop what is hidden (#3469)
     }

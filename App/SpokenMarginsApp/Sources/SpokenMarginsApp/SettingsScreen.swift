@@ -30,6 +30,7 @@ struct SettingsScreen: View {
     /// The Supertonic download card's "Open Voices" lands here and opens Voices (#1820).
     @ObservedObject private var supertonicNotice: SupertonicDownloadNotice
     @State private var showsVoices = false
+    @State private var showsControls = false
 
     init(supertonicNotice: SupertonicDownloadNotice) {
         _supertonicNotice = ObservedObject(wrappedValue: supertonicNotice)
@@ -39,34 +40,6 @@ struct SettingsScreen: View {
         NavigationStack {
             Form {
                 Section("Voice") {
-                    Picker("Playback Controls", selection: $usesVerbosePlaybackActions) {
-                        Text("Labeled").tag(true)
-                        Text("Compact").tag(false)
-                    }
-                    .accessibilityIdentifier("settings.playbackControlStyle.picker")
-                    Text("Choose labels or icons in listening options.")
-                        .font(.caption)
-                        .foregroundStyle(AppColors.secondaryText)
-                    Toggle(
-                        "Show “Mix with Other Audio”",
-                        isOn: Binding(
-                            get: { model.showsMixWithOtherAudioOption },
-                            set: { enabled in
-                                model.showsMixWithOtherAudioOption = enabled
-                                model.mixWithOtherAudioAvailabilityChanged()
-                            }
-                        )
-                    )
-                    .accessibilityIdentifier("settings.mixWithOtherAudio.toggle")
-                    Text("Adds a per-session option to the listening screen. It lets music or other audio continue, but Lock Screen and headphone controls may control the other app. Each listening session starts with this option off.")
-                        .font(.caption)
-                        .foregroundStyle(AppColors.secondaryText)
-                    NavigationLink {
-                        VoicesSettingsScreen(voices: model.requireVoiceDownloads()).miniPlayerKeepOut()
-                    } label: {
-                        Label("Voices", systemImage: "waveform")
-                    }
-                    .accessibilityIdentifier("settings.voices.link")
                     AppVoicePicker(selection: $model.ttsVoiceSelection, voices: model.requireVoiceDownloads())
                     .onCompatibleChange(of: model.ttsVoiceSelection) { _ in
                         model.ttsVoiceSelectionChanged()
@@ -151,41 +124,72 @@ struct SettingsScreen: View {
                         .buttonStyle(SecondaryButtonStyle())
                         .accessibilityIdentifier("settings.preview.assistiveTech.button")
                     }
-                    Picker("Text Navigation", selection: $model.skipUnit) {
-                        Text("Sentence").tag("sentence")
-                        Text("Paragraph").tag("paragraph")
-                        Text("Section").tag("section")
+                    NavigationLink {
+                        VoicesSettingsScreen(voices: model.requireVoiceDownloads()).miniPlayerKeepOut()
+                    } label: {
+                        Label("Download Voices", systemImage: "waveform")
                     }
-                    .accessibilityIdentifier("settings.skipUnit.picker")
-                    .onCompatibleChange(of: model.skipUnit) { _ in
-                        model.skipUnitChanged()
-                    }
-                    Picker("Podcast Skip Back", selection: $model.mediaSkipBackSeconds) {
-                        ForEach(Gate1AppModel.supportedMediaSkipSeconds, id: \.self) { seconds in
-                            Text("\(seconds) seconds").tag(seconds)
+                    .accessibilityIdentifier("settings.voices.link")
+                    DisclosureGroup("Controls", isExpanded: $showsControls) {
+                        Picker("Playback Controls", selection: $usesVerbosePlaybackActions) {
+                            Text("Labeled").tag(true)
+                            Text("Compact").tag(false)
+                        }
+                        .accessibilityIdentifier("settings.playbackControlStyle.picker")
+                        Text("Choose labels or icons in listening options.")
+                            .font(.caption)
+                            .foregroundStyle(AppColors.secondaryText)
+                        Toggle(
+                            "Show “Mix with Other Audio”",
+                            isOn: Binding(
+                                get: { model.showsMixWithOtherAudioOption },
+                                set: { enabled in
+                                    model.showsMixWithOtherAudioOption = enabled
+                                    model.mixWithOtherAudioAvailabilityChanged()
+                                }
+                            )
+                        )
+                        .accessibilityIdentifier("settings.mixWithOtherAudio.toggle")
+                        Text("Adds a per-session option to the listening screen. It lets music or other audio continue, but Lock Screen and headphone controls may control the other app. Each listening session starts with this option off.")
+                            .font(.caption)
+                            .foregroundStyle(AppColors.secondaryText)
+                        Picker("Text Navigation", selection: $model.skipUnit) {
+                            Text("Sentence").tag("sentence")
+                            Text("Paragraph").tag("paragraph")
+                            Text("Section").tag("section")
+                        }
+                        .accessibilityIdentifier("settings.skipUnit.picker")
+                        .onCompatibleChange(of: model.skipUnit) { _ in
+                            model.skipUnitChanged()
+                        }
+                        Picker("Podcast Skip Back", selection: $model.mediaSkipBackSeconds) {
+                            ForEach(Gate1AppModel.supportedMediaSkipSeconds, id: \.self) { seconds in
+                                Text("\(seconds) seconds").tag(seconds)
+                            }
+                        }
+                        .accessibilityIdentifier("settings.mediaSkipBack.picker")
+                        .onCompatibleChange(of: model.mediaSkipBackSeconds) { _ in
+                            model.mediaSkipSettingsChanged()
+                        }
+                        Picker("Headphone double-press", selection: $headphoneDoublePress) {
+                            Text("Skip forward").tag(HeadphoneDoublePressAction.skipForward.rawValue)
+                            Text("Add a Margin").tag(HeadphoneDoublePressAction.addMargin.rawValue)
+                        }
+                        .accessibilityIdentifier("settings.headphoneDoublePress.picker")
+                        Text("Add a Margin starts one. End it with the button on screen, or by pressing your headphones (not every headset reports a press).")
+                            .font(.caption)
+                            .foregroundStyle(AppColors.secondaryText)
+                        Picker("Podcast Skip Forward", selection: $model.mediaSkipForwardSeconds) {
+                            ForEach(Gate1AppModel.supportedMediaSkipSeconds, id: \.self) { seconds in
+                                Text("\(seconds) seconds").tag(seconds)
+                            }
+                        }
+                        .accessibilityIdentifier("settings.mediaSkipForward.picker")
+                        .onCompatibleChange(of: model.mediaSkipForwardSeconds) { _ in
+                            model.mediaSkipSettingsChanged()
                         }
                     }
-                    .accessibilityIdentifier("settings.mediaSkipBack.picker")
-                    .onCompatibleChange(of: model.mediaSkipBackSeconds) { _ in
-                        model.mediaSkipSettingsChanged()
-                    }
-                    Picker("Headphone double-press", selection: $headphoneDoublePress) {
-                        Text("Skip forward").tag(HeadphoneDoublePressAction.skipForward.rawValue)
-                        Text("Add a Margin").tag(HeadphoneDoublePressAction.addMargin.rawValue)
-                    }
-                    .accessibilityIdentifier("settings.headphoneDoublePress.picker")
-                    Text("Skip forward is the normal double-press. Add a Margin starts a Margin instead, but a headphone press can't end one: stop talking or use the button on the screen. Triple-press still skips back.")
-                        .font(.caption)
-                        .foregroundStyle(AppColors.secondaryText)
-                    Picker("Podcast Skip Forward", selection: $model.mediaSkipForwardSeconds) {
-                        ForEach(Gate1AppModel.supportedMediaSkipSeconds, id: \.self) { seconds in
-                            Text("\(seconds) seconds").tag(seconds)
-                        }
-                    }
-                    .accessibilityIdentifier("settings.mediaSkipForward.picker")
-                    .onCompatibleChange(of: model.mediaSkipForwardSeconds) { _ in
-                        model.mediaSkipSettingsChanged()
-                    }
+                    .accessibilityIdentifier("settings.controls.disclosure")
                 }
                 Section("Storage") {
                     Button(action: model.openOfflineStorage) {
@@ -194,6 +198,7 @@ struct SettingsScreen: View {
                             Spacer()
                             Image(systemName: "chevron.right")
                                 .foregroundStyle(AppColors.secondaryText)
+                                .accessibilityHidden(true)
                         }
                     }
                     .accessibilityIdentifier("settings.offlineStorage.button")
@@ -230,12 +235,12 @@ struct SettingsScreen: View {
                     Text("Chapters and scenes for podcasts are prepared on your device and are off by default. While Charging only prepares episodes that are already downloaded; the full transcript and temporary audio are deleted once the chapters and scenes are saved.")
                         .font(.caption)
                         .foregroundStyle(AppColors.secondaryText)
-                    Text("While Charging uses durable jobs and pauses between parts of an item when power, thermal, or storage safety changes. Completion timing is not guaranteed.")
+                    Text("While Charging uses durable jobs and pauses between parts of what it is preparing when power, thermal, or storage safety changes. Completion timing is not guaranteed.")
                         .font(.caption)
                         .foregroundStyle(AppColors.secondaryText)
                     DisclosureGroup("Recently Deleted\(model.recentlyDeletedItems.isEmpty ? "" : " (\(model.recentlyDeletedItems.count))")") {
                         if model.recentlyDeletedItems.isEmpty {
-                            Text("Items moved here can be restored. Nothing is deleted automatically.")
+                            Text("Anything moved here can be restored. Nothing is deleted automatically.")
                                 .foregroundStyle(AppColors.secondaryText)
                         } else {
                             Button("Empty Recently Deleted", role: .destructive) {
@@ -274,10 +279,11 @@ struct SettingsScreen: View {
                                 }
                             }
                             if list.showsToggle {
-                                Button(list.toggleTitle) {
-                                    withAnimation { showsAllRecentlyDeleted.toggle() }
+                                Button {
+                                    withMotion { showsAllRecentlyDeleted.toggle() }
+                                } label: {
+                                    Text(list.toggleTitle).frame(minHeight: 44).contentShape(Rectangle())
                                 }
-                                .frame(minHeight: 44)
                                 .accessibilityHint(list.toggleHint)
                                 .accessibilityIdentifier("recentlyDeleted.toggle.button")
                             }
@@ -349,7 +355,7 @@ struct SettingsScreen: View {
                             Text("Help make listening maps")
                             Text("Send transcripts of public episodes to the Spoken Margins server, which turns them into maps and then deletes them.")
                                 .font(.footnote)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(AppColors.secondaryText)
                         }
                     }
                     .accessibilityIdentifier("settings.communityMaps.toggle")
@@ -358,7 +364,7 @@ struct SettingsScreen: View {
                             Text("Look up community maps")
                             Text("When you open or play a public podcast episode with no chapters, ask the Spoken Margins server for a map other listeners helped make. This tells the server which episode you opened, and it can see your IP address.")
                                 .font(.caption)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(AppColors.secondaryText)
                         }
                     }
                     .accessibilityIdentifier("settings.communityMapLookup.toggle")
@@ -391,7 +397,7 @@ struct SettingsScreen: View {
                             ShareFileActivityView(fileURL: diagnosticsExportURL)
                         }
                     }
-                    Text("App state and recent playback events, as a file for a bug report. It includes the titles and links of items in your Library. It stays on this device unless you share it.")
+                    Text("App state and recent playback events, as a file for a bug report. It includes the titles and links of what is in your Library. It stays on this device unless you share it.")
                         .font(.footnote)
                         .foregroundStyle(AppColors.secondaryText)
                     Button {
@@ -459,7 +465,7 @@ struct SettingsScreen: View {
                         Text("Basic playback events are saved locally automatically (latest 300 events, no source text or audio). For detailed sampling, turn on, reproduce, then turn off and Share Diagnostics. Detailed recording keeps 1,200 events and is off after restart.")
                             .font(.caption)
                         Text(model.developerDiagnosticBuild).font(.caption.monospaced())
-                        Button("Add Sample Item", action: model.addSampleItem)
+                        Button("Add Sample Source", action: model.addSampleItem)
                         Picker("Runtime Profile", selection: $model.selectedProfileId) {
                             Text("Phone/Tablet Online").tag("phone-tablet-online")
                             Text("Phone/Tablet Offline").tag("phone-tablet-offline")
@@ -484,7 +490,7 @@ struct SettingsScreen: View {
                     }
                     Text("Listening Map JSON")
                         .font(.headline)
-                    Text("Developer diagnostic for \(model.selectedItem.title.isEmpty ? "the selected item" : model.selectedItem.title).")
+                    Text("Developer diagnostic for \(model.selectedItem.title.isEmpty ? "what is selected" : model.selectedItem.title).")
                         .font(.caption)
                         .foregroundStyle(AppColors.secondaryText)
                     TextEditor(text: $model.listeningMapJSON)
@@ -537,7 +543,7 @@ struct SettingsScreen: View {
                 Text("\(item.title) and all of its sessions, notes, and transcripts will be deleted. This cannot be undone.")
             }
             .confirmationDialog(
-                "Delete this shared item?",
+                "Delete this?",
                 isPresented: Binding(
                     get: { pendingInboxDeletion != nil },
                     set: { if !$0 { pendingInboxDeletion = nil } }
@@ -559,13 +565,13 @@ struct SettingsScreen: View {
                     model.permanentlyDeleteRecentlyDeletedItems()
                 }
             } message: {
-                Text("All \(model.recentlyDeletedItems.count) recently deleted item\(model.recentlyDeletedItems.count == 1 ? "" : "s") and their sessions, notes, transcripts, and downloaded audio will be permanently deleted. This cannot be undone.")
+                Text("All \(model.recentlyDeletedItems.count) recently deleted \(model.recentlyDeletedItems.count == 1 ? "entry" : "entries") and their sessions, notes, transcripts, and downloaded audio will be permanently deleted. This cannot be undone.")
             }
             .alert("Reset the entire library?", isPresented: $isResetConfirmationPresented) {
                 Button("Cancel", role: .cancel) {}
                 Button("Reset Library", role: .destructive, action: model.resetAndSeed)
             } message: {
-                Text("This permanently deletes every item and its related records, then loads the sample.")
+                Text("This permanently deletes everything in your Library and its related records, then loads the sample.")
             }
             .miniPlayerKeepOut()
         }

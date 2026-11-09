@@ -46,7 +46,7 @@ struct ExperienceSourcesScreen: View {
                     quickFolderRow
                         .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
                 }
-                if list.rows.isEmpty && list.quiet.isEmpty && friends.isEmpty {
+                if model.followingShowsEmptyState(friends: friends) {
                     SMExperienceEmptyState(
                         systemImage: "dot.radiowaves.left.and.right",
                         title: "You’re not following anything yet",
@@ -93,16 +93,17 @@ struct ExperienceSourcesScreen: View {
             .toolbar {
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     Button(action: { model.refreshQuickAddFeed() }) {
-                        if model.isRefreshingQuickAddFeed { ProgressView() } else { Image(systemName: "arrow.clockwise") }
+                        Group {
+                            if model.isRefreshingQuickAddFeed { ProgressView() } else { Image(systemName: "arrow.clockwise") }
+                        }
+                        .minimumTapTarget()
                     }
-                    .frame(minWidth: 44, minHeight: 44)
                     .disabled(model.isRefreshingQuickAddFeed)
                     .accessibilityLabel("Refresh Following")
                     .accessibilityIdentifier("quickAdd.refresh.button")
                     Button(action: { isShowingFollowSheet = true }) {
-                        Image(systemName: "plus")
+                        Image(systemName: "plus").minimumTapTarget()
                     }
-                    .frame(minWidth: 44, minHeight: 44)
                     .accessibilityLabel("Follow a show")
                     .accessibilityHint("Follow a feed, browse podcasts and writers, or import from another app.")
                     .accessibilityIdentifier("sources.manageFeeds")
@@ -148,7 +149,10 @@ struct ExperienceSourcesScreen: View {
                 // Finishing an episode moves its show's row to the next unread one, so a change in what the Library
                 // holds or has finished re-reads the rows.
                 libraryCount: model.libraryItems.count,
-                finishedCount: model.libraryItems.filter(\.isCompleted).count
+                finishedCount: model.libraryItems.filter(\.isCompleted).count,
+                // An episode counts as heard before the Library calls it finished (95%, or its last two minutes;
+                // `FollowingHeardRule`), so each 1% of listening re-reads the rows too (#3691).
+                listeningSteps: model.libraryItems.reduce(0) { $0 + ($1.continuationProgressPercent ?? 0) }
             )) {
                 await model.reloadFollowingShowEntries()
             }
@@ -284,6 +288,7 @@ struct ExperienceSourcesScreen: View {
         var isRefreshing: Bool
         var libraryCount: Int
         var finishedCount: Int
+        var listeningSteps: Int
     }
 
     private struct ArtworkKey: Equatable {
@@ -523,7 +528,7 @@ struct SourceInboxRow: View {
                 if let subscription { model.unfollowSource(id: subscription.id) }
             }
         } message: {
-            Text("Items already in your Library will be kept.")
+            Text("Everything already in your Library will be kept.")
         }
     }
 

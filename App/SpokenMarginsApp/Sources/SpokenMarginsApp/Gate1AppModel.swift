@@ -216,7 +216,7 @@ final class Gate1AppModel: ObservableObject {
     /// `hideSender` and `showSender` in `Gate1AppModel+HiddenSenders.swift`.
     let hiddenSenders = HiddenSendersController(directory: HiddenSendersController.defaultDirectory())
     @Published var libraryAccessError: String?
-    @Published var recentlyDeletedItems: [LibraryItemRow] = []
+    @Published var recentlyDeletedItems: [LibraryItemRow] = [] { didSet { libraryPresentationRevision += 1 } } // a row leaving this list stales a read begun before it (#2505)
     @Published var trashUndo: TrashUndoState?
     @Published var selectedItem = ItemDetailState() {
         didSet {
@@ -838,7 +838,7 @@ final class Gate1AppModel: ObservableObject {
             return "This podcast already includes publisher chapters. A generated Listening Map is unnecessary."
         }
         if !selectedItem.chapters.isEmpty {
-            return "This item already has a Listening Map."
+            return "This \(selectedItem.sourceNoun.inSentence) already has a Listening Map."
         }
         guard let item = try? store?.loadItemSummary(id: activeItemId) else {
             return "Listening Map generation is unavailable."
@@ -931,7 +931,7 @@ final class Gate1AppModel: ObservableObject {
                 self.closeCompletedSessionIfReady()
             }
         } catch {
-            self.diagnostics["playbackProgressSyncError"] = String(describing: error)
+            self.diagnostics["playbackProgressSyncError"] = SafeErrorText.describe(error)
         }
     }
 
@@ -966,7 +966,7 @@ final class Gate1AppModel: ObservableObject {
             if completedCurrentAudio { refreshSelectedItem() } else if refreshingItem { refreshSelectedItemInBackground() } // a finished session is read by the next tap (#2505)
             diagnostics["playbackLifecycleSync"] = "saved"
         } catch {
-            diagnostics["playbackLifecycleSyncError"] = String(describing: error)
+            diagnostics["playbackLifecycleSyncError"] = SafeErrorText.describe(error)
         }
     }
 
@@ -1096,20 +1096,14 @@ final class Gate1AppModel: ObservableObject {
     }
 
     @discardableResult
-    func playMarginMoment(_ row: MarginRow) -> Bool {
+    func playMarginMoment(_ row: MarginRow, loaded: MarginMomentLoad? = nil) -> Bool {
         guard !rejectNavigationOrSessionMutationWhileRecording("play_margin_moment") else { return false }
         let previousItemID = snapshot.itemId
         do {
             let store = try requireStore()
-            guard let session = try store.loadSession(id: row.interjection.sessionId),
-                  session.itemId == row.interjection.itemId,
-                  let interjection = try store.loadInterjections(sessionId: session.id).first(where: {
-                      $0.id == row.interjection.id && $0.sessionId == session.id
-                          && $0.itemId == session.itemId && $0.status == "active"
-                  }) else {
-                throw SessionKitError.invalidCommandForState("This Margin's listening session is unavailable.")
-            }
-            let detail = try loadItemDetail(id: session.itemId, store: store)
+            // A tap passes what it read off the main thread (MarginMomentTap); other callers read here (#2505).
+            let load = try loaded ?? MarginMomentLoad.read(row: row, store: store) { try loadItemDetail(id: $0, store: store) }
+            let (session, interjection, detail) = (load.target.session, load.target.interjection, load.detail)
             if engine == nil { installEngine(try makeEngine(store: store)) }
             guard let engine else { return false }
             if blockOfflineEpisodeStart(itemId: session.itemId) { return false }
@@ -1147,8 +1141,8 @@ final class Gate1AppModel: ObservableObject {
             reportFailure("This shared Margin has no position in the episode.")
             return
         }
-        // A recording, or a written Margin's reading: asked of `SharedMarginAudio` like every other way to play one (#3412).
-        let audio = WrittenMarginReadings.audio(for: row.interjection, in: row.layer, voiceFile: resolvedApplicationSupportAssetURL(for:))
+        let audio = WrittenMarginReadings.audio(for: row.interjection, in: row.layer, voiceFile: resolvedApplicationSupportAssetURL(for:)) // a recording or a written Margin's reading, as every way to play one asks (#3412)
+        if WrittenMarginReadings.waitsThenPlays(audio, row: row, model: self) { return } // the chosen voice's reading isn't made yet
         guard let voiceURL = WrittenMarginReadings.startingRender(audio) else { return reportFailure(SharedMarginAudio.unavailableWords(for: row.interjection)) }
         endMarginMoment(); stopInterjectionAudioPlayback() // one Margin voice at a time: a paused one of yours mustn't take the resume below (#1672)
         if snapshot.itemId != itemID || !hasActiveSession { startItem(id: itemID) }
@@ -1357,23 +1351,23 @@ final class Gate1AppModel: ObservableObject {
     func start() {
         guard !blockOfflineEpisodeStart(itemId: activeItemId) else { return }
         guard !requireTermsDecisionBeforePlayback(.startCurrentItem) else { return }
-        if !hasActiveSession {
-            resetMixWithOtherAudioForNewSession()
+        hangTelemetry.labels.scoped("start.clearTheWay") {
+            if !hasActiveSession { resetMixWithOtherAudioForNewSession() }
+            stopSpeechPreviews()
+            streamingSpeechQueue.stopAndClear()
+            let playsRecording = prewarmTextAudioForPlayStart(itemId: activeItemId)
+            narrationStartupProtection.protectUpcomingStart(eligible: narrationRendersOnDevice(itemId: activeItemId, playsRecording: playsRecording))
         }
-        stopSpeechPreviews()
-        streamingSpeechQueue.stopAndClear()
-        let playsRecording = prewarmTextAudioForPlayStart(itemId: activeItemId)
-        narrationStartupProtection.protectUpcomingStart(eligible: narrationRendersOnDevice(itemId: activeItemId, playsRecording: playsRecording))
         run { engine in
-            try prepareSourceMediaPlayback(itemId: activeItemId)
+            try hangTelemetry.labels.scoped("start.prepareSource") { try prepareSourceMediaPlayback(itemId: activeItemId) }
             let started = try engine.startSession(itemId: activeItemId)
-            snapshot = try applyPreferredPlaybackRate(to: started, engine: engine)
+            snapshot = try hangTelemetry.labels.scoped("start.playbackRate") { try applyPreferredPlaybackRate(to: started, engine: engine) }
             if let store, let sessionId = snapshot.sessionId {
                 try seedUITestingSummaryInterjectionIfNeeded(sessionId: sessionId, engine: engine, store: store)
                 try seedUITestingGeneratedTimelineIfNeeded(sessionId: sessionId, engine: engine, store: store)
             }
             if let store {
-                selectedItem = try loadItemDetail(id: activeItemId, store: store)
+                selectedItem = try hangTelemetry.labels.scoped("start.itemDetail") { try loadItemDetail(id: activeItemId, store: store) }
                 refreshLibraryRowsInBackground(mustPublish: true) // #2505
             }
             reflectTextAudioPrewarmStatusIfActive(itemId: activeItemId)
@@ -1531,30 +1525,6 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    func generateListeningMap() {
-        guard !isGeneratingListeningMap else { return }
-        guard selectedItem.chapters.isEmpty, selectedItem.mediaChapters.isEmpty else {
-            reportSuccess("This item already has a Listening Map.")
-            return
-        }
-        isGeneratingListeningMap = true
-        let selectedItemRecord = try? store?.loadItemSummary(id: activeItemId)
-        if let item = selectedItemRecord,
-           item.media?.sourceType == .nativeMediaFile || item.media?.sourceType == .remoteStream {
-            isGeneratingListeningMap = false
-            prepareEpisodeMap(itemId: item.id, policy: .explicit)
-            return
-        }
-        guard selectedItemRecord?.media == nil else {
-            diagnostics["lastListeningMapMode"] = "on_device_generation_disabled"
-            isGeneratingListeningMap = false
-            reportFailure("Publisher chapters appear when available. AI-generated podcast maps are reserved for a future server-hosted option.")
-            return
-        }
-        generateLocalListeningMap(confirmation: "Generated Listening Map.")
-        isGeneratingListeningMap = false
-    }
-
     /// Why a friend's shared map couldn't be placed on this item's copy, as stored on its packets (#481).
     /// Read from the open item's detail, worked out when it loaded; the Item screen asks on every render (#2506).
     /// Nil for an item that isn't the open one.
@@ -1582,8 +1552,8 @@ final class Gate1AppModel: ObservableObject {
             }
             item.status = "ready"
             try store.saveItem(item)
-            libraryItems = try loadLibraryRows(store: store)
-            selectedItem = try loadItemDetail(id: activeItemId, store: store)
+            refreshLibraryRowsInBackground(mustPublish: true) // #2505
+            refreshSelectedItemInBackground()
             diagnostics["lastAppliedMap"] = map.id
             diagnostics["lastAppliedMapChapters"] = "\(map.chapters.count)"
             schedulePrewarmAfterPreparedTextChange(itemId: activeItemId)
@@ -1767,7 +1737,7 @@ final class Gate1AppModel: ObservableObject {
                 reportConfirmation("\(item.title) is already available offline.")
             case .some(.remoteStream):
                 guard let rawURL = item.media?.url, let remoteURL = URL(string: rawURL) else {
-                    reportFailure("This audio item does not have a downloadable source.")
+                    reportFailure("This audio does not have a downloadable source.")
                     return
                 }
                 if podcastDownloadCoordinator?.downloadNow(itemId: id) != true {
@@ -1778,7 +1748,7 @@ final class Gate1AppModel: ObservableObject {
                 reportFailure("Browser-owned audio cannot be downloaded by Spoken Margins.")
             case .none, .some(.generatedTTSRealtime), .some(.generatedTTSPrerendered):
                 guard item.hasListenableText else {
-                    reportFailure("This item does not have text that can be prepared for offline listening.")
+                    reportFailure("This source does not have text that can be prepared for offline listening.")
                     return
                 }
                 guard hasAcceptedCurrentTerms, PreparationVoice.current(for: ttsVoiceSelection, model: self) != nil else {
@@ -1842,7 +1812,7 @@ final class Gate1AppModel: ObservableObject {
         clearPendingAutoPlayTurns()
         run { engine in
             snapshot = try engine.jumpToTurnChapter(turnId: turn.id, chapterId: chapter.id)
-            refreshSelectedItem()
+            refreshSelectedItemInBackground()
             screen = .playback
             if fromTimeline {
                 recordTimelineReviewCompleted()
@@ -1862,7 +1832,7 @@ final class Gate1AppModel: ObservableObject {
             clearPendingAutoPlayTurns()
         }
         snapshot = try engine.playTurn(turnId: turnId)
-        refreshSelectedItem()
+        refreshSelectedItemInBackground()
         screen = .playback
     }
 
@@ -2272,7 +2242,7 @@ final class Gate1AppModel: ObservableObject {
                     UserDefaults.standard.set(speechRate, forKey: "speechRate")
                 }
             }
-            if command == .finishInterjection { refreshSelectedItem() } else { refreshSelectedItemAfterTransport() } // a saved Margin shows at once
+            if command == .finishInterjection { refreshSelectedItemInBackground() } else { refreshSelectedItemAfterTransport() } // a saved Margin shows a moment later, when the reload lands
             if command == .finishInterjection {
                 recordSavedInterjectionForOnboarding()
             }
@@ -2311,7 +2281,7 @@ final class Gate1AppModel: ObservableObject {
             diagnostics["streamingPresentationOffset"] = "\(presentationOffset)"
             diagnostics["streamingRecoveryOffset"] = "\(streamingSpeechQueue.currentRecoveryOffset ?? presentationOffset)"
         } catch {
-            diagnostics["streamingAnchorSyncError"] = String(describing: error)
+            diagnostics["streamingAnchorSyncError"] = SafeErrorText.describe(error)
         }
     }
 
@@ -2331,7 +2301,7 @@ final class Gate1AppModel: ObservableObject {
                 diagnostics["streamingSpeechFailure:\(observation.turnId)"] = "offset:\(observation.charOffset)"
             }
         } catch {
-            diagnostics["streamingSpeechObservationError"] = String(describing: error)
+            diagnostics["streamingSpeechObservationError"] = SafeErrorText.describe(error)
         }
     }
 
@@ -2379,15 +2349,10 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func activateListeningEditionAudio(itemId: String, timeline: TranscriptTimeline) {
-        guard let edition = try? ListeningEditionStore.application().load(itemID: itemId), let store else { return }
-        do {
-            let (proposal, projection) = try edition.audioMap(timeline: timeline)
-            try store.savePortableListeningMapProposal(proposal, itemId: itemId)
-            try store.saveResolvedListeningMapProjection(projection)
-            if selectedItem.id == itemId { refreshSelectedItemInBackground() }
-            prepareImportedLocalAudioBridges(itemId: itemId)
-            Task { await ListeningReadyNotifications.notify(itemID: itemId, title: edition.title, revision: edition.revision) }
-        } catch { diagnostics["listeningEditionAudio"] = "not_ready" }
+        Task { [weak self] in // the map is written off main (#2509)
+            guard let self, let edition = await self.saveListeningEditionAudioMap(itemId: itemId, timeline: timeline) else { return }
+            self.hangTelemetry.labels.scoped("listeningEdition.activateAudio") { self.finishListeningEditionAudio(itemId: itemId, edition: edition) }
+        }
     }
 
     // MARK: Portable listening editions and personal knowledge output
@@ -2563,7 +2528,7 @@ final class Gate1AppModel: ObservableObject {
         let loadedProfile = try loadProfile(id: selectedProfileId)
         let profile = loadedProfile.limitedToOnDeviceAI(foundationModelAvailable: localFoundationModelAvailable)
         let provider: AIProviderClient = AppleFoundationAIProvider()
-        return SessionEngine(
+        return PublicSourceChecks.attached(to: SessionEngine(
             profile: profile,
             repository: store,
             audio: try makeAudioPlaybackClient(),
@@ -2571,7 +2536,7 @@ final class Gate1AppModel: ObservableObject {
             aiProvider: provider,
             linkResolver: sourceLinkResolver ?? PublicPodcastLinkResolver(),
             textAudio: try makeTextAudioPreparationClient()
-        )
+        ))
     }
 
     private func makeTextAudioPreparationClient() throws -> TextAudioPreparationClient? {
@@ -2632,13 +2597,13 @@ final class Gate1AppModel: ObservableObject {
                         self.finishTextAudioPrewarm(itemId: itemId, status: "failed", diagnostic: "full_unavailable")
                         return
                     }
-                    self.attachPreparedTextAudio(prepared, itemId: itemId, preparedStatus: "ready", diagnosticStatus: "ready")
+                    await self.attachPreparedTextAudioOffMain(prepared, itemId: itemId, preparedStatus: "ready", diagnosticStatus: "ready") // #2509
                 case .failure(let error):
-                    self.finishTextAudioPrewarm(itemId: itemId, status: "failed", diagnostic: "full_failed:\(error.localizedDescription)")
+                    self.finishTextAudioPrewarm(itemId: itemId, status: "failed", diagnostic: "full_failed:\(SafeErrorText.describe(error))")
                 }
             }
         } catch {
-            diagnostics["textAudioPrewarm:\(itemId)"] = "failed:\(error.localizedDescription)"
+            diagnostics["textAudioPrewarm:\(itemId)"] = "failed:\(SafeErrorText.describe(error))"
             preparedTextAudioStatus = "failed"
             snapshot.preparedTextAudioStatus = "failed"
         }
@@ -2646,41 +2611,6 @@ final class Gate1AppModel: ObservableObject {
 
     static func startupPreparationCandidates(_ rows: [LibraryItemRow]) -> [String] {
         LibraryRowBuilder.startupPreparationCandidates(rows)
-    }
-
-    @discardableResult
-    func attachPreparedTextAudio(
-        _ prepared: PreparedTextAudio,
-        itemId: String,
-        preparedStatus: String = "ready",
-        diagnosticStatus: String = "ready",
-        replaceActivePlayback: Bool = false
-    ) -> Bool {
-        do {
-            if engine == nil, let store {
-                installEngine(try makeEngine(store: store))
-            }
-            guard let engine else { return false }
-            snapshot = try engine.attachPreparedTextAudio(
-                itemId: itemId,
-                prepared: prepared,
-                replaceActivePlayback: replaceActivePlayback
-            )
-            if let store {
-                refreshLibraryRowsInBackground(mustPublish: true) // #2505: a finished prewarm is no reason to freeze the screen
-                if activeItemId == itemId { refreshSelectedItemInBackground() } else if selectedItem.id == itemId { selectedItem = try loadItemDetail(id: itemId, store: store) }
-            }
-            activateListeningEditionAudio(itemId: itemId, timeline: prepared.timeline)
-            diagnostics["textAudioPrewarm:\(itemId)"] = diagnosticStatus
-            preparedTextAudioStatus = preparedStatus
-            snapshot.preparedTextAudioStatus = preparedStatus
-            return true
-        } catch {
-            diagnostics["textAudioPrewarm:\(itemId)"] = "attach_failed:\(error.localizedDescription)"
-            preparedTextAudioStatus = "failed"
-            snapshot.preparedTextAudioStatus = "failed"
-            return false
-        }
     }
 
     private func finishTextAudioPrewarm(itemId: String, status: String, diagnostic: String) {
@@ -2778,14 +2708,12 @@ final class Gate1AppModel: ObservableObject {
                         try SourceTranscriptParsing.transcriptTimeline(from: data, link: link, itemId: itemId, durationMs: durationMs)
                     }.value
                     if let timeline = parsed, !timeline.segments.isEmpty {
-                        await MainActor.run {
-                            self.finishDiscoveredSourceTranscript(timeline, itemId: itemId, linkType: link.type)
-                        }
+                        await self.finishDiscoveredSourceTranscript(timeline, itemId: itemId, linkType: link.type)
                         return
                     }
                     lastFailure = "empty:\(link.type)"
                 } catch {
-                    lastFailure = "\(link.type):\(error.localizedDescription)"
+                    lastFailure = "\(link.type):\(SafeErrorText.describe(error))"
                 }
             }
             await MainActor.run {
@@ -2842,46 +2770,12 @@ final class Gate1AppModel: ObservableObject {
                     itemId: item.id,
                     durationMs: item.media?.durationMs
                 )
-                await MainActor.run {
-                    self.finishFullSourceTranscription(timeline, itemId: item.id)
-                }
+                await self.finishFullSourceTranscription(timeline, itemId: item.id)
             } catch {
                 await MainActor.run {
                     self.failFullSourceTranscription(itemId: item.id, error: error)
                 }
             }
-        }
-    }
-
-    func attachSourceTranscriptTimeline(_ timeline: TranscriptTimeline, itemId: String) {
-        let shouldGeneratePendingMap = pendingMapGenerationItemId == itemId
-        run { engine in
-            snapshot = try engine.attachTranscriptTimeline(itemId: itemId, timeline: timeline)
-            if store != nil {
-                refreshLibraryRowsInBackground(mustPublish: true) // #2505
-                // Transcript imports can finish long after a shared podcast was
-                // added. They must never retarget the playback screen away from
-                // the item/session that is still active.
-                if activeItemId == itemId { // a pending map generation reads selectedItem.chapters next, so it keeps the direct read
-                    if shouldGeneratePendingMap, let store { selectedItem = try loadItemDetail(id: itemId, store: store) } else { refreshSelectedItemInBackground() }
-                }
-            }
-            diagnostics["sourceTranscriptionStatus"] = "complete"
-            diagnostics["sourceTranscriptionItem"] = itemId
-            if activeItemId == itemId {
-                sourceTranscriptStatus = "ready"
-                snapshot.sourceTranscriptStatus = "ready"
-            }
-        }
-        if shouldGeneratePendingMap {
-            pendingMapGenerationItemId = nil
-            generateListeningMap()
-        }
-        retrySourceWindowContexts(itemId: itemId)
-        if let store { CommunityMapUploadService.shared.transcriptAttached(itemId: itemId, store: store, localAudio: { [weak self] in self?.importedPodcastRecipientLocalURLs[$0] ?? self?.podcastDownloadCoordinator?.validatedLocalURL(for: $0) }) { [weak self] in self?.diagnostics["communityMapUpload"] = $0 } }
-        if let localURL = importedPodcastRecipientLocalURLs[itemId]
-            ?? podcastDownloadCoordinator?.validatedLocalURL(for: itemId) {
-            resolveImportedPodcastCommentary(itemId: itemId, localURL: localURL)
         }
     }
 
@@ -2934,7 +2828,7 @@ final class Gate1AppModel: ObservableObject {
                 layer.revealMode = enabled ? .guided : .companion
                 try store.saveImportedCommentaryLayer(layer)
             }
-            refreshSelectedItem()
+            refreshSelectedItemInBackground() // #2505
             reportConfirmation(enabled
                 ? "Shared Margins will play automatically after their cue."
                 : "A tone will mark each shared Margin and the episode will play on. Tap Listen to hear it.")
@@ -2952,7 +2846,7 @@ final class Gate1AppModel: ObservableObject {
             guard var layer = try store.loadImportedCommentaryLayer(id: layerID) else { return }
             mutation(&layer)
             try store.saveImportedCommentaryLayer(layer)
-            refreshSelectedItem()
+            refreshSelectedItemInBackground() // #2505
         } catch {
             reportFailure(error, context: "Shared Margin settings could not be saved")
         }
@@ -3026,7 +2920,7 @@ final class Gate1AppModel: ObservableObject {
         do {
             return try setting.resolvedURL()
         } catch {
-            diagnostics["\(setting.bookmarkKey)Error"] = String(describing: error)
+            diagnostics["\(setting.bookmarkKey)Error"] = SafeErrorText.describe(error)
             return nil
         }
     }

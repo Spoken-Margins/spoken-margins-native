@@ -1,0 +1,53 @@
+# Saves App Store Connect's view of the builds for scripts/sm_live.py (#3872). Cloud sessions hold no App Store Connect
+# key, so this job reads it for them: which builds exist and whether internal or external tester groups have them.
+#
+# Safety:
+# - schedule and workflow_dispatch run the default branch's copy of this file, and the `phone-build` environment only
+#   lets `main` use the key. No PR code runs here.
+# - The script only sends GET requests.
+# - The artifact is public, so it holds build numbers, states and group counts. No group names, no testers (AGENTS.md).
+# - sm_live.py believes only an artifact from a run of this repository's own `main`.
+#
+# Cost and catch: about 20 free hosted seconds, 4 times a day, no tokens. It catches an agent telling the owner a build's
+# tester group from a stale note: on 2026-11-08 "Build 36 is internal" became a check he had already done. Waste signal:
+# a month with no one running sm_live.py, or the owner still correcting the same fact.
+name: live-state
+
+on:
+  schedule:
+    - cron: '17 */6 * * *'  # a jittered minute, not :00
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-state
+  cancel-in-progress: false
+
+jobs:
+  read:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: phone-build
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/sm_live.py
+            scripts/release_gate.py
+          sparse-checkout-cone-mode: false
+      - name: Read App Store Connect
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: python3 scripts/sm_live.py --write-asc asc-builds.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: asc-builds
+          path: asc-builds.json
+          retention-days: 7
+          if-no-files-found: error

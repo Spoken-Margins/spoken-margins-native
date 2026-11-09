@@ -29,14 +29,28 @@ public final class RecordingSessionPreparation<Context: Sendable>: @unchecked Se
         public let context: Context
         /// Whether the preparation changed the session (false: it was skipped, or the switch threw).
         public let applied: Bool
+        /// Why the switch threw, as `SafeErrorText` (domain and code, never a message); nil when it didn't throw.
+        /// `beginRecording` redoes the switch itself, so without this a failure the preparation met was gone (#3633).
+        public let failure: String?
         /// How long the switch took on the preparation queue.
         public let elapsedMs: Int?
+    }
+
+    /// What `apply` did: whether it left the session in the recording configuration, and why it threw if it did.
+    public struct Outcome: Sendable, Equatable {
+        public var applied: Bool
+        public var failure: String?
+        public init(applied: Bool, failure: String? = nil) {
+            self.applied = applied
+            self.failure = failure
+        }
     }
 
     private struct Pending {
         let generation: UInt64
         let context: Context
         var applied = false
+        var failure: String?
         /// Any preparation since the first tap left the session switched, including one a second tap superseded
         /// while it ran. This, not `applied`, is what `abandon` lets go of.
         var sessionChanged = false
@@ -72,6 +86,15 @@ public final class RecordingSessionPreparation<Context: Sendable>: @unchecked Se
         apply: @escaping @Sendable (Context) -> Bool,
         then: @escaping @MainActor @Sendable () -> Void
     ) {
+        prepare(readContext: readContext, applyReportingFailure: { Outcome(applied: apply($0)) }, then: then)
+    }
+
+    /// As `prepare`, for an `apply` that says why it failed, so the claim can carry it to the diagnostics (#3633).
+    public func prepare(
+        readContext: () -> Context,
+        applyReportingFailure apply: @escaping @Sendable (Context) -> Outcome,
+        then: @escaping @MainActor @Sendable () -> Void
+    ) {
         let earlier = lock.withLock { pending?.context }
         let context = earlier ?? readContext()
         let mine: UInt64 = lock.withLock {
@@ -85,7 +108,8 @@ public final class RecordingSessionPreparation<Context: Sendable>: @unchecked Se
             // Skipped when a newer `prepare` or an `abandon` came before the queue reached it.
             if lock.withLock({ generation == mine && pending?.generation == mine }) {
                 let start = clock()
-                let applied = apply(context)
+                let outcome = apply(context)
+                let applied = outcome.applied
                 let elapsedMs = max(0, Int(((clock() - start) * 1_000).rounded()))
                 lock.withLock {
                     // Recorded even when an `abandon` is waiting on this queue, or a newer tap superseded this one
@@ -93,6 +117,7 @@ public final class RecordingSessionPreparation<Context: Sendable>: @unchecked Se
                     if applied { pending?.sessionChanged = true }
                     guard pending?.generation == mine else { return }
                     pending?.applied = applied
+                    pending?.failure = outcome.failure
                     pending?.finished = true
                     pending?.elapsedMs = elapsedMs
                 }
@@ -109,7 +134,7 @@ public final class RecordingSessionPreparation<Context: Sendable>: @unchecked Se
         return lock.withLock {
             defer { pending = nil }
             guard let pending, pending.generation == generation else { return nil }
-            return Claim(context: pending.context, applied: pending.applied, elapsedMs: pending.elapsedMs)
+            return Claim(context: pending.context, applied: pending.applied, failure: pending.failure, elapsedMs: pending.elapsedMs)
         }
     }
 

@@ -66,7 +66,7 @@ enum LiveSessionActivities {
                 pushType: nil
             )
         } catch {
-            noteStartOutcome("failed:\(error.localizedDescription)")
+            noteStartOutcome("failed:\(SafeErrorText.describe(error))")
             return
         }
         // The live session takes the Lock Screen (#2962). iOS decides which of an app's cards shows first, and a
@@ -74,7 +74,7 @@ enum LiveSessionActivities {
         // the session runs; `Gate2LiveActivityController` holds it back and puts it up again after the session.
         Task {
             let ended = await endItemCards()
-            noteStartOutcome("started; ended \(ended) item card(s)")
+            noteStartOutcome("started; ended \(ended) player card(s)")
         }
     }
 

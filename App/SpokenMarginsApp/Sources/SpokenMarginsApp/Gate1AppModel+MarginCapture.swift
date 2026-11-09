@@ -32,10 +32,13 @@ extension Gate1AppModel {
             holdRecorder: { [weak self] in self?.engine?.pauseRecordingForReadyCue() },
             releaseRecorder: { [weak self] seconds in self?.engine?.resumeRecordingAfterReadyCue(after: seconds) }
         )
+        gate2CompactControls.remoteCommandArrivalHandler = { [weak self] name in self?.noteRemoteCommandArrival(name) }
+        headphoneEndGestureMonitor.begin()
     }
 
     func endCaptureWatch() {
         MarginOutcomeCuePlayer.shared.stop() // a dead microphone's repeating cue ends with the recording (#1977)
+        headphoneEndGestureMonitor.stop()
         captureWatcher.stop()
         recordingCaptureHealth = .capturing
         gate2CompactControls.setMicrophone(.capturing)
@@ -45,7 +48,7 @@ extension Gate1AppModel {
         let wasCapturing = recordingCaptureHealth == .capturing
         recordingCaptureHealth = health
         gate2CompactControls.setMicrophone(health.liveActivityMicrophone)
-        var fields = engine?.recordingCaptureDiagnostics() ?? [:]
+        var fields = hangTelemetry.labels.scoped("capture.healthDiagnostics") { engine?.recordingCaptureDiagnostics() ?? [:] }
         fields["health"] = health.diagnosticName
         fields["restarts"] = String(restarts)
         if let readyCue = captureWatcher.readyCueResult { fields["readyCue"] = readyCue }
@@ -72,8 +75,15 @@ extension Gate1AppModel {
     /// The listener tapped Try again on a recording screen that says the microphone isn't recording.
     func retryMicrophone() {
         guard snapshot.isRecording else { return }
-        // The new recorder starts inside `retry()`: end the microphone cue first, or its tail opens the new file.
-        MarginOutcomeCuePlayer.shared.stop()
+        // The new recorder starts inside `retry()`: the microphone cue has to have ended first, or its tail opens the
+        // new file. Stopping it can wait on the audio system, so the restart waits for the stop, not the main thread.
+        captureWatcher.retry(afterStopping: { MarginOutcomeCuePlayer.shared.stop(then: $0) }) { [weak self] in
+            self?.retryMicrophoneOnceCueHasStopped()
+        }
+    }
+
+    private func retryMicrophoneOnceCueHasStopped() {
+        guard snapshot.isRecording else { return }
         if captureWatcher.retry() {
             lastError = nil
         } else {
@@ -152,22 +162,46 @@ extension Gate1AppModel {
         diagnostics["outcomeCue"] = MarginOutcomeCuePlayer.shared.play(cue)
     }
 
+    /// The same cue, started without waiting for the audio system: reading the session and starting the player wait
+    /// on the system's audio service, and the haptic and the message must not wait behind them. Cues and stops run
+    /// in order on the player's own queue, so a later stop still ends this cue; the outcome is written to the
+    /// diagnostics when it lands. The cue is still never configured against the audio session.
+    private func startOutcomeCue(_ cue: MarginOutcomeCue) {
+        if engine?.recordingReleasedAudioSession() == true {
+            MarginOutcomeCuePlayer.shared.stop()
+            diagnostics["outcomeCue"] = "skipped:session_released"
+            return
+        }
+        MarginOutcomeCuePlayer.shared.play(cue) { [weak self] result in
+            self?.diagnostics["outcomeCue"] = result
+        }
+    }
+
     /// Reports interrupted, unexpectedly short or unverified saved audio without claiming a capture cause.
+    /// `finalizedRecordingIntegrity()` only hands back what the recorder measured when it stopped, so the verdict
+    /// is known here with no file read; the labels name which step a stall is in.
     func reportMarginSaved(_ verdict: MarginCaptureSupervisor.SaveVerdict) {
-        let integrity = engine?.finalizedRecordingIntegrity()
-        if let integrity { recordDeveloperDiagnostic("margin.capture.finalized", integrity.diagnosticFields) }
+        let labels = hangTelemetry.labels
+        let integrity = labels.scoped("marginSave.integrity") { () -> FinalizedRecordingIntegrity? in
+            let integrity = engine?.finalizedRecordingIntegrity()
+            if let integrity { recordDeveloperDiagnostic("margin.capture.finalized", integrity.diagnosticFields) }
+            return integrity
+        }
+        let haptic: HapticKind, cue: MarginOutcomeCue, message: String, isWarning: Bool
         if let integrity, integrity.fileMs == nil {
-            AppHaptics.play(.warning)
-            playOutcomeCue(.savedMaybeCut)
-            reportWarning("Margin saved, but its recording could not be checked. Please play it back.")
+            (haptic, cue, isWarning) = (.warning, .savedMaybeCut, true)
+            message = "Margin saved, but its recording could not be checked. Please play it back."
         } else if (integrity?.qualifying(verdict) ?? verdict) == .saveCutShort {
-            AppHaptics.play(.warning)
-            playOutcomeCue(MarginOutcomeCue(verdict: .saveCutShort))
-            reportWarning("Margin saved, but part of it may be missing.")
+            (haptic, cue, isWarning) = (.warning, MarginOutcomeCue(verdict: .saveCutShort), true)
+            message = "Margin saved, but part of it may be missing."
         } else {
-            AppHaptics.play(.saved)
-            playOutcomeCue(MarginOutcomeCue(verdict: .save))
-            reportConfirmation("Margin saved. Transcription is continuing in the background.")
+            (haptic, cue, isWarning) = (.saved, MarginOutcomeCue(verdict: .save), false)
+            message = "Margin saved. Transcription is continuing in the background."
+        }
+        labels.scoped("marginSave.haptic") { AppHaptics.play(haptic) }
+        labels.scoped("marginSave.cue") { startOutcomeCue(cue) }
+        labels.scoped("marginSave.status") {
+            if isWarning { reportWarning(message, savesMargin: true) } else { reportConfirmation(message, savesMargin: true) }
         }
     }
 
@@ -306,6 +340,8 @@ extension Gate1AppModel {
             }
         }
         guard !snapshot.isRecording else { return }
+        // The route and session switch of a start that failed, so an AirPlay or Bluetooth cause shows (#3633).
+        if let engine { recordDeveloperDiagnostic("margin.capture.startFailed", engine.recordingCaptureDiagnostics()) }
         abandonRecordingSessionPreparation() // a start that failed before the recorder claimed the switch
         resumeSourcePausedOnTap() // a start that failed before the engine took over the pause
         clearRecordingPresentation()
@@ -423,7 +459,7 @@ extension Gate1AppModel {
         WrittenMarginDraft(
             capture: capture,
             text: "",
-            itemTitle: (try? store.loadItemSummary(id: capture.itemId))?.title ?? "Current item",
+            itemTitle: (try? store.loadItemSummary(id: capture.itemId))?.title ?? "Current",
             targetDescription: capture.targetType == .item ? "Source" : (capture.targetType == .assistantTurn ? "Assistant response" : "Margin summary"),
             progressPercent: capture.roughPercent,
             replyChoice: replyChoice
@@ -484,10 +520,10 @@ extension Gate1AppModel {
             refreshMarginRowsInBackground(forItem: draft.capture.itemId)
             if draft.priorWasPlaying && snapshot.status == .paused {
                 AppHaptics.play(.warning)
-                reportWarning("Margin saved. Playback is paused; tap Play to continue.")
+                reportWarning("Margin saved. Playback is paused; tap Play to continue.", savesMargin: true)
             } else {
                 AppHaptics.play(.saved)
-                reportConfirmation("Written Margin saved.")
+                reportConfirmation("Written Margin saved.", savesMargin: true)
             }
         } catch {
             marginCapture.setDraftText(text)

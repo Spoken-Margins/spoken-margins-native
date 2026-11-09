@@ -32,7 +32,7 @@ extension Gate1AppModel {
             itemId = item.id
             finalPlaced = placed
             if let transcript {
-                attachSourceTranscriptTimeline(Self.timeline(for: transcript), itemId: itemId)
+                await attachSourceTranscriptTimelineOffMain(Self.timeline(for: transcript), itemId: itemId)
             }
             linked = try await StoreReader(store).readInOrder(LiveSessionWrites.orderKey) {
                 try LiveSessionMarginPlacer.placeLinked(placed, itemId: itemId, repository: $0)

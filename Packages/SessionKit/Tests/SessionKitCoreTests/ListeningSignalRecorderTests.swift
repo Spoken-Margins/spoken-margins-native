@@ -208,8 +208,13 @@ final class ListeningSignalRecorderTests: XCTestCase {
         let line = try Self.encodedShareRow()
         try Data().write(to: log)
         XCTAssertTrue(ListeningSignalRecorder.read(log).isEmpty, "the file exists but holds no row: the old wait would have stopped here")
-        DispatchQueue.global().asyncAfter(deadline: .now() + 0.1) { try? line.prefix(line.count / 2).write(to: log) }
-        DispatchQueue.global().asyncAfter(deadline: .now() + 0.2) { try? line.write(to: log) }
+        // One block, so the half line is always written before the whole one. Two timers on the concurrent global
+        // queue can fire together and run in either order, leaving half a line for good (#3590).
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.1) {
+            try? line.prefix(line.count / 2).write(to: log)
+            Thread.sleep(forTimeInterval: 0.1)
+            try? line.write(to: log)
+        }
         XCTAssertEqual(Self.signalsOnceWritten(log).map(\.event), [.share])
     }
 

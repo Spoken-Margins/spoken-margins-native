@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import test_lane_runner  # noqa: E402
 from test_lane_runner import FakeGitHub, HEAD, MERGE, comment, lane, runner_report  # noqa: E402
 from test_lane_t3_first import RealGitLaneTests  # noqa: E402
+import workflow_yaml  # noqa: E402
 
 PASSED = ('PASS', 'no simulator (compile only)', 'host tests (--plan fast): passed', [])
 WORKFLOW = (Path(__file__).resolve().parents[2] / '.github/workflows/lane.yml').read_text()
@@ -199,6 +200,41 @@ class HandOffAfterTheT3PassTests(RealGitLaneTests):
         self.assertIn('Lane report pr5-r43-auto — PASS', released)
         self.assertIn('merged into main as', released)
 
+    def test_the_hosted_release_run_never_hands_off_again_and_waits_for_the_hosted_checks(self):
+        # #3501: where a hand-off lands. Handing off here would dispatch itself in a loop.
+        github = self.github()
+        self.held_run(github)
+        self.move_next_by_a_build_input()
+        self.t3_passes(github)
+        github.hand_off_release = mock.Mock(return_value='https://example.test/runs')
+        with mock.patch.object(lane, 'hosted_rest_checks', return_value=(None, 'still running')) as look, \
+                mock.patch.dict('os.environ', {'LANE_HOSTED_FAST': 'on', 'LANE_HOSTED_MAC_REST': 'on'}), \
+                mock.patch.object(lane, 'run_auto', return_value=('PASS', 'hosted checks', 'x', [])) as run, \
+                mock.patch.object(lane, 'hosted_check_set', return_value=({}, '')):
+            released = lane.merge_after_t3(github, 5, 'main', self.head, 'pr5-r43-auto', self.evidence / 'hosted',
+                                           self.rev(self.tree, 'origin/main'), 'handed to hosted Linux',
+                                           hosted=True, waits_here=True)
+        github.hand_off_release.assert_not_called()
+        self.assertFalse((released or '').startswith(lane.HANDED_OFF), released)
+        self.assertEqual(look.call_args.kwargs['wait'], 0)  # a first look, which merges at once if they stand
+        # They don't stand yet, so run_auto does the real wait: hosted, with no wait of zero.
+        self.assertIs(run.call_args.kwargs['hosted'], True)
+        self.assertNotIn('rest_wait', run.call_args.kwargs)
+
+    def test_the_hosted_automerge_job_still_hands_the_wait_to_the_release_run(self):
+        github = self.github()
+        self.held_run(github)
+        self.move_next_by_a_build_input()
+        self.t3_passes(github)
+        github.hand_off_release = mock.Mock(return_value='https://example.test/runs')
+        with mock.patch.object(lane, 'hosted_rest_checks', return_value=(None, 'still running')), \
+                mock.patch.dict('os.environ', {'LANE_HOSTED_FAST': 'on', 'LANE_HOSTED_MAC_REST': 'on'}), \
+                mock.patch.object(lane, 'hosted_check_set', return_value=({}, '')):
+            released = lane.merge_after_t3(github, 5, 'main', self.head, 'pr5-r43-auto', self.evidence / 'hosted',
+                                           self.rev(self.tree, 'origin/main'), 'started by the T3 PASS', hosted=True)
+        github.hand_off_release.assert_called_once()
+        self.assertIn('goes to hosted Linux', released)
+
     def test_a_failed_hand_off_tests_here_as_before(self):
         # A PR whose merge ref predates this change has no actions: write, and a base without the release job
         # refuses the dispatch: the lane job then does what it did before #1209.
@@ -268,7 +304,7 @@ class MainWiringTests(unittest.TestCase):
         self.t3_job(github, '', 'Lane report pr5-r42-auto — FAIL\n')
         self.assertIn('lane:done', github.labeled)  # a release that didn't merge still wakes the dispatcher
 
-    def release_job(self, github, released, *, head=HEAD, merged_state='open', repo='o/r'):
+    def release_job(self, github, released, *, head=HEAD, merged_state='open', repo='o/r', extra=()):
         self.role = 'build'
         with tempfile.TemporaryDirectory() as outputs:
             out = Path(outputs) / 'out'
@@ -278,7 +314,8 @@ class MainWiringTests(unittest.TestCase):
                 github.pull = lambda: {'state': merged_state, 'head': {'sha': HEAD, 'repo': {'full_name': repo}},
                                        'base': {'ref': 'main'},
                                        'labels': [{'name': n} for n in sorted(github.labels)]}
-                self.run_main(github, head, 'PASS', '--mode', 'release', '--t3-report', 'https://example.test/t3')
+                self.run_main(github, head, 'PASS', '--mode', 'release', '--t3-report', 'https://example.test/t3',
+                              *extra)
             outcome = dict(line.split('=', 1) for line in out.read_text().splitlines()) if out.exists() else {}
         return release, outcome
 
@@ -292,6 +329,26 @@ class MainWiringTests(unittest.TestCase):
         self.assertIn('https://example.test/t3', args[7])
         self.assertEqual(outcome, {'reported': 'true', 'verdict': 'FAIL', 'held': 'false'})  # for the Verdict step's warning
         self.assertEqual(github.labeled, ['lane:done'])
+
+    def test_the_release_job_tells_the_workflow_a_hold_from_a_lane_that_tested_nothing(self):
+        # The status on the PR's head reads this: a hold keeps it green, as in the automerge job (#2596).
+        for said, held in (('not merged: it has no Claude audit of its head.', 'true'),
+                           ('the hosted checks do not stand: "hosted fast: Mac rest" ended cancelled', 'false')):
+            with self.subTest(held=held):
+                github = FakeGitHub(labels=('automerge',))
+                _, outcome = self.release_job(github, f'Lane report pr5-r42-auto — INCONCLUSIVE\nran: nothing\n{said}\n')
+                self.assertEqual(outcome, {'reported': 'true', 'verdict': 'INCONCLUSIVE', 'held': held})
+
+    def test_the_hosted_release_job_waits_on_linux_with_no_mac_setup(self):
+        # #3501: 87 T3 PASSes in a week queued for the one build runner; on 2026-11-05 that stopped them for hours.
+        github = FakeGitHub(labels=('automerge',))
+        with mock.patch.object(lane, 'link_tools') as tools:
+            release, _ = self.release_job(github, 'Lane report pr5-r42-auto — FAIL\nran: x\n', extra=('--hosted',))
+        tools.assert_not_called()
+        args, kwargs = release.call_args
+        self.assertEqual((kwargs['hosted'], kwargs['waits_here']), (True, True))
+        self.assertNotIn('room', kwargs)
+        self.assertNotIn('hand_off', kwargs)
 
     def test_a_merged_release_leaves_the_labels_alone(self):
         github = FakeGitHub(labels=('automerge',))
@@ -327,6 +384,19 @@ class MainWiringTests(unittest.TestCase):
         self.assertIsNone(lane.lane_report_verdict(note))
         self.assertTrue(lane.is_automerge_comment(note))
 
+    def test_the_audit_s_dispatch_for_a_fork_s_pr_or_another_base_runs_nothing(self):
+        # #2170: the automerge job's `if` checks these for a pull_request event; a dispatch has no such event.
+        for pull_repo, base in (('someone/fork', 'main'), ('o/r', 'next')):
+            with self.subTest(repo=pull_repo, base=base):
+                github = FakeGitHub(labels=('automerge',))
+                github.pull = lambda: {'state': 'open', 'head': {'sha': HEAD, 'repo': {'full_name': pull_repo}},
+                                       'base': {'ref': base}, 'labels': [{'name': 'automerge'}]}
+                with mock.patch.object(lane, 'run_auto') as run, \
+                        mock.patch.dict('os.environ', {'GITHUB_EVENT_NAME': 'workflow_dispatch'}):
+                    self.role = 'build'
+                    self.run_main(github, HEAD, 'PASS', '--mode', 'auto')
+                run.assert_not_called()
+
     def test_a_dispatch_for_a_fork_s_pr_or_another_base_runs_nothing(self):
         release, _ = self.release_job(FakeGitHub(labels=('automerge',)), None, repo='someone/fork')
         release.assert_not_called()
@@ -356,16 +426,81 @@ class GitHubDispatchTests(unittest.TestCase):
         self.assertTrue(where.startswith('https://github.com/o/r/actions/workflows/lane.yml'), where)
 
 
+class VerdictOnThePrHeadTests(unittest.TestCase):
+    """#3501 audit: a dispatched run's own check sits on the trunk's tip, so a release run that could not get the hosted
+    checks left the PR with nothing red. The step that fixes it runs here for real, against a fake gh."""
+
+    def run_step(self, *, reported='true', verdict='', held='false', job='success', pull_head=HEAD, post_fails=False):
+        import yaml
+        steps = yaml.safe_load(WORKFLOW)['jobs']['release']['steps']
+        step = next(step for step in steps if step.get('name') == "Put the verdict on the PR's head")
+        self.assertEqual(step['if'], 'always()')
+        with tempfile.TemporaryDirectory() as temp:
+            temp, posts = Path(temp), Path(temp) / 'posts'
+            fake = temp / 'gh'
+            fake.write_text('#!/bin/bash\n'
+                            'case "$*" in\n'
+                            f'  *pulls/5*) echo {pull_head} ;;\n'
+                            f'  *) echo "$*" >> "{posts}"; exit {1 if post_fails else 0} ;;\n'
+                            'esac\n')
+            fake.chmod(0o755)
+            ran = subprocess.run(['bash', '-e', '-c', step['run']], capture_output=True, text=True, env={
+                'PATH': f'{temp}:/usr/bin:/bin', 'GH_REPO': 'o/r', 'PR_NUMBER': '5', 'EVENT_HEAD': HEAD,
+                'RUN_URL': 'https://example.test/run', 'REPORTED': reported, 'VERDICT': verdict, 'HELD': held,
+                'JOB_STATUS': job})
+            self.assertEqual(ran.returncode, 0, ran.stderr)  # never red on the trunk's tip
+            return (posts.read_text() if posts.exists() else ''), ran.stdout
+
+    def test_each_outcome_puts_the_right_state_on_the_head(self):
+        for name, kwargs, state in (
+                ('a pass clears an earlier red', {'verdict': 'PASS'}, 'success'),
+                ('a hold is not a failing PR', {'verdict': 'INCONCLUSIVE', 'held': 'true'}, 'success'),
+                ('checks it could not get', {'verdict': 'INCONCLUSIVE'}, 'failure'),
+                ('a failed check', {'verdict': 'FAIL'}, 'failure'),
+                ('stopped before reporting', {'reported': '', 'job': 'failure'}, 'failure'),
+                ('cancelled or timed out', {'reported': '', 'job': 'cancelled'}, 'failure')):
+            with self.subTest(name):
+                posts, _ = self.run_step(**kwargs)
+                self.assertIn(f'repos/o/r/statuses/{HEAD}', posts)
+                self.assertIn(f'state={state}', posts)
+                self.assertIn('target_url=https://example.test/run', posts)
+
+    def test_a_run_with_nothing_to_release_or_a_pr_that_moved_on_posts_nothing(self):
+        self.assertEqual(self.run_step(reported='')[0], '')
+        self.assertEqual(self.run_step(verdict='FAIL', pull_head='c' * 40)[0], '')
+
+    def test_a_status_it_cannot_post_is_a_warning_not_a_red_trunk(self):
+        posts, out = self.run_step(verdict='FAIL', post_fails=True)
+        self.assertIn('state=failure', posts)
+        self.assertIn('::warning', out)
+
+    def test_the_job_may_post_statuses(self):
+        # The job's token, not the workflow's: a `permissions:` block on the release job replaces the workflow's, and
+        # the verdict-on-PR-head step would then 403 on a real run (#3704).
+        workflow = workflow_yaml.load('lane.yml')
+        self.assertEqual(workflow_yaml.effective_permissions(workflow, 'release').get('statuses'), 'write')
+        step = next(step for step in workflow['jobs']['release']['steps']
+                    if step.get('name') == "Put the verdict on the PR's head")
+        self.assertIn('statuses/', step['run'])
+
+
 class WorkflowTests(unittest.TestCase):
     def setUp(self):
         self.assertIn('\n  release:\n', WORKFLOW)
         self.release = WORKFLOW.split('\n  release:\n')[1].split('\n  # Tell the coordinator')[0]
 
-    def test_a_dispatch_starts_only_the_release_job_on_a_build_runner(self):
+    def test_a_dispatch_starts_only_the_release_job_on_hosted_linux_or_a_build_runner(self):
         self.assertRegex(WORKFLOW, r'\n  workflow_dispatch:\n    inputs:\n      pr:\n[\s\S]*?\n      head:\n[\s\S]*?\n      t3:\n')
         self.assertIn("github.event_name == 'workflow_dispatch'", self.release)
-        self.assertIn('runs-on: [self-hosted, macOS, sm-lane-build]', self.release)
-        self.assertIn('--mode release', self.release)
+        # #3501: hosted Linux once all three hosted checks are on, and the build runner only with them off.
+        switches = "vars.LANE_HOSTED_FAST == 'on' && vars.LANE_HOSTED_MAC_REST == 'on'"
+        self.assertIn("runs-on: ${{ fromJSON((" + switches + ") && '[\"ubuntu-latest\"]' || '[\"self-hosted\",\"macOS\",\"sm-lane-build\"]') }}",
+                      self.release)
+        self.assertIn(f"HOSTED_ARGS: ${{{{ ({switches}) && '--hosted' || '' }}}}", self.release)
+        self.assertIn('--mode "$MODE" --t3-report "$T3_REPORT" $HOSTED_ARGS', self.release)
+        self.assertIn('--mode "$MODE" $HOSTED_ARGS', self.release)  # the tidy step too
+        # A T3 PASS's hand-off, unless the hosted audit asked for the run a clean audit released (#2170).
+        self.assertIn("MODE: ${{ inputs.auto == 'true' && 'auto' || 'release' }}", self.release)
         self.assertIn('group: lane-release-pr-', self.release)  # never replaces a pending automerge run
         # The lane and automerge jobs need a pull_request, so a dispatch never starts a T3 or a second automerge run.
         for job in ('lane', 'automerge'):
@@ -403,17 +538,19 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(tidy.get('id'), 'tidy')
 
     def test_the_lane_job_may_dispatch(self):
-        lane_job = WORKFLOW.split('\n  lane:\n')[1].split('\n  automerge:\n')[0]
-        self.assertIn('actions: write', lane_job)
-        for permission in ('contents: write', 'pull-requests: write', 'issues: write'):
-            self.assertIn(permission, lane_job)  # a job's permissions replace the workflow's
+        # A job's permissions replace the workflow's, so what counts is the lane job's effective block.
+        granted = workflow_yaml.effective_permissions(workflow_yaml.load('lane.yml'), 'lane')
+        for permission in ('actions', 'contents', 'pull-requests', 'issues'):
+            self.assertEqual(granted.get(permission), 'write', permission)
 
     def test_dispatched_runs_keep_a_name_dedupe_ignores(self):
-        name = WORKFLOW.split('run-name: >-\n')[1].split('\non:')[0]
+        name = workflow_yaml.load('lane.yml')['run-name']
         # A pull_request run's number and head come first, so its name, which lane_dedupe.py parses, is unchanged.
         self.assertIn('pr=${{ github.event.pull_request.number || inputs.pr }}', name)
         self.assertIn('head=${{ github.event.pull_request.head.sha || inputs.head }}', name)
-        # Dedupe and the audit's re-arm check list only pull_request runs, so a release run never counts as one.
+        # Dedupe and the audit's re-arm check list only pull_request runs, so a release run never counts as one. This
+        # one stays a source check (#3704): the line is the query string of dedupe's own `gh api` call, and running it
+        # would need a stand-in for GitHub that answers whatever the string says.
         dedupe = (Path(__file__).resolve().parents[1] / 'lane_dedupe.py').read_text()
         self.assertIn('lane.yml/runs?event=pull_request&', dedupe)
 

@@ -256,7 +256,7 @@ struct SMExperienceTypeCover: View {
     private var foreground: Color {
         switch stableSeed {
         case 0: AppColors.evergreen
-        case 1: AppColors.ochre
+        case 1: AppColors.ochreText
         default: AppColors.plum
         }
     }
@@ -297,6 +297,51 @@ extension View {
     }
 }
 
+/// A text field whose placeholder is drawn in the app's secondary text colour. SwiftUI's default placeholder is a
+/// system grey: 1.73:1 on the input fill in light mode and 2.48:1 in dark (#3738). The call shape is `TextField`'s, so a
+/// field changes by its name alone. Alerts keep the plain `TextField`: the system draws their fields.
+struct AppTextField: View {
+    private let title: String
+    private let text: Binding<String>
+    private let axis: Axis?
+
+    init(_ title: String, text: Binding<String>, axis: Axis? = nil) {
+        self.title = title
+        self.text = text
+        self.axis = axis
+    }
+
+    /// `TextField`'s axis is not optional, and its absence is the single-line default, so the two shapes stay apart.
+    @ViewBuilder
+    var body: some View {
+        let prompt = Text(title).foregroundStyle(AppColors.secondaryText)
+        if let axis {
+            TextField(text: text, prompt: prompt, axis: axis) { Text(title) }.labelsHidden()
+        } else {
+            TextField(text: text, prompt: prompt) { Text(title) }.labelsHidden()
+        }
+    }
+}
+
+/// `AppTextField` for secrets, with the same placeholder colour.
+struct AppSecureField: View {
+    private let title: String
+    private let text: Binding<String>
+
+    init(_ title: String, text: Binding<String>) {
+        self.title = title
+        self.text = text
+    }
+
+    var body: some View {
+        // A prompt makes a Form row show the label beside the field; the placeholder alone is what the row showed.
+        SecureField(text: text, prompt: Text(title).foregroundStyle(AppColors.secondaryText)) {
+            Text(title)
+        }
+        .labelsHidden()
+    }
+}
+
 /// A listener-facing failure: an icon as well as a colour, because colour alone
 /// cannot tell failure from status for a red-green colour-blind listener (#308).
 struct FailureMessageLabel: View {
@@ -321,4 +366,12 @@ extension View {
             .background(AppColors.inputBackground)
             .increasedContrastEdge(cornerRadius: 8)
     }
+}
+
+extension AppColors {
+    /// Ochre for text, icons and control tints (#1920); `ochre` stays the fill. Lives here, not in Gate1RootView,
+    /// which may not grow (hot-file ratchet).
+    static let ochreText = dynamicColor(AppSemanticColorRGB.ochreText)
+    /// Warning copy and its icon, in place of the system orange (#1920).
+    static let warningText = dynamicColor(AppSemanticColorRGB.warningText)
 }

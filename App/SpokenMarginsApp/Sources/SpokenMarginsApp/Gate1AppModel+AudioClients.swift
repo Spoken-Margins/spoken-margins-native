@@ -13,6 +13,7 @@ extension Gate1AppModel {
             return audioPlaybackClientOverride
         }
         sanitizeTTSMode()
+        WrittenMarginReadings.bind(to: self) // a friend's written Margin follows the Terms and the voice chosen here (#3391)
         let speech = try makeSpeechPlaybackClient()
         speechPlaybackClient = speech
         let routed = RoutedAudioPlaybackClient(
@@ -159,9 +160,10 @@ extension Gate1AppModel {
                             self.diagnostics["supertonicPreparedCanonicalization:\(itemId)"] = "preparation_stopped" // #2134
                             return
                         }
-                        let attached = self.attachPreparedTextAudio(
+                        let attached = await self.attachPreparedTextAudioOffMain(
                             canonical,
                             itemId: itemId,
+                            manifestId: PreparedAudioCoordinator.manifestId(itemId: itemId, signature: signature), // re-checked inside the save (#2134)
                             preparedStatus: "ready",
                             diagnosticStatus: "supertonic_full_ready",
                             replaceActivePlayback: false
@@ -360,23 +362,35 @@ extension Gate1AppModel {
         ) { [weak self] command, mediaTimeMs, playbackRate in
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                self.hangTelemetry.labels.scoped("nowPlayingCommand") {
-                    self.syncPlaybackProgressForLifecycle()
-                    self.dispatchGate2CompactCommand(
-                        command,
-                        mediaTimeMs: mediaTimeMs,
-                        playbackRate: playbackRate,
-                        origin: "now_playing"
-                    )
+                let labels = self.hangTelemetry.labels
+                labels.scoped("nowPlayingCommand") {
+                    labels.scoped("nowPlaying.sync") { self.syncPlaybackProgressForLifecycle() }
+                    labels.scoped("nowPlaying.dispatch") {
+                        self.dispatchGate2CompactCommand(
+                            command,
+                            mediaTimeMs: mediaTimeMs,
+                            playbackRate: playbackRate,
+                            origin: "now_playing"
+                        )
+                    }
                 }
             }
+        }
+        client.remoteCommandArrivalHandler = { [weak self] name in
+            Task { @MainActor [weak self] in self?.noteRemoteCommandArrival(name) }
+        }
+        client.remoteCommandAnswerHandler = { [weak self] name, answer in
+            Task { @MainActor [weak self] in self?.noteRemoteCommandAnswer(name, answer: answer) }
         }
         client.nextTrackHandler = { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                self.hangTelemetry.labels.scoped("nowPlayingCommand") {
-                    self.syncPlaybackProgressForLifecycle()
-                    self.dispatchGate2CompactCommand(.skipForward, origin: "now_playing" + HeadphoneRemoteSignal.nextTrackOriginSuffix)
+                let labels = self.hangTelemetry.labels
+                labels.scoped("nowPlayingCommand") {
+                    labels.scoped("nowPlaying.sync") { self.syncPlaybackProgressForLifecycle() }
+                    labels.scoped("nowPlaying.dispatch") {
+                        self.dispatchGate2CompactCommand(.skipForward, origin: "now_playing" + HeadphoneRemoteSignal.nextTrackOriginSuffix)
+                    }
                 }
             }
         }

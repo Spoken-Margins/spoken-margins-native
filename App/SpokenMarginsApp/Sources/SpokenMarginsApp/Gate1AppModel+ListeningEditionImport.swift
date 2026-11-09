@@ -56,10 +56,10 @@ extension Gate1AppModel {
     /// Collection files picked from the Add sheet's Files route (#2373). Like a PDF added there, they land in the
     /// Library and nothing opens or plays. Returns whether every file went in, so the sheet knows to close.
     @discardableResult
-    func importListeningEditionFiles(_ urls: [URL], folders: [URL] = []) async -> Bool {
+    func importListeningEditionFiles(_ urls: [URL], folders: [URL] = [], skipping: Set<String> = []) async -> Bool {
         // The folders are walked and the files read and decoded off the main thread (#2510, #2256); each edition's
         // file is read and written off it too, and only the store steps run here.
-        let loaded = await Task.detached(priority: .userInitiated) { Self.readListeningEditionEntries(urls, folders: folders) }.value
+        let loaded = await Task.detached(priority: .userInitiated) { Self.readListeningEditionEntries(urls, folders: folders, skipping: skipping) }.value
         if loaded.entries.isEmpty {
             reportFailure(ListeningEditionFolderWalk.emptyMessage(folderNames: folders.map(\.lastPathComponent)))
             return false
@@ -80,17 +80,20 @@ extension Gate1AppModel {
 
     /// Reads the picked files, plus the `.json` files found in the picked folders (#2672), into batch entries.
     /// A folder's security-scoped access stays open while its files are read, since the files inherit it.
-    private nonisolated static func readListeningEditionEntries(_ urls: [URL], folders: [URL])
+    private nonisolated static func readListeningEditionEntries(_ urls: [URL], folders: [URL], skipping: Set<String>)
         -> (entries: [ListeningEditionBatch.Entry], truncated: Bool) {
         var all = urls
         var truncated = false
+        var walkedCount = 0
         var scoped: [URL] = []
         defer { for folder in scoped { folder.stopAccessingSecurityScopedResource() } }
         for folder in folders {
             if folder.startAccessingSecurityScopedResource() { scoped.append(folder) }
-            let room = max(0, ListeningEditionFolderWalk.defaultMaxFiles - (all.count - urls.count))
+            let room = max(0, ListeningEditionFolderWalk.defaultMaxFiles - walkedCount)
             let walked = ListeningEditionFolderWalk.collect(in: folder, maxFiles: room)
-            all.append(contentsOf: walked.urls)
+            walkedCount += walked.urls.count
+            // A link list found in the folder (#3767) was already added; the walk is the same, so its files are skipped.
+            all.append(contentsOf: walked.urls.filter { !skipping.contains(LinkListPick.filePath($0)) })
             if walked.truncated { truncated = true }
         }
         return (all.enumerated().map { ListeningEditionBatch.Entry.reading(url: $1, id: $0) }, truncated)
@@ -131,7 +134,7 @@ extension Gate1AppModel {
         refreshSelectedItem()
         screen = .item
         schedulePrewarmAfterPreparedTextChange(itemId: edition.itemID)
-        reportConfirmation("Imported item and Listening Map. Audio prepares separately; playback has not started.")
+        reportConfirmation("Imported the source and its Listening Map. Audio prepares separately; playback has not started.")
     }
 
     /// Saves the item, the edition and its map. Navigates nowhere.
@@ -146,26 +149,71 @@ extension Gate1AppModel {
             throw EditionError.invalid("This source already has a different Listening Map. To replace it, preview this edition (Review on its own, or paste it) in Import Listening Edition and turn on Replace.")
         }
         let store = try requireStore()
+        let itemId = edition.itemID
+        // The item (its text can be megabytes), the map and the audio map are written off the main thread (#2509), in
+        // the order they always had; the engine is told on main afterwards, and playback is checked again first.
         // Stable source identity preserves every existing session and Margin on retry.
-        if (try? store.loadItemSummary(id: edition.itemID)) == nil { // whether it is there, not its text (#2506)
-            try store.saveItem(Item(id: edition.itemID, title: edition.title, mediaType: "text", text: edition.text,
-                                   externalReference: edition.sourceURL, status: "ready", externalReferenceType: "url", createdAt: Date()))
-        }
-        try requireNoPlaybackForListeningEdition(itemId: edition.itemID)
-        try await Self.offMain { try ListeningEditionStore.application().save(edition) }
-        try requireNoPlaybackForListeningEdition(itemId: edition.itemID)
-        try hangTelemetry.labels.scoped("listeningEdition.attach") {
-            if let engine { snapshot = try engine.attachListeningMap(edition.listeningMap()) }
-            else { try store.saveListeningMap(edition.listeningMap()) }
-            if let timeline = try store.loadTranscriptTimeline(itemId: edition.itemID)?.timeline {
-                activateListeningEditionAudio(itemId: edition.itemID, timeline: timeline)
+        try await Self.offMain {
+            if (try? store.loadItemSummary(id: itemId)) == nil { // whether it is there, not its text (#2506)
+                try store.saveItem(Item(id: itemId, title: edition.title, mediaType: "text", text: edition.text,
+                                       externalReference: edition.sourceURL, status: "ready", externalReferenceType: "url", createdAt: Date()))
             }
         }
+        try requireNoPlaybackForListeningEdition(itemId: itemId)
+        try await Self.offMain { try ListeningEditionStore.application().save(edition) }
+        try requireNoPlaybackForListeningEdition(itemId: itemId)
+        let persister = try engine?.listeningMapPersister()
+        let written = try await Self.offMain { () -> (PersistedListeningMap?, TranscriptTimeline?) in
+            let map = edition.listeningMap()
+            var persisted: PersistedListeningMap?
+            if let persister { persisted = try persister.persist(map) } else { try store.saveListeningMap(map) }
+            return (persisted, try store.loadTranscriptTimeline(itemId: itemId)?.timeline)
+        }
+        // The listener may have pressed play on this item while the write ran: the map is saved, and the engine takes
+        // it the next time the item opens, as for a shared map ("left alone until the listener pauses").
+        let playingNow = snapshot.itemId == itemId && snapshot.status.isPlaybackActive
+        try hangTelemetry.labels.scoped("listeningEdition.attach") {
+            if let engine, let persisted = written.0, !playingNow { snapshot = try engine.attachListeningMap(persisted) }
+        }
+        if let timeline = written.1 {
+            await activateListeningEditionAudioOffMain(itemId: itemId, timeline: timeline)
+        }
+    }
+
+    /// Saves the audio map an edition's timeline resolves to, off the main thread (#2509), then tells the screen.
+    func activateListeningEditionAudioOffMain(itemId: String, timeline: TranscriptTimeline) async {
+        guard let edition = await saveListeningEditionAudioMap(itemId: itemId, timeline: timeline) else { return }
+        hangTelemetry.labels.scoped("listeningEdition.activateAudio") { finishListeningEditionAudio(itemId: itemId, edition: edition) }
+    }
+
+    /// The store half: the edition's audio map and its projection. Nil when there is no edition file or the map
+    /// could not be saved (the second case is noted in the diagnostics).
+    func saveListeningEditionAudioMap(itemId: String, timeline: TranscriptTimeline) async -> ListeningEdition? {
+        guard let store else { return nil }
+        do {
+            return try await Self.offMain { () -> ListeningEdition? in
+                guard let edition = try? ListeningEditionStore.application().load(itemID: itemId) else { return nil }
+                let (proposal, projection) = try edition.audioMap(timeline: timeline)
+                try store.savePortableListeningMapProposal(proposal, itemId: itemId)
+                try store.saveResolvedListeningMapProjection(projection)
+                return edition
+            }
+        } catch {
+            diagnostics["listeningEditionAudio"] = "not_ready"
+            return nil
+        }
+    }
+
+    /// What follows a saved audio map, on the main thread: the open screen refreshes and the listener is told.
+    func finishListeningEditionAudio(itemId: String, edition: ListeningEdition) {
+        if selectedItem.id == itemId { refreshSelectedItemInBackground() }
+        prepareImportedLocalAudioBridges(itemId: itemId)
+        Task { await ListeningReadyNotifications.notify(itemID: itemId, title: edition.title, revision: edition.revision) }
     }
 
     private func requireNoPlaybackForListeningEdition(itemId: String) throws {
         if snapshot.itemId == itemId, snapshot.status.isPlaybackActive {
-            throw EditionError.invalid("Pause playback before importing a map for the current item.")
+            throw EditionError.invalid("Pause playback before importing a map for what is playing.")
         }
     }
 
@@ -175,19 +223,6 @@ extension Gate1AppModel {
     private nonisolated static func savedListeningEditionState(of edition: ListeningEdition) throws -> SavedListeningEditionState {
         guard let previous = try ListeningEditionStore.application().load(itemID: edition.itemID) else { return .missing }
         return previous == edition ? .identical : .different
-    }
-
-    /// Saves a shared Listening Map for a text item (#1471). A running session reads its map from memory, so it is
-    /// told too; the item that is playing is left alone until the listener pauses, as for an edition above.
-    func attachSharedTextListeningMap(_ map: ListeningMap) throws {
-        if snapshot.itemId == map.itemId, snapshot.status.isPlaybackActive {
-            throw SessionKitError.persistenceFailed("shared_map_item_is_playing")
-        }
-        if let engine {
-            snapshot = try engine.attachListeningMap(map)
-        } else {
-            try requireStore().saveListeningMap(map)
-        }
     }
 
     /// A tap on a "ready to listen" notification opens that item, unless a Margin is recording.

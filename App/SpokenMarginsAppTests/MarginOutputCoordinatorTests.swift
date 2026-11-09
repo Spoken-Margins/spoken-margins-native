@@ -222,6 +222,24 @@ final class MarginOutputCoordinatorTests: XCTestCase {
         XCTAssertEqual(try f.notes(in: target).count, 1, "the Margin isn't delivered until delivery starts")
     }
 
+    /// #2137: the note is written off the main actor, so a pause, a folder change or a Retry Delivery can say
+    /// something newer while it is still writing. Its late "Test note saved" must not replace that.
+    func testALateTestNoteDoesNotReplaceANewerStatus() async throws {
+        let f = try Fixture()
+        try f.addMargin("m-1", text: "First.")
+        let target = try f.folder("Target")
+        let coordinator = try f.makeCoordinator([MarginOutputDestination(id: "new", name: "New", bookmark: try f.bookmark(target), isEnabled: false)])
+
+        let note = Task { await coordinator.sendTestNote(to: "new") }
+        await Task.yield() // the note is now waiting on the writer actor
+        coordinator.setEnabled("new", false)
+        let paused = coordinator.statuses["new"]?.message
+        XCTAssertTrue(paused?.hasPrefix("Paused") == true, paused ?? "no status")
+        await note.value
+
+        XCTAssertEqual(coordinator.statuses["new"]?.message, paused, "the late test note kept the newer status")
+    }
+
     func testAddingADestinationStartsPausedAndKeepsTheFolderName() throws {
         let f = try Fixture()
         let vault = try f.folder("Vault")
@@ -324,7 +342,7 @@ final class MarginOutputCoordinatorTests: XCTestCase {
         XCTAssertEqual(first.count, 1, coordinator.statuses["items"]?.message ?? "")
         let firstNote = try XCTUnwrap(first.first)
         XCTAssertTrue(firstNote.contains("First thought.") && firstNote.contains("Second thought."), "one note holds every Margin")
-        XCTAssertTrue(coordinator.statuses["items"]?.message.hasPrefix("1 item note saved to Items") == true, coordinator.statuses["items"]?.message ?? "")
+        XCTAssertTrue(coordinator.statuses["items"]?.message.hasPrefix("1 source note saved to Items") == true, coordinator.statuses["items"]?.message ?? "")
 
         // Marked unfinished, then complete again later: the same file is rewritten, never a second one.
         try f.complete("item-1", at: Date(timeIntervalSince1970: 1_800_090_000))

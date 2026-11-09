@@ -379,7 +379,7 @@ final class ReadwiseHighlightTests: XCTestCase {
         )
 
         XCTAssertEqual(report.summary,
-                       "2 Margins sent to Readwise across 2 items, most recently \u{201C}A Hacking Tool Built With A Very Long T\u{2026}\u{201D}.")
+                       "2 Margins sent to Readwise across 2 sources, most recently \u{201C}A Hacking Tool Built With A Very Long T\u{2026}\u{201D}.")
         XCTAssertEqual(try ledger().links(), [
             "item-article": URL(string: "https://readwise.io/bookreview/30")!,
             "item-episode": URL(string: "https://readwise.io/bookreview/31")!,
@@ -418,7 +418,11 @@ final class ReadwiseHighlightTests: XCTestCase {
         XCTAssertEqual(ReadwiseSyncReport(sent: 1, itemCount: 1, latestTitle: "Essay").summary,
                        "1 Margin sent to Readwise under \u{201C}Essay\u{201D}.")
         XCTAssertEqual(ReadwiseSyncReport(sent: 3, unlisted: 1, itemCount: 2, latestTitle: "Essay").summary,
-                       "3 Margins sent to Readwise across 2 items, most recently \u{201C}Essay\u{201D}. Readwise didn't list 1 of them.")
+                       "3 Margins sent to Readwise across 2 sources, most recently \u{201C}Essay\u{201D}. Readwise didn't list 1 of them.")
+        // No title to name: the line says so by leaving the clause out, never by quoting a stand-in.
+        XCTAssertEqual(ReadwiseSyncReport(sent: 2, itemCount: 2, latestTitle: nil).summary,
+                       "2 Margins sent to Readwise across 2 sources.")
+        XCTAssertEqual(ReadwiseSyncReport(sent: 1, itemCount: 1, latestTitle: nil).summary, "1 Margin sent to Readwise.")
         XCTAssertEqual(ReadwiseSyncReport.statusLine(lastSummary: nil, sentAt: nil, checkedAt: "8:32 AM"),
                        "No new Margins to send. Last checked 8:32 AM.")
         XCTAssertEqual(ReadwiseSyncReport.statusLine(lastSummary: "1 Margin sent to Readwise under \u{201C}Essay\u{201D}.",

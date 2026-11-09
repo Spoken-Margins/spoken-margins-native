@@ -12,9 +12,8 @@
 # are compared by content; new files land together at the end (--delay-updates) and old ones are
 # removed after that, so a page mid-load never finds half a build.
 #
-# Share-link creation stays off in this build: `npm run build` is Vite's production mode, and only
-# `--mode share-links-test` turns it on (Web/vite.config.ts). The script also refuses a build that
-# carries a test relay origin.
+# The web app can't create share links: that code is removed from Web/, not switched off (#3542). The
+# script also refuses a build that carries a test relay origin.
 #
 # Environment: SM_SSH_KEY, SM_RELAY_ORIGIN (default https://spokenmargins.com).
 set -euo pipefail
@@ -73,6 +72,8 @@ fi
 [[ -f "${dist}/index.html" && -f "${dist}/link.html" && -f "${dist}/sw.js" && -f "${dist}/manifest.webmanifest" ]] || die "build is missing index.html, link.html, sw.js or the manifest"
 grep -rqF -- "${relay_origin}" "${dist}/assets" || die "the relay origin is not in the build; VITE_RELAY_ORIGIN was not applied"
 ! grep -rqE -- 'relay\.test|127\.0\.0\.1:4174' "${dist}" || die "the build carries a test relay origin"
+# What scripts/sm_live.py reads to say which commit is live and when it went up (#3872).
+printf '{"commit":"%s","deployed_at":"%s"}\n' "${commit}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"${dist}/deploy.json"
 echo "built: $(find "${dist}" -type f | wc -l | tr -d ' ') files, $(du -sk "${dist}" | cut -f1) KB"
 
 rsync_opts=(-rlc --delete-delay --delay-updates --chmod=D755,F644 --itemize-changes -e "${rsync_ssh}")

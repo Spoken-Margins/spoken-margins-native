@@ -102,9 +102,10 @@ def pr(number, issue_number=None, armed=True, red=False, t4=None, mac=None):
             't4_waiting': t4, 'mac': mac}
 
 
-def gql_issue(number, title=None, labels=(), comments=(), reopened=None, milestone=None):
+def gql_issue(number, title=None, labels=(), comments=(), reopened=None, milestone=None, body='', created='', bot=False):
     """One open issue as the sweep's GraphQL scan returns it."""
     return {'number': number, 'title': title or f'Issue {number}', 'labels': {'nodes': [{'name': n} for n in labels]},
+            'body': body, 'createdAt': created, 'author': {'__typename': 'Bot' if bot else 'User'},
             'milestone': {'title': milestone} if milestone else None,
             'timelineItems': {'nodes': [{'createdAt': reopened}] if reopened else []}, 'comments': {'nodes': list(comments)}}
 
@@ -776,6 +777,37 @@ class Untriaged(unittest.TestCase):
         router = world().on(r'^issues\?state=open&milestone=none', sm_status.GitHubError('boom'))
         actions, _ = sweep.decide(facts_of(router))
         self.assertNotIn('untriaged', rules(actions))
+
+
+class UncheckedCards(unittest.TestCase):
+    """#3872: a card for the owner names where its facts came from."""
+    NEW = '2026-11-10T09:00:00Z'
+
+    def found(self, *nodes):
+        actions, _ = sweep.decide(facts_of(world(open_issues=nodes)))
+        return [a for a in actions if a['rule'] == 'unchecked-card']
+
+    def card(self, **kw):
+        return gql_issue(9, **dict(dict(labels=['needs-owner'], created=self.NEW), **kw))
+
+    def test_a_new_card_with_no_source_is_named(self):
+        found = self.found(self.card(body='Please test share links on your phone.'))
+        self.assertEqual(found[0]['issues'], [9])
+
+    def test_these_are_not_flagged(self):
+        rows = [('line in body', self.card(body='Ask\n**Checked:** sm_live, Build 36')),
+                ('plain line', self.card(body='checked: docs/decisions.md')),
+                ('list item', self.card(body='- Checked: the site')),
+                ('in a comment', self.card(comments=[gql_comment('**Checked:** the tag', self.NEW)])),
+                ('older card', self.card(created='2026-11-09T23:59:59Z')),
+                ('a script\'s notice', self.card(bot=True)),
+                ('not for the owner', self.card(labels=['ready']))]
+        for name, node in rows:
+            with self.subTest(name):
+                self.assertEqual(self.found(node), [])
+
+    def test_the_word_inside_a_sentence_is_not_a_source_line(self):
+        self.assertEqual(len(self.found(self.card(body='I checked: nothing really, but also unchecked: x'))), 1)
 
 
 class Unlabelled(unittest.TestCase):

@@ -23,9 +23,9 @@ public enum PlayQueueRows {
         }
     }
 
-    /// "3 items" or "1 item", for the Library entry.
+    /// "3 waiting", for the Library entry.
     public static func countLine(_ count: Int) -> String {
-        count == 1 ? "1 item" : "\(count) items"
+        "\(count) waiting"
     }
 
     /// The Library entry's second line: what plays first.

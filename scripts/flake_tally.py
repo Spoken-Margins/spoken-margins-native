@@ -2,7 +2,7 @@
 
 A test that failed and then passed on its rerun counts as a pass, and each such retry-pass is tallied as a comment
 on #2176 whose first line is `flake-tally: <test> <sha7> <run id> <UTC time>`. A test with 3 or more retry-passes
-in 7 days gets its own `ready` Showcase issue, whose body carries `<!-- flake-test: <test> -->` so a second issue is
+in 7 days gets its own `ready` groundwork issue (no milestone; #3636), whose body carries `<!-- flake-test: <test> -->` so a second issue is
 never opened for it. The hosted integration run (`ops/testdesk/sm_integration_run.py`), the lane runner
 (`scripts/lane-runner.py`) and `scripts/flake_tally_report.py` all format, parse and judge them here, so the
 comment format older comments use stays one thing.

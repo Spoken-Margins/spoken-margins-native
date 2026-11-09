@@ -31,7 +31,7 @@ public struct ItemDetailState: Equatable, Sendable {
     public var listeningMapIsCommunity: Bool { listeningMapScenes.first.map { CommunityMapConverter.isCommunitySceneId($0.id) } ?? false }
     public var listeningMapAvailabilityDescription: String {
         let scenes = "\(listeningMapScenes.count) scene\(listeningMapScenes.count == 1 ? "" : "s")"
-        return listeningMapIsCommunity ? "This item has a community map with \(scenes)." : "This item has a private Listening Map with \(scenes)."
+        return listeningMapIsCommunity ? "It has a community map with \(scenes)." : "It has a private Listening Map with \(scenes)."
     }
     /// The page this item was added from, when it has a public one (#1167).
     public var originalSourceURL: URL? {
@@ -55,7 +55,14 @@ public struct ItemDetailState: Equatable, Sendable {
     /// Why a friend's shared map couldn't be placed on this copy, as stored on its packets (#481). Worked out when the
     /// detail is loaded, so the Item screen's `body` reads this instead of the store on every render (#2506).
     public var sharedMapRefusalReason: String?
+    /// Where the on-device scene summaries stand, for a text item (#3461). Worked out from the saved proposals when the
+    /// detail loads, so the Item screen doesn't read the store to decide whether to offer a run.
+    public var textSceneSummaries: TextSceneSummaryProgress.State = .notApplicable
     public var turns: [ConversationTurn] = []
+    /// What the listener calls this source: "Episode", "Article", "PDF" (#3599). Worked out when the detail loads, from
+    /// the same stored facts the Library row reads, so the screen's title and sentences never say "item" and `body`
+    /// never scans the Library for it.
+    public var sourceNoun: SourceNoun = .text
 
     public init(
         id: String = "",
@@ -84,7 +91,9 @@ public struct ItemDetailState: Equatable, Sendable {
         importedCommentaryInterjections: [String: [ImportedCommentaryInterjection]] = [:],
         sharedMarginPlacement: SharedMarginPlacementPasses.Pass? = nil,
         sharedMapRefusalReason: String? = nil,
-        turns: [ConversationTurn] = []
+        textSceneSummaries: TextSceneSummaryProgress.State = .notApplicable,
+        turns: [ConversationTurn] = [],
+        sourceNoun: SourceNoun = .text
     ) {
         self.id = id
         self.title = title
@@ -112,7 +121,9 @@ public struct ItemDetailState: Equatable, Sendable {
         self.importedCommentaryInterjections = importedCommentaryInterjections
         self.sharedMarginPlacement = sharedMarginPlacement
         self.sharedMapRefusalReason = sharedMapRefusalReason
+        self.textSceneSummaries = textSceneSummaries
         self.turns = turns
+        self.sourceNoun = sourceNoun
     }
 }
 

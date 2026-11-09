@@ -10,7 +10,8 @@ import SessionKit
 /// starts unannounced (#932).
 ///
 /// A review of new shared Margins (#474) runs through here too: when a voice ends, the sequence says whether the
-/// source hops to the next lead-in, plays the next Margin straight away, or goes back to where the listener left off.
+/// source plays on, plays the next Margin straight away, or (after the last one, for a listener who was further on)
+/// goes back to where the listener left off. It never hops ahead by itself.
 ///
 /// The app owns the source transport and supplies it as closures; this type owns only the Margin voice.
 @MainActor
@@ -51,7 +52,7 @@ public final class MarginMomentConductor {
     /// Silence between the end of the chime and the start of the voice, matching the inline prompt's pause.
     static let pauseAfterChimeSeconds = 0.15
 
-    private let source: Source
+    private let givenSource: Source
     private let voiceURL: (String) -> URL?
     private var lastObservedMs: Int?
     private var voice: AVAudioPlayer?
@@ -65,7 +66,7 @@ public final class MarginMomentConductor {
 
     public init(sequence: MarginMomentSequence, source: Source, voiceURL: @escaping (String) -> URL?) {
         self.sequence = sequence
-        self.source = source
+        self.givenSource = source
         self.voiceURL = voiceURL
     }
 
@@ -132,6 +133,13 @@ public final class MarginMomentConductor {
         playVoice(for: margin)
     }
 
+    /// The source, as everything below reaches it. A listening for an episode that can't play has none: a seek would
+    /// only wake the dead player and fail, and a pause would report "Paused." and turn its failure into a pause (#3392).
+    /// One rule here, so no way of moving, pausing or resuming can miss it.
+    private var source: Source {
+        CantPlayListening.isCantPlayListening(sequence) ? Source(pause: {}, resume: {}, seek: { _ in }) : givenSource
+    }
+
     /// "Play it now" during the lead-in.
     public func playTargetNow() {
         guard let margin = sequence.jumpToTarget() else { return }
@@ -153,12 +161,14 @@ public final class MarginMomentConductor {
         onChange = nil
     }
 
-    /// The listener stopped a review: the voice stops and the source goes back to where they left off, paused.
+    /// The listener stopped a review: the voice stops and the source stays paused. It goes back to where they left off
+    /// only to undo the review's own hop, or to bring back a listener who was further on (`placeToReturnToWhenStopped`).
     public func stopReview() {
-        guard let review = sequence.review else { return cancel() }
+        guard sequence.review != nil else { return cancel() }
         stopVoice()
         source.pause()
-        if let returnTo = review.returnToMediaTimeMs { moveSource(to: returnTo) }
+        let at = lastObservedMs ?? sequence.playing?.mediaTimeMs ?? sequence.target.mediaTimeMs
+        if let place = sequence.placeToReturnToWhenStopped(sourceAtMediaTimeMs: at) { moveSource(to: place) }
         onChange = nil
     }
 
@@ -194,7 +204,7 @@ public final class MarginMomentConductor {
                 beginVoice(player, marginId: margin.marginId)
             }
         } catch {
-            onVoiceUnavailable?(margin.marginId, String(describing: error))
+            onVoiceUnavailable?(margin.marginId, SafeErrorText.describe(error))
             finishVoice()
         }
     }
@@ -259,9 +269,6 @@ public final class MarginMomentConductor {
         onChange?()
         switch advance {
         case .continueSource:
-            source.resume()
-        case .seek(let mediaTimeMs):
-            moveSource(to: mediaTimeMs)
             source.resume()
         case .playNow(let margin):
             playVoice(for: margin)

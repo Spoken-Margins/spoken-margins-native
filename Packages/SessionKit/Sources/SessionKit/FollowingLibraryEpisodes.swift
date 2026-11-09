@@ -40,18 +40,24 @@ public enum FollowingLibraryEpisodes {
         }
         let sessionsByItem = Dictionary(grouping: sessions, by: \.itemId)
 
-        var chosen: [String: LibraryItemSummary] = [:]
+        // Every live copy of an episode that came from one entry. A re-import makes a second copy; the listener
+        // may have heard either one, so the row counts the episode as heard if any copy is (#3691).
+        var copies: [String: [LibraryItemSummary]] = [:]
         for item in items where item.deletedAt == nil {
             guard let entry = entry(for: item, importedById: importedById, byAudio: byAudio, byPage: byPage,
                                     importedEntryIds: importedEntryIds) else { continue }
-            // Two items from one entry (a re-import): the later one is the copy the listener has.
-            if let existing = chosen[entry.id], !isLater(item, than: existing) { continue }
-            chosen[entry.id] = item
+            copies[entry.id, default: []].append(item)
         }
-        return chosen.mapValues { item in
-            FollowingLibraryEpisode(
-                itemID: item.id,
-                isFinished: item.sourceCompletedAt != nil || PreparationChunkGate.itemAlreadyListened(sessionsByItem[item.id] ?? [])
+        return copies.reduce(into: [:]) { result, pair in
+            let (entryId, copiesOfEntry) = pair
+            // The later copy is the one the listener has now, so it names the item.
+            guard let latest = copiesOfEntry.max(by: { isLater($1, than: $0) }) else { return }
+            let entryDurationMs = importedById[entryId]?.audioDurationMs
+            result[entryId] = FollowingLibraryEpisode(
+                itemID: latest.id,
+                isFinished: copiesOfEntry.contains {
+                    FollowingHeardRule.isHeard(item: $0, sessions: sessionsByItem[$0.id] ?? [], entryDurationMs: entryDurationMs)
+                }
             )
         }
     }

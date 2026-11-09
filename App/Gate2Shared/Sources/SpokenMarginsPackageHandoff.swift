@@ -64,7 +64,7 @@ public struct SpokenMarginsPackageHandoffStore: @unchecked Sendable {
         }
         let values = try sourceURL.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
         guard values.isRegularFile == true else {
-            throw SpokenMarginsPackageHandoffStoreError.invalidPackage("the shared item is not a regular file")
+            throw SpokenMarginsPackageHandoffStoreError.invalidPackage("what was shared is not a single file")
         }
         if let fileSize = values.fileSize, Int64(fileSize) > Self.maximumPackageBytes {
             throw SpokenMarginsPackageHandoffStoreError.invalidPackage("the file is larger than 100 MB")

@@ -16,6 +16,8 @@ Issue: #27. Branch: `anchor-reliability`.
   - `PodcastAnchorEvidence.swift` matches the fingerprints against the recipient's episode and classifies the result: acoustically verified, ambiguous, or unresolved.
   - Transcript context is the fallback. A bare timestamp is never trusted on its own, because an inserted ad shifts everything after it.
 - **Benchmark.** `scripts/run-podcast-anchor-benchmark.sh` builds a held-out pair of editions with inserted speech. The gate is **zero false-confident placements** and **p95 error ≤ 1.5 s**.
+  - Last run 2026-11-07 on the Mac, `main` at `ec3a0f6bd` (#2133): 232 anchors, 226 placeable. Fused placement: p95 error 4 ms, 0 false-confident, 22 placeable anchors declined as ambiguous or unresolved. Transcript alone: p95 4.56 s, 123 false-confident. Timestamp alone: p95 65 s, 188 false-confident. About 10.5 minutes and 288 MB of cache on a first run, about 7 minutes after.
+  - What it doesn't show: both editions are cut from one LibriVox recording, so it measures inserted, deleted and repeated passages plus re-encoding, not a different host's master, loudness or a different reader. It runs ShazamKit and Whisper on macOS, not the phone. The script fails when the test writes no result, so a skip can't pass for a measurement.
 
 ## Status
 

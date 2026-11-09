@@ -27,8 +27,12 @@ struct SpokenMarginsWatchApp: App {
         }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
-            case .active: WatchLink.shared.appBecameActive()
-            case .background: WatchLink.shared.appWentToBackground()
+            case .active:
+                WatchDiagnostics.becameActive()
+                WatchLink.shared.appBecameActive()
+            case .background:
+                WatchDiagnostics.wentToBackground()
+                WatchLink.shared.appWentToBackground()
             default: break
             }
         }
@@ -39,7 +43,11 @@ struct SpokenMarginsWatchApp: App {
 /// screen first appears (DESIGN section 9, changes point 10).
 final class WatchAppDelegate: NSObject, WKApplicationDelegate {
     func applicationDidFinishLaunching() {
-        MainActor.assumeIsolated { WatchLink.shared.activate() }
+        WatchDiagnostics.installExceptionHandler()
+        MainActor.assumeIsolated {
+            WatchDiagnostics.launched() // before anything else can fail (#3506)
+            WatchLink.shared.activate()
+        }
     }
 
     func handle(_ backgroundTasks: Set<WKRefreshBackgroundTask>) {
@@ -65,50 +73,215 @@ enum WatchRoute: Hashable {
 
 /// Home: the state line and one big Record button. Below, reached with the crown: what's waiting, Start session or
 /// End, Resume, and the microphone test.
+///
+/// While the phone has an item loaded (#3494) the first screen is "On this episode" (big, blue), "On the session"
+/// (smaller, orange, only while a session runs) and a back, play or pause, forward row. With nothing loaded it is the
+/// single Record it always was. While recording, the screen names the target in large words and offers Stop and Discard.
 struct WatchHomeView: View {
     @EnvironmentObject private var link: WatchLink
     @StateObject private var recorder = WatchMarginRecorder()
+    @State private var asksToDiscard = false
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
             let now = context.date
             let home = link.home(now: now)
+            let playing = recorder.isRecording ? nil : link.nowPlaying(now: now)
+            // The screen the owner chose must fit a 41 mm Watch with no scrolling, so its lines stay short (#3494).
+            let compact = playing != nil || (recorder.isRecording && recorder.choiceWasShown)
             ScrollView {
-                VStack(spacing: 8) {
-                    stateLine(home, now: now)
-                    recordButton(home)
-                        .frame(height: 120)
-                    statusLine(home, now: now)
+                VStack(spacing: compact ? CGFloat(WatchHomeLayout.spacing) : 8) {
+                    stateLine(home, now: now, lines: compact ? 1 : 2)
+                    if recorder.isRecording {
+                        recordingScreen(home, now: now)
+                        statusLine(home, now: now)
+                    } else if let playing {
+                        episodeHeader(playing, now: now)
+                        episodeButtons(home)
+                        transportRow(playing)
+                        // "Filed in…" stays within reach of the crown once it has left the top.
+                        if case .idle = recorder.state, !lastMarginIsNews(now: now) { statusLine(home, now: now) }
+                    } else {
+                        recordButton(.session)
+                            .frame(height: 120)
+                        statusLine(home, now: now)
+                    }
                     below(home, now: now)
                 }
-                .padding(.horizontal, 4)
+                .padding(.horizontal, CGFloat(WatchHomeLayout.sidePadding))
             }
         }
     }
 
-    private func stateLine(_ home: WatchSessionModel.Home, now: Date) -> some View {
+    private func stateLine(_ home: WatchSessionModel.Home, now: Date, lines: Int) -> some View {
         Label(home.line(now: now), systemImage: home.symbol)
             .font(.footnote)
-            .lineLimit(2)
+            .lineLimit(lines)
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityLabel(home.line(now: now))
     }
 
-    private func recordButton(_ home: WatchSessionModel.Home) -> some View {
+    /// Blue for the episode, orange for the session, always with the words and a different symbol (the owner is
+    /// red-green colour-blind).
+    private func tint(_ target: WatchRecordingTarget) -> Color {
+        target == .episode ? .blue : .orange
+    }
+
+    private func symbol(_ target: WatchRecordingTarget) -> String {
+        target == .episode ? "headphones" : "list.bullet.rectangle"
+    }
+
+    /// The single Record, with nothing loaded: it records for the session, as it always did.
+    private func recordButton(_ target: WatchRecordingTarget) -> some View {
         Button {
-            recorder.toggle()
+            recorder.toggle(target: target)
         } label: {
             VStack(spacing: 4) {
-                Image(systemName: recorder.isRecording ? "stop.fill" : "mic.fill")
+                Image(systemName: "mic.fill")
                     .font(.system(size: 40, weight: .semibold))
-                Text(recorder.isRecording ? "Stop" : "Record")
+                Text("Record")
                     .font(.headline)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        // Blue and orange, with the icon and word carrying the meaning too (the owner is red-green colour-blind).
-        .tint(recorder.isRecording ? .orange : .blue)
-        .accessibilityLabel(recorder.isRecording ? "Stop recording the spoken Margin" : "Record a spoken Margin")
+        .buttonStyle(WatchPlateButtonStyle(fill: .blue))
+        .accessibilityLabel("Record a spoken Margin")
+    }
+
+    private func lastMarginIsNews(now: Date) -> Bool {
+        guard let id = link.lastMarginId else { return false }
+        return link.ledger.isNews(id, now: now)
+    }
+
+    /// The line above the buttons: why the recording failed, else where the last Margin went while that is news, else the
+    /// item's title. "Filed in…" is how the listener knows the target was right, so it never waits below the fold (#3494).
+    @ViewBuilder
+    private func episodeHeader(_ playing: WatchNowPlaying, now: Date) -> some View {
+        if case .failed(let message) = recorder.state {
+            Label(message, systemImage: "exclamationmark.triangle")
+                .font(.footnote)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        } else if lastMarginIsNews(now: now), let id = link.lastMarginId, let display = link.ledger.display(id, now: now) {
+            Label(display.words, systemImage: display.symbol)
+                .font(.footnote)
+                .lineLimit(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            Text(playing.title)
+                .font(.footnote)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    /// "On this episode" is the big one; "On the session" is smaller and only there while a session runs.
+    @ViewBuilder
+    private func episodeButtons(_ home: WatchSessionModel.Home) -> some View {
+        let layout = WatchHomeLayout(sessionRuns: home.session != nil)
+        targetButton(.episode, size: layout.height(of: .episodeButton))
+        if home.session != nil {
+            targetButton(.session, size: layout.height(of: .sessionButton))
+        }
+    }
+
+    private func targetButton(_ target: WatchRecordingTarget, size: Double) -> some View {
+        Button {
+            recorder.toggle(target: target)
+        } label: {
+            Label(target.words, systemImage: "mic.fill")
+                .font(size >= 56 ? .headline : .footnote.weight(.semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+        }
+        // The plate fills this frame and no more, so it cannot draw over the transport row (#3674).
+        .buttonStyle(WatchPlateButtonStyle(fill: tint(target)))
+        .frame(height: CGFloat(size))
+        .accessibilityLabel("Record a spoken Margin \(target.words.lowercased())")
+    }
+
+    private func transportRow(_ playing: WatchNowPlaying) -> some View {
+        HStack(spacing: CGFloat(WatchHomeLayout.transportSpacing)) {
+            transportButton(.skipBack, symbol: "gobackward", label: "Back")
+            transportButton(
+                playing.isPlaying ? .pause : .play, symbol: playing.isPlaying ? "pause.fill" : "play.fill",
+                label: playing.isPlaying ? "Pause" : "Play"
+            )
+            transportButton(.skipForward, symbol: "goforward", label: "Forward")
+        }
+        .frame(height: CGFloat(WatchHomeLayout(sessionRuns: false).height(of: .transport)))
+        .disabled(!link.isReachable)
+        .opacity(link.isReachable ? 1 : 0.4)
+    }
+
+    private func transportButton(_ transport: WatchTransport, symbol: String, label: String) -> some View {
+        Button {
+            link.sendTransport(transport)
+        } label: {
+            Image(systemName: symbol)
+        }
+        .buttonStyle(WatchPlateButtonStyle(fill: Color.gray.opacity(0.4)))
+        .accessibilityLabel(label)
+    }
+
+    /// While recording: the target in large words, how long, and Stop beside Discard (#3494).
+    @ViewBuilder
+    private func recordingScreen(_ home: WatchSessionModel.Home, now: Date) -> some View {
+        let target = recorder.plan?.target ?? .session
+        // Named whenever the listener had a choice to make when it began, so "which one did I click" is always answered.
+        let withTarget = recorder.choiceWasShown
+        if withTarget {
+            Label(target.words, systemImage: symbol(target))
+                .font(.title3.weight(.bold))
+                .foregroundStyle(tint(target))
+                .multilineTextAlignment(.center)
+                .minimumScaleFactor(0.8)
+                .frame(maxWidth: .infinity)
+                .accessibilityLabel("Recording \(target.words.lowercased())")
+        }
+        // Stop and Discard side by side: Stop is the wide one, Discard one tap away from it (#3494).
+        HStack(spacing: 6) {
+            Button {
+                recorder.toggle(target: target)
+            } label: {
+                VStack(spacing: 4) {
+                    Image(systemName: "stop.fill")
+                        .font(.system(size: 30, weight: .semibold))
+                    Text("Stop")
+                        .font(.headline)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            .buttonStyle(WatchPlateButtonStyle(fill: withTarget ? tint(target) : .orange))
+            .accessibilityLabel("Stop recording the spoken Margin")
+            Button(role: .destructive) {
+                discardTapped(now: now)
+            } label: {
+                VStack(spacing: 4) {
+                    Image(systemName: "trash")
+                        .font(.system(size: 20, weight: .semibold))
+                    Text("Discard")
+                        .font(.footnote)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            .buttonStyle(WatchPlateButtonStyle(fill: Color.red.opacity(0.85)))
+            .accessibilityLabel("Discard this recording")
+        }
+        .frame(height: withTarget ? 84 : 100)
+        .confirmationDialog("Discard this Margin?", isPresented: $asksToDiscard) {
+            Button("Discard", role: .destructive) { recorder.discardRecording() }
+            Button("Keep recording", role: .cancel) {}
+        }
+    }
+
+    /// A short clip is thrown away at once; a longer one asks first (#3494).
+    private func discardTapped(now: Date) {
+        guard case .recording(let since) = recorder.state else { return }
+        let plan = recorder.plan ?? WatchRecordingPlan(target: .session)
+        if plan.discardAsks(afterRecording: now.timeIntervalSince(since)) {
+            asksToDiscard = true
+        } else {
+            recorder.discardRecording()
+        }
     }
 
     @ViewBuilder
@@ -119,9 +292,11 @@ struct WatchHomeView: View {
             VStack(spacing: 2) {
                 Label(String(format: "Recording %d:%02d", elapsed / 60, elapsed % 60), systemImage: "mic")
                     .font(.footnote.monospacedDigit())
-                Text((home.session?.kind ?? .other).hint)
-                    .font(.footnote)
-                    .multilineTextAlignment(.center)
+                if recorder.plan?.target != .episode {
+                    Text((home.session?.kind ?? .other).hint)
+                        .font(.footnote)
+                        .multilineTextAlignment(.center)
+                }
             }
         case .failed(let message):
             Label(message, systemImage: "exclamationmark.triangle")
@@ -252,5 +427,22 @@ struct WatchWaitingRow: View {
             .buttonStyle(.borderless)
             .font(.footnote)
         }
+    }
+}
+
+/// A button whose coloured plate is exactly the frame it is given, and whose tap area is that plate (#3674). The
+/// system button style sizes its chrome from the label, so a button given a fixed height could draw past it onto the
+/// button below, and take taps meant for it.
+struct WatchPlateButtonStyle: ButtonStyle {
+    let fill: Color
+
+    func makeBody(configuration: Configuration) -> some View {
+        let plate = RoundedRectangle(cornerRadius: 12, style: .continuous)
+        configuration.label
+            .foregroundStyle(.white)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(plate.fill(fill.opacity(configuration.isPressed ? 0.6 : 1)))
+            .clipShape(plate)
+            .contentShape(plate)
     }
 }

@@ -61,7 +61,7 @@ public struct SpokenNote: Codable, Equatable, Sendable {
     public static let currentSchemaVersion = 1
 
     /// A sentence's place in the whole note: which take, and which sentence of it.
-    public struct SentenceRef: Equatable, Sendable {
+    public struct SentenceRef: Hashable, Sendable {
         public let takeIndex: Int
         public let sentenceIndex: Int
 
@@ -187,6 +187,18 @@ public struct SpokenNoteStore: Sendable {
         }
         setAside()
         return SpokenNote(id: noteId)
+    }
+
+    /// The note as saved, read-only: nil when `note.json` is missing, unreadable or from a newer build. Unlike `load()`,
+    /// it never moves an unreadable file aside, so a caller that only reads (Export, #3660) can't change the note.
+    public func peek() -> SpokenNote? {
+        guard let data = try? Data(contentsOf: fileURL) else { return nil }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        guard let note = try? decoder.decode(SpokenNote.self, from: data), note.schemaVersion <= SpokenNote.currentSchemaVersion else {
+            return nil
+        }
+        return SpokenNote(id: note.id, takes: note.takes)
     }
 
     public func save(_ note: SpokenNote) throws {

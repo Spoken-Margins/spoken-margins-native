@@ -87,7 +87,8 @@ private struct Build23ImportedLayerList: View, Equatable {
             if layers.isEmpty {
                 emptyState
             } else {
-                LazyVStack(alignment: .leading, spacing: 16) {
+                // A plain stack: the item screen hosts this inside its own lazy stack, and lazy inside lazy froze the screen (#3781).
+                VStack(alignment: .leading, spacing: 16) {
                     ForEach(layers) { layer in
                         layerCard(layer)
                     }
@@ -112,9 +113,13 @@ private struct Build23ImportedLayerList: View, Equatable {
                             .foregroundStyle(AppColors.secondaryText)
                             .fixedSize(horizontal: false, vertical: true)
                         layerStateControls(layer)
-                        Label(proposalCountLabel(layer.listeningMapProposalCount), systemImage: "point.3.connected.trianglepath.dotted")
-                            .font(.subheadline)
-                            .foregroundStyle(AppColors.secondaryText)
+                        // A file with no Listening Map proposals says nothing: "0 Listening Map suggestions" is engineering words
+                        // to a friend whose file never held one (#3247, "what passes silently stays silent").
+                        if layer.listeningMapProposalCount > 0 {
+                            Label(proposalCountLabel(layer.listeningMapProposalCount), systemImage: "point.3.connected.trianglepath.dotted")
+                                .font(.subheadline)
+                                .foregroundStyle(AppColors.secondaryText)
+                        }
                     }
                     .padding(.top, 8)
                 }
@@ -173,12 +178,12 @@ private struct Build23ImportedLayerList: View, Equatable {
             )
             .tint(AppColors.evergreen)
 
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
+            AdaptiveStack(alignment: .firstTextBaseline, spacing: 12) {
                 Label(FriendArrivalWords.playModeTitle, systemImage: "eye")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(AppColors.text)
 
-                Spacer(minLength: 12)
+                AdaptiveSpacer(minLength: 12)
 
                 Picker(
                     FriendArrivalWords.playModeTitle,
@@ -242,7 +247,7 @@ private struct Build23ImportedLayerList: View, Equatable {
 
     @ViewBuilder
     private func marginRail(_ layer: Build23ImportedLayerSnapshot) -> some View {
-        LazyVStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 10) {
             Text("Margin placement")
                 .font(.headline)
                 .foregroundStyle(AppColors.text)
@@ -343,9 +348,9 @@ private struct Build23ImportedLayerList: View, Equatable {
 
     private func proposalCountLabel(_ count: Int) -> String {
         if count == 1 {
-            return "1 listening map proposal"
+            return "1 Listening Map suggestion"
         }
-        return "\(count) listening map proposals"
+        return "\(count) Listening Map suggestions"
     }
 
     private var emptyState: some View {

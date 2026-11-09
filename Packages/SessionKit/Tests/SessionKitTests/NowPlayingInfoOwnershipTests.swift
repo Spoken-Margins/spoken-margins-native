@@ -20,6 +20,24 @@ final class NowPlayingInfoOwnershipTests: XCTestCase {
         return (NowPlayingInfoOwnership(sink: sink, now: { Date(timeIntervalSince1970: 0) }), sink)
     }
 
+    /// #2844: the owner's call (2026-11-06) is to keep the app's listening out of Journaling Suggestions, which can pass
+    /// what is playing to other apps. Each writer's card must carry the flag, however it is written.
+    func testEveryWritersCardIsExcludedFromSuggestions() {
+        let key = NowPlayingInfoOwnership.excludeFromSuggestionsKey
+        for writer in [NowPlayingWriter.mediaPlayer, .compactControls, .sharedMargin] {
+            let (ledger, sink) = make()
+            ledger.write(["title": "A"], as: writer)
+            XCTAssertEqual(sink.info?[key] as? Bool, true, "write as \(writer)")
+            XCTAssertEqual(sink.title, "A", "the card's own fields are untouched")
+        }
+        let (ledger, sink) = make()
+        XCTAssertTrue(ledger.writeIfUnheld(["title": "B"], as: .compactControls))
+        XCTAssertEqual(sink.info?[key] as? Bool, true, "writeIfUnheld")
+        // A rewrite by the holder, which the player does every second, keeps the flag too.
+        ledger.write(["title": "C"], as: .compactControls)
+        XCTAssertEqual(sink.info?[key] as? Bool, true, "rewrite")
+    }
+
     func testAClearFromAnotherWriterLeavesTheHoldersCard() {
         let (ledger, sink) = make()
         ledger.write(["title": "Substack post"], as: .mediaPlayer)

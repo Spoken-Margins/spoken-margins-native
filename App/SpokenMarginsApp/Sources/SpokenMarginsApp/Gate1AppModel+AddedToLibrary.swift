@@ -9,6 +9,7 @@ extension Gate1AppModel {
     }
 
     func reportAddedToLibrary(title: String, itemId: String) {
+        startPublicSourceCheck(itemId: itemId) // the listener added this item: the one moment to look at its public copy (#3449)
         let confirmation = AddedToLibraryConfirmation(title: title, nowPlayingIsEmpty: nowPlayingIsEmpty)
         let playNow = confirmation.offersPlayNow ? UserFeedbackEvent.Action(
             title: "Play now",
@@ -27,7 +28,7 @@ extension Gate1AppModel {
         let itemIds = itemIds.filter { seen.insert($0).inserted }
         guard let first = itemIds.first else { return }
         if itemIds.count == 1 {
-            let title = libraryItems.first { $0.id == first }?.title ?? "Shared item"
+            let title = libraryItems.first { $0.id == first }?.title ?? "Shared source"
             reportAddedToLibrary(title: title, itemId: first)
         } else {
             reportConfirmation(AddedToLibraryConfirmation.message(addedCount: itemIds.count, nowPlayingIsEmpty: nowPlayingIsEmpty))

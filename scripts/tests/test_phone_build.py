@@ -43,8 +43,16 @@ if args[:3] == ["devicectl", "list", "devices"]:
         json.dump({"result": {"devices": json.loads(os.environ.get("FAKE_DEVICES", "[]"))}}, handle)
     sys.exit(0)
 if args[:4] == ["devicectl", "device", "install", "app"]:
+    if args[args.index("--device") + 1].startswith("WATCH"):
+        print(os.environ.get("FAKE_WATCH_INSTALL_OUTPUT", "App installed"))
+        sys.exit(int(os.environ.get("FAKE_WATCH_INSTALL_EXIT", "0")))
     print(os.environ.get("FAKE_INSTALL_OUTPUT", "App installed"))
     sys.exit(int(os.environ.get("FAKE_INSTALL_EXIT", "0")))
+if args[:4] == ["devicectl", "device", "info", "apps"]:
+    out = args[args.index("--json-output") + 1]
+    with open(out, "w") as handle:
+        json.dump({"result": {"apps": json.loads(os.environ.get("FAKE_WATCH_APPS", "[]"))}}, handle)
+    sys.exit(0)
 sys.exit(97)  # anything else (uninstall, launch, ...) is a test failure
 '''
 
@@ -57,6 +65,15 @@ def iphone(identifier, name='Cole iPhone', transport='wired', pairing='paired', 
     return {'identifier': identifier, 'deviceProperties': {'name': name},
             'hardwareProperties': {'platform': 'iOS', 'deviceType': kind},
             'connectionProperties': {'transportType': transport, 'pairingState': pairing}}
+
+
+def watch(identifier='WATCH-1', name='Cole Watch', pairing='paired'):
+    return {'identifier': identifier, 'deviceProperties': {'name': name},
+            'hardwareProperties': {'platform': 'watchOS', 'deviceType': 'appleWatch'},
+            'connectionProperties': {'transportType': 'localNetwork', 'pairingState': pairing}}
+
+
+WATCH_ID = 'com.example.fake.watchkitapp'
 
 
 class InstallerTests(unittest.TestCase):
@@ -289,6 +306,98 @@ class InstallerTests(unittest.TestCase):
         self.assertFalse(any('uninstall' in c for c in calls))
         self.assertEqual((self.phone / 'installed.txt').read_text().split()[0], self.sha)
         self.assertIn(f'open {folder.resolve()}/test-plan.md', calls)
+
+    def add_watch_app(self, folder, build='36'):
+        bundle = folder / 'SpokenMarginsApp.app' / 'Watch' / 'SpokenMarginsWatchApp.app'
+        bundle.mkdir(parents=True)
+        with open(bundle / 'Info.plist', 'wb') as handle:
+            plistlib.dump({'CFBundleIdentifier': WATCH_ID, 'CFBundleVersion': build}, handle)
+        return bundle
+
+    def watch_apps(self, build):
+        return json.dumps([{'bundleIdentifier': WATCH_ID, 'bundleVersion': build}])
+
+    def test_the_watch_app_follows_the_phone_and_the_build_is_read_back(self):
+        folder = self.make_build()
+        bundle = self.add_watch_app(folder, '36')
+        done, calls = self.run_installer([iphone('PHONE-1'), watch()], FAKE_WATCH_APPS=self.watch_apps('36'))
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        installs = [c for c in calls if 'install app' in c]
+        self.assertEqual(installs, [f'devicectl device install app --device PHONE-1 {folder.resolve()}/SpokenMarginsApp.app',
+                                    f'devicectl device install app --device WATCH-1 {folder.resolve()}/SpokenMarginsApp.app/Watch/SpokenMarginsWatchApp.app'])
+        self.assertIn(f'devicectl device info apps --device WATCH-1 --bundle-id {WATCH_ID}', ' '.join(calls))
+        self.assertFalse(any('uninstall' in c for c in calls))
+        self.assertIn('Cole Watch now runs the Watch app from this build (build 36)', done.stdout)
+
+    def test_a_watch_that_reports_an_older_build_is_named_not_hidden(self):
+        folder = self.make_build()
+        self.add_watch_app(folder, '36')
+        done, _ = self.run_installer([iphone('PHONE-1'), watch()], FAKE_WATCH_APPS=self.watch_apps('35'))
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn('says it runs build 35, but this build\'s Watch app is build 36', done.stdout)
+
+    def test_a_watch_whose_build_cannot_be_read_back_says_so(self):
+        folder = self.make_build()
+        self.add_watch_app(folder, '36')
+        done, _ = self.run_installer([iphone('PHONE-1'), watch()], FAKE_WATCH_APPS='[]')
+        self.assertIn("couldn't read its build back. Expected build 36", done.stdout)
+
+    def test_a_watch_that_will_not_install_never_fails_the_phone_install(self):
+        folder = self.make_build()
+        self.add_watch_app(folder, '36')
+        done, calls = self.run_installer([iphone('PHONE-1'), watch()], FAKE_WATCH_INSTALL_EXIT='1',
+                                         FAKE_WATCH_INSTALL_OUTPUT='The device is not reachable')
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual((self.phone / 'installed.txt').read_text().split()[0], self.sha)
+        self.assertIn('was not updated, so it still runs its old build. The phone is done.', done.stdout)
+        self.assertIn('devicectl said:', done.stdout)
+        self.assertIn(f'open {folder.resolve()}/test-plan.md', calls)
+        self.assertFalse(any('uninstall' in c for c in calls))
+
+    def test_a_watch_app_whose_build_cannot_be_read_leaves_the_watch_alone(self):
+        folder = self.make_build()
+        bundle = self.add_watch_app(folder)
+        (bundle / 'Info.plist').write_text('not a plist')
+        done, calls = self.run_installer([iphone('PHONE-1'), watch()])
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn("couldn't read the Watch app's build number", done.stdout)
+        self.assertEqual(len([c for c in calls if 'install app' in c]), 1)
+
+    def test_the_watch_step_comes_after_the_test_plan_is_opened(self):
+        folder = self.make_build()
+        self.add_watch_app(folder)
+        done, calls = self.run_installer([iphone('PHONE-1'), watch()], FAKE_WATCH_APPS=self.watch_apps('36'))
+        opened = calls.index(f'open {folder.resolve()}/test-plan.md')
+        watch_install = next(i for i, c in enumerate(calls) if 'install app --device WATCH-1' in c)
+        self.assertLess(opened, watch_install, 'a slow Watch must not delay the plan')
+
+    def test_no_paired_watch_is_one_plain_line(self):
+        folder = self.make_build()
+        self.add_watch_app(folder)
+        done, calls = self.run_installer([iphone('PHONE-1')])
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn('no Watch is paired with this Mac, so only the phone was updated', done.stdout)
+        self.assertEqual(len([c for c in calls if 'install app' in c]), 1)
+
+    def test_two_watches_leave_the_watch_alone(self):
+        folder = self.make_build()
+        self.add_watch_app(folder)
+        done, calls = self.run_installer([iphone('PHONE-1'), watch('WATCH-1', 'First'), watch('WATCH-2', 'Second')])
+        self.assertIn('more than one Watch is listed', done.stdout)
+        self.assertEqual(len([c for c in calls if 'install app' in c]), 1)
+
+    def test_an_unpaired_watch_is_not_installed_on(self):
+        folder = self.make_build()
+        self.add_watch_app(folder)
+        done, calls = self.run_installer([iphone('PHONE-1'), watch(pairing='unpaired')])
+        self.assertIn("isn't paired with this Mac, so only the phone was updated", done.stdout)
+        self.assertEqual(len([c for c in calls if 'install app' in c]), 1)
+
+    def test_a_build_without_a_watch_app_says_so_and_touches_no_watch(self):
+        self.make_build()
+        done, calls = self.run_installer([iphone('PHONE-1'), watch()])
+        self.assertIn('this build has no Watch app inside it', done.stdout)
+        self.assertEqual(len([c for c in calls if 'install app' in c]), 1)
 
     def test_copies_the_test_plan_to_icloud_drive_for_the_phone(self):
         folder = self.make_build()
@@ -1018,6 +1127,42 @@ class HostedPhoneBuildTests(unittest.TestCase):
         self.assertIn('latest is already the hosted build', done.stdout)
         self.assertEqual(self.log.read_text().count('run download'), before)
 
+    def point_latest_at_a_build_by_hand(self, sha):
+        folder = self.phone / f'20990101-000000-{sha[:7]}'
+        folder.mkdir()
+        (folder / 'build.json').write_text(json.dumps({'sha': sha, 'built_on': 'this mac'}))
+        (self.phone / 'latest').unlink()
+        (self.phone / 'latest').symlink_to(folder.name)
+        return folder
+
+    def test_the_job_leaves_a_build_made_by_hand_in_place(self):
+        """#3527: the job took the same hosted build again and put the installer back on an older commit."""
+        self.git('update-ref', 'refs/remotes/origin/main', self.tip)
+        self.assertEqual(self.run_trunk('--if-changed').returncode, 0)
+        folder = self.point_latest_at_a_build_by_hand('a' * 40)
+        before = self.log.read_text().count('run download')
+        done = self.run_trunk('--if-changed')
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn('already took the hosted build', done.stdout)
+        self.assertEqual(self.log.read_text().count('run download'), before)
+        self.assertEqual((self.phone / 'latest').resolve(), folder.resolve())
+
+    def test_a_hosted_build_of_a_new_commit_still_replaces_a_build_made_by_hand(self):
+        self.git('update-ref', 'refs/remotes/origin/main', self.tip)
+        self.assertEqual(self.run_trunk('--if-changed').returncode, 0)
+        self.point_latest_at_a_build_by_hand('a' * 40)
+        (self.phone / 'hosted-taken.json').write_text(json.dumps({'sha': 'b' * 40}))
+        done = self.run_trunk('--if-changed')
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual(json.loads((self.phone / 'latest' / 'build.json').read_text())['sha'], self.tip)
+
+    def test_the_first_look_with_no_record_still_takes_the_hosted_build(self):
+        self.git('update-ref', 'refs/remotes/origin/main', self.tip)
+        done = self.run_trunk('--if-changed')
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual(json.loads((self.phone / 'latest' / 'build.json').read_text())['sha'], self.tip)
+        self.assertEqual(json.loads((self.phone / 'hosted-taken.json').read_text())['sha'], self.tip)
+
     def run_trunk(self, *args, **extra):
         """As the launchd job runs it: no --commit, so it follows origin/main."""
         env = {**os.environ, **self.env, 'SM_TRUNK': 'main', **extra}
@@ -1672,7 +1817,8 @@ class VerdictTests(unittest.TestCase):
         quiet = {'body': self.MIXED['body'].replace(
             '  scripted journeys (probation, not verdict input): J1Tests/testOpen failed, J4Tests/testPlay passed\n', '')}
         _, got = self.outcomes([quiet])
-        self.assertIn('**not run** (the integration report lists no scripted journeys)', got['Scripted journeys'])
+        self.assertIn('**not run** (asked for when this build was cut; no scripted-journeys report for this commit yet)',
+                      got['Scripted journeys'])
         _, got = self.outcomes([{'body': self.MIXED['body'].replace('J1Tests/testOpen failed, J4Tests/testPlay passed',
                                                                     'J1Tests/testOpen not_run')}])
         self.assertIn('**not run**', got['Scripted journeys'])
@@ -1707,7 +1853,44 @@ class VerdictTests(unittest.TestCase):
     def test_an_inconclusive_run_proves_no_scripted_journey(self):
         _, got = self.outcomes([self.report_with('', verdict='INCONCLUSIVE')])
         self.assertIn('**not run (inconclusive)**', got['App tests'])
-        self.assertIn('**not run** (the integration run did not finish)', got['Scripted journeys'])
+        self.assertIn('**not run** (asked for when this build was cut; no scripted-journeys report for this commit yet)',
+                      got['Scripted journeys'])  # an old-format list in an unfinished run proves nothing
+
+    def scripted_report(self, verdict, body_lines):
+        """A `Lane report scripted-journeys-<sha7>` as sm_integration_run.journeys_report_text writes it (#3669)."""
+        sha7 = self.MIXED['body'].split('integration-')[1][:7]
+        lines = [f'Lane report scripted-journeys-{sha7} \u2014 {verdict}', f'commit {sha7}', 'run by: integration script', *body_lines]
+        return {'body': '```text\n' + '\n'.join(lines) + '\n```'}
+
+    def test_the_scripted_journeys_report_for_the_commit_is_the_record_of_the_journeys(self):
+        quiet = {'body': self.MIXED['body'].replace(
+            '  scripted journeys (probation, not verdict input): J1Tests/testOpen failed, J4Tests/testPlay passed\n', '')}
+        passed = self.scripted_report('PASS', ['  scripted journeys (only those on gating are verdict input): '
+                                               'J1Tests/testOpen passed, J4Tests/testPlay passed'])
+        plan, got = self.outcomes([quiet, passed])
+        self.assertIn('**pass** (J1Tests/testOpen passed, J4Tests/testPlay passed)', got['Scripted journeys'])
+        self.assertIn('**pass**', got['App tests'])      # the integration report still decides the app tests
+        failed = self.scripted_report('FAIL', ['  scripted journeys (only those on gating are verdict input): '
+                                               'J1Tests/testOpen failed', 'failing: J1Tests/testOpen',
+                                               'merges since the last scripted-journeys PASS (abc1234): #12, #11. '
+                                               'Any of them can be the cause; no revert is opened for a journey.'])
+        plan, got = self.outcomes([quiet, failed])
+        self.assertIn('**fail** (J1Tests/testOpen failed)', got['Scripted journeys'])
+        self.assertIn('- failing: J1Tests/testOpen', plan)
+        self.assertIn('- merges since the last scripted-journeys PASS (abc1234): #12, #11.', plan)  # the whole range, not a guess
+        inconclusive = self.scripted_report('INCONCLUSIVE', ['why inconclusive: journeys not run: simulator boot failed'])
+        _, got = self.outcomes([quiet, inconclusive])
+        self.assertIn('**not run**', got['Scripted journeys'])
+        self.assertIn('proves nothing either way', got['Scripted journeys'])
+
+    def test_a_scripted_journeys_report_for_another_commit_says_nothing_about_this_one(self):
+        quiet = {'body': self.MIXED['body'].replace(
+            '  scripted journeys (probation, not verdict input): J1Tests/testOpen failed, J4Tests/testPlay passed\n', '')}
+        other = self.scripted_report('PASS', ['  scripted journeys (only those on gating are verdict input): J1Tests/testOpen passed'])
+        other['body'] = other['body'].replace('scripted-journeys-' + self.MIXED['body'].split('integration-')[1][:7],
+                                              'scripted-journeys-0000000')
+        _, got = self.outcomes([quiet, other])
+        self.assertIn('**not run** (asked for when this build was cut', got['Scripted journeys'])
 
     def test_flakes_and_crashes_reach_the_plan_but_empty_lines_do_not(self):
         body = self.MIXED['body'].replace('flaky: none this run', 'flaky: AppTests/testSlow').replace(
@@ -3181,9 +3364,9 @@ class CurrentFocusTests(unittest.TestCase):
         self.assertIn(module.CURRENT_MILESTONE, named, line)
         self.assertEqual(named.index(module.CURRENT_MILESTONE), min(
             named.index(m) for m in named if m != 'priority'), 'the current milestone is the first one named')
-        never_held = re.findall(r'`([^`]+)`,? which is never held', line)
-        for milestone in never_held:
-            self.assertNotIn(milestone, module.HELD_MILESTONES, line)
+        # AGENTS.md no longer says which milestones are held, so phone-build's own list is pinned here: changing it is
+        # a decision to make in this test too (#3707). The held ones are never the order of work's.
+        self.assertEqual(module.HELD_MILESTONES, frozenset({'Later', 'Public beta'}))
         for milestone in module.HELD_MILESTONES:
             self.assertNotIn(milestone, named, f'{milestone} is in the order of work, so it is not held')
 

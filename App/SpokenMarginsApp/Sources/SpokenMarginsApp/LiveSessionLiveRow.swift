@@ -49,6 +49,8 @@ struct LiveSessionLiveRows: View {
     @EnvironmentObject private var model: Gate1AppModel
     @ObservedObject private var board = LiveSessionBoard.shared
     @State private var opened: Opened?
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @ScaledMetric(relativeTo: .title3) private var glyphWidth: CGFloat = 28
 
     private struct Opened: Identifiable {
         var id: String
@@ -60,7 +62,7 @@ struct LiveSessionLiveRows: View {
         if !board.rows.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(board.rows.prefix(Self.shownRows)) { row in
-                    HStack(spacing: 8) {
+                    AdaptiveStack(spacing: 8) {
                         Button { opened = Opened(id: row.id) } label: { line(row) }
                             .buttonStyle(.plain)
                             .accessibilityIdentifier("library.liveRow.\(row.id)")
@@ -103,14 +105,14 @@ struct LiveSessionLiveRows: View {
         HStack(spacing: 12) {
             Image(systemName: row.isRunning ? "record.circle" : (row.isQuick ? "bolt" : "stop.circle"))
                 .font(.title3)
-                .foregroundStyle(row.isRunning ? AppColors.accent : AppColors.secondaryText)
-                .frame(width: 28)
+                .foregroundStyle(row.isRunning ? AppColors.evergreen : AppColors.secondaryText)
+                .frame(width: glyphWidth)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 Text(row.isRunning ? "Live · \(row.title)" : row.title)
                     .font(.headline)
                     .foregroundStyle(AppColors.text)
-                    .lineLimit(1)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
                 Text(detail(row))
                     .font(.caption)
                     .foregroundStyle(AppColors.secondaryText)

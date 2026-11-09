@@ -42,6 +42,12 @@ public enum WatchContract {
         guard seconds.isFinite, seconds > 0 else { return 0 }
         return Int((min(seconds * 1_000, Double(Int32.max))).rounded())
     }
+    /// A transport command older than this, by the phone's clock, is dropped (#3494).
+    public static let transportMaxAge: TimeInterval = 10
+    /// How long a filed Margin's "Filed in…" takes the top of the first screen, in place of the item's title (#3494).
+    public static let filedIsNewsFor: TimeInterval = 30
+    /// With the phone out of reach, a now-playing line older than this is not shown (#3494).
+    public static let nowPlayingStaleAfter: TimeInterval = 60
     /// A named session nobody ends closes itself this long after its start (DESIGN section 2 point 8).
     public static let autoEndAfter: TimeInterval = 8 * 60 * 60
 }
@@ -149,6 +155,59 @@ public struct WatchSessionInfo: Codable, Equatable, Sendable {
     }
 }
 
+/// What the phone's player has loaded, as the Watch shows it (#3494). Times are by the phone's clock.
+public struct WatchNowPlaying: Codable, Equatable, Sendable {
+    public var itemId: String
+    /// The item's title, for the Watch's first screen.
+    public var title: String
+    public var isPlaying: Bool
+    /// Where the item was at `positionAt`.
+    public var positionMs: Int
+    public var positionAt: Date
+    /// How fast the position moves while playing. 0 means it doesn't: text read aloud has no media time (#3494).
+    public var rate: Double
+
+    public init(itemId: String, title: String, isPlaying: Bool, positionMs: Int, positionAt: Date, rate: Double = 1) {
+        self.itemId = itemId
+        self.title = title
+        self.isPlaying = isPlaying
+        self.positionMs = positionMs
+        self.positionAt = positionAt
+        self.rate = rate
+    }
+
+    /// Where the item is at `time` (phone clock): moving on at its rate while it plays, never before `positionAt`.
+    public func position(at time: Date) -> Int {
+        guard isPlaying, time > positionAt else { return max(0, positionMs) }
+        let advanced = WatchContract.milliseconds(seconds: time.timeIntervalSince(positionAt) * max(0, rate))
+        return max(0, positionMs.addingReportingOverflow(advanced).overflow ? Int.max : positionMs + advanced)
+    }
+}
+
+/// A transport command from the Watch for the item the phone is playing (#3494). The phone runs it through the same
+/// compact command path as the Lock Screen and the Live Activity. It travels on the fast lane only and goes stale
+/// quickly (`WatchContract.transportMaxAge`): a skip that reached the phone minutes late would be a surprise.
+public enum WatchTransport: String, Codable, CaseIterable, Sendable {
+    case play
+    case pause
+    case skipBack
+    case skipForward
+}
+
+/// A Watch Margin the listener aimed at the item the phone is playing, not at the running session (#3494). Optional in
+/// the contract, so the Watch build before it, which never sends one, files as it always did.
+public struct WatchItemTarget: Codable, Equatable, Sendable {
+    public var itemId: String
+    /// Where the item stood when the Watch started recording, as the Watch worked it out from the board (moving on at the
+    /// item's rate while it played). The phone prefers its own record of playing and uses this when that is missing.
+    public var positionMs: Int?
+
+    public init(itemId: String, positionMs: Int? = nil) {
+        self.itemId = itemId
+        self.positionMs = positionMs
+    }
+}
+
 /// The phone's latest view, sent as the application context and in every fast-lane reply (WATCH.md 3.4 point 1).
 /// Times are by the phone's clock.
 public struct WatchBoard: Codable, Equatable, Sendable {
@@ -162,12 +221,19 @@ public struct WatchBoard: Codable, Equatable, Sendable {
     public var endNotes: [String: String]
     /// The phone's clock when it made this board.
     public var phoneTime: Date
+    /// The item the phone has loaded, if any (#3494). Optional, so a board from an earlier build still decodes and an
+    /// earlier Watch ignores it.
+    public var nowPlaying: WatchNowPlaying?
 
-    public init(running: WatchSessionInfo? = nil, recentlyEnded: WatchSessionInfo? = nil, endNotes: [String: String] = [:], phoneTime: Date) {
+    public init(
+        running: WatchSessionInfo? = nil, recentlyEnded: WatchSessionInfo? = nil, endNotes: [String: String] = [:], phoneTime: Date,
+        nowPlaying: WatchNowPlaying? = nil
+    ) {
         self.running = running
         self.recentlyEnded = recentlyEnded
         self.endNotes = endNotes
         self.phoneTime = phoneTime
+        self.nowPlaying = nowPlaying
     }
 }
 
@@ -218,6 +284,9 @@ public struct WatchMarginTransfer: Codable, Equatable, Sendable {
         public static let clockMeasuredAt = "clockMeasuredAt"
         public static let sha256 = "sha256"
         public static let attempt = "attempt"
+        // #3494. Absent from a Watch Margin aimed at the session, and from every build before it.
+        public static let targetItemId = "targetItemId"
+        public static let targetPositionMs = "targetPositionMs"
     }
 
     public var id: String
@@ -232,8 +301,13 @@ public struct WatchMarginTransfer: Codable, Equatable, Sendable {
     public var sha256: String
     /// 1 for the first send, rising with each retry.
     public var attempt: Int
+    /// Set when the listener chose "On this episode": the Margin belongs on that item, not in the running session (#3494).
+    public var itemTarget: WatchItemTarget?
 
-    public init(id: String, wallStart: Date, durationMs: Int, sessionId: String? = nil, clock: WatchClockStamp? = nil, sha256: String = "", attempt: Int = 1) {
+    public init(
+        id: String, wallStart: Date, durationMs: Int, sessionId: String? = nil, clock: WatchClockStamp? = nil, sha256: String = "",
+        attempt: Int = 1, itemTarget: WatchItemTarget? = nil
+    ) {
         self.id = id
         self.wallStart = wallStart
         self.durationMs = durationMs
@@ -241,10 +315,11 @@ public struct WatchMarginTransfer: Codable, Equatable, Sendable {
         self.clock = clock
         self.sha256 = sha256
         self.attempt = attempt
+        self.itemTarget = itemTarget
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, wallStart, durationMs, sessionId, clock, sha256, attempt
+        case id, wallStart, durationMs, sessionId, clock, sha256, attempt, itemTarget
     }
 
     /// Reads what slice 1a wrote beside a landed file too, which had only the first three fields.
@@ -257,7 +332,8 @@ public struct WatchMarginTransfer: Codable, Equatable, Sendable {
             sessionId: try container.decodeIfPresent(String.self, forKey: .sessionId),
             clock: try container.decodeIfPresent(WatchClockStamp.self, forKey: .clock),
             sha256: try container.decodeIfPresent(String.self, forKey: .sha256) ?? "",
-            attempt: try container.decodeIfPresent(Int.self, forKey: .attempt) ?? 1
+            attempt: try container.decodeIfPresent(Int.self, forKey: .attempt) ?? 1,
+            itemTarget: try container.decodeIfPresent(WatchItemTarget.self, forKey: .itemTarget)
         )
     }
 
@@ -274,6 +350,10 @@ public struct WatchMarginTransfer: Codable, Equatable, Sendable {
            let measured = (metadata[Key.clockMeasuredAt] as? NSNumber)?.doubleValue, measured.isFinite, measured > 0 {
             clock = WatchClockStamp(offset: offset, measuredAt: Date(timeIntervalSince1970: measured))
         }
+        var itemTarget: WatchItemTarget?
+        if let itemId = (metadata[Key.targetItemId] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !itemId.isEmpty {
+            itemTarget = WatchItemTarget(itemId: itemId, positionMs: (metadata[Key.targetPositionMs] as? NSNumber)?.intValue.nonNegative)
+        }
         self.init(
             id: id,
             wallStart: Date(timeIntervalSince1970: start),
@@ -281,7 +361,8 @@ public struct WatchMarginTransfer: Codable, Equatable, Sendable {
             sessionId: sessionId?.isEmpty == false ? sessionId : nil,
             clock: clock,
             sha256: (metadata[Key.sha256] as? String) ?? "",
-            attempt: max(1, (metadata[Key.attempt] as? NSNumber)?.intValue ?? 1)
+            attempt: max(1, (metadata[Key.attempt] as? NSNumber)?.intValue ?? 1),
+            itemTarget: itemTarget
         )
     }
 
@@ -300,6 +381,10 @@ public struct WatchMarginTransfer: Codable, Equatable, Sendable {
             metadata[Key.clockMeasuredAt] = clock.measuredAt.timeIntervalSince1970
         }
         if !sha256.isEmpty { metadata[Key.sha256] = sha256 }
+        if let itemTarget {
+            metadata[Key.targetItemId] = itemTarget.itemId
+            if let position = itemTarget.positionMs { metadata[Key.targetPositionMs] = position }
+        }
         return metadata
     }
 
@@ -407,6 +492,11 @@ public enum WatchMessage: Codable, Equatable, Sendable {
     case marginDetails(WatchMarginTransfer)
     /// The listener deleted a waiting Margin on the Watch: a copy that arrives later is refused.
     case withdraw(id: String)
+    /// Play, pause or skip the item the phone is playing (#3494). Fast lane only; stale ones are dropped.
+    case transport(WatchTransport)
+    /// The Watch's record of launches, failures and unclean endings (#3506), for the phone's Diagnostics export. A
+    /// phone build before this one can't decode the case and drops the whole message, which is harmless.
+    case diagnostics(WatchDiagnosticsReport)
 }
 
 /// What travels: the message, the contract version, the Watch's clock at sending, and a counter that only rises.
@@ -483,6 +573,25 @@ extension WatchMarginAnswer {
               let decoded = try? WatchContractCoding.decoder.decode(WatchMarginAnswer.self, from: data) else { return nil }
         self = decoded
     }
+}
+
+extension WatchEnvelope {
+    /// When the Watch sent it, by the phone's clock, using the clock measurement it carried.
+    public var sentAtOnPhoneClock: Date {
+        guard let clock else { return sentAt }
+        return sentAt.addingTimeInterval(-clock.offset)
+    }
+
+    /// A transport command still worth running at `now` (the phone's clock): not older than `transportMaxAge`, and not
+    /// from the future by more than a second of clock noise.
+    public func transportIsFresh(now: Date) -> Bool {
+        let age = now.timeIntervalSince(sentAtOnPhoneClock)
+        return age <= WatchContract.transportMaxAge && age >= -2
+    }
+}
+
+private extension Int {
+    var nonNegative: Int? { self >= 0 ? self : nil }
 }
 
 /// One JSON coding for the contract on both devices: dates as seconds since 1970, which keeps fractions.

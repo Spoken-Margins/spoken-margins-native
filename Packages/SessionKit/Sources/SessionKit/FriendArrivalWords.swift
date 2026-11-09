@@ -20,6 +20,17 @@ public enum FriendArrivalWords {
         return senderLabels.count > 1 ? "From friends" : "From a friend"
     }
 
+    /// The Lock Screen's artist line while a friend's Margin plays: the name, or "A friend". The prompt carries the
+    /// stored stand-in "Unsigned sender" for a file that named nobody, which must never reach the Lock Screen (#3247).
+    public static func nowPlayingArtist(senderLabel: String?) -> String {
+        SharedPacketArrival.name(senderLabel) ?? "A friend"
+    }
+
+    /// "Shared Margin from Cole" on the Live Activity, which says "a friend" when the file named nobody (#3247).
+    public static func liveActivitySender(senderLabel: String?) -> String {
+        SharedPacketArrival.name(senderLabel) ?? "a friend"
+    }
+
     /// Possessive for control names: "Cole's Margins", "Your friend's Margins".
     public static func possessiveMargins(senderLabel: String?) -> String {
         "\(SharedPacketArrival.name(senderLabel).map { "\($0)'s" } ?? "Your friend's") Margins"
@@ -28,7 +39,7 @@ public enum FriendArrivalWords {
     /// The honest note, shown only under "About this file": the file is unchanged, the name isn't proven.
     /// What "Hide this sender" tells the listener before it hides (#2846). It says where it applies and that nothing is lost.
     public static let hideSenderMessage =
-        "Their Margins will disappear from every item on this phone. Nothing is deleted, and you can show them again in Settings."
+        "Their Margins will disappear from every list and from playback on this phone. Nothing is deleted, and you can show them again in Settings."
 
     /// What "Hide this Margin" tells the listener before it hides one Margin (#2846): the same promise, for one.
     public static let hideMarginMessage =

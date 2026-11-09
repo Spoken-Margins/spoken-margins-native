@@ -829,12 +829,18 @@ public struct ListeningMap: Codable, Equatable, Sendable {
     public var itemId: String
     public var overview: String
     public var chapters: [Chapter]
+    /// True when a model wrote the overview and the chapter titles outside the app: a Listening Edition import or a
+    /// pasted map. Those words leave the device only for a source marked public (#3588, `MapTextDisclosure`). Nil, the
+    /// value of every record from before this field, means the words are the publisher's or the app's and travel as
+    /// they did. Stored as one more optional key in the record's JSON, so an older build opens the row and ignores it.
+    public var modelWrittenText: Bool?
 
-    public init(id: String, itemId: String, overview: String, chapters: [Chapter]) {
+    public init(id: String, itemId: String, overview: String, chapters: [Chapter], modelWrittenText: Bool? = nil) {
         self.id = id
         self.itemId = itemId
         self.overview = overview
         self.chapters = chapters
+        self.modelWrittenText = modelWrittenText
     }
 }
 

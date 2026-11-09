@@ -51,14 +51,14 @@ class LiveActivityDynamicTypeTests(unittest.TestCase):
         # The Dynamic Island lines, the small and medium titles and chapters, and the next-chapter title.
         self.assertGreaterEqual(text.count(".adaptiveLineLimit()"), 8)
         # What keeps a bare one-line limit is a short word or a button label that shrinks to fit.
-        self.assertEqual(text.count(".lineLimit(1)"), 6)
+        self.assertEqual(text.count(".lineLimit(1)"), 7)
 
     def test_the_circles_are_fixed_size_controls_that_never_drop_below_a_touch_target(self):
         text = _text()
         self.assertNotRegex(text, r"\.frame\(width: (50|56|60), height: (50|56|60)\)")
         self.assertNotIn("controlScale", text, "a circle that grows would not fit the row at large text sizes")
         helper = _between(text, "enum Gate2ControlSize", "private struct AdaptiveLineLimit")
-        for name in ("skim", "skip", "play", "record"):
+        for name in ("skim", "skip", "play", "marginColumnWidth"):
             self.assertGreaterEqual(_constant(helper, name), MIN_TOUCH_TARGET, name)
 
     def test_the_transport_is_one_row_so_the_card_keeps_its_height(self):
@@ -67,9 +67,10 @@ class LiveActivityDynamicTypeTests(unittest.TestCase):
         controls = _between(text, "private var transportControls", "private var playbackCircles")
         self.assertNotIn("ViewThatFits", controls)
         self.assertNotIn("VStack", controls)
+        self.assertNotIn("Spacer", controls, "a Spacer adds a fifth gap, and the row no longer fits at 311 pt (#3692)")
         self.assertEqual(controls.count("HStack("), 1)
-        for part in ("playbackCircles", "recordButton"):
-            self.assertEqual(controls.count(part), 1, part)
+        self.assertEqual(controls.count("playbackCircles"), 1)
+        self.assertNotIn("recordButton", controls, "the Margin control is its own column beside the row (#3692)")
         self.assertNotIn("nextNavigation", controls, "the next-chapter action sits in the header")
         header = _between(text, "struct Gate2LiveActivityView", "private var transportControls")
         self.assertIn("nextNavigation", header)
@@ -98,20 +99,21 @@ class LiveActivityDynamicTypeTests(unittest.TestCase):
         play, chip = _constant(helper, "play"), _constant(helper, "nextChipHeight")
         # 10 pt padding top and bottom; the header is the taller of the title column (22 + 2 + 16) and the trailing
         # column (state word 16, a caption line, + the chip); a 6 pt gap, the 4 pt progress bar and a 6 pt gap; the transport row. A
-        # paused card adds the 6 pt gap and the 20 pt "Paused, tap to resume" line. The Summary and Discuss row is not
+        # paused card's prompt takes the chapter line, so it adds no row (#3692). The Summary and Discuss row is not
         # counted: it was already there and `main` is over the limit with it.
+        self.assertNotIn("Label(Gate2LiveActivityCopy.pausedPrompt", text, "a separate prompt row makes the card taller")
         header = max(22 + 2 + 16, 16 + chip)
         base = 2 * 10 + header + 6 + 4 + 6 + play
-        paused = base + 6 + 20
-        self.assertLessEqual(paused, LOCK_SCREEN_MAX_HEIGHT, paused)
+        self.assertLessEqual(base, LOCK_SCREEN_MAX_HEIGHT, base)
 
     def test_the_base_sizes_fit_one_row_on_the_narrowest_lock_screen(self):
         helper = _between(_text(), "enum Gate2ControlSize", "private struct AdaptiveLineLimit")
-        skim, skip, play, record, spacing = (
-            _constant(helper, name) for name in ("skim", "skip", "play", "record", "rowSpacing")
+        skim, skip, play, spacing, column, gap = (
+            _constant(helper, name)
+            for name in ("skim", "skip", "play", "rowSpacing", "marginColumnWidth", "marginColumnGap")
         )
-        row = 2 * skim + 2 * skip + play + record + 6 * spacing  # five circles, a spacer and the mic: six gaps
-        self.assertLessEqual(row, NARROW_LOCK_SCREEN_CONTENT_WIDTH)
+        row = 2 * skim + 2 * skip + play + 4 * spacing  # five circles, four gaps
+        self.assertLessEqual(row + gap + column, NARROW_LOCK_SCREEN_CONTENT_WIDTH)  # the Margin column beside them (#3692)
         self.assertLessEqual(NARROW_LOCK_SCREEN_CONTENT_WIDTH, LOCK_SCREEN_CONTENT_WIDTH)
 
 

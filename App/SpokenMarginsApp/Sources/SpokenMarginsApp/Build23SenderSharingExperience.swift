@@ -1,4 +1,5 @@
 import Foundation
+import SessionKit
 import SessionKitSharing
 import SwiftUI
 
@@ -11,10 +12,55 @@ struct Build23SenderSharingExperience: View {
     @State private var isSystemSharePresented = false
     @State private var verifiedShareURLForPresentation: URL?
     @State private var isAutoCleanChoicePresented = false
-    @State private var shareAfterVerification = false
+    /// What the listener asked for while the packet was still being made; delivered once it is ready.
+    @State private var pendingShare: Build23PendingShare?
     @State private var showsSharingOptions = false
+    /// The stage last announced to VoiceOver, so a stage change says its heading once (#3728).
+    @State private var announcedStage: VoiceOverAnnouncements.SharingStep = .select
+    #if SM_SHARE_LINK_CREATION
+    @StateObject private var linkSender = ShareLinkSender()
+    /// The server's `links` switch, asked once when the screen opens. Off, Share sends the file as before.
+    @State private var isLinkOffered = false
+    #endif
 
     var body: some View {
+        withShareLink(screen)
+    }
+
+    /// In a build that makes links, Share makes the link (#3750): the consent alert and the link's share sheet hang
+    /// on the whole screen, and the server is asked once whether links are on.
+    @ViewBuilder
+    private func withShareLink(_ content: some View) -> some View {
+        #if SM_SHARE_LINK_CREATION
+        content
+            .modifier(ShareLinkPresentation(sender: linkSender, packageURL: coordinator.verifiedShareFileURL) { packet in
+                coordinator.recordSystemShareCompleted(packetURL: packet)
+            })
+            .task { isLinkOffered = await linkSender.isOffered() }
+        #else
+        content
+        #endif
+    }
+
+    /// Whether the main Share button makes a link. False in a build without links, and while the server says no.
+    private var sharesLink: Bool {
+        #if SM_SHARE_LINK_CREATION
+        isLinkOffered
+        #else
+        false
+        #endif
+    }
+
+    private var isMakingLink: Bool {
+        #if SM_SHARE_LINK_CREATION
+        linkSender.state == .making
+        #else
+        false
+        #endif
+    }
+
+    @ViewBuilder
+    private var screen: some View {
         let snapshot = coordinator.snapshot
 
         ScrollView {
@@ -67,12 +113,15 @@ struct Build23SenderSharingExperience: View {
         // Review and Share stay pinned at the bottom, within thumb reach, rather than scrolling away (#147).
         .safeAreaInset(edge: .bottom) {
             if snapshot.stage != .share {
-                primaryAction(snapshot)
-                    .controlSize(.large)
-                    .frame(maxWidth: .infinity)
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 12)
-                    .background(AppColors.bone)
+                VStack(alignment: .leading, spacing: 8) {
+                    linkStatusLines
+                    primaryAction(snapshot)
+                        .controlSize(.large)
+                        .frame(maxWidth: .infinity)
+                }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 12)
+                .background(AppColors.bone)
             }
         }
         .background(AppColors.bone.ignoresSafeArea())
@@ -85,15 +134,17 @@ struct Build23SenderSharingExperience: View {
             isAutoCleanChoicePresented = coordinator.snapshot.needsAutoCleanDecision
         }
         .onCompatibleChange(of: snapshot.previewState) { previewState in
-            switch previewState {
-            case .ready where shareAfterVerification:
-                shareAfterVerification = false
-                presentVerifiedSystemShare()
-            case .failed, .stale:
-                shareAfterVerification = false
-            default:
-                break
+            let stage = coordinator.snapshot.stage
+            if previewState == .ready, stage != .select, let requested = pendingShare {
+                pendingShare = nil
+                deliver(requested)
+                return
             }
+            dropStaleShareRequests(stage: stage, previewState: previewState)
+        }
+        .onCompatibleChange(of: snapshot.stage) { stage in
+            dropStaleShareRequests(stage: stage, previewState: coordinator.snapshot.previewState)
+            announceStage(stage)
         }
         .alert("Clean selected Margins automatically?", isPresented: $isAutoCleanChoicePresented) {
             Button("Clean selected") {
@@ -137,6 +188,10 @@ struct Build23SenderSharingExperience: View {
             .filledActionButton()
             .disabled(!snapshot.canAdvance || snapshot.isPreparingAll)
             .accessibilityIdentifier("build23.sender.select.continue")
+        case .review where sharesLink:
+            linkShareButton(isWorking: Build23ShareRequestPolicy.showsMakingLink(isMakingLink: isMakingLink, pendingShare: pendingShare))
+                .disabled(!snapshot.canAdvance || isMakingLink)
+                .accessibilityIdentifier("build23.sender.review.share")
         case .review:
             Button("Share \(includedCount)", systemImage: "square.and.arrow.up") {
                 shareVerifiedPackage()
@@ -144,9 +199,13 @@ struct Build23SenderSharingExperience: View {
             .filledActionButton()
             .disabled(!snapshot.canAdvance)
             .accessibilityIdentifier("build23.sender.review.share")
+        case .recipientPreview where sharesLink:
+            linkShareButton(isWorking: Build23ShareRequestPolicy.showsMakingLink(isMakingLink: isMakingLink, pendingShare: pendingShare))
+                .disabled(snapshot.previewState != .ready || isMakingLink)
+                .accessibilityIdentifier("build23.sender.preview.share")
         case .recipientPreview:
             Button(
-                snapshot.previewState == .building ? "Verifying…" : "Share \(includedCount)",
+                snapshot.previewState == .building ? "Getting ready…" : "Share \(includedCount)",
                 systemImage: snapshot.previewState == .building ? "hourglass" : "square.and.arrow.up"
             ) {
                 shareVerifiedPackage()
@@ -156,6 +215,45 @@ struct Build23SenderSharingExperience: View {
         case .share:
             EmptyView()
         }
+    }
+
+    /// The main Share button when it makes a link (#3750). The file is the second choice, "Send as a file".
+    private func linkShareButton(isWorking: Bool) -> some View {
+        Button {
+            share(.link)
+        } label: {
+            if isWorking {
+                HStack(spacing: 8) {
+                    ProgressView()
+                    Text("Making link…")
+                }
+            } else {
+                Label("Share link", systemImage: "link")
+            }
+        }
+        .filledActionButton()
+        .accessibilityHint("Makes a private link to these Margins and opens the share sheet with it")
+    }
+
+    @ViewBuilder
+    private var linkStatusLines: some View {
+        #if SM_SHARE_LINK_CREATION
+        let lines = ShareLinkStatusLines(state: linkSender.state, companionNote: linkSender.companionNote)
+        if sharesLink, lines.hasLines {
+            lines
+        }
+        #endif
+    }
+
+    /// "Send as a file", the second choice beside a Share button that makes a link.
+    private func sendFileButton(enabled: Bool, identifier: String) -> some View {
+        Button("Send as a file", systemImage: "doc") {
+            share(.file)
+        }
+        .buttonStyle(.bordered)
+        .disabled(!enabled)
+        .accessibilityHint("Opens the share sheet with your Margins as a file")
+        .accessibilityIdentifier(identifier)
     }
 
     private func selectStage(_ snapshot: Build23SharingSnapshot) -> some View {
@@ -194,7 +292,7 @@ struct Build23SenderSharingExperience: View {
         return ExperienceSurface(tint: AppColors.softGreen) {
             VStack(alignment: .leading, spacing: 14) {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("Choose Margins")
+                    Text(VoiceOverAnnouncements.SharingStep.select.title)
                         .font(.title3.weight(.semibold))
                         .screenTitle()
                     Text("\(includedCount) of \(snapshot.margins.count) selected")
@@ -236,10 +334,10 @@ struct Build23SenderSharingExperience: View {
                         total: Double(max(snapshot.preparationTotal, 1))
                     )
                     .tint(AppColors.evergreen)
-                    HStack {
+                    AdaptiveStack {
                         Text("Cleaning \(snapshot.preparationCompleted) of \(snapshot.preparationTotal)")
                             .font(.subheadline)
-                        Spacer()
+                        AdaptiveSpacer()
                         Button("Cancel", role: .cancel) {
                             coordinator.send(.cancelPreparation)
                         }
@@ -263,7 +361,7 @@ struct Build23SenderSharingExperience: View {
     private func senderDetails(_ snapshot: Build23SharingSnapshot) -> some View {
         ExperienceSurface {
             VStack(alignment: .leading, spacing: 14) {
-                Text("Item being shared")
+                Text("What you’re sharing")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(AppColors.secondaryText)
                 Text(snapshot.itemTitle)
@@ -282,7 +380,7 @@ struct Build23SenderSharingExperience: View {
                     .font(.caption)
                     .foregroundStyle(AppColors.secondaryText)
 
-                TextField(
+                AppTextField(
                     "Name shown to the recipient",
                     text: Binding(
                         get: { snapshot.senderDisplayLabel },
@@ -301,7 +399,7 @@ struct Build23SenderSharingExperience: View {
                         set: { coordinator.send(.setIncludesAcousticEvidence($0)) }
                     )
                 )
-                .accessibilityHint("Controls whether supported listening evidence travels with the package")
+                .accessibilityHint("Controls whether supported listening evidence travels with your Margins")
                 .accessibilityIdentifier("build23.sender.include-acoustic-evidence")
 
                 if Build23SenderPresentation.showsLinklessRightsControl(for: snapshot.transport) {
@@ -312,7 +410,7 @@ struct Build23SenderSharingExperience: View {
                             set: { coordinator.send(.setPrivateSharingRightsConfirmed($0)) }
                         )
                     )
-                    .accessibilityHint("When disabled, Margins can still be sent without embedding the item; the recipient supplies the source")
+                    .accessibilityHint("When disabled, Margins can still be sent without including it; the recipient supplies the source")
                     .accessibilityIdentifier("build23.sender.confirm-rights")
                 }
             }
@@ -497,12 +595,13 @@ struct Build23SenderSharingExperience: View {
         VStack(alignment: .leading, spacing: 20) {
             reviewComposition(snapshot)
 
-            Text("Review selected Margins")
+            Text(VoiceOverAnnouncements.SharingStep.review.title)
                 .font(.headline)
                 .foregroundStyle(AppColors.text)
+                .screenTitle()
                 .accessibilityIdentifier("build23.sender.stage.review")
 
-            DisclosureGroup("Package and placement details") {
+            DisclosureGroup("Details") {
                 VStack(alignment: .leading, spacing: 16) {
                     Build23TransportConsequenceCard(
                         transport: snapshot.transport,
@@ -528,12 +627,16 @@ struct Build23SenderSharingExperience: View {
                 .buttonStyle(.bordered)
                 .accessibilityIdentifier("build23.sender.review.back")
 
-                Button("Preview package details", systemImage: "doc.text.magnifyingglass") {
+                if sharesLink {
+                    sendFileButton(enabled: snapshot.canAdvance && !isMakingLink, identifier: "build23.sender.review.share.file")
+                }
+
+                Button("Preview what your friend gets", systemImage: "doc.text.magnifyingglass") {
                     coordinator.send(.buildRecipientPreview)
                 }
                 .buttonStyle(.bordered)
                 .disabled(!snapshot.canAdvance)
-                .accessibilityHint("Optionally builds and shows the verified package details")
+                .accessibilityHint("Optionally shows what your friend will get")
                 .accessibilityIdentifier("build23.sender.preview.build")
             }
         }
@@ -542,9 +645,10 @@ struct Build23SenderSharingExperience: View {
 
     private func recipientPreviewStage(_ snapshot: Build23SharingSnapshot) -> some View {
         VStack(alignment: .leading, spacing: 20) {
-            Text("Recipient preview")
+            Text(VoiceOverAnnouncements.SharingStep.recipientPreview.title)
                 .font(.headline)
                 .foregroundStyle(AppColors.text)
+                .screenTitle()
                 .accessibilityIdentifier("build23.sender.stage.recipient-preview")
             switch snapshot.previewState {
             case .building:
@@ -554,7 +658,7 @@ struct Build23SenderSharingExperience: View {
                             .tint(AppColors.evergreen)
                         Build23StatusLabel(
                             icon: "doc.badge.gearshape",
-                            title: "Writing, reading back, and verifying the recipient package…",
+                            title: "Getting your Margins ready to share…",
                             tint: AppColors.evergreen
                         )
                     }
@@ -564,49 +668,43 @@ struct Build23SenderSharingExperience: View {
             case .ready:
                 if let verifiedPreview = snapshot.verifiedPreview {
                     Build23VerifiedShareActions(
-                        isFileShareEnabled: snapshot.canShareVerifiedFile && coordinator.verifiedShareFileURL != nil,
+                        isFileShareEnabled: coordinator.verifiedShareFileURL != nil && !isMakingLink,
+                        fileIsSecondChoice: sharesLink,
                         onEdit: { coordinator.send(.returnToSelect) },
                         onShareFile: presentVerifiedSystemShare
-                    ) {
-                        #if SM_SHARE_LINK_CREATION
-                        // Only in a build made to make links (#487); the file share above is unchanged.
-                        if snapshot.canShareVerifiedFile {
-                            ShareLinkSendControl(packageURL: coordinator.verifiedShareFileURL)
-                        }
-                        #endif
-                    }
+                    )
 
                     Build23VerifiedRecipientPreviewPanel(preview: verifiedPreview)
                 } else {
                     unavailablePreview(
-                        title: "The verified projection is unavailable.",
-                        detail: "Return to review and build the recipient preview again."
+                        title: "The preview is not available.",
+                        detail: "Go back to review and preview again."
                     )
                 }
 
             case .stale:
                 unavailablePreview(
-                    title: "The recipient preview is stale.",
-                    detail: "A package-affecting choice changed. Build and verify a fresh preview before sharing."
+                    title: "The preview is out of date.",
+                    detail: "You changed something. Preview again before sharing."
                 )
 
             case let .failed(message):
                 unavailablePreview(
-                    title: "The package could not be verified.",
+                    title: "Your Margins could not be made ready to share.",
                     detail: message,
                     isFailure: true
                 )
 
             case .notBuilt:
                 unavailablePreview(
-                    title: "No verified recipient preview is available.",
-                    detail: "Return to review and build the package first."
+                    title: "There is no preview yet.",
+                    detail: "Go back to review and preview first."
                 )
             }
         }
     }
 
-    /// A stale or unbuilt preview is a notice; a package that failed verification is a failure (#308).
+    /// A stale or unbuilt preview is a notice; Margins that could not be made ready are a failure (#308).
     private func unavailablePreview(title: String, detail: String, isFailure: Bool = false) -> some View {
         ExperienceSurface(tint: AppColors.ochre.opacity(0.12)) {
             VStack(alignment: .leading, spacing: 10) {
@@ -629,26 +727,27 @@ struct Build23SenderSharingExperience: View {
 
     private func shareStage(_ snapshot: Build23SharingSnapshot) -> some View {
         VStack(alignment: .leading, spacing: 20) {
-            Text("Share verified package")
+            Text(VoiceOverAnnouncements.SharingStep.share.title)
                 .font(.headline)
                 .foregroundStyle(AppColors.text)
+                .screenTitle()
                 .accessibilityIdentifier("build23.sender.stage.share")
             if coordinator.verifiedShareFileURL != nil, snapshot.canShareVerifiedFile {
                 ExperienceSurface(tint: AppColors.softGreen) {
                     Build23StatusLabel(
                         icon: "square.and.arrow.up.circle.fill",
-                        title: isSystemSharePresented ? "System share sheet open" : "Verified package ready",
+                        title: isSystemSharePresented ? "System share sheet open" : "Your Margins are ready",
                         tint: AppColors.evergreen
                     )
                 }
 
                 if !isSystemSharePresented {
-                    HStack {
+                    AdaptiveStack {
                         Button("Return to recipient preview", systemImage: "arrow.left") {
                             coordinator.send(.returnFromSystemShare)
                         }
                         .buttonStyle(.bordered)
-                        Spacer()
+                        AdaptiveSpacer()
                         Button("Open system share sheet", systemImage: "square.and.arrow.up") {
                             presentVerifiedSystemShare()
                         }
@@ -658,8 +757,8 @@ struct Build23SenderSharingExperience: View {
                 }
             } else {
                 unavailablePreview(
-                    title: "The verified share file is no longer available.",
-                    detail: "Return to selection and build a fresh recipient preview."
+                    title: "The file to share is no longer available.",
+                    detail: "Go back to selection and preview again."
                 )
             }
         }
@@ -721,15 +820,66 @@ struct Build23SenderSharingExperience: View {
         isSystemSharePresented = true
     }
 
+    /// Share the way the main button does: a link when this build makes them and the server allows it, else the file.
     private func shareVerifiedPackage() {
+        share(sharesLink ? .link : .file)
+    }
+
+    /// Makes the packet if it isn't ready, then sends it the way the listener asked.
+    private func share(_ kind: Build23PendingShare) {
         if coordinator.verifiedShareFileURL != nil {
-            presentVerifiedSystemShare()
+            deliver(kind)
             return
         }
-        shareAfterVerification = true
+        pendingShare = kind
         coordinator.send(.buildRecipientPreview)
         // Export can fail synchronously, before SwiftUI observes .building.
-        if case .failed = coordinator.previewState { shareAfterVerification = false }
+        if case .failed = coordinator.previewState { pendingShare = nil }
+    }
+
+    /// The stage is replaced in place and focus can stay on the bottom button, so say where the sheet is now (#3728).
+    /// `onCompatibleChange` hands over only the new value, so the previous stage is kept in `announcedStage`.
+    private func announceStage(_ stage: Build23SharingStage) {
+        let step = Self.step(for: stage)
+        if let text = VoiceOverAnnouncements.sharingStage(from: announcedStage, to: step) {
+            AccessibilityNotification.Announcement(text).post()
+        }
+        announcedStage = step
+    }
+
+    private static func step(for stage: Build23SharingStage) -> VoiceOverAnnouncements.SharingStep {
+        switch stage {
+        case .select: .select
+        case .review: .review
+        case .recipientPreview: .recipientPreview
+        case .share: .share
+        }
+    }
+
+    /// A share asked for, or a link being made, for a packet the screen no longer shows is dropped (#3751 audit).
+    private func dropStaleShareRequests(stage: Build23SharingStage, previewState: Build23SharingPreviewState) {
+        if !Build23ShareRequestPolicy.keepsPendingShare(stage: stage, previewState: previewState) {
+            pendingShare = nil
+        }
+        #if SM_SHARE_LINK_CREATION
+        if !Build23ShareRequestPolicy.keepsLink(stage: stage, previewState: previewState), linkSender.state != .idle {
+            linkSender.reset()
+        }
+        #endif
+    }
+
+    private func deliver(_ kind: Build23PendingShare) {
+        switch kind {
+        case .file:
+            presentVerifiedSystemShare()
+        case .link:
+            #if SM_SHARE_LINK_CREATION
+            guard let packageURL = coordinator.verifiedShareFileURL else { return }
+            linkSender.makeLink(packageURL: packageURL)
+            #else
+            presentVerifiedSystemShare()
+            #endif
+        }
     }
 
     private func shareError(_ snapshot: Build23SharingSnapshot) -> String? {
@@ -741,5 +891,35 @@ struct Build23SenderSharingExperience: View {
     private func finishSystemShare() {
         verifiedShareURLForPresentation = nil
         coordinator.send(.returnFromSystemShare)
+    }
+}
+
+/// How the listener asked to send while the packet was still being made (#3750).
+enum Build23PendingShare: Equatable {
+    case file
+    case link
+}
+
+/// When a share the listener asked for still matches what the screen shows (#3751 audit). Going back to the
+/// selection, or any change that discards the packet, drops it, so no share sheet opens for Margins they removed.
+enum Build23ShareRequestPolicy {
+    /// A link being made, or made and not yet shared, is for the packet on screen only while that packet is ready and
+    /// the listener is past the selection.
+    static func keepsLink(stage: Build23SharingStage, previewState: Build23SharingPreviewState) -> Bool {
+        stage != .select && previewState == .ready
+    }
+
+    /// A share asked for before the packet existed waits while it builds and is delivered once it's ready.
+    static func keepsPendingShare(stage: Build23SharingStage, previewState: Build23SharingPreviewState) -> Bool {
+        guard stage != .select else { return false }
+        switch previewState {
+        case .building, .ready: return true
+        case .notBuilt, .stale, .failed: return false
+        }
+    }
+
+    /// "Making link…" only while a link is made or asked for; a file asked for, or a plain preview, is not a link.
+    static func showsMakingLink(isMakingLink: Bool, pendingShare: Build23PendingShare?) -> Bool {
+        isMakingLink || pendingShare == .link
     }
 }

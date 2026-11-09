@@ -2039,6 +2039,7 @@ final class SourceLinkImportTests: XCTestCase {
         await transcriber.settleNext(.failure(SessionKitError.persistenceFailed("scripted_failure")))
         try await waitFor("failed transcription offers Retry") { model.feedbackEvent?.retry != nil }
         let failure = try XCTUnwrap(model.feedbackEvent)
+        await model.settleItemReload() // a finished Margin reaches the item detail off the main thread (#2505)
         let margin = try XCTUnwrap(model.selectedItem.interjections.first)
         XCTAssertEqual(failure.retry?.key, Gate1AppModel.transcriptionRetryKey(margin))
         return (model, margin, try XCTUnwrap(failure.retry).action)
@@ -3087,6 +3088,7 @@ extension SourceLinkImportTests {
     /// Stands in for the player's audio tap, which these tests don't run: hands the model the audio heard around the
     /// first Margin (#156). Silent samples are enough; the fake transcriber doesn't read them.
     func deliverHeardWindow(to model: Gate1AppModel, anchorMs: Int, startMs: Int, durationMs: Int) async throws {
+        await model.settleItemReload() // a finished Margin reaches the item detail off the main thread (#2505)
         let margin = try XCTUnwrap(model.selectedItem.interjections.first, "the Margin should be saved before its heard audio arrives")
         let request = PostResumeAudioSampleRequest(
             interjectionId: margin.id, sessionId: margin.sessionId, itemId: margin.itemId,

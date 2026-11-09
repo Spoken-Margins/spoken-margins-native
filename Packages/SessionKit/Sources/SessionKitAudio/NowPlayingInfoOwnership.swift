@@ -65,6 +65,25 @@ public final class SystemNowPlayingInfoSink: NowPlayingInfoSink, @unchecked Send
 public final class NowPlayingInfoOwnership: @unchecked Sendable {
     public static let shared = NowPlayingInfoOwnership(sink: SystemNowPlayingInfoSink())
 
+    /// `MPNowPlayingInfoPropertyExcludeFromSuggestions`: the key that keeps a card out of Apple's Journaling Suggestions,
+    /// which can pass what is playing to other developers' apps (Apple agreement 3.3.8F). The owner chose to keep the
+    /// app's listening out of them on 2026-11-06 (#2844), "for now"; to revisit, drop `excludingFromSuggestions` below.
+    /// Off iOS the constant may not exist, so the host tests read the same name through the literal.
+    public static let excludeFromSuggestionsKey: String = {
+        #if canImport(MediaPlayer) && os(iOS)
+        return MPNowPlayingInfoPropertyExcludeFromSuggestions
+        #else
+        return "MPNowPlayingInfoPropertyExcludeFromSuggestions"
+        #endif
+    }()
+
+    /// Every card written through the ledger carries the exclusion, so no writer can forget it.
+    private static func excludingFromSuggestions(_ info: [String: Any]) -> [String: Any] {
+        var info = info
+        info[excludeFromSuggestionsKey] = true
+        return info
+    }
+
     /// Transitions kept for Diagnostics. Writes by the holder that already has the card are counted, not listed: the
     /// player writes every second and would push everything else out.
     private static let eventLimit = 12
@@ -93,7 +112,7 @@ public final class NowPlayingInfoOwnership: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         let before = holder
-        sink.setNowPlayingInfo(info)
+        sink.setNowPlayingInfo(Self.excludingFromSuggestions(info))
         holder = writer
         if before == writer {
             repeatedWrites[writer, default: 0] += 1
@@ -112,7 +131,7 @@ public final class NowPlayingInfoOwnership: @unchecked Sendable {
             record(.writeSkipped, writer: writer, before: before, detail: detail)
             return false
         }
-        sink.setNowPlayingInfo(info)
+        sink.setNowPlayingInfo(Self.excludingFromSuggestions(info))
         holder = writer
         if before == writer {
             repeatedWrites[writer, default: 0] += 1

@@ -13,6 +13,7 @@ stage="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 caddyfile="${SM_CADDYFILE:-/etc/caddy/Caddyfile}"
 unit="${SM_UNIT:-/etc/systemd/system/smserver.service}"
 jconf="${SM_JOURNALD_CONF:-/etc/systemd/journald@smserver.conf}"
+jmain="${SM_JOURNALD_MAIN_CONF:-/etc/systemd/journald.conf.d/50-spokenmargins.conf}"
 bin="${SM_BIN:-/usr/local/bin/smserver}"
 # The product moved to spokenmargins.com (#3062). The old host keeps serving
 # the API, link and static machine paths, so it is the one whose answers can
@@ -136,6 +137,7 @@ say "changes"
 show_diff "${caddyfile}" "${caddyfile}" "${stage}/Caddyfile.candidate"
 show_diff "${unit}" "${unit}" "${stage}/smserver.service.rendered"
 show_diff "${jconf}" "${jconf}" "${stage}/journald@smserver.conf"
+show_diff "${jmain}" "${jmain}" "${stage}/journald-main.conf"
 id smserver >/dev/null 2>&1 && echo "-- user smserver: exists" || echo "-- user smserver: will be created (system user, no login)"
 echo "-- directories: ${server_root}/api/v1 and ${server_root}/bridge/v1 (owner smserver, 0755); state in /var/lib/smserver (systemd StateDirectory, 0700)"
 [[ -d "${web_root}" ]] && echo "-- ${web_root}: exists, kept as is ($(find "${web_root}" -type f | wc -l | tr -d ' ') files)" ||
@@ -164,6 +166,8 @@ install -d -m 0755 "${web_root}"
 install -m 0755 "${stage}/smserver" "${bin}.new" && mv -f "${bin}.new" "${bin}"
 install -m 0644 "${stage}/smserver.service.rendered" "${unit}"
 install -m 0644 "${stage}/journald@smserver.conf" "${jconf}"
+install -d -m 0755 "$(dirname "${jmain}")"
+install -m 0644 "${stage}/journald-main.conf" "${jmain}"
 if [[ ! -f "${server_root}/api/v1/config.json" ]]; then
   # The unit's sandbox makes this root read-only to the service, so the
   # first config is written here, as smserver, outside the sandbox.
@@ -179,6 +183,10 @@ unreadable="$(find "${server_root}" \( -type f ! -perm -o=r \) -o \( -type d ! -
 [[ -z "${unreadable}" ]] || die "not readable by Caddy (fix with chmod 0644 files / 0755 dirs); Caddy was not touched: ${unreadable}"
 systemctl daemon-reload
 systemctl try-restart systemd-journald@smserver.service || true
+# Main journal: a restart rereads the drop-in (SIGHUP only rotates files). It
+# is safe: journald keeps its files and systemd reconnects stdout streams; a
+# failure never blocks the deploy.
+systemctl try-restart systemd-journald.service || true
 systemctl enable --quiet smserver
 systemctl restart smserver
 if ! server_healthy "${port}"; then

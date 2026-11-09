@@ -147,6 +147,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       clip.current = null;
       URL.revokeObjectURL(url);
       const next = clipQueue.current.shift();
+      // Nothing is speaking once the clip has ended: the card goes, so the countdown, or "That was X's last Margin",
+      // shows again (#3797). A next Margin sets its own card, and a run without the episode sets or clears the next.
+      if (!next) setArrived((a) => (a?.margin.id === margin.id ? undefined : a));
       if (next) playClip(next, onDone);
       else if (onDone) onDone();
       else void audio.play().catch(() => undefined);

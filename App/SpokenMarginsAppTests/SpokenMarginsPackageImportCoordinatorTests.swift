@@ -1,3 +1,4 @@
+import AVFoundation
 import Combine
 import XCTest
 @testable import SessionKit
@@ -46,7 +47,7 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
 
     func testStagingTheSamePacketAfterImportOpensItsItemAndRemovesTheNewFolder() async throws {
         let h = try makeHarness()
-        let packet = try h.writePacket(named: "alpha", text: Self.alphaText)
+        let packet = try h.writePacket(named: "alpha", text: Self.alphaText, withVoice: true)
         assertStaged(await h.coordinator.stage(from: packet.url))
         let firstFolder = try XCTUnwrap(h.coordinator.review).extractionDirectory
         await h.confirmCurrentReview()
@@ -59,7 +60,7 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
         XCTAssertEqual(h.diagnostics["lastSpokenMarginsPackageImport"], "duplicate:\(packet.digest)")
         XCTAssertTrue(h.successes.isEmpty, "the item's screen is the answer; nothing more is said (#3291)")
         XCTAssertNil(h.coordinator.review, "a duplicate is never shown for review")
-        XCTAssertEqual(h.incomingFolderNames(), [firstFolder.lastPathComponent], "only the first import's folder is left")
+        XCTAssertEqual(h.incomingFolderNames(), [firstFolder.lastPathComponent], "only the first import's folder is left, the one its voice Margin plays from")
         XCTAssertTrue(h.events.isEmpty)
     }
 
@@ -231,7 +232,7 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
         assertStaged(await h.coordinator.stage(from: packet.url))
         let folder = try XCTUnwrap(h.coordinator.review).extractionDirectory
 
-        h.coordinator.cancel()
+        await h.coordinator.cancel()?.value
 
         XCTAssertNil(h.coordinator.review)
         XCTAssertNil(h.coordinator.importError)
@@ -255,9 +256,36 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
 
     // MARK: Confirm
 
+    // The issue's own example (#3402): a file adds three, one can't be read, and the arrival says what the offer says.
+    func testTheArrivalCountsWhatTheOfferCanPlayNotWhatTheFileHeld() async throws {
+        let h = try makeHarness()
+        let packet = try h.writePacket(named: "alpha", text: Self.alphaText, notes: ["First note.", "Second note.", "🎧🎧"])
+        let itemId = "item-shared-\(packet.digest.prefix(20))"
+        try h.saveEarlierFriendLayer(onItem: itemId)
+        assertStaged(await h.coordinator.stage(from: packet.url))
+
+        await h.confirmCurrentReview()
+
+        XCTAssertEqual(h.packetImports, [PacketImport(itemId: itemId, packetId: "package-alpha", marginCount: 3)], "all three are saved")
+        XCTAssertEqual(h.confirmations, ["2 new Margins from Cole"])
+    }
+
+    func testAnArrivalThatAddedOnlyANoteThatCannotBeReadSaysNothing() async throws {
+        let h = try makeHarness()
+        let packet = try h.writePacket(named: "alpha", text: Self.alphaText, notes: ["🎧"])
+        let itemId = "item-shared-\(packet.digest.prefix(20))"
+        try h.saveEarlierFriendLayer(onItem: itemId)
+        assertStaged(await h.coordinator.stage(from: packet.url))
+
+        await h.confirmCurrentReview()
+
+        XCTAssertEqual(h.packetImports, [PacketImport(itemId: itemId, packetId: "package-alpha", marginCount: 1)], "it is saved")
+        XCTAssertEqual(h.confirmations, [])
+    }
+
     func testConfirmImportsAndKeepsTheIncomingFolderForGood() async throws {
         let h = try makeHarness()
-        let packet = try h.writePacket(named: "alpha", text: Self.alphaText)
+        let packet = try h.writePacket(named: "alpha", text: Self.alphaText, withVoice: true)
         assertStaged(await h.coordinator.stage(from: packet.url))
         let review = try XCTUnwrap(h.coordinator.review)
         h.events.removeAll()
@@ -280,10 +308,47 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
         XCTAssertNil(h.coordinator.review)
         XCTAssertFalse(h.coordinator.isImporting)
         XCTAssertEqual(h.events, ["review:nil", "importing:false"], "review clears, then the busy flag")
-        // The folder rule (#956): success keeps what the import extracted. Only cancel, a failed stage, a duplicate
-        // stage and the restore-audio task remove it.
+        // The folder rule (#956, #3409): success keeps the folder a saved Margin plays from.
         XCTAssertTrue(FileManager.default.fileExists(atPath: review.extractionDirectory.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: review.packageURL.path))
+        XCTAssertEqual(h.incomingFolderNames(), [review.extractionDirectory.lastPathComponent])
+        let layer = try XCTUnwrap(try h.store.loadImportedCommentaryLayer(packageDigest: packet.digest))
+        let voice = try XCTUnwrap(try h.store.loadImportedCommentaryInterjections(layerId: layer.id).first?.audioPath)
+        XCTAssertTrue(voice.hasPrefix(review.extractionDirectory.path), "the friend's voice is inside the kept folder")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: voice), "and the recording is still there")
+    }
+
+    /// #3409: a text-only packet saves no row that names its folder, so the finished import removes the copy.
+    func testConfirmingATextOnlyPacketLeavesNoFolderBehind() async throws {
+        let h = try makeHarness()
+        let packet = try h.writePacket(named: "alpha", text: Self.alphaText)
+        assertStaged(await h.coordinator.stage(from: packet.url))
+
+        await h.confirmCurrentReview()
+
+        XCTAssertNotNil(try h.store.loadImportedCommentaryLayer(packageDigest: packet.digest))
+        XCTAssertEqual(h.incomingFolderNames(), [])
+    }
+
+    /// #3409, the voice case that lost recordings: a confirm that saved the friend's voice and then failed leaves the
+    /// review open. Cancel must not remove the folder the saved Margin plays from.
+    func testCancelAfterAConfirmThatSavedAVoiceKeepsTheFolderTheVoicePlaysFrom() async throws {
+        let h = try makeHarness()
+        let packet = try h.writePacket(named: "alpha", text: Self.alphaText, withVoice: true)
+        assertStaged(await h.coordinator.stage(from: packet.url))
+        let review = try XCTUnwrap(h.coordinator.review)
+        h.showImportedItemFailure = StubFailure()
+
+        await h.confirmCurrentReview()
+        XCTAssertEqual(h.coordinator.review?.id, review.id, "the sheet stays open after the failure")
+        let layer = try XCTUnwrap(try h.store.loadImportedCommentaryLayer(packageDigest: packet.digest))
+        let voice = try XCTUnwrap(try h.store.loadImportedCommentaryInterjections(layerId: layer.id).first?.audioPath)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: voice))
+
+        await h.coordinator.cancel()?.value
+
+        XCTAssertNil(h.coordinator.review)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: voice), "the saved voice survives Cancel")
         XCTAssertEqual(h.incomingFolderNames(), [review.extractionDirectory.lastPathComponent])
     }
 
@@ -520,14 +585,14 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
         XCTAssertNotNil(h.coordinator.importError)
         XCTAssertFalse(h.coordinator.isImporting)
 
-        h.coordinator.cancel()
+        await h.coordinator.cancel()?.value
 
         let waiting = try XCTUnwrap(h.coordinator.review, "cancelling A brings up B")
         XCTAssertEqual(waiting.contents.manifest.packageId, "package-beta")
         XCTAssertNil(h.coordinator.importError, "A's error does not follow B")
         XCTAssertFalse(FileManager.default.fileExists(atPath: captured.extractionDirectory.path))
 
-        h.coordinator.cancel()
+        await h.coordinator.cancel()?.value
 
         XCTAssertNil(h.coordinator.review)
         XCTAssertFalse(FileManager.default.fileExists(atPath: waiting.extractionDirectory.path), "B's staged files are removed, not leaked")
@@ -576,7 +641,7 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
         XCTAssertFalse(h.coordinator.isImporting)
         XCTAssertEqual(
             h.coordinator.importError,
-            "This package does not include the item. Add the matching source, then return to this pending import."
+            "This package does not include the source. Add the matching source, then return to this pending import."
         )
 
         let before = try XCTUnwrap(h.coordinator.review)
@@ -585,7 +650,7 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
         XCTAssertEqual(h.coordinator.review?.extractionDirectory, before.extractionDirectory)
         XCTAssertEqual(
             h.coordinator.importError,
-            "That source does not match the item described by this package yet. Add the same item or cancel the import."
+            "That source does not match what this package describes yet. Add the same one or cancel the import."
         )
     }
 
@@ -600,8 +665,9 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
 
         let rematch = Task { @MainActor in await h.coordinator.refreshAfterAddingSource() }
         await Task.yield()
-        h.coordinator.cancel()
+        let removal = h.coordinator.cancel()
         await rematch.value
+        await removal?.value
 
         XCTAssertNil(h.coordinator.review, "Cancel ended that review; a late answer must not show it again")
         XCTAssertNil(h.coordinator.importError)
@@ -992,6 +1058,14 @@ private final class ImportHarness {
         return name
     }
 
+    /// Margins a friend sent earlier on the item, which is what makes an arrival worth announcing.
+    func saveEarlierFriendLayer(onItem itemId: String) throws {
+        try store.saveImportedCommentaryLayer(ImportedCommentaryLayer(
+            id: "layer-earlier", itemId: itemId, packageDigest: "digest-earlier", packageId: "package-earlier",
+            itemIdentity: SharedItemIdentity(itemType: .text, title: "Essay"), displayLabel: "Cole",
+            importedAt: Date(timeIntervalSince1970: 1_777_000_000)))
+    }
+
     /// An imported friend's Margin whose recording is at `path`, saved as an import would.
     func saveImportedMargin(playingFrom path: String) throws {
         let date = Date(timeIntervalSince1970: 1_777_000_000)
@@ -1014,7 +1088,11 @@ private final class ImportHarness {
     }
 
     /// A packet that carries its item as text, so confirming needs no network.
-    func writePacket(named name: String, text: String, recipientSupplied: Bool = false) throws -> WrittenPacket {
+    /// `withVoice` makes every Margin a recording: an import then saves a row whose audio path is inside the folder.
+    func writePacket(
+        named name: String, text: String, recipientSupplied: Bool = false, notes: [String] = ["A sender-reviewed observation."],
+        withVoice: Bool = false
+    ) throws -> WrittenPacket {
         let packageID = "package-\(name)"
         let item = SharedItemIdentity(
             itemType: .text,
@@ -1022,17 +1100,32 @@ private final class ImportHarness {
             normalizedContentSHA256: PortableArticleAnchorResolver.normalizedContentSHA256(text),
             exactEditionSHA256: PortableArticleAnchorResolver.exactEditionSHA256(text)
         )
-        let revision = InterjectionShareRevision(
-            id: "revision-\(packageID)",
-            interjectionId: "sender-margin",
-            itemId: "sender-item",
-            sessionId: "sender-session",
-            createdAt: Date(timeIntervalSince1970: 1_777_000_000),
-            approvedTranscript: "A sender-reviewed observation.",
-            anchorBefore: "Before this passage.",
-            anchorAfter: "After this passage.",
-            status: .senderApproved
-        )
+        let representation: ReviewedRepresentationSelection
+        if withVoice {
+            let voiceURL = root.appendingPathComponent("\(name)-voice.m4a")
+            try writeSilentVoice(to: voiceURL)
+            representation = .originalAudio(sourceURL: voiceURL, durationMs: 100)
+        } else {
+            representation = .textOnly
+        }
+        let selections = notes.enumerated().map { index, words in
+            ReviewedInterjectionSelection(
+                packageScopedId: "margin-\(String(format: "%03d", index + 1))",
+                revision: InterjectionShareRevision(
+                    id: index == 0 ? "revision-\(packageID)" : "revision-\(packageID)-\(index + 1)",
+                    interjectionId: index == 0 ? "sender-margin" : "sender-margin-\(index + 1)",
+                    itemId: "sender-item",
+                    sessionId: "sender-session",
+                    createdAt: Date(timeIntervalSince1970: 1_777_000_000),
+                    approvedTranscript: words,
+                    anchorBefore: "Before this passage.",
+                    anchorAfter: "After this passage.",
+                    status: .senderApproved
+                ),
+                anchor: PortableAnchorEvidence(anchorType: .text, exactText: "The exact phrase to remember is"),
+                representation: representation
+            )
+        }
         let transport: ReviewedItemTransportSelection = recipientSupplied
             ? .recipientSupplied
             : .embeddedText(text: text, originalMediaType: "text", rightsBasis: .senderConfirmedPrivateRights)
@@ -1041,18 +1134,25 @@ private final class ImportHarness {
             createdAt: Date(timeIntervalSince1970: 1_777_000_000),
             item: item,
             itemTransportSelection: transport,
-            selections: [ReviewedInterjectionSelection(
-                packageScopedId: "margin-001",
-                revision: revision,
-                anchor: PortableAnchorEvidence(anchorType: .text, exactText: "The exact phrase to remember is"),
-                representation: .textOnly
-            )],
+            selections: selections,
             senderDisplayLabel: "Cole",
             suggestedRevealMode: .companion
         )
         let url = root.appendingPathComponent("\(name).spokenmargins")
         let manifest = try SpokenMarginsPackageArchive.write(prepared, to: url)
         return WrittenPacket(url: url, digest: try XCTUnwrap(manifest.contentDigest))
+    }
+
+    private func writeSilentVoice(to url: URL) throws {
+        let sampleRate = 44_100.0
+        let file = try AVAudioFile(forWriting: url, settings: [
+            AVFormatIDKey: Int(kAudioFormatMPEG4AAC), AVSampleRateKey: sampleRate,
+            AVNumberOfChannelsKey: 1, AVEncoderBitRateKey: 64_000
+        ])
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1))
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(sampleRate / 10)))
+        buffer.frameLength = buffer.frameCapacity
+        try file.write(from: buffer)
     }
 
     func makeEnvironment() -> SpokenMarginsPackageImportCoordinator.Environment {
