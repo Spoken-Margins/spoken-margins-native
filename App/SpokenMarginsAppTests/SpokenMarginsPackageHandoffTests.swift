@@ -975,6 +975,12 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         for _ in 0..<500 where model.diagnostics[afterDownloadKey] == nil {
             try await Task.sleep(for: .milliseconds(20))
         }
+        // The download also queues the coordinator's own placement pass, which reads the item off the main actor and
+        // asks the #914 question when it gets back. The caller's answer above can land first. Ending the session
+        // before that pass has asked lets it find no stream to keep, place at once, and clear the deferral, so
+        // `resumeDeferredPodcastPlacements` has nothing to resume and never records `resumed_after_session_change`
+        // (#3754: failed on the first run of a few CI runs, passed on retry). Wait for the pass to finish deferring.
+        await model.importedPodcastPlacement.waitForQueuedResolves()
 
         XCTAssertEqual(model.diagnostics["podcastPlacementDeferred:\(item.id)"], "session_keeps_its_edition")
         // The caller decides this before the background placement pass has recorded its own deferral (#2507).
