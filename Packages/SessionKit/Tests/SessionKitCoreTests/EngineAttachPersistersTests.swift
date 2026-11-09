@@ -131,11 +131,11 @@ final class EngineAttachPersistersTests: XCTestCase {
         XCTAssertEqual(try rig.store.loadItem(id: "item-1"), native)
     }
 
-    private func manifest(_ state: PreparedAudioState) -> PreparedAudioManifest {
+    private func manifest(_ state: PreparedAudioState, id: String = "prepared-item-1-abc", digest: String = "abc") -> PreparedAudioManifest {
         PreparedAudioManifest(
-            id: "prepared-item-1-abc", itemId: "item-1", sourcePackageId: "source",
+            id: id, itemId: "item-1", sourcePackageId: "source",
             signature: TTSRenderSignature(engine: "supertonic", modelRevision: "3", assetManifestHash: "a", voiceStyleHash: "v",
-                                          synthesisParametersHash: "p", normalizationVersion: "n", chunkingVersion: "c", digest: "abc"),
+                                          synthesisParametersHash: "p", normalizationVersion: "n", chunkingVersion: "c", digest: digest),
             state: state, plannedChunkCount: 1, chunks: [])
     }
 
@@ -173,6 +173,88 @@ final class EngineAttachPersistersTests: XCTestCase {
         let persisted = try rig.engine.preparedTextAudioPersister(itemId: "item-1")
             .persist(itemId: "item-1", prepared: prepared(), manifestId: "prepared-item-1-missing")
         XCTAssertNotNil(persisted.updated)
+    }
+
+    // MARK: Prepared audio assembly (#2256)
+
+    private func assemblyPersist(_ rig: Rig, manifest: PreparedAudioManifest, itemText: String? = nil, sourceText: String? = nil) throws -> PreparedAudioAssemblyAttach {
+        try rig.engine.preparedTextAudioPersister(itemId: "item-1").persistAssembly(
+            itemId: "item-1", prepared: prepared(), manifest: manifest,
+            itemText: itemText ?? text, sourceText: sourceText ?? text)
+    }
+
+    func testAssemblySaveWritesForALiveManifestOfTheSameText() throws {
+        for state in [PreparedAudioState.preparing, .pausedForThermal, .readyOffline] {
+            let rig = try rig(seed: [textItem()])
+            try rig.engine.prepareSpeechText(itemId: "item-1", targetType: .itemTextTTS)
+            let live = manifest(state)
+            try rig.store.savePreparedAudioManifest(live)
+            guard case .attached(let persisted) = try assemblyPersist(rig, manifest: live) else { return XCTFail("\(state)") }
+            XCTAssertNotNil(persisted.updated, "\(state)")
+            XCTAssertEqual(try rig.store.loadItem(id: "item-1").media, prepared().media, "\(state)")
+            XCTAssertEqual(try rig.store.loadTranscriptTimeline(itemId: "item-1")?.timeline.segments.count, 2, "\(state)")
+        }
+    }
+
+    /// The old transaction ran on the main actor and dropped the audio in each of these cases; the same cases still drop it.
+    func testAssemblySaveDropsAndWritesNothingWhenThePreparationMovedOn() throws {
+        for state in [PreparedAudioState.stopped, .failed, .needsRepreparation, .notPrepared] {
+            let rig = try rig(seed: [textItem()])
+            try rig.engine.prepareSpeechText(itemId: "item-1", targetType: .itemTextTTS)
+            let retired = manifest(state)
+            try rig.store.savePreparedAudioManifest(retired)
+            let before = try rig.store.loadItem(id: "item-1")
+            let writesBefore = rig.writes()
+            guard case .dropped = try assemblyPersist(rig, manifest: retired) else { return XCTFail("\(state)") }
+            XCTAssertEqual(rig.writes(), writesBefore, "\(state): nothing is written")
+            XCTAssertEqual(try rig.store.loadItem(id: "item-1"), before)
+            XCTAssertNil(try rig.store.loadTranscriptTimeline(itemId: "item-1"))
+        }
+        // Text that changed since the render began (the item's own, or the speech made from it), a manifest that is gone and a
+        // manifest of another voice.
+        let rig = try rig(seed: [textItem()])
+        try rig.engine.prepareSpeechText(itemId: "item-1", targetType: .itemTextTTS)
+        let live = manifest(.preparing)
+        try rig.store.savePreparedAudioManifest(live)
+        let before = try rig.store.loadItem(id: "item-1")
+        let writesBefore = rig.writes()
+        for (label, outcome) in [
+            ("item text moved", try assemblyPersist(rig, manifest: live, itemText: "An older text.")),
+            ("speech text moved", try assemblyPersist(rig, manifest: live, sourceText: "An older text.")),
+            ("manifest gone", try assemblyPersist(rig, manifest: manifest(.preparing, id: "prepared-item-1-gone"))),
+            ("another voice", try assemblyPersist(rig, manifest: manifest(.preparing, digest: "other"))),
+        ] {
+            guard case .dropped = outcome else { return XCTFail(label) }
+        }
+        XCTAssertEqual(rig.writes(), writesBefore, "nothing is written")
+        XCTAssertEqual(try rig.store.loadItem(id: "item-1"), before)
+    }
+
+    private final class ThreadProbe: @unchecked Sendable {
+        var onMain = true
+        var attached = false
+    }
+
+    func testAssemblySaveRunsOffTheMainThread() throws {
+        let rig = try rig(seed: [textItem()])
+        try rig.engine.prepareSpeechText(itemId: "item-1", targetType: .itemTextTTS)
+        let live = manifest(.preparing)
+        try rig.store.savePreparedAudioManifest(live)
+        let persister = try rig.engine.preparedTextAudioPersister(itemId: "item-1")
+        let audio = prepared()
+        let sourceText = text
+        let probe = ThreadProbe()
+        let done = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async {
+            probe.onMain = Thread.isMainThread
+            if case .attached? = try? persister.persistAssembly(itemId: "item-1", prepared: audio, manifest: live, itemText: sourceText, sourceText: sourceText) {
+                probe.attached = true
+            }
+            done.signal()
+        }
+        XCTAssertEqual(done.wait(timeout: .now() + 10), .success)
+        XCTAssertFalse(probe.onMain)
+        XCTAssertTrue(probe.attached)
     }
 
     func testTextAudioPersisterNeedsTheCapability() throws {
