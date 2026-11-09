@@ -12,15 +12,10 @@ import WidgetKit
 struct LiveSessionActivityWidget: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: LiveSessionActivityAttributes.self) { context in
-            Group {
-                if let stopped = context.state.endedAt {
-                    endedCard(stopped: stopped, context: context)
-                } else {
-                    runningCard(context)
-                }
-            }
+            LiveSessionActivityCard(
+                state: context.state, sessionStartedAt: context.attributes.sessionStartedAt, isStale: context.isStale
+            )
             .widgetURL(LiveSessionDeepLink.url())
-            .padding(16)
             .activityBackgroundTint(Color(red: 0.08, green: 0.09, blue: 0.12))
             .activitySystemActionForegroundColor(.white)
         } dynamicIsland: { context in
@@ -29,6 +24,7 @@ struct LiveSessionActivityWidget: Widget {
                     if let stopped = context.state.endedAt {
                         HStack(spacing: 4) {
                             Image(systemName: "stop.circle")
+                                .accessibilityLabel(context.state.stateAccessibilityLabel)
                             Text(stopped, style: .time)
                         }
                         .font(.caption.monospacedDigit())
@@ -55,6 +51,7 @@ struct LiveSessionActivityWidget: Widget {
                 }
             } compactLeading: {
                 Image(systemName: context.state.hasEnded ? "stop.circle" : context.state.isRecordingNow ? "waveform" : "bookmark")
+                    .accessibilityLabel(context.state.stateAccessibilityLabel)
             } compactTrailing: {
                 if context.state.hasEnded {
                     Text("Ended")
@@ -68,65 +65,112 @@ struct LiveSessionActivityWidget: Widget {
                 }
             } minimal: {
                 Image(systemName: context.state.hasEnded ? "stop.circle" : context.state.isRecordingNow ? "waveform" : "bookmark")
+                    .accessibilityLabel(context.state.stateAccessibilityLabel)
             }
             .widgetURL(LiveSessionDeepLink.url())
         }
     }
 
-    private func runningCard(_ context: ActivityViewContext<LiveSessionActivityAttributes>) -> some View {
+    private func markLabel(_ count: Int) -> String { liveSessionMarkLabel(count) }
+}
+
+private func liveSessionMarkLabel(_ count: Int) -> String {
+    count == 1 ? "1 Mark" : "\(count) Marks"
+}
+
+/// How the Lock Screen card behaves as text grows (#3722). The system may cut off a Live Activity taller than 160 pt, so
+/// the card stops growing at `textCeiling` (the largest standard size, so an accessibility size reads the same as
+/// that) and drops the Write and Speak links once the clock, the state line and the Mark button no longer leave them
+/// room. Tapping the card still opens the live session, where both are one tap away. `LiveSessionCardLayoutTests` lays
+/// the card out at every size and holds it to 160 pt.
+enum LiveSessionCardLayout {
+    static let textCeiling: DynamicTypeSize = .xxxLarge
+    static let marginLinksCeiling: DynamicTypeSize = .xLarge
+
+    static func showsMarginLinks(at size: DynamicTypeSize) -> Bool { size <= marginLinksCeiling }
+}
+
+/// The Lock Screen card, as its own view so `LiveSessionCardLayoutTests` can render it at real text sizes.
+struct LiveSessionActivityCard: View {
+    let state: LiveSessionActivityAttributes.ContentState
+    let sessionStartedAt: Date
+    let isStale: Bool
+    /// The size the listener chose, read before the ceiling below clamps it for the card's own content.
+    @Environment(\.dynamicTypeSize) private var chosenTextSize
+
+    var body: some View {
+        Group {
+            if let stopped = state.endedAt {
+                endedCard(stopped: stopped)
+            } else {
+                runningCard
+            }
+        }
+        .dynamicTypeSize(...LiveSessionCardLayout.textCeiling)
+        .padding(16)
+    }
+
+    private var runningCard: some View {
         VStack(spacing: 10) {
             HStack(spacing: 14) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(context.state.clockTitle ?? "Live session")
+                    Text(state.clockTitle ?? "Live session")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.white.opacity(0.8))
-                    Text(context.state.clockOrigin ?? context.attributes.sessionStartedAt, style: .timer)
+                        .lineLimit(1)
+                    Text(state.clockOrigin ?? sessionStartedAt, style: .timer)
                         .font(.title2.monospacedDigit().weight(.semibold))
                         .foregroundStyle(.white)
-                    if context.state.isRecordingNow {
+                        .lineLimit(1)
+                    if state.isRecordingNow {
                         Label("Recording a Margin", systemImage: "waveform")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(.white)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
                     } else {
-                        Text(markLabel(context.state.markCount))
+                        Text(liveSessionMarkLabel(state.markCount))
                             .font(.caption)
                             .foregroundStyle(.white.opacity(0.8))
+                            .lineLimit(1)
                     }
                 }
                 Spacer(minLength: 8)
-                if context.state.isRecordingNow {
+                if state.isRecordingNow {
                     LiveSessionFinishButton()
                 } else {
                     LiveSessionMarkButton()
                 }
             }
-            if !context.state.isRecordingNow { LiveSessionMarginLinks() }
+            if !state.isRecordingNow, LiveSessionCardLayout.showsMarginLinks(at: chosenTextSize) {
+                LiveSessionMarginLinks()
+            }
         }
     }
 
     /// "Ended 14:05 · Resume": when the session stopped, not when End was tapped, and the one button that undoes it.
     /// The Marks and Margin links go while it is ended; the session screen still takes a Margin, and Resume brings
     /// them back.
-    private func endedCard(stopped: Date, context: ActivityViewContext<LiveSessionActivityAttributes>) -> some View {
+    private func endedCard(stopped: Date) -> some View {
         HStack(spacing: 14) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(context.state.clockTitle ?? "Live session")
+                Text(state.clockTitle ?? "Live session")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.white.opacity(0.8))
+                    .lineLimit(1)
                 Text("Ended \(stopped, style: .time)")
                     .font(.title2.monospacedDigit().weight(.semibold))
                     .foregroundStyle(.white)
-                Text(markLabel(context.state.markCount))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                Text(liveSessionMarkLabel(state.markCount))
                     .font(.caption)
                     .foregroundStyle(.white.opacity(0.8))
+                    .lineLimit(1)
             }
             Spacer(minLength: 8)
-            LiveSessionResumeButton(sessionId: context.state.sessionId, isStale: context.isStale)
+            LiveSessionResumeButton(sessionId: state.sessionId, isStale: isStale)
         }
-    }
-
-    private func markLabel(_ count: Int) -> String {
-        count == 1 ? "1 Mark" : "\(count) Marks"
     }
 }
 
@@ -140,6 +184,8 @@ private struct LiveSessionResumeButton: View {
             Button(intent: LiveSessionResumeIntent(sessionId: sessionId)) {
                 Label("Resume", systemImage: "play.fill")
                     .font(.headline)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
                     .frame(minWidth: 88, minHeight: 44)
             }
             .tint(LiveSessionActivityStyle.buttonTint)
@@ -153,6 +199,8 @@ private struct LiveSessionMarkButton: View {
         Button(intent: LiveSessionMarkIntent()) {
             Label("Mark", systemImage: "bookmark.fill")
                 .font(.headline)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
                 .frame(minWidth: 88, minHeight: 44)
         }
         .tint(LiveSessionActivityStyle.buttonTint)
@@ -166,6 +214,8 @@ private struct LiveSessionFinishButton: View {
         Button(intent: LiveSessionFinishMarginIntent()) {
             Label("Finish Margin", systemImage: "checkmark.circle.fill")
                 .font(.headline)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
                 .frame(minWidth: 88, minHeight: 44)
         }
         .tint(LiveSessionActivityStyle.buttonTint)
@@ -175,11 +225,18 @@ private struct LiveSessionFinishButton: View {
 
 /// Write a Margin and Speak a Margin: each opens Spoken Margins on the live session, with the written field ready
 /// or the spoken Margin already recording (#2833).
+///
+/// At the larger text sizes the row is dropped (`LiveSessionCardLayout`). This check is the one the Dynamic Island
+/// relies on; the Lock Screen card makes the same check first, so its stack leaves no gap where the row was.
 private struct LiveSessionMarginLinks: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     var body: some View {
-        HStack(spacing: 10) {
-            link("Write a Margin", systemImage: "square.and.pencil", action: .write)
-            link("Speak a Margin", systemImage: "mic.fill", action: .speak)
+        if LiveSessionCardLayout.showsMarginLinks(at: dynamicTypeSize) {
+            HStack(spacing: 10) {
+                link("Write a Margin", systemImage: "square.and.pencil", action: .write)
+                link("Speak a Margin", systemImage: "mic.fill", action: .speak)
+            }
         }
     }
 
@@ -188,6 +245,8 @@ private struct LiveSessionMarginLinks: View {
             Label(title, systemImage: systemImage)
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.white)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
                 .frame(maxWidth: .infinity, minHeight: 44)
                 .background(Color.white.opacity(0.16), in: Capsule())
         }

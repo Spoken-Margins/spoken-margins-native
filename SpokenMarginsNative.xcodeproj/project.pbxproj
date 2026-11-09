@@ -54,6 +54,7 @@
 		A2D0366161FA302E7139746D /* SharedTextIntake.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45170E0354730F22BB2E258A /* SharedTextIntake.swift */; };
 		A391E3C44188F2FE5A49C93B /* KokoroPipeline in Frameworks */ = {isa = PBXBuildFile; productRef = 54900B4C14FBCE4EEBA05420 /* KokoroPipeline */; };
 		A5242E161454F038B466BAE4 /* Gate2LiveActivityWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7145068260B70B5F88F4D76 /* Gate2LiveActivityWidget.swift */; };
+		C3722B1E5F60718293A4B5C6 /* LiveSessionActivityWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3722A0D4E5F60718293A4B5 /* LiveSessionActivityWidget.swift */; };
 		A978B4713391C8A80029DD08 /* SessionKit in Frameworks */ = {isa = PBXBuildFile; productRef = 857D6087011D0775305B56B7 /* SessionKit */; };
 		AB149D16A2A0482B581B0847 /* SessionKitSharing in Frameworks */ = {isa = PBXBuildFile; productRef = 03B12E07A60683D31E17A8FC /* SessionKitSharing */; };
 		B401E3D73FFFC3B4CCD67491 /* SessionKitAudio in Frameworks */ = {isa = PBXBuildFile; productRef = 34C621C37AF71E6ED22B1045 /* SessionKitAudio */; };
@@ -203,6 +204,7 @@
 		E253416A15B5108380F819E8 /* Legal */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Legal; path = App/SpokenMarginsApp/Resources/Legal; sourceTree = SOURCE_ROOT; };
 		E3D5265FADF5995640D6FB31 /* SpokenMarginsGate2Widget.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = SpokenMarginsGate2Widget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		E7145068260B70B5F88F4D76 /* Gate2LiveActivityWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate2LiveActivityWidget.swift; sourceTree = "<group>"; };
+		C3722A0D4E5F60718293A4B5 /* LiveSessionActivityWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveSessionActivityWidget.swift; sourceTree = "<group>"; };
 		EE29274792FFFC88EA74C157 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		F2A6CC7522887307C67D46AE /* SpokenMarginsBrowserTextExtension.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = SpokenMarginsBrowserTextExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		F4D18E57D6973BBFE094E993 /* SpokenMarginsWatchApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SpokenMarginsWatchApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -413,6 +415,7 @@
 			isa = PBXGroup;
 			children = (
 				E7145068260B70B5F88F4D76 /* Gate2LiveActivityWidget.swift */,
+				C3722A0D4E5F60718293A4B5 /* LiveSessionActivityWidget.swift */,
 			);
 			name = Sources;
 			path = App/SpokenMarginsGate2Widget/Sources;
@@ -913,6 +916,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A5242E161454F038B466BAE4 /* Gate2LiveActivityWidget.swift in Sources */,
+				C3722B1E5F60718293A4B5C6 /* LiveSessionActivityWidget.swift in Sources */,
 				78065128412B4F94A3B7B6FD /* LiveSessionMarkInbox.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
