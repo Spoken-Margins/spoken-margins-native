@@ -10,11 +10,26 @@ final class RuntimeDiagnostics: ObservableObject {
     private var kept: [String: String] = [:]
     private var longestHandOverGap = LongestChunkHandOverGap()
     private static let handOverGapKey = "longestChunkHandOverGap"
+    private var preparationRun = AudioPreparationRunTracker()
 
     /// Each playback client only knows its own gaps, and the model builds a new one on a voice or
     /// settings change, so the longest of the run is kept here (#586).
     func recordChunkHandOverGap(_ gap: ChunkHandOverGapRecorder.Gap) {
         if longestHandOverGap.keep(gap) { values[Self.handOverGapKey] = gap.summary }
+    }
+
+    /// The last Make available offline run's cost, one line, kept across Refresh Diagnostics (#3816). It is
+    /// written with detailed recording off: it is a few counters, not an event log, and holds no item ids.
+    func preparationChunkCommitted(renderMs: Int, thermalAtStart: SpeechThermalLevel, thermalAtEnd: SpeechThermalLevel, at now: Date = Date()) {
+        keep(AudioPreparationRunSummary.diagnosticsKey, preparationRun.chunkCommitted(
+            renderMs: renderMs, thermalAtStart: thermalAtStart, thermalAtEnd: thermalAtEnd, at: now.timeIntervalSinceReferenceDate))
+    }
+
+    /// The queue is empty after a committed chunk, so the next chunk is a new request, not this run (#3816).
+    func preparationQueueDrained() { preparationRun.queueDrained() }
+
+    func preparationHeatPaused(thermal: SpeechThermalLevel, at now: Date = Date()) {
+        keep(AudioPreparationRunSummary.diagnosticsKey, preparationRun.heatPaused(thermal: thermal, at: now.timeIntervalSinceReferenceDate))
     }
 
     /// Refresh Diagnostics (`refreshDiagnostics()`) and `resetAndSeed()` assign a whole new

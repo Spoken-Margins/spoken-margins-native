@@ -61,6 +61,62 @@ final class LibraryAudioPreparationLoopWiringTests: XCTestCase {
         return Fixture(model: model, store: store, manifestId: manifest.id, renderer: renderer)
     }
 
+    /// #3816: the real pass, stopped at the heat gate before any render, leaves the run's summary with the pause counted.
+    func testAPassStoppedForHeatLeavesTheRunSummaryWithOneHeatPause() async throws {
+        let fixture = try await makeFixture()
+        let model = fixture.model
+        model.preparationSeams = PreparationPassSeams(
+            deviceConditions: { SpeechEngineConditions(thermal: .serious) },
+            renderer: { fixture.renderer },
+            memoryBackoffActive: { false }
+        )
+
+        let hasMoreWork = await model.performBackgroundAudioPreparationPass()
+
+        XCTAssertFalse(hasMoreWork)
+        XCTAssertEqual(model.diagnostics["backgroundAudioPreparation"], "pause_for_heat", "precondition: the pass stopped at the heat gate")
+        let started = await fixture.renderer.started
+        XCTAssertEqual(started, 0, "nothing rendered")
+        let line = try XCTUnwrap(model.diagnostics[AudioPreparationRunSummary.diagnosticsKey], "a run that paused for heat leaves a summary")
+        XCTAssertTrue(line.hasPrefix("chunks=0;"), line)
+        XCTAssertTrue(line.contains("heatPauses=1;peakThermal=serious;"), line)
+    }
+
+    /// #3816 audit on fba8a46: a not-cancelled job filed under another voice's engine stays in the table, and no pass picks it
+    /// while this voice is chosen. It must not count as work left, or the next run within the quiet gap joins this one.
+    func testAnotherEnginesPendingJobDoesNotKeepARunFromEnding() async throws {
+        let fixture = try await makeFixture()
+        let model = fixture.model
+        await fixture.renderer.release()
+
+        let otherItemId = "other-engine-item-\(UUID().uuidString)"
+        try fixture.store.saveItem(Item(id: otherItemId, title: "Queued under another voice", mediaType: "text",
+                                        text: "A short article for another voice.", externalReference: nil, status: "ready"))
+        let otherSignature = TTSRenderSignature(engine: "phonon", modelRevision: "1", assetManifestHash: "assets",
+                                                voiceStyleHash: "style", synthesisParametersHash: "parameters",
+                                                normalizationVersion: "normalization", chunkingVersion: "chunking", digest: "other-engine-digest")
+        let support = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+        let preparedRoot = support.appending(path: "PreparedAudio", directoryHint: .isDirectory)
+        let otherManifest = try await PreparedAudioCoordinator(repository: fixture.store, rootDirectory: preparedRoot)
+            .begin(itemId: otherItemId, sourceText: "A short article for another voice.", signature: otherSignature,
+                   plan: PreparedChunkPlan.articlePlan("A short article for another voice."), schedulesJob: false)
+        addTeardownBlock { try? FileManager.default.removeItem(at: preparedRoot.appending(path: otherItemId, directoryHint: .isDirectory)) }
+        try fixture.store.saveAudioPreparationJob(
+            AudioPreparationJob(id: "job-\(otherManifest.id)", itemId: otherItemId, manifestId: otherManifest.id, policy: .explicit))
+
+        var passes = 0
+        while await model.performBackgroundAudioPreparationPass(), passes < 20 { passes += 1 }
+        let ownJobsLeft = try fixture.store.loadAudioPreparationJobs().filter { $0.itemId != otherItemId }
+        XCTAssertTrue(ownJobsLeft.isEmpty, "precondition: this voice's own item finished")
+        XCTAssertEqual(try fixture.store.loadAudioPreparationJobs().map(\.itemId), [otherItemId], "precondition: the other engine's job is still pending")
+        let ended = try XCTUnwrap(model.diagnostics[AudioPreparationRunSummary.diagnosticsKey])
+
+        // A chunk from a later run, well inside the quiet gap, starts a new line instead of joining the finished run.
+        model.runtimeDiagnostics.preparationChunkCommitted(renderMs: 1_000, thermalAtStart: .nominal, thermalAtEnd: .nominal)
+        let next = try XCTUnwrap(model.diagnostics[AudioPreparationRunSummary.diagnosticsKey])
+        XCTAssertTrue(next.hasPrefix("chunks=1;"), "the finished run was ended, so this chunk starts a new one (was \(ended); now \(next))")
+    }
+
     /// The model reaches the loop's two stop operations from the right places: a plain stop and clearing the queue
     /// invalidate the run, while a snapshot change that forbids preparation only cancels it.
     func testTheModelStopsTheLoopFromEachCallSite() async throws {
