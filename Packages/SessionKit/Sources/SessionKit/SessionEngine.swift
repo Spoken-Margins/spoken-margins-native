@@ -5838,10 +5838,10 @@ public final class SessionEngine {
                 currentItem = try repository.loadItem(id: session.itemId)
             }
             let itemText = currentItem?.text ?? ""
-            guard session.currentTargetType == .itemTextTTS else {
+            guard session.currentTargetType == .itemTextTTS, let item = currentItem else {
                 return itemText
             }
-            return itemPlaybackPreface() + (listenableProjection()?.text ?? itemText)
+            return ItemPlaybackText.text(item: item, map: currentMap, listenable: listenableProjection())
         case .summaryTurnTTS, .assistantTurnTTS:
             guard let turn = try repository.loadTurns(sessionId: session.id).first(where: { $0.id == session.currentTargetId }) else {
                 throw SessionKitError.invalidCommandForState("playTurn")
@@ -5859,14 +5859,8 @@ public final class SessionEngine {
     }
 
     private func itemPlaybackPreface() -> String {
-        guard let map = currentMap else { return "" }
-        let title = currentItem?.title ?? ""
-        return ListeningMapOverviewText.spokenPreface(
-            overview: map.overview,
-            title: title,
-            chapterCount: map.chapters.count,
-            textOpening: String((listenableProjection()?.text ?? currentItem?.text ?? "").prefix(title.count * 2 + 200))
-        )
+        guard let item = currentItem else { return "" }
+        return ItemPlaybackText.preface(item: item, map: currentMap, listenable: listenableProjection())
     }
 
     private func turnTitle(for turn: ConversationTurn) -> String {
