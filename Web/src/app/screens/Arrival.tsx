@@ -4,7 +4,7 @@
 // the sender's first Margin and a Skip. Every failure says what happened and one thing to do.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { PlayIcon } from '../icons.tsx';
-import { PLAY_HINT, ARRIVAL_WORDS, arrivalFacts, possessive, senderName, type ArrivalFacts } from '../logic/arrival.ts';
+import { arrivalResumeAt, playHint, ARRIVAL_WORDS, arrivalFacts, possessive, senderName, type ArrivalFacts } from '../logic/arrival.ts';
 import { UNNAMED_SENDER, placeImport } from '../logic/import.ts';
 import { plainError } from '../logic/messages.ts';
 import { ShareLinkError, linkFooterText, openSharedPacketWithExpiry, type ParsedLink, type ShareLinkRef } from '../logic/share-link.ts';
@@ -139,10 +139,11 @@ export function Arrival({ link, onDone }: { link: ParsedLink; onDone: (playing: 
       setBusy(true);
       try {
         primeSpeech();
+        const current = dataRef.current;
         const { placed, saved } = store(read);
         // Started inside the tap, before any wait: a browser lets sound start only from the friend's own tap. Now
         // Playing opens as soon as the Margins are stored; it shows "Loading audio…" while the episode buffers.
-        void player.open(placed.episode.id, { at: 0, episode: placed.episode });
+        void player.open(placed.episode.id, { at: arrivalResumeAt(read, current.episodes, current.positions) ?? 0, episode: placed.episode });
         void finish(saved, true);
       } catch (error) {
         setBusy(false);
@@ -257,7 +258,7 @@ export function Arrival({ link, onDone }: { link: ParsedLink; onDone: (playing: 
               <PlayIcon size={22} />
               {unplayable ? `Keep ${possessive(who)} Margins` : 'Play'}
             </button>
-            {!unplayable && <p className="arrival-hint">{PLAY_HINT(who)}</p>}
+            {!unplayable && <p className="arrival-hint">{playHint(who, arrivalResumeAt(read, data.episodes, data.positions))}</p>}
           </>
         )}
         <footer className="arrival-foot">
