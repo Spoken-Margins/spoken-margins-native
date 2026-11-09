@@ -1703,14 +1703,16 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertFalse(appendix.range.overlaps(unheard), "the appendix Margin opens in the references: \(appendix.range)")
     }
 
-    // #312: a bare "<" in the Overview and a ">" in the article. Normalizing the whole spoken text
+    // #312: a tag that opens in the Overview and closes in the article. Normalizing the whole spoken text
     // eats across the seam, so the spoken article no longer matches the prepared one. The player
     // used to ask for prepared chunks by position anyway, which could play another stretch's audio.
+    // #3830: a bare "<" before a space is a comparison now (#3813) and no longer crosses the seam, so the
+    // fixture uses a real tag. SpeechSeamFixtureTests in SessionKitCoreTests holds the same two strings.
     func testASeamThatChangesTheSpokenArticleMatchesNoPreparedAudio() async throws {
-        let article = "Results > baseline in every run. " + (1...8).map {
+        let article = "id=intro > Results in every run. " + (1...8).map {
             "Sentence \($0) of the article carries enough ordinary words to fill part of a chunk."
         }.joined(separator: " ")
-        let preface = "Overview. Cost < quality for these agents.\n\n"
+        let preface = "Overview. Cost <b class=cost\n\n"
         let normalized = NarrationChunkPlanner.articlePlan(article).normalizedText
         XCTAssertNotEqual(String(SpeechTextNormalizer.normalize(preface + article).suffix(normalized.count)), normalized,
                           "the seam changes the spoken article (precondition)")
