@@ -364,16 +364,30 @@ struct LiveSessionView: View {
         return hadSheet
     }
 
-    /// For a link or a return to the screen: a cover asked for while this screen is itself still being presented, or
-    /// while a sheet is up, would be dropped, leaving a recording with no screen. The microphone doesn't wait for this.
-    private func showRecordingAfterPresenting() {
+    /// Whether anything is up over this screen that a full-screen cover can't present over.
+    private var hasSheetOrAlertUp: Bool { openMargin != nil || showsEndCard || controller.errorMessage != nil }
+
+    /// The one way a link, or a return to the screen, gets a full-screen cover shown (#3491). A cover asked for while
+    /// this screen is itself still being presented, or while a sheet or the error alert is up, is dropped and leaves
+    /// `cover` set to a screen nobody sees, so a recording would run with no Finish or Cancel. So it waits for the
+    /// screen to finish presenting, closes the sheets, and sets `cover` only when nothing is left over the screen. A
+    /// link can't close the error alert: that case leaves `cover` unset, and answering the alert shows a recording
+    /// that is still going (a Write link under the alert is dropped; the pencil is still there). The microphone
+    /// doesn't wait for any of this.
+    private func present(_ wanted: Cover) {
+        func stillWanted() -> Bool {
+            wanted == .liveRecording ? controller.isRecordingSpoken : controller.isRunning && !controller.isRecordingSpoken
+        }
         Task {
             try? await Task.sleep(for: .milliseconds(400))
-            guard controller.isRecordingSpoken, cover == nil else { return }
+            guard stillWanted(), cover == nil else { return }
             if closeSheets() { try? await Task.sleep(for: .milliseconds(400)) } // after the sheet has gone
-            if controller.isRecordingSpoken && cover == nil { cover = .liveRecording }
+            guard stillWanted(), cover == nil, controller.errorMessage == nil else { return }
+            cover = wanted
         }
     }
+
+    private func showRecordingAfterPresenting() { present(.liveRecording) }
 
     /// `startedAt` is when the listener began, when they began by recording: writing instead keeps that place.
     private func beginWriting(startedAt: Date? = nil) {
@@ -386,13 +400,10 @@ struct LiveSessionView: View {
         dismissKeyboard()
         pauseSource()
         writingStartedAt = startedAt ?? Date()
-        guard closeSheets() else {
+        if hasSheetOrAlertUp {
+            present(.liveWriting)
+        } else {
             cover = .liveWriting
-            return
-        }
-        Task {
-            try? await Task.sleep(for: .milliseconds(400)) // after the sheet has gone
-            if controller.isRunning && !controller.isRecordingSpoken && cover == nil { cover = .liveWriting }
         }
     }
 
