@@ -195,6 +195,7 @@ struct WatchUntetheredView: View {
                             Image(systemName: "list.bullet")
                                 .font(.caption2.weight(.bold))
                                 .foregroundStyle(.green)
+                                .accessibilityHidden(true)
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(chapter.title)
                                     .font(.caption2.weight(.semibold))

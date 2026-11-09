@@ -779,7 +779,7 @@ final class Gate1FlowUITests: XCTestCase {
                 add.tap()
                 XCTAssertTrue(waitForDisappearance(app.keyboards.firstMatch, timeout: 4), "Add Margin left the keyboard up")
             }
-            let removes = app.buttons.matching(NSPredicate(format: "label == %@", "Remove Margin"))
+            let removes = app.buttons.matching(NSPredicate(format: "label == %@ OR label BEGINSWITH %@", "Remove Margin", "Remove Margin, "))
             XCTAssertTrue(waitUntil(removes, "count == 4"), "Four Margins did not each get a Remove Margin button")
             for edge in 0..<4 {
                 let remove = removes.firstMatch

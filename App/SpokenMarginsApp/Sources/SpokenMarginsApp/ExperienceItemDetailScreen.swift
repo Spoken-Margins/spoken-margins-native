@@ -640,13 +640,13 @@ struct ExperienceItemDetailScreen: View {
                                     Image(systemName: "play.fill").frame(width: 44, height: 44)
                                 }
                                 .buttonStyle(.bordered)
-                                .accessibilityLabel("Resume this session")
+                                .accessibilityLabel(RowAccessibilityLabel.label("Resume this session", row: sessionTitle(row.session, index: index), "\(row.session.completionPercent)%"))
                                 .accessibilityIdentifier("session.resume.\(row.session.id)")
                                 Button { model.openExport(sessionId: row.session.id) } label: {
                                     Image(systemName: "square.and.arrow.up").frame(width: 44, height: 44)
                                 }
                                 .buttonStyle(.plain)
-                                .accessibilityLabel("Export this session")
+                                .accessibilityLabel(RowAccessibilityLabel.label("Export this session", row: sessionTitle(row.session, index: index), "\(row.session.completionPercent)%"))
                                 .accessibilityIdentifier("session.export.\(row.session.id)")
                             }
                         }
