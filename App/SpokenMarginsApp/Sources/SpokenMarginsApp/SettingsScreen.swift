@@ -198,6 +198,7 @@ struct SettingsScreen: View {
                             Spacer()
                             Image(systemName: "chevron.right")
                                 .foregroundStyle(AppColors.secondaryText)
+                                .accessibilityHidden(true)
                         }
                     }
                     .accessibilityIdentifier("settings.offlineStorage.button")

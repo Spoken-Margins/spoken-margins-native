@@ -328,7 +328,7 @@ struct ExperienceMarginsScreen: View {
                                 .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel("Details")
+                        .accessibilityLabel(RowAccessibilityLabel.label("Details", row: row.preview, group.itemTitle))
                         .accessibilityHint("Opens this Margin's details, where you can share it.")
                         .accessibilityIdentifier("margins.rowDetails.\(row.id)")
                       }

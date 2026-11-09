@@ -441,7 +441,7 @@ struct LiveSessionView: View {
                         Spacer()
                         Button { controller.removeMargin(id: margin.id) } label: { Image(systemName: "xmark.circle").minimumTapTarget() }
                             .buttonStyle(.borderless)
-                            .accessibilityLabel("Remove Margin")
+                            .accessibilityLabel(RowAccessibilityLabel.label("Remove Margin", row: positionText(for: margin, in: session), margin.isSpoken ? margin.spokenTranscript : margin.text))
                     }
                     if margin.isBlindMark {
                         AppTextField("Mark: add words to help place it (optional)", text: Binding(
