@@ -78,7 +78,7 @@ extension Gate1AppModel {
     }
 
     private func queuedTitle(_ itemId: String) -> String {
-        libraryItems.first(where: { $0.id == itemId })?.title ?? "Item"
+        libraryItems.first(where: { $0.id == itemId })?.title ?? "Untitled"
     }
 
     /// Starts the next queued item when the one that was playing reaches its end. Not while a sleep timer is running:

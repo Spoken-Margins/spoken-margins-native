@@ -3,18 +3,6 @@
  "note": "Listener-facing string literals that say \"item\" when #3599 arrived. Keyed by kind and text, with a count. A replacement slice deletes rows (scripts/listener_words.py --update); a new row needs --accept \"reason\". Do not add rows to make a check pass: say episode, article or PDF.",
  "entries": [
   {
-   "kind": "voiceover",
-   "text": "Item options",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "voiceover",
-   "text": "Opens item details and listening-session history",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
    "kind": "words",
    "text": "(?i)(?:(?<![A-Za-z0-9])|(?<=\\\\[nrt]))(?:session-)?item-[\\p{L}\\p{N}_-]+",
    "count": 1,
@@ -24,30 +12,6 @@
    "kind": "words",
    "text": "Acoustic signatures: …. These are opaque matching evidence, not item audio.",
    "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "Can't restore this Margin: its item was deleted.",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "Current item",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "Imported item and Listening Map. Audio prepares separately; playback has not started.",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "Item",
-   "count": 2,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
   },
   {
@@ -106,19 +70,7 @@
   },
   {
    "kind": "words",
-   "text": "Open Item",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
    "text": "Opens Spoken Margins to import an item and its supplied map. Does not regenerate the map or start playback. Pass the Assemble Listening Edition result straight in, with no Save step, or give the edition's JSON as text. A saved file works too.",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "Pause playback before importing a map for the current item.",
    "count": 1,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
   },
@@ -136,61 +88,13 @@
   },
   {
    "kind": "words",
-   "text": "Shared item",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "Some Skim summaries are not ready. Reopen the item to retry, or reimport the package to restore its supplied voices.",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
    "text": "Teams, Zoom, Webex, Google Meet and Otter transcripts work. With a recording, the item plays it; without one, the item is the transcript's text.",
    "count": 1,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
   },
   {
    "kind": "words",
-   "text": "There are no new Margins to review on this item.",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "This audio item does not have a downloadable source.",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "This item already has a Listening Map.",
-   "count": 2,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "This item does not have text that can be prepared for offline listening.",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
    "text": "Use itemAudioOmitted; a source is a feed, while this flag describes the listened-to item's audio.",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "You haven't made a Margin on this item since you opened your friend's.",
-   "count": 1,
-   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
-  },
-  {
-   "kind": "words",
-   "text": "Your thoughts on this item",
    "count": 1,
    "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
   },

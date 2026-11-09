@@ -20,7 +20,7 @@ extension Gate1AppModel {
     func restoreDeletedMargin(_ interjection: Interjection) {
         // The item may have been moved to Recently Deleted or removed since; its Margins go with it.
         guard let store, let item = try? store.loadItemSummary(id: interjection.itemId), item.deletedAt == nil else {
-            reportFailure("Can't restore this Margin: its item was deleted.")
+            reportFailure("Can't restore this Margin: its source was deleted.")
             return
         }
         run { engine in

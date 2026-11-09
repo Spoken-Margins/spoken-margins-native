@@ -65,7 +65,7 @@ extension Gate1AppModel {
     func beginListeningMapGeneration() -> Bool {
         guard !isGeneratingListeningMap else { return false }
         guard selectedItem.chapters.isEmpty, selectedItem.mediaChapters.isEmpty else {
-            reportSuccess("This item already has a Listening Map.")
+            reportSuccess("This \(selectedItem.sourceNoun.inSentence) already has a Listening Map.")
             return false
         }
         isGeneratingListeningMap = true

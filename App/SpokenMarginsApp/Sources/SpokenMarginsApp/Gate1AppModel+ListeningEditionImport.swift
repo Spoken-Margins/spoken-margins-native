@@ -131,7 +131,7 @@ extension Gate1AppModel {
         refreshSelectedItem()
         screen = .item
         schedulePrewarmAfterPreparedTextChange(itemId: edition.itemID)
-        reportConfirmation("Imported item and Listening Map. Audio prepares separately; playback has not started.")
+        reportConfirmation("Imported the source and its Listening Map. Audio prepares separately; playback has not started.")
     }
 
     /// Saves the item, the edition and its map. Navigates nowhere.
@@ -210,7 +210,7 @@ extension Gate1AppModel {
 
     private func requireNoPlaybackForListeningEdition(itemId: String) throws {
         if snapshot.itemId == itemId, snapshot.status.isPlaybackActive {
-            throw EditionError.invalid("Pause playback before importing a map for the current item.")
+            throw EditionError.invalid("Pause playback before importing a map for what is playing.")
         }
     }
 

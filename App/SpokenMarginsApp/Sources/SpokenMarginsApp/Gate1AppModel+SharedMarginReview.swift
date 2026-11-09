@@ -95,7 +95,7 @@ extension Gate1AppModel {
         guard !rejectNavigationOrSessionMutationWhileRecording("review_new_margins") else { return }
         let entries = offered ?? newSharedMargins(itemId: itemId)
         guard !entries.isEmpty else {
-            reportWarning("There are no new Margins to review on this item.")
+            reportWarning("There are no new Margins to review here.")
             return
         }
         if reviewFriendMarginsOfDeadEpisode(itemId: itemId, entries: entries) { return } // the episode can't play (#3392)
