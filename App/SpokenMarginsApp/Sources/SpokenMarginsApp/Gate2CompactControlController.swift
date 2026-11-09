@@ -312,6 +312,8 @@ final class Gate2CompactControlController {
     #endif
     private var appLifecycleObserver: Gate2AppLifecycleObserver?
     private let liveSpeechNowPlaying = Gate2LiveSpeechNowPlayingController()
+    /// Every system remote command this controller's Now Playing receives, by name (#3650).
+    var remoteCommandArrivalHandler: (@MainActor (String) -> Void)?
     private var nowPlayingEnabled = true
     private var lastPublishedSnapshot: CompactControlSnapshot?
     private var latestAppSnapshot: SessionSnapshot?
@@ -385,6 +387,7 @@ final class Gate2CompactControlController {
         liveSpeechNowPlaying.commandHandler = { [weak self] command, playbackRate in
             self?.queuedCommandHandler?(command, "now_playing_live_speech", nil, nil, playbackRate)
         }
+        liveSpeechNowPlaying.arrivalHandler = { [weak self] name in self?.remoteCommandArrivalHandler?(name) }
         liveSpeechNowPlaying.nextTrackHandler = { [weak self] in
             self?.queuedCommandHandler?(
                 .skipForward, "now_playing_live_speech" + HeadphoneRemoteSignal.nextTrackOriginSuffix, nil, nil, nil
@@ -907,7 +910,7 @@ final class Gate2LiveActivityController: Gate2LiveActivityControlling {
             isRecording: snapshot.isRecording,
             microphone: snapshot.isRecording ? microphone : .capturing,
             availableCommands: Gate2LiveActivityPolicy.availableCommands(from: snapshot).map(\.rawValue),
-            sharedMarginSenderLabel: sharedMarginPrompt?.senderLabel,
+            sharedMarginSenderLabel: sharedMarginPrompt.map { FriendArrivalWords.liveActivitySender(senderLabel: $0.senderLabel) },
             skimForwardDestinationMs: snapshot.skimForwardDestinationMs,
             skimBackwardDestinationMs: snapshot.skimBackwardDestinationMs
         )
@@ -1034,7 +1037,7 @@ final class Gate2LiveActivityController: Gate2LiveActivityControlling {
             let requestedId = try system.request(sessionId, state, staleDate)
             return (requestedId, "started")
         } catch {
-            return (nil, "failed:\(error.localizedDescription)")
+            return (nil, "failed:\(SafeErrorText.describe(error))")
         }
     }
 
@@ -1184,6 +1187,9 @@ private final class Gate2LiveSpeechNowPlayingController {
     var commandHandler: (@MainActor (CompactControlCommand, Double?) -> Void)?
     /// A headphone double-press: the next-track remote command, kept distinct from skip forward (#2031).
     var nextTrackHandler: (@MainActor () -> Void)?
+    /// Told the name of every remote command that arrives, before it is handled, for the Diagnostics log of a
+    /// recording's headphone events (#3650). It changes nothing about how the command is answered.
+    var arrivalHandler: (@MainActor (String) -> Void)?
     private(set) var lastRemoteCommand = "none"
     private(set) var lastRemoteCommandDetail = "none"
     private(set) var status = "media_coordinator"
@@ -1322,14 +1328,15 @@ private final class Gate2LiveSpeechNowPlayingController {
         center.changePlaybackRateCommand.supportedPlaybackRates = SpeechRateRule.supportedMultipliers.map { NSNumber(value: $0) }
         center.skipBackwardCommand.preferredIntervals = [15]
         center.skipForwardCommand.preferredIntervals = [15]
-        register(center.playCommand, command: .play, detail: "none")
-        register(center.pauseCommand, command: .pause, detail: "none")
-        register(center.togglePlayPauseCommand, command: .togglePlayPause, detail: "none")
-        register(center.skipBackwardCommand, command: .skipBack, detail: "15s")
-        register(center.skipForwardCommand, command: .skipForward, detail: "15s")
-        register(center.stopCommand, command: .pause, detail: "none")
-        let nextTrackTarget = center.nextTrackCommand.addTarget { [weak self] _ in
+        register(center.playCommand, command: .play, detail: "none", name: "play")
+        register(center.pauseCommand, command: .pause, detail: "none", name: "pause")
+        register(center.togglePlayPauseCommand, command: .togglePlayPause, detail: "none", name: "togglePlayPause")
+        register(center.skipBackwardCommand, command: .skipBack, detail: "15s", name: "skipBackward")
+        register(center.skipForwardCommand, command: .skipForward, detail: "15s", name: "skipForward")
+        register(center.stopCommand, command: .pause, detail: "none", name: "stop")
+        let nextTrackTarget = center.nextTrackCommand.addTarget { @Sendable [weak self] _ in
             Task { @MainActor [weak self] in
+                self?.arrivalHandler?("nextTrack")
                 self?.lastRemoteCommand = "nextTrack"
                 self?.lastRemoteCommandDetail = "none"
                 self?.nextTrackHandler?()
@@ -1337,14 +1344,14 @@ private final class Gate2LiveSpeechNowPlayingController {
             return .success
         }
         remoteCommandTargets.append((center.nextTrackCommand, nextTrackTarget))
-        let rateTarget = center.changePlaybackRateCommand.addTarget { [weak self] event in
-            guard let event = event as? MPChangePlaybackRateCommandEvent else {
+        let rateTarget = center.changePlaybackRateCommand.addTarget { @Sendable [weak self] event in
+            guard let rate = (event as? MPChangePlaybackRateCommandEvent)?.playbackRate else {
                 return .commandFailed
             }
             Task { @MainActor [weak self] in
                 self?.lastRemoteCommand = CompactControlCommand.setPlaybackRate.rawValue
-                self?.lastRemoteCommandDetail = String(format: "%.2f", event.playbackRate)
-                self?.commandHandler?(.setPlaybackRate, Double(event.playbackRate))
+                self?.lastRemoteCommandDetail = String(format: "%.2f", rate)
+                self?.commandHandler?(.setPlaybackRate, Double(rate))
             }
             return .success
         }
@@ -1374,7 +1381,7 @@ private final class Gate2LiveSpeechNowPlayingController {
                 try session.setActive(true)
                 failure = nil
             } catch {
-                failure = error.localizedDescription
+                failure = SafeErrorText.describe(error)
             }
             Task { @MainActor [weak self] in self?.noteAudioSessionActivation(failure: failure) }
         }
@@ -1397,9 +1404,11 @@ private final class Gate2LiveSpeechNowPlayingController {
     }
 
     #if canImport(MediaPlayer)
-    private func register(_ remoteCommand: MPRemoteCommand, command: CompactControlCommand, detail: String) {
-        let target = remoteCommand.addTarget { [weak self] _ in
+    private func register(_ remoteCommand: MPRemoteCommand, command: CompactControlCommand, detail: String, name: String) {
+        // MediaPlayer doesn't promise the main thread: a main-actor handler would trap on its queue (#3513).
+        let target = remoteCommand.addTarget { @Sendable [weak self] _ in
             Task { @MainActor [weak self] in
+                self?.arrivalHandler?(name)
                 self?.lastRemoteCommand = command.rawValue
                 self?.lastRemoteCommandDetail = detail
                 self?.commandHandler?(command, nil)

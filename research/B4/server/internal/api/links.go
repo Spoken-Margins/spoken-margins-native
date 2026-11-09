@@ -201,33 +201,37 @@ func linkHeaders(w http.ResponseWriter) {
 func (s *Server) getLink(w http.ResponseWriter, r *http.Request) {
 	linkHeaders(w)
 	if !s.linksUp() {
-		s.linkUnavailablePage(w, http.StatusServiceUnavailable, links.UnavailablePaused)
+		s.linkUnavailablePage(w, r, http.StatusServiceUnavailable, links.UnavailablePaused)
 		return
 	}
 	id := r.PathValue("id")
 	if err := s.Links.Live(id, s.Now()); err != nil {
 		switch {
 		case errors.Is(err, links.ErrNotFound):
-			s.linkUnavailablePage(w, http.StatusNotFound, links.UnavailableGone)
+			s.linkUnavailablePage(w, r, http.StatusNotFound, links.UnavailableGone)
 		case errors.Is(err, links.ErrGone):
-			s.linkUnavailablePage(w, http.StatusGone, links.UnavailableGone)
+			s.linkUnavailablePage(w, r, http.StatusGone, links.UnavailableGone)
 		default:
-			s.linkUnavailablePage(w, http.StatusInternalServerError, links.UnavailableError)
+			s.linkUnavailablePage(w, r, http.StatusInternalServerError, links.UnavailableError)
 		}
 		return
 	}
 	var page bytes.Buffer
 	if err := links.Render(&page, id, s.LinkInstallURL, s.LinkWebURL); err != nil {
-		s.linkUnavailablePage(w, http.StatusInternalServerError, links.UnavailableError)
+		s.linkUnavailablePage(w, r, http.StatusInternalServerError, links.UnavailableError)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write(page.Bytes())
 }
 
-func (s *Server) linkUnavailablePage(w http.ResponseWriter, status int, reason links.Unavailable) {
+func (s *Server) linkUnavailablePage(w http.ResponseWriter, r *http.Request, status int, reason links.Unavailable) {
+	installURL := s.LinkInstallURL
+	if !links.OffersIPhoneInstall(r.UserAgent()) {
+		installURL = ""
+	}
 	var page bytes.Buffer
-	if err := links.RenderUnavailable(&page, reason, s.LinkInstallURL); err != nil {
+	if err := links.RenderUnavailable(&page, reason, installURL); err != nil {
 		fail(w, http.StatusInternalServerError, "internal")
 		return
 	}
@@ -266,17 +270,23 @@ func (s *Server) getLinkScript(w http.ResponseWriter, r *http.Request) {
 	w.Write(data)
 }
 
+// LinkExpiresHeader carries the packet's expiry day, e.g. 2026-12-06.
+const LinkExpiresHeader = "X-SM-Link-Expires"
+
 func (s *Server) getLinkPacket(w http.ResponseWriter, r *http.Request) {
 	linkHeaders(w)
 	if !s.linksOn(w) {
 		return
 	}
-	f, err := s.Links.Packet(r.PathValue("id"), s.Now())
+	f, expires, err := s.Links.PacketUntil(r.PathValue("id"), s.Now())
 	if err != nil {
 		linkFailure(w, err)
 		return
 	}
 	defer f.Close()
+	// The day the link stops working, UTC, and nothing finer: the page words it for the friend (#2168). No
+	// creation time (Lifetime is fixed) and no key; a held link is 410 above and never reaches here.
+	w.Header().Set(LinkExpiresHeader, expires.UTC().Format("2006-01-02"))
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", `attachment; filename="shared.spokenmargins"`)
 	http.ServeContent(w, r, "", time.Time{}, f)

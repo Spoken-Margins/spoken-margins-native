@@ -124,6 +124,7 @@ REPO = 'Spoken-Margins/spoken-margins-native'
 REPO_LINK = r'(?i:github\.com/(?:spoken-margins|uncomposed)/spoken-margins-native)'
 BRANCH = trunk_branch()
 REPORTS_ISSUE = 184      # where the integration run and the Test Desk post their lane reports
+SCRIPTED_KIND = 'scripted-journeys'  # `Lane report scripted-journeys-<sha7>`: the journeys, run when a build is cut (#3669)
 DISK_FLOOR_GB = 10
 DISK_PER_BUILD_GB = 4
 PLAN_CHECKS = 8          # about a minute each, plus the install: roughly ten minutes
@@ -162,7 +163,15 @@ FIRST_ON_PHONE = {'found-on-phone', 'regression'}
 # Co-op Experience "is never held": the 13515da plan (2026-11-04) still led with Solid Ground and held #460, a
 # priority sharing fix, as "waits for Co-op Experience". A test reads AGENTS.md's "Order of work" line and fails
 # when these drift from it again (#3216).
-CURRENT_MILESTONE = 'Showcase'
+# Milestones are releases named by app version since 2026-11-07 (#3636); Showcase is 0.2 until it is renamed.
+CURRENT_MILESTONE = '0.2'
+RELEASE_ALIASES = {'Showcase': '0.2'}
+
+
+def is_current(title) -> bool:
+    return bool(title) and RELEASE_ALIASES.get(title, title) == CURRENT_MILESTONE
+
+
 HELD_MILESTONES = frozenset({'Later', 'Public beta'})
 NOT_LISTENER_LABELS = {'stream:A1'}  # the test lane: its SessionKit edits are compile guards, not behaviour
 # Acceptance belongs to the change, not necessarily its issue. The owner confirmed #1482's Build 30
@@ -689,7 +698,7 @@ def lead_tier(issue: dict, in_current: bool) -> int:
 def leads(issues: list[dict]) -> bool:
     """A change or fix that leads the owner's checks: one of its issues is in the current milestone and marked
     `priority` or found on his phone (2026-10-16: #1708 and #1337 never reached his plans)."""
-    return any(lead_tier(issue, (issue.get('milestone') or {}).get('title') == CURRENT_MILESTONE) <= 1
+    return any(lead_tier(issue, is_current((issue.get('milestone') or {}).get('title'))) <= 1
                for issue in issues)
 
 
@@ -713,7 +722,7 @@ def waiting_fixes(issues: list[dict], built: set[int], shown: set[int], named_in
     """
     def build_number(issue):
         milestone = issue.get('milestone') or {}
-        if milestone.get('title') == CURRENT_MILESTONE:
+        if is_current(milestone.get('title')):
             return 0
         found = re.fullmatch(r'Build (\d+)', milestone.get('title') or '')
         return int(found.group(1)) if found and milestone.get('state', 'OPEN') == 'OPEN' else None
@@ -1133,7 +1142,8 @@ def integration_skip(bodies: list[str], sha: str) -> str | None:
 
 # Lines of a lane report that say something was left out, failed or went wrong: the plan carries them
 # whole, not just the report's first line (#1465).
-CARRIED_LINES = re.compile(r'(failing|flaky|crashes|why inconclusive|merges since the last PASS|not run|not verified'
+CARRIED_LINES = re.compile(r'(failing|flaky|crashes|why inconclusive|merges since the last (?:scripted-journeys )?PASS'
+                           r'|not run|not verified'
                            r'|integration: skipped)\b', re.I)
 QUIET_LINE = re.compile(r':\s*(none( this run| recorded)?|n/a)?\.?$', re.I)  # "failing:", "flaky: none this run"
 OUTCOME_WORDS = {'PASS': 'pass', 'FAIL': 'fail', 'INCONCLUSIVE': 'not run (inconclusive)'}
@@ -1155,15 +1165,34 @@ def report_verdict(lines: list[str]) -> str | None:
 
 
 def scripted_journeys_outcome(lines: list[str]) -> tuple[str, str]:
-    line = next((l for l in lines if l.startswith('scripted journeys')), None)
+    line = next((l for l in lines if l.startswith('scripted journeys (')), None)
     if line is None:
-        return 'not run', 'the integration report lists no scripted journeys'
+        return 'not run', 'no scripted-journeys report for this commit'
     detail = line.split(':', 1)[-1].strip()
     if re.search(r'\b(failed|missing)\b', detail):
         return 'fail', detail
     # Only an all-passed line is a pass: a journey that was skipped or never ran leaves the rest unproven.
     unproven = re.search(r'\b(not_run|skipped)\b', detail)
     return ('pass' if re.search(r'\bpassed\b', detail) and not unproven else 'not run'), detail
+
+
+def scripted_record(reports: list[str], sha: str, integration: list[str], integration_verdict: str | None
+                    ) -> tuple[str, str]:
+    """The scripted journeys' line in the plan (#3669). Journeys run when a phone build is cut, as their own
+    `Lane report scripted-journeys-<sha7>`, so that report is the record. An integration report from before that
+    change may still carry the journeys; one that doesn't says they run at the build, not that they were skipped."""
+    journeys = report_body(reports, SCRIPTED_KIND, sha)
+    verdict = report_verdict(journeys)
+    if verdict == 'PASS':
+        return scripted_journeys_outcome(journeys)
+    if verdict == 'FAIL':
+        status, detail = scripted_journeys_outcome(journeys)
+        return 'fail', detail if status == 'fail' else journeys[0]
+    if verdict == 'INCONCLUSIVE':
+        return 'not run', f'{journeys[0]}; the run did not finish, so it proves nothing either way'
+    if integration_verdict in ('PASS', 'FAIL') and any(l.startswith('scripted journeys (') for l in integration):
+        return scripted_journeys_outcome(integration)
+    return 'not run', 'asked for when this build was cut; no scripted-journeys report for this commit yet'
 
 
 def commit_record(reports: list[str] | None, sha: str) -> list[tuple[str, str, str]]:
@@ -1183,8 +1212,7 @@ def commit_record(reports: list[str] | None, sha: str) -> list[tuple[str, str, s
     skip = integration_skip(reports, sha)
     app = (OUTCOME_WORDS[verdict], ran or integration[0]) if verdict else \
         ('not run', f'skipped by the Test Desk: {skip}' if skip else 'no integration report for this commit')
-    scripted = scripted_journeys_outcome(integration) if verdict in ('PASS', 'FAIL') else \
-        ('not run', 'the integration run did not finish' if verdict else 'no integration run')
+    scripted = scripted_record(reports, sha, integration, verdict)
     attended_verdict = report_verdict(journeys)
     attended = (OUTCOME_WORDS[attended_verdict], journeys[0]) if attended_verdict else \
         ('not run', 'agent-driven journeys need an attended session')
@@ -1212,7 +1240,7 @@ def outcome_lines(reports: list[str] | None, sha: str) -> list[str]:
     lines += [f'- {what}: **{status}**' + (f' ({detail})' if detail else '')
               for what, status, detail in commit_record(reports, sha)]
     carried = []
-    for kind in ('integration', 'journeys') if reports is not None else ():
+    for kind in ('integration', SCRIPTED_KIND, 'journeys') if reports is not None else ():
         for line in report_body(reports, kind, sha)[1:]:
             if CARRIED_LINES.match(line) and not QUIET_LINE.search(line) and line not in carried:
                 carried.append(line)
@@ -1787,10 +1815,28 @@ def deliver(app: Path, info: dict, sha: str, stamp: str, log: Path, seconds: int
     record_attempt(sha, 'built')
     prune()
     share_files(folder, sha)
+    request_journeys(sha)
     say(f'done: {folder}')
     say(f'app {size / 1e6:.0f} MB, built in {seconds} s; test plan: {plan}')
     notify_ready(sha, plan)
     return folder
+
+
+def request_journeys(sha: str) -> None:
+    """Ask the Mac's integration tick to run the scripted journeys on the commit just built (#3669).
+
+    A tip no longer gets them: the journeys run here, once per cut build, as `Lane report scripted-journeys-<sha7>`
+    on #184, which the plan reads on its next rewrite (`--plan-only`). Only the request is made, so the build
+    never waits for them and a failed request never fails the build."""
+    script = ROOT / 'ops' / 'testdesk' / 'sm_integration_run.py'
+    try:
+        done = subprocess.run([sys.executable, str(script), '--journeys-request', sha, '--why',
+                               'a phone build was cut from this commit'], cwd=ROOT, capture_output=True, text=True,
+                              timeout=120)
+        say(f'scripted journeys requested for {sha[:7]}' if done.returncode == 0 else
+            f'could not request the scripted journeys for {sha[:7]}: {(done.stderr or done.stdout).strip()[-200:]}')
+    except (OSError, subprocess.SubprocessError) as error:
+        say(f'could not request the scripted journeys for {sha[:7]}: {error}')
 
 
 # ---- the hosted build (#2357) ----------------------------------------------------------------------
@@ -2138,6 +2184,9 @@ class BuildFailed(Exception):
     pass
 
 
+HOSTED_TAKEN = 'hosted-taken.json'
+
+
 def take_hosted(commit: str | None, if_changed: bool, tip: str = '') -> int:
     """--source hosted: no xcodebuild here. Take the newest hosted build (of `commit`, when one is named)."""
     hosted, problem = hosted_build(commit)
@@ -2156,6 +2205,10 @@ def take_hosted(commit: str | None, if_changed: bool, tip: str = '') -> int:
     if latest_build().get('sha') == sha and (if_changed or not commit):
         say(f'latest is already the hosted build of {sha[:7]}; nothing to do')
         return 0
+    # Each hosted build is taken once: a build made by hand since then stays latest until main has a newer one.
+    if not commit and latest_build() and read_json(phone_dir() / HOSTED_TAKEN).get('sha') == sha:
+        say(f'already took the hosted build of {sha[:7]}; latest stays {latest_build().get("sha", "")[:7]}, made since')
+        return 0
     attempt = read_json(phone_dir() / 'last-attempt.json')
     if if_changed and attempt.get('sha') == sha and str(attempt.get('result', '')).startswith('failed'):
         say(f'{sha[:7]} already failed ({attempt["result"]}); waiting for a newer hosted build')
@@ -2165,7 +2218,10 @@ def take_hosted(commit: str | None, if_changed: bool, tip: str = '') -> int:
         say(f'skipped: free disk is {free:.1f} GB; taking a phone build needs {needed} GB')
         return EXIT_SKIPPED
     clear_work()
-    return fetch_hosted(hosted)
+    result = fetch_hosted(hosted)
+    if result == 0:
+        (phone_dir() / HOSTED_TAKEN).write_text(json.dumps({'sha': sha}) + '\n')
+    return result
 
 
 def main(argv) -> int:

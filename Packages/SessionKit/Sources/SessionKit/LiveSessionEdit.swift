@@ -20,6 +20,38 @@ public enum LiveSessionEdit {
         session.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// What the session is about (#3491). Trimmed; blank clears it. Unchanged words rewrite nothing.
+    public static func setDescription(_ text: String, on session: inout LiveSession) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let new = trimmed.isEmpty ? nil : trimmed
+        guard new != session.sessionDescription else { return }
+        session.sessionDescription = new
+    }
+
+    public enum StatedStartError: Error, Equatable, LocalizedError {
+        case inFuture
+        case afterEnd
+
+        public var errorDescription: String? {
+            switch self {
+            case .inFuture: "The start can't be in the future."
+            case .afterEnd: "The start can't be after the end."
+            }
+        }
+    }
+
+    /// The start time the listener says the session had (#3491), for display and export. Never touches `startedAt`,
+    /// which drives the clock and every Margin's offset. Throws, changing nothing, for a time after `now` or after
+    /// the end. Nil clears it.
+    public static func setStatedStart(_ date: Date?, now: Date, on session: inout LiveSession) throws {
+        if let date {
+            if date > now { throw StatedStartError.inFuture }
+            if let end = session.endedAt, date > end { throw StatedStartError.afterEnd }
+        }
+        guard session.statedStartedAt != date else { return }
+        session.statedStartedAt = date
+    }
+
     /// The chapter, page or percent the session started at. Blank clears it. What can be read as a place ("p. 118",
     /// "chapter seven", "40%") is kept as one, in the unit the listener used, and its words normalised ("Page 118");
     /// anything else stays as typed.

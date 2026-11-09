@@ -25,14 +25,15 @@ extension Gate1AppModel {
     }
 
     private func orphanedTranscriptionsSettled(failure: Error) {
-        diagnostics["orphanedTranscriptionsSettled"] = "failed:\(failure.localizedDescription)"
+        diagnostics["orphanedTranscriptionsSettled"] = "failed:\(SafeErrorText.describe(failure))"
     }
 
     /// A manual Retry failed. A Margin never transcribed would stay "pending" with the retry over; one that has
     /// words keeps them and its status (#942).
-    func recordFailedRetry(of interjection: Interjection, failure: String) {
-        diagnostics[Self.marginDiagnosticKey("interjectionTranscription", interjection)] = "retry_failed:\(failure)"
-        diagnostics["lastInterjectionTranscriptionFailure"] = "\(interjection.id):\(failure)"
+    /// `failure` is stored and read by the listener's wording; only `diagnostic` (`SafeErrorText`) goes in the export.
+    func recordFailedRetry(of interjection: Interjection, failure: String, diagnostic: String) {
+        diagnostics[Self.marginDiagnosticKey("interjectionTranscription", interjection)] = "retry_failed:\(diagnostic)"
+        diagnostics["lastInterjectionTranscriptionFailure"] = "\(interjection.id):\(diagnostic)"
         run { engine in
             snapshot = try engine.transcriptionRetryFailed(interjectionId: interjection.id, sessionId: interjection.sessionId, error: failure)
             refreshSelectedItemInBackground()
@@ -50,11 +51,9 @@ extension Gate1AppModel {
     // MARK: Source transcript finishes (#2512)
     // The main-actor stretches that end a source-transcript import, labelled so a hang names them.
 
-    func finishDiscoveredSourceTranscript(_ timeline: TranscriptTimeline, itemId: String, linkType: String) {
-        hangTelemetry.labels.scoped("sourceTranscriptAttach") {
-            diagnostics["sourceTranscriptDiscovery:\(itemId)"] = "attached:\(linkType)"
-            attachSourceTranscriptTimeline(timeline, itemId: itemId)
-        }
+    func finishDiscoveredSourceTranscript(_ timeline: TranscriptTimeline, itemId: String, linkType: String) async {
+        diagnostics["sourceTranscriptDiscovery:\(itemId)"] = "attached:\(linkType)"
+        await attachSourceTranscriptTimelineOffMain(timeline, itemId: itemId)
     }
 
     func markSourceTranscriptUnavailable(itemId: String, lastFailure: String) {
@@ -68,18 +67,18 @@ extension Gate1AppModel {
         }
     }
 
-    func finishFullSourceTranscription(_ timeline: TranscriptTimeline, itemId: String) {
-        hangTelemetry.labels.scoped("sourceTranscriptAttach") {
-            importedPodcastPlacement.releaseFullSourceTranscription(itemId: itemId)
-            attachSourceTranscriptTimeline(timeline, itemId: itemId)
-        }
+    func finishFullSourceTranscription(_ timeline: TranscriptTimeline, itemId: String) async {
+        // The slot stays taken while the transcript is saved off the main thread: until it is, the item has no transcript
+        // id, and a Listening Map request or an item open would start a second transcription of the same audio.
+        await attachSourceTranscriptTimelineOffMain(timeline, itemId: itemId)
+        importedPodcastPlacement.releaseFullSourceTranscription(itemId: itemId)
     }
 
     func failFullSourceTranscription(itemId: String, error: Error) {
         hangTelemetry.labels.scoped("sourceTranscriptionFailed") {
             importedPodcastPlacement.releaseFullSourceTranscription(itemId: itemId)
             diagnostics["sourceTranscriptionStatus"] = "unavailable"
-            diagnostics["sourceTranscriptionError"] = String(describing: error)
+            diagnostics["sourceTranscriptionError"] = SafeErrorText.describe(error)
             if activeItemId == itemId {
                 sourceTranscriptStatus = "unavailable"
                 snapshot.sourceTranscriptStatus = "unavailable"

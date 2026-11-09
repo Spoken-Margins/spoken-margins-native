@@ -156,8 +156,13 @@ final class ClipboardLinkOfferTests: XCTestCase {
 
     func testTimeoutsArePinned() {
         XCTAssertEqual(ClipboardLinkOffer.autoDismissDelay, 6)
-        XCTAssertEqual(ClipboardLinkOffer.autoDismissDelay(voiceOverRunning: false), 6)
-        XCTAssertEqual(ClipboardLinkOffer.autoDismissDelay(voiceOverRunning: true), 15)
+        XCTAssertEqual(ClipboardLinkOffer.autoDismissDelay(assistiveTechnologyRunning: false), 6, "others keep the 6 s")
+    }
+
+    /// #3720: with VoiceOver or Switch Control running, the card has no timer: finding Paste takes longer than any
+    /// fixed wait, and a card that vanishes under a focused control leaves the listener nothing to activate.
+    func testTheCardHasNoTimerWhileAssistiveTechnologyRuns() {
+        XCTAssertNil(ClipboardLinkOffer.autoDismissDelay(assistiveTechnologyRunning: true))
     }
 
     func testNeverAutoDismissesWhileBusyOrShowingAnError() {

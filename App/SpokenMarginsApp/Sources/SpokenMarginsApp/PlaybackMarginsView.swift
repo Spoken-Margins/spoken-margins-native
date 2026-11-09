@@ -3,6 +3,7 @@ import SessionKit
 
 /// One source-ordered list of this item's own and shared Margins inside the playback shell.
 struct PlaybackMarginsView: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @EnvironmentObject private var model: Gate1AppModel
     @State private var filter: PlaybackMarginsList.Filter = .all
     @State private var selectedMargin: MarginRow?
@@ -26,7 +27,7 @@ struct PlaybackMarginsView: View {
                 Text(model.selectedItem.title)
                     .font(.subheadline)
                     .foregroundStyle(AppColors.watchSecondary)
-                    .lineLimit(1)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 1)
                     .truncationMode(.tail)
                 PlaybackMarginsFilterView(selection: $filter)
                 Text("Margins: \(visibleCount(counts))")
@@ -41,7 +42,7 @@ struct PlaybackMarginsView: View {
                     if entry.origin == .own, let row = ownByID[entry.id] {
                         PlaybackMarginRowView(title: row.preview, detail: row.placeDescription(),
                             isShared: false, identifier: "margins.row.\(row.id)",
-                            showDetails: { selectedMargin = row }, play: { _ = model.playMarginMoment(row) })
+                            showDetails: { selectedMargin = row }, play: { MarginMomentTap.start(row, model: model) })
                     } else if entry.origin == .shared, let row = sharedByID[entry.id] {
                         PlaybackMarginRowView(title: row.interjection.approvedTranscript,
                             detail: "\(row.collectionLabel) · \(row.positionDescription)",
@@ -50,8 +51,9 @@ struct PlaybackMarginsView: View {
                             showDetails: { selectedSharedMargin = row }, play: { model.playSharedMarginMoment(row) })
                     }
                 }
-                Button("All Margins and export", systemImage: "square.and.arrow.up", action: model.openMargins)
-                    .frame(minHeight: 44)
+                Button(action: model.openMargins) {
+                    Label("All Margins and export", systemImage: "square.and.arrow.up").frame(minHeight: 44).contentShape(Rectangle())
+                }
                     .accessibilityIdentifier("playback.margins.collection.button")
             }
             .padding(.horizontal, 22)

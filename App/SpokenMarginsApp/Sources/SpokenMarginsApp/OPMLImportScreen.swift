@@ -174,6 +174,8 @@ struct OPMLImportScreen: View {
                 case .failure(let error): importer.showFailure(error)
                 }
             }
+            // A container, so the identifier doesn't replace the Cancel and Stop buttons' in the inset (#3818).
+            .accessibilityElement(children: .contain)
             .accessibilityIdentifier("opml.import.screen")
             .task {
                 // Once, after the push settles: a picker raised mid-transition can be dropped.
@@ -313,12 +315,10 @@ struct OPMLImportScreen: View {
                     importer.startFollowing()
                 }
                 .disabled(importer.selected.isEmpty)
-                Button("Cancel") { importer.cancel() }
-                    .frame(maxWidth: .infinity, minHeight: 44)
+                Button { importer.cancel() } label: { Text("Cancel").frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle()) }
                     .accessibilityIdentifier("opml.import.cancel")
             case .following:
-                Button("Stop") { importer.cancel() }
-                    .frame(maxWidth: .infinity, minHeight: 44)
+                Button { importer.cancel() } label: { Text("Stop").frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle()) }
                     .accessibilityIdentifier("opml.import.stop")
             case .finished:
                 primaryButton("Done", id: "opml.import.done") { dismiss() }

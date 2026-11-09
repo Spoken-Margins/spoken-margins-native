@@ -350,11 +350,6 @@ def night_active(at):
     return 1 if at < dt.datetime(2026, 11, 6, 4, 47, tzinfo=UTC) else 0
 
 
-def old_rule_holds(now, usage):
-    """The rule this replaces: Paced holds once the report is over 3 hours old, whatever it says."""
-    return now - usage['usage']['at'] > dt.timedelta(hours=3)
-
-
 class NightOfNovember5(unittest.TestCase):
     """Replays 2026-11-05/06 (#3518): 0 or 1 of 3 threads, 11 ready, usage far behind the trend, the Mac asleep."""
 
@@ -373,10 +368,6 @@ class NightOfNovember5(unittest.TestCase):
                 g.record_fire(state, f"fire-{at:%Y%m%dT%H%MZ}", at, ack)
         return fires, holds
 
-    def test_the_old_rule_held_from_05_32(self):
-        first = next(at for at in night_ticks() if old_rule_holds(at, self.usage))
-        self.assertEqual(first, dt.datetime(2026, 11, 6, 5, 32, tzinfo=UTC))
-
     def test_the_new_rule_keeps_firing_through_the_old_hold(self):
         fires, holds = self.replay(answered=True)
         old_hold_starts = dt.datetime(2026, 11, 6, 5, 32, tzinfo=UTC)
@@ -391,6 +382,8 @@ class NightOfNovember5(unittest.TestCase):
     def test_the_estimate_is_on_the_status_line(self):
         at = dt.datetime(2026, 11, 6, 9, 2, tzinfo=UTC)
         decision = g.decide(at, NIGHT_DIAL, self.usage, 11, None, {}, 0)
+        self.assertTrue(decision['fire'])  # 82% estimated is inside the trend, so the gate wakes the project
+        self.assertIn('Waking the project: 0 of 3 threads are active.', g.status_text(at, NIGHT_DIAL, self.usage, 11, None, {}, decision, []))
         text = g.status_text(at, NIGHT_DIAL, self.usage, 11, None, {}, decision, [])
         self.assertIn('Usage: about 82%, an estimate', text)
         self.assertIn('69%', text)

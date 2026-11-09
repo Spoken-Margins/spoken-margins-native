@@ -95,7 +95,7 @@ public actor AutomaticMarginWriter {
     // The folder is usually in another app's container (a vault in Files), reached through a security-scoped URL and
     // written under file coordination. Both exist only on Apple platforms; elsewhere (the host tests on Linux) the
     // folder is plain and the write goes straight through.
-    private static func beginAccess(to folder: URL) -> Bool {
+    static func beginAccess(to folder: URL) -> Bool {
         #if canImport(Darwin)
         folder.startAccessingSecurityScopedResource()
         #else
@@ -103,14 +103,14 @@ public actor AutomaticMarginWriter {
         #endif
     }
 
-    private static func endAccess(to folder: URL) {
+    static func endAccess(to folder: URL) {
         #if canImport(Darwin)
         folder.stopAccessingSecurityScopedResource()
         #endif
     }
 
     /// Runs `write` on the file's coordinated URL; returns the coordination error, if it could not be taken.
-    private static func coordinateWriting(at file: URL, _ write: (URL) -> Void) -> NSError? {
+    static func coordinateWriting(at file: URL, _ write: (URL) -> Void) -> NSError? {
         #if canImport(Darwin)
         var coordinationError: NSError?
         NSFileCoordinator().coordinate(writingItemAt: file, options: .forReplacing, error: &coordinationError, byAccessor: write)

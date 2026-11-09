@@ -338,7 +338,13 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
         iconView.translatesAutoresizingMaskIntoConstraints = false
         iconView.image = UIImage(systemName: "waveform.and.mic")
         iconView.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 20, weight: .semibold)
-        iconView.tintColor = .systemGreen
+        // The app's `green` token (`AppSemanticColorRGB.green`): the stock green is 2.0:1 on this card in light mode.
+        // The extension doesn't link SessionKit, so the values are copied; a host test keeps them equal (#3737).
+        iconView.tintColor = UIColor { traits in
+            traits.userInterfaceStyle == .dark
+                ? UIColor(red: 0.50, green: 0.84, blue: 0.62, alpha: 1)
+                : UIColor(red: 0.13, green: 0.43, blue: 0.30, alpha: 1)
+        }
         iconView.contentMode = .scaleAspectFit
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -348,16 +354,20 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
         // Wraps at the largest text sizes instead of truncating (#1941).
         titleLabel.numberOfLines = 0
         titleLabel.textColor = .label
+        titleLabel.accessibilityTraits.insert(.header)
 
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
         statusLabel.textAlignment = .left
         statusLabel.numberOfLines = 0
         statusLabel.font = .preferredFont(forTextStyle: .subheadline)
         statusLabel.adjustsFontForContentSizeCategory = true
-        statusLabel.textColor = .secondaryLabel
+        // Full-strength label: the status is the only place the result appears, and the secondary grey is 3.3:1 here (#3737).
+        statusLabel.textColor = .label
 
         closeButton.translatesAutoresizingMaskIntoConstraints = false
         closeButton.setTitle("Done", for: .normal)
+        // The same green as the icon beside it: the default tint (system blue) is 3.6:1 on this card in light mode (#3739).
+        closeButton.setTitleColor(iconView.tintColor, for: .normal)
         closeButton.titleLabel?.font = .preferredFont(forTextStyle: .body)
         closeButton.titleLabel?.adjustsFontForContentSizeCategory = true
         closeButton.addTarget(self, action: #selector(close), for: .touchUpInside)

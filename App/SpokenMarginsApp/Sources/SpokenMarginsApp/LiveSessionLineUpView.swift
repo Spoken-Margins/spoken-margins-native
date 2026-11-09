@@ -89,7 +89,7 @@ struct LiveSessionLineUpView: View {
                     .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
             }
             .buttonStyle(.bordered)
-            Text("Teams, Zoom, Webex, Google Meet and Otter transcripts work. With a recording, the item plays it; without one, the item is the transcript's text.")
+            Text("Teams, Zoom, Webex, Google Meet and Otter transcripts work. With a recording, it plays the recording; without one, the transcript's text is what you listen to.")
                 .font(.caption).foregroundStyle(AppColors.secondaryText)
         }
     }
@@ -106,9 +106,8 @@ struct LiveSessionLineUpView: View {
                             .font(.caption.monospacedDigit().weight(.semibold))
                         Spacer()
                         if recordingURL != nil {
-                            Button("Hear") { hear(placed.offsetMs) }
+                            Button { hear(placed.offsetMs) } label: { Text("Hear").minimumTapTarget() }
                                 .buttonStyle(.borderless)
-                                .frame(minHeight: 44)
                                 .accessibilityLabel("Hear the recording at \(LiveSessionPositionMap.clock(placed.offsetMs))")
                         }
                     }

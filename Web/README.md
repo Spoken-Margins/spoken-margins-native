@@ -13,7 +13,7 @@ One writer per folder while the first wave runs in parallel.
 | --- | --- | --- |
 | `src/shared/` | Types every module shares (`model.ts`) and tiny helpers | `npm run test:web` |
 | `src/sources/` | Podcast search, RSS parsing, Substack voice detection, the feed-read path | `npm run test:web` |
-| `src/packet/` | `.spokenmargins` read and write, voice recording to `.m4a`, share-link sealing (off) | `npm run test:web` |
+| `src/packet/` | `.spokenmargins` read and write, voice recording to `.m4a`, share-link opening | `npm run test:web` |
 | `src/transcribe/` | On-device speech-to-text for voice Margins: the pinned model, the worker, the opt-in rules | `npm run test:web` (rules), `e2e/transcribe.spec.ts` |
 | `src/app/` and the Vite project files | The React UI: Four tabs, Library, player, Margin capture | `Web/package.json` scripts |
 
@@ -26,13 +26,12 @@ One writer per folder while the first wave runs in parallel.
 - **The UI has its own `package.json`** (Vite, React, Playwright). Its tests run in the thread that changes
   it and are reported on the PR. They aren't in the merge gate yet: that needs a workflow change, which is
   the owner's tap.
-- **Share links are built but off.** Creating one is behind a build-time flag that every hosted build
-  leaves off. It turns on in a new build after the DMCA designated agent is registered (owner, 2026-10-20),
-  never from a server switch (2026-10-17).
-  - `SHARE_LINKS_ENABLED` (`src/packet/share-link.ts`) reads `__SM_SHARE_LINKS__`, which `vite.config.ts` sets
-    true only for `--mode share-links-test`, the Playwright build in `dist-share-links/`. `npm run build` leaves
-    it false, and the upload code is compiled out (`e2e/share-links.spec.ts` checks both).
-  - Opening a link needs no flag: a `/l/<id>#<key>` address, or the same pasted under Margins › Open a link,
+- **The web app is receive-only for share links** (owner, 2026-11-05, #3542). It opens and reports links and still
+  saves and sends `.spokenmargins` files. It cannot create a link: that code was removed from the web build, not
+  switched off. Sealing and uploading live only in `src/cli/` (the Mac's `make-share-link` command) and the tests;
+  `src/app/no-link-creation.test.ts` fails if the web bundle reaches them, and the last journey in
+  `e2e/link-open.spec.ts` fails if the page ever POSTs or PUTs to `/api/v1/links`.
+  - Opening a link: a `/l/<id>#<key>` address, or the same pasted under Margins › Open a link,
     fetches `/l/<id>/packet` from the link's own server and opens it with the key in the `#` part.
   - **A page loaded at a link starts on the arrival page** (`src/app/screens/Arrival.tsx`, #2168): "From Cole", the
     episode, how many Margins and how long, the one-time explanation of "Margin", and one Play. Play starts the episode

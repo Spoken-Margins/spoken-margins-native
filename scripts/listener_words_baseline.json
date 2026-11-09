@@ -1,0 +1,186 @@
+{
+ "version": 1,
+ "note": "Listener-facing string literals that say \"item\" when #3599 arrived. Keyed by kind and text, with a count. A replacement slice deletes rows (scripts/listener_words.py --update); a new row needs --accept \"reason\". Do not add rows to make a check pass: say episode, article or PDF.",
+ "entries": [
+  {
+   "kind": "words",
+   "text": "(?i)(?:(?<![A-Za-z0-9])|(?<=\\\\[nrt]))(?:session-)?item-[\\p{L}\\p{N}_-]+",
+   "count": 1,
+   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
+  },
+  {
+   "kind": "words",
+   "text": "Acoustic signatures: …. These are opaque matching evidence, not item audio.",
+   "count": 1,
+   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
+  },
+  {
+   "kind": "words",
+   "text": "Item audio is not included.",
+   "count": 1,
+   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
+  },
+  {
+   "kind": "words",
+   "text": "Item reference: <…>",
+   "count": 2,
+   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
+  },
+  {
+   "kind": "words",
+   "text": "Item reference: no public URL",
+   "count": 2,
+   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
+  },
+  {
+   "kind": "words",
+   "text": "Item transport: full listened-to text included (… characters) after a private-sharing rights confirmation.",
+   "count": 1,
+   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
+  },
+  {
+   "kind": "words",
+   "text": "Item transport: not included; the recipient must provide the same item.",
+   "count": 1,
+   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
+  },
+  {
+   "kind": "words",
+   "text": "Item transport: reference only; the recipient reconstructs the item.",
+   "count": 1,
+   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
+  },
+  {
+   "kind": "words",
+   "text": "Item: …",
+   "count": 1,
+   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
+  },
+  {
+   "kind": "words",
+   "text": "Loaded UI test item ….",
+   "count": 1,
+   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
+  },
+  {
+   "kind": "words",
+   "text": "Player item Mark",
+   "count": 1,
+   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
+  },
+  {
+   "kind": "words",
+   "text": "Player item spoken Margin",
+   "count": 1,
+   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
+  },
+  {
+   "kind": "words",
+   "text": "Use itemAudioOmitted; a source is a feed, while this flag describes the listened-to item's audio.",
+   "count": 1,
+   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
+  },
+  {
+   "kind": "words",
+   "text": "a completed … item",
+   "count": 1,
+   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
+  },
+  {
+   "kind": "words",
+   "text": "embedded item descriptor does not match artifact",
+   "count": 1,
+   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
+  },
+  {
+   "kind": "words",
+   "text": "embedded item transport is inconsistent",
+   "count": 1,
+   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
+  },
+  {
+   "kind": "words",
+   "text": "episode fingerprint spine identity conflicts with the item",
+   "count": 1,
+   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
+  },
+  {
+   "kind": "words",
+   "text": "exact contiguous phrase copied from ITEM CONTENT",
+   "count": 1,
+   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
+  },
+  {
+   "kind": "words",
+   "text": "feed … parsed (… items)",
+   "count": 1,
+   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
+  },
+  {
+   "kind": "words",
+   "text": "item digest is invalid",
+   "count": 1,
+   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
+  },
+  {
+   "kind": "words",
+   "text": "item fields are absent or out of bounds",
+   "count": 1,
+   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
+  },
+  {
+   "kind": "words",
+   "text": "item removed",
+   "count": 2,
+   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
+  },
+  {
+   "kind": "words",
+   "text": "item transport",
+   "count": 1,
+   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
+  },
+  {
+   "kind": "words",
+   "text": "long_form_source_transcript_empty(item=…)",
+   "count": 1,
+   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
+  },
+  {
+   "kind": "words",
+   "text": "no completed audio item",
+   "count": 1,
+   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
+  },
+  {
+   "kind": "words",
+   "text": "recipient-supplied item transport is inconsistent",
+   "count": 1,
+   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
+  },
+  {
+   "kind": "words",
+   "text": "referenced item transport is inconsistent",
+   "count": 1,
+   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
+  },
+  {
+   "kind": "words",
+   "text": "written-margin-item\\u{1f}…",
+   "count": 1,
+   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
+  },
+  {
+   "kind": "words",
+   "text": "… …; parsed (… items, … with audio)",
+   "count": 1,
+   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
+  },
+  {
+   "kind": "words",
+   "text": "…: Substack feed, … items",
+   "count": 1,
+   "reason": "Existing when the guard arrived (#3599); replace with the source's own noun."
+  }
+ ]
+}

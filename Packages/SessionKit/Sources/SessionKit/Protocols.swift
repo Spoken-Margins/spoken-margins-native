@@ -482,6 +482,9 @@ public protocol RecordingClient {
     func restartCapture() throws
     /// Privacy-safe fields about the capture in progress (route, restarts, level), for the diagnostics log.
     func captureDiagnostics() -> [String: String]
+    /// The microphone route alone, for the moment a recording starts: that path runs on the main thread straight after
+    /// the audio session switched, so it asks for this one thing and not every session property (#2256).
+    func captureInputRoute() -> String?
     /// Where the file being recorded will be, named the way the saved Margin names it. Nil when nothing is recording
     /// or the recorder can't say. The draft journal keeps it so a kill before Save still points at the file (#951).
     func recordingInProgressRef() -> String?
@@ -507,6 +510,7 @@ extension RecordingClient {
         throw SessionKitError.persistenceFailed("recording_restart_unsupported")
     }
     public func captureDiagnostics() -> [String: String] { [:] }
+    public func captureInputRoute() -> String? { captureDiagnostics()["inputs"] }
 }
 
 public protocol TranscriptionClient {

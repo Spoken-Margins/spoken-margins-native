@@ -57,7 +57,7 @@ extension Gate1AppModel {
                 return "A Margin you were recording when the app closed was recovered. Open it to retry its transcript."
             }
         } catch {
-            diagnostics["recordingDraftReconcile"] = "failed:\(error.localizedDescription)"
+            diagnostics["recordingDraftReconcile"] = "failed:\(SafeErrorText.describe(error))"
         }
         return nil
     }

@@ -21,7 +21,7 @@ struct ExperiencePlayQueueScreen: View {
                     ContentUnavailableView(
                         "Nothing queued",
                         systemImage: "text.line.first.and.arrowtriangle.forward",
-                        description: Text("Choose Play Next or Add to Queue on an item, and it plays after the one you are listening to.")
+                        description: Text("Choose Play Next or Add to Queue on an episode, article or PDF, and it plays after the one you are listening to.")
                     )
                     .listRowBackground(Color.clear)
                 } else {
@@ -44,7 +44,7 @@ struct ExperiencePlayQueueScreen: View {
                     } header: {
                         Text("Plays in this order")
                     } footer: {
-                        Text("When the item you are listening to ends, the first one here starts. A sleep timer stops the whole run.")
+                        Text("When what you are listening to ends, the first one here starts. A sleep timer stops the whole run.")
                     }
                 }
             }
@@ -61,7 +61,7 @@ struct ExperiencePlayQueueScreen: View {
                     }
                     ToolbarItem(placement: .bottomBar) {
                         Button("Clear queue", role: .destructive) { isConfirmingClear = true }
-                            .accessibilityHint("Empties the queue. Library items stay.")
+                            .accessibilityHint("Empties the queue. Everything in your Library stays.")
                             .accessibilityIdentifier("playQueue.clear.button")
                     }
                 }
@@ -70,7 +70,7 @@ struct ExperiencePlayQueueScreen: View {
                 Button("Clear queue", role: .destructive) { model.clearPlayQueue() }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("Your Library items stay.")
+                Text("Everything in your Library stays.")
             }
             .onAppear { model.loadPlayQueue() }
         }
@@ -84,7 +84,7 @@ struct PlayQueueRowLabel: View {
     var body: some View {
         HStack(spacing: 12) {
             Image(systemName: row.symbol)
-                .foregroundStyle(AppColors.ochre)
+                .foregroundStyle(AppColors.ochreText)
                 .frame(width: 28)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 3) {
@@ -114,7 +114,7 @@ struct PlayQueueSummaryRow: View {
                 HStack(spacing: 12) {
                     Image(systemName: "text.line.first.and.arrowtriangle.forward")
                         .font(.title3)
-                        .foregroundStyle(AppColors.ochre)
+                        .foregroundStyle(AppColors.ochreText)
                         .frame(width: 40, height: 40)
                         .background(AppColors.ochre.opacity(0.12), in: Circle())
                         .accessibilityHidden(true)

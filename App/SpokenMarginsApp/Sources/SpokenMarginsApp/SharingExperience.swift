@@ -35,6 +35,8 @@ struct InterjectionSharingState {
     var drafts: [ShareInterjectionDraft] = []
     var senderDisplayLabel = UserDefaults.standard.string(forKey: "sharingSenderDisplayLabel") ?? ""
     var includesAcousticEvidence = true
+    /// Model-written scene summaries the packet leaves out because the source is not marked public (#3449). Zero shows no note.
+    var withheldMapSceneCount = 0
     var itemReferenceURL: String?
     var canEmbedLinklessItem = false
     var isAppAuthoredItem = false
@@ -158,7 +160,7 @@ struct SpokenMarginsPackageImportView: View {
                                 .font(.title3.weight(.semibold))
                             Text(review.senderLabel)
                                 .font(.headline)
-                            Text("Integrity checked · Sender identity is not verified")
+                            Text("We can't prove who sent this.")
                                 .font(.caption)
                                 .foregroundStyle(AppColors.secondaryText)
                             Text("\(review.marginCount) shared Margin\(review.marginCount == 1 ? "" : "s")")
@@ -168,12 +170,12 @@ struct SpokenMarginsPackageImportView: View {
                     Text(importExplanation)
                         .font(.callout)
 
-                    DisclosureGroup("Package contents") {
+                    DisclosureGroup("What is included") {
                         VStack(alignment: .leading, spacing: 5) {
-                            Text("Voice files: \(review.contents.manifest.assets.filter { [SpokenMarginsAssetRole.originalVoice, SpokenMarginsAssetRole.cleanedVoice].contains($0.role) }.count)")
-                            Text("Acoustic anchor signatures: \(review.contents.manifest.assets.filter { $0.role == SpokenMarginsAssetRole.acousticSignature }.count)")
+                            Text("Voice recordings: \(review.contents.manifest.assets.filter { [SpokenMarginsAssetRole.originalVoice, SpokenMarginsAssetRole.cleanedVoice].contains($0.role) }.count)")
+                            Text("Podcast matching signatures: \(review.contents.manifest.assets.filter { $0.role == SpokenMarginsAssetRole.acousticSignature }.count)")
                             Text("Listening Map proposals: \(review.contents.listeningMapProposals.count) (stored as proposals; not activated)")
-                            Text(review.includesEmbeddedItem ? "Full listened-to item: included" : "Full listened-to item: not included")
+                            Text(review.includesEmbeddedItem ? "Full listened-to text: included" : "Full listened-to text: not included")
                             Text("Podcast audio: not included")
                         }
                         .font(.caption)
@@ -211,18 +213,18 @@ struct SpokenMarginsPackageImportView: View {
 
     private var importExplanation: String {
         if review.matchingItemId != nil {
-            return "Spoken Margins found this item in your library and will place the shared Margins in it. Nothing will play automatically."
+            return "Spoken Margins found this in your library and will place the shared Margins in it. Nothing will play automatically."
         }
         switch review.contents.manifest.itemTransport.kind {
         case .embeddedText:
             return "The sender included the exact text they listened to. Spoken Margins will add it to your library and resolve the Margins. Nothing will play automatically."
         case .reference:
-            return "Spoken Margins will reconstruct this linked item and then place the shared Margins in it. Nothing will play automatically."
+            return "Spoken Margins will rebuild this from its link and then place the shared Margins in it. Nothing will play automatically."
         case .recipientSupplied:
             if SharedEpisodeFeedMatcher.isPrivatePodcastSource(review.contents.manifest) {
                 return "These Margins came from a private podcast feed, so the episode is not included. Add the same episode to your library, for example by pasting your own feed link in the import screen, then reopen this .spokenmargins file."
             }
-            return "The item is not included. Add the same text, PDF, or EPUB to your library, then reopen this .spokenmargins file so its Margins can be attached safely."
+            return "The source is not included. Add the same text, PDF, or EPUB to your library, then reopen this .spokenmargins file so its Margins can be attached safely."
         }
     }
 }
@@ -251,16 +253,23 @@ struct InterjectionSharingView: View {
                                 VStack(alignment: .leading, spacing: 8) {
                                     Text("Review what you are sending")
                                         .font(.headline)
-                                    Text("The package includes only selected Margins, the reviewed text and voice version shown below, the words around each Margin, item identity, and optional acoustic signatures. It never includes the podcast audio, raw diagnostics, or unrelated sessions.")
+                                    Text("Only the Margins you picked go: their text and voice, the words around each one, and what they belong to. The podcast audio and the rest of your phone stay put.")
                                         .font(.callout)
                                         .foregroundStyle(AppColors.secondaryText)
                                 }
                             }
 
-                            TextField("Your display label (optional)", text: $model.sharingState.senderDisplayLabel)
+                            AppTextField("Your display label (optional)", text: $model.sharingState.senderDisplayLabel)
                                 .textFieldStyle(.roundedBorder)
 
                             itemTransportReview
+
+                            if let note = MapTextDisclosure.withheldNote(sceneCount: model.sharingState.withheldMapSceneCount) {
+                                Text(note)
+                                    .font(.callout)
+                                    .foregroundStyle(AppColors.secondaryText)
+                                    .accessibilityIdentifier("share.review.mapSummariesStayHome")
+                            }
 
                             Toggle("Include high-reliability podcast anchor evidence", isOn: $model.sharingState.includesAcousticEvidence)
                             Text("Recommended. These ShazamKit signatures help a recipient find the same spoken passage when their download contains different ads. They are not playable podcast audio.")
@@ -313,6 +322,7 @@ struct InterjectionSharingView: View {
             }
         }
         .onDisappear(perform: model.cancelBulkSharePreparation)
+        .task { await model.refreshWithheldMapNote() }
         .onPreferenceChange(MarginTranscriptFullHeightKey.self) {
             transcriptFullHeights.merge($0, uniquingKeysWith: { _, new in new })
         }
@@ -399,7 +409,7 @@ struct InterjectionSharingView: View {
                         .foregroundStyle(
                             model.sharingState.bulkPreparationFailureCount == 0
                                 ? AppColors.secondaryText
-                                : .orange
+                                : AppColors.warningText
                         )
                     }
                 }
@@ -414,20 +424,20 @@ struct InterjectionSharingView: View {
     private var itemTransportReview: some View {
         ProductPanel {
             VStack(alignment: .leading, spacing: 8) {
-                Text("Item being listened to")
+                Text("What you’re listening to")
                     .font(.headline)
                 if let reference = model.sharingState.itemReferenceURL {
-                    Label("Linked item", systemImage: "link")
+                    Label("Linked from the web", systemImage: "link")
                         .font(.subheadline.weight(.semibold))
                     Text(reference)
                         .font(.caption)
                         .foregroundStyle(AppColors.secondaryText)
-                    Text("The recipient will reconstruct the item from this reference. The full item is not included.")
+                    Text("The recipient will rebuild it from this link. The full text is not included.")
                         .font(.footnote)
                         .foregroundStyle(AppColors.secondaryText)
                 } else if model.sharingState.canEmbedLinklessItem {
                     Toggle(
-                        "I’m sharing this privately and have the right to share this item",
+                        "I’m sharing this privately and have the right to share this",
                         isOn: $model.sharingState.confirmsPrivateSharingRights
                     )
                     .disabled(model.sharingState.isAppAuthoredItem)
@@ -436,7 +446,7 @@ struct InterjectionSharingView: View {
                             .font(.footnote)
                             .foregroundStyle(AppColors.secondaryText)
                     } else if model.sharingState.confirmsPrivateSharingRights {
-                        Text("The full listened-to text will be included so the recipient can add and listen to the item.")
+                        Text("The full listened-to text will be included so the recipient can add and listen to it.")
                             .font(.footnote)
                             .foregroundStyle(AppColors.secondaryText)
                     } else {
@@ -445,12 +455,16 @@ struct InterjectionSharingView: View {
                             systemImage: "person.crop.circle.badge.exclamationmark"
                         )
                         .font(.caption)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(AppColors.warningText)
                     }
                 } else {
-                    Text("The item itself cannot be included. Make sure the recipient already has the same item.")
-                        .font(.footnote)
-                        .foregroundStyle(.orange)
+                    Label {
+                        Text("This cannot be included. Make sure the recipient already has the same one.")
+                            .font(.footnote)
+                    } icon: {
+                        Image(systemName: "exclamationmark.triangle")
+                    }
+                    .foregroundStyle(AppColors.warningText)
                 }
             }
         }
@@ -480,7 +494,7 @@ struct InterjectionSharingView: View {
                             .foregroundStyle(AppColors.secondaryText)
                         Text(note)
                             .font(.callout)
-                        Text("Only you can see this note; it is not included in the package.")
+                        Text("Only you can see this note; it is not sent.")
                             .font(.footnote)
                             .foregroundStyle(AppColors.secondaryText)
                     }
@@ -672,25 +686,25 @@ struct InterjectionSharingView: View {
                 if let warning = draft.warning {
                     Label(warning, systemImage: "exclamationmark.triangle")
                         .font(.caption)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(AppColors.warningText)
                 }
                 if let message = draft.preparationMessage {
                     Label(message, systemImage: "exclamationmark.circle")
                         .font(.caption)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(AppColors.warningText)
                 }
 
                 DisclosureGroup("Words around the Margin") {
                     VStack(alignment: .leading, spacing: 8) {
-                        TextField("Context before", text: Binding(
+                        AppTextField("Context before", text: Binding(
                             get: { model.sharingState.drafts.first(where: { $0.id == draft.id })?.anchorBefore ?? "" },
                             set: { model.setShareDraftAnchorBefore(draft.id, value: $0) }
                         ), axis: .vertical)
-                        TextField("Context after", text: Binding(
+                        AppTextField("Context after", text: Binding(
                             get: { model.sharingState.drafts.first(where: { $0.id == draft.id })?.anchorAfter ?? "" },
                             set: { model.setShareDraftAnchorAfter(draft.id, value: $0) }
                         ), axis: .vertical)
-                        Text("Only a short quote around each Margin is sent. Full item text is sent only when the item disclosure above says it is included.")
+                        Text("Only a short quote around each Margin is sent. The full text is sent only when the section above says it is included.")
                             .font(.footnote)
                             .foregroundStyle(AppColors.secondaryText)
                         Text("The quote after the Margin is capped at \(ExcerptCapRule.afterMaximum) characters. The quote before it is capped at up to \(ExcerptCapRule.beforeMaximum), depending on the length of your comment.")
@@ -915,7 +929,7 @@ struct SharedSpokenMarginsPackageReadyView: View {
             VStack(alignment: .leading, spacing: 18) {
                 ProductPanel {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("Package ready")
+                        Text("Your Margins are ready")
                             .font(.headline)
                         Text(packageURL.lastPathComponent)
                             .font(.caption)

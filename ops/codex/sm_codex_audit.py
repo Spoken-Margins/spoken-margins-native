@@ -35,6 +35,10 @@ A clean audit is never repeated because the description changed.
 Small PRs are batched: one Claude call per batch, one comment per PR. The comment opens
 `**Claude audit on `<sha7>`**`, the heading the lane runner counts as an audit.
 
+Where it runs: .github/workflows/claude-audit.yml on hosted Linux (#2170), or, by hand, the owner's Mac. In a
+workflow the token comes from CLAUDE_CODE_OAUTH_TOKEN, a PR from a fork is never read, and because a label change made
+with the workflow's own token starts no run, the re-arm and the tap check also dispatch the workflow they need.
+
 Re-arm: the runner merges an audio, persistence or packet PR only on a run
 after a clean audit, and nothing starts that run. So after each audit batch,
 and again at the end of every run, the script removes and re-adds `automerge`
@@ -114,6 +118,7 @@ CLAUDE_BUDGET_USD = "10"  # per call; a small batch costs well under $1
 CLAUDE_TIMEOUT_S = 30 * 60
 
 MAX_FAILED_AUDITS = 2  # a head whose audit call or post failed this many times is left alone (no blind retries)
+AUDIT_FAILED_TWICE = "audit failed twice on this head"
 MAX_DESCRIPTION_REAUDITS = 2  # audits of one head triggered by a changed title or description, beyond the first
 FAILURES_PATH = OPS_DIR / "codex-audit-failures.json"
 
@@ -656,14 +661,15 @@ def gh_json_lines(path: str) -> list[dict]:
 
 
 def fetch_open_prs(only: int | None) -> list[dict]:
-    fields = "number,title,body,isDraft,headRefOid,baseRefName,closingIssuesReferences,url,labels"
+    """Open PRs from this repository. A fork's PR is never audited: the job holds a Claude token (#2170)."""
+    fields = "number,title,body,isDraft,headRefOid,baseRefName,closingIssuesReferences,url,labels,isCrossRepository"
     if only is not None:
         res = run(["gh", "pr", "view", str(only), "--repo", REPO, "--json", fields + ",state"], cwd=REPO_ROOT)
         pr = json.loads(res.stdout)
-        return [pr] if pr.get("state") == "OPEN" else []
+        return [pr] if pr.get("state") == "OPEN" and pr.get("isCrossRepository") is False else []
     res = run(["gh", "pr", "list", "--repo", REPO, "--base", BASE_BRANCH, "--state", "open",
                "--limit", "200", "--json", fields], cwd=REPO_ROOT)
-    return json.loads(res.stdout)
+    return [pr for pr in json.loads(res.stdout) if pr.get("isCrossRepository") is False]
 
 
 def fetch_comments(number: int) -> list[dict]:
@@ -723,6 +729,49 @@ def inherited_text(comments: list[dict], holds: list[dict], lookup_error: str | 
 REARMED: set[int] = set()  # PRs this process re-armed, so the end-of-run pass skips them
 
 
+def in_a_workflow() -> bool:
+    return os.environ.get("GITHUB_ACTIONS") == "true"
+
+
+def dispatch_workflow(workflow: str, *fields: str) -> str:
+    """`gh workflow run` on the trunk, tried 3 times as the label add is. Returns '' or why not."""
+    problem = ""
+    for attempt in range(3):
+        if attempt:
+            time.sleep(5)
+        try:
+            res = run(["gh", "workflow", "run", workflow, "--repo", REPO, "--ref", BASE_BRANCH,
+                       *[arg for field in fields for arg in ("-f", field)]], cwd=REPO_ROOT, check=False)
+        except (OSError, subprocess.SubprocessError) as exc:
+            problem = str(exc)[:160]
+            continue
+        if res.returncode == 0:
+            return ""
+        problem = res.stderr.strip()[:160]
+    return problem
+
+
+def start_merge_run(number: int, head: str) -> str:
+    """Dispatch lane.yml's merge run for this PR, and return '' or why not. In a workflow the re-arm's label change
+    starts no run, but a dispatch does. The label change comes after it and stays: its event is what stops a second
+    re-arm, so it must not exist unless the run was started."""
+    return dispatch_workflow("lane.yml", f"pr={number}", f"head={head}", "auto=true")
+
+
+def say_on_pr(number: int, text: str, comments: list[dict] | None = None, marker: str = "") -> None:
+    """Post a note on the PR for what would otherwise wait with only a line in this job's log, at most once per marker
+    among <comments>. Opens with neither `**` nor "Lane": it is not an audit or a lane report. A failure is only logged."""
+    if marker and any(marker in comment_body(c) for c in comments or []):
+        return
+    body = f"{text}\n{marker}".rstrip() if marker else text
+    if carries_token(body):  # the repository is public: never post it, and never say what it was
+        log(f"note on #{number}: not posted, it contained the Claude token")
+        return
+    res = run(["gh", "pr", "comment", str(number), "--repo", REPO, "--body", body], cwd=REPO_ROOT, check=False)
+    if res.returncode != 0:
+        log(f"note on #{number}: not posted: {res.stderr.strip()[:160]}")
+
+
 def rearm_pass(prs: list[dict], dry_run: bool) -> None:
     """Remove and re-add automerge where rearm_decision says so (see the module docstring).
 
@@ -755,6 +804,20 @@ def rearm_pass(prs: list[dict], dry_run: bool) -> None:
             if dry_run:
                 log(f"dry-run: would re-arm #{n} on {pr['headRefOid'][:7]} ({why})")
                 continue
+            head7 = pr['headRefOid'][:7]
+            if in_a_workflow():
+                # Before the label change: its event stops every later re-arm, so with the label changed first a
+                # dispatch that failed could never be tried again (#3501 audit). The run takes far longer to start
+                # than the label takes to come back, so it never reads the PR without it.
+                problem = start_merge_run(n, pr['headRefOid'])
+                if problem:
+                    REARMED.add(n)  # the next run of this job tries again, not the next pass of this one
+                    log(f"re-arm #{n} failed: couldn't dispatch the merge run: {problem}")
+                    say_on_pr(n, f"The audit of `{head7}` is clean, but its merge run could not be started ({problem}). "
+                                 "The audit job tries again on its next run, within about 15 minutes. "
+                                 "Nobody needs to push or re-label.",
+                              comments, f"<!-- rearm-note: dispatch {pr['headRefOid']} -->")
+                    continue
             edit = ["gh", "pr", "edit", str(n), "--repo", REPO]
             removed = run(edit + ["--remove-label", AUTOMERGE], cwd=REPO_ROOT, check=False)
             if removed.returncode != 0:
@@ -767,10 +830,16 @@ def rearm_pass(prs: list[dict], dry_run: bool) -> None:
                 time.sleep(5)
             REARMED.add(n)  # the label was removed, so don't touch this PR again this run
             if added.returncode == 0:
-                log(f"re-armed #{n} on {pr['headRefOid'][:7]}: removed and re-added {AUTOMERGE} ({why})")
+                log(f"re-armed #{n} on {head7}: removed and re-added {AUTOMERGE} ({why})")
             else:
+                problem = added.stderr.strip()[:160]
                 log(f"re-arm #{n} FAILED: {AUTOMERGE} removed but not re-added after 3 tries; "
-                    f"add it back by hand: {added.stderr.strip()[:160]}")
+                    f"add it back by hand: {problem}")
+                # Without the label no run merges this PR and no re-arm looks at it again.
+                say_on_pr(n, f"The audit of `{head7}` is clean, but the `{AUTOMERGE}` label was removed to start its merge "
+                             f"run and could not be put back ({problem}). Nothing will merge this PR until someone "
+                             "adds it back: add it back by hand.",
+                          comments, f"<!-- rearm-note: label {pr['headRefOid']} -->")
         except Exception as exc:  # log and move on to the next PR
             log(f"re-arm #{n}: error: {exc}")
 
@@ -819,7 +888,7 @@ def find_candidates(prs: list[dict], force: bool = False) -> tuple[list[dict], d
                     ok, why, plan = evaluate(pr, comments, files, issue_comments, force=force,
                                              tap_checks_done=tap_checks_done)
                 if ok and failed_count(FAILURES, n, plan["key"] if plan else pr["headRefOid"]) >= MAX_FAILED_AUDITS:
-                    ok, why = False, "audit failed twice on this head"
+                    ok, why = False, AUDIT_FAILED_TWICE
                 if ok:
                     rep = newest_lane_report(comments)
                     cands.append({
@@ -841,7 +910,7 @@ def find_candidates(prs: list[dict], force: bool = False) -> tuple[list[dict], d
                 "no lane report": "no lane report",
                 "newest lane report on the head is FAIL": "lane FAIL",
                 "not risky, no request": "not risky",
-                "audit failed twice on this head": "audit failed twice",
+                AUDIT_FAILED_TWICE: "audit failed twice",
             }.get(why, "lane report not on head" if why.startswith("newest lane report is on") else why)
             skips[key] = skips.get(key, 0) + 1
     cands.sort(key=lambda c: (c["ready_at"], c["number"]))  # oldest ready first
@@ -881,6 +950,12 @@ def clear_failure(number: int) -> None:
 
 
 def claude_token() -> str | None:
+    """The workflow's secret, else the Mac's Keychain."""
+    token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "").strip()
+    if token:
+        return token
+    if in_a_workflow():
+        return None
     res = run(["/usr/bin/security", "find-generic-password", "-s", KEYCHAIN_SERVICE, "-w"],
               cwd=REPO_ROOT, check=False, timeout=30)
     token = res.stdout.strip() if res.returncode == 0 else ""
@@ -888,11 +963,11 @@ def claude_token() -> str | None:
 
 
 def check_claude() -> tuple[bool, str]:
-    """Whether a Claude call can start: the CLI is installed and the Keychain holds the token."""
+    """Whether a Claude call can start: the CLI is installed and the token is there."""
     if not CLAUDE.exists():
         return False, f"{CLAUDE} is missing"
     if not claude_token():
-        return False, f"no Claude token in the Keychain (service {KEYCHAIN_SERVICE})"
+        return False, f"no Claude token (CLAUDE_CODE_OAUTH_TOKEN, or the Keychain's service {KEYCHAIN_SERVICE})"
     return True, f"claude {CLAUDE_MODEL} {CLAUDE_EFFORT}"
 
 
@@ -1079,7 +1154,16 @@ def touches_owner_tap(files: list[dict] | None) -> bool:
 
 
 def request_tap_check(number: int) -> str:
-    """Re-add owner-tap-check so a fresh `labeled` event starts the alert check; a failure is only logged."""
+    """Re-add owner-tap-check so a fresh `labeled` event starts the alert check; a failure is only logged. In a workflow
+    a label change starts no run, so it dispatches the alert check instead."""
+    if in_a_workflow():
+        problem = dispatch_workflow("owner-tap-alert.yml", f"pr={number}")
+        if not problem:
+            return "tap check requested"
+        # This audit asks only once: nothing else asks again until one of the head's checks finishes (#3501 audit).
+        say_on_pr(number, f"This PR may now wait only for the owner's merge tap, but the alert after its audit could not "
+                          f"be sent ({problem}).")
+        return f"tap check request failed: {problem[:80]}"
     run(["gh", "api", "-X", "DELETE", f"repos/{REPO}/issues/{number}/labels/{OWNER_TAP_LABEL}"],
         cwd=REPO_ROOT, check=False)  # a PR without the label answers 404, which is fine
     res = run(["gh", "api", "-X", "POST", f"repos/{REPO}/issues/{number}/labels", "-f", f"labels[]={OWNER_TAP_LABEL}"],
@@ -1156,17 +1240,23 @@ def export_head_files(worktree: Path, number: int, head: str, files: list[dict])
     return rel
 
 
+def carries_token(text: str) -> bool:
+    token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "").strip()
+    return bool(token) and token in text
+
+
 def run_claude(worktree: Path, out_file: Path, prompt: str, transcript: Path) -> tuple[bool, str]:
     """One headless, read-only Claude call. The prompt goes in on stdin; the JSON result is kept as the
     transcript (the usage ledger reads it) and its `result` text is the answer."""
     token = claude_token()
     if not token or not CLAUDE.exists():
-        return False, "no Claude token in the Keychain" if not token else f"{CLAUDE} is missing"
+        return False, "no Claude token" if not token else f"{CLAUDE} is missing"
     cmd = [str(CLAUDE), "-p", "-", "--output-format", "json", "--model", CLAUDE_MODEL,
            "--effort", CLAUDE_EFFORT, "--permission-mode", "dontAsk", "--tools", CLAUDE_TOOLS,
            "--strict-mcp-config", "--setting-sources", "project", "--no-session-persistence",
            "--max-budget-usd", CLAUDE_BUDGET_USD]
-    env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+    # Claude gets no GitHub token: it only reads, and anything it can see could reach a public comment (#2170).
+    env = {k: v for k, v in os.environ.items() if k not in ("ANTHROPIC_API_KEY", "GH_TOKEN", "GITHUB_TOKEN")}
     env["CLAUDE_CODE_OAUTH_TOKEN"] = token
     with open(transcript, "wb") as tfh:
         proc = subprocess.Popen(cmd, cwd=worktree, env=env, stdin=subprocess.PIPE, stdout=tfh,
@@ -1279,10 +1369,15 @@ def audit_batch(batch: list[dict]) -> None:
                 target['post_missing_reason'] = 'audited by someone else meanwhile'
                 results.append(f"#{n} audited by someone else meanwhile, nothing posted")
                 continue
+            body = build_comment(n, head, sections[n], live_nums,
+                                 input_hash=audit_input_hash(c.get("title"), c.get("body")))
+            if carries_token(body):  # the repository is public: never post it, and never say what it was
+                target['post_missing_reason'] = 'the answer contained the Claude token'
+                record_failure(n, failure_key(c))
+                results.append(f"#{n} the answer contained the Claude token, nothing posted")
+                continue
             body_file = tmp / f"comment-{n}.md"
-            body_file.write_text(build_comment(
-                n, head, sections[n], live_nums, input_hash=audit_input_hash(c.get("title"), c.get("body"))),
-                encoding="utf-8")
+            body_file.write_text(body, encoding="utf-8")
             res = run(["gh", "pr", "comment", str(n), "--repo", REPO, "--body-file", str(body_file)],
                       cwd=REPO_ROOT, check=False)
             match = re.search(r'https://\S+#issuecomment-\d+', res.stdout or '')
@@ -1355,6 +1450,21 @@ def main(argv: list[str] | None = None) -> int:
         rearm_pass(prs, args.dry_run)
 
 
+def say_which_heads_are_left_alone(prs: list[dict], decisions: list[tuple[int, str]]) -> None:
+    """A head whose audit failed twice is never tried again (no blind retries), so the PR would wait with nothing said.
+    An expired token ends here: it passes check_claude, and every call fails (#3501 audit)."""
+    heads = {p["number"]: p["headRefOid"] for p in prs}
+    for n, why in decisions:
+        if why != AUDIT_FAILED_TWICE or n not in heads:
+            continue
+        try:
+            say_on_pr(n, f"The audit of `{heads[n][:7]}` failed twice, so the audit job won't try this head again. A new "
+                         "commit tries again, and so does running the audit workflow with this PR's number. The job's "
+                         "log says why it failed.", fetch_comments(n), f"<!-- audit-note: failed {heads[n]} -->")
+        except Exception as exc:  # noqa: BLE001 - a note is never a reason to skip the audits
+            log(f"note on #{n}: error: {exc}")
+
+
 def audit_prs(prs: list[dict], dry_run: bool, tag: str, t0: float, force: bool = False) -> int:
     FAILURES.clear()
     FAILURES.update(load_failures())
@@ -1368,6 +1478,8 @@ def audit_prs(prs: list[dict], dry_run: bool, tag: str, t0: float, force: bool =
         print("Per-PR decisions:")
         for n, why in decisions:
             print(f"  #{n}: {why}")
+    else:
+        say_which_heads_are_left_alone(prs, decisions)
 
     if not cands:
         skip_s = "; ".join(f"{k}: {v}" for k, v in sorted(skips.items()))
@@ -1384,7 +1496,13 @@ def audit_prs(prs: list[dict], dry_run: bool, tag: str, t0: float, force: bool =
     ok, why = check_claude()
     if not ok:
         log(f"paused: {why}; candidates {cand_s} not audited")
-        return 0
+        if not in_a_workflow():
+            return 0
+        # Nobody reads this job's log, and merge-stall.yml fires only when nothing merges at all (#3501 audit).
+        for c in cands:
+            say_on_pr(c["number"], f"This PR waits for its Claude audit of `{c['headRefOid'][:7]}`, and the audit job can't "
+                                   f"run: {why}.", c.get("comments"), f"<!-- audit-note: paused {c['headRefOid']} -->")
+        return 1
     log(f"run: {why}; candidates {cand_s}; batches {batch_s}")
 
     by_num = {c["number"]: c for c in cands}

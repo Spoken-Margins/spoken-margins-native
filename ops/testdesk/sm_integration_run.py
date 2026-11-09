@@ -7,6 +7,11 @@ to rule out a flake. Only a confirmed failure calls Claude (`claude -p`, read-on
 structured output) to group the failures; the script finds the culprit merge by re-running the failing
 tests at the commits since the last PASS (integration_revert.py), opens the revert PR and files the issues
 itself. No job is installed by this script; see README.md.
+
+Scripted journeys do not run on a tip (#3669): a tip gets `--plan app` and the screen tour. The journeys run on the
+commit a phone build is cut from and on the commit the owner says to upload, as `--journeys` (a foreground run) or a
+request from scripts/phone-build that the launchd tick takes (`--journeys-request`), and report as
+`Lane report scripted-journeys-<sha7>` on #184.
 """
 from __future__ import annotations
 
@@ -69,25 +74,36 @@ import simctl_preflight  # noqa: E402  (#2591: simctl waiting on Xcode's first-l
 from lane_xcresult_attachments import report_lines  # noqa: E402
 
 REPORT_RE = re.compile(r'^Lane report integration-([0-9a-f]{7,40}) — (PASS|FAIL|INCONCLUSIVE)\b')
+JOURNEYS_KIND = 'scripted-journeys'   # `Lane report scripted-journeys-<sha7>`: the journeys at a phone build or upload (#3669)
+JOURNEYS_REPORT_RE = re.compile(rf'^Lane report {JOURNEYS_KIND}-([0-9a-f]{{7,40}}) — (PASS|FAIL|INCONCLUSIVE)\b')
+JOURNEYS_NOT_ON_TIP = ('scripted journeys: not run on a tip; they run when a phone build is cut and before an upload '
+                       f'(Lane report {JOURNEYS_KIND}-<sha7>, #3669)')
+REQUEST_MAX_AGE_SECONDS = 3 * 24 * 60 * 60   # a journeys request nobody could take in this long is stale
 LANE_REQUEST_RE = re.compile(r'^\s*/lane\s+T(\d)\b', re.M)  # as scripts/lane-runner.py reads requests
 WAITING_STATUSES = {'queued', 'waiting', 'pending', 'requested'}
 
 
 # Pure decisions and text: no simulator, GitHub or Claude needed in host tests.
 
-def reported(bodies: list[str]) -> list[tuple[str, str]]:
+def reported(bodies: list[str], pattern=REPORT_RE) -> list[tuple[str, str]]:
     """(sha7, verdict) for each integration report on #184, oldest first, whoever ran it.
 
     Reports sit inside a ```text fence, so the fence and blank lines before the first line are
-    skipped, as scripts/phone-build reads them."""
+    skipped, as scripts/phone-build reads them. `pattern` picks the kind: JOURNEYS_REPORT_RE reads the
+    scripted-journeys reports instead, which never count as integration reports (a tip's "previous" and its last PASS)."""
     found = []
     for body in bodies:
         lines = [line.strip().replace('**', '') for line in (body or '').splitlines()]
         first = next((line for line in lines if line and not line.startswith('```')), '')
-        match = REPORT_RE.match(first)
+        match = pattern.match(first)
         if match:
             found.append((match.group(1)[:7], match.group(2)))
     return found
+
+
+def journey_reported(bodies: list[str]) -> list[tuple[str, str]]:
+    """(sha7, verdict) for each scripted-journeys report on #184, oldest first (#3669)."""
+    return reported(bodies, JOURNEYS_REPORT_RE)
 
 
 def last_green(reports: list[tuple[str, str]]) -> Optional[str]:
@@ -386,10 +402,11 @@ def retry_said_lines(retry_failures: dict, flaky) -> list[str]:
     return lines
 
 
-def describe(o: Outcome, *, sha7: str = '', scripted: str = '') -> dict:
+def describe(o: Outcome, *, sha7: str = '', scripted: str = '', kind: str = 'integration') -> dict:
     """The owner-facing words about an outcome: a pure function of the record, and the only maker of these
     sentences. Keys: `outcome` (one line), `failing`, `retry`, `probation`, `rerun`, `candidate` and `culprit_why`;
-    '' when a line does not apply. OutcomeWordingTests runs every combination of the record's parts through it."""
+    '' when a line does not apply. `kind` is the report's: an integration report (app tests, no journeys since #3669)
+    or a scripted-journeys report (journeys only). OutcomeWordingTests runs every combination of the record's parts through it."""
     names = ', '.join
     notes = dict(o.notes)
     if o.verdict == 'FAIL':
@@ -401,7 +418,8 @@ def describe(o: Outcome, *, sha7: str = '', scripted: str = '') -> dict:
                          + names(o.gating_failed))
         line = 'FAIL: ' + '; '.join(parts) + '.'
     elif o.verdict == 'PASS':
-        line = 'PASS: every app test and gating scripted journey ended green' + (
+        line = ('PASS: every app test ended green' if kind == 'integration' else
+                'PASS: every gating scripted journey ended green') + (
             f', {len(o.retry_passes)} of them only on a retry (named below).' if o.retry_passes else '.')
     else:
         line = 'INCONCLUSIVE: the run did not finish or ran no test, so it proves nothing either way.'
@@ -423,7 +441,7 @@ def describe(o: Outcome, *, sha7: str = '', scripted: str = '') -> dict:
                       if o.probation_failed else ''),
         'rerun': (f'failing tests re-run {o.reruns} times on the same build'
                   if o.reruns and o.first_failures else ''),
-        'candidate': ('' if o.verdict != 'PASS' else
+        'candidate': ('' if o.verdict != 'PASS' or kind != 'integration' else
                       f'{sha7} is the current phone candidate: app tests passed; {scripted}; attended journeys not run.'
                       if o.trunk else f"{sha7} is not {BASE_BRANCH}'s tip: a proof run, so it is no phone candidate."),
         'culprit_why': culprit_why,
@@ -482,7 +500,7 @@ def report_text(sha: str, result: dict, *, started: float, finished: float, prev
                 suspects: list[str], evidence, hosted: bool = False, trunk_tip: bool = True) -> str:
     c = result['counts']
     o = outcome_of(result, trunk_tip)  # every sentence about the outcome, the verdict too, comes from this record
-    words = describe(o, sha7=sha[:7], scripted=scripted_summary(result.get('journeys') or {}))
+    words = describe(o, sha7=sha[:7], scripted='scripted journeys run when the phone build is cut (#3669)')
     day = dt.datetime.fromtimestamp(started).strftime('%Y-%m-%d')
     why = (f'{BASE_BRANCH} moved from {previous}, the last tip with an integration report' if previous
            else f'no integration report on #{REPORT_ISSUE} in the last {REPORT_LOOKBACK.days} days')
@@ -500,13 +518,11 @@ def report_text(sha: str, result: dict, *, started: float, finished: float, prev
              f"  1. --plan app: {c['passed']} passed, {c['failed']} failed, {c['skipped']} skipped  ← verdict input"]
     if words['rerun']:
         lines.append('  2. ' + words['rerun'])
-    if result.get('journeys'):
-        lines.append('  scripted journeys (only those on gating are verdict input): '
-                     + ', '.join(f'{t.rsplit("/", 1)[-1]} {s}' for t, s in sorted(result['journeys'].items())))
-        if result.get('journeys_due'):
-            lines.append('  ' + result['journeys_due'])
+    lines.append('  ' + JOURNEYS_NOT_ON_TIP)
     if result.get('tour'):
         lines.append(tour_line(result['tour']))
+    if minutes_line(result.get('minutes')):
+        lines.append(minutes_line(result['minutes']))
     lines.append('outcome: ' + words['outcome'])
     lines += [words[k] for k in ('failing', 'probation') if words[k]]
     lines.append(words['retry'])
@@ -845,7 +861,7 @@ class Ops:
 
     def open_flake_issue(self, title: str, body: str) -> str:
         res = self.must(['gh', 'issue', 'create', '-R', REPO, '--title', title, '--body', body,
-                         '--label', 'ready', '--milestone', 'Showcase'])
+                         '--label', 'ready', '--label', 'area: groundwork'])
         return (res.stdout or '').strip()
 
     def post_report(self, body: str, evidence: Path) -> str:
@@ -1126,44 +1142,88 @@ def journeys_never_booted(manifest: dict, summary: dict) -> bool:
     return boot_failed and not summary['journeys']
 
 
+def plan_minutes(evidence: Path) -> dict:
+    """Wall-clock minutes each plan took, from the step seconds in its verify-tests manifest (#3669), as
+    {'app': .., 'screen tour': .., 'scripted journeys': ..}; a plan that did not run is left out. The app plan's
+    own re-runs count with it. Read from the evidence folder, so a run on either Mac reports the same way."""
+    groups = {'app': ('app', 'rerun-*'), 'screen tour': ('tour',), 'scripted journeys': ('journeys', 'journeys-retry')}
+    minutes = {}
+    for name, folders in groups.items():
+        seconds, found = 0.0, False
+        for pattern in folders:
+            for path in sorted(evidence.glob(pattern + '/manifest.json')):
+                try:
+                    steps = json.loads(path.read_text()).get('steps', [])
+                except (OSError, ValueError):
+                    continue
+                found = True
+                seconds += sum(float(step.get('seconds') or 0) for step in steps if isinstance(step, dict))
+        if found:
+            minutes[name] = max(1, round(seconds / 60)) if seconds else 0
+    return minutes
+
+
+def minutes_line(minutes: Optional[dict]) -> str:
+    """The report's `minutes:` line, or '' when no plan reported a time."""
+    return ('minutes: ' + ', '.join(f'{name} {n}' for name, n in minutes.items())) if minutes else ''
+
+
 def run_tests(ops: Ops, wt: Path, evidence: Path, fds: tuple) -> dict:
+    """What a new tip gets (#3669): `--plan app` with its re-runs, then the screen tour after a PASS.
+
+    The scripted journeys do not run here any more; `run_journeys` runs them when a phone build is cut."""
     first = summarize(ops.test_plan(wt, evidence / 'app', 'app', fds))
     reruns = []
     if first['verdict'] == 'FAIL':
         for n in range(1, RERUNS + 1):
             reruns.append(summarize(ops.test_plan(wt, evidence / f'rerun-{n}', 'app', fds, tuple(first['failed']))))
     result = dict(settle(first, reruns), reruns=len(reruns))
-    listing_path = wt / 'TestPlans' / 'scripted-journeys.json'
-    listing = json.loads(listing_path.read_text()) if listing_path.exists() else {}
-    gating_failed, probation_failed, boot_fault = [], [], False
-    if result['verdict'] != 'INCONCLUSIVE' and (listing.get('gating') or listing.get('probation')):
-        raw = ops.test_plan(wt, evidence / 'journeys', 'journeys', fds)
-        journeys = summarize(raw)
-        if journeys_never_booted(raw, journeys):  # one more try: the failed device is unsafe, so this gets a fresh one
-            raw = ops.test_plan(wt, evidence / 'journeys-retry', 'journeys', fds)
-            journeys = summarize(raw)
-        boot_fault = journeys_never_booted(raw, journeys)
-        result['journeys'] = script_results(listing, journeys['journeys'])
-        result['attachments'] = result['attachments'] + journeys['attachments']
-        result['flaky'] = sorted(set(result['flaky']) | set(journeys['retried']))  # the scripted journeys retry too
-        result['retry_failures'] = {**journeys.get('retry_failures', {}), **result.get('retry_failures', {})}
-        gating = {e['test'].removesuffix('()') for e in listing.get('gating', [])}
-        # An unrun gating journey after a boot fault is not a failed one; a journey that ran and failed still is.
-        gating_failed = sorted(t for t, s in result['journeys'].items()
-                               if t in gating and s != 'passed' and not (boot_fault and s == 'not_run'))
-        probation_failed = sorted(t for t, s in result['journeys'].items()
-                                  if t not in gating and s in ('failed', 'missing'))
     # The verdict and every list the report prints are settled once, here, from the record (see Outcome).
-    final = outcome_of(dict(result, gating_failed=gating_failed, probation_failed=probation_failed))
+    final = outcome_of(result)
     result.update(verdict=final.verdict, failed=list(final.failing), confirmed=list(final.confirmed),
-                  flaky=list(final.retry_passes), gating_failed=list(final.gating_failed),
-                  probation_failed=list(final.probation_failed))
-    if boot_fault and result['verdict'] == 'PASS':  # only when the app plan and every journey that ran passed
-        result['verdict'] = 'INCONCLUSIVE'
-        result['errors'] = list(result.get('errors', [])) + [BOOT_FAULT_WORDS]
+                  flaky=list(final.retry_passes))
     if result['verdict'] == 'PASS':  # a tour of a broken build proves nothing; only after a PASS (test-lane.md)
         result['tour'] = run_tour(ops, wt, evidence, fds)
+    result['minutes'] = plan_minutes(evidence)
     return result
+
+
+def run_journeys(ops: Ops, wt: Path, evidence: Path, fds: tuple) -> dict:
+    """The scripted journeys alone, on the commit checked out in `wt` (#3669).
+
+    Same reading of the journeys plan as the tip run had: only a `gating` journey that did not pass is a FAIL, a
+    probation journey is named and never verdict input, and a plan that never booted or ran nothing is INCONCLUSIVE
+    (an infrastructure fault, not a failing journey). This script does not re-run journeys."""
+    listing_path = wt / 'TestPlans' / 'scripted-journeys.json'
+    listing = json.loads(listing_path.read_text()) if listing_path.exists() else {}
+    if not (listing.get('gating') or listing.get('probation')):
+        return dict(summarize({'error': 'TestPlans/scripted-journeys.json lists no scripted journey'}),
+                    journeys={}, gating_failed=[], probation_failed=[], flaky=[], minutes={})
+    raw = ops.test_plan(wt, evidence / 'journeys', 'journeys', fds)
+    journeys = summarize(raw)
+    if journeys_never_booted(raw, journeys):  # one more try: the failed device is unsafe, so this gets a fresh one
+        raw = ops.test_plan(wt, evidence / 'journeys-retry', 'journeys', fds)
+        journeys = summarize(raw)
+    boot_fault = journeys_never_booted(raw, journeys)
+    results = script_results(listing, journeys['journeys'])
+    gating = {e['test'].removesuffix('()') for e in listing.get('gating', [])}
+    # An unrun gating journey after a boot fault is not a failed one; a journey that ran and failed still is.
+    gating_failed = sorted(t for t, s in results.items() if t in gating and s != 'passed'
+                           and not (boot_fault and s == 'not_run'))
+    probation_failed = sorted(t for t, s in results.items() if t not in gating and s in ('failed', 'missing'))
+    nothing_ran = all(status == 'not_run' for status in results.values())
+    final = outcome('INCONCLUSIVE' if boot_fault or nothing_ran else 'PASS', gating_failed=gating_failed,
+                    probation_failed=probation_failed, retry_passes=journeys['retried'])
+    errors = list(journeys['errors'])
+    if boot_fault:
+        errors.append(BOOT_FAULT_WORDS)
+    elif nothing_ran:
+        errors.append('no scripted journey ran, so nothing was verified')
+    return {'verdict': final.verdict, 'counts': journeys['counts'], 'failed': list(final.failing), 'confirmed': [],
+            'flaky': list(final.retry_passes), 'journeys': results, 'gating_failed': list(final.gating_failed),
+            'probation_failed': list(final.probation_failed), 'attachments': journeys['attachments'],
+            'crashes': journeys['crashes'], 'retry_failures': journeys.get('retry_failures', {}), 'errors': errors,
+            'listing': listing, 'minutes': plan_minutes(evidence)}
 
 
 TOUR_NAMES_SHOWN = 24
@@ -1247,6 +1307,217 @@ def act_on_culprit(ops: Ops, wt: Path, evidence: Path, sha: str, report: str, re
     return None
 
 
+def journeys_report_text(sha: str, result: dict, *, started: float, finished: float, previous: Optional[str],
+                         suspects: list[str], evidence, why: str) -> str:
+    """`Lane report scripted-journeys-<sha7>` (#3669): what the journeys did on the commit a phone build was cut from
+    or an upload was cut at. The journeys line has the integration report's words, so scripts/phone-build and
+    journey_promotion read it the same way."""
+    o = outcome(result['verdict'], gating_failed=result['gating_failed'], probation_failed=result['probation_failed'],
+                retry_passes=result['flaky'])
+    words = describe(o, sha7=sha[:7], kind='journeys')
+    day = dt.datetime.fromtimestamp(started).strftime('%Y-%m-%d')
+    lines = ['```text',
+             f'Lane report {JOURNEYS_KIND}-{sha[:7]} — {o.verdict}',
+             f'commit {sha[:8]} · scripted journeys: --plan journeys · {clock(started)}–{clock(finished)} local, {day}',
+             f'run by: {RUN_BY}',
+             f'why it ran: {why}',
+             'ran:']
+    if result.get('journeys'):
+        lines.append('  scripted journeys (only those on gating are verdict input): '
+                     + ', '.join(f'{t.rsplit("/", 1)[-1]} {s}' for t, s in sorted(result['journeys'].items())))
+    if result.get('journeys_due'):
+        lines.append('  ' + result['journeys_due'])
+    if minutes_line(result.get('minutes')):
+        lines.append(minutes_line(result['minutes']))
+    lines.append('outcome: ' + words['outcome'])
+    lines += [words[k] for k in ('failing', 'probation') if words[k]]
+    lines.append(words['retry'])
+    lines += retry_said_lines(result.get('retry_failures'), result.get('flaky'))
+    lines.append('crashes: ' + (', '.join(Path(p).name for p in result['crashes'])
+                                if result.get('crashes') else 'none recorded'))
+    if o.verdict == 'FAIL':
+        # One merge is not the culprit by default: a phone build spans every merge since the last candidate.
+        lines.append(f'merges since the last scripted-journeys PASS ({previous or "none on #184"}): '
+                     + (', '.join(suspects) if suspects else 'unknown')
+                     + '. Any of them can be the cause; no revert is opened for a journey.')
+    if o.verdict == 'INCONCLUSIVE' and result['errors']:
+        lines.append('why inconclusive: ' + '; '.join(dict.fromkeys(result['errors']))[:1500])
+    lines += [NOT_RUN, NOT_VERIFIED, f'evidence: {evidence}', '```']
+    if result.get('attachments'):
+        lines += ['', *report_lines(result['attachments'])]
+    if o.verdict == 'PASS':
+        lines += ['', f"{sha[:7]}: {scripted_summary(result.get('journeys') or {})}."]
+    return '\n'.join(lines) + '\n'
+
+
+def journey_fail_groups(failed: list[str], suspects: list[str], previous: Optional[str]) -> list[dict]:
+    """One issue per gating journey that failed: the range to search is every merge since the last candidate."""
+    groups = fallback_groups(failed, tuple(failed))
+    span = (f'any of the merges since the last scripted-journeys PASS ({previous or "none on #184"}): '
+            + (', '.join(suspects) if suspects else 'unknown'))
+    for group in groups:
+        group['steps'] = (f"Run `--plan journeys --only-testing {group['tests'][0]}` at the commit below, then at the merges in "
+                          'Suspect, oldest first, until it passes.')
+        group['suspect'] = span
+    return groups
+
+
+def request_dir(home: Path) -> Path:
+    return home / 'journeys-requests'
+
+
+def write_journeys_request(home: Path, sha: str, why: str, now: float) -> Path:
+    """Ask the launchd tick to run the journeys on `sha` (#3669). Asking twice for one commit keeps the first."""
+    folder = request_dir(home)
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / f'{sha}.json'
+    if not path.exists():  # written whole and renamed, so the tick never reads half a request and drops it
+        scratch = folder / f'.{sha}.tmp'
+        scratch.write_text(json.dumps({'sha': sha, 'why': why, 'requested': now, 'attempts': 0}))
+        os.replace(scratch, path)
+    return path
+
+
+def pending_journeys_requests(home: Path, now: float) -> list[dict]:
+    """Journeys requests waiting for the Mac, oldest first. One nobody could take in three days is dropped."""
+    found = []
+    for path in sorted(request_dir(home).glob('*.json')):
+        try:
+            record = json.loads(path.read_text())
+            if not re.fullmatch(r'[0-9a-f]{40}', record['sha']) or path.name != record['sha'] + '.json':
+                raise ValueError('not a request')
+            record['requested'] = float(record['requested'])
+        except (OSError, ValueError, KeyError, TypeError):
+            path.unlink(missing_ok=True)
+            continue
+        if now - record['requested'] > REQUEST_MAX_AGE_SECONDS:
+            path.unlink(missing_ok=True)
+        else:
+            found.append(record)
+    return sorted(found, key=lambda r: r['requested'])
+
+
+def refresh_phone_plan(ops: Ops, sha: str) -> None:
+    """After the journeys report, rewrite the owner's test plan if `sha` is the build waiting for him (#3669), so the
+    plan's "Scripted journeys" line shows the result instead of "asked for". Best-effort: never raises."""
+    try:
+        phone = Path(os.environ.get('SM_PHONE_DIR') or Path.home() / 'SpokenMargins-phone')
+        info = json.loads((phone / 'latest' / 'build.json').read_text())
+        if info.get('sha') == sha:
+            res = ops.run([ops.repo_root / 'scripts' / 'phone-build', '--plan-only'], cwd=ops.repo_root, timeout=300)
+            ops.log(f'phone plan for {sha[:7]} rewritten' if res.returncode == 0 else
+                    f'phone plan rewrite failed: {(res.stderr or res.stdout)[-200:]}')
+    except (OSError, ValueError, TypeError):
+        pass  # no phone build waiting, or its build.json is unreadable: nothing to refresh
+
+
+def journeys_run(ops: Ops, sha: str, why: str, *, now: Optional[float] = None, again: bool = False) -> str:
+    """Run the scripted journeys on `sha` on this Mac and post `Lane report scripted-journeys-<sha7>` (#3669).
+
+    Returns the verdict, or 'held' when the simulator slot is busy or #184 already has a PASS or FAIL for the
+    commit (`again` runs it anyway: a FAIL that looks like a flake gets a second look, and the newer report wins). A FAIL files one issue per gating journey naming every merge since the last scripted-journeys PASS; it
+    never searches for a culprit or opens a revert, because a phone build spans many merges and the journeys
+    don't re-run. Journey streaks toward `gating` come from the state file, as before."""
+    now = ops.now() if now is None else now
+    comments = ops.report_comments()
+    done = journey_reported([c['body'] for c in comments])
+    if not again and any(s7 == sha[:7] and v != 'INCONCLUSIVE' for s7, v in done):
+        ops.log(f'hold: #{REPORT_ISSUE} already has a scripted-journeys report for {sha[:7]}')
+        return 'held'
+    previous = next((s7 for s7, v in reversed(done) if v == 'PASS' and s7 != sha[:7]), None)
+    path = ops.home / 'state.json'
+    state = json.loads(path.read_text()) if path.exists() else {'results': {}}
+    with contextlib.ExitStack() as stack:
+        try:
+            fds = stack.enter_context(exclusive_slot())
+        except TimeoutError as error:
+            ops.log('hold: ' + str(error))
+            return 'held'
+        wt = ops.home / 'worktree'
+        evidence_root = ops.repo_root / 'artifacts' / 'integration-run'
+        evidence = evidence_root / f'{int(now)}-{sha[:7]}-journeys'
+        evidence.mkdir(parents=True, exist_ok=False)
+        ops.log(f'running the scripted journeys on {sha[:7]}')
+        added = False
+        result = dict(summarize({'error': 'run stopped before completion'}), flaky=[], journeys={}, gating_failed=[],
+                      probation_failed=[], minutes={})
+        try:
+            ops.clear_scratch_worktree(wt)  # whatever an interrupted tick left of this job's scratch worktree
+            ops.must(['git', 'worktree', 'add', '--detach', str(wt), sha])
+            added = True
+            ops.must(['scripts/setup-worktree.sh'], cwd=wt)
+            result = run_journeys(ops, wt, evidence, fds)
+        except Exception as error:  # noqa: BLE001
+            result = dict(summarize({'error': str(error)}), flaky=[], journeys={}, gating_failed=[],
+                          probation_failed=[], minutes={})
+        finally:
+            stack.close()  # the simulator is free before GitHub work
+        suspects = ops.suspects(sha, previous) if result['verdict'] == 'FAIL' else []
+        if result.get('journeys') and result.get('listing'):  # never blocks the report
+            try:
+                state['journeys'] = journey_promotion.update(state.get('journeys', {}), result['journeys'])
+                result['journeys_due'] = journey_promotion.report_line(
+                    journey_promotion.due(result['listing'], state['journeys']))
+                save_state(path, state)
+            except Exception as error:  # noqa: BLE001
+                ops.log('journey streaks failed: ' + str(error)[:300])
+        try:
+            body = journeys_report_text(sha, result, started=now, finished=ops.now(), previous=previous,
+                                        suspects=suspects, evidence=evidence, why=why)
+            report = ops.post_report(body, evidence)
+            ops.log(f"{result['verdict']} {sha[:7]}: {report}")
+            if result['verdict'] == 'FAIL':
+                filed = ops.file_failures(journey_fail_groups(result['gating_failed'], suspects, previous), sha, report,
+                                          evidence, None)
+                ops.log(f'filed or updated: {filed}')
+            elif result['verdict'] == 'PASS':
+                drop_bundles(evidence)
+            refresh_phone_plan(ops, sha)
+            return result['verdict']
+        finally:
+            if added or wt.exists():
+                try:
+                    ops.clear_scratch_worktree(wt)
+                except Exception as error:  # noqa: BLE001 - the report is already posted
+                    ops.log('worktree removal failed: ' + str(error)[:300])
+            prune_evidence(evidence_root)
+
+
+def take_journeys_request(ops: Ops, now: float, comments: list[dict]) -> Optional[str]:
+    """The tick's first job (#3669): run the journeys a phone build asked for, when the Mac has room.
+
+    None when nothing is waiting. A request is kept while the Mac is busy, and dropped once its commit has a
+    PASS or FAIL report; an INCONCLUSIVE run (an infrastructure fault) gets one more try, then is dropped."""
+    settled = {s7 for s7, v in journey_reported([c['body'] for c in comments]) if v != 'INCONCLUSIVE'}
+    for request in pending_journeys_requests(ops.home, now):
+        sha = request['sha']
+        path = request_dir(ops.home) / f'{sha}.json'
+        if sha[:7] in settled:
+            path.unlink(missing_ok=True)
+            continue
+        # Lane app tests that decide merges go first, as for a tip; a request waits at most LANE_YIELD_SECONDS for them.
+        why = room_reason(now, lane_slots.memory_pressure_level(), ops.free_bytes(), ops.builds_running(),
+                          lane_slots.simulator_job_running(), ops.lane_waiting(), request['requested']) \
+            or ops.simctl_problem()
+        if why:
+            ops.log(f'hold: the scripted journeys for {sha[:7]} wait: {why}')
+            return 'held'
+        try:
+            verdict = journeys_run(ops, sha, request.get('why') or 'a phone build was cut', now=now)
+        except Exception as error:  # noqa: BLE001 - a request that can't run must not stop the tip's tests
+            ops.log(f'the scripted journeys for {sha[:7]} stopped: {str(error)[:300]}')
+            verdict = 'INCONCLUSIVE'
+        if verdict == 'held':   # the slot was busy or a report exists: nothing ran, so no attempt is used
+            return 'held'
+        request['attempts'] = int(request.get('attempts') or 0) + 1
+        if verdict == 'INCONCLUSIVE' and request['attempts'] < 2:
+            path.write_text(json.dumps(request))
+        else:
+            path.unlink(missing_ok=True)
+        return verdict
+    return None
+
+
 def tick(ops: Ops, dry_run: bool = False) -> str:
     say = print if dry_run else ops.log
     now = ops.now()
@@ -1269,6 +1540,13 @@ def tick(ops: Ops, dry_run: bool = False) -> str:
             record['confirm'] = 'stopped before completion'
     comments = ops.report_comments()
     reports = reported([c['body'] for c in comments])
+    # A phone build's scripted journeys go first (#3669): there is no other time they run. Except when hosted
+    # integration is on and has a confirmed FAIL the Mac hasn't handled: "revert first" (#1180) outranks them.
+    hosted_fail = ops.hosted_on() and hosted_fail_to_handle(comments, state.get('hosted_handled', {}))
+    if not dry_run and not hosted_fail:
+        requested = take_journeys_request(ops, now, comments)
+        if requested:
+            return 'held' if requested == 'held' else 'journeys'
     if ops.hosted_on():
         outcome = defer_to_hosted(ops, state, path, comments, reports, now, dry_run, sha)
         if outcome:
@@ -1290,7 +1568,7 @@ def tick(ops: Ops, dry_run: bool = False) -> str:
     green = last_green(reports)
     if dry_run:
         say(f'Would test {sha[:7]} (last report {previous}, last PASS {green}): detached worktree, '
-            f'setup-worktree.sh, --plan app, {RERUNS} re-runs of any failing tests, scripted journeys, '
+            f'setup-worktree.sh, --plan app, {RERUNS} re-runs of any failing tests, the screen tour after a PASS, '
             f'one report on #{REPORT_ISSUE}; on a confirmed FAIL, the culprit merge, a revert PR with '
             f'automerge and a re-land issue (or a note on #{REPORT_ISSUE} when it is not safe to revert), a read-only '
             f'Claude diagnosis and, otherwise, issues labelled {FAIL_LABELS}. No tests or writes in dry-run.')
@@ -1330,14 +1608,6 @@ def tick(ops: Ops, dry_run: bool = False) -> str:
         finally:
             stack.close()  # the simulator is free before GitHub and Claude work
         suspects = ops.suspects(sha, green) if result['verdict'] == 'FAIL' else []
-        if result.get('journeys'):  # streaks toward gating, and the scripts due to move (#1901); never blocks the report
-            try:
-                state['journeys'] = journey_promotion.update(state.get('journeys', {}), result['journeys'])
-                listing = json.loads((wt / 'TestPlans' / 'scripted-journeys.json').read_text())
-                result['journeys_due'] = journey_promotion.report_line(
-                    journey_promotion.due(listing, state['journeys']))
-            except Exception as error:  # noqa: BLE001
-                ops.log('journey streaks failed: ' + str(error)[:300])
         state['results'][sha] = {'verdict': result['verdict'], 'started': now, 'evidence': str(evidence),
                                  'failed': result['failed'], 'flaky': result.get('flaky', [])}
         save_state(path, state)
@@ -1531,8 +1801,8 @@ def hosted_run(ops: Ops, sha: str, *, post: bool = True) -> str:
 
     The same tests and report as a Mac tick, with less around it: no culprit search, revert, issues or Claude
     (a PR opened with the job's token starts no workflows, and there is no Claude token here; the Mac handles a
-    confirmed FAIL, defer_to_hosted), no state, and no .xcresult bundles in the evidence the workflow uploads. Journey streaks are counted from
-    the earlier reports on #184 instead of a state file, so hosted passes can earn `gating` (#2894).
+    confirmed FAIL, defer_to_hosted), no state, and no .xcresult bundles in the evidence the workflow uploads. No scripted journeys: a tip gets
+    `--plan app` and the screen tour, and the journeys run at a phone build or an upload (`journeys_run`, #3669).
     The tip's simulator app is zipped for the workflow's `sim-app-<sha>` artifact instead of kept on disk.
     post=False (a proof run dispatched from a branch, --no-report) posts nothing to #184: a report for a commit that
     is not the trunk's tip would become the next tip's "previous" and its last PASS. The report is only logged."""
@@ -1559,15 +1829,6 @@ def hosted_run(ops: Ops, sha: str, *, post: bool = True) -> str:
     ops.log('simulator build ' + (pack_sim_build(ops.repo_root, evidence / 'app' / 'manifest.json', sha) if post
                                    else 'not packed: this run is not the trunk\'s tip'))
     suspects = ops.suspects(sha, green) if result['verdict'] == 'FAIL' else []
-    if result.get('journeys'):  # streaks from #184's earlier reports, since this run keeps no state (#2894); never blocks
-        try:
-            listing = json.loads((ops.repo_root / 'TestPlans' / 'scripted-journeys.json').read_text())
-            streaks = journey_promotion.update(
-                journey_promotion.streaks_from_reports(
-                    [c['body'] for c in comments if reported([c['body']])], listing), result['journeys'])
-            result['journeys_due'] = journey_promotion.report_line(journey_promotion.due(listing, streaks))
-        except Exception as error:  # noqa: BLE001
-            ops.log('journey streaks failed: ' + str(error)[:300])
     drop_bundles(evidence)
     run_url = ''
     if os.environ.get('GITHUB_RUN_ID'):
@@ -1601,7 +1862,17 @@ def main(argv=None) -> int:
     ap.add_argument('--dry-run', action='store_true', help='print the decision; run no tests and change nothing')
     ap.add_argument('--hosted', action='store_true',
                     help='test this checkout once on a GitHub-hosted Mac and post the report (hosted-integration.yml)')
-    ap.add_argument('--sha', help="with --hosted: the full SHA of the trunk's tip, which this checkout must be at")
+    ap.add_argument('--sha', help="with --hosted: the full SHA of the trunk's tip, which this checkout must be at; "
+                                  'with --journeys: the commit to run the scripted journeys on')
+    ap.add_argument('--journeys', action='store_true',
+                    help=f'run the scripted journeys on --sha now, wait for the tick to finish, and post '
+                         f'Lane report {JOURNEYS_KIND}-<sha7> on #{REPORT_ISSUE} (#3669; the upload step)')
+    ap.add_argument('--journeys-request', metavar='COMMIT',
+                    help='ask the launchd tick to run the scripted journeys on this commit, and return at once '
+                         '(scripts/phone-build calls this when it cuts a build)')
+    ap.add_argument('--again', action='store_true',
+                    help='with --journeys: run even if #184 already has a PASS or FAIL for the commit (a flaky FAIL)')
+    ap.add_argument('--why', default='', help='with --journeys or --journeys-request: why the journeys are run')
     ap.add_argument('--no-report', action='store_true',
                     help=f'with --hosted: run the tests but post nothing to #{REPORT_ISSUE} (a proof run from a branch)')
     args = ap.parse_args(argv)
@@ -1615,10 +1886,29 @@ def main(argv=None) -> int:
                 f.write(f'Integration run on {args.sha[:7]}: {verdict}\n')
         return hosted_exit_code(verdict)
     ops = Ops(echo=args.dry_run)
+    if args.journeys_request and args.dry_run:
+        print(f'Would ask the tick to run the scripted journeys on {args.journeys_request}. Nothing written.')
+        return 0
+    if args.journeys_request:
+        sha = ops.must(['git', 'rev-parse', '--verify', f'{args.journeys_request}^{{commit}}']).stdout.strip()
+        path = write_journeys_request(ops.home, sha, args.why or 'a phone build was cut', ops.now())
+        print(f'the tick will run the scripted journeys on {sha[:7]} ({path})')
+        return 0
     if args.dry_run:
         tick(ops, dry_run=True)
         return 0
     ops.home.mkdir(parents=True, exist_ok=True)
+    if args.journeys:
+        if not re.fullmatch(r'[0-9a-f]{40}', args.sha or ''):
+            ap.error('--journeys needs --sha <full 40-character SHA>')
+        with (ops.home / 'tick.lock').open('a+') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)  # a person asked: wait for a run in progress instead of skipping
+            verdict = journeys_run(ops, args.sha, args.why or 'the owner said upload', again=args.again)
+        if verdict == 'held':  # an earlier PASS or FAIL for this commit stands; otherwise the simulator was busy
+            verdict = next((v for s7, v in reversed(journey_reported([c['body'] for c in ops.report_comments()]))
+                            if s7 == args.sha[:7] and v != 'INCONCLUSIVE'), 'held')
+        print(f'scripted journeys on {args.sha[:7]}: {verdict}')
+        return 0 if verdict == 'PASS' else 75 if verdict == 'held' else 1
     with (ops.home / 'tick.lock').open('a+') as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)

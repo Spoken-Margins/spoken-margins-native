@@ -37,6 +37,31 @@ final class SharedMarginOfferQueueTests: XCTestCase {
         XCTAssertEqual(tick(&queue, all, from: 200, to: 200)?.id, "b")
     }
 
+    /// #3720: a tone-only card with no timer (assistive technology) gives way to a newly crossed Margin, but the
+    /// Margins that crossed together with it keep waiting: no card replaces the next every tick (#918).
+    func testACardWithNoTimerOnlyGivesWayToAMarginTheSourceJustCrossed() {
+        let all = prompts(["a": 100, "b": 110, "c": 120, "d": 500])
+        var queue = SharedMarginOfferQueue()
+        XCTAssertEqual(tick(&queue, all, from: 90, to: 200)?.id, "a") // a's card is up; b and c wait
+        for _ in 0..<3 {
+            XCTAssertNil(tick(&queue, all, from: 200, to: 200, canOffer: false, canReplaceCard: true),
+                         "nothing crossed, so the card stays")
+        }
+        XCTAssertEqual(queue.waitingIDs, ["b", "c"])
+        // d crosses: it queues behind b and c, and the oldest waiting one replaces the card.
+        XCTAssertEqual(tick(&queue, all, from: 200, to: 600, canOffer: false, canReplaceCard: true)?.id, "b")
+        XCTAssertEqual(queue.waitingIDs, ["c", "d"])
+        XCTAssertNil(tick(&queue, all, from: 600, to: 600, canOffer: false, canReplaceCard: true))
+    }
+
+    func testNothingReplacesACardUnlessTheCallerAllowsIt() {
+        let all = prompts(["a": 100, "b": 500])
+        var queue = SharedMarginOfferQueue()
+        XCTAssertEqual(tick(&queue, all, from: 90, to: 200)?.id, "a")
+        XCTAssertNil(tick(&queue, all, from: 200, to: 600, canOffer: false), "an ordinary card is never replaced")
+        XCTAssertEqual(queue.announcedIDs, ["a"], "b is not announced, so it is offered when the card ends")
+    }
+
     func testACrossedMarginIsAnnouncedOnceAndNotCrossedAgain() {
         let all = prompts(["a": 100])
         var queue = SharedMarginOfferQueue()
@@ -154,9 +179,9 @@ final class SharedMarginOfferQueueTests: XCTestCase {
     /// One tick of playback from `from` to `to` ms on the selected item. The step is not limited
     /// here, so a long step stands for several ticks of one crossing; use a seek test for jumps.
     private func tick(_ queue: inout SharedMarginOfferQueue, _ all: [ImportedCommentaryPrompt],
-                      from: Int, to: Int, canOffer: Bool = true) -> ImportedCommentaryPrompt? {
+                      from: Int, to: Int, canOffer: Bool = true, canReplaceCard: Bool = false) -> ImportedCommentaryPrompt? {
         queue.nextOffer(previous: snapshot(from), current: snapshot(to), selectedItemID: "item",
-                        canOffer: canOffer, prompts: all)
+                        canOffer: canOffer, canReplaceCard: canReplaceCard, prompts: all)
     }
 
     private func prompts(_ media: KeyValuePairs<String, Int>) -> [ImportedCommentaryPrompt] {

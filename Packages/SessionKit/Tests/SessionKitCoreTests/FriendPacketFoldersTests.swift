@@ -190,6 +190,108 @@ final class FriendPacketFoldersTests: XCTestCase {
         XCTAssertEqual(try folderNames(), [other])
     }
 
+    // MARK: Import cleanup (#3409)
+
+    func testAFreshFolderNoRowNamesIsRemovedWithItsFiles() throws {
+        let fresh = try stagedFolder(files: ["package.spokenmargins", "assets/voice.m4a"])
+
+        let outcome = FriendPacketFolders.removeIfUnused(folder: fresh, directory: incoming, keeping: [], store: store)
+
+        XCTAssertEqual(outcome.removed, [fresh])
+        XCTAssertEqual(try folderNames(), [])
+    }
+
+    /// The earlier layer of the same packet still plays from the folder, so a later layer that names nothing
+    /// cannot take it.
+    func testAFolderAnEarlierLayerOfTheSamePacketNamesStaysWithItsRecording() throws {
+        let earlier = try importFriend(onItem: "a")
+        let voice = incoming.appendingPathComponent("\(earlier)/assets/voice.m4a")
+        try saveLayer(id: "layer-resend", itemId: "a", digest: "digest-a", folder: nil, margin: nil)
+
+        let outcome = FriendPacketFolders.removeIfUnused(folder: earlier, directory: incoming, keeping: [], store: store)
+
+        XCTAssertEqual(outcome.removed, [])
+        XCTAssertEqual(outcome.kept, [earlier])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: voice.path))
+        XCTAssertEqual(try store.loadImportedCommentaryInterjections(layerId: "layer-a").count, 1)
+    }
+
+    func testAFolderOnlyTheLayersMapEvidenceNamesStays() throws {
+        let folder = try stagedFolder(files: ["assets/map.bin"])
+        try store.saveImportedCommentaryLayer(ImportedCommentaryLayer(
+            id: "layer-map", itemId: "a", packageDigest: "digest-map", packageId: "packet-map",
+            itemIdentity: identity, displayLabel: "Friend", importedAt: date,
+            sourceResolutionStatus: .contextOnly, isEnabled: true, isMuted: false,
+            episodeMapEvidencePaths: ["signature-1": incoming.appendingPathComponent("\(folder)/assets/map.bin").path]))
+
+        FriendPacketFolders.removeIfUnused(folder: folder, directory: incoming, keeping: [], store: store)
+
+        XCTAssertEqual(try folderNames(), [folder])
+    }
+
+    func testAFolderInUseIsNotRemovedEvenWhenNoRowNamesIt() throws {
+        let inUse = try stagedFolder(files: ["package.spokenmargins"])
+
+        let outcome = FriendPacketFolders.removeIfUnused(folder: inUse, directory: incoming, keeping: [inUse], store: store)
+
+        XCTAssertEqual(outcome.removed, [])
+        XCTAssertEqual(try folderNames(), [inUse])
+    }
+
+    func testTheCleanupRemovesOnlyTheNamedFolder() throws {
+        let fresh = try stagedFolder(files: ["package.spokenmargins"])
+        let anotherStaging = try stagedFolder(files: ["package.spokenmargins"])
+        let used = try importFriend(onItem: "a")
+        let notOurs = incoming.appendingPathComponent("not-a-uuid", isDirectory: true)
+        try FileManager.default.createDirectory(at: notOurs, withIntermediateDirectories: true)
+
+        FriendPacketFolders.removeIfUnused(folder: fresh, directory: incoming, keeping: [], store: store)
+
+        XCTAssertEqual(try folderNames(), ["not-a-uuid", anotherStaging, used].sorted())
+        XCTAssertEqual(FriendPacketFolders.removeIfUnused(folder: "not-a-uuid", directory: incoming, keeping: [], store: store),
+                       IncomingPackageSweep.Outcome(), "a name that is not a staged folder is left alone")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: notOurs.path))
+    }
+
+    func testAnUnreadableLibraryKeepsTheFolder() throws {
+        let fresh = try stagedFolder(files: ["package.spokenmargins"])
+        try StoreRawSQL.execute("DROP TABLE quarantined_records;", at: databasePath)
+
+        let outcome = FriendPacketFolders.removeIfUnused(folder: fresh, directory: incoming, keeping: [], store: store)
+
+        XCTAssertEqual(outcome.removed, [], "nothing is removed on a guess")
+        XCTAssertEqual(try folderNames(), [fresh])
+    }
+
+    /// A resend that brings nothing new saves no row naming its fresh copy; the first import's folder is untouched.
+    func testAResendWithNothingNewLeavesTheFirstFolderAndRemovesTheFreshOne() throws {
+        let first = try importFriend(onItem: "a")
+        let fresh = try stagedFolder(files: ["package.spokenmargins", "assets/voice.m4a"])
+        let token = MarginShareProvenance.token(sessionId: UUID().uuidString, interjectionId: "ij-001")
+        func margin(id: String, layerId: String, folder: String) -> ImportedCommentaryInterjection {
+            ImportedCommentaryInterjection(
+                id: id, layerId: layerId, packageScopedId: "\(id)-001", createdAt: date,
+                anchorEvidence: PortableAnchorEvidence(anchorType: .media, mediaTimeMs: 1_000),
+                approvedTranscript: "Keep this thought",
+                audioPath: incoming.appendingPathComponent("\(folder)/assets/voice.m4a").path, audioDurationMs: 500,
+                resolution: ImportedAnchorResolution(evidenceClass: .exactEdition, localMediaTimeMs: 9_000),
+                shareProvenance: token)
+        }
+        try store.saveImportedCommentaryInterjection(margin(id: "margin-a", layerId: "layer-a", folder: first))
+        let layer = ImportedCommentaryLayer(
+            id: "layer-resend", itemId: "a", packageDigest: "digest-resend", packageId: "packet-resend",
+            itemIdentity: identity, displayLabel: "Friend", importedAt: date,
+            sourceResolutionStatus: .contextOnly, isEnabled: true, isMuted: false)
+        let again = margin(id: "incoming", layerId: "layer-resend", folder: fresh)
+
+        let disposition = try ImportedMarginResends.importLayer(layer, interjections: [again], repository: store)
+        guard case .duplicate = disposition else { return XCTFail("expected a resend with nothing new, got \(disposition)") }
+        let outcome = FriendPacketFolders.removeIfUnused(folder: fresh, directory: incoming, keeping: [], store: store)
+
+        XCTAssertEqual(outcome.removed, [fresh])
+        XCTAssertEqual(try folderNames(), [first], "the first import's folder, which the held Margin plays from, stays")
+    }
+
     // MARK: Fixtures
 
     /// A friend's packet imported onto `itemId`: the folder, one layer and one Margin that plays from the folder.

@@ -18,8 +18,7 @@ extension Gate1AppModel {
                 self.pause()
             },
             libraryChanged: { [weak self] in
-                guard let self, let store = self.store else { return }
-                try? self.refreshLibraryRows(store: store)
+                self?.refreshLibraryRowsInBackground(mustPublish: true) // one saved note, no whole-table read on main (#2505)
             },
             beginBackgroundWork: { Gate2AppState.beginBackgroundTask($0) }
         )
@@ -37,8 +36,7 @@ extension Gate1AppModel {
             )
             guard !recovered.isEmpty else { return }
             await MainActor.run { [weak self] in
-                guard let self, let store = self.store else { return }
-                try? self.refreshLibraryRows(store: store)
+                self?.refreshLibraryRowsInBackground(mustPublish: true) // #2505
             }
         }
     }

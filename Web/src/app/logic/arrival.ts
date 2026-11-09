@@ -3,7 +3,10 @@
 // left, a failure says what happened and one thing the friend can do. Plain TypeScript with no DOM, so
 // `npm run test:web` covers it.
 import { formatClock } from '../../shared/clock.ts';
-import type { Margin } from '../../shared/model.ts';
+import type { Episode, Margin, PlaybackPosition } from '../../shared/model.ts';
+import type { PacketRead } from '../ports.ts';
+import { findEpisode } from './import.ts';
+import { listenState } from './library.ts';
 import { firesByItself } from './margin-autoplay.ts';
 
 /** How far before a Margin the first Skip lands, so the friend hears the episode's own lead-in (2026-10-31 call). */
@@ -86,8 +89,25 @@ export function arrivalFacts(sender: string | undefined, margins: readonly Margi
   };
 }
 
-/** The line under the Play button, saying what Play does. */
-export const PLAY_HINT = (who: string): string => `Starts at the beginning. ${leading(possessive(who))} Margins play when the episode reaches them.`;
+/**
+ * Where Play starts: the listener's own saved place in this episode, when they have started it (the Library row says
+ * "Resume at" for the same place), else the beginning (#3798). `undefined` means the beginning. A finished episode
+ * starts over, as the Library's own play does.
+ */
+export function arrivalResumeAt(
+  read: PacketRead,
+  episodes: readonly Episode[],
+  positions: readonly PlaybackPosition[],
+): number | undefined {
+  const own = findEpisode(read, episodes);
+  if (!own) return undefined;
+  const position = positions.find((p) => p.episodeId === own.id);
+  return listenState(own, position) === 'started' ? position?.seconds : undefined;
+}
+
+/** The line under the Play button, saying what Play does: one place, the same one Play then goes to. */
+export const playHint = (who: string, resumeAt?: number): string =>
+  `${resumeAt === undefined ? 'Starts at the beginning.' : `Picks up at ${formatClock(resumeAt)}.`} ${leading(possessive(who))} Margins play when the episode reaches them.`;
 
 /** Every way a link can fail to open, in the words a friend reads. Expired, removed and unknown all read the same. */
 export const ARRIVAL_WORDS = Object.freeze({

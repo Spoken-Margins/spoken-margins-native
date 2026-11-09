@@ -48,20 +48,18 @@ extension Gate1AppModel {
                 outputDirectory: support.appending(path: "PreparedSupertonicAudio", directoryHint: .isDirectory)
             )
             let assembledURL = prepared.media.url.flatMap(URL.init(string:))
-            var refused = false // Stop or a new voice landed while assembling: drop the audio, no failure (#2134)
-            var changed = false // the item's text moved on while assembling: the same, decided inside the attach transaction
-            let attached = try PreparedAudioEnqueue.withCurrentManifest(manifest, repository: store) { saved, current in
-                guard PreparedAudioEnqueue.mayComplete(saved.state) else { refused = true; return false }
-                guard current.text == item.text, try PreparedAudioEnqueue.preparedText(item: current, repository: store) == sourceText else { changed = true; return false }
-                return attachPreparedTextAudio(prepared, itemId: item.id, replaceActivePlayback: false)
-            }
-            guard attached != nil, !refused, !changed else {
+            // The re-check and the save are one transaction off the main actor; a Stop, a new voice or an edit that landed
+            // while assembling drops the audio, with no failure (#2134, #2256).
+            switch await attachAssembledPreparedAudioOffMain(prepared, itemId: item.id, manifest: manifest, itemText: item.text, sourceText: sourceText) {
+            case .dropped:
                 await ledger.discardStaleAssembly(assembledURL, reservationId: assemblyReservation.id)
                 return
-            }
-            guard attached == true, let url = assembledURL else {
+            case .failed:
                 throw SessionKitError.persistenceFailed("prepared_audio_attach_failed")
+            case .attached:
+                break
             }
+            guard let url = assembledURL else { throw SessionKitError.persistenceFailed("prepared_audio_attach_failed") }
             guard try await coordinator.complete(itemId: item.id, signature: signature, prepared: prepared) else {
                 await ledger.discardStaleAssembly(url, reservationId: assemblyReservation.id)
                 return

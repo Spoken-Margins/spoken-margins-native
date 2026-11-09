@@ -15,6 +15,9 @@ struct FollowingShowsState {
     var revision = 0
     var lookedLoaded = false
     var lookedDirty = false
+    /// True once `reloadFollowingShowEntries` has finished a first time. Until then `listCache` is empty, not "no shows",
+    /// so Following draws nothing rather than friends alone that the shows would then push down (#3753).
+    var listLoaded = false
 }
 
 extension Gate1AppModel {
@@ -25,6 +28,7 @@ extension Gate1AppModel {
     var followingShowRevision: Int { get { followingShows.revision } set { followingShows.revision = newValue } }
     var followingLookedLoaded: Bool { get { followingShows.lookedLoaded } set { followingShows.lookedLoaded = newValue } }
     var followingLookedDirty: Bool { get { followingShows.lookedDirty } set { followingShows.lookedDirty = newValue } }
+    var followingShowListLoaded: Bool { get { followingShows.listLoaded } set { followingShows.listLoaded = newValue } }
 }
 
 /// Writes the looked-times file one save at a time, newest value last: a save that was queued earlier but
@@ -57,6 +61,8 @@ extension Gate1AppModel {
     /// `markShowLooked` only updates memory and sets `followingLookedDirty`. If the followed shows can't be read,
     /// nothing is settled and the next reload tries again.
     func reloadFollowingShowEntries() async {
+        // No store yet (it opens lazily): not loaded, so Following stays quiet instead of flashing "not following
+        // anything". The screen's task re-runs when the Library loads (`libraryCount` is in its key).
         guard let store else { return }
         let needsMarkers = !followingLookedLoaded
         let url = Self.followingLookedURL
@@ -87,6 +93,7 @@ extension Gate1AppModel {
             }
         }
         await rebuildFollowingShowList()
+        followingShowListLoaded = true
     }
 
     /// Builds the rows from the current inputs off the main thread; `body` only reads the result.

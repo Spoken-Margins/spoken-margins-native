@@ -25,7 +25,9 @@ final class AppFileReadGuardTests: XCTestCase {
         // check the names the app saves; it asserts nothing about what Build 29 can read. SpokenMarginsPackageImportCoordinatorTests
         // writes embedded-text packets only to drive the import coordinator's stage and confirm paths; the same
         // packet shape is exported through exportPacket in SharingTests. Its map packet (#1471) is the same shape
-        // TextListeningMapPacketTests exports through exportMapOnlyPacket, which asserts the shipped build refuses it. SourceLinkImportTests
+        // TextListeningMapPacketTests exports through exportMapOnlyPacket, which asserts the shipped build refuses it. SkimBridgeControllerTests
+        // writes the same map-only packet shape to drive the real importer into a store and then Skim (#1471); it asserts nothing
+        // about what Build 29 can read. SourceLinkImportTests
         // writes a private-feed packet only to drive the #454 recovery; PrivateFeedRecoveryTests exports the same
         // kind of linkless packet through exportPacket. This pins that list: a new
         // direct write fails here until someone either routes it through a packet the Mac package tests also read
@@ -43,7 +45,7 @@ final class AppFileReadGuardTests: XCTestCase {
             if matches > 0 { counts[file.lastPathComponent] = matches }
         }
         XCTAssertEqual(counts, ["EpisodeMapStoredNamesTests.swift": 1, "LocalAudioListeningPackageTests.swift": 3,
-                                "SourceLinkImportTests.swift": 1, "SpokenMarginsPackageHandoffTests.swift": 1,
+                                "SkimBridgeControllerTests.swift": 1, "SourceLinkImportTests.swift": 1, "SpokenMarginsPackageHandoffTests.swift": 1,
                                 "SpokenMarginsPackageImportCoordinatorTests.swift": 2])
     }
 }

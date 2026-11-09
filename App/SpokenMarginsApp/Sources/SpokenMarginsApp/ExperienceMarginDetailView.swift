@@ -9,12 +9,11 @@ struct ExperienceMarginDetailView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var pendingNavigation: NavigationIntent?
     @State private var showsManagement = false
-    @State private var actionFeedback: UserFeedbackEvent?
     @State private var markdownFileURL: URL?
     @State private var isPreparingMarkdown = false
     let row: MarginRow
 
-    private enum NavigationIntent { case moment, item }
+    private enum NavigationIntent { case moment, item, share }
     private var current: MarginRow { model.marginRows.first { $0.id == row.id } ?? row }
 
     private var isStarred: Bool { current.interjection.isStarredForSharing == true }
@@ -58,8 +57,18 @@ struct ExperienceMarginDetailView: View {
             }
             .buttonStyle(.automatic)
             .accessibilityIdentifier("marginDetail.copyWithContext.button")
+            // Share means another listener (#3211): this opens the friend sheet with only this Margin.
+            if ItemShareSessionSelection.isShareable(current.interjection) {
+                Button("Share this Margin", systemImage: "person.wave.2") {
+                    pendingNavigation = .share // the friend sheet opens once this screen has closed
+                    dismiss()
+                }
+                .buttonStyle(.automatic)
+                .accessibilityIdentifier("marginDetail.share.button")
+            }
+            // Export means yourself or your tools: this Margin's note as a Markdown file (#1866, #3211).
             if MarginMarkdownShare.hasNote(current.interjection) {
-                Button("Share this Margin", systemImage: "square.and.arrow.up") { // its note as Markdown (#1866 Done when 4)
+                Button("Export this Margin as Markdown", systemImage: "square.and.arrow.up") {
                     guard !isPreparingMarkdown else { return }
                     isPreparingMarkdown = true
                     let margin = current.interjection
@@ -69,7 +78,7 @@ struct ExperienceMarginDetailView: View {
                     }
                 }
                 .buttonStyle(.automatic)
-                .accessibilityIdentifier("marginDetail.shareMarkdown.button")
+                .accessibilityIdentifier("marginDetail.exportMarkdown.button")
             }
             if model.selectedItem.id == current.interjection.itemId,
                model.snapshot.sessionId == current.interjection.sessionId {
@@ -164,7 +173,7 @@ struct ExperienceMarginDetailView: View {
                         }
                         .disabled(model.isRetryingAnchorContext(current.interjection))
                     }
-                    Button("Open Item", systemImage: "doc.text.magnifyingglass") {
+                    Button("Open the source", systemImage: "doc.text.magnifyingglass") {
                         pendingNavigation = .item
                         dismiss()
                     }
@@ -173,10 +182,7 @@ struct ExperienceMarginDetailView: View {
             }
             .buttonStyle(MarginDetailActionButtonStyle())
             .fileShareSheet($markdownFileURL)
-            .overlay(alignment: .top) {
-                if let actionFeedback { UserFeedbackBanner(feedback: actionFeedback).padding(.horizontal, 16) }
-            }
-            .onChange(of: model.feedbackEvent) { _, event in actionFeedback = event }
+            .modifier(SheetFeedbackPresentation())
             .onDisappear {
                 // Having been opened is what clears the mark (#1976); it stays while the note is on screen.
                 guard CutShortMargins.shared.clear(sessionId: row.interjection.sessionId, interjectionId: row.interjection.id) else { return }
@@ -211,8 +217,9 @@ struct ExperienceMarginDetailView: View {
             .onDisappear {
                 if model.isPlayingInterjectionAudio(current.interjection) { model.stopInterjectionAudioPlayback() }
                 switch pendingNavigation {
-                case .moment: model.playMarginMoment(current)
+                case .moment: MarginMomentTap.start(current, model: model)
                 case .item: model.openItemFromTap(id: current.interjection.itemId)
+                case .share: model.openMarginShare(current.interjection)
                 case nil: break
                 }
                 pendingNavigation = nil
@@ -224,7 +231,7 @@ struct ExperienceMarginDetailView: View {
 
 /// Keep activation visible after a quick tap, including when the action performs
 /// synchronous model work. A completion toast is a separate acknowledgement.
-private struct MarginDetailActionButtonStyle: PrimitiveButtonStyle {
+struct MarginDetailActionButtonStyle: PrimitiveButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         MarginDetailActionButton(configuration: configuration)
     }

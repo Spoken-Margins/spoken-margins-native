@@ -97,7 +97,38 @@ struct SupertonicDownloadNoticeCard: View {
         return "James and Lily use the Supertonic voice, which no longer comes inside the app. Download it once\(size) in Settings › Voices, ideally on Wi‑Fi."
     }
 
+    /// The words and the buttons together, exactly as before, whenever they fit the sheet.
+    /// When they don't (accessibility text sizes), the words scroll and the two buttons stay in a bottom inset, so
+    /// Open Voices and Not Now are never pushed off the sheet (#3724; the same remedy #1942 gave the written Margin
+    /// screen). `ViewThatFits` takes the first layout that fits, so the default layout is unchanged.
     var body: some View {
+        ViewThatFits(in: .vertical) {
+            VStack(alignment: .leading, spacing: 16) {
+                words
+                buttons
+            }
+            .padding(24)
+            ScrollView {
+                words
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 24)
+                    .padding(.top, 24)
+                    .padding(.bottom, 16)
+            }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                buttons
+                    .padding(.horizontal, 24)
+                    .padding(.top, 12)
+                    .padding(.bottom, 24)
+                    .background(.regularMaterial)
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("supertonicNotice.card")
+    }
+
+    private var words: some View {
         VStack(alignment: .leading, spacing: 16) {
             Label {
                 Text("Supertonic is now a free download")
@@ -105,7 +136,7 @@ struct SupertonicDownloadNoticeCard: View {
                     .foregroundStyle(AppColors.text)
             } icon: {
                 Image(systemName: "arrow.down.circle")
-                    .foregroundStyle(AppColors.accent)
+                    .foregroundStyle(AppColors.evergreen)
             }
             .accessibilityAddTraits(.isHeader)
             Text(Self.downloadSentence)
@@ -113,6 +144,11 @@ struct SupertonicDownloadNoticeCard: View {
             Text("Until then, the app’s backup voice reads your articles. Your choice of voice stays, and audio already made with Supertonic is kept.")
                 .font(.callout)
                 .foregroundStyle(AppColors.secondaryText)
+        }
+    }
+
+    private var buttons: some View {
+        VStack(spacing: 16) {
             Button(action: openVoices) {
                 Text("Open Voices").frame(maxWidth: .infinity)
             }
@@ -123,9 +159,5 @@ struct SupertonicDownloadNoticeCard: View {
                 .frame(maxWidth: .infinity)
                 .accessibilityIdentifier("supertonicNotice.notNow")
         }
-        .padding(24)
-        .presentationDetents([.medium, .large])
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("supertonicNotice.card")
     }
 }

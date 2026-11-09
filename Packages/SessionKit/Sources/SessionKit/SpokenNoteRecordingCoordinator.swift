@@ -27,13 +27,17 @@ public protocol SpokenNoteItemWriting: Sendable {
 
 /// What a note's row should become when its transcript text changes (#3108). The coordinator keeps its own copy of
 /// the item from when the note started, so it must never save that whole copy over the stored row: the listener may
-/// have moved the row to the trash, renamed it or emptied the trash since. Only the text is brought up to date, and a
-/// row the listener deleted stays deleted.
+/// have moved the row to the trash, renamed it or emptied the trash since. Only the text is brought up to date (and the
+/// title with it, while it is still the made-up one), and a row the listener deleted stays deleted.
 public enum SpokenNoteItemMerge {
     /// The row to save, or nil when nothing should be written.
     public static func rowToSave(stored: Item?, incoming: Item, isFirstSave: Bool) -> Item? {
         guard var row = stored else { return isFirstSave ? incoming : nil }
         guard row.deletedAt == nil, row.text != incoming.text else { return nil }
+        // A title made up from the words follows them; a title the listener typed is never touched (#3663).
+        if SpokenNoteTitle.isAutomatic(row) {
+            row.title = SpokenNoteTitle.automatic(createdAt: row.createdAt, text: incoming.text)
+        }
         row.text = incoming.text
         return row
     }
@@ -53,6 +57,9 @@ public struct SpokenNoteRecordingSnapshot: Equatable, Sendable {
     public var hasUnsavedTake: Bool
     /// Rises with every report, so a screen that receives reports out of order keeps the newest.
     public var revision: Int
+    /// The note's title as this recording knows it: made up from the day and words while they arrive, or the listener's own
+    /// once they rename it (#3663).
+    public var title: String
 }
 
 /// Records takes into one spoken note and keeps the note, its transcripts and its Library item in step (#3108).
@@ -146,8 +153,17 @@ public actor SpokenNoteRecordingCoordinator {
     public func snapshot() -> SpokenNoteRecordingSnapshot {
         SpokenNoteRecordingSnapshot(
             note: store.load(), isRecording: recording != nil,
-            transcribingTakeIds: transcribing, failedTranscriptTakeIds: failed, hasUnsavedTake: !pendingTakes.isEmpty, revision: revision
+            transcribingTakeIds: transcribing, failedTranscriptTakeIds: failed, hasUnsavedTake: !pendingTakes.isEmpty, revision: revision,
+            title: item.title
         )
+    }
+
+    /// The listener renamed the note (the row is already written): this recording takes the new title as its own, so a
+    /// transcript that arrives later neither overwrites it nor shows the old one (#3663).
+    public func adoptTitle(_ title: String) {
+        item.title = title
+        savedItem?.title = title
+        publish()
     }
 
     /// Starts a take. A second start while one is recording is refused, never a second recorder.

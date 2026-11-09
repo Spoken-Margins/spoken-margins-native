@@ -40,6 +40,8 @@ public actor LiveSessionFileWorker {
         /// A Watch recording still waiting in the landing folder and the inbox: nothing is cleared until the Margin is
         /// somewhere the listener can see it (`completePlacement`), so an app that ends in between loses nothing (#2542).
         public var pending: PendingWatchCapture?
+        /// The listener chose "On this episode" on the Watch (#3494): the answer says so.
+        public var aimedAtItem: Bool = false
     }
 
     /// What a deferred Watch Margin needs to be answered and cleared once it is placed.
@@ -302,6 +304,31 @@ public actor LiveSessionFileWorker {
         return session
     }
 
+    /// Files a spoken Margin recorded on the phone into the stored session `sessionId`, whatever screen is or isn't
+    /// open (#3489). A Margin is never lost because its screen closed, the phone locked or the session ended while
+    /// it recorded: an ended session takes it too, at the moment it was started. A screen save that hasn't seen it
+    /// keeps it (`keepingUnseen`). Returns the saved session, or nil when the session was discarded, the Margin is
+    /// already there or the save failed.
+    @discardableResult
+    public func attachSpokenMargin(
+        sessionId: String, marginId: String, audioPath: String, markedAt: Date, durationMs: Int?, spokenOn: String
+    ) -> LiveSession? {
+        let stored = sessions() // loads the deletions too
+        guard !deletions.deletedSession(sessionId), !deletions.marginIds.contains(marginId),
+              let before = stored[sessionId] else { return nil }
+        var session = before
+        guard session.attachSpokenMargin(
+            id: marginId, audioPath: audioPath, markedAt: markedAt, durationMs: durationMs, spokenOn: spokenOn
+        ) else { return nil }
+        noteUnseen(from: before, to: session)
+        do {
+            try persist([session])
+        } catch {
+            return nil
+        }
+        return session
+    }
+
     // MARK: Filing
 
     /// Files each received Watch Margin by `LiveSessionFiling`: stored in `WatchMarginInbox` first, then filed, and only
@@ -393,7 +420,10 @@ public actor LiveSessionFileWorker {
         try? fileManager.removeItem(atPath: pending.landedStem + ".m4a")
         try? fileManager.removeItem(atPath: pending.landedStem + ".json")
         guard let session else {
-            return WatchMarginAnswer(receipt: pending.receipt, outcome: .filed, filedIn: "what was playing", positionMs: placement.positionMs)
+            return WatchMarginAnswer(
+                receipt: pending.receipt, outcome: .filed, filedIn: placement.aimedAtItem ? "this episode" : "what was playing",
+                positionMs: placement.positionMs
+            )
         }
         return WatchMarginAnswer(
             receipt: pending.receipt, outcome: .filed, sessionId: session.id, filedIn: Self.name(of: session),
@@ -434,7 +464,10 @@ public actor LiveSessionFileWorker {
         let corrected = LiveSessionWatchSessions.phoneTime(transfer.wallStart, clock: transfer.clock)
         let offset = transfer.clock.flatMap { $0.isFresh(at: transfer.wallStart) ? $0.offset : nil }
         let decision = LiveSessionFiling.decide(
-            .init(marginId: transfer.marginId, markedAt: transfer.wallStart, clockOffset: offset, sessionId: transfer.sessionId),
+            .init(
+                marginId: transfer.marginId, markedAt: transfer.wallStart, clockOffset: offset, sessionId: transfer.sessionId,
+                itemTarget: transfer.itemTarget
+            ),
             sessions: candidates(), deletions: deletions, playerRuns: playerRuns, now: now
         )
         switch decision {
@@ -464,7 +497,8 @@ public actor LiveSessionFileWorker {
             pass.placements.append(PlayerPlacement(
                 marginId: transfer.marginId, itemId: itemId, positionMs: positionMs, markedAt: corrected.time,
                 audioPath: transfer.audioPath, durationMs: transfer.durationMs, spokenOn: "watch",
-                pending: PendingWatchCapture(captureId: captureId, receipt: receipt, landedStem: audioURL.deletingPathExtension().path)
+                pending: PendingWatchCapture(captureId: captureId, receipt: receipt, landedStem: audioURL.deletingPathExtension().path),
+                aimedAtItem: transfer.itemTarget != nil
             ))
             return nil
         }

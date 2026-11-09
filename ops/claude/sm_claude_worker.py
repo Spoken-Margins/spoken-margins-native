@@ -25,10 +25,10 @@ run starts from that branch and that comment. After 3 runs the branch becomes a 
 `needs-mac` with a "Handing to the Mac finisher:" comment. Two runs in a row that add no commit
 park the issue as `blocked` (the waste signal in the issue's Cost and catch).
 
-Project board (#1621): each tick runs `scripts/sm_project_sync.py --apply` at most once an hour, and a
-child syncs its issue's card right after its claim and its stop note. The cloud dispatch can't write
-the user project (its token gets a 403), so the Mac, whose `gh` token has the project scope, keeps
-the board in line. Best effort: a failed sync is logged and never holds a tick or a run.
+Area labels (#3636): each tick runs `scripts/area_labels.py --apply` at most once an hour, which puts
+`needs-area` on any open issue without exactly one area label. It replaced the project-board sync
+(#1621) on 2026-11-07, when the owner dropped the board. Best effort: a failed pass is logged and never
+holds a tick or a run.
 
 Holds (every slip fails toward spending less): Dial Off or no Threads box; HALT (usage breaker:
 Claude) on #337; Paced usage at the hold line or ahead of trend, or no fresh report; less than
@@ -98,8 +98,12 @@ MAX_WORKERS = int(os.environ.get('SM_CLAUDE_WORKER_MAX', '1'))  # the Mac has tw
 MARGIN = 3                 # points below the Dial's stop line where new work holds (as the Dial gate)
 TREND_SLACK = 10           # points ahead of the trend line allowed (as the Dial gate; owner 2026-10-19)
 MIN_FREE_GIB = 20          # the Mac finisher's pause line; AGENTS.md wants 10 GiB plus 4 per build
+# Milestones are releases named by app version (owner, 2026-11-07; #3636): with no override, the lowest open
+# version ranks first, then the next ones, then every other milestone. The variable still forces an order.
 FOCUS_MILESTONES = tuple(name.strip() for name in
-                         os.environ.get('SM_CLAUDE_WORKER_FOCUS_MILESTONE', 'Showcase').split(',') if name.strip())
+                         os.environ.get('SM_CLAUDE_WORKER_FOCUS_MILESTONE', '').split(',') if name.strip())
+VERSION_MILESTONE = re.compile(r'^\d+(?:\.\d+)+$')
+RELEASE_ALIASES = {'Showcase': '0.2'}    # until the owner renames the milestone (#3636)
 CLAIM_STALE = dt.timedelta(hours=6)      # another thread's claim this old and quiet is released
 STALL_GRACE = dt.timedelta(hours=1)      # the Mac finisher gets this long on a stalled PR first
 FAULT_COOLDOWN = dt.timedelta(minutes=30)
@@ -109,7 +113,7 @@ MAX_FINISH_ROUNDS = 2
 MAX_WEEKLY_ROUNDS = 4      # finishing rounds per PR in a week, so a PR the worker can't fix stops costing runs
 ROUND_WINDOW = dt.timedelta(hours=24)
 OTHER_FINISHER_HOLD = dt.timedelta(hours=2)
-BOARD_EVERY = dt.timedelta(hours=1)      # the full project-board pass (#1621); claims and stops sync their own card
+BOARD_EVERY = dt.timedelta(hours=1)      # the hourly pass: area labels (#3636) and PR issue links (#2167)
 BOARD_TIMEOUT_S = 600
 LANE_STATE = Path(os.environ.get('SM_LANE_STATE', str(Path.home() / 'Library' / 'Caches' / 'SpokenMarginsLane')))
 
@@ -388,11 +392,15 @@ def label_skip(issue: dict, held: set = frozenset()) -> Optional[str]:
     return None
 
 
-def focus_rank(milestone: Optional[str]) -> int:
-    """Position of the milestone in the ordered focus list; anything else ranks after every listed one."""
-    if FOCUS_MILESTONES and milestone in FOCUS_MILESTONES:
-        return FOCUS_MILESTONES.index(milestone)
-    return len(FOCUS_MILESTONES)
+def focus_rank(milestone: Optional[str]) -> tuple:
+    """With an override, the milestone's place in that list (anything else after it). Otherwise a release
+    milestone by its version, lowest first, ahead of every other milestone."""
+    if FOCUS_MILESTONES:
+        return (FOCUS_MILESTONES.index(milestone) if milestone in FOCUS_MILESTONES else len(FOCUS_MILESTONES),)
+    version = RELEASE_ALIASES.get(milestone or '', milestone or '')
+    if VERSION_MILESTONE.match(version):
+        return (0, tuple(int(part) for part in version.split('.')))
+    return (1, ())
 
 
 def issue_rank(issue: dict, pending: bool) -> tuple:
@@ -900,22 +908,21 @@ class Ops:
     def comment(self, number: int, body: str) -> None:
         self.must(['gh', 'issue', 'comment', str(number), '-R', REPO, '--body', body], cwd=self.repo_root)
 
-    def board_sync(self, number: Optional[int] = None, ledger: Optional[Path] = None) -> str:
-        """Bring project 6's cards (or one issue's) in line with the evidence (#1621). Never raises.
+    def area_sync(self, ledger: Optional[Path] = None) -> str:
+        """Flag open issues without exactly one area label (#3636). Never raises.
         With `ledger` (the lane's state folder), the run's time and any unknowns go in the step ledger."""
-        script = self.own_root / 'scripts' / 'sm_project_sync.py'
+        script = self.own_root / 'scripts' / 'area_labels.py'
         if not script.exists():
-            return 'skipped: scripts/sm_project_sync.py is not on this checkout'
-        cmd = [sys.executable, str(script), '--apply'] + (['--issue', str(number)] if number else [])
-        cmd += ['--ledger-state', str(ledger)] if ledger else []
+            return 'skipped: scripts/area_labels.py is not on this checkout'
+        cmd = [sys.executable, str(script), '--apply'] + (['--ledger-state', str(ledger)] if ledger else [])
         try:
             res = self.run(cmd, cwd=self.repo_root, timeout=BOARD_TIMEOUT_S)
         except Exception as exc:
             return f'error: {exc}'
         try:
             report = json.loads(res.stdout or '')
-            told = (f"{len(report.get('changes', []))} change(s), {len(report.get('unknown', []))} unknown, "
-                    f"{report.get('api_calls')} calls, {report.get('writes')} writes, {report.get('seconds')} s"
+            told = (f"{len(report.get('flagged', []))} flagged, {len(report.get('cleared', []))} cleared, "
+                    f"{len(report.get('unknown', []))} unknown, {report.get('seconds')} s"
                     + ''.join(f'; ledger: {one_line(alarm)}' for alarm in report.get('ledger_alarms') or []))
         except (ValueError, AttributeError, TypeError):
             told = one_line(res.stderr or res.stdout or 'no output')
@@ -934,6 +941,22 @@ class Ops:
             report = json.loads(res.stdout or '')
             told = (f"{len(report.get('flagged', []))} flagged, {len(report.get('cleared', []))} cleared, "
                     f"{len(report.get('unknown', []))} unknown")
+        except (ValueError, AttributeError, TypeError):
+            told = one_line(res.stderr or res.stdout or 'no output')
+        return f'exit {res.returncode}: {told}'
+
+    def ready_guard_sync(self) -> str:
+        """Take `ready` off issues whose only work left is the owner's check (#3666). Never raises. No model."""
+        script = self.own_root / 'scripts' / 'ready_owner_only.py'
+        if not script.exists():
+            return 'skipped: scripts/ready_owner_only.py is not on this checkout'
+        try:
+            res = self.run([sys.executable, str(script), '--apply'], cwd=self.repo_root, timeout=BOARD_TIMEOUT_S)
+        except Exception as exc:
+            return f'error: {exc}'
+        try:
+            report = json.loads(res.stdout or '')
+            told = f"{len(report.get('flagged', []))} flagged, {len(report.get('unknown', []))} unknown"
         except (ValueError, AttributeError, TypeError):
             told = one_line(res.stderr or res.stdout or 'no output')
         return f'exit {res.returncode}: {told}'
@@ -969,11 +992,12 @@ def board_pass(ops: Ops, now: dt.datetime) -> Optional[str]:
         (ops.home / 'board-sync.json').write_text(
             json.dumps({'last': now.astimezone(dt.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}))
     except OSError as exc:   # no stamp, no pass: an unwritable folder must not run it every tick
-        ops.log(f'board sync (hourly, #1621): skipped, could not write its stamp ({exc})')
+        ops.log(f'hourly pass (#3636): skipped, could not write its stamp ({exc})')
         return None
-    result = ops.board_sync(ledger=LANE_STATE if LANE_STATE.is_dir() else None)
-    ops.log(f'board sync (hourly, #1621): {result}')
+    result = ops.area_sync(ledger=LANE_STATE if LANE_STATE.is_dir() else None)
+    ops.log(f'area labels (hourly, #3636): {result}')
     ops.log(f'PR issue links (hourly, #2167): {ops.pr_link_sync()}')
+    ops.log(f'ready with only the owner\'s check left (hourly, #3666): {ops.ready_guard_sync()}')
     return result
 
 
@@ -1192,7 +1216,6 @@ def run_issue(ops: Ops, slot: int, number: int) -> str:
                 ops.label(number, add=add)
             except Exception as exc:
                 ops.log(f'#{number} slot {slot}: could not add {add}: {exc}')
-        ops.log(f'#{number} slot {slot}: board card: {ops.board_sync(number)}')
 
     try:
         run_dir.mkdir(parents=True, exist_ok=True)
@@ -1214,7 +1237,6 @@ def run_issue(ops: Ops, slot: int, number: int) -> str:
         ops.label(number, remove='ready')
         ops.comment(number, claim_text(slot, now, run))
         ops.log(f'#{number} slot {slot}: claimed as "{worker_title(slot)}", run {run} of {MAX_RUNS}')
-        ops.log(f'#{number} slot {slot}: board card: {ops.board_sync(number)}')
 
         ops.must(['git', 'fetch', '--quiet', 'origin', BASE_BRANCH], cwd=ops.repo_root, timeout=600)
         clear_worktree(ops, wt)

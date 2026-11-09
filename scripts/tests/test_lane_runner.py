@@ -1,5 +1,9 @@
 import os
 os.environ.pop('SM_TRUNK', None)  # fixtures are written for the default trunk; the lane and the Mac export SM_TRUNK (#1492)
+# A dispatched hosted run (hosted-portable.yml, workflow_dispatch) runs these tests inside a real Actions job, so the real
+# event name would reach lane-runner.py's `--mode auto` branch on it and fail every test that drives main() (#3645).
+# The lane test modules import this one first; a test sets the event itself with mock.patch.dict when it needs one.
+os.environ.pop('GITHUB_EVENT_NAME', None)
 import contextlib
 import datetime
 import importlib.util
@@ -19,6 +23,8 @@ from unittest import mock
 
 SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
+sys.path.insert(0, str(SCRIPTS / 'tests'))
+import workflow_yaml  # noqa: E402
 spec = importlib.util.spec_from_file_location('lane_runner', SCRIPTS / 'lane-runner.py')
 lane = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(lane)
@@ -477,6 +483,31 @@ class T3Tests(unittest.TestCase):
         # A plan that did not finish is the lane's trouble, not a verdict on the requested test.
         stopped = lane.summarize_manifest({'steps': []})
         self.assertEqual(lane.t3_verdict([stopped], ['failed_or_incomplete']), 'INCONCLUSIVE')
+
+    def test_a_hosted_audio_loopback_class_that_could_not_listen_is_not_a_fail_or_an_inconclusive(self):
+        """#3604: a hosted Mac has no BlackHole, so the AudioLoopback skip is recorded as not run; the rest decides."""
+        ran = {'status': 'verified', 'steps': [{'name': 'xcode-tests', 'tests': {'T/A/test1': {'status': 'passed'}}}]}
+        audio = 'T/AudioLoopbackPlaybackTests/testVoice'
+        only_audio = {'status': 'verified', 'steps': [{'name': 'xcode-tests', 'audio_not_run': [audio],
+                                                       'tests': {audio: {'status': 'skipped'}}}]}
+        nothing = {'status': 'verified', 'steps': [{'name': 'xcode-tests', 'tests': {}}]}
+        loopback, other = ['T/AudioLoopbackPlaybackTests'], ['T/A']
+        # (plan: (manifest, the selectors it was asked for)), the verdict, whether the report says the audio check is owed
+        for plans, verdict, owed in (
+                ({'app': (ran, other), 'adapters': (only_audio, loopback)}, 'PASS', True),
+                ({'adapters': (only_audio, loopback)}, 'INCONCLUSIVE', True),
+                ({'app': (ran, other), 'adapters': (nothing, other)}, 'FAIL', False),
+                # The audit on d223d47: another requested class in the same plan that ran nothing is still #2596's FAIL.
+                ({'app': (ran, other), 'adapters': (only_audio, loopback + ['T/Foo'])}, 'FAIL', True),
+                ({'adapters': (only_audio, loopback + ['T/Foo'])}, 'FAIL', True)):
+            with self.subTest(plans=list(plans), verdict=verdict):
+                grouped = {plan: selectors for plan, (_, selectors) in plans.items()}
+                summaries, statuses, _, details = lane.run_plans(grouped, lambda plan, *_: plans[plan][0], Path('/e'))
+                self.assertEqual(lane.t3_verdict(summaries, statuses), verdict)
+                self.assertEqual(any('not run on the hosted Mac' in line and 'still owed' in line for line in details), owed)
+                self.assertEqual(any('ran 0 of the requested tests' in line for line in details), verdict == 'FAIL')
+                audio_only_plan = any(selectors == loopback for _, selectors in plans.values())
+                self.assertEqual(any('only AudioLoopback tests were requested' in line for line in details), audio_only_plan)
 
     def test_only_a_deliberate_wait_is_a_hold(self):
         held = ['not merged: held for T3: this PR\'s newest /lane T3 request has no lane report yet.']
@@ -2477,14 +2508,18 @@ class MainFlowTests(unittest.TestCase):
 
     def test_the_workflow_fails_its_verdict_step_and_tidies_only_when_nothing_was_reported(self):
         workflow = (Path(__file__).resolve().parents[2] / '.github/workflows/lane.yml').read_text()
+        checkouts = [options for _, options in workflow_yaml.checkout_steps(workflow_yaml.load('lane.yml'))]
         # Every Mac job checks out the Git LFS models: --plan fast's contracts check reads them (#301). The third is
         # the release job a T3 PASS hands to a build runner (#1209). The lane job checks them out on the Mac, and on a
         # GitHub-hosted Mac fetches them from a cache instead (#1389 phase 2, test_lane_hosted_app.py).
-        self.assertEqual(workflow.count('lfs: true'), 2)  # the release job and the automerge-mac fallback (#2459)
-        self.assertIn("lfs: ${{ runner.environment != 'github-hosted' }}", workflow)
-        self.assertIn("lfs: ${{ !contains(fromJSON(needs.route.outputs.automerge || '[]'), 'ubuntu-latest') }}", workflow)
-        # hosted routing plus the four Mac jobs (automerge-mac, #2459)
-        self.assertEqual(workflow.count('persist-credentials: false'), 5)
+        self.assertEqual([options['lfs'] for options in checkouts if options.get('lfs') is True], [True])  # automerge-mac (#2459)
+        # The others take them only where a Mac builds: the release job on the build runner (#3501).
+        self.assertEqual(sorted(str(options['lfs']) for options in checkouts if 'lfs' in options and options['lfs'] is not True), [
+            "${{ !(vars.LANE_HOSTED_FAST == 'on' && vars.LANE_HOSTED_MAC_REST == 'on') }}",
+            "${{ !contains(fromJSON(needs.route.outputs.automerge || '[]'), 'ubuntu-latest') }}",
+            "${{ runner.environment != 'github-hosted' }}"])
+        # hosted routing plus the four Mac jobs (automerge-mac, #2459): none keeps the token in .git/config
+        self.assertEqual([options.get('persist-credentials') for options in checkouts], [False] * 5)
         self.assertIn("if: steps.run.outputs.reported == 'true'", workflow)
         self.assertIn("if: (failure() || cancelled()) && steps.run.outputs.reported != 'true'", workflow)
 
@@ -4060,6 +4095,17 @@ class TrustedCommentTests(unittest.TestCase):
         self.assertEqual(lane.pending_requests(kept), (None, False))
         printed.assert_not_called()
 
+
+
+class DispatchedHostedRunTests(unittest.TestCase):
+    """#3645: the lane tests pass inside a dispatched hosted run, where GITHUB_EVENT_NAME is workflow_dispatch and
+    GITHUB_ACTIONS is true. Runs a lane test module that drives main() in a child with that environment."""
+
+    def test_a_lane_module_that_drives_main_passes_under_a_dispatched_hosted_run(self):
+        env = {**os.environ, 'GITHUB_EVENT_NAME': 'workflow_dispatch', 'GITHUB_ACTIONS': 'true'}
+        done = subprocess.run([sys.executable, '-m', 'unittest', 'test_lane_beside_simulator'],
+                              cwd=Path(__file__).resolve().parent, env=env, capture_output=True, text=True, timeout=120)
+        self.assertEqual(done.returncode, 0, done.stderr[-2000:])
 
 if __name__ == '__main__':
     unittest.main()

@@ -40,7 +40,7 @@ extension Gate1AppModel {
         switch written {
         case .success(let segments): files = segments
         case .failure(let error):
-            diagnostics[diagnosticKey] = "write_failed:\(error.localizedDescription)"
+            diagnostics[diagnosticKey] = "write_failed:\(SafeErrorText.describe(error))"
             return
         }
         // A newer hand-over for this Margin may have started while this one wrote; the newer window wins, in either order.
@@ -109,7 +109,7 @@ extension Gate1AppModel {
                     )
                     parts.append((file.startMediaTimeMs, analysis.timeline))
                 } catch {
-                    failure = error.localizedDescription
+                    failure = SafeErrorText.describe(error)
                 }
                 // The scratch folder holds a whole exported window; clear it off the main actor (#2510).
                 _ = try? await Self.offMain {
@@ -306,7 +306,7 @@ extension Gate1AppModel {
                     if reportsResult { self.reportConfirmation("Source context recovered.") }
                 }
             } catch {
-                self.diagnostics[Self.marginDiagnosticKey("sourceWindowTranscription", sessionId: interjection.sessionId, interjectionId: interjectionId)] = "failed:\(error.localizedDescription)"
+                self.diagnostics[Self.marginDiagnosticKey("sourceWindowTranscription", sessionId: interjection.sessionId, interjectionId: interjectionId)] = "failed:\(SafeErrorText.describe(error))"
                 self.diagnostics[Self.marginDiagnosticKey("sourceWindowContextProvenance", sessionId: interjection.sessionId, interjectionId: interjectionId)] = "unavailable"
                 self.pendingSourceContextInterjectionIds.remove(identity)
                 self.run { engine in
@@ -397,17 +397,18 @@ extension Gate1AppModel {
             } catch {
                 await MainActor.run {
                     let failure = String(describing: error)
+                    let diagnostic = SafeErrorText.describe(error)
                     let wasRetry = retryingInterjectionTranscriptionIds.contains(Self.marginIdentity(interjection))
                     if wasRetry {
-                        recordFailedRetry(of: interjection, failure: failure)
+                        recordFailedRetry(of: interjection, failure: failure, diagnostic: diagnostic)
                         presentTranscriptionFailure(TranscriptionFailureWording.notice(error: failure, isRetry: true), for: interjection)
                     } else {
                         run { engine in
                             snapshot = try engine.transcriptionFailed(interjectionId: interjection.id, sessionId: interjection.sessionId, error: failure)
                             refreshSelectedItemInBackground()
                             refreshMarginRow(sessionId: interjection.sessionId, interjectionId: interjection.id)
-                            diagnostics[Self.marginDiagnosticKey("interjectionTranscription", interjection)] = "failed:\(failure)"
-                            diagnostics["lastInterjectionTranscriptionFailure"] = "\(interjection.id):\(failure)"
+                            diagnostics[Self.marginDiagnosticKey("interjectionTranscription", interjection)] = "failed:\(diagnostic)"
+                            diagnostics["lastInterjectionTranscriptionFailure"] = "\(interjection.id):\(diagnostic)"
                             presentTranscriptionFailure(TranscriptionFailureWording.notice(error: failure, isRetry: false), for: interjection)
                         }
                     }

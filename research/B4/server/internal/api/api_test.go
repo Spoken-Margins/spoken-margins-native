@@ -122,6 +122,11 @@ func TestSkeletonEndToEnd(t *testing.T) {
 	if r.Body["status"] != "ok" {
 		t.Fatalf("health body %v", r.Body)
 	}
+	for _, field := range []string{"commit", "built"} {
+		if _, ok := r.Body[field]; !ok {
+			t.Fatalf("health has no %s field, which scripts/sm_live.py reads: %v", field, r.Body)
+		}
+	}
 
 	r, err = c.Get(api.PathConfig)
 	expect(t, "config", r, err, 200, "")

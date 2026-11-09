@@ -12,7 +12,7 @@ public struct SharedPacketExportFailure: Equatable, Sendable {
     public let listenerMessage: String
 
     public init(error: Error, prepared: PreparedSpokenMarginsPackage?) {
-        var diagnostic = String(describing: error)
+        var diagnostic = SafeErrorText.describe(error)
         if let manifest = prepared?.manifest {
             let item = manifest.item
             let longestURL = [item.canonicalURL, item.originalURL, item.enclosureURL, item.source?.canonicalURL]

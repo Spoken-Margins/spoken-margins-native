@@ -58,7 +58,7 @@ public enum FollowingFriends {
             var item = group.items[itemId] ?? (entry.itemTitle, date, [], [], entry.layer.itemIdentity.itemType)
             item.newest = max(item.newest, date)
             item.marginIds.insert(entry.id)
-            if entry.interjection.isNewToListener {
+            if entry.interjection.showsAsNew {
                 group.newIds.insert(entry.id)
                 item.newIds.insert(entry.id)
             }
@@ -130,7 +130,7 @@ public enum FollowingFriends {
         "\(count) Margin\(count == 1 ? "" : "s")"
     }
 
-    /// "episode" when every item is a podcast episode, "article" for articles; "item" for a mix.
+    /// "episode" when every item is a podcast episode, "article" for articles; "source" for a mix.
     static func itemNoun(_ kinds: Set<SharedItemType>, count: Int) -> String {
         let (one, many): (String, String)
         switch kinds.count == 1 ? kinds.first : nil {
@@ -138,7 +138,7 @@ public enum FollowingFriends {
         case .text: (one, many) = ("article", "articles")
         case .pdf: (one, many) = ("PDF", "PDFs")
         case .epub: (one, many) = ("book", "books")
-        case .other, nil: (one, many) = ("item", "items")
+        case .other, nil: (one, many) = ("source", "sources")
         }
         return count == 1 ? one : many
     }

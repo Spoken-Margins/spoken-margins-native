@@ -20,11 +20,13 @@ public struct ClipboardLinkOffer: Equatable, Sendable {
 
     /// How long the card stays untouched before it hides itself and settles that copy (#2696).
     public static let autoDismissDelay: TimeInterval = 6
-    /// The longer wait with VoiceOver on, so the card stays reachable while it is read and navigated.
-    public static let voiceOverAutoDismissDelay: TimeInterval = 15
 
-    public static func autoDismissDelay(voiceOverRunning: Bool) -> TimeInterval {
-        voiceOverRunning ? voiceOverAutoDismissDelay : autoDismissDelay
+    /// How long the card waits before it hides itself, or nil when it stays until the listener answers. With VoiceOver
+    /// or Switch Control running, finding the card and activating Paste takes longer than any fixed timer allows, so it
+    /// stays, as the sibling banners do (#1927, #3720). A listener touching the card or on it with focus holds the
+    /// timer for everyone else (`FeedbackBannerPolicy.timerIsHeld`).
+    public static func autoDismissDelay(assistiveTechnologyRunning: Bool) -> TimeInterval? {
+        assistiveTechnologyRunning ? nil : autoDismissDelay
     }
 
     /// Whether the timer may hide the card. It never does while an import runs or an error shows.

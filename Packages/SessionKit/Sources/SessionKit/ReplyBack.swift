@@ -118,25 +118,48 @@ extension SharedMarginReview {
     /// order is the lead-in, the parent, then the reply (default taken on #3221). A parent plays once, before the first
     /// reply to it, and sits at the reply's place so the review makes no extra hop. A parent with no saved voice (a
     /// written Margin) can't be played and is left out.
+    ///
+    /// A reply placed only by a clock or a map (`isApproximate`) is the exception (#3611): the friend's clock can be
+    /// off by the ad difference between two copies of an episode, while the listener's own Margin sits at its exact
+    /// place on this copy. The parent then keeps its own place, exact, and the reply follows it there (still marked
+    /// approximate: how far after the parent the friend spoke isn't known).
     public static func playlist(for entries: [Entry], ownMargins: [Interjection]) -> [Step] {
         let own = Dictionary(ownMargins.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        var played = Set<String>()
+        var parentPlaces: [String: Int] = [:]  // where each played parent's step sits, for its later replies
         var steps: [Step] = []
         for entry in entries {
-            if case .yours(let id, let ms)? = entry.replyContext?.parent,
-               let parent = own[id], parent.isSpokenItemMargin, played.insert(id).inserted {
-                let caption = "Your Margin" + (ms.map { " at \(ReplyContext.clock($0))" } ?? "")
-                steps.append(Step(
-                    anchor: MarginMomentAnchor(
-                        marginId: parentMarginId(id), mediaTimeMs: entry.mediaTimeMs, isApproximate: entry.isApproximate,
-                        caption: caption, isYours: true
-                    ),
-                    entry: nil, ownParent: parent
-                ))
+            var replyAnchor = entry.anchor
+            if case .yours(let id, let ms)? = entry.replyContext?.parent, let parent = own[id], parent.isSpokenItemMargin {
+                // A guessed reply goes where its parent plays: the parent's own place on this copy, or where an earlier
+                // reply already put the parent's step.
+                let place = parentPlaces[id] ?? (entry.isApproximate ? parent.anchor.mediaTimeMs : nil)
+                if parentPlaces[id] == nil {
+                    let caption = "Your Margin" + (ms.map { " at \(ReplyContext.clock($0))" } ?? "")
+                    let at = place ?? entry.mediaTimeMs
+                    parentPlaces[id] = at
+                    steps.append(Step(
+                        anchor: MarginMomentAnchor(
+                            marginId: parentMarginId(id), mediaTimeMs: at,
+                            isApproximate: place == nil && entry.isApproximate, caption: caption, isYours: true
+                        ),
+                        entry: nil, ownParent: parent
+                    ))
+                }
+                if entry.isApproximate, let place = parentPlaces[id] {
+                    replyAnchor = MarginMomentAnchor(
+                        marginId: entry.marginId, mediaTimeMs: place, label: entry.senderLabel, isApproximate: true,
+                        caption: entry.replyContext?.caption, isReadAloud: entry.interjection.isWritten
+                    )
+                }
             }
-            steps.append(Step(anchor: entry.anchor, entry: entry, ownParent: nil))
+            steps.append(Step(anchor: replyAnchor, entry: entry, ownParent: nil))
         }
-        return steps
+        // `entries` are in the friends' clock order; a step moved to its parent's place may now be out of order, and
+        // the sequence plays a step that isn't ahead of the last one at once, with no lead-in. Stable, so a parent
+        // stays directly before its reply.
+        return steps.enumerated()
+            .sorted { ($0.element.anchor.mediaTimeMs, $0.offset) < ($1.element.anchor.mediaTimeMs, $1.offset) }
+            .map(\.element)
     }
 
     /// The Margins whose arrival is announced with the chime: the first Margin of each stretch the listener hears,

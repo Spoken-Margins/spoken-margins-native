@@ -13,7 +13,7 @@ final class FeedbackBannerTests: XCTestCase {
 
         // Reports a failure: the item isn't in Recently Deleted.
         model.permanentlyDeleteItem(id: "item-pill")
-        let message = "Move the item to Recently Deleted before deleting it permanently."
+        let message = "Move it to Recently Deleted before deleting it permanently."
         XCTAssertEqual(model.feedbackEvent?.kind, .error)
         XCTAssertEqual(model.itemFailures.lastFailure(itemId: "item-pill")?.message, message)
 
@@ -177,6 +177,17 @@ final class FeedbackBannerTests: XCTestCase {
         XCTAssertTrue(plain.mayBeReplaced(by: confirmation))
     }
 
+    /// #3793: the saved-Margin news wasn't shown while a voice Margin's transcript Retry was up.
+    func testASavedMarginCoversATranscriptRetryButAnotherConfirmationDoesNot() {
+        let origin = FeedbackOrigin(itemId: "item", sessionId: "session", work: .marginTranscription)
+        let transcriptRetry = UserFeedbackEvent(kind: .error, message: "Audio saved. Transcript failed.", retry: .init(key: "t") {}, origin: origin)
+        let saved = UserFeedbackEvent(kind: .success, message: "Written Margin saved.", savesMargin: true)
+        let copied = UserFeedbackEvent(kind: .success, message: "Copied.")
+
+        XCTAssertTrue(transcriptRetry.mayBeReplaced(by: saved))
+        XCTAssertFalse(transcriptRetry.mayBeReplaced(by: copied))
+    }
+
     func testFailedTimelineSummaryStaysOnItsItemAfterBannerCloses() async throws {
         try await withPendingLocalSummary { model, summarizer in
             XCTAssertEqual(model.screen, .timeline)
@@ -327,6 +338,37 @@ final class FeedbackBannerTests: XCTestCase {
         }
         XCTFail("Timed out waiting for the local summary failure.")
     }
+
+    // MARK: The hold the timed cards share (#3720)
+
+    /// A card the listener is touching waits, a second at a time, until they let go.
+    func testTheHoldWaitsWhileTouchedAndStopsWhenReleased() async throws {
+        let hold = FeedbackBannerHold()
+        hold.setTouched(true)
+        var slept = 0
+        try await hold.waitWhileHeld { _ in
+            slept += 1
+            if slept == 3 { hold.setTouched(false) }
+        }
+        XCTAssertEqual(slept, 3)
+    }
+
+    func testTheHoldDoesNotWaitWhenNothingHoldsTheCard() async throws {
+        let hold = FeedbackBannerHold()
+        var slept = 0
+        try await hold.waitWhileHeld { _ in slept += 1 }
+        XCTAssertEqual(slept, 0)
+    }
+
+    /// A touch SwiftUI never reports as ended can't keep a card forever.
+    func testTheHoldGivesUpAfterItsCap() async throws {
+        let hold = FeedbackBannerHold()
+        hold.setFocused(true)
+        var slept = 0
+        try await hold.waitWhileHeld(maxSeconds: 5) { _ in slept += 1 }
+        XCTAssertEqual(slept, 5)
+    }
+
 }
 
 private actor PendingFailingSummaryClient: LocalFoundationModelClient {

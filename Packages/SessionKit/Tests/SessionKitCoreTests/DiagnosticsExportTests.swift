@@ -22,6 +22,8 @@ final class DiagnosticsExportTests: XCTestCase {
         )
     }
 
+    private static let salt = Data("test-salt-1".utf8)
+
     // MARK: Rule A: keys that may hold what the listener typed, pasted or chose
 
     func testLiveEntriesThatMayHoldUserContentNeverLeave() {
@@ -132,13 +134,13 @@ final class DiagnosticsExportTests: XCTestCase {
             "automaticAudioPreparation:\(Self.itemIds[1])": "queued",
             "lastImport": Self.itemIds[0],
         ]
-        let entries = DiagnosticsExport.entries(live: live, stored: [:], fixed: fixed())
-        let token = DiagnosticsExport.token(Self.itemIds[0])
+        let entries = DiagnosticsExport.entries(live: live, stored: [:], fixed: fixed(), salt: Self.salt)
+        let token = DiagnosticsExport.token(Self.itemIds[0], salt: Self.salt)
         XCTAssertEqual(entries["automaticAudioPreparation:\(token)"], "queued")
         XCTAssertEqual(entries["startupAudioPreparation:\(token)"], "ready_2_of_4")
         XCTAssertEqual(entries["lastImport"], token, "a value that names the item carries the same token as its keys")
-        XCTAssertEqual(entries["automaticAudioPreparation:\(DiagnosticsExport.token(Self.itemIds[1]))"], "queued")
-        XCTAssertNotEqual(token, DiagnosticsExport.token(Self.itemIds[1]))
+        XCTAssertEqual(entries["automaticAudioPreparation:\(DiagnosticsExport.token(Self.itemIds[1], salt: Self.salt))"], "queued")
+        XCTAssertNotEqual(token, DiagnosticsExport.token(Self.itemIds[1], salt: Self.salt))
         XCTAssertEqual(token.count, 12)
     }
 
@@ -149,9 +151,9 @@ final class DiagnosticsExportTests: XCTestCase {
         live["lastSourceLinkImport"] = "none"
         live["lastSharedPDFImport"] = "Tax Return 2025.pdf"
         live["lastRemotePDFImport"] = "https://example.com/private.pdf"
-        let entries = DiagnosticsExport.entries(live: live, stored: [:], fixed: fixed())
+        let entries = DiagnosticsExport.entries(live: live, stored: [:], fixed: fixed(), salt: Self.salt)
         for key in DiagnosticsExport.keysHoldingAnItemId where key != "lastSourceLinkImport" {
-            XCTAssertEqual(entries[key], DiagnosticsExport.token(id), key)
+            XCTAssertEqual(entries[key], DiagnosticsExport.token(id, salt: Self.salt), key)
         }
         XCTAssertEqual(entries["lastSourceLinkImport"], "none")
         XCTAssertNil(entries["lastSharedPDFImport"], "a file name is what the listener chose")
@@ -163,10 +165,11 @@ final class DiagnosticsExportTests: XCTestCase {
         let entries = DiagnosticsExport.entries(
             live: ["sourceEntryImport:https://example.com/feed/1": "item:\(item),subscription:sub-1"],
             stored: [:],
-            fixed: fixed()
+            fixed: fixed(),
+            salt: Self.salt
         )
-        let key = "sourceEntryImport:\(DiagnosticsExport.token("https://example.com/feed/1"))"
-        XCTAssertEqual(entries[key], "item:\(DiagnosticsExport.token(item)),subscription:sub-1")
+        let key = "sourceEntryImport:\(DiagnosticsExport.token("https://example.com/feed/1", salt: Self.salt))"
+        XCTAssertEqual(entries[key], "item:\(DiagnosticsExport.token(item, salt: Self.salt)),subscription:sub-1")
     }
 
     func testKeysWithoutAnIdAndPerMarginKeysAreLeftAlone() {

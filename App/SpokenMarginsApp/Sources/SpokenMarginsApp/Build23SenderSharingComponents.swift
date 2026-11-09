@@ -97,9 +97,9 @@ enum Build23SenderPresentation {
     static func transportConsequence(_ transport: Build23RecipientTransport) -> String {
         switch transport {
         case .reference:
-            "The package points back to the source. The recipient may need source access, and no embedding-rights assertion is required."
+            "The file points back to the source. The recipient may need source access, and no embedding-rights assertion is required."
         case .embeddedText:
-            "Reviewed source text travels inside the package. Declining embedding rights still allows Margin export with recipient-supplied transport."
+            "Reviewed source text travels inside the file. Declining embedding rights still allows Margin export with recipient-supplied transport."
         case .recipientSupplied:
             "Margins still export without embedded source material. The recipient supplies the source before imported Margins are positioned."
         }
@@ -173,7 +173,7 @@ struct Build23PlaceholderWordsEditor: View {
                     Build23PlaceholderTag()
                 }
             }
-            TextField(
+            AppTextField(
                 placeholder,
                 text: Binding(
                     get: { margin.isShowingPlaceholder ? "" : margin.reviewedText },
@@ -258,31 +258,36 @@ struct Build23TransportConsequenceCard: View {
     }
 }
 
-/// The recipient preview's share actions: back to the selection, "Share verified package", and under them what else
-/// the build offers to send ("Share as link", #487). One view, so a test can render the real buttons in each state.
-struct Build23VerifiedShareActions<LinkRow: View>: View {
+/// The recipient preview's share actions: back to the selection and the file share. In a build that makes links the
+/// pinned Share button makes the link, and the file share here becomes the second choice, "Send as a file" (#3750).
+/// One view, so a test can render the real buttons in each state.
+struct Build23VerifiedShareActions: View {
     let isFileShareEnabled: Bool
+    var fileIsSecondChoice = false
     let onEdit: () -> Void
     let onShareFile: () -> Void
-    @ViewBuilder let linkRow: () -> LinkRow
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            AdaptiveStack(spacing: 12) {
-                Button("Edit selection", systemImage: "arrow.left", action: onEdit)
+        AdaptiveStack(spacing: 12) {
+            Button("Edit selection", systemImage: "arrow.left", action: onEdit)
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("build23.sender.preview.edit")
+
+            Spacer()
+
+            if fileIsSecondChoice {
+                Button("Send as a file", systemImage: "doc", action: onShareFile)
                     .buttonStyle(.bordered)
-                    .accessibilityIdentifier("build23.sender.preview.edit")
-
-                Spacer()
-
-                Button("Share verified package", systemImage: "square.and.arrow.up", action: onShareFile)
+                    .disabled(!isFileShareEnabled)
+                    .accessibilityHint("Opens the share sheet with your Margins as a file")
+                    .accessibilityIdentifier("build23.sender.share.present")
+            } else {
+                Button("Share your Margins", systemImage: "square.and.arrow.up", action: onShareFile)
                     .filledActionButton()
                     .disabled(!isFileShareEnabled)
-                    .accessibilityHint("Opens the system share sheet with the verified package file")
+                    .accessibilityHint("Opens the system share sheet with your Margins")
                     .accessibilityIdentifier("build23.sender.share.present")
             }
-
-            linkRow()
         }
     }
 }
@@ -303,7 +308,7 @@ struct Build23MarginSelectionRow: View {
                             if margin.isStarred {
                                 Label("Starred", systemImage: "star.fill")
                                     .font(.caption.weight(.semibold))
-                                    .foregroundStyle(AppColors.ochre)
+                                    .foregroundStyle(AppColors.ochreText)
                             } else {
                                 Text("Margin")
                                     .font(.caption.weight(.semibold))
@@ -335,7 +340,6 @@ struct Build23MarginSelectionRow: View {
                 .buttonStyle(.plain)
                 .disabled(!isEnabled)
                 .accessibilityLabel("\(margin.isStarred ? "Starred " : "")Margin, \(margin.spokenWordsDescription), \(margin.shareStatusDescription)")
-                .accessibilityHint("Double tap to \(margin.isIncluded ? "exclude" : "include") this Margin")
                 .accessibilityIdentifier("build23.sender.margin.row.\(margin.id)")
 
                 Toggle(
@@ -347,8 +351,9 @@ struct Build23MarginSelectionRow: View {
                 )
                 .font(.caption.weight(.semibold))
                 .fixedSize(horizontal: true, vertical: false)
-                .accessibilityLabel("Include this Margin in the package")
-                .accessibilityValue(margin.isLeftOutForMissingText ? "Included, but left out: no transcript yet" : (margin.isIncluded ? "Included" : "Not included"))
+                // The row's own button above already says "included" or "not included" and toggles on a double tap, so
+                // the switch beside it would be a second, identical control to swipe past (#3730).
+                .accessibilityHidden(true)
                 .accessibilityIdentifier("build23.sender.margin.include.\(margin.id)")
                 .disabled(!isEnabled)
             }
@@ -527,7 +532,7 @@ struct Build23MarginEditor: View {
                         Text("These excerpts help place the Margin for the recipient. Most people do not need to edit them.")
                             .font(.footnote)
                             .foregroundStyle(AppColors.secondaryText)
-                        TextField(
+                        AppTextField(
                             "Words before this Margin",
                             text: Binding(
                                 get: { margin.anchorBefore },
@@ -539,7 +544,7 @@ struct Build23MarginEditor: View {
                         .accessibilityLabel("Words before this Margin")
                         .accessibilityIdentifier("build23.sender.anchor.before.\(margin.id)")
 
-                        TextField(
+                        AppTextField(
                             "Words after this Margin",
                             text: Binding(
                                 get: { margin.anchorAfter },
@@ -555,7 +560,7 @@ struct Build23MarginEditor: View {
                 }
                 .font(.headline)
 
-                HStack(spacing: 10) {
+                AdaptiveStack(spacing: 10) {
                     Button("Undo", systemImage: "arrow.uturn.backward") {
                         send(.undo(id: margin.id))
                     }
@@ -569,7 +574,7 @@ struct Build23MarginEditor: View {
                     .accessibilityIdentifier("build23.sender.editor.redo.\(margin.id)")
 
                     if margin.canUndo || margin.automaticCleanupEnabled || margin.hasCleanedVoice {
-                        Spacer()
+                        AdaptiveSpacer()
                         Button("Undo all edits") {
                             send(.restoreOriginal(id: margin.id))
                         }
@@ -676,13 +681,13 @@ struct Build23BatchPreparationCard: View {
                     .accessibilityLabel("Voice preparation progress")
                     .accessibilityValue("\(completed) of \(total) complete")
 
-                    HStack {
+                    AdaptiveStack {
                         Build23StatusLabel(
                             icon: "hourglass",
                             title: "\(completed) of \(total) prepared",
                             tint: AppColors.evergreen
                         )
-                        Spacer()
+                        AdaptiveSpacer()
                         Button("Cancel preparation", role: .cancel, action: onCancel)
                             .buttonStyle(.bordered)
                             .accessibilityIdentifier("build23.sender.preparation.cancel")
@@ -742,7 +747,7 @@ struct Build23VerifiedRecipientPreviewPanel: View {
         VStack(alignment: .leading, spacing: 16) {
             ExperienceSurface(tint: AppColors.softGreen) {
                 VStack(alignment: .leading, spacing: 10) {
-                    Label("Verified from the written package", systemImage: "checkmark.seal.fill")
+                    Label("This is what your friend gets", systemImage: "checkmark.seal.fill")
                         .font(.headline)
                         .foregroundStyle(AppColors.evergreen)
                     Text(preview.itemTitle)
@@ -791,10 +796,10 @@ struct Build23VerifiedRecipientPreviewPanel: View {
 
             ExperienceSurface {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Package contents")
+                    Text("What is included")
                         .font(.headline)
-                    Build23StatusLabel(icon: "waveform", title: "\(preview.voiceAssetCount) voice assets")
-                    Build23StatusLabel(icon: "waveform.path.ecg", title: "\(preview.acousticEvidenceCount) acoustic evidence records")
+                    Build23StatusLabel(icon: "waveform", title: "\(preview.voiceAssetCount) voice recordings")
+                    Build23StatusLabel(icon: "waveform.path.ecg", title: "\(preview.acousticEvidenceCount) podcast matching signatures")
                     Build23StatusLabel(
                         icon: "map",
                         title: preview.listeningMapProposalCount > 0

@@ -64,14 +64,18 @@ A device can be named by UID, by exact name, or by the start of its name (`Black
 
 ## Safety
 
-- **The default output always comes back.** `route` writes the previous device to `~/SpokenMarginsOps/audio-loopback/previous-default-output.txt` before switching, and restores it when the command ends, fails, or gets Ctrl-C, TERM, HUP, QUIT or ALRM. Only `kill -9` or a power cut can skip that, and then the next `route`, or `loopback restore`, puts the saved device back first.
+- **The default output always comes back.** `route` writes the previous device to `~/SpokenMarginsOps/audio-loopback/previous-default-output.txt` before switching, and restores it when the command ends, fails, or gets Ctrl-C, TERM, HUP, QUIT or ALRM. An audio window skips `route` altogether when `sim-audio-pin` has every booted Simulator on BlackHole. Only `kill -9` or a power cut can skip that restore, and then the next `route`, or `loopback restore`, puts the saved device back first.
 - **Inputs are never changed.** `record` points only its own audio engine at BlackHole; the Mac's default input (the owner's microphone) stays as it is. The system alert sound device is never touched.
 - **When BlackHole is already the default output, don't route.** Use `capture --no-route`; there's nothing to switch.
 - **Prefer no switching at all.** When the source can play to BlackHole itself (`loopback play --device`, `say -a "BlackHole 2ch"`, or a Simulator set to BlackHole in its menu), use `capture --no-route`.
 
 ### Routing only the Simulator
 
-Simulator has its own output choice: **I/O → Audio Output** in the Simulator app's menu bar. Its default, "System Default", follows the Mac's default output, which is what `route` switches. Picking BlackHole 2ch there sends only the Simulator's sound to BlackHole and leaves the Mac alone. That menu item has no command-line or `simctl` equivalent we could find; `defaults read com.apple.iphonesimulator` only keeps a list of recently used devices. Scripting the menu would need Accessibility access for the script, so the lane uses `route` for now, which is safe because it always restores.
+Simulator has its own output choice: **I/O → Audio Output** in the Simulator app's menu bar. Its default, "System Default", follows the Mac's default output, so test runs play through the speakers whenever the owner picks them. `sim-audio-pin` makes the same choice as that menu for every booted Simulator: it checks every 2 seconds and sets the output to BlackHole, so the owner can use his speakers while tests run. It never reads or sets the Mac's default devices, and it leaves the Simulator's microphone alone. Install it once with `ops/audio-loopback/install-sim-audio-pin.sh`; `~/SpokenMarginsOps/audio-loopback/sim-audio-pin --status` shows each booted Simulator's output, and the log is beside it.
+
+There is no `simctl` command for this, so it calls CoreSimulator's private routing call. An Xcode update can break that: `--status` then shows `__sim__hostUseSystemDefaultDeviceUID`, which means "follows the Mac". Each Simulator saves its choice in `data/var/run/com.apple.coresimulator.audio.plist`. An audio window reads that file: when every booted Simulator is pinned it records without `route`, and otherwise it falls back to `route`, which is what makes BlackHole the Mac's default for the window.
+
+Don't disassemble Simulator programs to find such calls: `otool -oV` on `SimAudioProcessorService` grew to 187 GB on 2026-11-08 and forced a quit. `strings` and a small program that lists what an Objective-C protocol offers found everything needed.
 
 ## Permissions
 
@@ -206,6 +210,16 @@ Transcription wasn't part of it: it ran from a Claude Code session, which macOS 
 
 On 2026-10-17, `prove-host.sh` with words, run from the Claude desktop app's terminal pane: 5.16 s of sound, all 15 words heard, word error rate 0.0, PASS.
 
+## Desk recordings, rechecked 2026-11-06
+
+`check --allow-trailing` on the Simulator recordings from the 2026-10-18 desk run (iOS voice, test simulators only), and on copies of four of them spliced into the two playback-fault shapes:
+
+| Recordings | Before | After |
+| --- | --- | --- |
+| 7 clean recordings, including the four from that run's comment (`probe`, `tides`, `stamp3`, `pdf-start`) | 2 FAIL "repeats": `pdf-start` and `sim-t4`, each a phrase the source says twice | 7 PASS; 4 matches reported as `recurring`, each the same words twice in the transcript |
+| 4 restarted chunks (#1762 shape: 1.4 s, 0.2 s of silence, then the chunk from the top) | replay found in 2 of 4 | replay found in 4 of 4; each FAIL "repeats" |
+| 4 seeks back by 2.3 s | replay found in 2 of 4 (a third failed only on its recurring phrase) | replay found in 4 of 4; each FAIL "repeats" |
+
 ## Transcription: why recordings are cut at pauses
 
 macOS's on-device recogniser forgets what it heard when a pause of more than about a second follows it. Its final result keeps only the speech after the last long pause, and is empty when the file ends in silence. Found on 2026-10-17 (#1790), from the terminal pane, with clean `say` speech at 16 kHz:
@@ -227,4 +241,7 @@ When no words come back, the transcript says why in `empty_reason`: no sound in 
 - The recording is mixed to mono and averaged down to 16 kHz.
 - Loudness is measured every 10 ms over 30 ms. Anything above `--silence-db` (default −45 dBFS) is sound. Pauses under 0.25 s are joined, so ordinary pauses between words don't count as gaps.
 - **Repeats:** the loudest moment of each syllable is a landmark. Every pair of landmarks up to 30 s apart votes for the delay between them. A delay that four or more nearby landmarks agree on is a candidate. It counts only if the loudness of the two stretches tracks within 4 dB, frame by frame, for at least 0.6 s, with a correlation of 0.9 or more. A replay of the same rendered speech matches to within a fraction of a dB. Different words, or the same word in a new sentence, don't hold that match for 0.6 s; the tests check ten pairs of different synthetic speech for false repeats. A steady synthetic voice saying new words in the same rhythm does hold a loudness match (desk run 2026-10-18, clean iOS-voice speech flagged "repeats"), so the two stretches must also match in brightness: the share of each 30 ms window's energy in its fast wiggles, which differs from vowel to vowel and is the same in a true replay (within 0.3 dB in the tests; the limit is 1 dB). The limit was set on synthetic speech; if a real replay (#1762) is ever missed, look at `mean_db_difference` and the brightness difference first.
+- **Nearby lags.** Landmarks vote to the nearest 10 ms, so the lags just around a vote are tried too, and the one whose two stretches are closest is checked. Keeping the longest stretch instead lost exact replays in real recordings: a lag one frame off holds the loose loudness match just as long, then fails on brightness. Levels below the silence line count as the silence line, so a frame or two of digital silence at a stretch's edge doesn't sink an exact replay's correlation.
+- **Recurring, not repeated.** The source can say a phrase twice, and a voice renders it the same both times: two authors' "foundation for American innovation", 3.5 s apart, in the 2026-10-18 desk recording `pdf-start.wav`. A match goes under `recurring` when at least 0.5 s of new sound comes between the original and the second time, and the sound after the second time differs. A restarted chunk (#1762) has nothing new between, a seek back keeps matching, and a replay followed by silence shows nothing new, so these stay repeats. Sound alone can't tell the rest apart: playback that replays a passage after a Margin, or after a blip, and then moves on looks the same as a phrase said twice. So the words decide when they can. With `--expected` (or a lane request's `expected`), a recurring match passes only when two or more words are heard there, the transcript has them at least twice, and the expected text has them at least as often as the transcript; otherwise it moves to `repeats` and fails. A replay adds a hearing the text doesn't have, so even a common word fails it. One word is too little to vouch for a source repeat, and a transcript that heard the phrase only once has dropped a hearing, so both fail. One gap stays open: a phrase the source says twice, replayed once more after new sound, with the recogniser dropping one of the three hearings, passes. A misheard word inside a true source repeat fails it too: strict, never a false pass. Without expected text, a recurring match is listed and doesn't fail.
+- **Too short to catch.** A replay needs four syllable landmarks. A restart that replays under about a second of speech (three syllables) is missed.
 - Music, or anything with a steady beat, will look like repeats. Pass `--allow-repeats` for those.

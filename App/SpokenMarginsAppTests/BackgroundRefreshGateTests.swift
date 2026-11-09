@@ -110,6 +110,7 @@ final class BackgroundRefreshGateTests: XCTestCase {
     func testATapReloadOvertakenBySynchronousRowsReadsAgainInsteadOfRestoringOldRows() async throws {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
+        let store = try XCTUnwrap(model.store)
         let held = HeldReads()
         holdReads(held, on: model)
         var started = held.started.stream.makeAsyncIterator()
@@ -124,12 +125,15 @@ final class BackgroundRefreshGateTests: XCTestCase {
         await model.settleLibraryReload()
 
         XCTAssertEqual(held.count, 2, "the older read must not publish over the newer rows; the reload reads again")
-        XCTAssertNotEqual(model.libraryItems.map(\.id), ["newer-item"], "the second read, which saw no change, publishes the stored Library")
+        let stored = try model.loadLibraryRows(store: store)
+        XCTAssertFalse(stored.isEmpty, "the seeded Library has rows, so an empty publish cannot pass")
+        XCTAssertEqual(model.libraryItems, stored, "the second read, which saw no change, publishes the stored Library")
     }
 
     func testATapReloadThatKeepsBeingOvertakenPublishesOnItsThirdRead() async throws {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
+        let store = try XCTUnwrap(model.store)
         let held = HeldReads()
         holdReads(held, on: model)
         var started = held.started.stream.makeAsyncIterator()
@@ -143,7 +147,9 @@ final class BackgroundRefreshGateTests: XCTestCase {
         await model.settleLibraryReload()
 
         XCTAssertEqual(held.count, 3, "three reads, then the tap's rows are published whatever moved")
-        XCTAssertFalse(model.libraryItems.map(\.id).contains { $0.hasPrefix("churn-") }, "the tapped change must show under churn")
+        let stored = try model.loadLibraryRows(store: store)
+        XCTAssertFalse(stored.isEmpty, "the seeded Library has rows, so an empty publish cannot pass")
+        XCTAssertEqual(model.libraryItems, stored, "the tapped change must show under churn: the stored Library, not the churn rows")
     }
 
     /// Play, Open session and Resume used to rebuild the whole Library (every article's text) on the main thread
@@ -328,7 +334,9 @@ final class BackgroundRefreshGateTests: XCTestCase {
         _ = try await reload.value
 
         XCTAssertEqual(held.count, 2, "the older read must not publish over the newer rows; the reload reads again")
-        XCTAssertNotEqual(model.libraryItems.map(\.id), ["newer-item"], "the second read, which saw no change, publishes the stored Library")
+        let stored = try model.loadLibraryRows(store: store)
+        XCTAssertFalse(stored.isEmpty, "the seeded Library has rows, so an empty publish cannot pass")
+        XCTAssertEqual(model.libraryItems, stored, "the second read, which saw no change, publishes the stored Library")
     }
 
     /// An import's third read publishes although a newer reload has started; the tap behind that newer reload still
@@ -417,7 +425,7 @@ final class BackgroundRefreshGateTests: XCTestCase {
         let margin = try XCTUnwrap(model.selectedItem.interjections.first)
         model.selectedItem.interjections = []
 
-        model.recordFailedRetry(of: margin, failure: "no speech")
+        model.recordFailedRetry(of: margin, failure: "no speech", diagnostic: "no_speech")
         XCTAssertTrue(model.selectedItem.interjections.isEmpty, "the job's end must not read the item before it returns")
 
         await model.settleItemReload()

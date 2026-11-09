@@ -17,7 +17,7 @@ struct PlaybackTimelineSourceView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     if let page = selection.entry.pageIndex {
-                        Text("Page \(page + 1)").font(.caption).foregroundStyle(.secondary)
+                        Text("Page \(page + 1)").font(.caption).foregroundStyle(AppColors.secondaryText)
                     }
                     Text(selection.entry.text)
                         .font(selection.entry.role == .table ? .body.monospaced() : .body)
@@ -93,7 +93,7 @@ struct PlaybackTimelineElementView: View {
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     if let alt = element.altText, alt != element.label {
-                        Text("Picture description: \(alt)").font(.callout).foregroundStyle(.secondary)
+                        Text("Picture description: \(alt)").font(.callout).foregroundStyle(AppColors.secondaryText)
                     }
                     if let url = URL(string: element.url), ["https", "http"].contains(url.scheme?.lowercased() ?? "") {
                         Link(element.kind == .link ? "Open link" : "Open on the web", destination: url).frame(minHeight: 44)

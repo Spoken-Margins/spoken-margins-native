@@ -250,8 +250,9 @@ final class RealPlayerMarginMomentTests: XCTestCase {
 
     // MARK: Review new Margins (#474)
 
-    /// Each Margin gets a hop to its own lead-in, its voice, and then the source goes back to where the listener left off.
-    func testAReviewHopsToEachLeadInPlaysEachVoiceAndGoesBackToWhereTheListenerLeftOff() throws {
+    /// The first lead-in is the only hop. After each voice the episode plays on from where the Margin was, and after the
+    /// last one a listener who was further on goes back to their place (owner, 2026-11-06: no teleporting).
+    func testAReviewHopsOnlyToTheFirstLeadInThenPlaysOnFromEachMargin() throws {
         let fixture = try ReviewFixture(margins: [("a", 30_000), ("b", 70_000)], returnTo: 500_000, resumes: true)
         defer { fixture.cleanUp() }
 
@@ -259,8 +260,8 @@ final class RealPlayerMarginMomentTests: XCTestCase {
         XCTAssertEqual(fixture.events, ["seek:10000"], "the first lead-in starts twenty seconds before the first Margin")
         fixture.reach(30_000)
         XCTAssertEqual(fixture.events, ["seek:10000", "pause", "voice:a"])
-        try fixture.pump(until: { fixture.events.last == "resume" }, "the source hops to b's lead-in and plays on")
-        XCTAssertEqual(Array(fixture.events.suffix(3)), ["voice:a", "seek:50000", "resume"], "the stretch between a and b is skipped")
+        try fixture.pump(until: { fixture.events.last == "resume" }, "the source plays on from a")
+        XCTAssertEqual(Array(fixture.events.suffix(2)), ["voice:a", "resume"], "no hop to b's lead-in: the listener asks for that")
 
         fixture.reach(70_000)
         try fixture.pump(until: { fixture.events.last == "resume" }, "after the last Margin the source goes back and plays on")
@@ -279,10 +280,11 @@ final class RealPlayerMarginMomentTests: XCTestCase {
         XCTAssertEqual(fixture.events, ["seek:10000", "pause", "voice:a", "voice:b"], "no resume or seek between the two")
         XCTAssertEqual(fixture.log.resumed, 0)
         try fixture.pump(until: { fixture.conductor.sequence.phase == .listening }, "the review ends")
-        XCTAssertEqual(fixture.log.resumed, 0, "the review stops after the last Margin; nothing plays on by itself")
+        XCTAssertEqual(fixture.log.resumed, 1, "after the last Margin the episode plays on from where it is")
     }
 
-    func testStoppingAReviewGoesBackToWhereTheListenerLeftOffWithoutPlayingOn() throws {
+    /// A listener who was further on than the Margin is brought back to their place by Stop, paused.
+    func testStoppingAReviewBringsBackAListenerWhoWasFurtherOnWithoutPlayingOn() throws {
         let fixture = try ReviewFixture(margins: [("a", 30_000), ("b", 70_000)], returnTo: 500_000, resumes: true)
         defer { fixture.cleanUp() }
 
@@ -297,6 +299,40 @@ final class RealPlayerMarginMomentTests: XCTestCase {
         XCTAssertEqual(fixture.log.resumed, 0)
     }
 
+    /// The listener had only just opened the episode: Stop while the Margin speaks leaves them at the Margin, not at 0:02.
+    func testStoppingAReviewWhileAMarginSpeaksLeavesAListenerWhoWasBehindWhereTheyAre() throws {
+        let fixture = try ReviewFixture(margins: [("a", 30_000), ("b", 70_000)], returnTo: 2_000, resumes: false)
+        defer { fixture.cleanUp() }
+
+        fixture.conductor.start()
+        fixture.reach(30_000)
+        fixture.conductor.stopReview()
+        XCTAssertEqual(fixture.events, ["seek:10000", "pause", "voice:a", "pause"], "no seek back to the start")
+        XCTAssertEqual(fixture.log.resumed, 0)
+    }
+
+    /// Stopping in the first lead-in, before anything has played, undoes the review's own hop.
+    func testStoppingAReviewBeforeAnyMarginPlaysUndoesTheHop() throws {
+        let fixture = try ReviewFixture(margins: [("a", 30_000)], returnTo: 2_000, resumes: false)
+        defer { fixture.cleanUp() }
+
+        fixture.conductor.start()
+        fixture.conductor.stopReview()
+        XCTAssertEqual(fixture.events, ["seek:10000", "pause", "seek:2000"])
+    }
+
+    /// The reported case: the episode just opened, the Margin 38 minutes ahead. After its voice the episode plays on.
+    func testTheLastMarginOfAReviewAheadOfTheListenerPlaysOnFromTheMargin() throws {
+        let fixture = try ReviewFixture(margins: [("a", 30_000)], returnTo: 2_000, resumes: false)
+        defer { fixture.cleanUp() }
+
+        fixture.conductor.start()
+        fixture.reach(30_000)
+        try fixture.pump(until: { fixture.events.last == "resume" }, "the episode plays on after the Margin")
+        XCTAssertEqual(fixture.events, ["seek:10000", "pause", "voice:a", "resume"], "no seek back to the start")
+        XCTAssertEqual(fixture.conductor.sequence.phase, .listening)
+    }
+
     /// A Margin whose recording is missing is reported and skipped; the review carries on to the next one.
     func testAReviewSkipsAMarginWhoseRecordingIsMissing() throws {
         let fixture = try ReviewFixture(margins: [("a", 30_000), ("b", 70_000)], returnTo: nil, resumes: false, missing: ["a"])
@@ -305,7 +341,7 @@ final class RealPlayerMarginMomentTests: XCTestCase {
         fixture.conductor.start()
         fixture.reach(30_000)
         XCTAssertEqual(fixture.log.unavailable, ["a:recording_missing"])
-        XCTAssertEqual(Array(fixture.events.suffix(3)), ["pause", "seek:50000", "resume"])
+        XCTAssertEqual(Array(fixture.events.suffix(2)), ["pause", "resume"], "the episode plays on toward b")
         fixture.reach(70_000)
         try fixture.pump(until: { fixture.events.contains("voice:b") }, "b still plays")
     }

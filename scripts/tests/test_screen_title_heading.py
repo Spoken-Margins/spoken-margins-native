@@ -20,13 +20,14 @@ NOT_HEADINGS = {
     ("Build23RecipientSharingExperience.swift", "Text(snapshot.itemTitle)"): "the item named under the screen title",
     ("Build23SenderSharingComponents.swift", "Text(preview.itemTitle)"): "a preview's item name",
     ("Build23SenderSharingExperience.swift", "Text(snapshot.itemTitle)"): "the item named under the screen title",
-    ("ExperienceRecordingScreen.swift", "Text(MicrophonePrimer.message)"): "body copy",
-    ("ExperienceRecordingScreen.swift", "Text(context.itemTitle)"): "context line",
+    ("MarginRecordingScreen.swift", "Text(MicrophonePrimer.message)"): "body copy",
+    ("MarginRecordingScreen.swift", "Text(state.anchorTitle)"): "context line",
     ("ExperienceSourcesScreen.swift", "Text(letter)"): "an index letter",
     ("ExperienceSourcesScreen.swift", 'Text(title.first.map { String($0).uppercased() } ?? "?")'): "a show artwork placeholder initial, hidden from VoiceOver",
     ("ExperienceStorageScreen.swift", 'Text("\\(Int(usageFraction * 100))%")'): "a value readout",
     ("PlaybackScreen.swift", "Text(model.compactPlaybackRateDescription)"): "a value readout",
     ("SharingExperience.swift", "Text(review.contents.manifest.item.title)"): "the item named under the screen title",
+    ("SpokenNoteRecordingView.swift", "Text(title)"): "the note's name inside the rename button, which carries the heading trait itself (#3663)",
 }
 
 

@@ -46,6 +46,13 @@ public struct LiveSessionActivityAttributes: ActivityAttributes {
 
         /// True once the session has ended and the card is only waiting out the Resume window.
         public var hasEnded: Bool { endedAt != nil }
+
+        /// What VoiceOver reads for the card's state glyph (the stop, waveform and bookmark symbols in the Dynamic
+        /// Island), which is otherwise the symbol's own name (#3722).
+        public var stateAccessibilityLabel: String {
+            if hasEnded { return "Session ended" }
+            return isRecordingNow ? "Recording" : "Session running"
+        }
     }
 
     public var sessionStartedAt: Date

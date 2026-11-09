@@ -223,6 +223,14 @@ public struct WatchMarginLedger: Codable, Equatable, Sendable {
 
     // MARK: Showing it
 
+    /// Whether this Margin's state is still news, so the first screen says it at the top: the Watch still holds it, or the
+    /// phone filed it within `WatchContract.filedIsNewsFor`.
+    public func isNews(_ id: String, now: Date) -> Bool {
+        if held(id) != nil { return true }
+        guard let done = filed.last(where: { $0.id == id }) else { return false }
+        return now.timeIntervalSince(done.filedAt) <= WatchContract.filedIsNewsFor
+    }
+
     public func display(_ id: String, now: Date) -> Display? {
         if let item = held(id) {
             switch item.status {
@@ -326,6 +334,43 @@ public struct WatchSessionModel: Codable, Equatable, Sendable {
         return nil
     }
 
+    // MARK: The item the phone is playing (#3494)
+
+    /// A time by the Watch's clock, on the phone's clock.
+    public func phoneTime(of watchTime: Date) -> Date {
+        guard let clock else { return watchTime }
+        return watchTime.addingTimeInterval(-clock.offset)
+    }
+
+    /// The item the phone has loaded, for the first screen: shown while the phone is reachable, or while its last board is
+    /// less than `WatchContract.nowPlayingStaleAfter` old. Nil when the board names no item, so Home stays the single Record.
+    public func nowPlaying(now: Date, phoneReachable: Bool) -> WatchNowPlaying? {
+        guard let playing = board?.nowPlaying, let received = boardReceivedAt else { return nil }
+        if phoneReachable { return playing }
+        return now.timeIntervalSince(received) <= WatchContract.nowPlayingStaleAfter ? playing : nil
+    }
+
+    /// Where the item is now, by the phone's clock as the Watch works it out. Nil when the board names no item.
+    public func nowPlayingPosition(now: Date) -> Int? {
+        board?.nowPlaying?.position(at: phoneTime(of: now))
+    }
+
+    /// The button just pressed, drawn at once: play and pause flip the board's play state, from where the item is now.
+    /// The phone's next board replaces it. A skip changes nothing here, since the phone says where it landed.
+    public mutating func noteTransport(_ transport: WatchTransport, now: Date) {
+        guard var playing = board?.nowPlaying else { return }
+        switch transport {
+        case .play, .pause:
+            let phoneNow = phoneTime(of: now)
+            playing.positionMs = playing.position(at: phoneNow)
+            playing.positionAt = phoneNow
+            playing.isPlaying = transport == .play
+        case .skipBack, .skipForward:
+            return
+        }
+        board?.nowPlaying = playing
+    }
+
     public func home(now: Date, phoneReachable: Bool) -> Home {
         if let (session, place) = running(now: now) {
             var asOf: Date?
@@ -400,8 +445,13 @@ public struct WatchSessionModel: Codable, Equatable, Sendable {
 
     // MARK: The phone's board
 
-    public mutating func apply(_ newBoard: WatchBoard, receivedAt: Date) {
+    /// `keepingNowPlaying` is for the reply to a transport command: the phone made it around the moment the command ran, so
+    /// its play state may be the old one, and the button already drawn must not flip back. A board sent after the command
+    /// says what really happened (#3494).
+    public mutating func apply(_ newBoard: WatchBoard, receivedAt: Date, keepingNowPlaying: Bool = false) {
+        let drawn = board?.nowPlaying
         board = newBoard
+        if keepingNowPlaying { board?.nowPlaying = drawn }
         boardReceivedAt = receivedAt
         let running = newBoard.running
 
@@ -433,5 +483,142 @@ public struct WatchSessionModel: Codable, Equatable, Sendable {
         lastEnded = ended
         local = nil
         endNote = note
+    }
+}
+
+/// Where the listener aimed a spoken Margin on the Watch: the item the phone is playing, or the running session (#3494).
+public enum WatchRecordingTarget: Equatable, Sendable {
+    case episode
+    case session
+
+    /// Said in large words on the recording screen, so the target never rests on colour alone.
+    public var words: String {
+        switch self {
+        case .episode: "On this episode"
+        case .session: "On the session"
+        }
+    }
+}
+
+/// What the Watch decides when a recording starts and ends: whether to pause the phone's item, which item the Margin
+/// is aimed at, and when the phone is played again (#3494; the owner's calls of 2026-11-06 on the issue). Pure, so the
+/// rules are tested on the host.
+public struct WatchRecordingPlan: Equatable, Sendable {
+    /// Under this long, Discard asks nothing and a short clip is simply thrown away. Past it, Discard asks once.
+    public static let discardAsksAfter: TimeInterval = 30
+
+    public var target: WatchRecordingTarget
+    /// The item the Margin belongs on. Nil for the session, and for "this episode" when the board named no item.
+    public var itemTarget: WatchItemTarget?
+    /// The Watch paused the phone's item when recording began, so it plays it again when recording ends.
+    public var pausedPhone: Bool
+    /// The item the Watch paused (the same for either target), so Play is not sent to a different one later.
+    public var pausedItemId: String?
+
+    /// Starting a recording at `phoneNow` (the phone's clock) with what the board says is loaded. Record pauses an item
+    /// that is playing, whichever the target. An episode target carries where the item is as the Watch works it out, a
+    /// fallback for the phone when its own record of playing is missing.
+    public static func begin(target: WatchRecordingTarget, nowPlaying: WatchNowPlaying?, phoneNow: Date) -> WatchRecordingPlan {
+        var itemTarget: WatchItemTarget?
+        if target == .episode, let nowPlaying {
+            itemTarget = WatchItemTarget(itemId: nowPlaying.itemId, positionMs: nowPlaying.position(at: phoneNow))
+        }
+        let pauses = nowPlaying?.isPlaying == true
+        return WatchRecordingPlan(target: target, itemTarget: itemTarget, pausedPhone: pauses, pausedItemId: pauses ? nowPlaying?.itemId : nil)
+    }
+
+    /// The command to send when recording starts: pause the item that is playing.
+    public var pauseOnStart: WatchTransport? { pausedPhone ? .pause : nil }
+
+    /// The command to send when recording ends (Stop or Discard): play again, but only if the Watch paused it, and not
+    /// when the board now names another item (the listener moved on). A board that is missing, or still shows the same
+    /// item even playing, gets `play`, which a playing phone ignores.
+    public func resumeOnEnd(nowPlaying current: WatchNowPlaying?) -> WatchTransport? {
+        guard pausedPhone else { return nil }
+        if let current, let pausedItemId, current.itemId != pausedItemId { return nil }
+        return .play
+    }
+
+    public init(target: WatchRecordingTarget, itemTarget: WatchItemTarget? = nil, pausedPhone: Bool = false, pausedItemId: String? = nil) {
+        self.target = target
+        self.itemTarget = itemTarget
+        self.pausedPhone = pausedPhone
+        self.pausedItemId = pausedItemId
+    }
+
+    /// Whether Discard asks first, after `elapsed` seconds of recording.
+    public func discardAsks(afterRecording elapsed: TimeInterval) -> Bool {
+        elapsed >= Self.discardAsksAfter
+    }
+}
+
+/// The Watch's first screen with an item loaded, as plain numbers (#3674). Its buttons stack in one column, and each
+/// one is drawn at exactly the height named here: the Watch app gives them a plate that fills their frame and no more,
+/// so the plates cannot spill onto a neighbour. Pure, so the stacking and the tap sizes are tested on the host, where
+/// no Watch is needed.
+public struct WatchHomeLayout: Equatable, Sendable {
+    /// One tap target in the column, top to bottom.
+    public enum Row: Equatable, Sendable {
+        case episodeButton
+        case sessionButton
+        case transport
+    }
+
+    /// The least height a tap target gets, and the gap kept between two of them.
+    public static let minimumTapHeight = 38.0
+    public static let spacing = 4.0
+    /// The gap between the three transport buttons, side by side.
+    public static let transportSpacing = 6.0
+    /// The screen's side padding.
+    public static let sidePadding = 4.0
+    /// What a 40 mm Watch (162 pt wide) offers; the smallest supported one.
+    public static let smallestContentWidth = 162.0
+    /// What a 41 mm Watch (215 pt tall) leaves for the column once the status bar, the state line, the header and the
+    /// gaps between them are out. A 40 mm Watch has 18 pt less and scrolls with the crown; its buttons still never overlap.
+    public static let columnBudget41mm = 143.0
+
+    public struct Frame: Equatable, Sendable {
+        public var row: Row
+        public var top: Double
+        public var height: Double
+        public var bottom: Double { top + height }
+    }
+
+    /// Whether a session is running: the episode button is then smaller, and "On the session" sits under it.
+    public var sessionRuns: Bool
+
+    public init(sessionRuns: Bool) {
+        self.sessionRuns = sessionRuns
+    }
+
+    public func height(of row: Row) -> Double {
+        switch row {
+        case .episodeButton: sessionRuns ? 56 : 90
+        case .sessionButton: Self.minimumTapHeight
+        case .transport: Self.minimumTapHeight
+        }
+    }
+
+    public var rows: [Row] {
+        sessionRuns ? [.episodeButton, .sessionButton, .transport] : [.episodeButton, .transport]
+    }
+
+    /// Where each row sits in the column, with `spacing` between rows.
+    public var frames: [Frame] {
+        var top = 0.0
+        return rows.map { row in
+            let frame = Frame(row: row, top: top, height: height(of: row))
+            top = frame.bottom + Self.spacing
+            return frame
+        }
+    }
+
+    public var totalHeight: Double {
+        frames.last?.bottom ?? 0
+    }
+
+    /// The width of one of the three transport buttons on a screen `contentWidth` points wide.
+    public static func transportButtonWidth(contentWidth: Double) -> Double {
+        (contentWidth - 2 * sidePadding - 2 * transportSpacing) / 3
     }
 }

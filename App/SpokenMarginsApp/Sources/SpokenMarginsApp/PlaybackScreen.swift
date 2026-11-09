@@ -340,26 +340,11 @@ struct PlaybackScreen: View {
 
     /// Add a Margin (spoken) with the pencil (written) beside it.
     private var marginRow: some View {
-        HStack(spacing: 8) {
-            Button(action: model.beginInterjection) {
-                Label(dynamicTypeSize.isAccessibilitySize ? "Record" : "Add a Margin", systemImage: "mic.fill")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(InterjectButtonStyle())
-            .accessibilityLabel("Record a Margin")
-            .accessibilityIdentifier("playback.interject.button")
-            Button(action: model.beginWrittenMargin) {
-                Image(systemName: "square.and.pencil")
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: dynamicTypeSize.isAccessibilitySize ? 32 : 24, height: dynamicTypeSize.isAccessibilitySize ? 32 : 24)
-                    .frame(width: 52, height: 52)
-            }
-            .buttonStyle(InterjectButtonStyle())
-            .accessibilityLabel("Write a Margin")
-            .accessibilityIdentifier("playback.write.button")
-        }
-        .disabled(!model.hasActiveSession)
+        MarginAddButtons(record: model.beginInterjection,
+                         write: model.beginWrittenMargin,
+                         recordIdentifier: "playback.interject.button",
+                         writeIdentifier: "playback.write.button",
+                         isDisabled: !model.hasActiveSession)
     }
 
     /// Share without opening More (#1507): the Share Margins sheet opens on its review, so Share here and Share
@@ -372,7 +357,7 @@ struct PlaybackScreen: View {
         }
         .fixedSize(horizontal: true, vertical: false)
         .accessibilityLabel("Share Margins")
-        .accessibilityHint("Opens the review of this item's Margins with Share ready")
+        .accessibilityHint("Opens the review of the Margins here, with Share ready")
         .accessibilityIdentifier("playback.shareMargins.button")
     }
 
@@ -438,10 +423,11 @@ struct PlaybackScreen: View {
             .disabled(!model.canSummarizeInterjections || model.isSummarizingInterjections)
             .accessibilityIdentifier("playback.summary.button")
         }
-        Button("Margins", systemImage: "quote.bubble") {
+        Button {
             closeOptions(to: .margins)
+        } label: {
+            Label("Margins", systemImage: "quote.bubble").frame(minHeight: 44).contentShape(Rectangle())
         }
-        .frame(minHeight: 44)
     }
 
     private var sessionActionDock: some View {
@@ -452,7 +438,7 @@ struct PlaybackScreen: View {
                 Image(systemName: "doc.text")
                     .frame(width: 48, height: 48)
             }
-            .accessibilityLabel("Item")
+            .accessibilityLabel("Details")
             .accessibilityIdentifier("playback.item.button")
 
             Button(action: openTimeline) {
@@ -1869,7 +1855,7 @@ private struct TimelineInterjectionRow: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Open Margin")
+                .accessibilityLabel(RowAccessibilityLabel.label("Open Margin", row: percent, subtitle))
                 .accessibilityIdentifier("timeline.interjection.open.\(interjectionID)")
 
                 Button(action: toggleStar) {
@@ -1997,17 +1983,6 @@ private struct WatchSecondaryButtonStyle: ButtonStyle {
         configuration.label
             .foregroundStyle(.white)
             .background(AppColors.watchControl.opacity(configuration.isPressed ? 0.72 : 1))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-    }
-}
-
-private struct InterjectButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.headline)
-            .frame(minHeight: 52)
-            .foregroundStyle(AppColors.interjectText)
-            .background(AppColors.captureBackground.opacity(configuration.isPressed ? 0.78 : 1))
             .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 }

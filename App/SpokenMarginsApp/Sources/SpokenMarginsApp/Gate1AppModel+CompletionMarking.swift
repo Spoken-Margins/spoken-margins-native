@@ -15,6 +15,7 @@ extension Gate1AppModel {
             refreshLibraryRowsInBackground(mustPublish: true)
             try reloadSelectedItemAfterCompletionChange(id: id, store: store)
             presentCompletionUndo(itemId: id, title: item.title, markedAt: item.sourceCompletedAt ?? Date())
+            saveCompletedSpokenNoteToExportFolder(item) // A spoken note goes to the export folder (#3661).
         } catch {
             reportFailure(error, context: "Mark complete failed")
         }

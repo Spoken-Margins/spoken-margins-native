@@ -43,7 +43,7 @@ struct ExperienceTimelineRailScreen: View {
                     Text(model.selectedItem.title)
                         .font(.subheadline)
                         .foregroundStyle(AppColors.secondaryText)
-                        .lineLimit(1)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 1)
                         .truncationMode(.tail)
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.bottom, 12)
@@ -83,11 +83,12 @@ struct ExperienceTimelineRailScreen: View {
                 if onReturnToPlayback != nil && !followsPlayback && !responseEditorFocused {
                     HStack {
                         Spacer()
-                        Button("Follow playback", systemImage: "location.fill") {
+                        Button {
                             followsPlayback = true
                             focusTimeline(using: proxy)
+                        } label: {
+                            Label("Follow playback", systemImage: "location.fill").frame(minHeight: 44).contentShape(Rectangle())
                         }
-                        .frame(minHeight: 44)
                         .accessibilityIdentifier("timeline.followPlayback.button")
                     }
                     .padding(.horizontal, 18)
@@ -317,7 +318,7 @@ struct ExperienceTimelineRailScreen: View {
                     id: "shared.\(row.id)", position: position, rank: 1,
                     provenance: .sharedMargin,
                     title: TimelineTextPresentation.excerpt(margin.approvedTranscript, characterLimit: TimelineTextPresentation.marginCharacterLimit),
-                    detail: "Shared by \(row.collectionLabel) · \(row.positionDescription)",
+                    detail: "From \(row.collectionLabel) · \(row.positionDescription)",
                     action: .sharedMargin(row),
                     isNew: row.isNew,
                     precisePosition: TimelineRailSortKey.percent(position: margin.resolution.localMediaTimeMs ?? row.placementStatus.previousMediaTimeMs, length: knownDuration),
@@ -531,8 +532,8 @@ struct ExperienceTimelineRailScreen: View {
         case .listeningMapScene(let scene):
             model.jumpToListeningMapScene(scene, fromTimeline: true)
         case .sharedMargin(let row):
-            // #158: play the moment directly; details stay on long-press. A written Margin set not to be read aloud has
-            // nothing to play, so the tap opens its details, where its words and the way to turn reading on are (#3427).
+            // #158: play the moment directly; details stay on long-press. A written Margin set not to be read aloud, or with
+            // no voice on this phone (#3402), has nothing to play, so the tap opens its details, where its words are (#3427).
             if row.interjection.isWritten, !SharedMarginAudio.canOffer(row.interjection) {
                 selectedSharedMargin = row
             } else {

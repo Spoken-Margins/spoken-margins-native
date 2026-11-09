@@ -619,6 +619,77 @@ final class ImportedMarginResendsTests: XCTestCase {
         XCTAssertEqual(try memory.loadImportedCommentaryLayer(packageDigest: "O")?.shareLinkId, linkA)
     }
 
+    // MARK: Text places (#3708)
+    // The rows above place Margins by media time only. A Margin on a page or a transcript is placed by
+    // these fields, so each one gets its own neighbouring row: the same words from the same friend,
+    // one field apart, are two Margins; none apart is one. (A Unicode re-spelling needs no row: Swift compares canonically equivalent
+    // strings as equal, so the fingerprint cannot tell them apart whether or not it normalizes.)
+
+    private var baseTextPlace: PortableAnchorEvidence {
+        PortableAnchorEvidence(
+            anchorType: .text, startChar: 120, endChar: 160, exactText: "the harbour light", prefix: "past ", suffix: " again",
+            roughPercent: 40, transcriptSegmentId: "seg-4", chapterTitle: "Harbour")
+    }
+
+    private func textPlace(
+        type: AnchorType? = nil, startChar: Int? = nil, endChar: Int? = nil, exactText: String? = nil,
+        prefix: String? = nil, suffix: String? = nil, roughPercent: Int? = nil, transcriptSegmentId: String? = nil,
+        chapterTitle: String? = nil
+    ) -> PortableAnchorEvidence {
+        let base = baseTextPlace
+        return PortableAnchorEvidence(
+            anchorType: type ?? base.anchorType, startChar: startChar ?? base.startChar, endChar: endChar ?? base.endChar,
+            exactText: exactText ?? base.exactText, prefix: prefix ?? base.prefix, suffix: suffix ?? base.suffix,
+            roughPercent: roughPercent ?? base.roughPercent, transcriptSegmentId: transcriptSegmentId ?? base.transcriptSegmentId,
+            chapterTitle: chapterTitle ?? base.chapterTitle)
+    }
+
+    private func held(whenResentWith changed: PortableAnchorEvidence) throws -> Int {
+        _ = try send(packet("O", from: "Ada", [("love this", 60_000)], place: baseTextPlace))
+        _ = try send(packet("U", from: "Ada", [("love this", 60_000)], place: changed))
+        return try margins().count
+    }
+
+    func testTheSameTextPlaceAgainIsTheMarginAlreadyHeld() throws {
+        XCTAssertEqual(try held(whenResentWith: baseTextPlace), 1)
+    }
+
+    func testAnotherStartCharIsAnotherMargin() throws {
+        XCTAssertEqual(try held(whenResentWith: textPlace(startChar: 121)), 2)
+    }
+
+    func testAnotherEndCharIsAnotherMargin() throws {
+        XCTAssertEqual(try held(whenResentWith: textPlace(endChar: 161)), 2)
+    }
+
+    func testAnotherExactTextIsAnotherMargin() throws {
+        XCTAssertEqual(try held(whenResentWith: textPlace(exactText: "the harbour lights")), 2)
+    }
+
+    func testAnotherPrefixIsAnotherMargin() throws {
+        XCTAssertEqual(try held(whenResentWith: textPlace(prefix: "by ")), 2)
+    }
+
+    func testAnotherSuffixIsAnotherMargin() throws {
+        XCTAssertEqual(try held(whenResentWith: textPlace(suffix: " once more")), 2)
+    }
+
+    func testAnotherRoughPercentIsAnotherMargin() throws {
+        XCTAssertEqual(try held(whenResentWith: textPlace(roughPercent: 41)), 2)
+    }
+
+    func testAnotherTranscriptSegmentIsAnotherMargin() throws {
+        XCTAssertEqual(try held(whenResentWith: textPlace(transcriptSegmentId: "seg-5")), 2)
+    }
+
+    func testAnotherChapterTitleIsAnotherMargin() throws {
+        XCTAssertEqual(try held(whenResentWith: textPlace(chapterTitle: "Lighthouse")), 2)
+    }
+
+    func testAnotherAnchorTypeIsAnotherMargin() throws {
+        XCTAssertEqual(try held(whenResentWith: textPlace(type: .transcript)), 2)
+    }
+
     // MARK: Helpers
 
     private struct Packet {
@@ -640,7 +711,8 @@ final class ImportedMarginResendsTests: XCTestCase {
     /// A packet's Margins as the importer builds them: new local ids, the packet's own scoped ids.
     private func packet(
         _ digest: String, from label: String?, _ margins: [(String, Int)],
-        voiceMs: Int? = nil, evidence: [String] = [], itemId: String? = "item-1", links: [MarginReplyLink] = [], provenance: Bool = true, person: String? = nil, readAloud: Bool? = nil, recording: Bool = false
+        voiceMs: Int? = nil, evidence: [String] = [], itemId: String? = "item-1", links: [MarginReplyLink] = [], provenance: Bool = true, person: String? = nil, readAloud: Bool? = nil, recording: Bool = false,
+        place: PortableAnchorEvidence? = nil
     ) -> Packet {
         var occurrences: [Int: Int] = [:]
         return Packet(
@@ -656,7 +728,7 @@ final class ImportedMarginResendsTests: XCTestCase {
                     id: "local-\(digest)-\(index + 1)", layerId: "layer-\(digest)", packageScopedId: "\(digest)-\(index + 1)",
                     // The time the packet was made, as the app stamps it: never the same twice.
                     createdAt: clock.addingTimeInterval(Double(digest.unicodeScalars.first!.value)),
-                    anchorEvidence: PortableAnchorEvidence(anchorType: .media, mediaTimeMs: margin.1, machineEvidenceAssetIds: evidence),
+                    anchorEvidence: place ?? PortableAnchorEvidence(anchorType: .media, mediaTimeMs: margin.1, machineEvidenceAssetIds: evidence),
                     approvedTranscript: margin.0,
                     audioPath: recording ? "/tmp/\(digest)-\(index + 1).m4a" : nil,
                     audioDurationMs: voiceMs,

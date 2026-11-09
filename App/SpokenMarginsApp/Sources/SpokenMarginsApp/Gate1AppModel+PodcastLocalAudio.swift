@@ -115,15 +115,27 @@ extension Gate1AppModel {
             guard let summary = try store.loadItemSummary(id: itemId) else { throw SessionKitError.missingFixture("item:\(itemId)") }
             return summary
         }
-        if let item = summary, item.mediaType == "audiobook" {
-            guard let url = resolvedOwnedAudiobookURL(for: item) else {
-                throw SessionKitError.invalidCommandForState("The imported audio file is unavailable. Restore the source audio to continue listening.")
+        // A file this app owns plays from that file: an imported audiobook, or a spoken note's joined audio (#3662).
+        if let item = summary, item.mediaType == "audiobook" || SpokenNoteItem.isSpokenNote(mediaType: item.mediaType) {
+            let url: URL?
+            if item.mediaType == "audiobook" {
+                guard let owned = resolvedOwnedAudiobookURL(for: item) else {
+                    throw SessionKitError.invalidCommandForState("The imported audio file is unavailable. Restore the source audio to continue listening.")
+                }
+                url = owned
+            } else {
+                // A note plays from the audio its Play made ready. One that was never made ready has no file to name here (a
+                // launch restoring its old session must not fail); the engine refuses to start it, and never reads it aloud.
+                url = (try? applicationSupportDirectory()).flatMap {
+                    SpokenNoteWholePlayback.playbackURL(for: item, applicationSupport: $0)
+                }
             }
-            _ = try engine?.updatePlaybackTransport(itemId: itemId, playbackURL: url.absoluteString, replaceActivePlayback: false)
+            _ = try engine?.updatePlaybackTransport(itemId: itemId, playbackURL: url?.absoluteString, replaceActivePlayback: false)
             return
         }
         guard let coordinator = podcastDownloadCoordinator else { return }
-        coordinator.configureActiveItem(itemId)
+        // Its offline-asset writes run here on purpose (#287), and so can wait behind a background write: name them.
+        hangTelemetry.labels.scoped("start.offlineAssets") { coordinator.configureActiveItem(itemId) }
         if let record = podcastDownloadRecords[itemId], record.state == .evicted,
            coordinator.networkTransport == .wifi,
            let remoteURL = URL(string: record.remoteURL) {

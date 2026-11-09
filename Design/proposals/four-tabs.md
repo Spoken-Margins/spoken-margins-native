@@ -11,7 +11,7 @@
 | Unfollow a show | 5 | 3 | Following tab > Show row |
 | Find the Margin you added most recently | 1 | 1 | Margins tab |
 | Hear a Margin's moment | 3 | 2 | Margins tab > Margin row (plays this moment) |
-| Share one Margin with a friend | 5 | 3 | Margins tab > chevron on a Margin row (details) > Share this Margin (square.and.arrow.up) |
+| Share one Margin with a friend | 6 | 4 | Margins tab > chevron on a Margin row (details) > More > Share this Margin (person.wave.2) > Share N |
 | See an item's details | 1 | 1 | Library row (title area) |
 | Add an article from the clipboard | 2 | 2 | Add (plus) |
 | Write a Margin while listening | 2 | 2 | Mini player (Open Now Playing) > square.and.pencil 'Write a Margin' |

@@ -119,7 +119,10 @@ public enum SharedItemIdentityBuilder {
     }
 
     private static func isPodcast<Fields: LibraryItemFields>(_ item: Fields) -> Bool {
-        item.media?.sourceType == .remoteStream || item.media?.sourceType == .nativeMediaFile
+        // A spoken note has audio of its own since #3662, but it is the listener's dictation, not an episode: its packets
+        // keep the identity they had before.
+        guard !SpokenNoteItem.isSpokenNote(mediaType: item.mediaType) else { return false }
+        return item.media?.sourceType == .remoteStream || item.media?.sourceType == .nativeMediaFile
     }
 
     private static func episodeGUID(for item: Item) -> String? {

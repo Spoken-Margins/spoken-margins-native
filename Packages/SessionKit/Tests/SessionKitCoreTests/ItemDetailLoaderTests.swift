@@ -186,6 +186,41 @@ final class ItemDetailLoaderTests: XCTestCase {
         }
     }
 
+    /// #3664: a Margin on a spoken note's sentence keeps the words and id it was made on when the note's audio is joined
+    /// again with the sentence at another time. An episode's Margin is still placed by its time.
+    func testASpokenNoteMarginKeepsItsSentenceWhenTheJoinedAudioMovesAndAnEpisodeMarginStillFollowsItsTime() throws {
+        try withFixture { fixture, store, _ in
+            func seed(_ id: String, mediaType: String) throws {
+                var media = item(id)
+                media.mediaType = mediaType
+                media.media = ItemMedia(sourceType: .nativeMediaFile, url: "file:///\(id).m4a", durationMs: 600_000)
+                try store.saveItem(media)
+                try store.saveSession(Session(id: "S-\(id)", itemId: id,
+                    createdAt: Date(timeIntervalSince1970: 1), updatedAt: Date(timeIntervalSince1970: 1),
+                    status: "in_progress", phase: .itemPlayback, currentTargetType: .transcriptBackedMedia,
+                    currentTargetId: id, position: Position(), completionPercent: 0, playbackRate: 1))
+                var margin = note("m-\(id)", session: "S-\(id)", item: id, time: 10)
+                margin.anchor = Anchor(anchorType: .transcript, startChar: 0, endChar: 6, anchorBefore: "Made on", anchorAfter: "",
+                    mediaTimeMs: 4_200, transcriptSegmentId: SpokenNoteMargins.segmentId(takeId: "b", sentenceIndex: 0))
+                try store.saveInterjection(margin)
+                // The audio was joined again: the sentence's time now holds other words.
+                try store.saveTranscriptTimeline(SourceTranscriptTimeline(id: "t-\(id)", itemId: id,
+                    createdAt: Date(timeIntervalSince1970: 5),
+                    timeline: TranscriptTimeline(segments: [
+                        MediaTimelineSegment(id: "other", startMs: 0, endMs: 9_000, startChar: 20, endChar: 30, text: "Other words")
+                    ], chapters: [], durationMs: 600_000)))
+            }
+            try seed("note", mediaType: SpokenNoteItem.mediaType)
+            try seed("episode", mediaType: "podcast")
+
+            let noteAnchor = try XCTUnwrap(try fixture.load("note", store).interjections.first?.anchor)
+            XCTAssertEqual(noteAnchor.anchorBefore, "Made on", "the note's Margin keeps the words it was made on")
+            XCTAssertEqual(noteAnchor.transcriptSegmentId, SpokenNoteMargins.segmentId(takeId: "b", sentenceIndex: 0))
+            let episodeAnchor = try XCTUnwrap(try fixture.load("episode", store).interjections.first?.anchor)
+            XCTAssertEqual(episodeAnchor.transcriptSegmentId, "other", "an episode's Margin is still read from its time")
+        }
+    }
+
     /// #2506: the Item screen's `body` asked the store three questions on every render (the layers, the proposal ids,
     /// the timeline's chapters) to decide whether to show "A shared map couldn't be placed". The loader works the
     /// answer out once, and the screen reads it from the detail. Each row ends in what the old three reads said.
@@ -294,6 +329,33 @@ final class ItemDetailLoaderTests: XCTestCase {
             XCTAssertNil(unreadable.publishedDateText, "an unreadable date is omitted, not shown as written")
             XCTAssertNotNil(present.addedDateText, "#3212: an item with a createdAt shows when it was added")
             XCTAssertNil(missing.addedDateText, "#3212: an item with no createdAt says nothing")
+        }
+    }
+
+    /// #3599: the Item screen titles itself and speaks of the source by the listener's word, not the app's "item".
+    /// The loader works the word out once, from the same facts the Library row reads, so `body` never scans the Library.
+    func testTheDetailNamesTheSourceTheWayTheLibraryRowDoes() throws {
+        try withFixture { fixture, store, _ in
+            let rows: [(id: String, mediaType: String, reference: String?, type: String?, expected: SourceNoun)] = [
+                ("podcast", "podcast", nil, nil, .episode),
+                ("transcript", "transcript_backed_media", nil, nil, .episode),
+                ("pdf", "pdf", nil, nil, .pdf),
+                ("article", "article", nil, nil, .article),
+                ("linked-text", "text", "https://example.com/a", "url", .article),
+                ("pasted", "text", nil, nil, .text),
+                ("unknown-kind", "something-new", nil, nil, .text)
+            ]
+            for row in rows {
+                var saved = item(row.id)
+                saved.mediaType = row.mediaType
+                saved.externalReference = row.reference
+                saved.externalReferenceType = row.type
+                try store.saveItem(saved)
+                let detail = try fixture.load(row.id, store)
+                XCTAssertEqual(detail.sourceNoun, row.expected, row.id)
+                XCTAssertFalse(detail.sourceNoun.capitalized.lowercased().contains("item"), row.id)
+            }
+            XCTAssertEqual(ItemDetailState().sourceNoun, .text, "an empty detail, before anything loads, says text, never item")
         }
     }
 

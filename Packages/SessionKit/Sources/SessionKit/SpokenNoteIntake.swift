@@ -68,6 +68,10 @@ public enum SpokenNoteIntake {
     public static func updatedItem(_ item: Item, for note: SpokenNote) -> Item {
         guard SpokenNoteItem.noteId(of: item) == note.id, item.text != note.text else { return item }
         var updated = item
+        // A made-up title follows the words; one the listener typed, or an older note's, is left as it is (#3663).
+        if SpokenNoteTitle.isAutomatic(item) {
+            updated.title = SpokenNoteTitle.automatic(createdAt: item.createdAt, text: note.text)
+        }
         updated.text = note.text
         return updated
     }

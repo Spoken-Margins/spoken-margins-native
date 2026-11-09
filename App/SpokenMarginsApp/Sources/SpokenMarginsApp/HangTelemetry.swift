@@ -59,6 +59,7 @@ final class HangTelemetry {
                 }
                 fields["durationMs"] = String(hang.durationMs)
                 fields["operation"] = hang.operation.isEmpty ? "none" : hang.operation
+                if !hang.samples.isEmpty { fields["operationSamples"] = hang.samplesField }
                 fields.merge(self.lastTapFields()) { current, _ in current }
                 record("main.hang", fields)
             }

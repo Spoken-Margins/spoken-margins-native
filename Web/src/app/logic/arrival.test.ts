@@ -1,15 +1,18 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import type { Margin } from '../../shared/model.ts';
+import type { Episode, Margin, PlaybackPosition } from '../../shared/model.ts';
+import type { PacketRead } from '../ports.ts';
 import {
   ARRIVAL_WORDS,
   LEAD_IN_SECONDS,
   arrivalFacts,
+  arrivalResumeAt,
   countdownClock,
   countdownSpoken,
   friendMargins,
   cueFor,
   marginsSeconds,
+  playHint,
   readsAloud,
   senderInitial,
   senderName,
@@ -190,4 +193,27 @@ test('the countdown and its Skip pass a Margin that is not read aloud (#3445)', 
   assert.equal(cueFor([silent], 0, 'Cole', { failed: true, heardWithoutEpisode: false }), undefined);
   // The count in "3 of 3" still includes it.
   assert.equal(speakingLine(silent, [silent, spoken], 'Cole').position, '1 of 2');
+});
+
+// #3798: the Arrival's hint and the Library row said two different places for the same episode.
+const own: Episode = { id: 'e1', showId: 's', title: 'T', guid: 'g-1', audioUrl: 'https://media.example.com/1.mp3', durationSeconds: 600 };
+const packet = (episode: PacketRead['episode']): PacketRead => ({ contentDigest: 'd'.repeat(64), episode, margins: [], textMarginCount: 0 });
+const at = (seconds: number, episodeId = 'e1'): PlaybackPosition => ({ episodeId, seconds, updatedAt: '2026-11-08T10:00:00Z' });
+
+test('Play starts where the Library says Resume at, and the hint says so', () => {
+  const read = packet({ title: 'T', guid: 'g-1' });
+  assert.equal(arrivalResumeAt(read, [own], [at(4)]), 4);
+  assert.equal(playHint('Cole', 4), 'Picks up at 0:04. Cole’s Margins play when the episode reaches them.');
+  assert.equal(playHint('Cole', 125), 'Picks up at 2:05. Cole’s Margins play when the episode reaches them.');
+});
+
+test('Play starts at the beginning for a new, unmatched, finished or zero-position episode', () => {
+  const read = packet({ title: 'T', guid: 'g-1' });
+  assert.equal(arrivalResumeAt(read, [own], []), undefined, 'never started');
+  assert.equal(arrivalResumeAt(read, [own], [at(0)]), undefined, 'a zero position is not started');
+  assert.equal(arrivalResumeAt(read, [own], [at(590)]), undefined, 'within the last 15 seconds counts as finished');
+  assert.equal(arrivalResumeAt(read, [own], [at(300, 'other')]), undefined, 'another episode’s place');
+  assert.equal(arrivalResumeAt(packet({ title: 'New', guid: 'g-9' }), [own], [at(4)]), undefined, 'not in the Library');
+  assert.equal(arrivalResumeAt(packet({ title: 'T', audioUrl: own.audioUrl }), [own], [at(4)]), 4, 'matched by audio address');
+  assert.equal(playHint('Cole'), 'Starts at the beginning. Cole’s Margins play when the episode reaches them.');
 });

@@ -9,7 +9,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, test, type Page } from '@playwright/test';
-import { keyFromFragment, sealPart, PART } from '../src/packet/share-link.ts';
+import { keyFromFragment, PART } from '../src/packet/share-link.ts';
+import { sealPart } from '../src/cli/link-sealing.ts';
 import { serveAudio, serveFixtures } from './fixtures.ts';
 
 const repo = fileURLToPath(new URL('../../', import.meta.url));

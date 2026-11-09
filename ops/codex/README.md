@@ -4,13 +4,13 @@ After 2026-10-15 Claude is the only model on this project. Each job Codex did ha
 
 | Codex role | After 2026-10-15 | Where |
 |---|---|---|
-| Audit of risky and lane PRs (the merge gate) | **Headless Claude**, read-only, same script and launchd job, posts `**Claude audit on `<sha7>`**` | "Audit" below |
+| Audit of risky and lane PRs (the merge gate) | **Headless Claude**, read-only, same script, on hosted Linux since #2170 (`claude-audit.yml`), posts `**Claude audit on `<sha7>`**` | "Audit" below |
 | Taking `ready` issues (Codex worker) | The owner's Claude Code project threads, one per `ready` issue (AGENTS.md), and for `where:mac` issues and stalled PRs the **Claude Mac worker** (headless Claude, #1599). **Deleted.** | "Deleted: Codex worker" below; `ops/claude/README.md` |
 | Finishing stalled PRs (lane FAIL on the head, `needs-mac`, audit findings) | The Mac finisher for Mac-side fixes, and the project's hourly dispatch, which gives a conflict, a failing cloud test or confirmed audit findings to a free thread. **Retired on the Codex side.** | project instructions; `.claude/skills/lane-request/SKILL.md` |
 | Test Desk (`--plan app` plus scripted journeys on each new tip of `next`) | The integration script, `ops/testdesk/` (#1178), with culprit and revert in #1180. **Retired** (the launchd job was never loaded; its script and plist are deleted). | `ops/testdesk/README.md` |
 | Journey desk (a Codex app automation with computer use, #693) | Agent-driven journeys stay with the standing Claude Test Desk. **Retired** (owner, 2026-10-09). | `.claude/skills/journey/SKILL.md` |
 
-`com.spokenmargins.codex-audit` is the audit job, which now calls Claude; it keeps its name so the loaded job, its log and its lock carry on. See "After 2026-10-15" at the end.
+The audit runs as the hosted workflow `claude-audit.yml`. The laptop job `com.spokenmargins.codex-audit` was removed on 2026-11-09 (#2170); its template stays so `ops/install-launchd.py --install codex-audit` can bring it back.
 
 # Deleted: Codex worker
 
@@ -125,7 +125,9 @@ Host tests (Python 3.9, no simulator):
 
 ## Audit (headless Claude)
 
-`sm_codex_audit.py` is the mechanical audit of PRs into the trunk (`main`). Since #1195 it runs on headless Claude (`claude -p`, model `opus`, effort `high`), read-only; before that it ran Codex (`gpt-6-astra`). launchd runs it every 5 minutes (`com.spokenmargins.codex-audit.plist`; 20 until #1456). An idle tick makes no model call. The script, job label, log and lock keep their old names, so the loaded job picks the change up when the ops checkout pulls `main`, with nothing to reinstall. Its docstring has the full gating rules. In short, it audits an open PR when:
+**On hosted Linux since #2170.** `.github/workflows/claude-audit.yml` runs this script when a lane run finishes and every 15 minutes. It uses the owner's Claude subscription through the `CLAUDE_CODE_OAUTH_TOKEN` secret of the `claude-audit` environment, which only `main` may use. That's the token `claude setup-token` makes, not API billing. Without the secret it logs "paused" and posts nothing. A merge run it can't dispatch after a clean audit is said on the PR and tried again on its next run. Its memory of failed heads and its token ledger live in the Actions cache. The launchd details below apply only to a run by hand on the Mac; once the hosted audit has posted, the owner unloads the launchd job so the two don't race. A missing token makes the run red and says so on each PR waiting for its audit. An expired one (`claude setup-token` makes one that lasts about a year) still looks present, so each call fails, and after two failures on a head the PR gets a note. `merge-stall.yml` alarms (#3502) only when nothing merges at all, and PRs that need no audit keep merging. The audit's token ledger now sits in the Actions cache, so the Mac's copy (`ops/ledger`) no longer sees these runs; the run logs carry each batch's result.
+
+`sm_codex_audit.py` is the mechanical audit of PRs into the trunk (`main`). Since #1195 it runs on headless Claude (`claude -p`, model `opus`, effort `high`), read-only; before that it ran Codex (`gpt-6-astra`). `claude-audit.yml` runs it when a lane run finishes and every 15 minutes as a backstop (it was a launchd job on the Mac until #2170). An idle tick makes no model call. The script, log and lock keep their old names. Its docstring has the full gating rules. In short, it audits an open PR when:
 
 1. The PR has no Codex or Claude audit comment naming its head. Only comments the lane runner also counts are audits: legacy ones starting ``**Codex audit (Astra)`` or `## Codex audit`, or an exact first-line heading ``**Claude audit on `<sha7>`**`` (7–40 lowercase hex characters). A finisher's reply such as ``**Codex audit on `a919a79` (P2): fixed in `d00dd82` `` is not (#812).
 2. Its newest lane report is a PASS on the head. A PR only the owner merges (it touches `scripts/lane-runner.py` or `.github/`) is never armed, so it gets no lane report: it is audited once its head's check runs and commit statuses have all finished with none failed (`head_checks_state`, #2052). A lane FAIL on the head still blocks it, and a head with no checks yet waits. The owner-tap alert (`scripts/owner_tap_alert.py`) then says "audit clean" or names the findings; an alert that went out before the audit gets one follow-up when the audit lands.
@@ -208,5 +210,5 @@ existing verdict parsers.
 ## After 2026-10-15 (owner)
 
 1. Done (owner, 2026-10-17): the Codex worker is unloaded, and its files are deleted from the repo (#1853). Delete `~/Library/LaunchAgents/com.spokenmargins.codex-worker.plist` if it is still there.
-2. Leave `com.spokenmargins.codex-audit` loaded. It is the Claude audit now.
+2. Done (2026-11-09, #2170): `com.spokenmargins.codex-audit` is removed from the Mac; the audit runs in `claude-audit.yml`.
 3. Remove the **Codex workers**, **Codex stop line**, **Codex finish by** and **Codex focus** groups from the Dial (#589), and the Codex usage line from the Mac tick. Both live outside the repo.

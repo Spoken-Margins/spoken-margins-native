@@ -26,14 +26,28 @@ public struct SharedMarginPromptStyle: Sendable, Equatable {
     /// The card goes away unanswered after this long. Nil when it waits for an answer.
     public let expiresAfterMs: Int?
 
+    /// A tone and a card the listener may ignore while the episode plays on. With no expiry (assistive technology) it
+    /// is the one card a newly crossed Margin may replace, so it can't hide every later Margin (#3720).
+    public var isToneOnly: Bool { !pausesSource && autoPlayAfterMs == nil }
+
     /// A layer with no reveal mode set is not auto-play (as before: only `.guided` plays by itself).
-    public static func style(revealMode: ImportedCommentaryRevealMode?, arrival: Arrival) -> SharedMarginPromptStyle {
+    ///
+    /// With VoiceOver or Switch Control running, finding and activating the card takes longer than 12 seconds, so the
+    /// tone-only card waits for an answer, as the card for a Margin the listener jumped to does (#3720). For a listener
+    /// touching the card or on it with focus, the app holds the timer (`FeedbackBannerPolicy.timerIsHeld`).
+    public static func style(
+        revealMode: ImportedCommentaryRevealMode?,
+        arrival: Arrival,
+        assistiveTechnologyRunning: Bool = false
+    ) -> SharedMarginPromptStyle {
         if revealMode == .guided {
             return SharedMarginPromptStyle(pausesSource: true, autoPlayAfterMs: autoPlayDelayMs, expiresAfterMs: nil)
         }
         switch arrival {
         case .crossed:
-            return SharedMarginPromptStyle(pausesSource: false, autoPlayAfterMs: nil, expiresAfterMs: toneOnlyCardMs)
+            return SharedMarginPromptStyle(
+                pausesSource: false, autoPlayAfterMs: nil,
+                expiresAfterMs: assistiveTechnologyRunning ? nil : toneOnlyCardMs)
         case .jumpedTo:
             return SharedMarginPromptStyle(pausesSource: true, autoPlayAfterMs: nil, expiresAfterMs: nil)
         }

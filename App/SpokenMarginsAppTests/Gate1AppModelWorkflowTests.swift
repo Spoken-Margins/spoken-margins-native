@@ -129,6 +129,50 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.snapshot.sessionId, session)
     }
 
+    /// #3211: "Share this Margin" on Margin details is Share, so it opens the friend sheet with only that Margin on its
+    /// review (a packet, not a Markdown file), and leaves the playing session and the current screen alone.
+    func testShareThisMarginOpensTheFriendSheetWithOnlyThatMargin() throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        model.beginWrittenMargin()
+        model.saveWrittenMargin(text: "First private thought")
+        model.beginWrittenMargin()
+        model.saveWrittenMargin(text: "Second selected thought")
+        model.refreshMarginRows()
+        let row = try XCTUnwrap(model.marginRows.first { $0.preview.contains("Second selected") })
+        let session = model.snapshot.sessionId
+        let screen = model.screen
+
+        model.openMarginShare(row.interjection)
+
+        XCTAssertTrue(model.isSharingInterjectionsPresented)
+        XCTAssertEqual(model.sharingState.drafts.map(\.interjection.id), [row.interjection.id], "only the opened Margin is offered")
+        XCTAssertTrue(model.sharingState.drafts.allSatisfy(\.isIncluded))
+        XCTAssertEqual(model.sharingState.entry, .reviewDefaults)
+        XCTAssertTrue(model.sharingState.draftsPreparedForExport, "the sheet keeps the one-Margin list when it opens")
+        XCTAssertEqual(model.selectedItem.id, row.interjection.itemId)
+        XCTAssertEqual(model.screen, screen)
+        XCTAssertEqual(model.snapshot.sessionId, session)
+    }
+
+    /// #3211: a Margin the sheet can't send (not active) never opens an empty sheet.
+    func testShareThisMarginRefusesAMarginTheSheetCannotSend() throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        model.beginWrittenMargin()
+        model.saveWrittenMargin(text: "A thought that was removed")
+        model.refreshMarginRows()
+        var margin = try XCTUnwrap(model.marginRows.first).interjection
+        margin.status = "deleted"
+
+        model.openMarginShare(margin)
+
+        XCTAssertFalse(model.isSharingInterjectionsPresented)
+        XCTAssertTrue(model.sharingState.drafts.isEmpty)
+    }
+
     /// #147: when the newest session has no Margins, Share still opens the sheet with the Margins of the
     /// session that has them, as the Share/Export screen did.
     func testItemMarginsShareUsesTheSessionWithMarginsWhenTheNewestHasNone() throws {
@@ -191,7 +235,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
 
         XCTAssertFalse(model.isSharingInterjectionsPresented)
         XCTAssertEqual(model.screen, screen)
-        XCTAssertEqual(model.lastError, "Record at least one Margin on this item before sharing.")
+        XCTAssertEqual(model.lastError, "Record at least one Margin on it before sharing.")
     }
 
     /// #1254: Settings is a tab, so every route to it (the Offline Storage back button) lands
@@ -449,6 +493,34 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: withoutLog) }
         let bare = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(contentsOf: withoutLog)) as? [String: String])
         XCTAssertNil(bare["voiceDownloads"], "no log, no key")
+    }
+
+    /// #3506: the export carries the Watch's latest report from its file, so a launch that crashed shows up in the
+    /// phone's Diagnostics after a later launch that survived.
+    func testDiagnosticsExportCarriesTheWatchReportFromItsFile() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("watch-diag-export-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let file = folder.appendingPathComponent("WatchDiagnostics.json")
+        var log = WatchDiagnosticsLog()
+        log.launched(at: Date(timeIntervalSince1970: 1_800_000_000))
+        log.launched(at: Date(timeIntervalSince1970: 1_800_000_100)) // the first one never reached the front
+        WatchDiagnosticsStore.save(log.report(build: "36", osVersion: "26.1", at: Date(timeIntervalSince1970: 1_800_000_101)), to: file)
+        let fixed = DiagnosticsExport.Fixed(
+            developerBuild: "test", developerRecording: nil, playbackEvents: nil, exportedAt: Date(),
+            playbackStatus: "idle", sessionPhase: "idle", targetType: nil, pendingAIJobs: 0
+        )
+
+        let withReport = try DiagnosticsExportInputs(live: [:], store: nil, fixed: fixed, voiceDownloadLogFile: nil, watchDiagnosticsFile: file).writeFile()
+        defer { try? FileManager.default.removeItem(at: withReport) }
+        let payload = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(contentsOf: withReport)) as? [String: String])
+        let watch = try XCTUnwrap(payload["watchDiagnostics"])
+        XCTAssertTrue(watch.contains("previousLaunchNeverBecameActive"))
+
+        let without = try DiagnosticsExportInputs(live: [:], store: nil, fixed: fixed, voiceDownloadLogFile: nil, watchDiagnosticsFile: folder.appendingPathComponent("none.json")).writeFile()
+        defer { try? FileManager.default.removeItem(at: without) }
+        let bare = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(contentsOf: without)) as? [String: String])
+        XCTAssertNil(bare["watchDiagnostics"], "no report, no key")
     }
 
     /// #1191: Share Diagnostics builds the file off the main actor so the button can show a spinner. The file
@@ -1782,7 +1854,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
     /// #1043 APM-10: the practice-Margin step was checked once, before any tap. It must stay open through Add
     /// Margin (button and compact control), through Cancel, and through a Finish whose save fails; only a saved
     /// Margin completes it.
-    func testGuidedOnboardingAdvancesOnlyFromCompletedProductActions() throws {
+    func testGuidedOnboardingAdvancesOnlyFromCompletedProductActions() async throws {
         let priorTermsVersion = UserDefaults.standard.object(forKey: SpokenMarginsTerms.acceptanceVersionKey)
         let priorTermsDate = UserDefaults.standard.object(forKey: SpokenMarginsTerms.acceptanceDateKey)
         defer {
@@ -1844,6 +1916,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
 
         XCTAssertTrue(model.isOnboardingStepComplete(.firstInterjection))
         XCTAssertEqual(model.guidedOnboardingStage, .reviewTimeline)
+        await model.settleItemReload() // the item detail reloads off the main thread after the save (#2505)
         let interjection = try XCTUnwrap(model.selectedItem.interjections.first)
 
         model.recordTimelineInterjectionViewed(interjectionId: interjection.id)
@@ -1979,6 +2052,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(saved.itemId, "item-pill")
         XCTAssertEqual(saved.sessionId, aSessionID)
         XCTAssertTrue(try store.loadInterjections(sessionId: bSession.id).isEmpty)
+        await model.settleItemReload() // so a late item reload that leaked A's Margin into B would show here (#2505)
         XCTAssertEqual(model.selectedItem.id, b.id)
         XCTAssertTrue(model.selectedItem.interjections.isEmpty, "B's open detail never receives A's Margin")
         XCTAssertEqual(model.selectedItem.sessionRows.map(\.interjectionCount), [0])
@@ -2035,7 +2109,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.dispatchGate2CompactCommand(.cancelInterjection)
     }
 
-    func testFinishAndCancelAreTheOnlyRecordingExits() throws {
+    func testFinishAndCancelAreTheOnlyRecordingExits() async throws {
         let restoreTerms = acceptTerms()
         defer { restoreTerms() }
         let recorder = try CountingToneRecordingClient()
@@ -2056,6 +2130,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.dispatchGate2CompactCommand(.finishInterjection)
         XCTAssertEqual(recorder.finishCount, 1)
         XCTAssertEqual(recorder.cancelCount, 0)
+        await model.settleItemReload() // the item detail reloads off the main thread after the save (#2505)
         XCTAssertEqual(model.selectedItem.interjections.first?.audioPath, recorder.savedPaths.first)
 
         XCTAssertFalse(model.recordingNavigationIsLocked)
@@ -3435,6 +3510,23 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertFalse(model.recentlyDeletedItems.contains(where: { $0.id == "item-pill" }))
     }
 
+    /// #2505: a permanent delete from Recently Deleted drops the row without a table read, so a Library read that began
+    /// before it (Home's, which checks only the revision) must be made stale, or it would publish the row again. A trashed
+    /// row is never in `libraryItems`, so the revision has to move on the `recentlyDeletedItems` change alone.
+    func testPermanentDeleteFromRecentlyDeletedMovesThePresentationRevision() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.moveItemToTrash(id: "item-pill")
+        XCTAssertTrue(model.recentlyDeletedItems.contains(where: { $0.id == "item-pill" }))
+        XCTAssertFalse(model.libraryItems.contains(where: { $0.id == "item-pill" }), "a trashed row is not in the Library list")
+        let before = model.libraryPresentationRevision
+
+        model.permanentlyDeleteItem(id: "item-pill")
+
+        XCTAssertFalse(model.recentlyDeletedItems.contains(where: { $0.id == "item-pill" }))
+        XCTAssertGreaterThan(model.libraryPresentationRevision, before, "a read begun before the delete must be stale")
+    }
+
     func testEmptyRecentlyDeletedPermanentlyDeletesEveryTrashedItem() {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
@@ -3905,6 +3997,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.startItem(id: "item-pill")
         model.dispatchGate2CompactCommand(.beginInterjection)
         model.dispatchGate2CompactCommand(.finishInterjection)
+        await model.settleItemReload() // the item detail reloads off the main thread after the save (#2505)
         XCTAssertEqual(model.selectedItem.interjections.count, 1)
         XCTAssertTrue(model.canSummarizeInterjections)
 
@@ -3988,6 +4081,10 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.pause()
         model.dispatchGate2CompactCommand(.beginInterjection)
         model.dispatchGate2CompactCommand(.finishInterjection)
+        // Summarize reads the item detail, which reloads off the main thread after the save (#2505). Tapping before
+        // that lands finds no unsummarized note, refuses with "already exists" and never starts a summary (#3688).
+        await model.settleItemReload()
+        XCTAssertTrue(model.canSummarizeInterjections)
         model.summarize()
         try await waitFor("first local summary completion") {
             model.selectedItem.turns.filter { $0.turnType == "interjection_summary" && $0.status == "complete" }.count == 1
@@ -4001,6 +4098,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.dispatchGate2CompactCommand(.beginInterjection)
         model.dispatchGate2CompactCommand(.finishInterjection)
         await model.settleSummaryRecords()
+        await model.settleItemReload() // the item detail reloads off the main thread after the save (#2505)
 
         XCTAssertTrue(model.canSummarizeInterjections)
         XCTAssertFalse(model.isSummarizingInterjections)
@@ -6137,6 +6235,50 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertNil(try store.loadSourceSuggestionDecision(sourceId: source.id), "a failed follow records no decision")
     }
 
+    /// #3817: a page offering two feeds with the same title puts both on the suggestion card, each with its
+    /// address so the listener can tell them apart. Nothing is followed until one is tapped, and the tap follows
+    /// that feed only. Discovery runs for real over a stubbed network.
+    func testTwoFeedsWithOneTitleAreBothOfferedAndOnlyTheTappedOneIsFollowed() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let databaseURL = root.appending(path: "library.sqlite")
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: databaseURL)
+        model.resetAndSeed()
+        let store = try model.libraryStoreForTesting()
+        addTeardownBlock { [weak model, weak store] in
+            // Never unlink an open SQLite/WAL file; see testFollowDiscoveryRechecksSubscriptionsBeforePublishing.
+            if model == nil, store == nil {
+                try FileManager.default.removeItem(at: root)
+            }
+        }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [SameTitleFeedsURLProtocol.self]
+        model.followedSourceCoordinator = FollowedSourceCoordinator(repository: store, session: URLSession(configuration: configuration), signals: nil)
+        try store.saveItem(Item(id: "article", title: "Article", mediaType: "text", text: "Source text.", externalReference: SameTitleFeedsURLProtocol.article, status: "ready", externalReferenceType: "url"))
+        try store.saveSession(Session(id: "session-article", itemId: "article", status: "in_progress", phase: .itemPlayback, currentTargetType: .itemTextTTS, currentTargetId: "article", position: Position(charOffset: 4), completionPercent: 40, playbackRate: 1))
+        model.openHome()
+        model.openItem(id: "article")
+
+        model.offerFollowSuggestionIfEligible(itemId: "article", store: store)
+        try await waitFor("the suggestion check finished") {
+            model.sourceFollowSuggestionCandidates.count == 2 || model.diagnostics["sourceFollowSuggestion"] != nil
+        }
+
+        let candidates = model.sourceFollowSuggestionCandidates
+        XCTAssertEqual(candidates.count, 2, "outcome: \(model.diagnostics["sourceFollowSuggestion"] ?? "none")")
+        XCTAssertEqual(candidates.map(\.source.canonicalURL), [SameTitleFeedsURLProtocol.news, SameTitleFeedsURLProtocol.essays])
+        XCTAssertEqual(candidates.map(\.displayName), ["Same Title", "Same Title"])
+        XCTAssertEqual(candidates.map { $0.showsFeedURL(among: candidates) }, [true, true], "the card shows each address under the shared name")
+        XCTAssertTrue(try store.loadFeedSubscriptions().isEmpty, "offering a feed is not following it")
+        XCTAssertTrue(model.feedSubscriptions.isEmpty)
+
+        model.acceptSourceFollowSuggestion(candidates[1])
+
+        try await waitFor("the tapped feed is followed") { !model.feedSubscriptions.isEmpty && model.sourceFollowSuggestionCandidates.isEmpty }
+        XCTAssertEqual(try store.loadFeedSubscriptions().map(\.source.canonicalURL), [SameTitleFeedsURLProtocol.essays])
+        XCTAssertEqual(model.feedSubscriptions.map(\.source.canonicalURL), [SameTitleFeedsURLProtocol.essays])
+    }
+
     /// #539: diagnostics showed a Follow failure for Noahpinion, which the owner follows. Its
     /// article on www.noahpinion.blog wasn't matched to the followed www.noahpinion.blog/feed, so
     /// opening it ran discovery again and recorded an error.
@@ -6938,6 +7080,46 @@ private final class GuidedTourRequestCountingURLProtocol: URLProtocol, @unchecke
     override func startLoading() {
         Self.lock.withLock { Self.urls.append(request.url?.absoluteString ?? "") }
         client?.urlProtocol(self, didFailWithError: URLError(.notConnectedToInternet))
+    }
+
+    override func stopLoading() {}
+}
+
+/// An article page linking two RSS feeds with the same title and different entries, both listing the article (#3817).
+private final class SameTitleFeedsURLProtocol: URLProtocol, @unchecked Sendable {
+    static let article = "https://sametitle.example/article"
+    static let news = "https://sametitle.example/news.xml"
+    static let essays = "https://sametitle.example/essays.xml"
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        guard let url = request.url else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badURL)); return
+        }
+        func feed(_ other: String) -> String {
+            #"<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"><channel><title>Same Title</title><link>https://sametitle.example</link>"#
+                + "<item><title>Article</title><link>\(Self.article)</link><guid>\(Self.article)</guid></item>"
+                + "<item><title>\(other)</title><link>https://sametitle.example/\(other)</link><guid>https://sametitle.example/\(other)</guid></item>"
+                + "</channel></rss>"
+        }
+        let reply: (status: Int, type: String, body: String)
+        switch url.absoluteString {
+        case Self.article:
+            reply = (200, "text/html", #"<html><head><link rel="alternate" type="application/rss+xml" href="/news.xml"><link rel="alternate" type="application/rss+xml" href="/essays.xml"></head><body>Article</body></html>"#)
+        case Self.news: reply = (200, "application/rss+xml", feed("news-1"))
+        case Self.essays: reply = (200, "application/rss+xml", feed("essay-1"))
+        default: reply = (404, "text/plain", "")
+        }
+        let body = Data(reply.body.utf8)
+        guard let response = HTTPURLResponse(url: url, statusCode: reply.status, httpVersion: "HTTP/1.1",
+                                             headerFields: ["Content-Type": reply.type, "Content-Length": "\(body.count)"]) else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse)); return
+        }
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: body)
+        client?.urlProtocolDidFinishLoading(self)
     }
 
     override func stopLoading() {}

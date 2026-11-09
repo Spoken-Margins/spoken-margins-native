@@ -67,10 +67,9 @@ public actor FollowedSourceCoordinator {
     private let session: URLSession
     private let parser = FeedParser()
     public private(set) var contactedHosts: Set<String> = []
-    /// What each discovery step saw on the last `discover`, for diagnostics (#244). Hosts and
-    /// error codes only, never a full link.
+    /// What each discovery step saw on the last `discover`, for diagnostics (#244). Substack steps
+    /// name hosts, so `failureDiagnostic` redacts them (#3548) before the line leaves this type.
     private(set) var lastDiscoveryTrace: [String] = []
-    private var lastDiscoveryHost = "unknown"
     /// Where newly seen entries are logged as I4 `item_published` rows (#483).
     private let signals: ListeningSignalRecorder?
     /// Each followed show's artwork, in a side file beside the database (#773).
@@ -89,8 +88,14 @@ public actor FollowedSourceCoordinator {
             configuration.timeoutIntervalForRequest = 20
             configuration.timeoutIntervalForResource = 30
             configuration.urlCache = nil
-            self.session = URLSession(configuration: configuration, delegate: BoundedRedirectDelegate(maximumRedirects: 5), delegateQueue: nil)
+            self.session = Self.boundedSession(configuration: configuration)
         }
+    }
+
+    /// The session `init` makes when none is passed: at most five redirects, each to an https address.
+    /// Internal so tests can run the same rule over a stub protocol in `configuration` (#3817).
+    static func boundedSession(configuration: URLSessionConfiguration) -> URLSession {
+        URLSession(configuration: configuration, delegate: BoundedRedirectDelegate(maximumRedirects: 5), delegateQueue: nil)
     }
 
     public func follow(urlString: String) async throws -> FeedSubscription {
@@ -113,7 +118,6 @@ public actor FollowedSourceCoordinator {
         let link = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
         lastDiscoveryTrace = []
         guard let url = URL(string: link) else { throw FollowedSourceError.invalidURL }
-        lastDiscoveryHost = url.host?.lowercased() ?? "unknown"
         contactedHosts = []
         if url.scheme?.lowercased() == "https" {
             do {
@@ -136,11 +140,12 @@ public actor FollowedSourceCoordinator {
         }
     }
 
-    /// One line for diagnostics after a failed Follow (#244): the error case, the host, and what
-    /// each discovery step saw.
+    /// One line for diagnostics after a failed Follow (#244): the error case and what each discovery step saw.
+    /// Hosts and handles are replaced with a placeholder (#3548), so the line never names a publisher.
+    /// The `host=` word stays, now with a constant value, because the stamped line's prefix is matched in tests.
     public func failureDiagnostic(for error: Error) -> String {
-        let steps = lastDiscoveryTrace.isEmpty ? "none" : lastDiscoveryTrace.joined(separator: " | ")
-        return "\(Self.diagnosticCode(for: error)) host=\(lastDiscoveryHost) steps=\(steps)"
+        let steps = lastDiscoveryTrace.isEmpty ? "none" : DiagnosticsHostRedaction.redactingHosts(in: lastDiscoveryTrace.joined(separator: " | "))
+        return "\(Self.diagnosticCode(for: error)) host=\(DiagnosticsHostRedaction.hostPlaceholder) steps=\(steps)"
     }
 
     public static func diagnosticCode(for error: Error) -> String {

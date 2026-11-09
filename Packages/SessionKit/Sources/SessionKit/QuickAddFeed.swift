@@ -170,8 +170,14 @@ public struct QuickAccessFolderScan: Sendable {
 }
 
 public enum QuickAccessFolderScanner {
-    /// The eight newest importable files (md, markdown, txt, pdf) directly in the folder. Hidden files,
-    /// subfolders and other extensions are skipped. An unreadable folder returns the error and no files.
+    /// How many `.json` files one scan reads to tell a link list from anything else. Newer files go first, so a folder
+    /// full of Listening Editions can't make a scan read without end. Each read is at most `LinkListFile.maxFileBytes`.
+    public static let maxJSONReads = 40
+
+    /// The eight newest importable files directly in the folder: md, markdown, txt and pdf by extension, and `.json`
+    /// only when the file itself says it is a structured link list (#3767, `LinkListFile.recognize`; never by name, so a
+    /// Listening Edition or any other JSON never shows). Hidden files, subfolders and other extensions are skipped. An
+    /// unreadable folder returns the error and no files. Reading happens here, so call it off the main actor.
     public static func scan(_ folderURL: URL) -> QuickAccessFolderScan {
         do {
             let files = try FileManager.default.contentsOfDirectory(
@@ -179,24 +185,54 @@ public enum QuickAccessFolderScanner {
                 includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey],
                 options: [.skipsHiddenFiles]
             )
-            let supported = files.compactMap { url -> QuickAccessFileCandidate? in
+            let found = files.compactMap { url -> (candidate: QuickAccessFileCandidate, isJSON: Bool)? in
                 let ext = url.pathExtension.lowercased()
-                guard ["md", "markdown", "txt", "pdf"].contains(ext) else { return nil }
+                guard ["md", "markdown", "txt", "pdf", "json"].contains(ext) else { return nil }
                 let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .isRegularFileKey])
                 guard values?.isRegularFile == true else { return nil }
-                return QuickAccessFileCandidate(
+                return (QuickAccessFileCandidate(
                     id: url.lastPathComponent,
                     name: url.deletingPathExtension().lastPathComponent,
                     relativePath: url.lastPathComponent,
                     modifiedAt: values?.contentModificationDate ?? .distantPast
-                )
+                ), ext == "json")
             }
-            return QuickAccessFolderScan(
-                files: Array(supported.sorted { $0.modifiedAt > $1.modifiedAt }.prefix(8)),
-                errorDescription: nil
-            )
+            // Newest first, ties by name so the order never depends on the directory listing.
+            let newestFirst = found.sorted {
+                $0.candidate.modifiedAt != $1.candidate.modifiedAt
+                    ? $0.candidate.modifiedAt > $1.candidate.modifiedAt
+                    : $0.candidate.relativePath < $1.candidate.relativePath
+            }
+            var accepted: [QuickAccessFileCandidate] = []
+            var jsonReads = 0
+            for entry in newestFirst where accepted.count < 8 {
+                if entry.isJSON {
+                    guard jsonReads < maxJSONReads else { continue }
+                    jsonReads += 1
+                    guard isLinkListFile(folderURL.appendingPathComponent(entry.candidate.relativePath)) else { continue }
+                }
+                accepted.append(entry.candidate)
+            }
+            return QuickAccessFolderScan(files: accepted, errorDescription: nil)
         } catch {
-            return QuickAccessFolderScan(files: [], errorDescription: String(describing: error))
+            return QuickAccessFolderScan(files: [], errorDescription: SafeErrorText.describe(error))
         }
+    }
+
+    /// True when the file's own `schemaVersion` says it is a link list (valid or refused: a refused list is shown so the
+    /// listener can read why). A file over the size limit is read only as far as its first 512 bytes, to see whether it
+    /// announces the link-list format, so the "too large, split it" reason reaches the listener without the scan
+    /// loading it. Anything unreadable is not a link list.
+    static func isLinkListFile(_ url: URL) -> Bool {
+        guard let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize, size > 0 else { return false }
+        if size > LinkListFile.maxFileBytes {
+            guard let handle = try? FileHandle(forReadingFrom: url) else { return false }
+            defer { try? handle.close() }
+            guard let head = try? handle.read(upToCount: 512) else { return false }
+            return head.range(of: Data(LinkListFile.schemaFamilyPrefix.utf8)) != nil
+        }
+        guard let data = try? Data(contentsOf: url) else { return false }
+        if case .notALinkList = LinkListFile.recognize(data) { return false }
+        return true
     }
 }

@@ -94,7 +94,8 @@ extension Gate1AppModel {
     }
 
     func dismissPendingImportedCommentary() {
-        guard pendingImportedCommentary != nil else { return }
+        guard let dismissed = pendingImportedCommentary else { return }
+        WrittenMarginReadings.skipped(dismissed) // a reading still being made for it stops (#3391)
         importedCommentaryAutoPlayTask?.cancel()
         importedCommentaryAutoPlayTask = nil
         pendingImportedCommentary = nil
@@ -217,7 +218,7 @@ extension Gate1AppModel {
     }
 
     private func sharedMarginHeardFailed(_ marginId: String, _ error: Error) {
-        diagnostics["sharedMarginHeard:\(marginId)"] = "failed:\(error.localizedDescription)"
+        diagnostics["sharedMarginHeard:\(marginId)"] = "failed:\(SafeErrorText.describe(error))"
         refreshSelectedItemInBackground()
         refreshMarginRowsInBackground()
     }
@@ -234,13 +235,20 @@ extension Gate1AppModel {
     func reconcileImportedCommentary(previous: SessionSnapshot, current: SessionSnapshot) {
         // Margins crossed together are offered one after another (#918). None is offered over a review of new
         // Margins (#474): its lead-ins cross Margins already heard, and an offer would pause the review.
+        let nothingElseIsGoing = playingImportedCommentary == nil
+            && marginMomentConductor?.sequence.isReview != true
+            && marginMomentConductor?.isPlayingVoice != true // a moment's voice is not cut mid-sentence (#1671)
+        // A tone-only card with no timer (VoiceOver or Switch Control) gives way to a Margin the source just crossed,
+        // and to nothing else (#3720). Read before the queue is modified: the call below holds the queue.
+        let toneOnlyCardID = sharedMarginOffers.toneOnlyCardID
+        let cardWithNoTimerIsUp = pendingImportedCommentary != nil && pendingImportedCommentary?.id == toneOnlyCardID
         guard let prompt = sharedMarginOffers.nextOffer(
             previous: previous, current: current, selectedItemID: selectedItem.id,
-            canOffer: pendingImportedCommentary == nil && playingImportedCommentary == nil
-                && marginMomentConductor?.sequence.isReview != true
-                && marginMomentConductor?.isPlayingVoice != true, // a moment's voice is not cut mid-sentence (#1671)
+            canOffer: pendingImportedCommentary == nil && nothingElseIsGoing,
+            canReplaceCard: cardWithNoTimerIsUp && nothingElseIsGoing,
             prompts: importedCommentaryPrompts(includeAnnounced: true)
         ) else { return }
+        if cardWithNoTimerIsUp { dismissPendingImportedCommentary() } // the same clean-up as a timed card going away
         presentImportedCommentaryPrompt(prompt, sourceWasPlaying: current.status.isPlaybackActive)
     }
 
@@ -253,7 +261,10 @@ extension Gate1AppModel {
         sourceWasPlaying: Bool,
         arrival: SharedMarginPromptStyle.Arrival = .crossed
     ) {
-        let style = SharedMarginPromptStyle.style(revealMode: prompt.layer.revealMode, arrival: arrival)
+        let style = SharedMarginPromptStyle.style(
+            revealMode: prompt.layer.revealMode, arrival: arrival, assistiveTechnologyRunning: AssistiveTechnology.isRunning)
+        FeedbackBannerHold.marginCard.setTouched(false) // a touch on the card before can't carry over; focus stays where it is
+        sharedMarginOffers.toneOnlyCardID = style.isToneOnly && style.expiresAfterMs == nil ? prompt.id : nil
         let pausesSource = sourceWasPlaying && style.pausesSource
         sharedMarginReturn.promptShown(sourceWasPlaying: pausesSource)
         if pausesSource, snapshot.status.isPlaybackActive { pause() }
@@ -271,6 +282,9 @@ extension Gate1AppModel {
                 if autoPlays {
                     self.hangTelemetry.labels.scoped("importedCommentaryAutoPlay") { self.listenToPendingImportedCommentary() }
                 } else {
+                    // A listener still touching the card, or with focus on it, keeps it (#3720).
+                    try? await FeedbackBannerHold.marginCard.waitWhileHeld()
+                    guard !Task.isCancelled, self.pendingImportedCommentary?.id == prompt.id else { return }
                     self.dismissPendingImportedCommentary()
                 }
             }
@@ -373,7 +387,7 @@ extension Gate1AppModel {
     private func playImportedCommentaryCue() {
         #if canImport(AVFoundation)
         do { try marginVoicePlayer.playCue() } catch {
-            diagnostics["importedCommentaryCue"] = "failed:\(error.localizedDescription)"
+            diagnostics["importedCommentaryCue"] = "failed:\(SafeErrorText.describe(error))"
         }
         #endif
     }

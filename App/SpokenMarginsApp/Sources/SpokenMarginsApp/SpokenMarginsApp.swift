@@ -1,4 +1,5 @@
 import SessionKit
+import SessionKitAudio
 import SessionKitSharing
 import SwiftUI
 import UserNotifications
@@ -73,10 +74,16 @@ struct SpokenMarginsApp: App {
     #endif
 
     init() {
+        // How long each launch takes to reach a usable screen, kept across launches (#3752). First, so the
+        // time before the model exists counts. Unit tests have no launch to time.
+        let runningTests = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+        if !runningTests {
+            LaunchRecorder.shared = LaunchRecorder()
+        }
         let model = Gate1AppModel.makeApplicationModel()
         // Memory use and memory kills, in Diagnostics (#122). Unit tests keep nothing on disk.
-        let runningTests = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
         let pinnedDiagnostics = PinnedDiagnostics(diagnostics: model.runtimeDiagnostics)
+        LaunchRecorder.shared?.attach { key, value in pinnedDiagnostics.set(key, value) }
         let memoryFootprint = MemoryFootprintRecorder(diagnostics: pinnedDiagnostics,
                                                       fileURL: runningTests ? nil : MemoryFootprintRecorder.defaultFileURL)
         memoryFootprint.start(observing: model)
@@ -98,6 +105,7 @@ struct SpokenMarginsApp: App {
         if !runningTests {
             previousRunExit.start { [weak model] kind, fields in
                 model?.recordDeveloperDiagnostic(kind, fields)
+                LaunchRecorder.shared?.noteExit(fields: fields) // the event log's 300 can push it out (#3752)
             }
         }
         self.previousRunExit = previousRunExit
@@ -115,6 +123,10 @@ struct SpokenMarginsApp: App {
         // A voice download iOS finished or woke the app for in the background carries on (#1819).
         BackgroundVoiceModelTransport.shared.onBackgroundEvents = { [weak model] in
             Task { @MainActor in await model?.requireVoiceDownloads().resumePending() }
+        }
+        // Which notes this phone's voices can read, so the count of new Margins follows them (#3402).
+        WrittenMarginVoiceCoverage.shared.install { [weak model] in
+            Task { @MainActor in model?.hangTelemetry.labels.scoped("writtenMarginVoicesChanged") { model?.writtenMarginVoicesChanged() } }
         }
         _model = StateObject(wrappedValue: model)
         _playbackStartCue = StateObject(wrappedValue: PlaybackStartCue(model: model, pinned: pinnedDiagnostics))
@@ -145,6 +157,7 @@ struct SpokenMarginsApp: App {
     }
 
     private func open(_ url: URL) {
+        let url = UITestingHooks.handedOffShareLink(url) ?? url
         if LiveSessionLinkRouter.shared.handle(url) { return }
         // A friend's file comes before the first-run drawer (#3291).
         if ShareLinkURL.isOnShareHost(url)
@@ -165,9 +178,9 @@ struct SpokenMarginsApp: App {
                 .onOpenURL(perform: open)
                 .onCompatibleChange(of: scenePhase) { phase in
                     if phase == .active {
-                        model.handleAppBecameActive()
+                        MainThreadOperationLabels.shared.scoped("scene.active") { model.handleAppBecameActive() }
                     } else if phase == .inactive || phase == .background {
-                        model.handleAppBecameInactiveOrBackground(entersBackground: phase == .background)
+                        MainThreadOperationLabels.shared.scoped("scene.inactiveOrBackground") { model.handleAppBecameInactiveOrBackground(entersBackground: phase == .background) }
                         #if canImport(BackgroundTasks) && canImport(UIKit)
                         if phase == .background {
                             // Read off main (#2508): the published list can predate the launch refresh.
@@ -185,7 +198,7 @@ struct SpokenMarginsApp: App {
                 }
                 #endif
                 .task {
-                    model.importPendingSourceLinkHandoffs()
+                    MainThreadOperationLabels.shared.scoped("launch.sourceLinkHandoffs") { model.importPendingSourceLinkHandoffs() }
                     #if DEBUG
                     // The screen tour's packets (#3237) open the way a listener's tap does.
                     if let packet = UITestingHooks.packetToOpen() { open(packet) }

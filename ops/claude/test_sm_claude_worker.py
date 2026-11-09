@@ -279,16 +279,28 @@ class FocusMilestoneTests(unittest.TestCase):
         with unittest.mock.patch.object(w, 'FOCUS_MILESTONES', focus):
             return w.issue_rank({'number': 1, 'labels': [], 'milestone': {'title': milestone}}, False)
 
-    def test_default_focus_is_showcase_not_the_closed_solid_ground(self):
-        self.assertEqual(w.FOCUS_MILESTONES, ('Showcase',))
+    def test_with_no_override_the_lowest_release_ranks_first(self):
+        # Milestones are releases named by app version (owner, 2026-11-07; #3636).
+        self.assertEqual(w.FOCUS_MILESTONES, ())
+        order = ['0.2', '0.2.1', '0.3', '0.10', '1.0', 'Co-op Experience']
+        ranks = [self.rank(name, ()) for name in order]
+        self.assertEqual(ranks, sorted(ranks))
+        self.assertLess(self.rank('0.2.1', ()), self.rank('0.3', ()))
+        self.assertLess(self.rank('0.9', ()), self.rank('0.10', ()))     # numbers, not text
+        self.assertEqual(self.rank('Showcase', ()), self.rank('0.2', ()))  # until the rename
+        for not_a_release in ('Later', 'Build 35', 'v0.2', '0.2 beta', '2', ''):
+            with self.subTest(milestone=not_a_release):
+                self.assertEqual(self.rank(not_a_release, ()), self.rank('Later', ()))
 
     def test_an_ordered_list_ranks_earlier_names_first(self):
         focus = ('Showcase', 'Co-op Experience')
         self.assertLess(self.rank('Showcase', focus), self.rank('Co-op Experience', focus))
         self.assertLess(self.rank('Co-op Experience', focus), self.rank('Later', focus))
 
-    def test_an_empty_list_ranks_every_milestone_alike(self):
-        self.assertEqual(self.rank('Showcase', ()), self.rank('Later', ()))
+    def test_an_override_still_forces_its_order(self):
+        focus = ('Co-op Experience',)
+        self.assertLess(self.rank('Co-op Experience', focus), self.rank('0.2', focus))
+        self.assertEqual(self.rank('0.2', focus), self.rank('Later', focus))
 
 
 class SlotCountTests(unittest.TestCase):
@@ -352,12 +364,15 @@ class TickOps(w.Ops):
         self.tick = [rest(tick_line, ago(minutes=40), 337)]
         self.boards, self.pr_links = [], 0
 
-    def board_sync(self, number=None, ledger=None):
-        self.boards.append(number)
+    def area_sync(self, ledger=None):
+        self.boards.append(None)
         return 'exit 0: fake'
 
     def pr_link_sync(self):
         self.pr_links += 1
+        return 'exit 0: fake'
+
+    def ready_guard_sync(self):
         return 'exit 0: fake'
 
     def dial_body(self): return self.dial
@@ -425,7 +440,7 @@ class TickTests(unittest.TestCase):
                 self.assertIn(why, decision['why'])
 
     def test_the_board_pass_runs_hourly_whatever_the_dial_says(self):
-        # #1621: the cloud dispatch gets a 403 from the project API, so the Mac's tick keeps project 6 in line.
+        # #3636: the hourly area-label pass runs on the Mac whatever the Dial says.
         off = DIAL.replace('- [x] Paced', '- [ ] Paced').replace('- [ ] Off', '- [x] Off')
         spawn = lambda o, slot, number, kind: 4242
         with tempfile.TemporaryDirectory() as d:
@@ -443,24 +458,23 @@ class TickTests(unittest.TestCase):
             w.tick(ops, spawn=spawn)                       # an unreadable stamp runs it rather than never
             self.assertEqual(ops.boards, [None, None, None])
 
-    def test_board_sync_runs_the_script_and_summarises_its_report(self):
+    def test_area_sync_runs_the_script_and_summarises_its_report(self):
         with tempfile.TemporaryDirectory() as d:
             root, sent = Path(d), []
             def run(cmd, cwd=None, timeout=300):
                 sent.append([str(x) for x in cmd])
-                return w.Result(0, json.dumps({'changes': [{}], 'unknown': [], 'api_calls': 12, 'writes': 3,
-                                               'seconds': 4.2}))
+                return w.Result(0, json.dumps({'flagged': [{}, {}], 'cleared': [3], 'unknown': [], 'seconds': 4.2}))
             ops = w.Ops(home=root / 'home', repo_root=root, own_root=root, run=run, echo=False)
-            self.assertIn('skipped', ops.board_sync(7))   # not on this checkout yet: nothing runs
+            self.assertIn('skipped', ops.area_sync())   # not on this checkout yet: nothing runs
             self.assertEqual(sent, [])
             (root / 'scripts').mkdir()
-            (root / 'scripts' / 'sm_project_sync.py').write_text('')
-            self.assertEqual(ops.board_sync(7), 'exit 0: 1 change(s), 0 unknown, 12 calls, 3 writes, 4.2 s')
-            self.assertEqual(sent[-1][1:], [str(root / 'scripts' / 'sm_project_sync.py'), '--apply', '--issue', '7'])
-            ops.board_sync(ledger=root / 'lane')
+            (root / 'scripts' / 'area_labels.py').write_text('')
+            self.assertEqual(ops.area_sync(), 'exit 0: 2 flagged, 1 cleared, 0 unknown, 4.2 s')
+            self.assertEqual(sent[-1][1:], [str(root / 'scripts' / 'area_labels.py'), '--apply'])
+            ops.area_sync(ledger=root / 'lane')
             self.assertEqual(sent[-1][2:], ['--apply', '--ledger-state', str(root / 'lane')])
             ops.run = lambda cmd, cwd=None, timeout=300: (_ for _ in ()).throw(OSError('gone'))
-            self.assertEqual(ops.board_sync(), 'error: gone')   # never raises into a tick or a run
+            self.assertEqual(ops.area_sync(), 'error: gone')   # never raises into a tick or a run
 
     def test_pr_link_sync_runs_the_script_and_summarises_its_report(self):
         with tempfile.TemporaryDirectory() as d:
@@ -477,6 +491,22 @@ class TickTests(unittest.TestCase):
             self.assertEqual(sent[-1][1:], [str(root / 'scripts' / 'pr_issue_link.py'), '--apply'])
             ops.run = lambda cmd, cwd=None, timeout=300: (_ for _ in ()).throw(OSError('gone'))
             self.assertEqual(ops.pr_link_sync(), 'error: gone')
+
+    def test_ready_guard_sync_runs_the_script_and_summarises_its_report(self):
+        with tempfile.TemporaryDirectory() as d:
+            root, sent = Path(d), []
+            def run(cmd, cwd=None, timeout=300):
+                sent.append([str(x) for x in cmd])
+                return w.Result(0, json.dumps({'flagged': [4, 5], 'unknown': []}))
+            ops = w.Ops(home=root / 'home', repo_root=root, own_root=root, run=run, echo=False)
+            self.assertIn('skipped', ops.ready_guard_sync())
+            self.assertEqual(sent, [])
+            (root / 'scripts').mkdir()
+            (root / 'scripts' / 'ready_owner_only.py').write_text('')
+            self.assertEqual(ops.ready_guard_sync(), 'exit 0: 2 flagged, 0 unknown')
+            self.assertEqual(sent[-1][1:], [str(root / 'scripts' / 'ready_owner_only.py'), '--apply'])
+            ops.run = lambda cmd, cwd=None, timeout=300: (_ for _ in ()).throw(OSError('gone'))
+            self.assertEqual(ops.ready_guard_sync(), 'error: gone')
 
     def test_idle_when_nothing_is_eligible(self):
         decision, started, _ = self.tick(issues=[issue(7, labels=('ready',))])
@@ -721,12 +751,12 @@ class IssueRunTests(unittest.TestCase):
         self.assertEqual(self.labels(), {'where:mac', 'blocked'})
         self.assertIn('two runs in a row added no commit', self.h.gh.comments(7)[-1])
 
-    def test_the_claim_and_the_stop_each_sync_the_issues_card(self):
+    def test_a_run_touches_no_board(self):
+        # The board went on 2026-11-07 (#3636): a claim and a stop no longer sync a card.
         self.h.plan({'files': {'one.txt': '1'}, 'handoff': 'Done: the model.'})
-        ops, seen = self.h.ops(), []
-        ops.board_sync = lambda number=None, ledger=None: seen.append((number, sorted(self.labels()))) or 'exit 0: fake'
+        ops = self.h.ops()
+        ops.area_sync = lambda ledger=None: self.fail('a run must not run the hourly pass')
         self.assertEqual(w.run_issue(ops, 1, 7), 'handoff')
-        self.assertEqual(seen, [(7, ['in-progress', 'where:mac']), (7, ['ready', 'where:mac'])])
 
     def test_a_run_that_never_started_is_a_fault_not_a_run(self):
         self.h.plan({'no_json': True, 'exit': 1})

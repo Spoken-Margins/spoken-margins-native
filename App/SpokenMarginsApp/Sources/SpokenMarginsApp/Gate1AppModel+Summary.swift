@@ -98,7 +98,7 @@ extension Gate1AppModel {
               selectedItem.id == original.itemId,
               snapshot.sessionId == original.sessionId,
               summaryScopeForCurrentTarget() == original.scope else {
-            reportFailure("Return to the original item and listening target to retry this summary.", itemId: original.itemId)
+            reportFailure("Return to the original source and listening target to retry this summary.", itemId: original.itemId)
             return
         }
         guard localFoundationModelAvailable else {
@@ -106,7 +106,7 @@ extension Gate1AppModel {
             return
         }
         guard let store, let engine else {
-            reportFailure("The original summary is unavailable. Open the item and try again.", itemId: original.itemId)
+            reportFailure("The original summary is unavailable. Open it and try again.", itemId: original.itemId)
             return
         }
         do {
@@ -129,7 +129,7 @@ extension Gate1AppModel {
                           : note.targetType == .item && note.targetId == original.itemId
                   }),
                   localSummaryContexts(interjections: source) == original.contexts else {
-                reportFailure("The original summary or its Margins changed or are unavailable. Open the original item to start a new summary.", itemId: original.itemId)
+                reportFailure("The original summary or its Margins changed or are unavailable. Open the original source to start a new summary.", itemId: original.itemId)
                 return
             }
             snapshot = try engine.retryAIJob(jobId: job.id)

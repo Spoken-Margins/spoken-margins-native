@@ -147,7 +147,7 @@ final class ManifestBoundTests: XCTestCase {
             itemTransportSelection: .reference, selections: sixMargins(evidenceID: nil)
         )
         let failure = SharedPacketExportFailure(error: SpokenMarginsPackageArchiveError.manifestTooLarge, prepared: prepared)
-        XCTAssertTrue(failure.diagnostic.hasPrefix("manifestTooLarge;"), failure.diagnostic)
+        XCTAssertTrue(failure.diagnostic.contains(":manifestTooLarge;artifacts="), failure.diagnostic)
         XCTAssertTrue(failure.diagnostic.contains("artifacts=1;assets=0;longestURL=320;manifestBytes="), failure.diagnostic)
         XCTAssertFalse(failure.listenerMessage.localizedCaseInsensitiveContains("manifest"))
         XCTAssertTrue(failure.listenerMessage.contains("fewer"), failure.listenerMessage)
@@ -190,7 +190,7 @@ final class ManifestBoundTests: XCTestCase {
     private func markedPublicItem() -> Item {
         var item = Item(id: "item-public", title: "Public", mediaType: "text", text: nil,
                         externalReference: "https://example.com/post", status: "ready", externalReferenceType: "url")
-        item.publicSourceMark = PublicSourceMark(url: "https://example.com/post", checkedAt: Date(timeIntervalSince1970: 1_800_000_000))
+        item.publicSourceMark = PublicSourceMark(url: "https://example.com/post", checkedAt: Date())
         return item
     }
 

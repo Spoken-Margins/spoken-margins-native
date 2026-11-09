@@ -113,7 +113,7 @@ NOTES = {
              '(SupertonicClientHarness, #353).',
     'app-ui': 'If a listener would notice this change, the milestone needs a T4 journey.',
     'guard': 'After changing the guard, run scripts/install-lane-guard.py so new sessions use it.',
-    'ui-tests': 'Scripted journeys run only in the integration run on next\'s tip, never per PR. Name the '
+    'ui-tests': 'Scripted journeys run when a phone build is cut and before an upload, never per PR or on a tip. Name the '
                 'journey the script covers in the PR, and add a new script to TestPlans/scripted-journeys.json '
                 'under probation (docs/journeys.md, Scripted journeys).',
 }
@@ -186,33 +186,118 @@ REACH_LISTED = 5  # how many left-out classes the note names
 # changed file is an audio file. A test class named for the changed file, or named in a `tests:` line, is unaffected.
 REACH_AUDIO_DEVICE_CLASS = re.compile(r'^AudioLoopback')
 TEST_METHOD = re.compile(r'^\s*(?:@\w+\s+)*func test\w*\(')
-COMMENT = re.compile(r'(?<!:)//.*')  # not the // of https://
 WORD = re.compile(r'[A-Za-z_]\w*')
 MEMBER_DECL = re.compile(
-    r'^(\s*)(?:@\w+(?:\([^)]*\))?\s+)*((?:(?:private|fileprivate|internal|public|open|static|final|override|mutating|'
-    r'nonisolated|lazy|weak|unowned|indirect|convenience|required|class)(?:\(\w+\))?\s+)*)(func|var|let|struct|enum|'
+    r'^(\s*)(?:@\w+(?:\([^)]*\))?\s+)*((?:(?:private|fileprivate|internal|public|open|package|static|final|override|mutating|'
+    r'nonisolated|nonmutating|consuming|borrowing|distributed|isolated|lazy|weak|unowned|indirect|convenience|required|'
+    r'dynamic|class)(?:\(\w+\))?\s+)*)(func|var|let|struct|enum|'
     r'class|protocol|actor|typealias|case|extension)\s+`?(\w+)((?:\s*,\s*`?\w+)*)')
 # An init or subscript has no name to follow, but its body belongs to it, not to the member declared above it.
 NAMELESS_DECL = re.compile(r'^(\s*)(?:@\w+(?:\([^)]*\))?\s+)*(?:(?:private|fileprivate|internal|public|open|convenience|'
-                           r'required|override|nonisolated|static|class)(?:\(\w+\))?\s+)*(?:init[?!]?\s*[(<]|subscript\s*[(<])')
+                           r'required|override|nonisolated|isolated|static|class|final|package)(?:\(\w+\))?\s+)*(?:init[?!]?\s*[(<]|'
+                           r'subscript\s*[(<]|'
+                           r'deinit\b)')
 TYPE_KINDS = {'struct', 'enum', 'class', 'protocol', 'actor', 'extension'}
 
 
+def string_end(text, i):
+    """The index after the Swift string literal that starts at <i> (#, ", or a raw or multi-line opener), or None when
+    <i> starts no string. A string is kept whole, interpolations and the strings inside them included."""
+    size, hashes = len(text), 0
+    while text.startswith('#', i + hashes):
+        hashes += 1
+    if not text.startswith('"', i + hashes):
+        return None
+    multiline = text.startswith('"""', i + hashes)
+    quote = '"""' if multiline else '"'
+    end, escape = quote + '#' * hashes, '\\' + '#' * hashes
+    j = i + hashes + len(quote)
+    while j < size:
+        if text.startswith(end, j):
+            return j + len(end)
+        if not multiline and text[j] == '\n':
+            return j
+        if text.startswith(escape + '(', j):
+            j = interpolation_end(text, j + len(escape) + 1)
+        elif text.startswith(escape, j):
+            j += len(escape) + 1
+        else:
+            j += 1
+    return size
+
+
+def interpolation_end(text, i):
+    """The index after the ) that closes a \\( interpolation whose code starts at <i>: parentheses nest, and a string
+    inside it is skipped whole, so a // or /* in that string does not start a comment."""
+    depth, size = 1, len(text)
+    while i < size and depth:
+        end = string_end(text, i) if text[i] in '#"' else None
+        if end is not None:
+            i = end
+            continue
+        depth += {'(': 1, ')': -1}.get(text[i], 0)
+        i += 1
+    return i
+
+
+def strip_comments(text):
+    """The lines of Swift <text> with // and /* */ comments (which nest) blanked, one output line per input line so that
+    an index means the same line to git. A // inside a string literal is not a comment: file:///tmp, "https://x", a raw
+    string #"//"# and a multi-line string are kept whole."""
+    out, i, size, depth = [], 0, len(text), 0
+    while i < size:
+        char = text[i]
+        if depth:
+            if text.startswith('/*', i):
+                depth += 1
+                out.append('  ')
+                i += 2
+            elif text.startswith('*/', i):
+                depth -= 1
+                out.append('  ')
+                i += 2
+            else:
+                out.append(char if char == '\n' else ' ')
+                i += 1
+        elif text.startswith('//', i):
+            while i < size and text[i] != '\n':
+                i += 1
+        elif text.startswith('/*', i):
+            depth = 1
+            out.append('  ')
+            i += 2
+        elif text.startswith('#/', i) and text.find('/#', i + 2) >= 0:  # an extended regex literal #/ ... /#
+            end = text.find('/#', i + 2) + 2
+            out.append(text[i:end])
+            i = end
+        elif char in '#"' and string_end(text, i) is not None:
+            end = string_end(text, i)
+            out.append(text[i:end])
+            i = end
+        else:
+            out.append(char)
+            i += 1
+    return [line.rstrip('\r') for line in ''.join(out).split('\n')]
+
+
 def swift_sources(root, prefix):
-    """{path: lines without // comments} for every Swift file under <prefix>."""
+    """{path: lines without comments} for every Swift file under <prefix>."""
     found = {}
     for path in sorted((root / prefix).glob('**/*.swift')):
         try:
             text = path.read_text(errors='replace')
         except OSError:
             continue
-        found[str(path.relative_to(root))] = [COMMENT.sub('', line) for line in text.splitlines()]
+        found[str(path.relative_to(root))] = strip_comments(text)
     return found
 
 
-def member_declarations(lines):
+def member_declarations(lines, extensions=None):
     """(line index, indent, name) of each declaration that is a member of a type or a top-level one. A local let or
-    func inside a function body is not one: no other file can name it."""
+    func inside a function body is not one: no other file can name it. An init or subscript has no name to follow, but
+    its body belongs to it, not to the member declared above it: it is listed with the name None. When <extensions> is a
+    list, each extension is appended to it as (line index, indent, the extended type's name, the last part of a dotted
+    one): not a member, but the type a nameless member inside it stands for."""
     stack, found = [], []  # stack: (indent, kind) of the open declarations
     for index, line in enumerate(lines):
         nameless = NAMELESS_DECL.match(line)
@@ -220,6 +305,8 @@ def member_declarations(lines):
             indent = len(nameless.group(1))
             while stack and stack[-1][0] >= indent:
                 stack.pop()
+            if not stack or stack[-1][1] in TYPE_KINDS:
+                found.append((index, indent, None))
             stack.append((indent, 'init'))
             continue
         match = MEMBER_DECL.match(line)
@@ -233,8 +320,35 @@ def member_declarations(lines):
             # An extension names the type it extends: that type is not a thing the change declares.
             if kind != 'extension':
                 found.extend((index, indent, each) for each in [name] + more)
+            elif extensions is not None:
+                extensions.append((index, indent, re.search(r'extension\s+([\w.]+)', line).group(1).split('.')[-1]))
         stack.append((indent, kind))
     return found
+
+
+def holder_at(holders, index, indent):
+    """The (index, indent, name) of the member that holds the line at <index>, indented by <indent>: the nearest
+    declaration at or above it with a smaller indent. None when there is none."""
+    held = None
+    for holder in holders:
+        if holder[0] == index or (holder[0] < index and holder[1] < indent):
+            held = holder
+    return held
+
+
+def holder_at_before(holders, holder):
+    """The member that holds <holder>'s own declaration line (its parent), or None."""
+    around = [other for other in holders if other[0] < holder[0] and other[1] < holder[1]]
+    return around[-1] if around else None
+
+
+def type_around(holders, extensions, holder):
+    """The name of the type around a nameless <holder> (an init): the nearest named member or extension that holds it."""
+    around = holder_at_before(holders, holder)
+    outer = [other for other in extensions if other[0] < holder[0] and other[1] < holder[1]]
+    if outer and (around is None or around[0] < outer[-1][0]):
+        return outer[-1][2]
+    return around[2] if around else None
 
 
 def test_counts(tests):
@@ -264,11 +378,19 @@ def reaching_classes(root, changed, skip=()):
         return [], []
     audio_diff = any(APP_AUDIO.search(Path(path).name) for path in changed)
     words = {path: set(WORD.findall('\n'.join(lines))) for path, lines in {**sources, **tests}.items()}
-    members = {path: member_declarations(lines) for path, lines in sources.items()}
-    frontier = {name for path in changed for _, _, name in members[path]}
+    extended = {path: [] for path in sources}
+    members = {path: member_declarations(lines, extended[path]) for path, lines in sources.items()}
+
+    def fanout(name):
+        return sum(name in w for w in words.values())
+
+    def common(name):
+        return fanout(name) > REACH_FANOUT
+
+    frontier = {name for path in changed for _, _, name in members[path] if name}
     seen, classes = set(frontier), []
     for _ in range(REACH_HOPS):
-        frontier = {name for name in frontier if sum(name in w for w in words.values()) <= REACH_FANOUT}
+        frontier = {name for name in frontier if not common(name)}
         if not frontier:
             break
         for path in sorted(tests):
@@ -284,11 +406,14 @@ def reaching_classes(root, changed, skip=()):
             for index, line in enumerate(lines):
                 if not frontier & set(WORD.findall(line)):
                     continue
-                # The member that holds this line: the nearest declaration above it with a smaller indent.
-                indent = len(line) - len(line.lstrip())
-                held = [name for at, deep, name in holders if at == index or (at < index and deep < indent)]
-                if held:
-                    reached.add(held[-1])
+                # The member that holds this line. An init body belongs to the init, which has no name to follow: the
+                # type around it stands for it (not the member declared above it).
+                held = holder_at(holders, index, len(line) - len(line.lstrip()))
+                name = held[2] if held else None
+                if held and name is None:
+                    name = type_around(holders, extended[path], held)
+                if name:
+                    reached.add(name)
         frontier = reached - seen
         seen |= reached
     counts, picked, left_out, total = test_counts(tests), [], [], 0
@@ -503,7 +628,7 @@ MAC_SCRIPT_NAME = re.compile(r'lane|verif|test-scope|test_scope|phone|sim[_-]|se
 # verify-tests.py). test_mac_checks_scope.py walks that code's imports and fails when one is missing here.
 MAC_SCRIPT_FILES = {'sm_paths.py', 'sm_build_cache.py', 'comment_trust.py', 'setup-worktree.sh', 'merge_audit.py',
                     'simctl_preflight.py', 'test_inventory.py', 'third_party_notices.py', 'node_modules_drift.py',
-                    'check_posterboard_repair.py', 'ops_checkout.py'}
+                    'check_posterboard_repair.py', 'ops_checkout.py', 'workflow_yaml.py', 'test_workflow_files.py'}
 MAC_NOT_NEEDED_PREFIXES = ('docs/', 'Design/', 'references/', 'tmp/', '.claude/', 'research/', 'Site/', 'ops/',
                            '.github/', 'Tools/BrowserExtraction/', 'Contracts/docs/')
 MAC_NOT_NEEDED_FILES = T0_FILES | BROWSER_FILES | {'AGENTS.md', 'CLAUDE.md'}
@@ -532,6 +657,13 @@ def mac_checks_required(paths):
         if why:
             return True, why
     return False, 'Mac checks not required: no Swift inputs'
+
+
+def app_build_required(paths):
+    """True when the runner waits for hosted-app-macos.yml's build before merging (#3539). Every path here is on that
+    workflow's `paths` list, so the build is sure to start. Packages/ and project.yml also start it, but the runner
+    doesn't wait for it on those diffs: the need here is App/ diffs leaving the Mac checks (#3540)."""
+    return any(path.startswith('App/') for path in paths)
 
 
 # Ops folders whose tests skip themselves on Linux (ops/power's amph is AppleScript): a pass there proves nothing.

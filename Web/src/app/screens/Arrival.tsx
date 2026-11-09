@@ -4,10 +4,10 @@
 // the sender's first Margin and a Skip. Every failure says what happened and one thing to do.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { PlayIcon } from '../icons.tsx';
-import { PLAY_HINT, ARRIVAL_WORDS, arrivalFacts, possessive, senderName, type ArrivalFacts } from '../logic/arrival.ts';
+import { arrivalResumeAt, playHint, ARRIVAL_WORDS, arrivalFacts, possessive, senderName, type ArrivalFacts } from '../logic/arrival.ts';
 import { UNNAMED_SENDER, placeImport } from '../logic/import.ts';
 import { plainError } from '../logic/messages.ts';
-import { ShareLinkError, openSharedPacket, type ParsedLink, type ShareLinkRef } from '../logic/share-link.ts';
+import { ShareLinkError, linkFooterText, openSharedPacketWithExpiry, type ParsedLink, type ShareLinkRef } from '../logic/share-link.ts';
 import { NotSavedError } from '../logic/storage.ts';
 import { useData } from '../data.tsx';
 import type { PacketRead } from '../ports.ts';
@@ -19,7 +19,7 @@ import { useUi } from '../ui.tsx';
 type State =
   | { status: 'opening' }
   | { status: 'failed'; message: string }
-  | { status: 'ready'; read: PacketRead; facts: ArrivalFacts };
+  | { status: 'ready'; read: PacketRead; facts: ArrivalFacts; expires?: string };
 
 /** Words for a link that wouldn't open. A cut-off link and an unopenable key read the same: the friend re-copies it. */
 function failureWords(error: unknown): string {
@@ -87,9 +87,9 @@ export function Arrival({ link, onDone }: { link: ParsedLink; onDone: (playing: 
     }
     void (async () => {
       try {
-        const bytes = await openSharedPacket(serverFor(link.link));
+        const { bytes, expires } = await openSharedPacketWithExpiry(serverFor(link.link));
         const read = await services.packets.readPacket(bytes, 'shared.spokenmargins');
-        setState({ status: 'ready', read, facts: arrivalFacts(read.sender, read.margins) });
+        setState({ status: 'ready', read, facts: arrivalFacts(read.sender, read.margins), ...(expires === undefined ? {} : { expires }) });
       } catch (error) {
         setState({ status: 'failed', message: failureWords(error) });
       }
@@ -139,10 +139,11 @@ export function Arrival({ link, onDone }: { link: ParsedLink; onDone: (playing: 
       setBusy(true);
       try {
         primeSpeech();
+        const current = dataRef.current;
         const { placed, saved } = store(read);
         // Started inside the tap, before any wait: a browser lets sound start only from the friend's own tap. Now
         // Playing opens as soon as the Margins are stored; it shows "Loading audio…" while the episode buffers.
-        void player.open(placed.episode.id, { at: 0, episode: placed.episode });
+        void player.open(placed.episode.id, { at: arrivalResumeAt(read, current.episodes, current.positions) ?? 0, episode: placed.episode });
         void finish(saved, true);
       } catch (error) {
         setBusy(false);
@@ -204,7 +205,7 @@ export function Arrival({ link, onDone }: { link: ParsedLink; onDone: (playing: 
     );
   }
 
-  const { read, facts } = state;
+  const { read, facts, expires } = state;
   const who = facts.who;
   const episode = read.episode;
   const article = read.margins.length === 0;
@@ -257,11 +258,11 @@ export function Arrival({ link, onDone }: { link: ParsedLink; onDone: (playing: 
               <PlayIcon size={22} />
               {unplayable ? `Keep ${possessive(who)} Margins` : 'Play'}
             </button>
-            {!unplayable && <p className="arrival-hint">{PLAY_HINT(who)}</p>}
+            {!unplayable && <p className="arrival-hint">{playHint(who, arrivalResumeAt(read, data.episodes, data.positions))}</p>}
           </>
         )}
         <footer className="arrival-foot">
-          <p>This link works for 30 days.</p>
+          <p>{linkFooterText(expires)}</p>
           {reportHref && (
             <p>
               <a href={reportHref} target="_blank" rel="noopener noreferrer">
