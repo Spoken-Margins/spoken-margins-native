@@ -93,7 +93,6 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
     /// The background task stopped: its item stops showing progress, and the foreground loop picks its own work again (#534).
     func libraryAudioBackgroundDrainEnded() {
         libraryAudioLoop.turns.stopped(.background)
-        runtimeDiagnostics.preparationRunEnded() // the background task's run is over; its summary stays (#3816)
         refreshLibraryRowsInBackground()
         if canPrepareLibraryAudio, UIApplication.shared.applicationState == .active { startForegroundAudioPreparationIfNeeded() }
     }

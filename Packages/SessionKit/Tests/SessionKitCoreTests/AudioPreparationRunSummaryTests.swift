@@ -76,7 +76,7 @@ final class AudioPreparationRunSummaryTests: XCTestCase {
         XCTAssertEqual(line, "chunks=1;renderMsMedian=4000;renderMsP90=4000;heatPauses=0;peakThermal=nominal;wallClockS=4")
     }
 
-    func testChunksAndPausesBeforeTheRunEndsAreOneRun() {
+    func testChunksAndPausesCloseTogetherAreOneRunWhoeverRendersThem() {
         var tracker = AudioPreparationRunTracker()
         tracker.chunkCommitted(renderMs: 1_000, thermalAtStart: .nominal, thermalAtEnd: .nominal, at: 1_001)
         tracker.heatPaused(thermal: .serious, at: 1_002)
@@ -84,26 +84,36 @@ final class AudioPreparationRunSummaryTests: XCTestCase {
         XCTAssertEqual(line, "chunks=2;renderMsMedian=2000;renderMsP90=3000;heatPauses=1;peakThermal=serious;wallClockS=100")
     }
 
-    func testTheRunAfterAnEndedOneReplacesItAndDoesNotAddToIt() {
+    func testAHeatWaitAsLongAsTheLongestAllowedDoesNotSplitTheRun() {
+        var tracker = AudioPreparationRunTracker()
+        tracker.heatPaused(thermal: .serious, at: 1_000)
+        let resumed = 1_000 + Double(OfflinePreparationRun.maximumHeatWaitSeconds)
+        let line = tracker.chunkCommitted(renderMs: 2_000, thermalAtStart: .fair, thermalAtEnd: .fair, at: resumed)
+        XCTAssertTrue(line.hasPrefix("chunks=1;"), line)
+        XCTAssertTrue(line.contains("heatPauses=1;peakThermal=serious;"), "the pause before the wait is still in the run: \(line)")
+    }
+
+    func testTheRunAfterAQuietSpellReplacesTheLastOneAndDoesNotAddToIt() {
         var tracker = AudioPreparationRunTracker()
         tracker.chunkCommitted(renderMs: 9_000, thermalAtStart: .critical, thermalAtEnd: .critical, at: 100)
         tracker.heatPaused(thermal: .critical, at: 101)
-        tracker.ended()
-        XCTAssertEqual(tracker.current?.chunks, 1, "an ended run's summary stays until the next run")
-        let line = tracker.chunkCommitted(renderMs: 1_000, thermalAtStart: .nominal, thermalAtEnd: .nominal, at: 5_000)
+        XCTAssertEqual(tracker.current?.chunks, 1, "the last run's summary stays until another replaces it")
+        let later = 101 + AudioPreparationRunTracker.idleGap + 1
+        let line = tracker.chunkCommitted(renderMs: 1_000, thermalAtStart: .nominal, thermalAtEnd: .nominal, at: later)
         XCTAssertEqual(line, "chunks=1;renderMsMedian=1000;renderMsP90=1000;heatPauses=0;peakThermal=nominal;wallClockS=1")
+    }
+
+    func testAnEventExactlyAtTheGapStillJoinsTheRun() {
+        var tracker = AudioPreparationRunTracker()
+        tracker.chunkCommitted(renderMs: 1_000, thermalAtStart: .nominal, thermalAtEnd: .nominal, at: 100)
+        let line = tracker.chunkCommitted(renderMs: 1_000, thermalAtStart: .nominal, thermalAtEnd: .nominal, at: 100 + AudioPreparationRunTracker.idleGap)
+        XCTAssertTrue(line.hasPrefix("chunks=2;"), line)
     }
 
     func testARunThatOnlyPausedForHeatLeavesASummary() {
         var tracker = AudioPreparationRunTracker()
         let line = tracker.heatPaused(thermal: .serious, at: 10)
         XCTAssertEqual(line, "chunks=0;renderMsMedian=none;renderMsP90=none;heatPauses=1;peakThermal=serious;wallClockS=0")
-    }
-
-    func testEndingBeforeAnyEventLeavesNothingToReport() {
-        var tracker = AudioPreparationRunTracker()
-        tracker.ended()
-        XCTAssertNil(tracker.current)
     }
 
     // MARK: The export

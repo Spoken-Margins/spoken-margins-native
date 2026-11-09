@@ -19,13 +19,14 @@ final class AudioPreparationRunDiagnosticsTests: XCTestCase {
         XCTAssertEqual(diagnostics.values[key], expected)
     }
 
-    func testTheNextRunReplacesTheEndedOne() {
+    func testTheNextRunAfterAQuietSpellReplacesTheLastOne() {
         let diagnostics = RuntimeDiagnostics()
         let first = Date(timeIntervalSinceReferenceDate: 1_000)
         diagnostics.preparationChunkCommitted(renderMs: 9_000, thermalAtStart: .nominal, thermalAtEnd: .nominal, at: first)
-        diagnostics.preparationRunEnded()
-        XCTAssertNotNil(diagnostics.values[key], "an ended run's line stays")
-        diagnostics.preparationChunkCommitted(renderMs: 1_000, thermalAtStart: .nominal, thermalAtEnd: .nominal, at: first + 600)
+        XCTAssertNotNil(diagnostics.values[key])
+        diagnostics.preparationChunkCommitted(
+            renderMs: 1_000, thermalAtStart: .nominal, thermalAtEnd: .nominal,
+            at: first + AudioPreparationRunTracker.idleGap + 60)
         XCTAssertEqual(diagnostics.values[key], "chunks=1;renderMsMedian=1000;renderMsP90=1000;heatPauses=0;peakThermal=nominal;wallClockS=1")
     }
 
@@ -43,7 +44,9 @@ final class AudioPreparationRunDiagnosticsTests: XCTestCase {
         XCTAssertTrue(line.contains("heatPauses=1;peakThermal=serious;"), line)
     }
 
-    func testTheLoopEndingEndsTheRunSoTheNextOneStartsFresh() async throws {
+    /// A loop that ends while another keeps the queue (the foreground loop finding the background task holding
+    /// the turn) must not cut the run in two: nothing ends a run but a quiet spell (audit on c64d9e6).
+    func testALoopEndingMidRunDoesNotSplitTheRun() async throws {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(),
                                   databaseURLOverride: FileManager.default.temporaryDirectory
                                     .appending(path: "run-diagnostics-\(UUID().uuidString).sqlite"))
@@ -51,10 +54,10 @@ final class AudioPreparationRunDiagnosticsTests: XCTestCase {
             deviceConditions: { SpeechEngineConditions(thermal: .nominal) },
             pause: { _ in }
         )
-        model.runtimeDiagnostics.preparationHeatPaused(thermal: .critical)
+        model.runtimeDiagnostics.preparationChunkCommitted(renderMs: 1_000, thermalAtStart: .nominal, thermalAtEnd: .nominal)
         await model.runForegroundPreparationLoop { false } // nothing to do, and nothing to wait for
-        model.runtimeDiagnostics.preparationHeatPaused(thermal: .nominal)
+        model.runtimeDiagnostics.preparationChunkCommitted(renderMs: 1_000, thermalAtStart: .nominal, thermalAtEnd: .nominal)
         let line = try XCTUnwrap(model.runtimeDiagnostics.values[key])
-        XCTAssertTrue(line.contains("heatPauses=1;peakThermal=nominal;"), "the second run didn't inherit the first's heat: \(line)")
+        XCTAssertTrue(line.hasPrefix("chunks=2;"), line)
     }
 }

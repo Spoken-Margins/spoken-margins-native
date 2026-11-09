@@ -29,9 +29,6 @@ final class RuntimeDiagnostics: ObservableObject {
         keep(AudioPreparationRunSummary.diagnosticsKey, preparationRun.heatPaused(thermal: thermal, at: now.timeIntervalSinceReferenceDate))
     }
 
-    /// The run is over; its line stays until the next run replaces it.
-    func preparationRunEnded() { preparationRun.ended() }
-
     /// Refresh Diagnostics (`refreshDiagnostics()`) and `resetAndSeed()` assign a whole new
     /// dictionary, and a gap no longer than the kept one is never written again.
     private func putBackLongestHandOverGap() {

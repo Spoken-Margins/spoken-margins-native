@@ -73,12 +73,17 @@ public struct AudioPreparationRunSummary: Equatable, Sendable {
     }
 }
 
-/// Which run an event belongs to. A run ends when the pass finds nothing left to do or is stopped; the
-/// next event starts a new run, which replaces the last summary. A heat pause doesn't end a run: it is
-/// one of the run's numbers.
+/// Which run an event belongs to. Nothing says when a run ends: the foreground loop, the background task and
+/// the pause wait all take turns on one queue, and each can stop while another goes on, so any "the run is
+/// over" call from one of them can cut another's run in two (found twice in review and audit of #3835). A run
+/// is instead the events that follow one another closely: the first event after a quiet spell longer than
+/// `idleGap` starts a new run, which replaces the last summary. The gap is longer than the longest heat wait
+/// (`OfflinePreparationRun.maximumHeatWaitSeconds`), so a pause that is being waited out doesn't split its run.
+/// Two runs started less than that apart count as one.
 public struct AudioPreparationRunTracker: Equatable, Sendable {
+    public static let idleGap = TimeInterval(OfflinePreparationRun.maximumHeatWaitSeconds + 5 * 60)
+
     public private(set) var current: AudioPreparationRunSummary?
-    private var isOpen = false
 
     public init() {}
 
@@ -86,26 +91,25 @@ public struct AudioPreparationRunTracker: Equatable, Sendable {
     @discardableResult
     public mutating func chunkCommitted(renderMs: Int, thermalAtStart: SpeechThermalLevel, thermalAtEnd: SpeechThermalLevel, at: TimeInterval) -> String {
         // The render began renderMs before it was committed.
-        update(startingAt: at - Double(max(0, renderMs)) / 1_000) {
+        update(startingAt: at - Double(max(0, renderMs)) / 1_000, at: at) {
             $0.chunkCommitted(renderMs: renderMs, thermalAtStart: thermalAtStart, thermalAtEnd: thermalAtEnd, at: at)
         }
     }
 
     @discardableResult
     public mutating func heatPaused(thermal: SpeechThermalLevel, at: TimeInterval) -> String {
-        update(startingAt: at) { $0.heatPaused(thermal: thermal, at: at) }
+        update(startingAt: at, at: at) { $0.heatPaused(thermal: thermal, at: at) }
     }
 
-    /// The pass stopped or found no work. The summary stays until the next run replaces it.
-    public mutating func ended() {
-        isOpen = false
-    }
-
-    private mutating func update(startingAt start: TimeInterval, _ change: (inout AudioPreparationRunSummary) -> Void) -> String {
-        var summary = isOpen ? (current ?? AudioPreparationRunSummary(startedAt: start)) : AudioPreparationRunSummary(startedAt: start)
+    private mutating func update(startingAt start: TimeInterval, at: TimeInterval, _ change: (inout AudioPreparationRunSummary) -> Void) -> String {
+        var summary: AudioPreparationRunSummary
+        if let current, at - current.lastActivityAt <= Self.idleGap {
+            summary = current
+        } else {
+            summary = AudioPreparationRunSummary(startedAt: start)
+        }
         change(&summary)
         current = summary
-        isOpen = true
         return summary.line
     }
 }

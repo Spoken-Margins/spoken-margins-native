@@ -27,7 +27,6 @@ extension Gate1AppModel {
     /// rendered nothing waits out a heat pause or a memory backoff and goes on. `pass` returns
     /// whether it has more work.
     func runForegroundPreparationLoop(pass: () async -> Bool) async {
-        defer { runtimeDiagnostics.preparationRunEnded() } // the loop is the run; its summary stays (#3816)
         while !Task.isCancelled {
             if await pass() {
                 await Task.yield()
