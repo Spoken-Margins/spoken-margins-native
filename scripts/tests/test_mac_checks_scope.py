@@ -27,6 +27,65 @@ ROOT = Path(__file__).resolve().parents[2]
 HEAD, MERGE = 'a' * 40, 'b' * 40
 
 
+class MacOnlyAppReadsTests(unittest.TestCase):
+    """#3538: a test that runs only on a Mac may read an App/ path only if MAC_APP_READS names it. A diff elsewhere under
+    App/ can then be checked off the Mac, so a new read that needs no Apple framework goes to SessionKitCoreTests."""
+    TESTS = ROOT / 'Packages/SessionKit/Tests'
+    HELPER = TESTS / 'TestInputs/TestInputs.swift'
+    # What keeps a whole core test file off Linux, or part of it. Finding one treats the file's reads as Mac reads.
+    COMPILED_OUT = re.compile(r'^\s*#(?:if|elseif)\b.*\b(?:canImport|os)\(', re.M)
+
+    def app_inputs(self):
+        return {case: path for case, path in re.findall(r'case (\w+) = "([^"]+)"', self.HELPER.read_text())
+                if path.startswith('App/')}
+
+    def mac_only_files(self):
+        """Every test file in a target other than SessionKitCoreTests, so a new Mac-only target is covered, and every
+        core test file with a part Linux may not compile."""
+        for path in sorted(self.TESTS.rglob('*.swift')):
+            if '.build' in path.parts or path == self.HELPER:
+                continue
+            if self.TESTS / 'SessionKitCoreTests' not in path.parents or self.COMPILED_OUT.search(path.read_text()):
+                yield path
+
+    def reads(self, text):
+        inputs = self.app_inputs()
+        return {inputs[case] for case in re.findall(r'\.(\w+)\b', text) if case in inputs}
+
+    def listed(self, read):
+        return any((read + '/').startswith(path) for path in scope.MAC_APP_READS)
+
+    def test_mac_only_tests_read_only_the_app_paths_on_the_list(self):
+        unlisted = {}
+        for path in self.mac_only_files():
+            found = sorted(read for read in self.reads(path.read_text()) if not self.listed(read))
+            if found:
+                unlisted[str(path.relative_to(self.TESTS))] = found
+        self.assertEqual(unlisted, {}, 'these tests run only on a Mac and read App/ paths MAC_APP_READS does not name. If '
+                                       'the read needs no Apple framework, move it to SessionKitCoreTests; if it does, '
+                                       'add the path and say why')
+
+    def test_every_listed_path_is_still_read_on_the_mac_and_is_a_pass_input(self):
+        import sessionkit_pass
+        read = set()
+        for path in self.mac_only_files():
+            read |= self.reads(path.read_text())
+        for listed in scope.MAC_APP_READS:
+            with self.subTest(listed=listed):
+                self.assertIn(listed.rstrip('/'), read, 'nothing on the Mac reads this any more: take it off the list')
+                self.assertTrue(listed.startswith(sessionkit_pass.READS))
+
+    def test_the_guard_sees_a_mac_only_read_and_a_core_file_linux_leaves_out(self):
+        self.assertEqual(self.reads('let a = try TestInputs.text(.appSources, "x.swift")'),
+                         {'App/SpokenMarginsApp/Sources/SpokenMarginsApp'})
+        self.assertFalse(self.listed('App/SpokenMarginsApp/Sources/SpokenMarginsApp'))
+        self.assertTrue(self.listed('App/SpokenMarginsApp/Resources/Kitten'))
+        names = {path.name for path in self.mac_only_files()}
+        self.assertIn('KittenRendererTests.swift', names)
+        self.assertIn('VoiceCatalogCoordinatorTests.swift', names)
+        self.assertNotIn('HiddenSendersCallSiteGuardTests.swift', names)
+
+
 class MacChecksRequiredTests(unittest.TestCase):
     def required(self, *paths):
         return scope.mac_checks_required(paths)

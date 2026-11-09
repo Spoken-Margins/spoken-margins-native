@@ -604,6 +604,18 @@ MAC_READS = ('Packages/SessionKit/', 'Contracts/', 'App/SpokenMarginsApp/Sources
              'research/C2/frontend/', 'research/B2/', 'research/B4/', 'research/C2/pocket/',
              'research/C2/passages.json', 'research/C2/results/darwin/', 'Site/onboarding/catalog/',
              'Site/onboarding/v1/', 'README.md', 'traces/', 'fixtures/')
+# The App/ paths that tests only a Mac runs still read (#3538). test_mac_checks_scope.py fails on any other, so a text-only
+# read goes to SessionKitCoreTests, which also runs on Linux, instead of keeping App/ diffs on the Mac.
+MAC_APP_READS = (
+    # SharingLoopTourFixtureTests: reads its packets with SessionKitSharing, which imports ShazamKit and AudioToolbox.
+    'App/TestFixtures/',
+    # KittenRendererTests: the real voice, through AVFoundation and the ONNX runtime.
+    'App/SpokenMarginsApp/Resources/Kitten/',
+    # SupertonicDownloadedModelTests: its hashes against the real model, in SessionKitSupertonic.
+    'App/SpokenMarginsApp/Resources/Supertonic/',
+    # The same, and VoiceCatalogCoordinatorTests, which is compiled out on Linux (canImport(CryptoKit)).
+    'App/SpokenMarginsApp/Resources/VoiceCatalog/',
+)
 # Swift inputs and the machinery of the Mac jobs. Every workflow counts: they are the jobs' own definitions.
 MAC_PREFIXES = MAC_READS + ('Packages/', 'App/', 'Config/', 'TestPlans/', 'SpokenMarginsNative.xcodeproj/',
                             '.github/workflows/', '.github/actions/', 'ops/disk/', 'ops/power/')
