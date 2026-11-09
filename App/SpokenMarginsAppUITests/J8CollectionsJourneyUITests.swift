@@ -90,7 +90,7 @@ final class J8CollectionsJourneyUITests: XCTestCase {
             XCTAssertTrue(choice.waitForExistence(timeout: 5), "The scope picker does not list the new collection")
             attachScreenshot("margins-scope-picker")
             // The menu animates open, and a row can exist before a tap on it lands. A tap that misses closes the
-            // menu and changes nothing, which left the scope on "All items" in 3 of 3 flaky hosted runs (#3156).
+            // menu and changes nothing, which left the scope on "Everything" in 3 of 3 flaky hosted runs (#3156).
             // So tap the row only once it is hittable.
             let tappable = XCTNSPredicateExpectation(predicate: NSPredicate(format: "isHittable == true"), object: choice)
             XCTAssertEqual(XCTWaiter().wait(for: [tappable], timeout: 5), .completed,

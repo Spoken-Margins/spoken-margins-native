@@ -204,8 +204,8 @@ struct Build23RecipientSharingExperience: View {
                     )
                 } else {
                     Text(snapshot.isListeningMap
-                        ? "This map stays ready while you add your copy. It can’t be added until that is in your Library."
-                        : "These Margins stay ready while you add the same one. You can add them once it is in your Library.")
+                        ? "This map stays ready while you add your copy. It can’t be added until the source is in your Library."
+                        : "These Margins stay ready while you add the same source. You can add them once it is in your Library.")
                         .font(.subheadline)
                         .foregroundStyle(AppColors.secondaryText)
                         .fixedSize(horizontal: false, vertical: true)
