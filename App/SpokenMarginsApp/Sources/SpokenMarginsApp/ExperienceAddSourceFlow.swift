@@ -531,12 +531,15 @@ struct ExperienceAddSourceFlow: View {
         Task { @MainActor in
             // A `.json` file that says it is a structured link list (#3767) adds its links; any other `.json` file
             // goes to the edition import as before. Only the file's own `schemaVersion` decides, never its name.
-            let picks = await model.splitLinkLists(from: editionURLs)
+            // The same goes for the `.json` files inside a picked folder: link lists there are added, and the edition
+            // import skips them and takes the rest.
+            let picks = await model.splitLinkLists(from: editionURLs, folders: folders)
+            let editionImportRuns = picks.needsEditionImport(foldersPicked: !folders.isEmpty)
             var linkResult: (allImported: Bool, message: String?) = (true, nil)
-            if !picks.isEmpty { linkResult = await model.importLinkLists(picks) }
+            if !picks.isEmpty { linkResult = await model.importLinkLists(picks, noteFolderTruncation: !editionImportRuns) }
             var editionsImported = true
-            if !picks.others.isEmpty || !folders.isEmpty {
-                editionsImported = await model.importListeningEditionFiles(picks.others, folders: folders)
+            if editionImportRuns {
+                editionsImported = await model.importListeningEditionFiles(picks.others, folders: folders, skipping: picks.folderFilePaths)
             }
             let allImported = linkResult.allImported && editionsImported
             if !allImported { fileImportError = editionsImported ? linkResult.message : (model.lastError ?? linkResult.message) }

@@ -56,10 +56,10 @@ extension Gate1AppModel {
     /// Collection files picked from the Add sheet's Files route (#2373). Like a PDF added there, they land in the
     /// Library and nothing opens or plays. Returns whether every file went in, so the sheet knows to close.
     @discardableResult
-    func importListeningEditionFiles(_ urls: [URL], folders: [URL] = []) async -> Bool {
+    func importListeningEditionFiles(_ urls: [URL], folders: [URL] = [], skipping: Set<String> = []) async -> Bool {
         // The folders are walked and the files read and decoded off the main thread (#2510, #2256); each edition's
         // file is read and written off it too, and only the store steps run here.
-        let loaded = await Task.detached(priority: .userInitiated) { Self.readListeningEditionEntries(urls, folders: folders) }.value
+        let loaded = await Task.detached(priority: .userInitiated) { Self.readListeningEditionEntries(urls, folders: folders, skipping: skipping) }.value
         if loaded.entries.isEmpty {
             reportFailure(ListeningEditionFolderWalk.emptyMessage(folderNames: folders.map(\.lastPathComponent)))
             return false
@@ -80,17 +80,20 @@ extension Gate1AppModel {
 
     /// Reads the picked files, plus the `.json` files found in the picked folders (#2672), into batch entries.
     /// A folder's security-scoped access stays open while its files are read, since the files inherit it.
-    private nonisolated static func readListeningEditionEntries(_ urls: [URL], folders: [URL])
+    private nonisolated static func readListeningEditionEntries(_ urls: [URL], folders: [URL], skipping: Set<String>)
         -> (entries: [ListeningEditionBatch.Entry], truncated: Bool) {
         var all = urls
         var truncated = false
+        var walkedCount = 0
         var scoped: [URL] = []
         defer { for folder in scoped { folder.stopAccessingSecurityScopedResource() } }
         for folder in folders {
             if folder.startAccessingSecurityScopedResource() { scoped.append(folder) }
-            let room = max(0, ListeningEditionFolderWalk.defaultMaxFiles - (all.count - urls.count))
+            let room = max(0, ListeningEditionFolderWalk.defaultMaxFiles - walkedCount)
             let walked = ListeningEditionFolderWalk.collect(in: folder, maxFiles: room)
-            all.append(contentsOf: walked.urls)
+            walkedCount += walked.urls.count
+            // A link list found in the folder (#3767) was already added; the walk is the same, so its files are skipped.
+            all.append(contentsOf: walked.urls.filter { !skipping.contains(LinkListPick.filePath($0)) })
             if walked.truncated { truncated = true }
         }
         return (all.enumerated().map { ListeningEditionBatch.Entry.reading(url: $1, id: $0) }, truncated)
