@@ -174,6 +174,8 @@ struct OPMLImportScreen: View {
                 case .failure(let error): importer.showFailure(error)
                 }
             }
+            // A container, so the identifier doesn't replace the Cancel and Stop buttons' in the inset (#3818).
+            .accessibilityElement(children: .contain)
             .accessibilityIdentifier("opml.import.screen")
             .task {
                 // Once, after the push settles: a picker raised mid-transition can be dropped.
