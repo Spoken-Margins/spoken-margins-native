@@ -31,6 +31,9 @@ cp "$bibliography" "$out/BibliographicReferenceExtractor.swift"
 cp "$wrappedHeading" "$out/PDFWrappedHeading.swift"
 cp "$wordSpacing" "$out/PDFWordSpacing.swift"
 cp "$itemTitle" "$out/PDFItemTitle.swift"
+for name in RenderedSpeechChunker NarrationChunkPlanner PDFMathSpeech; do
+    cp "$repo/Packages/SessionKit/Sources/SessionKit/$name.swift" "$out/$name.swift"
+done
 
 # Fingerprint what was copied, so every output says which extractor made it.
 commit=$(git -C "$repo" rev-parse --short HEAD)
