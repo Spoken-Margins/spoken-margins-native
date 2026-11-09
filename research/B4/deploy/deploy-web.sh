@@ -72,6 +72,8 @@ fi
 [[ -f "${dist}/index.html" && -f "${dist}/link.html" && -f "${dist}/sw.js" && -f "${dist}/manifest.webmanifest" ]] || die "build is missing index.html, link.html, sw.js or the manifest"
 grep -rqF -- "${relay_origin}" "${dist}/assets" || die "the relay origin is not in the build; VITE_RELAY_ORIGIN was not applied"
 ! grep -rqE -- 'relay\.test|127\.0\.0\.1:4174' "${dist}" || die "the build carries a test relay origin"
+# What scripts/sm_live.py reads to say which commit is live and when it went up (#3872).
+printf '{"commit":"%s","deployed_at":"%s"}\n' "${commit}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"${dist}/deploy.json"
 echo "built: $(find "${dist}" -type f | wc -l | tr -d ' ') files, $(du -sk "${dist}" | cut -f1) KB"
 
 rsync_opts=(-rlc --delete-delay --delay-updates --chmod=D755,F644 --itemize-changes -e "${rsync_ssh}")

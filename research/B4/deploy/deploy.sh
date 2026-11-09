@@ -45,8 +45,14 @@ trap cleanup EXIT
 echo "== build linux/amd64 smserver"
 cp "${here}/edit-caddyfile.sh" "${here}/remote-install.sh" "${here}/caddy-global.caddy" "${here}/caddy-site.caddy" \
   "${here}/caddy-legacy-site.caddy" "${here}/caddy-www.caddy" "${here}/caddy-legacy-web.caddy" "${here}/caddy-web.caddy" "${here}/smserver.service" "${here}/journald@smserver.conf" "${here}/journald-main.conf" "${stage}/"
-(cd "${here}/../server" && go test ./... >/dev/null && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o "${stage}/smserver" ./cmd/smserver)
-echo "built $(git -C "${here}" rev-parse --short HEAD), tests pass"
+# The health check reports these, and scripts/sm_live.py reads them (#3872). The build uses the working tree, so a checkout
+# with local edits says so.
+commit="$(git -C "${here}" rev-parse --short HEAD)"
+if [[ -n "$(git -C "${here}" status --porcelain -- ../server)" ]]; then commit="${commit}-dirty"; fi
+built="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+stamp="-X spokenmargins.dev/bridge/internal/api.Commit=${commit} -X spokenmargins.dev/bridge/internal/api.Built=${built}"
+(cd "${here}/../server" && go test ./... >/dev/null && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "${stamp}" -o "${stage}/smserver" ./cmd/smserver)
+echo "built ${commit}, tests pass"
 if ((dry_run)); then rm "${stage}/smserver"; fi
 
 master=(-M -fnNT -o ControlPersist=120 -o ServerAliveInterval=15)
