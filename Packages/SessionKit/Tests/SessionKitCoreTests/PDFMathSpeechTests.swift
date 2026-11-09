@@ -112,3 +112,48 @@ final class PDFMathSpeechTests: XCTestCase {
         XCTAssertFalse(text.unicodeScalars.contains { (0x1D400...0x1D7FF).contains($0.value) }, text)
     }
 }
+
+/// Speech normalizes a whole paper at once, so a comparison sign must not start a "tag" that runs pages further on.
+final class SpeechMarkupRemovalTests: XCTestCase {
+    func testComparisonsKeepTheWordsBetweenThem() {
+        let kept: [(String, String)] = [
+            ("Note: p<0.05\nThe second page has words\nand the effect x>1 is large.", "second page has words"),
+            ("Note: p < 0.05 here, then a sentence, and later 3 > 2 there.", "then a sentence"),
+            ("if x<y and also z>w then", "and also"),
+            ("<0.01 alone\nmore words follow > here", "more words follow"),
+            ("costs <$5 and pays >$3", "and pays"),
+            ("\u{00E9}t\u{00E9} p<0.05 caf\u{00E9} words x>1", "words"),
+            ("a <\n\nnew paragraph here\n\n> b", "new paragraph here"),
+        ]
+        for (source, phrase) in kept {
+            XCTAssertTrue(SpeechTextNormalizer.normalize(source).contains(phrase), "lost \(phrase) from \(source)")
+        }
+    }
+
+    func testMarkupIsStillRemoved() {
+        let cases: [(String, String)] = [
+            ("<b>bold</b> word", "bold word"),
+            ("a<br/>b", "a b"),
+            ("<p class=\"x\" data-y>text</p>", "text"),
+            ("<a href='z'\n  title=\"t\">link</a> end", "link end"),
+            ("<!-- a note\nover lines --> text", "text"),
+            ("<!DOCTYPE html>text", "text"),
+            ("<?xml version=\"1.0\"?>text", "text"),
+        ]
+        for (source, expected) in cases {
+            XCTAssertEqual(SpeechTextNormalizer.normalize(source), expected, source)
+        }
+    }
+
+    func testImportCleaningIsUnchanged() {
+        XCTAssertEqual(SpeechTextNormalizer.normalizeImportedText("keep p<0.05 gone x>1 end"), "keep p 1 end")
+    }
+
+    func testOffsetsStayOnTheirCharactersAfterAComparison() {
+        let source = "p<0.05\nnext words x>1 tail"
+        let projection = SpeechTextNormalizer.normalizeWithSourceOffsets(source)
+        let spoken = projection.text
+        let at = spoken.distance(from: spoken.startIndex, to: spoken.range(of: "next")!.lowerBound)
+        XCTAssertEqual(projection.sourceOffset(atSpokenCharacterOffset: at), 7)
+    }
+}
