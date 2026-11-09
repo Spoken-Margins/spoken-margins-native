@@ -34,7 +34,7 @@ public enum ListeningMapPacketBuilder {
             case .tooManyScenes(let count): return "the map has \(count) scenes; a packet carries at most \(ListeningMapPacket.maximumScenes)"
             case .sceneOutsideText(let title): return "scene \"\(title)\" lies outside the source text"
             case .scenesOutOfOrder(let title): return "scene \"\(title)\" starts before the scene ahead of it"
-            case .itemNotShareable: return "a map packet needs a text, PDF or EPUB item with a title"
+            case .itemNotShareable: return "a map packet needs a text, PDF or EPUB with a title"
             case .sceneCannotBePlaced(let title): return "the first words of scene \"\(title)\" appear more than once, so a listener's copy couldn't tell where it starts"
             case .contractViolation(let detail): return "the map breaks the share rules: \(detail)"
             }

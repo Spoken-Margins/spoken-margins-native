@@ -97,7 +97,7 @@ enum PlayerRunController {
             }
         }.value
         guard !touched.isEmpty else { return }
-        model.diagnostics["playerItemMargin"] = "withdrawn from \(touched.count) item(s)"
+        model.diagnostics["playerItemMargin"] = "withdrawn from \(touched.count) source(s)"
         for itemId in touched {
             model.refreshMarginRowsInBackground(forItem: itemId)
             if model.activeItemId == itemId { model.refreshSelectedItemInBackground() }
