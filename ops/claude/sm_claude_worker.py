@@ -961,6 +961,23 @@ class Ops:
             told = one_line(res.stderr or res.stdout or 'no output')
         return f'exit {res.returncode}: {told}'
 
+    def owner_card_sync(self) -> str:
+        """Flag `needs-owner` with no card, and label a card with no `needs-owner` (#3898). Never raises. No model."""
+        script = self.own_root / 'scripts' / 'owner_card_guard.py'
+        if not script.exists():
+            return 'skipped: scripts/owner_card_guard.py is not on this checkout'
+        try:
+            res = self.run([sys.executable, str(script), '--apply'], cwd=self.repo_root, timeout=BOARD_TIMEOUT_S)
+        except Exception as exc:
+            return f'error: {exc}'
+        try:
+            report = json.loads(res.stdout or '')
+            told = (f"{len(report.get('card_missing', []))} card missing, {len(report.get('labelled', []))} labelled, "
+                    f"{len(report.get('unknown', []))} unknown")
+        except (ValueError, AttributeError, TypeError):
+            told = one_line(res.stderr or res.stdout or 'no output')
+        return f'exit {res.returncode}: {told}'
+
     def label(self, number: int, add: Optional[str] = None, remove: Optional[str] = None) -> None:
         cmd = ['gh', 'issue', 'edit', str(number), '-R', REPO]
         if add:
@@ -998,6 +1015,7 @@ def board_pass(ops: Ops, now: dt.datetime) -> Optional[str]:
     ops.log(f'area labels (hourly, #3636): {result}')
     ops.log(f'PR issue links (hourly, #2167): {ops.pr_link_sync()}')
     ops.log(f'ready with only the owner\'s check left (hourly, #3666): {ops.ready_guard_sync()}')
+    ops.log(f'owner cards (hourly, #3898): {ops.owner_card_sync()}')
     return result
 
 
