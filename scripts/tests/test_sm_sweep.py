@@ -42,9 +42,10 @@ def stop(issue, title, when):
     return note(issue, f'Thread "{title}" stopping: nothing armed · test', when)
 
 
-def issue(number, labels=(), created='2026-10-01T00:00:00Z', title=None):
+def issue(number, labels=(), created='2026-10-01T00:00:00Z', title=None, milestone=None):
     return {'number': number, 'title': title or f'Issue {number}', 'created_at': created,
-            'labels': [{'name': name} for name in labels], 'milestone': None, 'state': 'open'}
+            'labels': [{'name': name} for name in labels], 'milestone': {'title': milestone} if milestone else None,
+            'state': 'open'}
 
 
 class Router:
@@ -121,7 +122,7 @@ def gql_pull(number, merged_at, base='main', title=None, body='', head=''):
 
 
 def world(comments=(), ready=(), in_progress=(), events=None, refs=None, tick=TICK_BODY, tick_at=None, dial=DIAL_BODY,
-          status_comment=None, comments_error=None, untriaged=(), open_issues=(), lookup=None):
+          status_comment=None, comments_error=None, open_rest=(), open_issues=(), lookup=None):
     """A router for one sweep: the Dial issue, the Mac tick, repo comments, the two label lists, claim evidence."""
     router = Router()
     router.on(r'^issues/589$', {'body': dial})
@@ -137,7 +138,7 @@ def world(comments=(), ready=(), in_progress=(), events=None, refs=None, tick=TI
     router.gql['lookup'] = lambda query, variables: {'repository': {
         f'n{n}': (lookup or {}).get(int(n)) for n in re.findall(r'n(\d+): issueOrPullRequest', query)}}
     router.on(r'^git/ref/heads/next', {'object': {'sha': 'a' * 40}})
-    router.on(r'^issues\?state=open&milestone=none', list(untriaged))
+    router.on(r'^issues\?state=open$', list(open_rest))    # rule 7 reads the open issues over REST
     router.on(r'^issues\?state=open&labels=ready', list(ready))
     router.on(r'^issues\?state=open&labels=in-progress', list(in_progress))
     router.on(r'^issues/(\d+)/events', lambda path: (events or {}).get(int(re.search(r'issues/(\d+)', path).group(1)), []))
@@ -762,21 +763,101 @@ if __name__ == '__main__':
 
 
 class Untriaged(unittest.TestCase):
-    def test_issues_with_no_milestone_are_listed_however_old(self):
-        old = issue(1256, created='2026-10-10T00:00:00Z')
-        actions, _ = sweep.decide(facts_of(world(untriaged=[issue(1500, created='2026-10-14T00:00:00Z'), old])))
-        found = [a for a in actions if a['rule'] == 'untriaged']
+    """Rule 7 (#3885): triaged means exactly one `area:` label and a state. The milestone says nothing: since 2026-11-07
+    most triaged issues keep none, so "no milestone" read 133 of 278 on every run."""
+
+    def found(self, *nodes):
+        actions, _ = sweep.decide(facts_of(world(open_rest=nodes)))
+        return [a for a in actions if a['rule'] == 'untriaged']
+
+    def test_an_issue_with_an_area_and_a_state_but_no_milestone_is_not_listed(self):
+        self.assertEqual(self.found(issue(1, labels=['area: groundwork', 'ready'])), [])
+
+    def test_a_milestone_does_not_make_an_issue_triaged(self):
+        found = self.found(issue(2, milestone='0.2', labels=['ready']))
+        self.assertEqual([a['issues'] for a in found], [[2]])
+
+    def test_no_area_label_is_listed_even_with_a_state(self):
+        found = self.found(issue(3, labels=['ready', 'bug']))
+        self.assertEqual([a['issues'] for a in found], [[3]])
+
+    def test_two_area_labels_are_listed(self):
+        found = self.found(issue(4, labels=['area: groundwork', 'area: answer it', 'ready']))
+        self.assertEqual([a['issues'] for a in found], [[4]])
+
+    def test_a_lookalike_label_is_not_an_area(self):
+        for label in ('area:groundwork', 'Area: groundwork', 'needs-area', 'areas: groundwork'):
+            with self.subTest(label=label):
+                self.assertEqual(len(self.found(issue(5, labels=[label, 'ready']))), 1)
+
+    def test_every_one_of_the_six_areas_counts(self):
+        for area in ('get it in', 'hear it well', 'answer it', 'pass it on', 'groundwork', 'housekeeping'):
+            with self.subTest(area=area):
+                self.assertEqual(self.found(issue(6, labels=[f'area: {area}', 'ready'])), [])
+
+    def test_the_milestone_less_issue_that_sat_without_a_state_is_listed(self):
+        self.assertEqual(len(self.found(issue(7, labels=['area: groundwork', 'bug']))), 1)
+
+    def test_the_issue_that_sat_for_39_hours_is_named(self):
+        """#3521, the case the old UNLABELLED line (rule 12) existed for: a milestone, an area, no state."""
+        found = self.found(issue(3391, milestone='Showcase', labels=['area: pass it on', 'enhancement', 'found-on-phone']))
         self.assertEqual(len(found), 1)
-        self.assertIn('2 open issue(s) have no milestone (oldest #1256, filed 2026-10-10)', found[0]['detail'])
+        self.assertEqual(found[0]['issues'], [3391])
+
+    def test_labels_that_say_nothing_about_state_do_not_count(self):
+        for label in ('bug', 'enhancement', 'priority', 'found-on-phone', 'found-by-audit', 'where:mac', 'hot-file'):
+            with self.subTest(label=label):
+                self.assertEqual(len(self.found(issue(1, milestone='Showcase', labels=['area: groundwork', label]))), 1)
+
+    def test_every_state_label_counts_as_a_state(self):
+        for label in sorted(sweep.STATE_LABELS - {sweep.OUTSIDE_LABEL}):
+            with self.subTest(label=label):
+                self.assertEqual(self.found(issue(1, labels=['area: groundwork', 'bug', label])), [])
+
+    def test_the_states_threads_and_triage_rely_on_are_all_there(self):
+        self.assertLessEqual({'ready', 'in-progress', 'needs-owner', 'deferred', 'blocked', 'parked', 'tracker',
+                              'validate-by-use', 'agent-verify', 'needs-human-validation',
+                              'status: needs-human-validation', 'type: research', 'needs-triage-review'},
+                             sweep.STATE_LABELS)
+
+    def test_later_is_a_state_of_its_own(self):
+        self.assertEqual(self.found(issue(1, milestone=sweep.PARKED_MILESTONE, labels=['area: groundwork'])), [])
+
+    def test_a_similar_milestone_name_is_not_later(self):
+        self.assertEqual(len(self.found(issue(1, milestone='Later this week', labels=['area: groundwork']))), 1)
+
+    def test_many_are_one_line_with_a_count_and_the_oldest_first(self):
+        old = issue(1256, created='2026-10-10T00:00:00Z')
+        found = self.found(issue(1500, created='2026-10-14T00:00:00Z'), old)
+        self.assertEqual(len(found), 1)
+        self.assertIn('2 open issue(s)', found[0]['detail'])
+        self.assertIn('oldest #1256, filed 2026-10-10', found[0]['detail'])
+
+    def test_ten_are_named_and_the_rest_counted(self):
+        found = self.found(*[issue(n, created=f'2026-10-{n - 99:02d}T00:00:00Z') for n in range(100, 115)])
+        self.assertIn('15 open issue(s)', found[0]['detail'])
+        self.assertEqual(len(found[0]['issues']), 10)
 
     def test_nothing_untriaged_says_nothing(self):
         actions, _ = sweep.decide(facts_of(world()))
         self.assertNotIn('untriaged', rules(actions))
 
     def test_an_unreadable_listing_is_not_reported_as_a_backlog(self):
-        router = world().on(r'^issues\?state=open&milestone=none', sm_status.GitHubError('boom'))
+        router = world().on(r'^issues\?state=open$', sm_status.GitHubError('boom'))
         actions, _ = sweep.decide(facts_of(router))
         self.assertNotIn('untriaged', rules(actions))
+
+    def test_it_does_not_need_graphql(self):
+        """GraphQL is not available from a Claude Code cloud session; rule 7 must still read (#3885)."""
+        router = world(open_rest=[issue(9)])
+        router.gql['issues'] = sm_status.GitHubError('GraphQL is not available')
+        actions, _ = sweep.decide(facts_of(router))
+        self.assertEqual([a['issues'] for a in actions if a['rule'] == 'untriaged'], [[9]])
+
+    def test_the_old_unlabelled_rule_is_gone_not_doubled(self):
+        actions, _ = sweep.decide(facts_of(world(open_rest=[issue(8, milestone='Showcase')])))
+        self.assertNotIn('unlabelled', rules(actions))
+        self.assertIn('untriaged', rules(actions))
 
 
 class UncheckedCards(unittest.TestCase):
@@ -810,73 +891,17 @@ class UncheckedCards(unittest.TestCase):
         self.assertEqual(len(self.found(self.card(body='I checked: nothing really, but also unchecked: x'))), 1)
 
 
-class Unlabelled(unittest.TestCase):
-    """#3521: a milestone and no state label left #3391 unseen for 39 hours, because rule 7 reads only no-milestone."""
-
-    def found(self, *nodes):
-        actions, _ = sweep.decide(facts_of(world(open_issues=nodes)))
-        return [a for a in actions if a['rule'] == 'unlabelled']
-
-    def test_the_issue_that_sat_for_39_hours_is_named(self):
-        found = self.found(gql_issue(3391, milestone='Showcase', labels=['enhancement', 'found-on-phone']))
-        self.assertEqual(len(found), 1)
-        self.assertIn('1 open issue(s)', found[0]['detail'])
-        self.assertEqual(found[0]['issues'], [3391])
-
-    def test_labels_that_say_nothing_about_state_do_not_count(self):
-        for label in ('bug', 'enhancement', 'priority', 'found-on-phone', 'found-by-audit', 'where:mac', 'hot-file'):
-            with self.subTest(label=label):
-                self.assertEqual(len(self.found(gql_issue(1, milestone='Showcase', labels=[label]))), 1)
-
-    def test_every_state_label_counts_as_a_state(self):
-        for label in sorted(sweep.STATE_LABELS):
-            with self.subTest(label=label):
-                self.assertEqual(self.found(gql_issue(1, milestone='Showcase', labels=['bug', label])), [])
-
-    def test_the_states_threads_and_triage_rely_on_are_all_there(self):
-        self.assertLessEqual({'ready', 'in-progress', 'needs-owner', 'deferred', 'blocked', 'parked', 'tracker',
-                              'validate-by-use', 'agent-verify', 'needs-human-validation',
-                              'status: needs-human-validation', 'type: research', 'needs-triage-review'},
-                             sweep.STATE_LABELS)
-
-    def test_later_is_a_state_of_its_own(self):
-        self.assertEqual(self.found(gql_issue(1, milestone=sweep.PARKED_MILESTONE, labels=['bug'])), [])
-
-    def test_no_milestone_is_rule_7s_not_this_one(self):
-        self.assertEqual(self.found(gql_issue(1, labels=['bug'])), [])
-
-    def test_a_similar_milestone_name_is_not_later(self):
-        self.assertEqual(len(self.found(gql_issue(1, milestone='Later this week'))), 1)
-
-    def test_many_are_one_line_with_a_count_and_the_oldest_first(self):
-        found = self.found(*[gql_issue(n, milestone='Showcase') for n in range(100, 115)])
-        self.assertEqual(len(found), 1)
-        self.assertIn('15 open issue(s)', found[0]['detail'])
-        self.assertIn('oldest #100', found[0]['detail'])
-        self.assertEqual(found[0]['issues'], list(range(100, 110)))
-
-    def test_nothing_to_report_says_nothing(self):
-        self.assertEqual(self.found(gql_issue(1, milestone='Showcase', labels=['ready'])), [])
-
-    def test_an_unreadable_scan_is_unreadable_not_clean(self):
-        router = world()
-        router.gql['issues'] = sm_status.GitHubError('boom')
-        actions, _ = sweep.decide(facts_of(router))
-        self.assertNotIn('unlabelled', rules(actions))
-        self.assertIn('drift-unreadable', rules(actions))
-
-
 class OutsideIssues(unittest.TestCase):
     def test_issues_awaiting_review_are_not_a_triage_backlog(self):
         held = issue(1900, labels=['needs-triage-review'])
-        actions, _ = sweep.decide(facts_of(world(untriaged=[held, issue(1901)])))
+        actions, _ = sweep.decide(facts_of(world(open_rest=[held, issue(1901)])))
         untriaged = [a for a in actions if a['rule'] == 'untriaged']
         self.assertEqual(untriaged[0]['issues'], [1901])
         outside = [a for a in actions if a['rule'] == 'outside-issues']
         self.assertEqual(outside[0]['issues'], [1900])
 
     def test_only_outside_issues_leave_no_triage_backlog(self):
-        actions, _ = sweep.decide(facts_of(world(untriaged=[issue(1900, labels=['needs-triage-review'])])))
+        actions, _ = sweep.decide(facts_of(world(open_rest=[issue(1900, labels=['needs-triage-review'])])))
         self.assertNotIn('untriaged', rules(actions))
         self.assertIn('outside-issues', rules(actions))
 
