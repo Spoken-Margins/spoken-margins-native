@@ -44,6 +44,8 @@ class SecretTests(unittest.TestCase):
         for value in ('${{ secrets.TOKEN }}', "${{ secrets['TOKEN'] }}", '${{ toJSON(secrets) }}'):
             with self.subTest(value=value):
                 self.assertEqual(len(self.named(base % value)), 1)
+        self.assertEqual(len(self.named(base % '${{ SECRETS.TOKEN }}')), 1)  # context names ignore case
+        self.assertEqual(len(self.named('jobs:\n  j:\n    uses: ./x.yml\n    secrets: inherit\n')), 1)
         self.assertEqual(self.named(base % 'x  # secrets.TOKEN is not used here'), [])
         self.assertEqual(self.named('jobs:\n  j:\n    steps:\n      - run: echo hi # secrets.X\n'), [])
 

@@ -36,10 +36,12 @@ def mentions_of(node, word: str, where: str = '') -> list[str]:
     """The path (job, step name, key) of every string value in a parsed workflow that names `word` as a context,
     `secrets.X`, `secrets['X']` or `toJSON(secrets)` alike. A key with no such value, and a comment, are not listed."""
     found = []
-    pattern = re.compile(r'\b' + re.escape(word) + r'\b')
+    pattern = re.compile(r'\b' + re.escape(word) + r'\b', re.I)  # context names are not case-sensitive
     if isinstance(node, dict):
         label = node.get('name') or node.get('id') or ''
         for key, value in node.items():
+            if str(key).lower() == word:  # `secrets: inherit` on a job that calls a reusable workflow
+                found.append(f'{where}/{key}')
             found += mentions_of(value, word, f'{where}/{label}.{key}' if label and key in ('env', 'with', 'run', 'if')
                                  else f'{where}/{key}')
     elif isinstance(node, list):
