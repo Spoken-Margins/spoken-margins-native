@@ -153,8 +153,10 @@ final class AudioPreparationRunSummaryTests: XCTestCase {
 
     // MARK: Which jobs count as work left
 
-    private func job(_ id: String, _ policy: PreparationJobPolicy, cancelled: Bool = false) -> AudioPreparationJob {
-        AudioPreparationJob(id: id, itemId: "item-\(id)", manifestId: "manifest-\(id)", policy: policy, isCancelled: cancelled)
+    private func job(_ id: String, _ policy: PreparationJobPolicy, cancelled: Bool = false, maximumChunkCount: Int? = nil) -> AudioPreparationJob {
+        AudioPreparationJob(
+            id: id, itemId: "item-\(id)", manifestId: "manifest-\(id)", policy: policy,
+            maximumChunkCount: maximumChunkCount, isCancelled: cancelled)
     }
 
     func testAnEmptyTableIsDrained() {
@@ -180,6 +182,37 @@ final class AudioPreparationRunSummaryTests: XCTestCase {
         for policy in [PreparationJobPolicy.whileCharging, .demandWindow] {
             XCTAssertTrue(AudioPreparationRunTracker.isDrained(remainingJobs: [job("a", policy)], automaticPolicy: .off), "nothing will pick it up")
             XCTAssertFalse(AudioPreparationRunTracker.isDrained(remainingJobs: [job("a", policy)], automaticPolicy: .whileCharging))
+        }
+    }
+
+    func testAnOpeningBufferWaitingForTheForegroundLoopIsWorkLeftWithAutomaticPreparationOff() {
+        // Every added article gets one (.demandWindow, two chunks) and the default policy is off.
+        let buffer = job("b", .demandWindow, maximumChunkCount: 2)
+        XCTAssertFalse(AudioPreparationRunTracker.isDrained(remainingJobs: [buffer], automaticPolicy: .off))
+        XCTAssertFalse(AudioPreparationRunTracker.isDrained(remainingJobs: [buffer], automaticPolicy: .whileCharging))
+        XCTAssertTrue(AudioPreparationRunTracker.isDrained(
+            remainingJobs: [job("b", .demandWindow, cancelled: true, maximumChunkCount: 2)], automaticPolicy: .off), "a stopped one is not")
+    }
+
+    func testTheDrainAgreesWithWhatEachPassWouldPickForEveryKindOfJob() {
+        // The drain must never say "empty" while either pass has something to take, and never "work left"
+        // when neither does: compared against the passes' own rules over every policy, cap and stop.
+        let policies = [PreparationJobPolicy.explicit, .demandWindow, .whileCharging]
+        for policy in policies {
+            for cap in [nil, 2] as [Int?] {
+                for cancelled in [false, true] {
+                    for automatic in [AutomaticAudioPreparationPolicy.off, .whileCharging] {
+                        let jobs = [job("j", policy, cancelled: cancelled, maximumChunkCount: cap)]
+                        let foregroundHasWork = !LibraryAudioPreparationTurns.eligible(jobs, for: .foreground).isEmpty
+                        let backgroundHasWork = !LibraryAudioPreparationTurns.eligible(
+                            OfflinePreparationRecovery.backgroundJobs(jobs, automaticPolicy: automatic), for: .background).isEmpty
+                        XCTAssertEqual(
+                            AudioPreparationRunTracker.isDrained(remainingJobs: jobs, automaticPolicy: automatic),
+                            !(foregroundHasWork || backgroundHasWork),
+                            "\(policy) cap \(String(describing: cap)) cancelled \(cancelled) automatic \(automatic)")
+                    }
+                }
+            }
         }
     }
 
