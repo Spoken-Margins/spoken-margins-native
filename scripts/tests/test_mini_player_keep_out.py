@@ -24,6 +24,7 @@ NO_PILL = {
     ("ExperiencePlayQueueScreen.swift", "*"): "a sheet from the Library",
     ("ExperienceAddSourceFlow.swift", "*"): "the add-source sheet",
     ("ExperienceReactionsScreen.swift", "*"): "a sheet from the item screen",
+    ("LiveSessionMarginDetailView.swift", "*"): "a sheet from the live session",
     ("ExperienceMarginsScreen.swift", "SharedMarginDetailView"): "a sheet from Margins",
     ("ExperienceTimelineRailScreen.swift", "*"): "the Timeline places its own mini player",
     ("HelpScreen.swift", "*"): "a sheet",

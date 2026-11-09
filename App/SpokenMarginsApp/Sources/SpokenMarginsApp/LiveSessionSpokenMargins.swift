@@ -138,6 +138,10 @@ final class LiveSessionSpokenCapture: ObservableObject {
 
     /// The session the phone is recording a spoken Margin for, or nil.
     @Published private(set) var sessionId: String?
+    /// When the recording started, for the recording screen's clock; nil when nothing records.
+    @Published private(set) var recordingStartedAt: Date?
+    /// The recorder was asked to start and has not yet taken the microphone, so the recording screen says it is waiting.
+    @Published private(set) var isStarting = false
     /// Something the listener should hear about a recording that no screen was showing when it happened. The open
     /// live session screen shows it once.
     @Published var notice: String?
@@ -166,14 +170,21 @@ final class LiveSessionSpokenCapture: ObservableObject {
     func start(sessionId id: String) {
         guard sessionId == nil else { return }
         sessionId = id
+        recordingStartedAt = Date()
+        isStarting = true
         starting = Task { [weak self, recorder] in
             do {
                 try await LiveSessionPhoneRecorder.checkCanRecord()
                 try await recorder.start()
+                if self?.sessionId == id { self?.isStarting = false }
                 self?.watchRecorder(for: id)
                 self?.syncCard(for: id)
             } catch {
-                if self?.sessionId == id { self?.sessionId = nil }
+                if self?.sessionId == id {
+                    self?.sessionId = nil
+                    self?.recordingStartedAt = nil
+                    self?.isStarting = false
+                }
                 self?.notice = ListenerErrorText.message(for: error)
             }
         }
@@ -185,6 +196,8 @@ final class LiveSessionSpokenCapture: ObservableObject {
     func stopAndFile() -> Task<Void, Never>? {
         guard let id = sessionId else { return nil }
         sessionId = nil
+        recordingStartedAt = nil
+        isStarting = false
         watcher?.cancel()
         watcher = nil
         let started = starting
@@ -200,10 +213,12 @@ final class LiveSessionSpokenCapture: ObservableObject {
         }
     }
 
-    /// Throws the recording away. Only for a session the listener is discarding.
+    /// Throws the recording away. For a listener who confirmed a discard, or a session being discarded.
     func cancel(sessionId id: String) {
         guard sessionId == id else { return }
         sessionId = nil
+        recordingStartedAt = nil
+        isStarting = false
         watcher?.cancel()
         watcher = nil
         Task { [recorder, starting] in

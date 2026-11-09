@@ -214,6 +214,11 @@ final class AppColorContrastCoverageTests: XCTestCase {
     /// #3732: the follow-a-source card put the dark `watchControl` tint behind light-mode text (secondary text 2.5:1,
     /// the system blue and red buttons 1.9:1 and 1.7:1). The `watch*` colours are made for the always-dark playback
     /// surface, so only the `Playback*` files may use them.
+    /// The running live session is drawn on the playback screen's dark surface, by the owner's choice (#3491).
+    private static let liveSessionDarkSurface: Set<String> = [
+        "LiveSessionDock.swift", "LiveSessionMarginsPane.swift", "LiveSessionSessionPane.swift", "LiveSessionView.swift"
+    ]
+
     func testWatchColoursStayOnTheAlwaysDarkPlaybackSurface() throws {
         let directory = try TestInputs.directory(.appSources)
         let enumerator = try XCTUnwrap(FileManager.default.enumerator(at: directory, includingPropertiesForKeys: nil))
@@ -222,7 +227,7 @@ final class AppColorContrastCoverageTests: XCTestCase {
         var found: [String] = []
         for file in files {
             let name = file.lastPathComponent
-            if name.hasPrefix("Playback") { continue }
+            if name.hasPrefix("Playback") || Self.liveSessionDarkSurface.contains(name) { continue }
             let text = try String(contentsOf: file, encoding: .utf8)
             if text.range(of: #"AppColors\.watch\w+"#, options: .regularExpression) != nil {
                 found.append(name)
