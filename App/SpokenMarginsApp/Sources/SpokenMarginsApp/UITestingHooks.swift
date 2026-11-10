@@ -31,6 +31,14 @@ enum UITestingHooks {
         UserDefaults.standard.removePersistentDomain(forName: domain)
     }
 
+    /// Clears the Live sessions an earlier test left (#3967), before the model or the Live session worker reads them. A
+    /// launch that replaces the Library starts with none; a kept-Library relaunch keeps them.
+    static func clearLiveSessionsIfRequested() {
+        guard isActive, seed.clearsLiveSessions,
+              let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return }
+        LiveSessionCollection.removeAllLiveSessionFiles(under: support)
+    }
+
     /// What this launch puts in the Library before it loads.
     static let seed = UITestingLaunchSeed(
         arguments: CommandLine.arguments,
@@ -121,6 +129,7 @@ enum UITestingHooks {
     static var keepsFirstRun: Bool { false }
     static var suppressesFirstRun: Bool { false }
     static func prepareFirstRunIfRequested() {}
+    static func clearLiveSessionsIfRequested() {}
     static let seed = UITestingLaunchSeed.none
     static var usesStandInAudioServices: Bool { false }
     static var importsCoopLayer: Bool { false }

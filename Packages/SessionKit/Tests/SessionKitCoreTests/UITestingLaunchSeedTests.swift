@@ -142,6 +142,23 @@ final class UITestingLaunchSeedTests: XCTestCase {
         XCTAssertFalse(UITestingLaunchSeed(arguments: ["--ui-testing"], environment: ["SPOKEN_MARGINS_UI_TEST_KEEP_LIBRARY": "1"]).writesLibrary)
     }
 
+    // #3967: a Live session is a file outside the store, so a launch that resets the store has to clear it too.
+    func testOnlyTheSeedsThatReplaceTheLibraryAlsoStartWithNoLiveSessions() {
+        let replacing: [UITestingLaunchSeed] = [
+            .fixture, .importedPDF, .firstRun,
+            .text(title: "t", text: "x", reference: "r"), .offlinePodcast(title: "t", durationSeconds: 10),
+        ]
+        for seed in replacing {
+            XCTAssertTrue(seed.clearsLiveSessions, "\(seed) resets the store, so it clears Live sessions")
+        }
+        XCTAssertFalse(UITestingLaunchSeed.keepLibrary.clearsLiveSessions, "a force-quit relaunch keeps what the first launch left")
+        XCTAssertFalse(UITestingLaunchSeed.none.clearsLiveSessions, "a normal launch never clears the listener's sessions")
+        XCTAssertFalse(UITestingLaunchSeed(arguments: ["SpokenMarginsApp"], environment: everySeedVariable).clearsLiveSessions)
+        for seed in replacing + [.keepLibrary, .none] {
+            XCTAssertEqual(seed.clearsLiveSessions, seed.writesLibrary, "\(seed): a new seed that resets the Library clears Live sessions too")
+        }
+    }
+
     // #2918: the kept-Library relaunch reaches the bootstrap, which is where the co-op layer is imported. It used to
     // be dropped there with the seeds that don't write, so J9's friend's Margin never arrived.
     func testAKeptLibraryRelaunchStillReachesTheLibraryBootstrap() {

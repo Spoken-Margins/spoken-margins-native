@@ -114,5 +114,34 @@ class ShareLinkHandoffTests(unittest.TestCase):
         self.assertRegex(project, rf"CFBundleURLSchemes:\s*\n\s*- {scheme}\s*\n")
 
 
+class LiveSessionsClearedAtUITestLaunchTests(unittest.TestCase):
+    """A UI-test launch that resets the store also clears Live sessions (#3967).
+
+    Live sessions are files kept outside the SQLite store, so `store.reset()` leaves one that an earlier test
+    started. It then sits at the top of every later test's Library and, at the largest text size, pushes every
+    library row off the first screen. SessionKit's tests prove what the clearing does; these prove the app still
+    calls it, before the model or the Live session worker reads a file, and only under `--ui-testing`.
+    """
+
+    APP = ROOT / "App" / "SpokenMarginsApp" / "Sources" / "SpokenMarginsApp"
+
+    def test_the_app_model_clears_live_sessions_before_it_is_built(self):
+        source = (self.APP / "UITestingLaunchSeedWriter.swift").read_text(encoding="utf-8")
+        make = source.index("static func makeApplicationModel()")
+        call = source.find("UITestingHooks.clearLiveSessionsIfRequested()", make)
+        build = source.find("Gate1AppModel(", make)
+        self.assertNotEqual(call, -1, "makeApplicationModel no longer clears the Live sessions a UI-test launch leaves")
+        self.assertLess(call, build, "the Live sessions must be cleared before any Gate1AppModel is built")
+
+    def test_the_hook_clears_only_for_a_ui_test_launch_that_resets_the_library(self):
+        source = (self.APP / "UITestingHooks.swift").read_text(encoding="utf-8")
+        body = source[source.index("static func clearLiveSessionsIfRequested() {"):]
+        body = body[: body.index("\n    }\n")]
+        self.assertIn("guard isActive, seed.clearsLiveSessions", body)
+        self.assertIn("removeAllLiveSessionFiles", body)
+        # The Release stub does nothing, so a TestFlight build never clears a listener's sessions.
+        self.assertIn("static func clearLiveSessionsIfRequested() {}", source)
+
+
 if __name__ == "__main__":
     unittest.main()

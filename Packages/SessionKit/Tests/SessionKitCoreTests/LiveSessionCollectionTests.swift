@@ -149,6 +149,35 @@ final class LiveSessionCollectionTests: XCTestCase {
         XCTAssertEqual(names[0], "live-1.json")
         XCTAssertFalse(names.contains { $0.contains("/") })
     }
+
+    // #3967: a UI-test launch that resets the Library clears the Live sessions an earlier test left, which are files
+    // outside the store, and touches nothing else under Application Support.
+    func testRemovingEveryLiveSessionFileLeavesNoSessionAndNothingElse() async throws {
+        let collection = LiveSessionCollection(root: root)
+        try collection.save(LiveSession(id: "left-running", title: "Meeting session", startedAt: t0))
+        try collection.save(LiveSession(id: "left-ended", startedAt: t0.addingTimeInterval(60)))
+        try collection.writeLegacyMirror(collection.loadAll())
+        XCTAssertTrue(FileManager.default.fileExists(atPath: currentURL.path), "the setup wrote current.json")
+        let worker = LiveSessionFileWorker(root: root)
+        let inbox = try XCTUnwrap(worker.inboxDirectory)
+        try FileManager.default.createDirectory(at: inbox, withIntermediateDirectories: true)
+        try Data("waiting".utf8).write(to: inbox.appending(path: "m1.json"))
+        let neighbour = root.appending(path: "PodcastAudio", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: neighbour, withIntermediateDirectories: true)
+        try Data("episode".utf8).write(to: neighbour.appending(path: "ui-test-episode.caf"))
+        XCTAssertEqual(collection.loadAll().count, 2)
+
+        LiveSessionCollection.removeAllLiveSessionFiles(under: root)
+
+        XCTAssertEqual(collection.loadAll(), [])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: currentURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: inbox.appending(path: "m1.json").path))
+        let freshWorker = LiveSessionFileWorker(root: root)
+        let summaries = await freshWorker.summaries()
+        XCTAssertEqual(summaries, [], "the Library's Live row has nothing to show")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: neighbour.appending(path: "ui-test-episode.caf").path))
+        LiveSessionCollection.removeAllLiveSessionFiles(under: root) // already empty: nothing to do, nothing thrown
+    }
 }
 
 /// `LiveSession` as the build before slice 1a decodes it (main at 285aaa05), to prove it still reads what this build writes.
