@@ -218,7 +218,7 @@ final class Gate1FlowUITests: XCTestCase {
         editor.typeText("A thought to find again.")
         element("writtenMargin.save.button").tap()
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 5))
-        scrollToElement("playback.margins.button").tap()
+        openRootMarginsFromPlayback()
         let open = element("margins.openItem.item-pill")
         let share = element("margins.shareItem.item-pill")
         XCTAssertTrue(open.waitForExistence(timeout: 5))
@@ -236,8 +236,9 @@ final class Gate1FlowUITests: XCTestCase {
         app.terminate()
         app.launchArguments += ["-UIPreferredContentSizeCategoryName", UIContentSizeCategory.accessibilityExtraExtraExtraLarge.rawValue]
         launchAllowingOneStall()
-        let row = app.buttons["library.row.item-pill"]
-        XCTAssertTrue(row.waitForExistence(timeout: 8))
+        // At AX5 the seeded row can sit below the fold, so scroll to it before the long press (#2717).
+        XCTAssertTrue(app.buttons["library.row.item-pill"].waitForExistence(timeout: 8))
+        let row = scrollToButtonIdentified("library.row.item-pill")
         row.press(forDuration: 0.8)
         app.buttons["Mark Complete"].tap()
         let undo = element("completion.undo.button")
@@ -361,8 +362,8 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertEqual(timelineButton.label, "Timeline")
         XCTAssertFalse(timelineButton.label.contains("\n"))
         app.buttons["playback.options.button"].tap()
-        XCTAssertTrue(element("playback.export.button").waitForExistence(timeout: 4))
-        XCTAssertTrue(element("playback.export.button").isHittable)
+        // Listening options opens at a medium height, so Export can sit below the fold; scroll to it (#2717).
+        XCTAssertTrue(scrollToButtonIdentified("playback.export.button").isHittable)
         app.buttons["Done"].tap()
 
         let playbackScroll = app.scrollViews.firstMatch
@@ -464,7 +465,8 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(waitForDisappearance(element("addSource.sheet"), timeout: 8))
         XCTAssertTrue(element("home.screen").waitForExistence(timeout: 4))
 
-        let libraryRow = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", itemTitle)).firstMatch
+        // The "Added ... to Library" banner's label holds the title too and comes first, so match Library rows only (#2717).
+        let libraryRow = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "library.row.", itemTitle)).firstMatch
         XCTAssertTrue(libraryRow.waitForExistence(timeout: 4))
         libraryRow.press(forDuration: 1)
         XCTAssertTrue(app.buttons["Move to Recently Deleted"].waitForExistence(timeout: 3))
@@ -586,7 +588,9 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(element("sources.screen").waitForExistence(timeout: 4))
         // Following opens on its entries; the feed field lives on the Follow sheet (#141, #3205).
         XCTAssertFalse(element("sources.follow.url").exists)
-        element("sources.manageFeeds").tap()
+        // The identifier appears twice on iOS 26.5 (a wrapper and the Button), so a descendants query finds
+        // "multiple matches"; ask for the Button (#2717).
+        app.buttons["sources.manageFeeds"].firstMatch.tap()
         XCTAssertTrue(element("sources.follow.url").waitForExistence(timeout: 4))
         XCTAssertTrue(element("sources.follow.paste").exists)
         XCTAssertTrue(element("sources.follow.button").exists)
@@ -594,8 +598,8 @@ final class Gate1FlowUITests: XCTestCase {
         // Read Later and Listening Edition imports are in Settings, not on this sheet.
         XCTAssertFalse(app.buttons["Read Later Services"].exists)
         XCTAssertFalse(app.buttons["Import Listening Edition"].exists)
-        element("sources.follow.cancel").tap()
-        XCTAssertTrue(element("sources.manageFeeds").waitForExistence(timeout: 4))
+        app.buttons["sources.follow.cancel"].firstMatch.tap()
+        XCTAssertTrue(app.buttons["sources.manageFeeds"].firstMatch.waitForExistence(timeout: 4))
         tapRoot("Settings")
         XCTAssertTrue(element("settings.screen").waitForExistence(timeout: 5))
         captureScreen(named: "following-settings-opened")
@@ -648,7 +652,7 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertFalse(element("recording.screen").exists, "A second finish tap started another Margin")
         XCTAssertEqual(element("playback.play.button").label, "Pause", "Saving a voice Margin did not resume playback")
         pausePlaybackIfNeeded()
-        element("playback.margins.button").tap()
+        openRootMarginsFromPlayback()
         XCTAssertTrue(element("margins.screen").waitForExistence(timeout: 4))
         XCTAssertTrue(element("miniPlayer.bar").exists)
         let savedMargin = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "margins.rowDetails.")).firstMatch
@@ -807,7 +811,7 @@ final class Gate1FlowUITests: XCTestCase {
         element("writtenMargin.save.button").tap()
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 5))
         XCTAssertEqual(element("playback.play.button").label, "Play", "Saving a pre-paused note started playback")
-        element("playback.margins.button").tap()
+        openRootMarginsFromPlayback()
         let search = app.textFields["margins.search.field"]
         XCTAssertTrue(search.waitForExistence(timeout: 4))
         search.tap()
@@ -1392,6 +1396,17 @@ final class Gate1FlowUITests: XCTestCase {
         add(attachment)
     }
 
+    /// The Margins pane inside playback (`playback.margins.button`) lists only this source's Margins and has no search
+    /// field, scope row or per-item heading since the playback shell redesign (#1475). Tests that look at the Margins
+    /// page, with those parts, leave playback by its Home button and open the Margins root; the mini-player keeps the
+    /// source playing. Repaired for #2717.
+    private func openRootMarginsFromPlayback() {
+        // Home sits in the secondary controls row, which can be below the fold at AX5.
+        scrollToButtonIdentified("playback.home.button").tap()
+        tapRoot("Margins")
+        XCTAssertTrue(element("margins.screen").waitForExistence(timeout: 4), "The Margins root did not open")
+    }
+
     private func openLibrarySettings() {
         tapRoot("Settings")
     }
@@ -1461,6 +1476,16 @@ final class Gate1FlowUITests: XCTestCase {
             }
         }
         scrollToElement("queue.start.item-ui-text-regression").tap()
+    }
+
+    /// Like `scrollToElement`, for an identifier that a wrapper and its Button can share on iOS 26.5: the Button only.
+    private func scrollToButtonIdentified(_ identifier: String) -> XCUIElement {
+        let candidate = app.buttons[identifier].firstMatch
+        for _ in 0..<12 where !isReadyToTap(candidate) {
+            app.swipeUp()
+        }
+        XCTAssertTrue(candidate.waitForExistence(timeout: 4), "Missing \(identifier)")
+        return candidate
     }
 
     private func scrollToElement(_ identifier: String) -> XCUIElement {
