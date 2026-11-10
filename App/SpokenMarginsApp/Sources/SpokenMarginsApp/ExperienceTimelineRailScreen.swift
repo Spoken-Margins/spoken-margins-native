@@ -9,6 +9,8 @@ struct ExperienceTimelineRailScreen: View {
     /// A playback pane reuses the rail and sheets, without a second player or navigation stack.
     var onReturnToPlayback: (() -> Void)? = nil
     var onEditorFocusChange: ((Bool) -> Void)? = nil
+    /// The playback screen hides its dock while the editor has focus and brings it back after the keyboard leaves.
+    var playbackDockHidden = false
 
     @State private var followsPlayback = true
     @State private var selectedSource: PlaybackTimelineSourceView.Selection?
@@ -124,6 +126,17 @@ struct ExperienceTimelineRailScreen: View {
                 if phase == .interacting { followsPlayback = false }
             }
             .onDisappear { onEditorFocusChange?(false) }
+            .onChange(of: playbackDockHidden) { _, hidden in
+                // The dock is back after the editor's keyboard left: keep the Reflect box and its Import button in
+                // view above it, not behind it (#4043).
+                guard !hidden, !responseEditorFocused else { return }
+                Task { @MainActor in
+                    await Task.yield()
+                    withMotion(.easeOut(duration: 0.2)) {
+                        proxy.scrollTo("timeline.reflection.composer", anchor: .bottom)
+                    }
+                }
+            }
             .onChange(of: responseEditorFocused) { _, isFocused in
                 onEditorFocusChange?(isFocused)
                 guard isFocused else { return }
