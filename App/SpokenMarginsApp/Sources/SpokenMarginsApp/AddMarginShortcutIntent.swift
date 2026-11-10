@@ -5,7 +5,7 @@ import SessionKit
 
 enum AddMarginShortcutError: Error, Equatable, LocalizedError {
     case emptyText
-    case nothingPlaying
+    case nothingRunning
     case writingInProgress
     case libraryUnavailable
     case itemNotFound
@@ -23,11 +23,11 @@ enum AddMarginShortcutError: Error, Equatable, LocalizedError {
     var errorDescription: String? {
         switch self {
         case .emptyText:
-            return "The Margin is empty. Pass the text the Margin should say."
-        case .nothingPlaying:
-            return "Nothing is playing in Spoken Margins. Start an episode, article or PDF, then run the shortcut again."
+            return SiriMarginRoute.emptyText
+        case .nothingRunning:
+            return SiriMarginRoute.nothingRunningMessage
         case .writingInProgress:
-            return "Spoken Margins is already waiting on a Margin. Save or cancel it, then run the shortcut again."
+            return SiriMarginRoute.writingInProgress
         case .libraryUnavailable:
             return "Spoken Margins could not open its Library. Try the shortcut again."
         case .itemNotFound:
@@ -35,7 +35,7 @@ enum AddMarginShortcutError: Error, Equatable, LocalizedError {
         case .itemNotStarted:
             return "Start this once before adding a Margin to it."
         case .notSaved(let reason):
-            return reason ?? "The Margin could not be saved."
+            return reason ?? SiriMarginRoute.notSaved
         }
     }
 }
@@ -63,13 +63,42 @@ enum AddMarginShortcutAction {
         }
     }
 
+    /// Where Siri's Margin goes (#3880): a Library item chosen in a Shortcut, else the running live session (a written
+    /// Margin at this moment, whatever is in the player), else the item in the player, else a refusal. Returns what
+    /// Siri says it went to: the item's title or the live session's name.
+    static func perform(
+        text: String, toItemId itemId: String?, in model: Gate1AppModel,
+        files: LiveSessionFileWorker = .shared, now: Date = Date()
+    ) async throws -> String {
+        let words = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !words.isEmpty else { throw AddMarginShortcutError.emptyText }
+        let route = SiriMarginRoute.decide(.init(
+            choseItem: itemId != nil, runningSession: await files.runningSession(), playerHasSession: model.hasActiveSession
+        ))
+        switch route {
+        case .chosenItem, .playerItem:
+            return try addWrittenMargin(text: words, toItemId: itemId, in: model)
+        case let .liveSession(name):
+            guard await files.addWrittenMargin(text: words, markedAt: now) != nil else {
+                throw AddMarginShortcutError.notSaved(nil)
+            }
+            // The open session screen takes it in, the Library's Live row and the Watch's board redraw.
+            NotificationCenter.default.post(name: LiveSessionSpokenMargins.changedOnDisk, object: nil)
+            LiveSessionBoard.shared.refresh()
+            WatchMarginReceiver.shared.processInbox()
+            return name
+        case .nothingRunning:
+            throw AddMarginShortcutError.nothingRunning
+        }
+    }
+
     /// Returns the title of the item that received the Margin. Throws before touching playback when
     /// the text is empty, nothing is playing, or a Margin is already being written; a Margin is
     /// created only if it was saved.
     static func addWrittenMargin(text: String, to model: Gate1AppModel) throws -> String {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { throw AddMarginShortcutError.emptyText }
-        guard model.hasActiveSession else { throw AddMarginShortcutError.nothingPlaying }
+        guard model.hasActiveSession else { throw AddMarginShortcutError.nothingRunning }
         guard !model.recordingNavigationIsLocked else { throw AddMarginShortcutError.writingInProgress }
 
         model.beginWrittenMargin()
@@ -91,7 +120,7 @@ enum AddMarginShortcutAction {
 struct AddMarginToSpokenMarginsIntent: AppIntent {
     static let title: LocalizedStringResource = "Add Margin"
     static let description = IntentDescription(
-        "Writes a text Margin on whatever is playing in Spoken Margins, at the current place, and playback carries on. Choose something else from your Library to write on it instead, at the place where you left it, without starting it."
+        "Writes a text Margin in Spoken Margins: into your running live session if there is one, else on whatever is playing, at the current place, and playback carries on. Choose something else from your Library to write on it instead, at the place where you left it, without starting it."
     )
     static let openAppWhenRun = false
 
@@ -119,8 +148,8 @@ struct AddMarginToSpokenMarginsIntent: AppIntent {
         guard let model = ListeningEditionShortcutBridge.model else {
             throw AddMarginShortcutError.libraryUnavailable
         }
-        let title = try AddMarginShortcutAction.addWrittenMargin(text: text, toItemId: item?.id, in: model)
-        return .result(dialog: "Margin added to \(title).")
+        let name = try await AddMarginShortcutAction.perform(text: text, toItemId: item?.id, in: model)
+        return .result(dialog: IntentDialog(stringLiteral: SiriMarginRoute.confirmation(named: name)))
     }
 }
 #endif
