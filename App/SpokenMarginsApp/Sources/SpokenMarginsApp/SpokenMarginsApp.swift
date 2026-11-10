@@ -152,7 +152,9 @@ struct SpokenMarginsApp: App {
                 )
             },
             searcher: CatalogDrawerModel.makeSearcher(),
-            startFirstListen: { [weak model] sourceIds in await model?.startFirstListen(pickedSourceIds: sourceIds) }
+            startFirstListen: { [weak model] sourceIds, allowsWelcome in
+                await model?.startFirstListen(pickedSourceIds: sourceIds, allowsWelcomeSample: allowsWelcome)
+            }
         ))
     }
 

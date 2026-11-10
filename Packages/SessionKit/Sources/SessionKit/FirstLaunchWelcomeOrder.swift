@@ -11,6 +11,10 @@ import Foundation
 /// refused, the import cancelled, the app closed), the drawer is owed to the next launch, even though the Library
 /// is no longer empty by then.
 ///
+/// The drawer opens once more in that case, and nothing plays when it closes with nothing picked (#3795, #3796): the
+/// listener has a friend's episode and a reason to be here, so the Welcome sample is not played over it. The held-back
+/// state is spent when the drawer opens, so a drawer left open when the app is killed is not owed again.
+///
 /// Terms are not part of this order: they show only on the first on-device voice playback, as before.
 public struct FirstLaunchWelcomeOrder: Equatable, Sendable {
     /// Where the listener is when something changes.
@@ -44,6 +48,12 @@ public struct FirstLaunchWelcomeOrder: Equatable, Sendable {
 
     public private(set) var phase: Phase
     public private(set) var isSettled = false
+    /// A friend's file held the drawer back, in this launch or an earlier one. Stays true once the drawer shows.
+    public private(set) var wasHeldBack: Bool
+
+    /// Whether Done with nothing picked (or a pick that couldn't start) may play the Welcome sample. It may not
+    /// when a friend's file held the drawer back (#3796).
+    public var playsWelcomeSampleOnClose: Bool { !wasHeldBack }
 
     /// Whether this launch owes the drawer. A fresh install owes it (the Library was empty before the Welcome
     /// sample was added), and so does a launch after one whose friend's file kept it waiting.
@@ -60,8 +70,11 @@ public struct FirstLaunchWelcomeOrder: Equatable, Sendable {
         )
     }
 
-    public init(drawerOwed: Bool) {
+    /// - Parameter owedFromEarlierLaunch: an earlier launch's friend's file kept the drawer waiting and the app was
+    ///   left before it showed; the drawer is owed now and counts as held back.
+    public init(drawerOwed: Bool, owedFromEarlierLaunch: Bool = false) {
         phase = drawerOwed ? .owed : .notOwed
+        wasHeldBack = drawerOwed && owedFromEarlierLaunch
     }
 
     /// The drawer is still owed while a friend's file holds it back; the app keeps that for the next launch.
@@ -81,10 +94,12 @@ public struct FirstLaunchWelcomeOrder: Equatable, Sendable {
         switch phase {
         case .owed:
             phase = .waitingForFriendItem
+            wasHeldBack = true
             return .none
         case .drawerShowing:
             guard !drawerHasPicks else { return .none }
             phase = .waitingForFriendItem
+            wasHeldBack = true
             return .withdrawDrawer
         case .notOwed, .waitingForFriendItem, .waitingForLibrary:
             return .none

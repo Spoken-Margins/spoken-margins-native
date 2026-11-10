@@ -6,7 +6,10 @@ extension Gate1AppModel {
     /// The first pick's newest episode or latest post, else the Welcome sample. The play goes through
     /// `importFollowedSourceEntry`, the same path as ▶ on a Following row, so the Terms sheet and any
     /// download appear in the flow and resume the play; nothing the listener picked is undone by them.
-    func startFirstListen(pickedSourceIds: [String]) async {
+    ///
+    /// `allowsWelcomeSample` is false when a friend's file held the first-run drawer back (#3796): then a pick that
+    /// can't start plays nothing, and the friend's episode stays what the listener sees.
+    func startFirstListen(pickedSourceIds: [String], allowsWelcomeSample: Bool = true) async {
         if !pickedSourceIds.isEmpty {
             reportConfirmation("Getting your first listen ready.")
             var entry = await firstListenEntry(pickedSourceIds: pickedSourceIds)
@@ -22,6 +25,7 @@ extension Gate1AppModel {
                 return
             }
         }
+        guard allowsWelcomeSample else { return }
         guard libraryItems.contains(where: { $0.id == Self.welcomeSampleItemId }) else { return }
         startItem(id: Self.welcomeSampleItemId)
     }
