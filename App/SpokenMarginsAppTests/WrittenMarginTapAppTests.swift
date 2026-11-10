@@ -64,6 +64,41 @@ final class WrittenMarginTapAppTests: XCTestCase {
         try await fixture.waitUntil("the episode plays again after the reading") { model.snapshot.status == .playing }
     }
 
+    // #3907: while a friend's written Margin is read, the episode is paused and silent (never "ducked"), and the audio
+    // session lowers only other apps' audio, and only when the listener mixes with other audio and asked for it to be
+    // lowered. Two asserts, one reading: the state the model reports and the session options iOS would act on. Whether
+    // another app audibly gets quieter is iOS's to do from those options, and is not asserted here.
+    func testWhileAWrittenMarginIsReadTheEpisodeIsPausedAndOnlyOtherAppsAreLowered() async throws {
+        for (mixes, lowers) in [(false, false), (false, true), (true, false), (true, true)] {
+            let label = "mixes \(mixes), lowers \(lowers)"
+            let fixture = try await ReturnFixture.make(sourcePlaying: true, writtenWords: uniqueWords())
+            defer { fixture.cleanUp() }
+            let model = fixture.model
+            model.mixesWithOtherAudio = mixes
+            model.lowersBackgroundAudio = lowers
+            try await fixture.seedReading(ready: true)
+            XCTAssertTrue(model.jumpToImportedCommentary(interjectionID: fixture.record.id), label)
+
+            model.listenToPendingImportedCommentary()
+            XCTAssertNotNil(model.playingImportedCommentary, "the reading plays: \(label)")
+            XCTAssertEqual(model.snapshot.status, .paused, "the episode is paused, not playing underneath: \(label)")
+            // Silent, not quieter: a paused episode's clock stands still while the reading plays.
+            let pausedAtMs = try XCTUnwrap(model.snapshot.currentMediaTimeMs, label)
+            try await Task.sleep(for: .milliseconds(400))
+            XCTAssertEqual(model.snapshot.status, .paused, "still paused after the reading has played a while: \(label)")
+            let laterMs = try XCTUnwrap(model.snapshot.currentMediaTimeMs, label)
+            XCTAssertEqual(laterMs, pausedAtMs, accuracy: 50, "the episode's clock stands still: \(label)")
+
+            let session = AVAudioSession.sharedInstance()
+            XCTAssertEqual(session.category, .playback, label)
+            XCTAssertEqual(session.mode, .spokenAudio, label)
+            XCTAssertEqual(session.categoryOptions.contains(.mixWithOthers), mixes, "other apps are mixed with only when the listener mixes: \(label)")
+            XCTAssertEqual(session.categoryOptions.contains(.duckOthers), mixes && lowers, "other apps are lowered only when asked: \(label)")
+
+            model.stopImportedCommentaryPlayback(resumeSource: false)
+        }
+    }
+
     // A friend's Margin on a podcast that hasn't been placed yet has only the sender's time. Listening needs no place
     // in the listener's copy: the reading plays and nothing is reported as failed.
     func testAWrittenMarginOnAnUnplacedLayerPlaysWithoutALocalTime() async throws {
