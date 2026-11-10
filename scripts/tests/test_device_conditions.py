@@ -41,6 +41,19 @@ class ListTests(unittest.TestCase):
             self.assertRegex(text, rf'`{reason}` \({primary["none:" + reason]}[,;)]')
         self.assertIn(f'{round(with_row * 100 / total)}% of the {total}', LANE.read_text())
 
+    def test_the_reports_51_are_all_in_the_list(self):
+        issues = dc.load_issues(dc.REPORT_51)
+        self.assertEqual((len(issues), len(set(issues))), (51, 51))
+        bugs, missing = dc.only(dc.load(), issues)
+        self.assertEqual(missing, [], 'add these to device-conditions-bugs.tsv')
+        _, with_row, total = dc.counts(bugs)
+        self.assertIn(f'{with_row} of the {total} ({round(with_row * 100 / total)}%) sit under a row', DOC.read_text())
+
+    def test_only_names_the_issues_the_list_lacks(self):
+        bugs = [dict(issue=n, created='', state='', row='lock', also='', title='') for n in (1, 2, 3)]
+        kept, missing = dc.only(bugs, dc.load_issues(write('# a comment\n2\n\n4\n')))
+        self.assertEqual(([b['issue'] for b in kept], missing), ([2], [4]))
+
     def test_every_row_has_a_bug(self):
         used = {bug['row'] for bug in dc.load()}
         self.assertEqual(set(dc.ROWS) - used, set())

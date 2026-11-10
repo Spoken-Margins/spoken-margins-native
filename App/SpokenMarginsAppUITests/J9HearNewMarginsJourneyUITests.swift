@@ -135,7 +135,7 @@ final class J9HearNewMarginsJourneyUITests: XCTestCase {
             XCTAssertEqual(play.label, "Play")
             let marginsOnly = app.buttons["item.reviewNewMargins.button"].firstMatch
             XCTAssertTrue(marginsOnly.exists, "The second choice is missing")
-            XCTAssertTrue(marginsOnly.label.hasPrefix("Hear only "), "The second choice reads \(marginsOnly.label)")
+            XCTAssertTrue(marginsOnly.label.hasPrefix("Skip to "), "The second choice reads \(marginsOnly.label)")
             XCTAssertTrue(element("item.friendIntro.sender").exists, "The item doesn't say who sent the Margins")
             XCTAssertTrue(element("item.friendIntro.explanation").exists, "The item doesn't say what a Margin is")
             XCTAssertFalse(

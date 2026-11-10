@@ -122,7 +122,7 @@ public struct PinnedMarginCard: Equatable, Sendable {
     /// quiet Stop. While its voice plays, Stop is the listener's only way out of the chain (pause leaves it armed).
     public let chainsWithoutLeadIn: Bool
 
-    /// "Hear only Margins" and a can't-play listening are a review: the Margins follow one another and Next Margin moves
+    /// "Skip to the Margins" and a can't-play listening are a review: the Margins follow one another and Next Margin moves
     /// between them. "Play this moment" is a moment. A Margin that plays when the episode reaches it is in no run.
     public enum Run: Equatable, Sendable { case none, moment, review }
 

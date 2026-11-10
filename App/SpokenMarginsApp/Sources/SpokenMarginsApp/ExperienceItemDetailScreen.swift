@@ -78,7 +78,7 @@ struct ExperienceItemDetailScreen: View {
                     .background(AppColors.bone)
             }
             .background(AppColors.bone)
-            // A container, not a stamp: a bare identifier here is copied onto the pinned Play and "Hear only"
+            // A container, not a stamp: a bare identifier here is copied onto the pinned Play and "Skip to"
             // buttons in the inset above and replaces their own, so tests and journeys can't find them (#3818).
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("item.screen")
@@ -133,7 +133,7 @@ struct ExperienceItemDetailScreen: View {
                 }
             }
             .task(id: model.selectedItem.id) { await refreshEpisodeLinkStatus() }
-            .task(id: WrittenMarginReadings.waitingKey(model.selectedItem)) { WrittenMarginReadings.prepare(newSharedMargins) } // readings ready before "Hear only the Margins" (#3365)
+            .task(id: WrittenMarginReadings.waitingKey(model.selectedItem)) { WrittenMarginReadings.prepare(newSharedMargins) } // readings ready before "Skip to the Margins" (#3365)
             .onDisappear { WrittenMarginReadings.leftItemScreen(model.selectedItem.id) }
             .sheet(item: $collectionItem) { item in
                 ItemCollectionSheet(item: item).environmentObject(model)

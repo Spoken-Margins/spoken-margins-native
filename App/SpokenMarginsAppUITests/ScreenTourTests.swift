@@ -201,10 +201,10 @@ final class ScreenTourTests: XCTestCase {
         capture("24-item-bottom", "The episode's item screen, scrolled to the bottom")
         for _ in 0..<3 { app.swipeDown() }
 
-        // The item offers two choices (#3219): the big Play starts the episode without asking, and "Hear only …"
+        // The item offers two choices (#3219): the big Play starts the episode without asking, and "Skip to …"
         // reviews Sam's Margin in place. Hear it on its own first.
         let hearOnly = scrollTo("item.reviewNewMargins.button")
-        capture("25-item-two-choices", "The item's two choices: Play, and Hear only Sam's new Margin")
+        capture("25-item-two-choices", "The item's two choices: Play, and Skip to Sam's new Margin")
         hearOnly.tap()
         if !element("playback.screen").waitForExistence(timeout: 8) { tapButton("miniPlayer.open.button") }
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8), "Now Playing did not open")

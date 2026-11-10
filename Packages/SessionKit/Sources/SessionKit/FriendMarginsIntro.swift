@@ -10,7 +10,7 @@ import Foundation
 public struct FriendMarginsIntro: Equatable, Sendable {
     /// "From Cole", or "From a friend" when the packet carries no single name.
     public let senderLine: String
-    /// "3 Margins · about 2 min": the Margins alone, without the lead-ins "Hear only…" adds.
+    /// "3 Margins · about 2 min": the Margins alone, without the lead-ins "Skip to …" adds.
     public let countLine: String
     /// What a Margin is, once, in the version that fits these Margins.
     public let explanation: String

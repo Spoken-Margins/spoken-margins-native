@@ -9,6 +9,8 @@ than half") is read from here, with no hand count.
   scripts/device_conditions.py --after-issue 3897  count only bugs filed after that issue (the next-30 reading: pass --first 30)
   scripts/device_conditions.py --check             fail on an unknown row, a repeated issue or a malformed line
   scripts/device_conditions.py --unlisted          found-on-phone bugs on GitHub that the list does not have yet (needs gh)
+  scripts/device_conditions.py --only docs/workstreams/device-conditions-report-51.txt
+                                                   count only the issues in that file (the report's 51)
 """
 import argparse
 from collections import Counter
@@ -19,6 +21,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 LIST = ROOT / 'docs/workstreams/device-conditions-bugs.tsv'
+REPORT_51 = ROOT / 'docs/workstreams/device-conditions-report-51.txt'
 ROWS = ('lock', 'background', 'relaunch', 'store', 'main-thread', 'network', 'route', 'web-packet', 'live-activity',
         'hot', 'burst', 'long-source')
 NO_ROW_REASONS = ('parse-fixture', 'visual', 'design', 'logic', 'unclear', 'ears', 'ops')
@@ -43,6 +46,18 @@ def load(path=LIST):
             raise ValueError(f'line {number}: issue {issue!r} is not a number')
         bugs.append({'issue': int(issue), 'created': created, 'state': state, 'row': row, 'also': also, 'title': title})
     return bugs
+
+
+def load_issues(path):
+    """Issue numbers from a file of one number per line; `#` lines are comments."""
+    lines = (line.strip() for line in Path(path).read_text().splitlines())
+    return [int(line) for line in lines if line and not line.startswith('#')]
+
+
+def only(bugs, issues):
+    """(the bugs whose issue is in `issues`, the issues the list does not have)."""
+    wanted = set(issues)
+    return [bug for bug in bugs if bug['issue'] in wanted], sorted(wanted - {bug['issue'] for bug in bugs})
 
 
 def problems(bugs):
@@ -103,6 +118,7 @@ def main(argv=None):
     parser.add_argument('--first', type=int, help='with --after-issue, only the first N of them (lowest issue numbers)')
     parser.add_argument('--check', action='store_true')
     parser.add_argument('--unlisted', action='store_true')
+    parser.add_argument('--only', type=Path, help='count only the issues in this file, one number per line')
     args = parser.parse_args(argv)
     bugs = load()
     if args.check:
@@ -115,6 +131,11 @@ def main(argv=None):
             print(f'{number}\t{title}')
         print(f'{len(missing)} not in the list', file=sys.stderr)
         return 0
+    if args.only:
+        bugs, missing = only(bugs, load_issues(args.only))
+        if missing:
+            print('not in the list: ' + ' '.join(f'#{n}' for n in missing), file=sys.stderr)
+            return 1
     if args.after_issue is not None:
         bugs = after_issue(bugs, args.after_issue, args.first)
     print(report(bugs))
