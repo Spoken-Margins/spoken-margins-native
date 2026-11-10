@@ -1055,10 +1055,22 @@ final class Gate1FlowUITests: XCTestCase {
         let addSource = element("build23.recipient.addToLibrary")
         XCTAssertTrue(addSource.waitForExistence(timeout: 4))
         let pinnedImport = app.buttons["Import"].firstMatch
-        for _ in 0..<6 where addSource.frame.maxY >= pinnedImport.frame.minY {
-            app.scrollViews["build23.recipient.experience"].swipeUp()
+        XCTAssertTrue(pinnedImport.waitForExistence(timeout: 4))
+        // Import is the top button of the bar pinned over the content; the bar's divider and padding sit about 24 pt
+        // above it. A drag must start on the content above the bar, or it presses the bar and moves nothing (#3952).
+        func importBarTop() -> CGFloat { pinnedImport.frame.minY - 24 }
+        let window = app.windows.firstMatch
+        for _ in 0..<6 where addSource.frame.maxY >= importBarTop() {
+            let origin = window.coordinate(withNormalizedOffset: .zero)
+            let x = window.frame.width - 24
+            let startY = importBarTop() - 24 - window.frame.minY
+            let distance = min(addSource.frame.maxY - importBarTop() + 48, startY - 160)
+            guard distance > 20 else { break }
+            origin.withOffset(CGVector(dx: x, dy: startY))
+                .press(forDuration: 0.05, thenDragTo: origin.withOffset(CGVector(dx: x, dy: startY - distance)),
+                       withVelocity: .slow, thenHoldForDuration: 0.1)
         }
-        XCTAssertLessThan(addSource.frame.maxY, pinnedImport.frame.minY,
+        XCTAssertLessThan(addSource.frame.maxY, importBarTop(),
                           "Add to Library remains covered by the pinned import actions.")
         addSource.tap()
         XCTAssertTrue(element("addSource.sheet").waitForExistence(timeout: 5))
@@ -1088,7 +1100,10 @@ final class Gate1FlowUITests: XCTestCase {
         let provenance = importedLayerElement(suffix: ".provenance")
         XCTAssertTrue(provenance.waitForExistence(timeout: 5))
         XCTAssertTrue(provenance.label.hasPrefix("From "))
-        XCTAssertTrue(provenance.label.localizedCaseInsensitiveContains("A tone marks each one"))
+        // Every import arrives guided, whatever the sender suggested (owner, 2026-10-31; e563e4135), so the layer's
+        // play mode reads "Play as you reach them", not the companion mode's "A tone marks each one".
+        XCTAssertTrue(provenance.label.localizedCaseInsensitiveContains("When Margins play: Play as you reach them"),
+                      "The imported layer's provenance does not say it plays as you reach it: \(provenance.label)")
         captureScreen(named: "second-edition-item-shared-provenance")
 
         element("miniPlayer.open.button").tap()

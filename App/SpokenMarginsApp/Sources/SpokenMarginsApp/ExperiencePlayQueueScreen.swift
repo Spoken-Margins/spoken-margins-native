@@ -37,10 +37,14 @@ struct PlayQueueSheetActions {
 }
 
 #if DEBUG
-/// Counts how often the queue sheet's body runs, so a test can tell a redraw from a skipped one (#3891).
+/// Counts how often the queue sheet's body runs, and how SwiftUI's equality check on the sheet came out, so a test can
+/// tell a redraw from a skipped one and a failure says which kind it was (#3891, #3999). `==` is not main-actor, so its
+/// two counters are not either; SwiftUI calls it on the main thread.
 @MainActor
 enum PlayQueueSheetProbe {
     static var bodyRuns = 0
+    nonisolated(unsafe) static var comparisons = 0
+    nonisolated(unsafe) static var unequalComparisons = 0
 }
 #endif
 
@@ -48,13 +52,17 @@ struct PlayQueueSheet: View, Equatable {
     let rows: [PlayQueueRow]
     let actions: PlayQueueSheetActions
 
-    @Environment(\.dismiss) private var dismiss
     @State private var isConfirmingClear = false
     /// Held here, not left to the navigation stack, so Edit mode is the sheet's own and a redraw cannot reset it.
     @State private var editMode: EditMode = .inactive
 
     nonisolated static func == (lhs: PlayQueueSheet, rhs: PlayQueueSheet) -> Bool {
-        lhs.rows == rhs.rows
+        let same = lhs.rows == rhs.rows
+        #if DEBUG
+        PlayQueueSheetProbe.comparisons += 1
+        if !same { PlayQueueSheetProbe.unequalComparisons += 1 }
+        #endif
+        return same
     }
 
     var body: some View {
@@ -73,10 +81,7 @@ struct PlayQueueSheet: View, Equatable {
                 } else {
                     Section {
                         ForEach(rows) { row in
-                            Button {
-                                dismiss()
-                                actions.playNow(row.id)
-                            } label: {
+                            PlayQueueDismissingButton(action: { actions.playNow(row.id) }) {
                                 PlayQueueRowLabel(row: row)
                             }
                             .buttonStyle(.plain)
@@ -98,7 +103,7 @@ struct PlayQueueSheet: View, Equatable {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("Done") { dismiss() }
+                    PlayQueueDismissingButton(action: {}) { Text("Done") }
                         .accessibilityIdentifier("playQueue.done.button")
                 }
                 if !rows.isEmpty {
@@ -126,6 +131,24 @@ struct PlayQueueSheet: View, Equatable {
         }
         .environment(\.editMode, $editMode)
         .accessibilityIdentifier("playQueue.screen")
+    }
+}
+
+/// A button that closes the sheet, then does its action. It reads `dismiss` here, in its own small view, not in the
+/// sheet: a sheet that reads an environment value is redrawn whenever SwiftUI says that value changed, whatever its
+/// `==` says, and a redraw per model publish is what #3891 removed (#3999).
+private struct PlayQueueDismissingButton<Content: View>: View {
+    @Environment(\.dismiss) private var dismiss
+    let action: () -> Void
+    @ViewBuilder let label: () -> Content
+
+    var body: some View {
+        Button {
+            dismiss()
+            action()
+        } label: {
+            label()
+        }
     }
 }
 

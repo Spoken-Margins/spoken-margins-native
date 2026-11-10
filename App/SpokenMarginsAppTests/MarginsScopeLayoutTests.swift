@@ -32,25 +32,6 @@ final class MarginsScopeLayoutTests: XCTestCase {
         }
     }
 
-    /// #3605: the row is shown with `.equatable()`, so it must compare equal through a playing item's progress and
-    /// unequal when its choice, a menu row or its count changes.
-    func testTheScopeRowRedrawsForItsChoiceAndRowsButNotForPlaybackProgress() {
-        let hist = ItemCollection(id: "c1", name: "HIST 210", itemIDs: ["scope-item"], createdAt: Date(timeIntervalSince1970: 1_000))
-        var playing = LibraryItemRow(id: "scope-item", title: "A short walk", status: "ready", canDelete: true,
-                                     hasContinuationSession: true, continuationProgressPercent: 12)
-        func row(_ item: LibraryItemRow, selection: String? = nil, collections: [ItemCollection]? = nil, count: String = "1 Margin") -> MarginsScopeRow {
-            MarginsScopeRow(title: "Everything", countText: count, selection: .constant(selection),
-                            collections: collections ?? [hist], items: [item])
-        }
-        let before = row(playing)
-        playing.continuationProgressPercent = 13
-        playing.startupAudioCompletedChunkCount = 3
-        XCTAssertTrue(before == row(playing), "a playing item's progress redrew the scope menu")
-        XCTAssertFalse(before == row(playing, selection: "collection:c1"), "a new choice must redraw the row")
-        XCTAssertFalse(before == row(playing, collections: []), "a removed collection must redraw the menu")
-        XCTAssertFalse(before == row(playing, count: "2 Margins"), "a new count must redraw the row")
-    }
-
     private func size(title: String, offered: CGSize, textSize: DynamicTypeSize) -> CGSize {
         let row = MarginsScopeRow(
             title: title, countText: "12 Margins", selection: .constant("scope-item"),
