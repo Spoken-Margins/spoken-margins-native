@@ -1171,6 +1171,52 @@ class ScriptedJourneyOutcomeTests(unittest.TestCase):
         self.assertIn('no scripted journey ran, so nothing was verified', ops.posted[0])
         self.assertEqual(ops.filed, [])
 
+    def stopped(self, gating, probation='not_run', **records):
+        """What verify-tests.py wrote at f4e7222 (#3963): three app crashes at launch in a minute stopped the step
+        (exit 124, interrupted), and the journey it was on has no record."""
+        step = {'name': 'xcode-tests', 'errors': ['Process exit 124'], 'exit_code': 124, 'interrupted': True,
+                'simulator_crash_report': '/r/SpokenMarginsApp-2026-11-09-220741.ips', 'passed_on_retry': [],
+                'tests': records, 'gating': {self.GATING: gating}, 'probation': {JOURNEY + '2/testOpen': probation}}
+        return {'status': 'failed_or_incomplete', 'steps': [step], 'error': 'Process exit 124; No completed tests recorded'}
+
+    def test_a_journey_a_crash_flood_stopped_is_inconclusive_not_a_fail(self):
+        ops, verdict = self.journeys_run([self.stopped('missing')])
+        self.assertEqual(verdict, 'INCONCLUSIVE')
+        report = ops.posted[0]
+        self.assertIn('— INCONCLUSIVE', report)
+        self.assertNotIn('failing:', report)
+        self.assertIn('stopped before these gating journeys finished', report)
+        self.assertNotIn('no scripted journey ran', report)   # one reason, not two
+        self.assertRegex(report, r'new red since the last cut \([^)]*\): none')   # nor a bad run in the streaks
+        self.assertEqual((ops.comments, ops.diagnosed, ops.filed), ([], [], []))
+
+    def test_a_stop_after_a_journey_failed_still_fails_that_one(self):
+        # The probation journey had passed; the gating one ran and failed before the stop: a seen failure is red.
+        ops, verdict = self.journeys_run([self.stopped('failed', 'passed',
+                                                       **{self.GATING: {'status': 'failed'}})])
+        self.assertEqual(verdict, 'FAIL')
+        self.assertIn(f'failing: {JOURNEY}', ops.posted[0])
+
+    def test_a_stop_that_cut_a_gating_journey_short_is_not_a_pass(self):
+        ops, verdict = self.journeys_run([self.stopped('missing', 'passed',
+                                                       **{JOURNEY + '2/testOpen': {'status': 'passed'}})])
+        self.assertEqual(verdict, 'INCONCLUSIVE')
+        self.assertIn(f'stopped before these gating journeys finished, so they were not verified: {JOURNEY}',
+                      ops.posted[0])
+        self.assertEqual(ops.filed, [])
+
+    def test_a_probation_journey_a_stop_cut_short_is_not_named_failed(self):
+        ops, verdict = self.journeys_run([self.stopped('failed', 'missing', **{self.GATING: {'status': 'failed'}})])
+        self.assertEqual(verdict, 'FAIL')
+        self.assertNotIn('probation scripted journeys that failed', ops.posted[0])
+        self.assertNotRegex(ops.posted[0], rf'new red since the last cut \([^)]*\): [^\n]*{self.NAME}2')
+
+    def test_a_listed_journey_missing_from_a_run_that_finished_is_still_a_fail(self):
+        # Not stopped: a gating script that xcodebuild never ran (a renamed test) is red, so the listing gets fixed.
+        ops, verdict = self.journeys_run([self.journeys('missing', 'passed')])
+        self.assertEqual(verdict, 'FAIL')
+        self.assertIn(f'failing: {JOURNEY}', ops.posted[0])
+
     def test_a_journeys_boot_fault_that_clears_on_the_retry_is_judged_by_the_journeys(self):
         ops, verdict = self.journeys_run([self.boot_failed(), self.journeys('passed', 'passed')])
         self.assertEqual(verdict, 'PASS')

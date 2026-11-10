@@ -272,7 +272,8 @@ def summarize(manifest: dict) -> dict:
             # A run that executed nothing proves nothing, whatever its status says (#2590).
             errors.append('the app plan ran 0 tests, so nothing was verified')
     return {'verdict': verdict, 'counts': counts, 'failed': sorted(set(failed)), 'tests': statuses,
-            'retried': sorted(retried), 'retry_failures': retry_failures, 'journeys': journeys, 'attachments': attachments, 'crashes': crashes,
+            'stopped': incomplete, 'retried': sorted(retried), 'retry_failures': retry_failures, 'journeys': journeys,
+            'attachments': attachments, 'crashes': crashes,
             'errors': errors + ([manifest['error']] if manifest.get('error') else [])}
 
 
@@ -1208,20 +1209,32 @@ def run_journeys(ops: Ops, wt: Path, evidence: Path, fds: tuple) -> dict:
     boot_fault = journeys_never_booted(raw, journeys)
     results = script_results(listing, journeys['journeys'])
     gating = {e['test'].removesuffix('()') for e in listing.get('gating', [])}
-    # An unrun gating journey after a boot fault is not a failed one; a journey that ran and failed still is.
-    gating_failed = sorted(t for t, s in results.items() if t in gating and s != 'passed'
-                           and not (boot_fault and s == 'not_run'))
-    probation_failed = sorted(t for t, s in results.items() if t not in gating and s in ('failed', 'missing'))
-    nothing_ran = all(status == 'not_run' for status in results.values())
-    final = outcome('INCONCLUSIVE' if boot_fault or nothing_ran else 'PASS', gating_failed=gating_failed,
+    # A plan stopped part-way (a crash flood, its time budget, an interrupt) left the journey it was on with no record
+    # ('missing') and the rest unrun: neither was seen failing (#3963: three dyld_sim crashes at launch on a Mac at
+    # load 140 stopped the run, and the one gating journey was filed as a failed assertion). After a boot fault or a
+    # stop, an unseen journey is not a failed one; a journey that ran and failed still is.
+    unseen = ('not_run', 'missing') if journeys['stopped'] else ('not_run',) if boot_fault else ()
+    gating_failed = sorted(t for t, s in results.items() if t in gating and s != 'passed' and s not in unseen)
+    probation_failed = sorted(t for t, s in results.items() if t not in gating and s in ('failed', 'missing')
+                              and s not in unseen)
+    nothing_ran = all(status in ('not_run',) + unseen for status in results.values())
+    # A stop that left a gating journey unseen and none failed proves nothing either way: not a PASS, not a FAIL.
+    cut_short = sorted(t for t, s in results.items() if t in gating and s in unseen) if journeys['stopped'] else []
+    inconclusive = boot_fault or nothing_ran or (cut_short and not gating_failed)
+    final = outcome('INCONCLUSIVE' if inconclusive else 'PASS', gating_failed=gating_failed,
                     probation_failed=probation_failed, retry_passes=journeys['retried'])
     errors = list(journeys['errors'])
     if boot_fault:
         errors.append(BOOT_FAULT_WORDS)
+    elif cut_short and final.verdict == 'INCONCLUSIVE':
+        errors.append('the journeys run stopped before these gating journeys finished, so they were not verified: '
+                      + ', '.join(cut_short))
     elif nothing_ran:
         errors.append('no scripted journey ran, so nothing was verified')
+    # The streaks and the report's red lines read these: an unseen journey is a run it did not have, not a bad one.
+    seen = {t: 'not_run' if s in unseen else s for t, s in results.items()}
     return {'verdict': final.verdict, 'counts': journeys['counts'], 'failed': list(final.failing), 'confirmed': [],
-            'flaky': list(final.retry_passes), 'journeys': results, 'gating_failed': list(final.gating_failed),
+            'flaky': list(final.retry_passes), 'journeys': seen, 'gating_failed': list(final.gating_failed),
             'probation_failed': list(final.probation_failed), 'attachments': journeys['attachments'],
             'crashes': journeys['crashes'], 'retry_failures': journeys.get('retry_failures', {}), 'errors': errors,
             'listing': listing, 'minutes': plan_minutes(evidence)}
