@@ -125,8 +125,12 @@ final class WrittenMarginTapAppTests: XCTestCase {
         model.pause()
         // Wait for the reading to be ready, as the tap tests above do: a fixed sleep passes whenever the reading is
         // slower than it is (#3714). Only then is "the review did not start" something the hold could have got wrong.
+        // A hold that ends cancels a render nobody else waits on, so the reading is made ready by the reader looking at the
+        // seeded file itself, as `seedReading(ready: true)` does, rather than by hoping the hold's render got there first.
         let reading = try XCTUnwrap(fixture.writtenReading)
-        try await fixture.waitUntil("the reading is ready, with the hold gone") { WrittenMarginReader.shared.isReady(reading) }
+        _ = WrittenMarginReader.shared.start(["seed": reading])
+        await WrittenMarginReader.shared.waitUntilSettled([reading], upTo: 10)
+        XCTAssertTrue(WrittenMarginReader.shared.isReady(reading), "the reader found the seeded reading")
         try await Task.sleep(for: .milliseconds(500))
         XCTAssertNil(model.marginMoment, "the listener moved on, so the review does not start by itself")
     }
@@ -188,8 +192,12 @@ final class WrittenMarginTapAppTests: XCTestCase {
         WrittenMarginReadings.leftItemScreen("real-source")
         // Wait for the reading to be ready, as the tap tests above do: a fixed sleep passes whenever the reading is
         // slower than it is (#3714). Only then is "the review did not start" something the hold could have got wrong.
+        // A hold that ends cancels a render nobody else waits on, so the reading is made ready by the reader looking at the
+        // seeded file itself, as `seedReading(ready: true)` does, rather than by hoping the hold's render got there first.
         let reading = try XCTUnwrap(fixture.writtenReading)
-        try await fixture.waitUntil("the reading is ready, with the hold gone") { WrittenMarginReader.shared.isReady(reading) }
+        _ = WrittenMarginReader.shared.start(["seed": reading])
+        await WrittenMarginReader.shared.waitUntilSettled([reading], upTo: 10)
+        XCTAssertTrue(WrittenMarginReader.shared.isReady(reading), "the reader found the seeded reading")
         try await Task.sleep(for: .milliseconds(500))
         XCTAssertNil(model.marginMoment, "the listener left, so the review does not start by itself")
     }
