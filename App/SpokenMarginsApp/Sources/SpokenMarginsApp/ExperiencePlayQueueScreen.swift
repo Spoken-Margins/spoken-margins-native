@@ -3,21 +3,67 @@ import SwiftUI
 
 /// The play queue (#1990): what plays next, in order. Tap a row to play it now, drag to reorder (Edit), swipe to remove,
 /// Clear to empty it. It opens from the Library's "Play queue" row, which only shows while something is queued.
+///
+/// This view only reads the queue and the Library, and hands the sheet its rows and what its buttons do. It watches
+/// `Gate1AppModel`, which publishes many times a second while audio plays, and the sheet is `.equatable()`: a model
+/// publish that leaves the rows as they were does not redraw the sheet. Redrawn on every publish, the list in Edit mode
+/// kept restarting its edit transition, so the rows hopped and the remove icons flickered (#3891).
 struct ExperiencePlayQueueScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
     @ObservedObject private var state = PlayQueueState.shared
+
+    var body: some View {
+        PlayQueueSheet(
+            rows: PlayQueueRows.rows(for: PlayQueue(itemIds: state.itemIds), items: model.libraryItems),
+            actions: PlayQueueSheetActions(
+                load: { model.loadPlayQueue() },
+                playNow: { model.playQueuedItemNow(itemId: $0) },
+                remove: { model.removeFromQueue(itemId: $0) },
+                move: { model.moveInQueue(fromOffsets: $0, toOffset: $1) },
+                clear: { model.clearPlayQueue() }
+            )
+        )
+        .equatable()
+    }
+}
+
+/// What the queue sheet's buttons do. Not part of the sheet's equality: they only reach the model, which does not change.
+struct PlayQueueSheetActions {
+    let load: () -> Void
+    let playNow: (String) -> Void
+    let remove: (String) -> Void
+    let move: (IndexSet, Int) -> Void
+    let clear: () -> Void
+}
+
+#if DEBUG
+/// Counts how often the queue sheet's body runs, so a test can tell a redraw from a skipped one (#3891).
+@MainActor
+enum PlayQueueSheetProbe {
+    static var bodyRuns = 0
+}
+#endif
+
+struct PlayQueueSheet: View, Equatable {
+    let rows: [PlayQueueRow]
+    let actions: PlayQueueSheetActions
+
     @Environment(\.dismiss) private var dismiss
     @State private var isConfirmingClear = false
+    /// Held here, not left to the navigation stack, so Edit mode is the sheet's own and a redraw cannot reset it.
+    @State private var editMode: EditMode = .inactive
 
-    private var rows: [PlayQueueRow] {
-        PlayQueueRows.rows(for: PlayQueue(itemIds: state.itemIds), items: model.libraryItems)
+    nonisolated static func == (lhs: PlayQueueSheet, rhs: PlayQueueSheet) -> Bool {
+        lhs.rows == rhs.rows
     }
 
     var body: some View {
+        #if DEBUG
+        let _ = PlayQueueSheetProbe.bodyRuns += 1
+        #endif
         NavigationStack {
-            let current = rows
             List {
-                if current.isEmpty {
+                if rows.isEmpty {
                     ContentUnavailableView(
                         "Nothing queued",
                         systemImage: "text.line.first.and.arrowtriangle.forward",
@@ -26,10 +72,10 @@ struct ExperiencePlayQueueScreen: View {
                     .listRowBackground(Color.clear)
                 } else {
                     Section {
-                        ForEach(current) { row in
+                        ForEach(rows) { row in
                             Button {
                                 dismiss()
-                                model.playQueuedItemNow(itemId: row.id)
+                                actions.playNow(row.id)
                             } label: {
                                 PlayQueueRowLabel(row: row)
                             }
@@ -37,9 +83,9 @@ struct ExperiencePlayQueueScreen: View {
                             .accessibilityHint("Plays it now")
                             .accessibilityIdentifier("playQueue.row.\(row.id)")
                         }
-                        .onMove { model.moveInQueue(fromOffsets: $0, toOffset: $1) }
+                        .onMove { actions.move($0, $1) }
                         .onDelete { offsets in
-                            for id in offsets.map({ current[$0].id }) { model.removeFromQueue(itemId: id) }
+                            for id in offsets.map({ rows[$0].id }) { actions.remove(id) }
                         }
                     } header: {
                         Text("Plays in this order")
@@ -67,13 +113,18 @@ struct ExperiencePlayQueueScreen: View {
                 }
             }
             .confirmationDialog("Clear the play queue?", isPresented: $isConfirmingClear, titleVisibility: .visible) {
-                Button("Clear queue", role: .destructive) { model.clearPlayQueue() }
+                Button("Clear queue", role: .destructive) { actions.clear() }
                 Button("Cancel", role: .cancel) {}
             } message: {
                 Text("Everything in your Library stays.")
             }
-            .onAppear { model.loadPlayQueue() }
+            .onAppear { actions.load() }
+            .onChange(of: rows.isEmpty) { _, isEmpty in
+                // With nothing left there is no Edit button to leave Edit mode with.
+                if isEmpty { editMode = .inactive }
+            }
         }
+        .environment(\.editMode, $editMode)
         .accessibilityIdentifier("playQueue.screen")
     }
 }
