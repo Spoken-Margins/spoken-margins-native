@@ -238,7 +238,7 @@ final class Gate1FlowUITests: XCTestCase {
         launchAllowingOneStall()
         // At AX5 the seeded row can sit below the fold, so scroll to it before the long press (#2717).
         XCTAssertTrue(app.buttons["library.row.item-pill"].waitForExistence(timeout: 8))
-        let row = scrollToElement("library.row.item-pill")
+        let row = scrollToButtonIdentified("library.row.item-pill")
         row.press(forDuration: 0.8)
         app.buttons["Mark Complete"].tap()
         let undo = element("completion.undo.button")
@@ -363,7 +363,7 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertFalse(timelineButton.label.contains("\n"))
         app.buttons["playback.options.button"].tap()
         // Listening options opens at a medium height, so Export can sit below the fold; scroll to it (#2717).
-        XCTAssertTrue(scrollToElement("playback.export.button").isHittable)
+        XCTAssertTrue(scrollToButtonIdentified("playback.export.button").isHittable)
         app.buttons["Done"].tap()
 
         let playbackScroll = app.scrollViews.firstMatch
@@ -1401,9 +1401,8 @@ final class Gate1FlowUITests: XCTestCase {
     /// page, with those parts, leave playback by its Home button and open the Margins root; the mini-player keeps the
     /// source playing. Repaired for #2717.
     private func openRootMarginsFromPlayback() {
-        let home = app.buttons["playback.home.button"]
-        XCTAssertTrue(home.waitForExistence(timeout: 4), "Missing the Home button on the playback screen")
-        home.tap()
+        // Home sits in the secondary controls row, which can be below the fold at AX5.
+        scrollToButtonIdentified("playback.home.button").tap()
         tapRoot("Margins")
         XCTAssertTrue(element("margins.screen").waitForExistence(timeout: 4), "The Margins root did not open")
     }
@@ -1477,6 +1476,16 @@ final class Gate1FlowUITests: XCTestCase {
             }
         }
         scrollToElement("queue.start.item-ui-text-regression").tap()
+    }
+
+    /// Like `scrollToElement`, for an identifier that a wrapper and its Button can share on iOS 26.5: the Button only.
+    private func scrollToButtonIdentified(_ identifier: String) -> XCUIElement {
+        let candidate = app.buttons[identifier].firstMatch
+        for _ in 0..<12 where !isReadyToTap(candidate) {
+            app.swipeUp()
+        }
+        XCTAssertTrue(candidate.waitForExistence(timeout: 4), "Missing \(identifier)")
+        return candidate
     }
 
     private func scrollToElement(_ identifier: String) -> XCUIElement {
