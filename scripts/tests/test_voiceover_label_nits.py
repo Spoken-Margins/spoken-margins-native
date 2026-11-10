@@ -43,9 +43,9 @@ class VoiceOverLabelNitTests(unittest.TestCase):
 
     def test_the_written_margin_placeholder_is_not_a_second_element(self):
         text = _read("MarginWritingSheet.swift")
-        placeholder = text[text.index('Text("What do you want to remember?")'):]
+        placeholder = text[text.index('Text(writingPrompt)'):]
         self.assertIn(".accessibilityHidden(true)", placeholder[:400])
-        self.assertIn('.accessibilityHint("What do you want to remember?")', text)
+        self.assertIn('.accessibilityHint(writingPrompt)', text)
 
     def test_the_sharing_star_does_not_read_its_state_twice(self):
         text = _read("PlaybackScreen.swift")
