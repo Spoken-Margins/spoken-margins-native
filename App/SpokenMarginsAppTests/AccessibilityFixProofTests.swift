@@ -354,6 +354,26 @@ final class AccessibilityFixProofTests: XCTestCase {
     }
 }
 
+/// The size checks compare a drawn size to a whole number of points. SwiftUI lays text out in binary floating point, so a
+/// button drawn exactly 44 pt can measure 43.999999999999986 on one iOS and 44 on another (#3984). A measured size meets a
+/// minimum when it is short of it by no more than `tolerance`, a thousandth of a point: far below one screen pixel, far
+/// above the rounding. A button 0.01 pt short, or any real shortfall, still fails.
+enum PointSizeCheck {
+    static let tolerance: CGFloat = 0.001
+
+    static func meets(_ measured: CGFloat, atLeast minimum: CGFloat) -> Bool {
+        measured >= minimum - tolerance
+    }
+}
+
+func XCTAssertAtLeastPoints(
+    _ measured: CGFloat, _ minimum: CGFloat, _ message: @autoclosure () -> String = "",
+    file: StaticString = #filePath, line: UInt = #line
+) {
+    XCTAssertTrue(PointSizeCheck.meets(measured, atLeast: minimum),
+                  message().isEmpty ? "\(measured) pt is under \(minimum) pt" : message(), file: file, line: line)
+}
+
 /// Turns on the accessibility automation flag an assistive client would set, so UIKit loads its accessibility
 /// bundles and SwiftUI vends its tree in-process. Test-only and simulator-only; the app never calls it.
 enum AccessibilityAutomation {

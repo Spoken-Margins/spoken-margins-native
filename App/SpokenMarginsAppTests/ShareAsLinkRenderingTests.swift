@@ -70,7 +70,7 @@ final class ShareAsLinkRenderingTests: XCTestCase {
             let preview = try render(Build23PreviewRow(action: {}), name: "preview-row", size: size)
             for (label, rendered) in [("Back to selection", back), ("Send as a file", file), ("Preview row", preview)] {
                 XCTAssertLessThanOrEqual(rendered.width, Self.narrowestWidth + 1, "\(size): \(label) ran off the screen")
-                XCTAssertGreaterThanOrEqual(rendered.height, 44, "\(size): \(label) is under 44 points high")
+                XCTAssertAtLeastPoints(rendered.height, 44, "\(size): \(label) is under 44 points high")
             }
             // At ordinary sizes the preview label takes at most two lines, not the five it broke into in a shared row (#3896).
             if size != .accessibility5 {

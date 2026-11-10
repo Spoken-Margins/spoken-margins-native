@@ -106,13 +106,24 @@ final class PinnedMarginCardLayoutTests: XCTestCase {
                     // `mount` draws the card from the window's top, so the card spans 0 to `height`.
                     XCTAssertLessThanOrEqual(button.frame.maxY, height + 1,
                                              "\(context): \"\(button.label ?? "")\" ends at \(button.frame.maxY) pt, below the \(height) pt card")
-                    XCTAssertGreaterThanOrEqual(button.frame.height, Self.minimumTap,
-                                                "\(context): \"\(button.label ?? "")\" is \(button.frame.height) pt tall")
-                    XCTAssertGreaterThanOrEqual(button.frame.width, Self.minimumTap,
-                                                "\(context): \"\(button.label ?? "")\" is \(button.frame.width) pt wide")
+                    XCTAssertAtLeastPoints(button.frame.height, Self.minimumTap,
+                                           "\(context): \"\(button.label ?? "")\" is \(button.frame.height) pt tall")
+                    XCTAssertAtLeastPoints(button.frame.width, Self.minimumTap,
+                                           "\(context): \"\(button.label ?? "")\" is \(button.frame.width) pt wide")
                 }
             }
         }
+    }
+
+    /// #3984: iOS 26.5 measured a 44 pt button as 43.999999999999986. The check forgives that rounding and nothing more.
+    func testTheTapSizeCheckForgivesRoundingAndStillFailsAShortButton() {
+        XCTAssertTrue(PointSizeCheck.meets(44, atLeast: 44))
+        XCTAssertTrue(PointSizeCheck.meets(43.999999999999986, atLeast: 44), "the iOS 26.5 reading")
+        XCTAssertTrue(PointSizeCheck.meets(44.5, atLeast: 44))
+        XCTAssertFalse(PointSizeCheck.meets(43.99, atLeast: 44), "0.01 pt short is short")
+        XCTAssertFalse(PointSizeCheck.meets(43.5, atLeast: 44))
+        XCTAssertFalse(PointSizeCheck.meets(43, atLeast: 44))
+        XCTAssertFalse(PointSizeCheck.meets(0, atLeast: 44))
     }
 
     // MARK: - Drawing

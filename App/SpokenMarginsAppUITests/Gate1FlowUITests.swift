@@ -225,7 +225,7 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(share.exists)
         let window = app.windows.firstMatch.frame
         XCTAssertGreaterThanOrEqual(share.frame.minY, open.frame.maxY - 1, "Share still sits beside the item title")
-        XCTAssertGreaterThanOrEqual(share.frame.height, 44)
+        XCTAssertGreaterThanOrEqual(share.frame.height + 0.001, 44)
         XCTAssertLessThanOrEqual(share.frame.maxX, window.maxX + 1)
         XCTAssertGreaterThan(open.frame.width, window.width * 0.6, "The item title is squeezed beside the buttons")
         captureScreen(named: "margins-heading-accessibility")
@@ -247,7 +247,7 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(banner.exists)
         let window = app.windows.firstMatch.frame
         XCTAssertGreaterThanOrEqual(undo.frame.minY, banner.frame.maxY - 1, "Undo still sits beside the message")
-        XCTAssertGreaterThanOrEqual(undo.frame.height, 44, "Undo is under 44 pt")
+        XCTAssertGreaterThanOrEqual(undo.frame.height + 0.001, 44, "Undo is under 44 pt")
         XCTAssertLessThanOrEqual(undo.frame.maxX, window.maxX + 1, "Undo runs off the right edge")
         XCTAssertGreaterThan(banner.frame.width, window.width * 0.6, "The message is squeezed beside the buttons")
         captureScreen(named: "feedback-banner-accessibility")
@@ -899,7 +899,7 @@ final class Gate1FlowUITests: XCTestCase {
         let viewport = app.windows.firstMatch.frame
         XCTAssertGreaterThan(open.frame.width, viewport.width * 0.8, "The row's title is squeezed beside the icon and the play button")
         XCTAssertGreaterThanOrEqual(play.frame.minY, open.frame.maxY - 1, "The play button sits below the title")
-        XCTAssertGreaterThanOrEqual(play.frame.height, 44)
+        XCTAssertGreaterThanOrEqual(play.frame.height + 0.001, 44)
         captureScreen(named: "library-row-accessibility-size")
     }
 
@@ -974,7 +974,7 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertFalse(app.segmentedControls["batchExport.filter.picker"].exists, "Still a segmented control at AX5")
         let window = app.windows.firstMatch.frame
         XCTAssertLessThanOrEqual(filter.frame.maxX, window.maxX + 1)
-        XCTAssertGreaterThanOrEqual(filter.frame.height, 44)
+        XCTAssertGreaterThanOrEqual(filter.frame.height + 0.001, 44)
         captureScreen(named: "batch-export-pickers-accessibility")
     }
 

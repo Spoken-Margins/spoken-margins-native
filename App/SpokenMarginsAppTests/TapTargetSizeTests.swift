@@ -20,8 +20,8 @@ final class TapTargetSizeTests: XCTestCase {
     }
 
     private func assertTapTarget(_ size: CGSize, _ name: String, _ text: String, file: StaticString = #filePath, line: UInt = #line) {
-        XCTAssertGreaterThanOrEqual(size.width, TapTarget.minimum, "\(name) (\(text)) is \(size.width) pt wide", file: file, line: line)
-        XCTAssertGreaterThanOrEqual(size.height, TapTarget.minimum, "\(name) (\(text)) is \(size.height) pt tall", file: file, line: line)
+        XCTAssertAtLeastPoints(size.width, TapTarget.minimum, "\(name) (\(text)) is \(size.width) pt wide", file: file, line: line)
+        XCTAssertAtLeastPoints(size.height, TapTarget.minimum, "\(name) (\(text)) is \(size.height) pt tall", file: file, line: line)
     }
 
     func testDismissAndClearIconsHaveAFortyFourPointHitArea() {
@@ -65,7 +65,7 @@ final class TapTargetSizeTests: XCTestCase {
     func testMarginsSearchFieldIsAtLeastFortyFourPointsTall() {
         for text in Self.textSizes {
             let field = measure(MarginsSearchField(text: .constant("")), textSize: text.size)
-            XCTAssertGreaterThanOrEqual(field.height, TapTarget.minimum, "The Margins search field (\(text.name)) is \(field.height) pt tall")
+            XCTAssertAtLeastPoints(field.height, TapTarget.minimum, "The Margins search field (\(text.name)) is \(field.height) pt tall")
         }
     }
 
