@@ -79,4 +79,27 @@ extension MarginCollectionQuery {
         guard let current = collection else { return }
         collection = collections.first { $0.id == current.collectionID }.map(ItemCollectionScope.init)
     }
+
+    /// The scope menu's collection rows, in the collections' order.
+    public static func scopeChoices(collections: [ItemCollection]) -> [MarginScopeChoice] {
+        collections.map { MarginScopeChoice(tag: collectionTagPrefix + $0.id, title: $0.name) }
+    }
+
+    /// The scope menu's item rows, in the items' order.
+    public static func scopeChoices(items: [LibraryItemRow]) -> [MarginScopeChoice] {
+        items.map { MarginScopeChoice(tag: $0.id, title: $0.title) }
+    }
+}
+
+/// One row of the Margins scope menu: the tag the picker writes and the title it shows. Only these two, so a
+/// playing item's progress or audio preparation doesn't count as a change to the menu (#3605).
+public struct MarginScopeChoice: Hashable, Sendable, Identifiable {
+    public let tag: String
+    public let title: String
+    public var id: String { tag }
+
+    public init(tag: String, title: String) {
+        self.tag = tag
+        self.title = title
+    }
 }
