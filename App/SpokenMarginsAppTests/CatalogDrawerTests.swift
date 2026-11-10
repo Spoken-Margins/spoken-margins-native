@@ -18,7 +18,7 @@ final class CatalogDrawerTests: XCTestCase {
 
     private func makeDrawer(
         defaults: UserDefaults, log: FollowLog, searcher: PodcastNameSearch? = nil,
-        startFirstListen: (@MainActor ([String]) async -> Void)? = nil
+        startFirstListen: (@MainActor ([String], Bool) async -> Void)? = nil
     ) throws -> CatalogDrawerModel {
         let bundled = try XCTUnwrap(Bundle.main.url(forResource: "catalog", withExtension: "json"), "catalog snapshot is bundled")
         let cache = FileManager.default.temporaryDirectory.appending(path: "catalog-drawer-\(UUID().uuidString)")
@@ -60,7 +60,7 @@ final class CatalogDrawerTests: XCTestCase {
     func testDoneOnTheFirstRunOpeningStartsTheFirstListenWithPicksInTapOrder() async throws {
         let log = FollowLog()
         var started: [[String]] = []
-        let drawer = try makeDrawer(defaults: try freshDefaults(), log: log) { started.append($0) }
+        let drawer = try makeDrawer(defaults: try freshDefaults(), log: log) { ids, _ in started.append(ids) }
         drawer.presentIfFirstRun(libraryWasEmptyAtLaunch: true, followedSourceCount: 0)
         await drawer.load()
         let picks = Array(drawer.entries.prefix(2))
@@ -82,7 +82,7 @@ final class CatalogDrawerTests: XCTestCase {
 
     func testDoneWithNothingFollowedStartsTheFirstListenWithNoPicksSoTheWelcomeSamplePlays() async throws {
         var started: [[String]] = []
-        let drawer = try makeDrawer(defaults: try freshDefaults(), log: FollowLog()) { started.append($0) }
+        let drawer = try makeDrawer(defaults: try freshDefaults(), log: FollowLog()) { ids, _ in started.append(ids) }
         drawer.presentIfFirstRun(libraryWasEmptyAtLaunch: true, followedSourceCount: 0)
         drawer.finish()
         await drawer.playFirstListenIfRequested()
@@ -92,7 +92,7 @@ final class CatalogDrawerTests: XCTestCase {
     func testAFailedFollowIsNotAPickAndASwipeOrAFollowingOpeningDoesNotPlay() async throws {
         let log = FollowLog()
         var started: [[String]] = []
-        let drawer = try makeDrawer(defaults: try freshDefaults(), log: log) { started.append($0) }
+        let drawer = try makeDrawer(defaults: try freshDefaults(), log: log) { ids, _ in started.append(ids) }
         drawer.presentIfFirstRun(libraryWasEmptyAtLaunch: true, followedSourceCount: 0)
         await drawer.load()
         log.failing = true
@@ -317,7 +317,7 @@ final class CatalogDrawerTests: XCTestCase {
     func testAFriendsFileWithdrawsAnUntouchedDrawerWithoutMarkingItSeen() async throws {
         let defaults = try freshDefaults()
         var started: [[String]] = []
-        let drawer = try makeDrawer(defaults: defaults, log: FollowLog()) { started.append($0) }
+        let drawer = try makeDrawer(defaults: defaults, log: FollowLog()) { ids, _ in started.append(ids) }
         drawer.presentIfFirstRun(libraryWasEmptyAtLaunch: true, followedSourceCount: 0)
         XCTAssertTrue(drawer.isPresented)
         drawer.friendFileArrived()
@@ -333,10 +333,83 @@ final class CatalogDrawerTests: XCTestCase {
         XCTAssertTrue(next.isPresented)
     }
 
+    /// #3796: back on the Library after the friend's item, Done with nothing picked plays nothing, and no Terms follow.
+    func testDoneWithNothingPickedAfterAFriendsItemPlaysNothing() async throws {
+        var started: [[String]] = []
+        let drawer = try makeDrawer(defaults: try freshDefaults(), log: FollowLog()) { ids, _ in started.append(ids) }
+        drawer.noteLaunch(libraryWasEmptyAtLaunch: true, followedSourceCount: 0)
+        drawer.friendFileArrived()
+        drawer.settleFirstRun(at: .library)
+        drawer.listenerMoved(to: .item)
+        drawer.listenerMoved(to: .library)
+        XCTAssertTrue(drawer.isPresented)
+        drawer.finish()
+        drawer.didDismiss()
+        await drawer.playFirstListenIfRequested()
+        XCTAssertEqual(started, [], "the Welcome sample stays in the Library for a tap")
+    }
+
+    /// #3796: a pick still plays in a held-back launch, and the Welcome sample may not stand in for it.
+    func testAPickAfterAFriendsItemStillPlaysButTheWelcomeSampleMayNotStandIn() async throws {
+        var started: [([String], Bool)] = []
+        let drawer = try makeDrawer(defaults: try freshDefaults(), log: FollowLog()) { ids, welcome in started.append((ids, welcome)) }
+        drawer.noteLaunch(libraryWasEmptyAtLaunch: true, followedSourceCount: 0)
+        drawer.friendFileArrived()
+        drawer.settleFirstRun(at: .library)
+        drawer.listenerMoved(to: .item)
+        drawer.listenerMoved(to: .library)
+        await drawer.load()
+        drawer.toggleFollow(try XCTUnwrap(drawer.entries.first))
+        drawer.finish()
+        drawer.didDismiss()
+        await drawer.playFirstListenIfRequested()
+        XCTAssertEqual(started.count, 1)
+        XCTAssertEqual(started.first?.0, ["source-1"])
+        XCTAssertEqual(started.first?.1, false)
+    }
+
+    /// #3795: the held-back drawer is owed once. A kill with it up does not bring it back on the next launch.
+    func testAHeldBackDrawerIsSpentWhenItOpensSoAKillDoesNotBringItBack() throws {
+        let defaults = try freshDefaults()
+        let drawer = try makeDrawer(defaults: defaults, log: FollowLog())
+        drawer.noteLaunch(libraryWasEmptyAtLaunch: true, followedSourceCount: 0)
+        drawer.friendFileArrived()
+        XCTAssertTrue(defaults.bool(forKey: CatalogDrawerModel.deferredByFriendFileKey), "owed to the next launch while held back")
+        drawer.settleFirstRun(at: .library)
+        drawer.listenerMoved(to: .item)
+        drawer.listenerMoved(to: .library)
+        XCTAssertTrue(drawer.isPresented)
+        XCTAssertFalse(defaults.bool(forKey: CatalogDrawerModel.deferredByFriendFileKey), "spent as the drawer opens")
+
+        // The app is killed with the drawer up: no didDismiss. The next launch has the friend's item in the Library.
+        let next = try makeDrawer(defaults: defaults, log: FollowLog())
+        next.presentIfFirstRun(libraryWasEmptyAtLaunch: false, followedSourceCount: 0)
+        XCTAssertFalse(next.isPresented)
+    }
+
+    /// #3795: a friend's file that arrives while the drawer is up still owes the drawer after that friend's item.
+    func testAFriendsFileWhileTheHeldBackDrawerIsUpOwesItAgain() throws {
+        let defaults = try freshDefaults()
+        let drawer = try makeDrawer(defaults: defaults, log: FollowLog())
+        drawer.noteLaunch(libraryWasEmptyAtLaunch: true, followedSourceCount: 0)
+        drawer.friendFileArrived()
+        drawer.settleFirstRun(at: .library)
+        drawer.listenerMoved(to: .item)
+        drawer.listenerMoved(to: .library)
+        XCTAssertTrue(drawer.isPresented)
+        drawer.friendFileArrived()
+        XCTAssertFalse(drawer.isPresented, "withdrawn for the second friend's file")
+        XCTAssertTrue(defaults.bool(forKey: CatalogDrawerModel.deferredByFriendFileKey))
+        drawer.didDismiss()
+        drawer.listenerMoved(to: .item)
+        drawer.listenerMoved(to: .library)
+        XCTAssertTrue(drawer.isPresented, "back after the second friend's item")
+    }
+
     func testADrawerWithPicksStaysButDonePlaysNothingOverTheFriendsItem() async throws {
         let log = FollowLog()
         var started: [[String]] = []
-        let drawer = try makeDrawer(defaults: try freshDefaults(), log: log) { started.append($0) }
+        let drawer = try makeDrawer(defaults: try freshDefaults(), log: log) { ids, _ in started.append(ids) }
         drawer.presentIfFirstRun(libraryWasEmptyAtLaunch: true, followedSourceCount: 0)
         await drawer.load()
         drawer.toggleFollow(try XCTUnwrap(drawer.entries.first))

@@ -40,8 +40,9 @@ final class CatalogDrawerModel: ObservableObject {
     private let defaults: UserDefaults
     private var hasLoaded = false
     /// What Done plays on a fresh install (#2851): the first pick's newest episode or latest post, else the
-    /// Welcome sample. Gets the picked sources' ids in tap order. Nil in tests and previews.
-    private let startFirstListen: (@MainActor ([String]) async -> Void)?
+    /// Welcome sample. Gets the picked sources' ids in tap order, and whether the Welcome sample may stand in when
+    /// no pick can start (not when a friend's file held the drawer back, #3796). Nil in tests and previews.
+    private let startFirstListen: (@MainActor ([String], Bool) async -> Void)?
     /// Shows tapped in this opening, in tap order. A pick's `sourceId` arrives when its follow lands and is
     /// dropped when the follow fails.
     private var picks: [(key: String, sourceId: String?)] = []
@@ -67,7 +68,7 @@ final class CatalogDrawerModel: ObservableObject {
         follow: @escaping @MainActor (String) async throws -> String,
         makeOPMLImport: (@MainActor () -> OPMLImportModel)? = nil,
         searcher: PodcastNameSearch? = nil,
-        startFirstListen: (@MainActor ([String]) async -> Void)? = nil
+        startFirstListen: (@MainActor ([String], Bool) async -> Void)? = nil
     ) {
         self.startFirstListen = startFirstListen
         self.searcher = searcher
@@ -142,7 +143,7 @@ final class CatalogDrawerModel: ObservableObject {
             deferredFromEarlierLaunch: defaults.bool(forKey: Self.deferredByFriendFileKey),
             hasSeenDrawer: defaults.bool(forKey: Self.seenKey),
             followedSourceCount: followedSourceCount
-        ))
+        ), owedFromEarlierLaunch: defaults.bool(forKey: Self.deferredByFriendFileKey))
         // The system can hand the file over before the root view appears.
         if hasFriendFileArrived { recordFriendFileArrival() }
     }
@@ -177,6 +178,9 @@ final class CatalogDrawerModel: ObservableObject {
             guard !isPresented, !defaults.bool(forKey: Self.seenKey) else { return }
             present()
             isFirstRunOpening = true
+            // A held-back drawer is owed once: spent as it opens, so a kill with it up doesn't bring it back (#3795).
+            // A friend's file arriving while it is up sets the key again (`recordFriendFileArrival`).
+            defaults.removeObject(forKey: Self.deferredByFriendFileKey)
         case .withdrawDrawer:
             isWithdrawing = true
             isPresented = false
@@ -199,7 +203,9 @@ final class CatalogDrawerModel: ObservableObject {
     /// Done. On the first-run opening the sheet closes and the listener's first pick starts playing as it
     /// goes (#2851). A swipe down closes it without playing.
     func finish() {
-        playsOnDismiss = isFirstRunOpening && startFirstListen != nil && !friendFileOpenedUnderneath
+        // Held back by a friend's file, Done with nothing picked plays nothing: the Library has the friend's episode (#3796).
+        let nothingToPlay = !welcomeOrder.playsWelcomeSampleOnClose && picks.isEmpty
+        playsOnDismiss = isFirstRunOpening && startFirstListen != nil && !friendFileOpenedUnderneath && !nothingToPlay
         isPresented = false
     }
 
@@ -218,7 +224,7 @@ final class CatalogDrawerModel: ObservableObject {
         guard playsOnDismiss, let startFirstListen else { return }
         playsOnDismiss = false
         for task in followTasks { await task.value }
-        await startFirstListen(picks.compactMap { $0.sourceId })
+        await startFirstListen(picks.compactMap { $0.sourceId }, welcomeOrder.playsWelcomeSampleOnClose)
     }
 
     /// Called when the sheet closes, however it closes.
