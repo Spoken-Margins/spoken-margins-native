@@ -28,6 +28,8 @@ TOOLCHAIN_SOURCE = SOURCE.parent / 'toolchain_guard.py'
 TOOLCHAIN_TARGET = Path.home() / '.claude/hooks/spoken-margins-toolchain-guard.py'
 HANDOFF_SOURCE = SOURCE.parent / 'context_handoff_hook.py'
 HANDOFF_TARGET = Path.home() / '.claude/hooks/spoken-margins-context-handoff.py'
+WRITE_GUARD_SOURCE = SOURCE.parent / 'worktree_write_guard.py'
+WRITE_GUARD_TARGET = Path.home() / '.claude/hooks/spoken-margins-worktree-write-guard.py'
 PYTHON = '/usr/bin/python3'
 
 
@@ -48,6 +50,12 @@ def toolchain_entry():
             'hooks': [{'type': 'command', 'timeout': 10, 'command': f'{PYTHON} {TOOLCHAIN_TARGET}'}]}
 
 
+def write_guard_entry():
+    return {'matcher': 'Bash|Monitor|mcp__terminal__.*',
+            'hooks': [{'type': 'command', 'timeout': 10,
+                       'command': f'{PYTHON} {WRITE_GUARD_TARGET} --repo {main_checkout()}'}]}
+
+
 def handoff_entries():
     command = {'type': 'command', 'timeout': 10, 'command': f'{PYTHON} {HANDOFF_TARGET}'}
     return {'PreToolUse': {'matcher': '*', 'hooks': [command]}, 'PostToolUse': {'matcher': '*', 'hooks': [command]}}
@@ -58,7 +66,8 @@ def main():
     parser.add_argument('--check', action='store_true')
     parser.add_argument('--context-handoff', action='store_true', help='also install the context hand-off hook')
     args = parser.parse_args()
-    pairs = [(SOURCE, TARGET), (TOOLCHAIN_SOURCE, TOOLCHAIN_TARGET), (HANDOFF_SOURCE, HANDOFF_TARGET)]
+    pairs = [(SOURCE, TARGET), (TOOLCHAIN_SOURCE, TOOLCHAIN_TARGET), (HANDOFF_SOURCE, HANDOFF_TARGET),
+             (WRITE_GUARD_SOURCE, WRITE_GUARD_TARGET)]
     matches = [target.exists() and filecmp.cmp(source, target, shallow=False) for source, target in pairs]
     if args.check:
         for (source, target), ok in zip(pairs, matches):
@@ -76,7 +85,7 @@ def main():
         shutil.copyfile(source, target)
         print(f'Installed {target}' + (' (unchanged)' if ok else ''))
     print('PreToolUse entries for ~/.claude/settings.json (hooks.PreToolUse):')
-    print(json.dumps([settings_entry(), toolchain_entry()], indent=2))
+    print(json.dumps([settings_entry(), toolchain_entry(), write_guard_entry()], indent=2))
     if args.context_handoff:
         print('Context hand-off entries for ~/.claude/settings.json (hooks.PreToolUse and hooks.PostToolUse):')
         print(json.dumps(handoff_entries(), indent=2))
