@@ -152,7 +152,7 @@ public enum SessionExportMarkdownRenderer {
         lines.append("# Spoken Margins AI Handoff: \(export.item.title)")
         lines.append("")
         if let reference = export.item.externalReference, !reference.isEmpty {
-            lines.append("Item: \(reference)")
+            lines.append("Reference: \(reference)")
             lines.append("")
         }
         if let sourceURL = export.item.sourceURL, !sourceURL.isEmpty, sourceURL != export.item.externalReference {
