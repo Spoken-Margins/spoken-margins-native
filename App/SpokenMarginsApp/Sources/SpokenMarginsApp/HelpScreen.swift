@@ -74,6 +74,7 @@ struct HelpScreen: View {
                     Text("Tap the record button on the mini player, or Add a Margin on Now Playing, speak your note, then tap Save & resume. The Margin stays attached to the point you were hearing.")
                     Text("Playback restarts before transcription runs in the background. A short pause can still occur while the app saves the recording and switches the audio session back to playback.")
                     Text("Open the Margins tab and tap a Margin to hear its recording or read its transcript.")
+                    Text("Hands-free: say \"Add a Margin in Spoken Margins\", then say your thought. It goes onto what's playing.")
                 }
                 Section("Optional AI") {
                     Text("Summarize Notes uses Apple’s on-device Foundation Model when available. Listening Maps use publisher chapters for podcasts and deterministic structure for native text.")

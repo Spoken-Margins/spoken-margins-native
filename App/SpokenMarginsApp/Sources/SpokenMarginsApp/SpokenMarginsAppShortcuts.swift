@@ -7,6 +7,9 @@ import AppIntents
 /// with no setup, whether Spoken Margins or another app is playing. Siri asks "What should the Margin say?"
 /// for the text and the intent writes it on the playing item (it says so if nothing is playing).
 ///
+/// The first phrase is the one Help teaches; the second is the fallback if Siri sends the first elsewhere. "Add a
+/// Margin to/with <app>" is left out because Siri gave it to Reminders (#3893).
+///
 /// Every phrase must contain the application name, and a phrase can't hold a free-text parameter, so the
 /// text is always asked for afterwards.
 struct SpokenMarginsAppShortcuts: AppShortcutsProvider {
@@ -15,12 +18,10 @@ struct SpokenMarginsAppShortcuts: AppShortcutsProvider {
             intent: AddMarginToSpokenMarginsIntent(),
             phrases: [
                 "Add a Margin in \(.applicationName)",
-                "Add a Margin to \(.applicationName)",
-                "Add a Margin with \(.applicationName)",
+                "\(.applicationName) add a Margin",
                 "Write a Margin in \(.applicationName)",
                 "Make a Margin in \(.applicationName)",
                 "Margin in \(.applicationName)",
-                "\(.applicationName) add a Margin",
             ],
             shortTitle: "Add Margin",
             systemImageName: "text.bubble"
