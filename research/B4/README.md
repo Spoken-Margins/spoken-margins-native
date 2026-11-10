@@ -32,8 +32,9 @@ Map uploads can require one of those tokens (#743, DESIGN.md §10): `smserver sw
 ## Share links (#486)
 
 The `links` service is off by default. Deployment and enabling it stay with the
-owner. Set `serve -links-install-url https://testflight.apple.com/join/INVITATION`
-(or the app's real `https://apps.apple.com/.../id...` listing); without a valid
+owner. Set `serve -links-install-url /join/` (the join guide on the page's own host,
+#3783), a TestFlight invitation such as `https://testflight.apple.com/join/INVITATION`, or the
+app's real `https://apps.apple.com/.../id...` listing; without a valid
 install URL the link routes fail closed with 503. Existing config files missing
 `links` remain off; `smserver switch -public DIR links on|off` adds the entry.
 

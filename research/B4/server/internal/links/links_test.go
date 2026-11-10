@@ -319,6 +319,11 @@ func TestLinkInstallURLValidation(t *testing.T) {
 		{"https://testflight.apple.com/", false}, {"https://testflight.apple.com/join/", false},
 		{"https://testflight.apple.com.evil.test/join/code", false}, {"https://testflight.apple.com@evil.test/join/code", false},
 		{"https://testflight.apple.com/join/code?token=secret", false}, {"http://testflight.apple.com/join/code", false}, {"", false},
+		// The join guide on the page's own host (#3783): a plain path is fine, anything another site could be read from is not.
+		{"/join/", true}, {"/join", true}, {"/", true},
+		{"//evil.test/join/", false}, {"/\\evil.test/join/", false}, {"/join/../x", false}, {"/join//", false},
+		{"/join/?x=1", false}, {"/join/#top", false}, {"/join/ ", false}, {"/join/\n", false}, {"/jo in/", false},
+		{"join/", false}, {"javascript:alert(1)", false}, {"/join/%2e%2e/", false},
 	} {
 		if ValidInstallURL(row.url) != row.valid {
 			t.Errorf("%s valid=%v", row.url, row.valid)
@@ -330,20 +335,26 @@ func TestLinkInstallURLValidation(t *testing.T) {
 // words named the App Store before there is a listing. Only the words changed; the link still goes to the
 // configured install URL.
 func TestInstallLinkSaysGetSpokenMargins(t *testing.T) {
-	var landing, gone bytes.Buffer
-	if err := Render(&landing, strings.Repeat("a", 32), install, ""); err != nil {
-		t.Fatal(err)
-	}
-	if err := RenderUnavailable(&gone, UnavailableGone, install); err != nil {
-		t.Fatal(err)
-	}
-	want := `<a href="` + install + `" rel="noreferrer noopener">Get Spoken Margins</a>`
-	for name, html := range map[string]string{"landing": landing.String(), "unavailable": gone.String()} {
-		if !strings.Contains(html, want) {
-			t.Errorf("%s page: missing %q", name, want)
+	// The configured link is the join guide on the page's own host (#3783); a TestFlight invitation still works.
+	for _, target := range []string{"/join/", install} {
+		var landing, gone bytes.Buffer
+		if err := Render(&landing, strings.Repeat("a", 32), target, ""); err != nil {
+			t.Fatal(err)
 		}
-		if strings.Contains(html, "App Store") {
-			t.Errorf("%s page still names the App Store", name)
+		if err := RenderUnavailable(&gone, UnavailableGone, target); err != nil {
+			t.Fatal(err)
+		}
+		want := `<a href="` + target + `" rel="noreferrer noopener">Get Spoken Margins</a>`
+		for name, html := range map[string]string{"landing": landing.String(), "unavailable": gone.String()} {
+			if !strings.Contains(html, want) {
+				t.Errorf("%s page for %s: missing %q", name, target, want)
+			}
+			if strings.Contains(html, "App Store") {
+				t.Errorf("%s page for %s still names the App Store", name, target)
+			}
+			if target == "/join/" && strings.Contains(html, "testflight.apple.com") {
+				t.Errorf("%s page for the join guide still carries a TestFlight address", name)
+			}
 		}
 	}
 }

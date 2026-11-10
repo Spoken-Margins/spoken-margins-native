@@ -24,9 +24,12 @@ import (
 // here, on the report form, which is closed (a details element, so it works without JavaScript) until the address
 // asks for it.
 
-// InstallURL must be a real app listing or a TestFlight invitation supplied by
-// the owner, never a guessed listing or an arbitrary redirect on the page.
+// InstallURL must be a real app listing, a TestFlight invitation or a path on the page's own host (the join guide,
+// "/join/", #3783), supplied by the owner, never a guessed listing or an arbitrary redirect on the page.
 func ValidInstallURL(raw string) bool {
+	if strings.HasPrefix(raw, "/") {
+		return sameHostPath.MatchString(raw) && !strings.Contains(raw, "//") && !strings.Contains(raw, "..")
+	}
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme != "https" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.Port() != "" {
 		return false
@@ -34,6 +37,10 @@ func ValidInstallURL(raw string) bool {
 	return (u.Host == "testflight.apple.com" && strings.HasPrefix(u.Path, "/join/") && len(strings.TrimPrefix(u.Path, "/join/")) > 0) ||
 		(u.Host == "apps.apple.com" && strings.Contains(u.Path, "/id"))
 }
+
+// sameHostPath is the shape of a page on the link's own host: the way PolicyLinks are written, no host, no query, no
+// fragment and nothing a browser would read as another site ("//evil.test", "/\\evil.test").
+var sameHostPath = regexp.MustCompile(`^/[A-Za-z0-9._~/-]*$`)
 
 var landing = template.Must(template.New("landing").Parse(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><title>Shared Margins — Spoken Margins</title>
@@ -101,7 +108,7 @@ var unavailable = template.Must(template.New("unavailable").Parse(`<!doctype htm
 </main></body></html>`))
 
 // OffersIPhoneInstall says whether a browser whose User-Agent header is userAgent is offered the install link on
-// the unavailable page. The link goes to TestFlight or the App Store, which work only on Apple devices, so a
+// the unavailable page. The link goes to the join guide, TestFlight or the App Store, which are for Apple devices, so a
 // browser that says it is Android is not offered it (#3799). The header is read for this one answer and never
 // kept.
 func OffersIPhoneInstall(userAgent string) bool {
