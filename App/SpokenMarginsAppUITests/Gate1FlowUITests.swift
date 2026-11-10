@@ -486,6 +486,18 @@ final class Gate1FlowUITests: XCTestCase {
 
         XCTAssertTrue(waitForDisappearance(app.buttons["Restore \(itemTitle)"], timeout: 2))
         XCTAssertFalse(app.staticTexts[itemTitle].exists)
+
+        // Settings is not where a restored item would show up, and a Library row is a button whose label only contains
+        // the title, so the checks above could not see one. Look in the Library, then again after a relaunch (#3716).
+        tapRoot("Library")
+        XCTAssertTrue(element("home.screen").waitForExistence(timeout: 4), "The Library did not open")
+        XCTAssertFalse(libraryRow.exists, "The permanently deleted item is back in the Library")
+
+        app.terminate()
+        app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_KEEP_LIBRARY"] = "1"
+        app.launch()
+        XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8), "The Library did not reopen")
+        XCTAssertFalse(libraryRow.waitForExistence(timeout: 3), "The permanently deleted item came back after a relaunch")
     }
 
     func testAddSourcePresentsEveryTypedIntakeRoute() throws {
