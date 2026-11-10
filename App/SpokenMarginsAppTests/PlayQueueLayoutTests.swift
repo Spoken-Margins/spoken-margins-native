@@ -89,6 +89,33 @@ final class PlayQueueLayoutTests: XCTestCase {
         }
     }
 
+    // MARK: - #3891: the sheet holds still while audio plays
+
+    /// The model publishes many times a second while audio plays. Redrawn on each publish, the sheet's list in Edit mode
+    /// kept restarting its edit transition (rows hopped, remove icons flickered). A publish that leaves the queue as it
+    /// was must not run the sheet's body; a real change to the queue still must.
+    func testTheQueueSheetIsNotRedrawnByModelPublishesThatLeaveTheQueueAsItWas() async throws {
+        let model = try makeModel(itemCount: 3)
+        for id in Self.itemIds(3) { model.queueAppend(itemId: id) }
+        let mounted = try mount(AnyView(ExperiencePlayQueueScreen().environmentObject(model)), size: .large)
+        defer { mounted.close() }
+        let settled = try await settledList(in: mounted) { $0.totalItems >= 3 }
+        let runsBefore = PlayQueueSheetProbe.bodyRuns
+
+        for _ in 0..<20 {
+            model.objectWillChange.send()
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        _ = try await settledList(in: mounted) { _ in true }
+        XCTAssertEqual(PlayQueueSheetProbe.bodyRuns, runsBefore,
+                       "20 model publishes with the queue unchanged redrew the sheet \(PlayQueueSheetProbe.bodyRuns - runsBefore) times")
+
+        model.removeFromQueue(itemId: Self.itemIds(3)[0])
+        let afterRemoving = try await settledList(in: mounted) { $0.totalItems < settled.totalItems }
+        XCTAssertGreaterThan(PlayQueueSheetProbe.bodyRuns, runsBefore, "Removing a queued item should redraw the sheet")
+        XCTAssertEqual(afterRemoving.totalItems, settled.totalItems - 1, "The removed item's row should be gone")
+    }
+
     // MARK: - Done when 2: the place in the list holds
 
     /// A new row above what is on screen pushed every row down by the entry's height, so adding an item to the queue
