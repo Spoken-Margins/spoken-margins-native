@@ -5096,8 +5096,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertNotNil(gate.continuation)
         model.switchPendingVoiceCaptureToWrittenMargin()
         let draft = try XCTUnwrap(model.writtenMarginDraft)
-        gate.finish(true)
-        for _ in 0..<20 { await Task.yield() }
+        try await gate.finishAndSettle(true)
         XCTAssertFalse(model.snapshot.isRecording)
         XCTAssertEqual(model.writtenMarginDraft?.captureID, draft.captureID)
         model.cancelWrittenMargin()
@@ -5105,8 +5104,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         for _ in 0..<100 where gate.continuation == nil { await Task.yield() }
         XCTAssertNotNil(gate.continuation)
         model.cancelInterjection()
-        gate.finish(true)
-        for _ in 0..<20 { await Task.yield() }
+        try await gate.finishAndSettle(true)
         XCTAssertFalse(model.snapshot.isRecording)
         XCTAssertFalse(model.recordingNavigationIsLocked)
         XCTAssertEqual(model.snapshot.status, .paused)
@@ -7055,14 +7053,28 @@ private final class TranscribedAudioPaths: @unchecked Sendable {
 private final class MarginPermissionTestGate {
     var continuation: CheckedContinuation<Bool, Never>?
     private(set) var requests = 0
+    /// Answers handed back to the app, counted at the moment `request()` returns into its caller.
+    private(set) var answersReturned = 0
     func request() async -> Bool {
         requests += 1
-        return await withCheckedContinuation { continuation = $0 }
+        let granted = await withCheckedContinuation { continuation = $0 }
+        answersReturned += 1
+        return granted
     }
     func finish(_ granted: Bool) {
         let pending = continuation
         continuation = nil
         pending?.resume(returning: granted)
+    }
+    /// Answers the pending request and returns only once the answer is back in the app's hands, then gives the app's own
+    /// continuation (the grant handler) a generous run of hops. A fixed handful of yields let a handler that needed a few
+    /// more hops go unseen, and the "late grant changed nothing" checks passed anyway (#3714).
+    func finishAndSettle(_ granted: Bool) async throws {
+        let before = answersReturned
+        finish(granted)
+        for _ in 0..<1_000 where answersReturned == before { await Task.yield() }
+        XCTAssertEqual(answersReturned, before + 1, "the permission answer never reached the app")
+        for _ in 0..<200 { await Task.yield() }
     }
 }
 

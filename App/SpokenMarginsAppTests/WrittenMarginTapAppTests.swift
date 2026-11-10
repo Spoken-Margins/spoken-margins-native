@@ -123,7 +123,11 @@ final class WrittenMarginTapAppTests: XCTestCase {
         model.reviewNewMargins(itemId: "real-source", thenContinue: true)
         XCTAssertNil(model.marginMoment, "the review waits for its readings")
         model.pause()
-        try await Task.sleep(for: .milliseconds(1_200))
+        // Wait for the reading to be ready, as the tap tests above do: a fixed sleep passes whenever the reading is
+        // slower than it is (#3714). Only then is "the review did not start" something the hold could have got wrong.
+        let reading = try XCTUnwrap(fixture.writtenReading)
+        try await fixture.waitUntil("the reading is ready, with the hold gone") { WrittenMarginReader.shared.isReady(reading) }
+        try await Task.sleep(for: .milliseconds(500))
         XCTAssertNil(model.marginMoment, "the listener moved on, so the review does not start by itself")
     }
 
@@ -182,7 +186,11 @@ final class WrittenMarginTapAppTests: XCTestCase {
         model.reviewNewMargins(itemId: "real-source", thenContinue: true)
         XCTAssertNil(model.marginMoment, "the review waits for its readings")
         WrittenMarginReadings.leftItemScreen("real-source")
-        try await Task.sleep(for: .milliseconds(1_200))
+        // Wait for the reading to be ready, as the tap tests above do: a fixed sleep passes whenever the reading is
+        // slower than it is (#3714). Only then is "the review did not start" something the hold could have got wrong.
+        let reading = try XCTUnwrap(fixture.writtenReading)
+        try await fixture.waitUntil("the reading is ready, with the hold gone") { WrittenMarginReader.shared.isReady(reading) }
+        try await Task.sleep(for: .milliseconds(500))
         XCTAssertNil(model.marginMoment, "the listener left, so the review does not start by itself")
     }
 
