@@ -184,7 +184,7 @@ struct PlaybackScreen: View {
                 .task(id: timelineDock.waitsForKeyboard) {
                     guard timelineDock.waitsForKeyboard else { return }
                     do { try await Task.sleep(for: .seconds(1)) } catch { return }
-                    timelineDock.keyboardDidHide()
+                    timelineDock.keyboardWaitTimedOut()
                 }
                 .task(id: model.renderFrontierKey) { await model.observeRenderedFrontier() }
                 .task(id: "\(model.snapshot.itemId ?? "")|\(model.snapshot.status.rawValue)") {

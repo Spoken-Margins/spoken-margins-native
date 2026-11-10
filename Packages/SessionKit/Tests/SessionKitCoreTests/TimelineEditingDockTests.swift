@@ -53,13 +53,13 @@ final class TimelineEditingDockTests: XCTestCase {
     }
 
     func testAMissedHideNeverStrandsTheDock() {
-        // The view's fallback calls keyboardDidHide when no hide arrives in time.
         var dock = TimelineEditingDock()
         dock.editorFocusChanged(true)
         dock.keyboardWillShow()
         dock.editorFocusChanged(false)
-        dock.keyboardDidHide()
-        dock.keyboardDidHide()
+        dock.keyboardWaitTimedOut()
         XCTAssertFalse(dock.hidesDock)
+        dock.keyboardDidHide()
+        XCTAssertFalse(dock.hidesDock, "A late hide changes nothing")
     }
 }

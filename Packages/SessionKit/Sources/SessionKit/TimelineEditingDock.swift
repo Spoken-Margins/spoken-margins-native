@@ -25,10 +25,14 @@ public struct TimelineEditingDock: Equatable, Sendable {
         keyboardOnScreen = true
     }
 
-    /// Also the fallback when no hide arrives, such as a hardware keyboard that never showed one.
     public mutating func keyboardDidHide() {
         keyboardOnScreen = false
         settle()
+    }
+
+    /// The fallback when no hide arrives in time, so the dock is never stranded.
+    public mutating func keyboardWaitTimedOut() {
+        keyboardDidHide()
     }
 
     private mutating func settle() {

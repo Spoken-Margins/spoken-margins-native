@@ -20,6 +20,7 @@ struct ExperienceTimelineRailScreen: View {
     @State private var entries: [TimelineRailEntry] = []
     @State private var playbackTick = 0 // bumped by each progress tick: the current row follows the playhead (#2074)
     @FocusState private var responseEditorFocused: Bool
+    @State private var composerWaitsForDock = false
     @ScaledMetric(relativeTo: .body) private var responseEditorHeight: CGFloat = 160
 
     var body: some View {
@@ -128,24 +129,21 @@ struct ExperienceTimelineRailScreen: View {
             .onDisappear { onEditorFocusChange?(false) }
             .onChange(of: playbackDockHidden) { _, hidden in
                 // The dock is back after the editor's keyboard left: keep the Reflect box and its Import button in
-                // view above it, not behind it (#4043).
+                // view above it, not behind it (#4043). Scroll again once the dock's inset is laid out.
                 guard !hidden, !responseEditorFocused else { return }
-                Task { @MainActor in
-                    await Task.yield()
-                    withMotion(.easeOut(duration: 0.2)) {
-                        proxy.scrollTo("timeline.reflection.composer", anchor: .bottom)
-                    }
-                }
+                composerWaitsForDock = true
+                scrollComposerIntoView(using: proxy)
+            }
+            .onScrollGeometryChange(for: CGFloat.self) { $0.contentInsets.bottom } action: { old, new in
+                guard composerWaitsForDock, new > old else { return }
+                composerWaitsForDock = false
+                scrollComposerIntoView(using: proxy)
             }
             .onChange(of: responseEditorFocused) { _, isFocused in
                 onEditorFocusChange?(isFocused)
                 guard isFocused else { return }
-                Task { @MainActor in
-                    await Task.yield()
-                    withMotion(.easeOut(duration: 0.2)) {
-                        proxy.scrollTo("timeline.reflection.composer", anchor: .bottom)
-                    }
-                }
+                composerWaitsForDock = false
+                scrollComposerIntoView(using: proxy)
             }
         }
         .accessibilityElement(children: .contain)
@@ -601,6 +599,15 @@ struct ExperienceTimelineRailScreen: View {
 
     private var currentEntryIDs: Set<String> { playbackSelection.currentIDs }
     private var currentEntryID: String? { playbackSelection.focusID }
+
+    private func scrollComposerIntoView(using proxy: ScrollViewProxy) {
+        Task { @MainActor in
+            await Task.yield()
+            withMotion(.easeOut(duration: 0.2)) {
+                proxy.scrollTo("timeline.reflection.composer", anchor: .bottom)
+            }
+        }
+    }
 
     private func focusTimeline(using proxy: ScrollViewProxy) {
         guard !responseEditorFocused else { return }
