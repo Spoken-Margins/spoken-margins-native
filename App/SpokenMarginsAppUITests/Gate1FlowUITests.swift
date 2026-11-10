@@ -1023,7 +1023,9 @@ final class Gate1FlowUITests: XCTestCase {
         openBuild23Review()
         // The Share action must build, verify and present in one tap. When the server offers links, the main button
         // makes a link instead, and "Send as a file" under it is the one that opens the system share sheet (#3750).
-        let sendsFile = element("build23.sender.review.share.file").exists
+        // The server's answer arrives once, soon after the sheet opens; the short wait covers a late one.
+        XCTAssertTrue(element("build23.sender.review.share").waitForExistence(timeout: 5))
+        let sendsFile = element("build23.sender.review.share.file").waitForExistence(timeout: 2)
         scrollToBuild23SenderElement(sendsFile ? "build23.sender.review.share.file" : "build23.sender.review.share").tap()
 
         XCTAssertTrue(element("build23.sender.stage.share").waitForExistence(timeout: 5))
@@ -1311,8 +1313,8 @@ final class Gate1FlowUITests: XCTestCase {
         scrollToBuild23Sender(element(identifier), named: identifier)
     }
 
-    /// Scrolls the sender sheet until `candidate` is fully on screen, clear of the pinned bar. `name` is the
-    /// identifier when there is one: a bar button is reachable where it sits, so it skips the bar check.
+    /// Scrolls the sender sheet until `candidate` is fully on screen, clear of the pinned bar. `identifier` names it in
+    /// the failure message; when it is a pinned-bar button's identifier, the bar does not count as covering it.
     @discardableResult
     private func scrollToBuild23Sender(_ candidate: XCUIElement, named identifier: String) -> XCUIElement {
         let senderExperience = element("build23.sender.experience")
