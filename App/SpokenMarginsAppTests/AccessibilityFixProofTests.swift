@@ -185,8 +185,12 @@ final class AccessibilityFixProofTests: XCTestCase {
             let mounted = try mount(AnyView(LiveSessionLiveRows(board: LiveSessionBoard(rows: [ended])).environmentObject(model)),
                                     textSize: size)
             defer { mounted.close() }
-            let line = try await mounted.waitForNode("the Live row's line") { $0.identifier == "library.liveRow.live-ax5" }
-            let resume = try await mounted.waitForNode("the Resume button") { $0.identifier == "library.liveRow.resume.live-ax5" }
+            let line = try await mounted.waitForNode("the Live row's line") {
+                $0.identifier == "library.liveRow.live-ax5" || $0.label?.contains("Quarterly planning review") == true
+            }
+            let resume = try await mounted.waitForNode("the Resume button") {
+                $0.identifier == "library.liveRow.resume.live-ax5" || $0.label == "Resume"
+            }
             if stacked {
                 XCTAssertGreaterThanOrEqual(resume.frame.minY, line.frame.maxY - 1, "\(size): Resume is beside the line, not under it")
             } else {
