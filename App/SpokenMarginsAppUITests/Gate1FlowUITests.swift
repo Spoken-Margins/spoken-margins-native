@@ -1496,9 +1496,13 @@ final class Gate1FlowUITests: XCTestCase {
     }
 
     private func returnToNowPlayingFromTimelineIfNeeded() {
+        // The top-left arrow only returns to Now while the Timeline editor hides the tab switch (#4027); otherwise the
+        // Now tab does.
         let button = app.buttons["timeline.nowPlaying.button"]
         if button.exists {
             button.tap()
+        } else if element("timeline.screen").exists {
+            app.buttons["playback.now.button"].firstMatch.tap()
         } else {
             XCTAssertTrue(element("playback.timeline.adjacent").exists)
         }
