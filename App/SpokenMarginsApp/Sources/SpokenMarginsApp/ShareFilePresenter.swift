@@ -19,13 +19,17 @@ enum ShareFilePresenter {
     /// The sheet itself, apart from presenting it, so a test can check what it carries and how it is anchored.
     static func makeController(fileURL: URL, anchoredIn view: UIView) -> UIActivityViewController {
         let controller = UIActivityViewController(activityItems: activityItems(for: fileURL), applicationActivities: nil)
-        // On iPad the sheet is a popover and needs an anchor; a centred one with no arrow reads like the phone's sheet.
-        if let popover = controller.popoverPresentationController {
-            popover.sourceView = view
-            popover.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.midY, width: 0, height: 0)
-            popover.permittedArrowDirections = []
-        }
+        anchor(controller.popoverPresentationController, in: view)
         return controller
+    }
+
+    /// On iPad the sheet is a popover and crashes without an anchor; a centred one with no arrow reads like the phone's
+    /// sheet. Apart from `makeController` so a test can give it a popover on any device (an iPhone has none to find).
+    static func anchor(_ popover: UIPopoverPresentationController?, in view: UIView) {
+        guard let popover else { return }
+        popover.sourceView = view
+        popover.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.midY, width: 0, height: 0)
+        popover.permittedArrowDirections = []
     }
 
     /// What the sheet carries: the file. A test reads this; `UIActivityViewController` doesn't give its items back.

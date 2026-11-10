@@ -38,18 +38,22 @@ final class ShareFilePresenterTests: XCTestCase {
         XCTAssertEqual(ShareFilePresenter.activityItems(for: url).compactMap { $0 as? URL }, [url])
     }
 
-    /// On an iPad the sheet is a popover and crashes without an anchor. An iPhone has no popover, so there is nothing to
-    /// check there.
-    func testTheSheetIsAnchoredWhereItIsAPopover() throws {
-        try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "Only an iPad shows the share sheet as a popover")
+    /// A view controller set to `.popover` has a popover presentation controller on any device, so this runs everywhere
+    /// (the lane counts a skipped test as a fault).
+    func testThePopoverIsAnchoredAtTheCentreWithNoArrow() throws {
         let view = UIView(frame: CGRect(x: 0, y: 0, width: 393, height: 852))
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("diagnostics.json")
-
-        let controller = ShareFilePresenter.makeController(fileURL: url, anchoredIn: view)
-
+        let controller = UIViewController()
+        controller.modalPresentationStyle = .popover
         let popover = try XCTUnwrap(controller.popoverPresentationController)
+
+        ShareFilePresenter.anchor(popover, in: view)
+
         XCTAssertTrue(popover.sourceView === view)
-        XCTAssertEqual(popover.sourceRect.origin.x, view.bounds.midX)
+        XCTAssertEqual(popover.sourceRect, CGRect(x: 196.5, y: 426, width: 0, height: 0))
         XCTAssertEqual(popover.permittedArrowDirections, [])
+    }
+
+    func testNoPopoverMeansNothingToAnchor() {
+        ShareFilePresenter.anchor(nil, in: UIView())
     }
 }
