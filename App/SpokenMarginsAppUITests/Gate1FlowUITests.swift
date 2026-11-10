@@ -1296,7 +1296,10 @@ final class Gate1FlowUITests: XCTestCase {
         func visibleBottom() -> CGFloat {
             var bottom = min(senderExperience.frame.maxY - 8, app.windows.firstMatch.frame.maxY - 34)
             if recipientFooter.exists { bottom = min(bottom, recipientFooter.frame.minY - 12) }
-            for button in pinnedBarButtons where button.exists && !button.frame.isEmpty {
+            // Only a button in the lower half is in the bar: without share links "share.present" is an in-content
+            // button near the top of the preview step, which must not count.
+            let barFloor = senderExperience.frame.midY
+            for button in pinnedBarButtons where button.exists && button.frame.minY > barFloor {
                 bottom = min(bottom, button.frame.minY - 12)
             }
             return bottom
