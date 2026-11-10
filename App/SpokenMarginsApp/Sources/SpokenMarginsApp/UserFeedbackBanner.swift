@@ -207,16 +207,17 @@ struct UserFeedbackBanner: View {
 /// The banner again, on a sheet. The model's line goes to the root's banner, which a sheet covers, so a control on the
 /// sheet that reports one looks like it did nothing (#3402). A sheet whose controls can report one uses this. It only
 /// mirrors: the root still announces the line and times it out, and when the model drops the event this copy goes too.
+///
+/// It reads the model's event as it is drawn, with no copy of its own. It once kept a copy that filled only on a later
+/// change, so a sheet opened while an error was already up showed nothing, and the error never times out (#3858).
 struct SheetFeedbackPresentation: ViewModifier {
     @EnvironmentObject private var model: Gate1AppModel
-    @State private var feedback: UserFeedbackEvent?
 
     func body(content: Content) -> some View {
         content
             .overlay(alignment: .top) {
-                if let feedback { UserFeedbackBanner(feedback: feedback).padding(.horizontal, 16) }
+                if let feedback = model.feedbackEvent { UserFeedbackBanner(feedback: feedback).padding(.horizontal, 16) }
             }
-            .onChange(of: model.feedbackEvent) { _, event in feedback = event }
     }
 }
 
