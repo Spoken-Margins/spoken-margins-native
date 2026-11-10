@@ -25,6 +25,7 @@ LISTING = Path(__file__).resolve().parents[2] / 'TestPlans' / 'scripted-journeys
 PROMOTE_AFTER = 2  # consecutive passing runs on probation
 DEMOTE_AFTER = 2   # consecutive bad runs on gating
 BAD = ('failed', 'missing')
+MUST_END_AFTER = 2  # a probation script red at this many cuts running must end (owner's call 2026-11-09, #3881)
 
 
 def update(streaks: dict, results: dict) -> dict:
@@ -117,6 +118,38 @@ def report_line(moves: dict) -> str | None:
         return None
     return ('journeys due to move: ' + '; '.join(parts)
             + ' (python3 ops/testdesk/journey_promotion.py --apply, then a PR into next)')
+
+
+def red_report(listing: dict, prior_bodies: list, results: dict) -> dict:
+    """What this cut turned red, and which probation scripts have been red too long (#3881).
+
+    `prior_bodies` are the report comments from before this cut, oldest first (this commit's own earlier report,
+    if any, left out so a re-run is not a second cut); `results` is this cut's {test selector: status}. Red is
+    failed or missing, as for the streaks. Returns {'new': [selectors red now that were not red at the last
+    cut], 'must_end': [(selector, cuts running)] for probation scripts red at MUST_END_AFTER cuts or more}."""
+    before = streaks_from_reports(prior_bodies, listing)
+    now = update(before, results)
+    probation = {entry['test'].removesuffix('()') for entry in listing.get('probation', [])}
+    red_now = {t for t, status in results.items() if status in BAD}  # a script that did not run this cut is not named
+    new = sorted(t for t in red_now if before.get(t, {}).get('bad', 0) == 0)
+    must_end = sorted((t, now[t]['bad']) for t in probation & red_now if now[t]['bad'] >= MUST_END_AFTER)
+    return {'new': new, 'must_end': must_end}
+
+
+def red_lines(red: dict, previous: str | None, merges: list, *, shown: int = 12) -> list:
+    """The two lines a cut-time report leads with, in place of a bare PASS (#3881). `merges` are the merges into
+    the trunk since the previous cut ('#123 title' strings, newest first); only their PR numbers are shown."""
+    name = lambda t: t.rsplit('/', 1)[-1]
+    numbers = [m.split()[0] for m in merges if m.startswith('#')]
+    since = f'{previous}' if previous else 'no earlier cut on #184'
+    if numbers:
+        since += '; merges since ' + ', '.join(numbers[:shown]) + (f' and {len(numbers) - shown} more' if len(numbers) > shown else '')
+    elif previous and red['new']:
+        since += '; no merge commits found since'
+    new = ', '.join(name(t) for t in red['new']) or 'none'
+    must_end = ', '.join(f'{name(t)} ({n} cuts)' for t, n in red['must_end']) or 'none'
+    return [f'new red since the last cut ({since}): {new}',
+            f'must end (probation scripts red at {MUST_END_AFTER} or more cuts running: fix the app, fix the script, or delete the test): {must_end}']
 
 
 def main(argv=None) -> int:

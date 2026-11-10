@@ -1281,9 +1281,28 @@ final class Gate1FlowUITests: XCTestCase {
         let senderExperience = element("build23.sender.experience")
         XCTAssertTrue(senderExperience.waitForExistence(timeout: 5), "Build 23 sender experience is missing")
         let recipientFooter = element("build23.sender.recipient-test-session")
+        // The bar pinned to the bottom of the sender screen (#3896) holds one or two buttons, depending on the stage
+        // and on whether the build makes links. Content scrolls under it, so a drag must start above its topmost button
+        // or it presses the bar and moves nothing (#3952). When the target is itself a bar button it is reachable where
+        // it sits, so the bar does not shrink the visible area for that lookup.
+        let pinnedBarIdentifiers = [
+            "build23.sender.select.continue",
+            "build23.sender.review.share",
+            "build23.sender.review.share.file",
+            "build23.sender.preview.share",
+            "build23.sender.share.present",
+        ]
+        let pinnedBarButtons = pinnedBarIdentifiers.contains(identifier) ? [] : pinnedBarIdentifiers.map { element($0) }
         func visibleBottom() -> CGFloat {
-            let screenBottom = min(senderExperience.frame.maxY - 8, app.windows.firstMatch.frame.maxY - 34)
-            return recipientFooter.exists ? min(screenBottom, recipientFooter.frame.minY - 12) : screenBottom
+            var bottom = min(senderExperience.frame.maxY - 8, app.windows.firstMatch.frame.maxY - 34)
+            if recipientFooter.exists { bottom = min(bottom, recipientFooter.frame.minY - 12) }
+            // Only a button in the lower half is in the bar: without share links "share.present" is an in-content
+            // button near the top of the preview step, which must not count.
+            let barFloor = senderExperience.frame.midY
+            for button in pinnedBarButtons where button.exists && button.frame.minY > barFloor {
+                bottom = min(bottom, button.frame.minY - 12)
+            }
+            return bottom
         }
         func fullyReachable() -> Bool {
             candidate.exists && candidate.isHittable

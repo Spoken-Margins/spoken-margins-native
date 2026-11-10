@@ -129,3 +129,67 @@ class CommandTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+def cut_body(results):
+    """A scripted-journeys report on #184 with this journeys line."""
+    line = ', '.join(f"{t.rsplit('/', 1)[-1]} {status}" for t, status in results.items())
+    return f'```text\nLane report scripted-journeys-abc1234 \u2014 PASS\n  scripted journeys (only those on gating are verdict input): {line}\n```\n'
+
+
+class RedReportTests(unittest.TestCase):
+    """#3881: four scripts sat red for days under a PASS. New red and the scripts that must end lead the report."""
+
+    def red(self, history, now):
+        return jp.red_report(LISTING, [cut_body(h) for h in history], now)
+
+    def test_red_now_and_not_red_at_the_last_cut_is_new(self):
+        self.assertEqual(self.red([{J1: 'passed'}], {J1: 'failed'}), {'new': [J1], 'must_end': []})
+        self.assertEqual(self.red([], {J1: 'missing'}), {'new': [J1], 'must_end': []})
+
+    def test_a_probation_script_red_at_two_cuts_running_must_end_and_is_no_longer_new(self):
+        self.assertEqual(self.red([{J1: 'failed'}], {J1: 'failed'}), {'new': [], 'must_end': [(J1, 2)]})
+        self.assertEqual(self.red([{J1: 'failed'}, {J1: 'missing'}], {J1: 'failed'}), {'new': [], 'must_end': [(J1, 3)]})
+
+    def test_a_pass_between_reds_starts_the_count_again(self):
+        self.assertEqual(self.red([{J1: 'failed'}, {J1: 'passed'}], {J1: 'failed'}), {'new': [J1], 'must_end': []})
+
+    def test_a_cut_that_did_not_run_the_script_keeps_its_streak(self):
+        self.assertEqual(self.red([{J1: 'failed'}, {J1: 'not_run'}, {J1: 'skipped'}], {J1: 'failed'}),
+                         {'new': [], 'must_end': [(J1, 2)]})
+
+    def test_a_script_that_did_not_run_this_cut_is_never_named(self):
+        # Review of #3881: skipped or not_run keeps the old streak, which must not read as red now.
+        for status in ('skipped', 'not_run'):
+            self.assertEqual(self.red([{J1: 'failed'}], {J1: status}), {'new': [], 'must_end': []}, status)
+            self.assertEqual(self.red([{J1: 'failed'}, {J1: 'failed'}], {J1: status}), {'new': [], 'must_end': []}, status)
+
+    def test_a_gating_script_is_new_red_but_never_must_end_because_demotion_covers_it(self):
+        self.assertEqual(self.red([{J3: 'failed'}], {J3: 'failed'}), {'new': [], 'must_end': []})
+        self.assertEqual(self.red([{J3: 'passed'}], {J3: 'failed'}), {'new': [J3], 'must_end': []})
+
+    def test_a_green_script_and_a_script_with_trailing_parens_in_the_listing_are_judged_like_the_rest(self):
+        self.assertEqual(self.red([{J2: 'failed'}], {J2: 'failed', J1: 'passed'}), {'new': [], 'must_end': [(J2, 2)]})
+
+    def test_comments_that_are_not_reports_change_nothing(self):
+        found = jp.red_report(LISTING, ['looks fine', '', cut_body({J1: 'failed'}), 'scripted journeys (only those'],
+                              {J1: 'failed'})
+        self.assertEqual(found, {'new': [], 'must_end': [(J1, 2)]})
+
+
+class RedLinesTests(unittest.TestCase):
+    def test_the_lines_name_scripts_by_their_last_part_and_the_merges_by_number(self):
+        lines = jp.red_lines({'new': [J1], 'must_end': [(J2, 3)]}, 'abc1234', ['#12 Add a thing', '#11 Fix it'])
+        self.assertEqual(lines[0], 'new red since the last cut (abc1234; merges since #12, #11): J1Tests')
+        self.assertTrue(lines[1].startswith('must end (probation scripts red at 2 or more cuts running'))
+        self.assertTrue(lines[1].endswith(': J2Tests (3 cuts)'))
+
+    def test_nothing_red_says_none_and_a_long_range_is_cut_short(self):
+        quiet = jp.red_lines({'new': [], 'must_end': []}, 'abc1234', [])
+        self.assertEqual((quiet[0], quiet[1][-6:]), ('new red since the last cut (abc1234): none', ': none'))
+        long = jp.red_lines({'new': [J1], 'must_end': []}, 'abc1234', [f'#{n} x' for n in range(30)], shown=3)
+        self.assertIn('merges since #0, #1, #2 and 27 more)', long[0])
+
+    def test_no_earlier_cut_and_unreadable_merges_are_said_not_guessed(self):
+        self.assertIn('(no earlier cut on #184)', jp.red_lines({'new': [J1], 'must_end': []}, None, [])[0])
+        self.assertIn('abc1234; no merge commits found since', jp.red_lines({'new': [J1], 'must_end': []}, 'abc1234', [])[0])

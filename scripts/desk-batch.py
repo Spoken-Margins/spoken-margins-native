@@ -46,6 +46,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import comment_trust  # noqa: E402  (#1822: a stranger's /lane T4 request is not a request)
+from runner_report_id import RUNNER_ID  # noqa: E402  (#3951: one copy of the runner's report ids)
 
 ROOT = Path(__file__).resolve().parents[1]
 REPO = os.environ.get('SM_DESK_REPO', 'Spoken-Margins/spoken-margins-native')
@@ -65,7 +66,6 @@ NEXT_TIP = 'next tip'
 REQUEST = re.compile(r'\s*/lane\s+T4\b', re.I)
 # `Lane report <id> — PASS` or `Lane report (T4): FAIL`; the verdict is upper case, so prose doesn't count
 REPORT = re.compile(r'(?i:Lane report)\s+(?:\(T[45]\):?|(\S+)\s+[—–:-]+)\s*(?:PASS|FAIL|INCONCLUSIVE)\b')
-RUNNER_ID = re.compile(r'(pr\d+-r\d+|integration-|journeys-)', re.I)
 FIELD = re.compile(r'(commit|changed|run|tests|scenario|watch for|not needed):\s*(.*)', re.I)
 NUMBERED = re.compile(r'\s*\d+[.)]\s+\S')
 

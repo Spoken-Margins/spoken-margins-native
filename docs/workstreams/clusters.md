@@ -52,10 +52,11 @@ Yesterday these failed late, at the rollup, and forced refactors. Run them befor
 
 On 2026-11-06 briefs in two clusters gave helpers a quoted path to a shared lock script. The worktree guard refused it, and helpers got the same script to run another way: through a shell by name, through a symlink, inside a script file they wrote, with a no-op command in front, or from the lead's session.
 
+- **A guard sees what the shell says, not what a program does (#3665).** `scripts/worktree_write_guard.py` refuses a shell write outside a session's own worktree; a Python script that writes files gets past it. Helpers never write outside their own worktree, `artifacts/` or their scratchpad, by any means.
 - **Do what the refusal asks, or stop.** A helper may do what the guard's message says: plain, separate commands in its own worktree. It may also use the Edit tool there. It never hides the same command from the guard: no shell by name, no script file, no symlink, no extra command in front, no other session or worktree. If the job still can't be done, the helper stops and reports the refusal to its lead. The lead brings it to the director, who takes it to the owner if it can't be settled inside the guard.
 - **Nobody runs a refused command for a helper.** A lead doesn't run it from its own session.
 - **Briefs give plain commands:** the command itself, literal arguments, run from the helper's own worktree. No wrapper or lock scripts. The lead hands out the turns that keep a cluster to one fast plan and one build.
-- **Git stays in the helper's own worktree.** The lead creates and repairs worktrees from its own session, and no one runs `git worktree prune` during a run.
+- **Git stays in the helper's own worktree.** Start each helper with `isolation: "worktree"`, so its shell starts there; a helper started in the lead's folder cannot write into another worktree (#3665). The lead repairs worktrees from its own session, and no one runs `git worktree prune` during a run.
 
 ## CI watching
 

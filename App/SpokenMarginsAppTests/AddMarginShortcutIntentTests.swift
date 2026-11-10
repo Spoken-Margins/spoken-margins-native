@@ -135,8 +135,8 @@ final class AddMarginShortcutIntentTests: XCTestCase {
             try await run("Orphan.", on: model)
             XCTFail("The action must refuse when nothing is playing.")
         } catch let error as AddMarginShortcutError {
-            XCTAssertEqual(error, .nothingPlaying)
-            XCTAssertTrue(error.localizedDescription.contains("Nothing is playing in Spoken Margins"))
+            XCTAssertEqual(error, .nothingRunning)
+            XCTAssertTrue(error.localizedDescription.contains("Nothing is running in Spoken Margins"))
         }
 
         model.refreshMarginRows()

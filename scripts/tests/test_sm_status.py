@@ -258,6 +258,64 @@ class Strangers(unittest.TestCase):
         self.assertNotEqual(forged['since'], '2026-10-14T19:00:00Z')
 
 
+class DeskReportTests(unittest.TestCase):
+    """is_desk_report and waiting_t4 (#3951): the runner's own report ids are never a Test Desk's answer."""
+
+    def test_the_scripted_journeys_runner_report_is_not_a_desk_report(self):
+        # the runner posts `Lane report scripted-journeys-<sha7>` (ops/testdesk/sm_integration_run.py)
+        for rid in ('scripted-journeys-abc1234', 'journeys-abc1234', 'integration-abc1234', 'pr1-r1', 'pr3900-r4-auto'):
+            self.assertFalse(status.is_desk_report(comment(f'Lane report {rid} — PASS\ncommit abc1234')), rid)
+
+    def test_a_desk_report_still_is_one(self):
+        for rid in ('t4-3925', 'desk-9', 'prefix-journeys-notrunner'):
+            self.assertTrue(status.is_desk_report(comment(f'Lane report {rid} — FAIL\ncommit abc1234')), rid)
+        self.assertTrue(status.is_desk_report(comment('**Lane report (T4): PASS · PR #1523 · build bb007253**')))
+
+    def test_a_scripted_journeys_report_does_not_answer_a_waiting_t4_request(self):
+        asked = request('T4', at='2026-10-14T18:10:00Z')
+        runner = comment('Lane report scripted-journeys-abc1234 — PASS\ncommit abc1234', at='2026-10-14T18:20:00Z')
+        self.assertEqual(status.waiting_t4([asked, runner])['commit7'], HEAD[:7])
+        desk = comment('Lane report t4-1 — PASS\ncommit abc1234', at='2026-10-14T18:30:00Z')
+        self.assertIsNone(status.waiting_t4([asked, runner, desk]))
+
+
+class RunnerIdHasOneCopy(unittest.TestCase):
+    """The runner-id rule lives in scripts/runner_report_id.py; desk-batch.py and sm_status.py import it (#3951)."""
+
+    @staticmethod
+    def load(name, file):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(name, SCRIPTS / file)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_both_readers_use_the_shared_pattern(self):
+        import runner_report_id
+        desk = self.load('desk_batch_for_runner_id', 'desk-batch.py')
+        self.assertIs(status.RUNNER_ID, runner_report_id.RUNNER_ID)
+        self.assertIs(desk.RUNNER_ID, runner_report_id.RUNNER_ID)
+
+    def test_no_script_keeps_its_own_copy_again(self):
+        # the pattern's first alternative, `pr\d+-r\d+`, written out anywhere in scripts, ops or .github (any name,
+        # any file type) is a second copy; tests are excluded because they name ids as examples
+        root = SCRIPTS.parent
+        needle = 'pr' + chr(92) + 'd+-r' + chr(92) + 'd+'
+        own = []
+        for folder in (root / 'scripts', root / 'ops', root / '.github'):
+            for path in sorted(folder.rglob('*')):
+                if (not path.is_file() or path.name == 'runner_report_id.py' or 'tests' in path.relative_to(root).parts
+                        or '__pycache__' in path.parts):
+                    continue
+                try:
+                    text = path.read_text()
+                except (UnicodeDecodeError, OSError):
+                    continue
+                if needle in text:
+                    own.append(str(path.relative_to(root)))
+        self.assertEqual(own, [], 'import RUNNER_ID from runner_report_id instead of copying the pattern')
+
+
 class T3Gate(unittest.TestCase):
     QUEUED = ('automerge', 'lane:queued')
 

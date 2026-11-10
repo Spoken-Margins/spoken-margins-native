@@ -121,7 +121,12 @@ final class J3RecordAndRejoinJourneyUITests: XCTestCase {
                 self.currentPosition().map { abs($0 - marginPosition) <= 10 } ?? false
             }
             // The Margin's voice plays with the source paused, then the source carries on; pause it for the force-quit.
-            waitUntil("The source did not carry on after the Margin's voice", timeout: 30) { self.playPause.label == "Pause" }
+            // The play button already reads "Pause" while the voice sounds and the source clock is held, so wait for the
+            // voice to end (its Skip button goes, as J12 waits for its voice card) before asking the clock to move (#3917).
+            let skipVoice = app.buttons["marginMoment.skip"]
+            XCTAssertTrue(skipVoice.waitForExistence(timeout: 5), "The Margin's voice did not start after Play it now")
+            waitUntil("The Margin's voice did not finish", timeout: 30) { !skipVoice.exists }
+            waitUntil("The source did not carry on after the Margin's voice", timeout: 10) { self.playPause.label == "Pause" }
             let carryingOn = try position()
             try waitUntilAdvancing("The source clock is stuck after the Margin's voice")
             let later = try position()

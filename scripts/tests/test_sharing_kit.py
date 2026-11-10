@@ -288,8 +288,8 @@ class ProcedureTests(unittest.TestCase):
         self.assertTrue(any('Fetch It' in p for p in kit_tool.procedure_problems(self.kit, renamed, self.literals)))
 
     def test_wording_of_a_screen_the_app_no_longer_shows_is_caught(self):
-        # SpokenMarginsPackageImportView still holds these strings, but no screen presents it (Gate1RootView shows
-        # Build23RecipientSharingExperience), so the app-label check alone would let them through.
+        # SpokenMarginsPackageImportView held these strings until #3909 deleted it; no screen presents it (Gate1RootView
+        # shows Build23RecipientSharingExperience). A procedure that still quotes them describes a screen that isn't there.
         for dead in ('Import & Resolve Margins', 'Spoken Margins found this item in your library', 'Voice files: 3'):
             problems = kit_tool.procedure_problems(self.kit, self.text + f'\n{dead}\n', self.literals)
             self.assertTrue(any('no longer shows' in p for p in problems), dead)
