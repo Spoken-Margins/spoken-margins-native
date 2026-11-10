@@ -54,7 +54,7 @@ final class PlayQueueLayoutTests: XCTestCase {
         XCTAssertEqual(rows.count, 3)
 
         for size in Self.sizes {
-            let mounted = try mount(AnyView(ExperiencePlayQueueScreen().environmentObject(model)), size: size)
+            let mounted = try mount(AnyView(ExperiencePlayQueueScreen(close: {}).environmentObject(model)), size: size)
             defer { mounted.close() }
             let list = try await settledList(in: mounted) { $0.totalItems >= 1 }
             attachScreenshot(of: mounted, name: "play-queue-sheet-\(size)")
@@ -97,7 +97,7 @@ final class PlayQueueLayoutTests: XCTestCase {
     func testTheQueueSheetIsNotRedrawnByModelPublishesThatLeaveTheQueueAsItWas() async throws {
         let model = try makeModel(itemCount: 3)
         for id in Self.itemIds(3) { model.queueAppend(itemId: id) }
-        let mounted = try mount(AnyView(ExperiencePlayQueueScreen().environmentObject(model)), size: .large)
+        let mounted = try mount(AnyView(ExperiencePlayQueueScreen(close: {}).environmentObject(model)), size: .large)
         defer { mounted.close() }
         let settled = try await settledList(in: mounted) { $0.totalItems >= 3 }
         // The list's shape settles before the sheet stops drawing: the first rows' own async work (#3999: this failed on
@@ -125,6 +125,64 @@ final class PlayQueueLayoutTests: XCTestCase {
         let afterRemoving = try await settledList(in: mounted) { $0.totalItems < settled.totalItems }
         XCTAssertGreaterThan(PlayQueueSheetProbe.bodyRuns, runsBefore, "Removing a queued item should redraw the sheet")
         XCTAssertEqual(afterRemoving.totalItems, settled.totalItems - 1, "The removed item's row should be gone")
+    }
+
+    /// #3891, reopened: with the sheet no longer redrawn, the owner's phone still showed the remove icon and handle fading
+    /// between full and half strength in Edit mode, row text still. The Library presenting the sheet redraws on every
+    /// model publish and hands the sheet a new `dismiss` each time; the rows read it, so every publish redrew every row,
+    /// and a redrawn row in Edit mode fades its edit controls in again. Presented the same way, in Edit mode, the rows
+    /// must not redraw, Edit mode must hold, and nothing in a row may be animating while nobody touches the screen.
+    func testInEditModeTheQueueRowsHoldStillWhileTheirPresenterRedrawsOnEveryPublish() async throws {
+        let model = try makeModel(itemCount: 3)
+        for id in Self.itemIds(3) { model.queueAppend(itemId: id) }
+        let mounted = try mount(AnyView(QueueSheetPresenter(model: model, startingEditMode: .active)), size: .large)
+        defer { mounted.close() }
+        let settled = try await settledList(in: mounted) { $0.totalItems >= 3 && $0.view.isEditing }
+        _ = try await bodyRunsOnceTheSheetIsQuiet()
+        let rowsBefore = try await rowRunsOnceTheRowsAreQuiet()
+
+        var notEditing = 0
+        var animating: Set<String> = []
+        for _ in 0..<20 {
+            model.objectWillChange.send()
+            for _ in 0..<2 {
+                try await Task.sleep(for: .milliseconds(20))
+                if !settled.view.isEditing { notEditing += 1 }
+                animating.formUnion(Self.animatingLayers(in: settled.view.visibleCells))
+            }
+        }
+        try await Task.sleep(for: .milliseconds(300))
+        animating.formUnion(Self.animatingLayers(in: settled.view.visibleCells))
+
+        XCTAssertEqual(PlayQueueSheetProbe.rowRuns, rowsBefore,
+                       "20 model publishes with the queue unchanged redrew the rows \(PlayQueueSheetProbe.rowRuns - rowsBefore) times")
+        XCTAssertEqual(notEditing, 0, "Edit mode went off in \(notEditing) of 40 looks with nothing touched")
+        XCTAssertTrue(animating.isEmpty, "Rows were animating with nothing touched: \(animating.sorted())")
+
+        // A real change still lands, and Edit mode survives it.
+        model.removeFromQueue(itemId: Self.itemIds(3)[0])
+        let afterRemoving = try await settledList(in: mounted) { $0.totalItems < settled.totalItems }
+        XCTAssertEqual(afterRemoving.totalItems, settled.totalItems - 1, "The removed item's row should be gone")
+        XCTAssertTrue(afterRemoving.view.isEditing, "Removing a row should leave Edit mode on")
+    }
+
+    /// The control for the test above: it shows the presenter really does what the Library does. Under it, a row that
+    /// reads `dismiss`, as the queue rows did, is redrawn by publishes that change nothing. If this fails, the test above
+    /// no longer reproduces the Library and its pass proves nothing.
+    func testWithoutAFixedCloseARowThatReadsDismissRedrawsOnEveryPublish() async throws {
+        let model = try makeModel(itemCount: 0)
+        let mounted = try mount(AnyView(DismissReadingSheetPresenter(model: model)), size: .large)
+        defer { mounted.close() }
+        _ = try await settledList(in: mounted) { $0.totalItems >= 3 }
+        try await Task.sleep(for: .milliseconds(500))
+        let before = DismissReadingRow.runs
+
+        for _ in 0..<20 {
+            model.objectWillChange.send()
+            try await Task.sleep(for: .milliseconds(40))
+        }
+        XCTAssertGreaterThanOrEqual(DismissReadingRow.runs - before, 20,
+                                    "3 rows reading dismiss, 20 publishes: redrawn \(DismissReadingRow.runs - before) times")
     }
 
     // MARK: - Done when 2: the place in the list holds
@@ -312,6 +370,34 @@ final class PlayQueueLayoutTests: XCTestCase {
         throw NotSettled()
     }
 
+    /// The queue rows' body-run count once it has not moved for 10 polls (0.4 s).
+    private func rowRunsOnceTheRowsAreQuiet() async throws -> Int {
+        var last = PlayQueueSheetProbe.rowRuns
+        var quiet = 0
+        for _ in 0..<150 {
+            try await Task.sleep(for: .milliseconds(40))
+            let now = PlayQueueSheetProbe.rowRuns
+            quiet = now == last ? quiet + 1 : 0
+            last = now
+            if quiet >= 10 { return now }
+        }
+        XCTFail("The rows kept drawing with nothing changing (\(last) body runs)")
+        throw NotSettled()
+    }
+
+    /// Each layer in the cells with an animation running, as "layer's view class: animation keys".
+    private static func animatingLayers(in cells: [UICollectionViewCell]) -> Set<String> {
+        var found: Set<String> = []
+        func visit(_ view: UIView) {
+            if let keys = view.layer.animationKeys(), !keys.isEmpty {
+                found.insert("\(type(of: view)): \(keys.sorted().joined(separator: ","))")
+            }
+            view.subviews.forEach(visit)
+        }
+        cells.forEach(visit)
+        return found
+    }
+
     /// Where the row's top edge sits relative to the top of the visible list: 0 at the edge, negative above it.
     private func offsetFromTop(of index: Int, in list: ListState) throws -> CGFloat {
         let frame = try XCTUnwrap(list.view.layoutAttributesForItem(at: list.paths[index])?.frame)
@@ -389,5 +475,47 @@ private struct PlainListWithTopRow: View {
             }
             .listStyle(.plain)
         }
+    }
+}
+
+/// The Library's shape around the queue sheet: a presenter that watches the model, so every publish redraws it and
+/// rebuilds the sheet's presentation, as the Library does while audio plays.
+private struct QueueSheetPresenter: View {
+    @ObservedObject var model: Gate1AppModel
+    let startingEditMode: EditMode
+    @State private var isPresented = true
+
+    var body: some View {
+        Color.clear
+            .sheet(isPresented: $isPresented) {
+                ExperiencePlayQueueScreen(close: { isPresented = false }, startingEditMode: startingEditMode)
+                    .environmentObject(model)
+            }
+    }
+}
+
+/// The same presenter over a list whose rows read `dismiss`, as the queue rows did before #3891 was reopened.
+private struct DismissReadingSheetPresenter: View {
+    @ObservedObject var model: Gate1AppModel
+    @State private var isPresented = true
+
+    var body: some View {
+        Color.clear
+            .sheet(isPresented: $isPresented) {
+                List {
+                    ForEach(0..<3, id: \.self) { DismissReadingRow(index: $0) }
+                }
+            }
+    }
+}
+
+private struct DismissReadingRow: View {
+    @MainActor static var runs = 0
+    @Environment(\.dismiss) private var dismiss
+    let index: Int
+
+    var body: some View {
+        let _ = Self.runs += 1
+        Button("Row \(index)") { dismiss() }
     }
 }

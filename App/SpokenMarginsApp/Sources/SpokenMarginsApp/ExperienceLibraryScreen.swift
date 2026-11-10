@@ -114,7 +114,7 @@ struct ExperienceLibraryScreen: View {
                 .environmentObject(model)
         }
         .sheet(isPresented: $isPlayQueuePresented) {
-            ExperiencePlayQueueScreen()
+            ExperiencePlayQueueScreen(close: { isPlayQueuePresented = false })
                 .environmentObject(model)
         }
         .onAppear { model.loadPlayQueue() }
