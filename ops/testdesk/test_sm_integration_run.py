@@ -421,6 +421,16 @@ class ReportTextTests(unittest.TestCase):
         self.assertIn('Scripted journeys: **fail**', plan)
         self.assertIn('merges since the last scripted-journeys PASS', plan)   # the plan carries the whole range
 
+    def test_the_phone_plan_carries_new_red_and_must_end_only_when_there_is_some(self):
+        phone = load_phone_build()
+        body = self.journeys_text({'J1Tests/testOpen': 'passed'}).replace(
+            f'\ncommit {SHA[:8]}',
+            f'\nnew red since the last cut ({OLD[:7]}): J9Tests\nmust end (probation scripts red at 2 or more cuts running): none'
+            f'\ncommit {SHA[:8]}', 1)
+        plan = '\n'.join(phone.outcome_lines([body], SHA))
+        self.assertIn(f'new red since the last cut ({OLD[:7]}): J9Tests', plan)
+        self.assertNotIn('must end', plan)   # "none" is quiet, like "failing: none"
+
     def test_an_inconclusive_journeys_report_is_not_a_pass_or_a_fail(self):
         body = self.journeys_text({}, verdict='INCONCLUSIVE')
         self.assertIn('why inconclusive: why not', body)
@@ -1069,12 +1079,51 @@ class ScriptedJourneyOutcomeTests(unittest.TestCase):
                 'gating': {self.GATING: gating}, 'probation': {JOURNEY + '2/testOpen': probation}}
         return {'status': 'verified', 'steps': [step]}
 
-    def journeys_run(self, plans, bodies=(report_comment(OLD[:7], 'PASS'),)):
+    def journeys_run(self, plans, bodies=(report_comment(OLD[:7], 'PASS'),), **kw):
         with tempfile.TemporaryDirectory() as tmp:
             ops = CulpritOps(tmp, plans, bodies=list(bodies), listing=self.LISTING)
             with recording_slot(ops.events), patch.object(run.revert, 'load_test_scope', return_value=real_scope()):
-                verdict = run.journeys_run(ops, SHA, 'a phone build was cut from this commit')
+                verdict = run.journeys_run(ops, SHA, 'a phone build was cut from this commit', **kw)
         return ops, verdict
+
+    NAME = 'J1ListenToAnArticleJourneyUITests'
+
+    def cut(self, sha7, probation, gating='passed', verdict='PASS'):
+        """An earlier scripted-journeys report on #184, as the journeys line prints it."""
+        return (f'```text\nLane report scripted-journeys-{sha7} \u2014 {verdict}\n'
+                f'  scripted journeys (only those on gating are verdict input): '
+                f'{self.NAME} {gating}, {self.NAME}2 {probation}\n```\n')
+
+    def test_a_probation_script_red_at_a_second_cut_must_end_and_the_report_leads_with_it(self):
+        # #3881: four scripts sat red for days under a bare PASS. The owner's rule (2026-11-09): two cuts at most.
+        ops, verdict = self.journeys_run([self.journeys('passed', 'failed')],
+                                         bodies=[self.cut('1111111', 'failed'), self.cut('2222222', 'failed')])
+        self.assertEqual(verdict, 'PASS')
+        lines = ops.posted[0].splitlines()
+        self.assertTrue(lines[1].startswith('Lane report scripted-journeys-'))
+        self.assertEqual(lines[2], 'new red since the last cut (2222222): none')
+        self.assertTrue(lines[3].startswith('must end (probation scripts red at 2 or more cuts running'), lines[3])
+        self.assertTrue(lines[3].endswith(f': {self.NAME}2 (3 cuts)'), lines[3])
+        self.assertTrue(lines[4].startswith('commit '))
+
+    def test_a_script_that_turns_red_at_this_cut_is_new_red_with_the_merges_since_the_last_cut(self):
+        ops, _ = self.journeys_run([self.journeys('passed', 'failed')], bodies=[self.cut('2222222', 'passed')])
+        report = ops.posted[0]
+        self.assertIn(f'new red since the last cut (2222222; merges since #1170): {self.NAME}2', report)
+        self.assertIn('fix the script, or delete the test): none', report)
+
+    def test_the_first_cut_on_record_has_no_range_and_a_green_cut_says_none(self):
+        ops, _ = self.journeys_run([self.journeys('passed', 'failed')], bodies=[])
+        self.assertIn(f'new red since the last cut (no earlier cut on #184): {self.NAME}2', ops.posted[0])
+        ops, _ = self.journeys_run([self.journeys('passed', 'passed')], bodies=[self.cut('2222222', 'failed')])
+        self.assertIn('new red since the last cut (2222222): none', ops.posted[0])
+        self.assertIn('delete the test): none', ops.posted[0])
+
+    def test_a_rerun_of_the_same_commit_is_not_a_second_cut(self):
+        # The earlier report for SHA must not count as a cut again, or one more red run would end a script a cut early.
+        ops, _ = self.journeys_run([self.journeys('passed', 'failed')],
+                                   bodies=[self.cut('2222222', 'failed'), self.cut(SHA[:7], 'failed')], again=True)
+        self.assertIn(f'{self.NAME}2 (2 cuts)', ops.posted[0])
 
     def test_a_gating_journey_that_fails_is_a_fail_with_one_issue_and_no_revert(self):
         previous = report_comment(OLD[:7], 'PASS').replace('integration-', 'scripted-journeys-')

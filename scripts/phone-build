@@ -1143,6 +1143,7 @@ def integration_skip(bodies: list[str], sha: str) -> str | None:
 # Lines of a lane report that say something was left out, failed or went wrong: the plan carries them
 # whole, not just the report's first line (#1465).
 CARRIED_LINES = re.compile(r'(failing|flaky|crashes|why inconclusive|merges since the last (?:scripted-journeys )?PASS'
+                           r'|new red since the last cut|must end'  # the journeys report's lead lines (#3881)
                            r'|not run|not verified'
                            r'|integration: skipped)\b', re.I)
 QUIET_LINE = re.compile(r':\s*(none( this run| recorded)?|n/a)?\.?$', re.I)  # "failing:", "flaky: none this run"
