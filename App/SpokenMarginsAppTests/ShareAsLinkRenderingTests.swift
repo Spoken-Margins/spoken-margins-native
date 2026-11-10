@@ -25,6 +25,22 @@ final class ShareAsLinkRenderingTests: XCTestCase {
         XCTAssertEqual(shared, 1)
     }
 
+    /// #3787: a link goes out with a sentence, so the friend does not get a bare address. The sentence and the whole
+    /// link, key included, are one text, so no app can keep one and drop the other.
+    func testTheLinkSheetCarriesTheSentenceAndTheWholeLinkAsOneText() throws {
+        let link = URL(string: "https://example.test/l/abc#k")!
+        let alone = ShareLinkActivityView.activityItems(link: link, companionFile: nil)
+        XCTAssertEqual(alone.count, 1)
+        let text = try XCTUnwrap(alone.first as? String)
+        XCTAssertTrue(text.hasPrefix(ShareLinkMessage.sentence))
+        XCTAssertTrue(text.hasSuffix("https://example.test/l/abc#k"))
+
+        let file = URL(fileURLWithPath: "/tmp/margins.spokenmargins")
+        let withFile = ShareLinkActivityView.activityItems(link: link, companionFile: file)
+        XCTAssertEqual(withFile.count, 2, "the file still goes in the same message as the link")
+        XCTAssertEqual(withFile.first as? String, text)
+    }
+
     func testTheStatusLinesAreEmptyUntilALinkFailsOrNeedsItsFile() throws {
         for size in [DynamicTypeSize.large, .accessibility5] {
             let idle = try render(ShareLinkStatusLines(state: .idle, companionNote: nil), name: "status-idle", size: size)

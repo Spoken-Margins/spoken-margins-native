@@ -213,9 +213,7 @@ struct ShareLinkActivityView: UIViewControllerRepresentable {
 
     /// The sheet itself, apart from SwiftUI's context so a test can check what it carries and what it reports.
     func makeController() -> UIActivityViewController {
-        var items: [Any] = [link]
-        if let companionFile { items.append(SpokenMarginsPackageActivityItem(packageURL: companionFile)) }
-        let controller = UIActivityViewController(activityItems: items, applicationActivities: nil)
+        let controller = UIActivityViewController(activityItems: Self.activityItems(link: link, companionFile: companionFile), applicationActivities: nil)
         controller.completionWithItemsHandler = { _, completed, _, _ in
             if completed { onShared() }
         }
@@ -223,6 +221,14 @@ struct ShareLinkActivityView: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+
+    /// What the sheet carries (#3787): one text holding the sentence and the link, then the companion file if there is
+    /// one. A test reads this; `UIActivityViewController` doesn't give its items back.
+    static func activityItems(link: URL, companionFile: URL?) -> [Any] {
+        var items: [Any] = [ShareLinkMessage.text(for: link)]
+        if let companionFile { items.append(SpokenMarginsPackageActivityItem(packageURL: companionFile)) }
+        return items
+    }
 }
 #endif
 
