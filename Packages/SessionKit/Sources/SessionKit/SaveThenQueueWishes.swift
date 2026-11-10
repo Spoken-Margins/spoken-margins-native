@@ -47,9 +47,20 @@ public struct SaveThenQueueWishes: Equatable, Sendable {
 
     /// Notes that the listener wants the item queued once it lands. Returns false when the key already has a wish,
     /// which changes nothing (Add to Queue twice).
+    ///
+    /// A wish whose import already failed, and which only waits behind an earlier wish, is a spent wish: a new tap
+    /// replaces it (at the end, in tap order) instead of being swallowed until the head settles.
+    ///
+    /// Call this **before** asking for the import. `settle` for a key with no wish queues nothing, so a wish registered
+    /// after its import ended would wait forever. And every way an import can end, including an early return or a
+    /// cancel, must call `settle(_:outcome: .failed…)`: a wish whose import never reports holds back every wish tapped
+    /// after it.
     @discardableResult
     public mutating func register(_ key: String) -> Bool {
-        guard !isWished(key) else { return false }
+        if let index = wishes.firstIndex(where: { $0.key == key }) {
+            guard wishes[index].outcome == .failed else { return false }
+            wishes.remove(at: index)
+        }
         wishes.append(Wish(key: key, outcome: nil))
         return true
     }

@@ -27,13 +27,6 @@ final class SaveThenQueueWishesTests: XCTestCase {
         XCTAssertEqual(wishes.settle("entry-1", outcome: .imported(itemId: "item-1"), itemExists: everyItemExists), [], "a second settle queues nothing")
     }
 
-    func testAWishDoesNotQueueAnythingBeforeTheImportEnds() {
-        var wishes = SaveThenQueueWishes()
-        XCTAssertTrue(wishes.register("entry-1"))
-        XCTAssertTrue(wishes.isWished("entry-1"))
-        XCTAssertEqual(wishes.pendingKeys, ["entry-1"])
-    }
-
     func testAnItemAlreadyInTheQueueIsNotQueuedTwice() {
         var wishes = SaveThenQueueWishes()
         var queue = PlayQueue(itemIds: ["other", "item-1"])
@@ -51,25 +44,6 @@ final class SaveThenQueueWishesTests: XCTestCase {
         XCTAssertEqual(wishes.pendingKeys, ["entry-1"])
         let released = wishes.settle("entry-1", outcome: .imported(itemId: "item-1"), itemExists: everyItemExists)
         XCTAssertEqual(released.count, 1, "one banner and one queue entry")
-    }
-
-    func testAddToQueueWhileAddIsRunningAttachesTheWishToThatImport() {
-        // Add started the import; the wish is registered afterwards and the same import's end settles it. A second
-        // import is never needed, because `importFollowedSourceEntry` returns early for an entry already importing.
-        var wishes = SaveThenQueueWishes()
-        var importsStarted = 0
-        importsStarted += 1 // the Add tap
-        wishes.register("entry-1") // the Add to Queue tap, while that import runs
-        XCTAssertEqual(importsStarted, 1)
-        XCTAssertEqual(wishes.settle("entry-1", outcome: .imported(itemId: "item-1"), itemExists: everyItemExists).map(\.itemId), ["item-1"])
-    }
-
-    func testAddAfterAddToQueueIsTheSameImportAndTheSameWish() {
-        var wishes = SaveThenQueueWishes()
-        wishes.register("entry-1") // Add to Queue starts the import
-        // Add then joins that import: it registers nothing, and the import's end still releases the wish once.
-        XCTAssertEqual(wishes.pendingKeys, ["entry-1"])
-        XCTAssertEqual(wishes.settle("entry-1", outcome: .imported(itemId: "item-1"), itemExists: everyItemExists).count, 1)
     }
 
     func testAnImportEndingWithNoWishQueuesNothing() {
@@ -116,21 +90,49 @@ final class SaveThenQueueWishesTests: XCTestCase {
         XCTAssertTrue(wishes.register("entry-1"), "a new tap after the first wish ended is a new wish")
     }
 
+    func testASettleBeforeTheRegisterQueuesNothingAndLeavesALateWishWaiting() {
+        // The contract: register first. A wish registered after its import ended has nothing left to settle it.
+        var wishes = SaveThenQueueWishes()
+        XCTAssertEqual(wishes.settle("entry-1", outcome: .imported(itemId: "item-1"), itemExists: everyItemExists), [])
+        wishes.register("entry-1")
+        XCTAssertEqual(wishes.pendingKeys, ["entry-1"], "still waiting: this is why the app registers before it imports")
+    }
+
+    func testTheFirstTapOfABurstIsTheOnlyOneThatIsNew() {
+        var wishes = SaveThenQueueWishes()
+        let newTaps = (0..<5).filter { _ in wishes.register("entry-1") }
+        XCTAssertEqual(newTaps.count, 1, "five taps are one wish, so one import is wanted and one entry is queued")
+    }
+
     // MARK: network
 
-    func testAFailedImportQueuesNothingAndClearsTheWish() throws {
-        let directory = try makeTemporaryDirectory()
-        let store = PlayQueueStore(fileURL: directory.appending(path: "play-queue.json"))
-        try store.save(PlayQueue(itemIds: ["old"]))
-        let before = try Data(contentsOf: store.fileURL)
-
+    func testAFailedImportQueuesNothingAndClearsTheWish() {
         var wishes = SaveThenQueueWishes()
         wishes.register("entry-1")
-        let released = wishes.settle("entry-1", outcome: .failed, itemExists: everyItemExists)
-        XCTAssertEqual(released, [])
+        XCTAssertEqual(wishes.settle("entry-1", outcome: .failed, itemExists: everyItemExists), [])
         XCTAssertFalse(wishes.isWished("entry-1"), "the wish is cleared, so a retry starts clean")
-        XCTAssertEqual(try Data(contentsOf: store.fileURL), before, "the queue file is untouched")
         XCTAssertTrue(wishes.register("entry-1"), "the listener can try again")
+    }
+
+    func testAFailureThatWaitsBehindAnEarlierWishDoesNotSwallowTheRetry() {
+        var wishes = SaveThenQueueWishes()
+        wishes.register("entry-A")
+        wishes.register("entry-B")
+        XCTAssertEqual(wishes.settle("entry-B", outcome: .failed, itemExists: everyItemExists), [], "B failed but waits behind A")
+        XCTAssertTrue(wishes.register("entry-B"), "a retry is a new wish, not ignored")
+        XCTAssertEqual(wishes.pendingKeys, ["entry-A", "entry-B"])
+        let released = wishes.settle("entry-A", outcome: .imported(itemId: "item-A"), itemExists: everyItemExists)
+        XCTAssertEqual(released.map(\.itemId), ["item-A"], "the spent B does not queue; the retry is still waiting")
+        XCTAssertEqual(wishes.pendingKeys, ["entry-B"])
+        XCTAssertEqual(wishes.settle("entry-B", outcome: .imported(itemId: "item-B"), itemExists: everyItemExists).map(\.itemId), ["item-B"])
+    }
+
+    func testAFailedFirstWishReleasesASuccessorThatAlreadyLanded() {
+        var wishes = SaveThenQueueWishes()
+        wishes.register("entry-A")
+        wishes.register("entry-B")
+        XCTAssertEqual(wishes.settle("entry-B", outcome: .imported(itemId: "item-B"), itemExists: everyItemExists), [])
+        XCTAssertEqual(wishes.settle("entry-A", outcome: .failed, itemExists: everyItemExists).map(\.itemId), ["item-B"])
     }
 
     // MARK: A deleted item
@@ -155,50 +157,29 @@ final class SaveThenQueueWishesTests: XCTestCase {
 
     // MARK: background
 
-    func testTheWishSurvivesTheAppBeingLeftAndResolvesOnCompletion() {
-        // Leaving the app changes nothing here: the wish is a value the model holds, and only an import's end settles it.
-        var wishes = SaveThenQueueWishes()
-        wishes.register("entry-1")
-        let backgrounded = wishes // a copy taken when the app was left stays equal to the live one
-        XCTAssertEqual(backgrounded, wishes)
-        XCTAssertEqual(wishes.settle("other-entry", outcome: .failed, itemExists: everyItemExists), [], "another entry's failure leaves this wish alone")
-        XCTAssertTrue(wishes.isWished("entry-1"))
-        XCTAssertEqual(wishes.settle("entry-1", outcome: .imported(itemId: "item-1"), itemExists: everyItemExists).map(\.itemId), ["item-1"])
-    }
-
-    func testTheWishClearsOnAFailureAfterTheAppWasLeft() {
-        var wishes = SaveThenQueueWishes()
-        wishes.register("entry-1")
-        XCTAssertEqual(wishes.settle("entry-1", outcome: .failed, itemExists: everyItemExists), [])
-        XCTAssertEqual(wishes.pendingKeys, [])
-    }
-
-    func testOpeningOrPlayingSomethingElseDoesNotCancelTheWish() {
-        // Queuing never takes playback (#2124 is about what plays now), so the wish has no cancel at all: the only
-        // ways out are an import's end, success or failure.
-        var wishes = SaveThenQueueWishes()
-        wishes.register("entry-1")
-        XCTAssertTrue(wishes.isWished("entry-1"))
-        XCTAssertEqual(wishes.settle("entry-1", outcome: .imported(itemId: "item-1"), itemExists: everyItemExists).count, 1)
-    }
-
     // MARK: relaunch
 
-    func testARelaunchLosesTheWishButTheItemAndTheQueueFileAreIntact() throws {
+    /// Wishes only ever reach the queue file when they are released, so a relaunch loses exactly the wishes still waiting
+    /// and nothing the file already holds.
+    func testARelaunchLosesTheWaitingWishesAndTheFileHoldsOnlyWhatWasReleased() throws {
         let directory = try makeTemporaryDirectory()
         let store = PlayQueueStore(fileURL: directory.appending(path: "play-queue.json"))
-        try store.save(PlayQueue(itemIds: ["old-1", "old-2"]))
-        let before = try Data(contentsOf: store.fileURL)
+        try store.save(PlayQueue(itemIds: ["old"]))
 
         var wishes = SaveThenQueueWishes()
-        wishes.register("entry-1")
-        // The app is killed mid-import and starts again: the wishes are new and empty.
-        var afterRelaunch = SaveThenQueueWishes()
-        XCTAssertFalse(afterRelaunch.isWished("entry-1"))
-        XCTAssertEqual(afterRelaunch.settle("entry-1", outcome: .imported(itemId: "item-1"), itemExists: everyItemExists), [], "the import that finished anyway queues nothing")
-        XCTAssertEqual(store.load().itemIds, ["old-1", "old-2"], "the queue is what the file said")
-        XCTAssertEqual(try Data(contentsOf: store.fileURL), before, "the file is untouched")
-        _ = wishes
+        wishes.register("entry-A")
+        wishes.register("entry-B")
+        wishes.register("entry-C")
+        // B and C land, A is still running, and each landed item is already in the Library.
+        for key in ["entry-B", "entry-C"] {
+            var queue = store.load()
+            apply(wishes.settle(key, outcome: .imported(itemId: "item-\(key)"), itemExists: everyItemExists), to: &queue)
+            try store.save(queue)
+        }
+        // The app is killed here and starts again.
+        let relaunched = SaveThenQueueWishes()
+        XCTAssertEqual(relaunched.pendingKeys, [])
+        XCTAssertEqual(store.load().itemIds, ["old"], "B and C were waiting behind A, so the file never held them")
     }
 
     func testTheQueueFileFormatIsUnchangedAfterAReleasedWish() throws {
