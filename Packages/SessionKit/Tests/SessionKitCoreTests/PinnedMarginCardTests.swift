@@ -24,8 +24,9 @@ final class PinnedMarginCardTests: XCTestCase {
     func testTheLeadInInTheButtonIsTheReviewsOwnValueNotALiteral() {
         XCTAssertEqual(MarginMomentSequence.reviewLeadInMs, 20_000, "the owner's call on #3059; the old code comment said 15")
         let jump = card(cole, .upNext(msRemaining: 39 * 60_000, arrival: .playsByItself), press: seek).actions[0]
-        XCTAssertEqual(jump.title, "Jump to \(MarginMomentSequence.reviewLeadInMs / 1_000) sec before it")
-        XCTAssertEqual(jump.title, "Jump to 20 sec before it")
+        XCTAssertEqual(jump.title, "Skip to just before Cole")
+        XCTAssertEqual(jump.hint, "Moves the episode to about \(MarginMomentSequence.reviewLeadInMs / 1_000) seconds before the next Margin.")
+        XCTAssertEqual(jump.hint, "Moves the episode to about 20 seconds before the next Margin.")
     }
 
     // MARK: Words while a Margin plays
@@ -99,7 +100,7 @@ final class PinnedMarginCardTests: XCTestCase {
         XCTAssertEqual(unheard.headline, "Next Margin in 39 min")
         XCTAssertEqual(unheard.detail, "It won't play by itself.")
         XCTAssertFalse((unheard.headline + unheard.detail).contains("heard"))
-        XCTAssertEqual(titles(unheard), ["Jump to 20 sec before it"])
+        XCTAssertEqual(titles(unheard), ["Skip to just before Cole"])
         let heard = card(cole, .upNext(msRemaining: 39 * 60_000, arrival: .onRequest), press: seek)
         XCTAssertEqual(heard.headline, "You've heard this one")
         XCTAssertEqual(titles(heard), ["Hear it again"])
@@ -187,12 +188,12 @@ final class PinnedMarginCardTests: XCTestCase {
 
     func testAReviewsLeadInMainButtonIsThePressAndItsExitIsStop() {
         let far = card(cole, .comingUp(msRemaining: 39 * 60_000), press: seek)
-        XCTAssertEqual(titles(far), ["Jump to 20 sec before it", "Stop"])
+        XCTAssertEqual(titles(far), ["Skip to just before Cole", "Stop"])
         XCTAssertEqual(far.actions.map(\.job), [.goToNextMargin, .stopReview])
         XCTAssertEqual(far.actions[0].hint, "Moves the episode to about 20 seconds before this Margin.")
         for press in [NextMarginPress.playMarginNow, .unavailable, .skipVoice] {
             let near = card(cole, .comingUp(msRemaining: 8_000), press: press)
-            XCTAssertEqual(titles(near), ["Play it now", "Stop"], "\(press)")
+            XCTAssertEqual(titles(near), ["Skip to Cole now", "Stop"], "\(press)")
             XCTAssertEqual(near.actions.map(\.job), [.playMomentNow, .stopReview])
         }
         for c in [far, card(cole, .comingUp(msRemaining: 8_000))] {
@@ -201,10 +202,58 @@ final class PinnedMarginCardTests: XCTestCase {
         }
     }
 
+    /// #3791: the two presses between a friend's Margins are "Skip to …", the owner's words of 2026-11-05. A sender with
+    /// no name reads "it"; your own Margins keep the words they had.
+    func testTheTwoPressesOfAFriendsMarginReadSkipToAndYourOwnKeepTheirWords() {
+        for (subject, hop, now) in [
+            (cole, "Skip to just before Cole", "Skip to Cole now"),
+            (nobody, "Skip to just before it", "Skip to it now"),
+        ] {
+            XCTAssertEqual(titles(card(subject, .comingUp(msRemaining: 39 * 60_000), press: seek))[0], hop)
+            XCTAssertEqual(titles(card(subject, .comingUp(msRemaining: 8_000), press: .playMarginNow))[0], now)
+            XCTAssertEqual(titles(card(subject, .upNext(msRemaining: 120_000, arrival: .playsByItself), press: seek)), [hop])
+            XCTAssertEqual(titles(card(subject, .upNext(msRemaining: 120_000, arrival: .playsByItself), press: .playMarginNow)), [now])
+        }
+        XCTAssertEqual(titles(card(.yours, .comingUp(msRemaining: 8_000), press: .playMarginNow, run: .moment)), ["Play it now", "Keep listening"])
+        XCTAssertEqual(titles(card(.yours, .comingUp(msRemaining: 39 * 60_000), press: seek))[0], "Jump to 20 sec before it")
+    }
+
+    /// #4001: the longest button held a six-line name at the largest text size and pushed the card past half the screen.
+    /// A button says a short name, the first word of a long one, or "it"; the headline keeps the whole name.
+    func testAButtonSaysAShortNameAndTheHeadlineKeepsTheWholeOne() {
+        let table: [(sender: String, button: String)] = [
+            ("Cole", "Cole"),
+            ("Alexandria Bartholomew-Featherstonehaugh the Third", "Alexandria"),
+            ("Alexandria  Bartholomew", "Alexandria"),          // 23 characters, two spaces: the first word
+            ("Maria Alejandra", "Maria"),                        // 15 characters
+            ("Elizabeth Smith", "Elizabeth"),                    // 15 characters
+            ("Fourteen Chars", "Fourteen Chars"),                // 14: the whole name still fits
+            ("Maria-Alejandra", "it"),                           // one 15-character word: nothing short to say
+            ("Featherstonehaughwhatever", "it"),
+            ("Zoë Müller-Lindström", "Zoë"),                     // accents count as one character each
+            ("Dr. Alexandria Smith", "it"),                      // a title is not a name
+            ("The Johnson Family", "it"),                        // nor is an article
+            ("Prof. Ada Lovelace", "it"),
+            ("Åsa", "Åsa"),
+            ("👩🏽‍🚀 Ada Lovelace-Byron", "👩🏽‍🚀"),                  // one emoji is one character, not seven scalars
+        ]
+        for (sender, button) in table {
+            let subject = PinnedMarginCard.Subject.friend(sender)
+            let hop = card(subject, .comingUp(msRemaining: 39 * 60_000), press: seek).actions[0].title
+            let now = card(subject, .comingUp(msRemaining: 8_000), press: .playMarginNow).actions[0].title
+            XCTAssertEqual(hop, "Skip to just before \(button)", sender)
+            XCTAssertEqual(now, "Skip to \(button) now", sender)
+            XCTAssertEqual(card(subject, .speaking).headline, "Margin from \(subject.name ?? "")", "\(sender): the headline keeps the whole name")
+        }
+        XCTAssertEqual(PinnedMarginCard.Subject.yours.buttonName, nil)
+        let own = card(.yours, .comingUp(msRemaining: 39 * 60_000), press: seek).actions[0].title
+        XCTAssertEqual(own, "Jump to 20 sec before it", "your own Margins keep their words")
+    }
+
     func testAPlainMomentsLeadInOffersPlayItNowAndKeepListening() {
         for press in [more, seek, .playMarginNow, .unavailable] {
             let c = card(cole, .comingUp(msRemaining: 8_000), press: press, run: .moment)
-            XCTAssertEqual(titles(c), ["Play it now", "Keep listening"], "\(press)")
+            XCTAssertEqual(titles(c), ["Skip to Cole now", "Keep listening"], "\(press)")
             XCTAssertEqual(c.actions.map(\.job), [.playMomentNow, .keepListening])
         }
     }
@@ -265,13 +314,13 @@ final class PinnedMarginCardTests: XCTestCase {
         func button(_ arrival: PinnedMarginCard.Arrival, _ press: NextMarginPress) -> [String] {
             titles(card(cole, .upNext(msRemaining: 120_000, arrival: arrival), press: press))
         }
-        XCTAssertEqual(button(.playsByItself, seek), ["Jump to 20 sec before it"])
-        XCTAssertEqual(button(.toneThenTap, seek), ["Jump to 20 sec before it"])
-        XCTAssertEqual(button(.playsByItself, .playMarginNow), ["Play it now"])
-        XCTAssertEqual(button(.toneThenTap, .playMarginNow), ["Play it now"])
+        XCTAssertEqual(button(.playsByItself, seek), ["Skip to just before Cole"])
+        XCTAssertEqual(button(.toneThenTap, seek), ["Skip to just before Cole"])
+        XCTAssertEqual(button(.playsByItself, .playMarginNow), ["Skip to Cole now"])
+        XCTAssertEqual(button(.toneThenTap, .playMarginNow), ["Skip to Cole now"])
         XCTAssertEqual(button(.onRequest, seek), ["Hear it again"])
-        XCTAssertEqual(button(.onRequest, .playMarginNow), ["Hear it again"], "a heard Margin never offers \"Play it now\" (text sources always press playMarginNow)")
-        XCTAssertEqual(button(.waitsForYou, .playMarginNow), ["Play it now"])
+        XCTAssertEqual(button(.onRequest, .playMarginNow), ["Hear it again"], "a heard Margin never offers \"Skip to Cole now\" (text sources always press playMarginNow)")
+        XCTAssertEqual(button(.waitsForYou, .playMarginNow), ["Skip to Cole now"])
         XCTAssertEqual(button(.playsByItself, .unavailable), [], "nowhere to go, no button")
         XCTAssertEqual(button(.onRequest, .unavailable), [])
         let all = [PinnedMarginCard.Arrival.playsByItself, .toneThenTap, .onRequest, .waitsForYou]
@@ -281,7 +330,7 @@ final class PinnedMarginCardTests: XCTestCase {
     }
 
     func testTheButtonAndTheRealPressAgreeAtEveryPosition() {
-        // The button is built from the press the rule makes, so the first press says "Jump" and the second "Play it now".
+        // The button is built from the press the rule makes, so the first press says "Skip to just before" and the second "Skip to … now".
         let marginAt = 120_000
         let lead = MarginMomentSequence.leadInStartMediaTimeMs(
             forTarget: MarginMomentAnchor(marginId: "m", mediaTimeMs: marginAt), leadInMs: MarginMomentSequence.reviewLeadInMs)
@@ -289,10 +338,10 @@ final class PinnedMarginCardTests: XCTestCase {
             let press = NextMarginPress.press(.sharedPlayback(positionMs: position, nextMarginMs: marginAt, arrival: arrival))
             return card(cole, .upNext(msRemaining: marginAt - position, arrival: arrival), press: press).actions.first?.title
         }
-        XCTAssertEqual(title(position: 10_000), "Jump to 20 sec before it")
-        XCTAssertEqual(title(position: lead - 1), "Jump to 20 sec before it")
-        XCTAssertEqual(title(position: lead), "Play it now", "inside the lead-in the second press plays it")
-        XCTAssertEqual(title(position: 10_000, arrival: .waitsForYou), "Play it now", "a Fresh layer has no lead-in")
+        XCTAssertEqual(title(position: 10_000), "Skip to just before Cole")
+        XCTAssertEqual(title(position: lead - 1), "Skip to just before Cole")
+        XCTAssertEqual(title(position: lead), "Skip to Cole now", "inside the lead-in the second press plays it")
+        XCTAssertEqual(title(position: 10_000, arrival: .waitsForYou), "Skip to Cole now", "a Fresh layer has no lead-in")
         XCTAssertEqual(title(position: 10_000, arrival: .onRequest), "Hear it again")
         XCTAssertEqual(title(position: lead, arrival: .onRequest), "Hear it again")
     }
