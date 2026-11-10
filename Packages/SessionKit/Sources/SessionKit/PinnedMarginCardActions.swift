@@ -50,7 +50,7 @@ extension PinnedMarginCard {
         case .speaking, .reading, .voicePaused, .loading:
             // The one button while a voice sounds skips it: the episode plays on from where the Margin ended. It never says
             // "Next Margin", because stopping a voice does not move the listener to the next one; the next Margin's own
-            // lead-in button ("Jump to 20 sec before it") comes once the voice is over (audit on #3623).
+            // lead-in button ("Skip to just before Cole", for a friend's) comes once the voice is over (audit on #3623).
             // Never a Stop beside it: three exits for one short voice (#3597 proposal: "No Stop button; the pause control
             // already does that job"). The one exception is a can't-play listening: its Margins chain with no lead-in, so
             // the lead-in's Stop never comes and pause leaves the review armed. Stop stays there as the way out.
@@ -75,11 +75,24 @@ extension PinnedMarginCard {
         }
     }
 
+    /// The two presses between a friend's Margins read as one action, "Skip to …", the words the owner said yes to on
+    /// 2026-11-05 (#3791): the first goes to just before the Margin, the second to the Margin. Your own Margins keep
+    /// "Jump to 20 sec before it" and "Play it now"; his answer was for a friend's.
+    private var playNowTitle: String {
+        guard case .friend = subject else { return "Play it now" }
+        return "Skip to \(subject.name ?? "it") now"
+    }
+
+    private func hopTitle(seconds: Int) -> String {
+        guard case .friend = subject else { return "Jump to \(seconds) sec before it" }
+        return "Skip to just before \(subject.name ?? "it")"
+    }
+
     /// The lead-in. A review's main button is the press, as between a friend's Margins: far off it hops to the lead-in, near it
     /// plays the Margin. Its quiet exit is Stop, which pauses (the episode plays on between a review's Margins, so
     /// "back to the episode" would be false). A plain moment plays on from the lead-in, so "Keep listening" is true.
     private func comingUpActions(ahead: String, stop: Action) -> [Action] {
-        let playNow = Action(job: .playMomentNow, title: "Play it now", hint: "Plays the Margin now, without waiting for the \(ahead).", prominence: .primary)
+        let playNow = Action(job: .playMomentNow, title: playNowTitle, hint: "Plays the Margin now, without waiting for the \(ahead).", prominence: .primary)
         guard run == .review else {
             return [
                 playNow,
@@ -88,7 +101,7 @@ extension PinnedMarginCard {
         }
         if case .seekToLeadIn = nextPress {
             let seconds = MarginMomentSequence.reviewLeadInMs / 1_000
-            let hop = Action(job: .goToNextMargin, title: "Jump to \(seconds) sec before it", hint: "Moves the \(ahead) to about \(seconds) seconds before this Margin.", prominence: .primary)
+            let hop = Action(job: .goToNextMargin, title: hopTitle(seconds: seconds), hint: "Moves the \(ahead) to about \(seconds) seconds before this Margin.", prominence: .primary)
             return [hop, stop]
         }
         return [playNow, stop]
@@ -104,13 +117,13 @@ extension PinnedMarginCard {
             if arrival == .onRequest {
                 return Action(job: .goToNextMargin, title: "Hear it again", hint: "Moves the \(ahead) to about \(leadInSeconds) seconds before this Margin, so you can hear it again.", prominence: .secondary)
             }
-            return Action(job: .goToNextMargin, title: "Jump to \(leadInSeconds) sec before it", hint: "Moves the \(ahead) to about \(leadInSeconds) seconds before the next Margin.", prominence: .secondary)
+            return Action(job: .goToNextMargin, title: hopTitle(seconds: leadInSeconds), hint: "Moves the \(ahead) to about \(leadInSeconds) seconds before the next Margin.", prominence: .secondary)
         case .playMarginNow:
             // A Margin the card calls heard says "Hear it again", whichever press the tap makes; the words and the button agree.
             if arrival == .onRequest {
                 return Action(job: .goToNextMargin, title: "Hear it again", hint: "Plays this Margin again.", prominence: .secondary)
             }
-            return Action(job: .goToNextMargin, title: "Play it now", hint: "Plays the next Margin now.", prominence: .secondary)
+            return Action(job: .goToNextMargin, title: playNowTitle, hint: "Plays the next Margin now.", prominence: .secondary)
         case .skipVoice:
             return Action(job: .goToNextMargin, title: "Next Margin", hint: "Goes on to the next Margin.", prominence: .secondary)
         }
