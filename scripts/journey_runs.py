@@ -13,7 +13,7 @@ format), next to the verdict:
   scripts/journey_runs.py --window-days 7   another window
   scripts/journey_runs.py --json            the same as JSON
 
-Only the desk's own reports count (the runner's `pr<N>-r<run>`, `integration-` and `journeys-` ids are scripted, not
+Only the desk's own reports count (the runner's `pr<N>-r<run>`, `integration-` and `(scripted-)journeys-` ids are scripted, not
 agent-driven), from trusted commenters (comment_trust). A desk report with no valid `record:` line (none, or a malformed or impossible one) is counted as
 unrecorded, so the audit sees how much of the Test Desk's work the record covers. The script only reads GitHub.
 """
@@ -77,6 +77,12 @@ def summarize(comments):
             'per_journey': {key: {**row, 'bugs': sorted(row['bugs'])} for key, row in sorted(per_journey.items())}}
 
 
+def created_since(comments, since):
+    """Only comments posted at or after `since`. GitHub's `?since=` filters by `updated_at`, so a report posted long ago
+    and edited yesterday comes back; the window means when it was posted (#3951)."""
+    return [c for c in comments if (c.get('created_at') or '') >= since]
+
+
 def render(summary, days):
     lines = [f'Test Desk journey runs, last {days} days',
              f"desk reports: {summary['desk_reports']} ({summary['unrecorded_reports']} with no record line)",
@@ -101,7 +107,7 @@ def main(argv=None, api=None, now=None):
     except RuntimeError as error:
         print(f'cannot read GitHub: {error}', file=sys.stderr)
         return 2
-    summary = summarize(comments)
+    summary = summarize(created_since(comments, since))
     print(json.dumps(summary, indent=2) if args.json else render(summary, args.window_days))
     return 0
 
