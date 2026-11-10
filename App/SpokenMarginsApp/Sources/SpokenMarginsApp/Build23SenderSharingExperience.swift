@@ -248,20 +248,17 @@ struct Build23SenderSharingExperience: View {
     }
 
     /// "Back to selection", on its own line under the header on the review and preview steps (#3896). Each step keeps
-    /// its own identifier; the action is the same.
+    /// its own identifier; the action is the same. The preview step draws it only once the preview is ready.
     @ViewBuilder
     private func backToSelectionLink(_ snapshot: Build23SharingSnapshot) -> some View {
-        switch snapshot.stage {
-        case .review:
-            Build23BackToSelectionButton(identifier: "build23.sender.review.back") {
+        if let identifier = Build23SenderPresentation.topBackToSelectionIdentifier(
+            stage: snapshot.stage,
+            previewState: snapshot.previewState,
+            hasVerifiedPreview: snapshot.verifiedPreview != nil
+        ) {
+            Build23BackToSelectionButton(identifier: identifier) {
                 coordinator.send(.returnToSelect)
             }
-        case .recipientPreview:
-            Build23BackToSelectionButton(identifier: "build23.sender.preview.edit") {
-                coordinator.send(.returnToSelect)
-            }
-        case .select, .share:
-            EmptyView()
         }
     }
 

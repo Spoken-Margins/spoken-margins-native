@@ -43,6 +43,24 @@ enum Build23SenderPresentation {
         return ["fingerprint", "landmark", "assets/evidence/"].contains { lowered.contains($0) }
     }
 
+    /// The identifier of the top "Back to selection" button for this step, or nil when none is drawn there (#3896).
+    /// On the preview step it is drawn only once the preview is ready and verified, as the old button inside
+    /// `Build23VerifiedShareActions` was. While the preview builds, "back" would leave the build task running and a
+    /// failed build would then pull the listener off the selection screen; the other preview states already carry
+    /// their own "Back to selection" in the unavailable-preview notice.
+    static func topBackToSelectionIdentifier(
+        stage: Build23SharingStage, previewState: Build23SharingPreviewState, hasVerifiedPreview: Bool
+    ) -> String? {
+        switch stage {
+        case .review:
+            "build23.sender.review.back"
+        case .recipientPreview:
+            previewState == .ready && hasVerifiedPreview ? "build23.sender.preview.edit" : nil
+        case .select, .share:
+            nil
+        }
+    }
+
     static func stageOwnsDetailedEditor(_ stage: Build23SharingStage) -> Bool {
         stage == .review
     }
