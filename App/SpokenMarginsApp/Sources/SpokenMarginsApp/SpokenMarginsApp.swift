@@ -159,6 +159,10 @@ struct SpokenMarginsApp: App {
     }
 
     private func open(_ url: URL) {
+        // First, before any router can swallow it: the export then tells a Live Activity tap that reached the app from
+        // one that never did. Kind, host word and command only, never a path, query or key (#4031).
+        model.recordDeveloperDiagnostic("url.received", IncomingURLDiagnostic.fields(
+            for: url, appScheme: Gate2CompactCommandURL.scheme, compactHost: Gate2CompactCommandURL.host))
         let url = UITestingHooks.handedOffShareLink(url) ?? url
         if LiveSessionLinkRouter.shared.handle(url) { return }
         // A friend's file comes before the first-run drawer (#3291).
