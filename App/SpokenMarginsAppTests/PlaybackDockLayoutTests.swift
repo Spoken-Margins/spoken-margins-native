@@ -176,10 +176,10 @@ final class PlaybackDockLayoutTests: XCTestCase {
         }
         let bare = idealWidth(backward: .hidden, forward: .hidden)
         let next = idealWidth(backward: .hidden, forward: .nextChapter)
-        XCTAssertGreaterThanOrEqual(next - bare, 44, "the Next chapter button added \(next - bare) points to the row")
+        XCTAssertAtLeastPoints(next - bare, 44, "the Next chapter button added \(next - bare) points to the row")
         let skim = idealWidth(backward: .skim, forward: .skim)
         let dimmed = idealWidth(backward: .skimDisabled, forward: .skimDisabled)
-        XCTAssertGreaterThanOrEqual(skim - bare, 88, "the two Skim arrows added \(skim - bare) points to the row")
+        XCTAssertAtLeastPoints(skim - bare, 88, "the two Skim arrows added \(skim - bare) points to the row")
         XCTAssertEqual(dimmed, skim, accuracy: 0.5, "a dimmed Skim must keep its place")
         XCTAssertEqual(idealWidth(backward: .skim, forward: .nextChapter), skim, accuracy: 0.5,
                        "Next chapter takes Skim forward's slot, no wider")
@@ -216,10 +216,10 @@ final class PlaybackDockLayoutTests: XCTestCase {
         }
         let long = "The long and winding road to a chapter title that does not fit on one line"
         let short = fittedHeight(title: "Intro", size: .accessibility5)
-        XCTAssertGreaterThanOrEqual(short, 88, "the skim controls sit under the title, not beside it")
+        XCTAssertAtLeastPoints(short, 88, "the skim controls sit under the title, not beside it")
         // A one-line row is a 44-point title, a 4-point gap and the 44-point control line: 92 points. Two reserved
         // title lines at AX5 are well over 44 points, so a long title wraps and a short one keeps the same room.
-        XCTAssertGreaterThanOrEqual(short, 92 + 30, "the title slot reserves a second line at AX5")
+        XCTAssertAtLeastPoints(short, 92 + 30, "the title slot reserves a second line at AX5")
         XCTAssertEqual(fittedHeight(title: long, size: .accessibility5), short, accuracy: 1,
                        "a long and a short title take the same height (#357, #430)")
         XCTAssertEqual(fittedHeight(title: long, size: .large), 44, accuracy: 1,
