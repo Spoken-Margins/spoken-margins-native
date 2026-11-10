@@ -142,11 +142,15 @@ The Test Desk (or the runner) replies on the PR:
 Lane report <request-id> — PASS | FAIL | INCONCLUSIVE
 commit <sha> · tier T4 · simulator <model, iOS version> · <duration>
 ran: J1 (pass), J7 (fail at step 1)
+record: J1 · build 3997dbb · steps 9/9 · bugs none
+record: J7 · build 3997dbb · steps 0/1 · bugs #3931
 J7 step 1 — expected: "Downloaded on…" stamp not read. observed: transcript shows it in paragraph 1 of page 2. evidence: artifacts/lane/<id>/j7-step1.png
 crashes: none | 1 isolated SpringBoard crash (noted, continued)
 not verified: audible content (owner), Lock Screen (owner)
 tokens: J1 41k (9 screenshots), J7 38k (12) · desk 95k at the end
 ```
+
+The `record:` lines (#3903) are the Test Desk's run record, one per journey or one-off scenario the desk ran, in exactly the form `record: <J<n> or scenario> · build <sha7 of the installed build> · steps <passed>/<total> · bugs <#issue, #issue or none>`; `bugs` lists the issues the run filed or found already filed. They make agent-driven runs countable: `scripts/journey_runs.py` reads the last 30 days of desk reports and prints runs, steps passed, bugs found and the reports that have no record line. A report from the runner (`pr<N>-r<run>`, `integration-`, `journeys-` ids) is scripted and carries none. Without a `record:` line a desk's work leaves no count, so the desk writes them before it labels `lane:done`.
 
 The `tokens:` line gives each journey's helper `subagent_tokens` (from the Agent tool's usage line) and its screenshot count, and the lead desk's context when it posts, so the cost per journey can be compared across desks.
 

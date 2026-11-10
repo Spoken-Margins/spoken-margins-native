@@ -125,6 +125,6 @@ Don't reboot in a loop or switch devices. A single crash is noted in the report 
 
 ## Report and clean up
 
-1. Post the report on the PR in the test-lane.md format (PASS / FAIL / INCONCLUSIVE, per-step observations, evidence paths, crashes, what's not verified, and the `tokens:` line: each journey's helper `subagent_tokens` and the lead's context at the end), then change the label from `lane:queued` to `lane:done`.
+1. Post the report on the PR in the test-lane.md format (PASS / FAIL / INCONCLUSIVE, per-step observations, evidence paths, crashes, what's not verified, the `tokens:` line: each journey's helper `subagent_tokens` and the lead's context at the end, and one `record:` line per journey or scenario run: `record: J7 · build <sha7> · steps <passed>/<total> · bugs <#n, #n or none>`, which `scripts/journey_runs.py` counts, #3903), then change the label from `lane:queued` to `lane:done`.
 2. Give the pool device or devices back with `scripts/lane-sim-boot --done <udid>`, once each (not one marked unsafe: the next `--pool` retires it). Pool devices are reused, so a repeated `--done` on one that another run has since taken would shut that run down.
 3. Remove the worktree with `git worktree remove .claude/worktrees/lane-<id>`, which also deletes its DerivedData. Disk space on this Mac is tight.
