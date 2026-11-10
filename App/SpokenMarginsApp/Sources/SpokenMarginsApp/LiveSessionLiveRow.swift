@@ -26,6 +26,12 @@ final class LiveSessionBoard: ObservableObject {
         refresh()
     }
 
+    /// A board that shows these rows and reads nothing, for a mounted test of the Live row (#3723).
+    init(rows: [LiveSessionFileWorker.Summary]) {
+        files = LiveSessionFileWorker(root: nil)
+        self.rows = rows
+    }
+
     func refresh() {
         Task { await refreshNow() }
     }
@@ -47,7 +53,7 @@ final class LiveSessionBoard: ObservableObject {
 /// that session's screen. Slice 1a keeps it simple; grouping a day's Mark-only quick sessions comes later.
 struct LiveSessionLiveRows: View {
     @EnvironmentObject private var model: Gate1AppModel
-    @ObservedObject private var board = LiveSessionBoard.shared
+    @ObservedObject private var board: LiveSessionBoard
     @State private var opened: Opened?
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @ScaledMetric(relativeTo: .title3) private var glyphWidth: CGFloat = 28
@@ -57,6 +63,10 @@ struct LiveSessionLiveRows: View {
     }
 
     private static let shownRows = 3
+
+    init(board: LiveSessionBoard = .shared) {
+        _board = ObservedObject(wrappedValue: board)
+    }
 
     var body: some View {
         if !board.rows.isEmpty {

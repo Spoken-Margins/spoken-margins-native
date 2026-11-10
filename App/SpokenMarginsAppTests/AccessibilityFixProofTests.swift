@@ -172,6 +172,29 @@ final class AccessibilityFixProofTests: XCTestCase {
         }
     }
 
+    /// The Library's Live row: a session that can be resumed shows its line and a Resume button. Side by side by default,
+    /// the button sits under the line at accessibility sizes, so the title keeps the whole row's width (#3723 item 1).
+    func testTheLiveRowsResumeButtonSitsUnderItsLineAtAccessibilitySizes() async throws {
+        let now = Date()
+        let ended = LiveSessionFileWorker.Summary(
+            id: "live-ax5", title: "Quarterly planning review with the whole product group", kind: .meeting, isQuick: false,
+            isRunning: false, startedAt: now.addingTimeInterval(-3_600), endedAt: now.addingTimeInterval(-60), marginCount: 2,
+            resumableUntil: now.addingTimeInterval(600))
+        for (size, stacked) in [(DynamicTypeSize.large, false), (.accessibility5, true)] {
+            let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+            let mounted = try mount(AnyView(LiveSessionLiveRows(board: LiveSessionBoard(rows: [ended])).environmentObject(model)),
+                                    textSize: size)
+            defer { mounted.close() }
+            let line = try await mounted.waitForNode("the Live row's line") { $0.identifier == "library.liveRow.live-ax5" }
+            let resume = try await mounted.waitForNode("the Resume button") { $0.identifier == "library.liveRow.resume.live-ax5" }
+            if stacked {
+                XCTAssertGreaterThanOrEqual(resume.frame.minY, line.frame.maxY - 1, "\(size): Resume is beside the line, not under it")
+            } else {
+                XCTAssertGreaterThanOrEqual(resume.frame.minX, line.frame.maxX - 1, "\(size): Resume is not beside the line")
+            }
+        }
+    }
+
     // MARK: - #3724 the Supertonic download notice keeps its buttons on screen
 
     /// At accessibility5 the notice's words are taller than the screen. Squeezed into one stack, SwiftUI would cut the
