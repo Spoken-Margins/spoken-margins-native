@@ -26,11 +26,13 @@ public struct PinnedMarginCard: Equatable, Sendable {
 
         /// The name as a button says it: the whole name when it is short, else its first word when that is short, else
         /// nil (the button then says "it", as it does for a sender with no name). "Cole" stays "Cole"; "Alexandria
-        /// Bartholomew-Featherstonehaugh the Third" becomes "Alexandria".
+        /// Bartholomew-Featherstonehaugh the Third" becomes "Alexandria". A first word that is only a title ("Dr.") or
+        /// an article ("The") is no name, so those get "it" too.
         var buttonName: String? {
             guard let name else { return nil }
             if name.count <= Self.buttonNameLimit { return name }
-            guard let first = name.split(whereSeparator: \.isWhitespace).first, first.count <= Self.buttonNameLimit else { return nil }
+            guard let first = name.split(whereSeparator: \.isWhitespace).first, first.count <= Self.buttonNameLimit,
+                  !first.hasSuffix("."), !["the", "a", "an"].contains(first.lowercased()) else { return nil }
             return String(first)
         }
 

@@ -231,6 +231,9 @@ final class PinnedMarginCardTests: XCTestCase {
             ("Maria-Alejandra", "it"),                           // one 15-character word: nothing short to say
             ("Featherstonehaughwhatever", "it"),
             ("Zoë Müller-Lindström", "Zoë"),                     // accents count as one character each
+            ("Dr. Alexandria Smith", "it"),                      // a title is not a name
+            ("The Johnson Family", "it"),                        // nor is an article
+            ("Prof. Ada Lovelace", "it"),
             ("Åsa", "Åsa"),
             ("👩🏽‍🚀 Ada Lovelace-Byron", "👩🏽‍🚀"),                  // one emoji is one character, not seven scalars
         ]
