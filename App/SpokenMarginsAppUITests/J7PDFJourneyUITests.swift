@@ -111,7 +111,9 @@ final class J7PDFJourneyUITests: XCTestCase {
             tap("marginDetail.playMoment.button")
             XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8), "Play this moment did not open Now Playing")
             // A written Margin's moment keeps the Timeline pane the Margin was opened from (a spoken one switches to
-            // Now), and the sentence highlight lives on Now, so show Now before reading it (#3918).
+            // Now), and the sentence highlight lives on Now, so show Now before reading it (#3918). Now Playing sits
+            // behind the Margin's sheet, so wait for the sheet to go before tapping.
+            waitUntil("The Margin's screen did not close after Go to this moment") { !self.element("marginDetail.screen").exists }
             tap("playback.now.button")
             XCTAssertTrue(element("playback.now.passage").waitForExistence(timeout: 5), "Now did not show the PDF's passage")
             // One wait for both, so a PDF already playing on from the Margin's sentence can't move the id between two
