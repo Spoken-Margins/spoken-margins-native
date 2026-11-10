@@ -55,7 +55,7 @@ enum WrittenMarginReadings {
         #endif
     }
 
-    /// How long "Skip to the Margins" holds off for its readings before it starts anyway. The review's own lead-in
+    /// How long "Hear only the Margins" holds off for its readings before it starts anyway. The review's own lead-in
     /// gives a reading 20 more seconds, so a miss takes about half a minute of waiting in all.
     static let reviewHold: TimeInterval = 10
 
@@ -215,7 +215,7 @@ enum WrittenMarginReadings {
               pending: model.pendingImportedCommentary?.id, playing: model.playingImportedCommentary?.id)
     }
 
-    /// "Skip to the Margins" with a written Margin whose reading isn't ready holds off, for `reviewHold` seconds at
+    /// "Hear only the Margins" with a written Margin whose reading isn't ready holds off, for `reviewHold` seconds at
     /// most, then starts, unless the listener did anything else meanwhile (checked every quarter second against where
     /// they were when they asked); a reading still missing then gets the ordinary warning. True when this took the call
     /// (the review starts later, from here).
