@@ -202,7 +202,7 @@ extension View {
 /// it keep one size, and a mark any larger would overrun them (#3726).
 struct StartPendingStopMark: View {
     private let baseSize: CGFloat
-    @ScaledMetric(relativeTo: .caption) private var scaledSize: CGFloat
+    @ScaledMetric private var scaledSize: CGFloat
 
     init(baseSize: CGFloat) {
         self.baseSize = baseSize
