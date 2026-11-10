@@ -412,6 +412,8 @@ final class ScreenTourTests: XCTestCase {
             "-libraryOfflineStateFilter", "all", "-librarySort", "recently_added",
             "-libraryUnfinishedDefaultApplied", "YES"]
         app.launchEnvironment["SPOKEN_MARGINS_UI_TESTING"] = "1"
+        // The device's appearance alone left the dark tour's tabs light (#4017); the app is asked as well.
+        app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_APPEARANCE"] = appearance
         if app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_KEEP_LIBRARY"] == nil {
             for (key, value) in loopEnvironment { app.launchEnvironment[key] = value }
         }
