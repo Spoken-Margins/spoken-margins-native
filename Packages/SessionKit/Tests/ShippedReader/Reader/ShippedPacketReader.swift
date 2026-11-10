@@ -16,7 +16,7 @@ public enum ShippedPacketReader {
     }
 
     /// Reads a packet and imports it into an empty in-memory Library, as the shipped build does.
-    /// Returns the package-scoped IDs of the Margins the shipped build saved, read back from that Library's
+    /// Returns the package-scoped IDs (sorted) of the Margins the shipped build saved, read back from that Library's
     /// repository rather than from the parsed archive, so a Margin the importer drops on the way in is missing here.
     @discardableResult
     public static func importPacket(at packetURL: URL) throws -> [String] {
@@ -31,7 +31,8 @@ public enum ShippedPacketReader {
             guard case .imported(let layerId, _) = disposition else {
                 throw Rejected(description: "not imported: \(disposition)")
             }
-            return try repository.loadImportedCommentaryInterjections(layerId: layerId).map(\.packageScopedId)
+            // Sorted: the repository orders ties on createdAt by a random local id, so its own order says nothing.
+            return try repository.loadImportedCommentaryInterjections(layerId: layerId).map(\.packageScopedId).sorted()
         } catch {
             throw Rejected(description: "\(build) could not import \(packetURL.lastPathComponent): \(error)")
         }

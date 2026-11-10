@@ -124,6 +124,7 @@ final class CantPlayListeningTests: XCTestCase {
     /// The conductor tests that name `/nonexistent/voice.m4a` only ever take the
     /// "voice unavailable" branch. The two tests below use a real file for every beat, so the real `AVAudioPlayer`
     /// path runs for a can't-play sequence (#3712). The voice is muted; the source closures record any touch.
+    @MainActor
     private struct RealVoices {
         let directory: URL
         let urls: [String: URL]
