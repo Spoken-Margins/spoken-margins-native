@@ -2127,6 +2127,26 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.dispatchGate2CompactCommand(.beginInterjection)
         XCTAssertTrue(model.recordingNavigationIsLocked)
         XCTAssertEqual(recorder.beginCount, 1, "the microphone was asked to start once")
+
+        // "Only": every other way off the recording is refused, and changes neither the screen, the session nor the
+        // recording (#3718). A tab switch is the same guard in `AppNavigationState.select(recordingIsLocked:)`.
+        let screenWhileRecording = model.screen
+        model.openHome()
+        model.openLibrary()
+        model.openMargins()
+        model.openSettings()
+        model.openItemFromTap(id: "item-pill")
+        model.endSession()
+        XCTAssertTrue(model.recordingNavigationIsLocked, "no other exit ended the recording")
+        XCTAssertTrue(model.snapshot.isRecording)
+        XCTAssertEqual(model.screen, screenWhileRecording, "no other exit moved the screen")
+        XCTAssertEqual(model.snapshot.sessionId, sessionID, "no other exit ended the session")
+        XCTAssertEqual(model.snapshot.targetId, targetID)
+        XCTAssertNotNil(model.diagnostics["recordingNavigationGuard"], "the guard is what refused them")
+        XCTAssertEqual(recorder.finishCount, 0, "no other exit saved the recording")
+        XCTAssertEqual(recorder.cancelCount, 0, "no other exit discarded the recording")
+        XCTAssertEqual(recorder.beginCount, 1)
+
         model.dispatchGate2CompactCommand(.finishInterjection)
         XCTAssertEqual(recorder.finishCount, 1)
         XCTAssertEqual(recorder.cancelCount, 0)
