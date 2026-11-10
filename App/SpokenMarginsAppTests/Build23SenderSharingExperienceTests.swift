@@ -85,6 +85,27 @@ final class Build23SenderSharingExperienceTests: XCTestCase {
         ))
     }
 
+    /// #3896 audit: the top "Back to selection" on the preview step was drawn in every preview state, so a listener
+    /// could go back while the preview was still building and a failed build then pushed them off the selection
+    /// screen. It is drawn only for a ready, verified preview, as the old in-actions button was.
+    func testTheTopBackToSelectionOnThePreviewStepNeedsAReadyVerifiedPreview() {
+        func id(_ stage: Build23SharingStage, _ state: Build23SharingPreviewState, verified: Bool) -> String? {
+            Build23SenderPresentation.topBackToSelectionIdentifier(stage: stage, previewState: state, hasVerifiedPreview: verified)
+        }
+        XCTAssertEqual(id(.recipientPreview, .ready, verified: true), "build23.sender.preview.edit")
+        for state in [Build23SharingPreviewState.building, .stale, .notBuilt, .failed("x"), .ready] {
+            XCTAssertNil(id(.recipientPreview, state, verified: false), "\(state) without a verified preview")
+        }
+        for state in [Build23SharingPreviewState.building, .stale, .notBuilt, .failed("x")] {
+            XCTAssertNil(id(.recipientPreview, state, verified: true), "\(state)")
+        }
+        for state in [Build23SharingPreviewState.building, .ready, .failed("x")] {
+            XCTAssertEqual(id(.review, state, verified: false), "build23.sender.review.back")
+        }
+        XCTAssertNil(id(.select, .ready, verified: true))
+        XCTAssertNil(id(.share, .ready, verified: true))
+    }
+
     func testPresentationReturnsExactlyOneExpandedEditorForTheSelectedMargin() {
         let coordinator = makeCoordinator(marginCount: 2)
         coordinator.send(.begin)

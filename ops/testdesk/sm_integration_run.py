@@ -52,6 +52,7 @@ RERUNS = 2
 REPORT_LOOKBACK = dt.timedelta(days=7)
 KEEP_EVIDENCE = 20
 FAIL_LABELS = 'ready,priority,bug,regression'
+TOUR_LABELS = 'ready,bug,area: groundwork'  # a failing tour test is tracked, not a blocker (#3822)
 CLAUDE = Path(os.environ.get('SM_CLAUDE_CLI', Path.home() / '.local' / 'bin' / 'claude'))
 KEYCHAIN_SERVICE = 'claude-code-oauth'
 CLAUDE_MODEL = 'opus'
@@ -1005,7 +1006,7 @@ class Ops:
         return [json.loads(line) for line in out.splitlines() if line.strip()]
 
     def file_failures(self, groups: list[dict], sha: str, report: str, evidence: Path,
-                      cost: Optional[float]) -> list[int]:
+                      cost: Optional[float], labels: str = FAIL_LABELS) -> list[int]:
         filed = []
         for i, group in enumerate(groups):
             duplicate = None
@@ -1021,7 +1022,7 @@ class Ops:
                 filed.append(duplicate)
             else:
                 res = self.must(['gh', 'issue', 'create', '-R', REPO, '--title', group['title'][:120],
-                                 '--body-file', str(path), '--label', FAIL_LABELS])
+                                 '--body-file', str(path), '--label', labels])
                 match = re.search(r'/issues/(\d+)', res.stdout or '')
                 if match:
                     filed.append(int(match.group(1)))
@@ -1244,7 +1245,37 @@ def run_tour(ops: Ops, wt: Path, evidence: Path, fds: tuple) -> dict:
                                                             else f"the tour's verdict was {done['verdict']}")
     status = 'failed' if done['verdict'] == 'FAIL' else 'inconclusive'
     return {'status': status, 'detail': why + (f" (failed: {', '.join(done['failed'])})" if done['failed'] else ''),
-            'screens': screens}
+            'screens': screens, 'failed': list(done['failed']) if status == 'failed' else []}
+
+
+def tour_groups(failed: list[str]) -> list[dict]:
+    """One issue group per failing screen tour test (#3822), in the shape `file_failures` takes. The tour is never
+    diagnosed: its text says so, and the test's own name is what a repeat run is matched on."""
+    return [{'tests': [t], 'title': f'Screen tour test {t.rsplit("/", 1)[-1]} fails on {BASE_BRANCH}',
+             'steps': f'Run `--plan tour --only-testing {t}` at the tip below.',
+             'expected': 'The tour reaches each screen and exports its screenshot.',
+             'actual': 'The tour test fails; see xcode-tests.log in the tour folder of the evidence the integration report '
+                       'below names (a hosted run keeps it as the hosted-integration-<sha> artifact for 14 days). The tour '
+                       'is not verdict input, so that report still said PASS.',
+             'root_cause': 'Not diagnosed: the tour is not read by Claude. Read the test and its screenshots.',
+             'suspect': 'unknown'}
+            for t in failed]
+
+
+def file_tour_failures(ops: Ops, sha: str, report: str, evidence: Path, tour: Optional[dict]) -> list[int]:
+    """A failing screen tour test gets one tracked issue (#3822), or a comment on the open one from an earlier run,
+    so a broken tour cannot sit in every report as one unread line. The verdict is untouched and nothing here raises:
+    the report is already out."""
+    failed = (tour or {}).get('failed') or []
+    if not failed:
+        return []
+    try:
+        filed = ops.file_failures(tour_groups(failed), sha, report, evidence, None, labels=TOUR_LABELS)
+        ops.log(f'screen tour failures filed or updated: {filed}')
+        return filed
+    except Exception as error:  # noqa: BLE001
+        ops.log('screen tour issue failed: ' + str(error)[:300])
+        return []
 
 
 def tour_line(tour: dict) -> str:
@@ -1639,6 +1670,7 @@ def tick(ops: Ops, dry_run: bool = False) -> str:
                 save_state(path, state)
                 say(f'filed or updated: {filed}')
             elif result['verdict'] == 'PASS':
+                file_tour_failures(ops, sha, report, evidence, result.get('tour'))
                 drop_bundles(evidence)
             return result['verdict']
         finally:
@@ -1799,8 +1831,8 @@ def defer_to_hosted(ops: Ops, state: dict, path: Path, comments: list[dict], rep
 def hosted_run(ops: Ops, sha: str, *, post: bool = True) -> str:
     """Test this checkout on a GitHub-hosted Mac and post #184's report (hosted-integration.yml, #1389).
 
-    The same tests and report as a Mac tick, with less around it: no culprit search, revert, issues or Claude
-    (a PR opened with the job's token starts no workflows, and there is no Claude token here; the Mac handles a
+    The same tests and report as a Mac tick, with less around it: no culprit search, revert, failure issues or Claude
+    (a trunk-tip run does file one issue per failing screen tour test, #3822; a PR opened with the job's token starts no workflows, and there is no Claude token here; the Mac handles a
     confirmed FAIL, defer_to_hosted), no state, and no .xcresult bundles in the evidence the workflow uploads. No scripted journeys: a tip gets
     `--plan app` and the screen tour, and the journeys run at a phone build or an upload (`journeys_run`, #3669).
     The tip's simulator app is zipped for the workflow's `sim-app-<sha>` artifact instead of kept on disk.
@@ -1843,6 +1875,8 @@ def hosted_run(ops: Ops, sha: str, *, post: bool = True) -> str:
         ops.log('--no-report: the report is not posted to #184:\n' + body)
         report = f'not posted ({evidence / "report.md"})'
     ops.log(f"{result['verdict']} {sha[:7]}: {report}")
+    if post and result['verdict'] == 'PASS':  # the trunk's tip only, as with the report and the flakes below
+        file_tour_failures(ops, sha, report, evidence, result.get('tour'))
     if post and result.get('flaky') and os.environ.get('GITHUB_RUN_ID'):  # the trunk's tip only, as with the report
         for line in record_flakes(ops, result['flaky'], sha, os.environ['GITHUB_RUN_ID'], result.get('retry_failures')):
             ops.log('opened ' + line)

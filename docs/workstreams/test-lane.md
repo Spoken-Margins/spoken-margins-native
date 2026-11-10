@@ -143,11 +143,15 @@ The Test Desk (or the runner) replies on the PR:
 Lane report <request-id> — PASS | FAIL | INCONCLUSIVE
 commit <sha> · tier T4 · simulator <model, iOS version> · <duration>
 ran: J1 (pass), J7 (fail at step 1)
+record: J1 · build 3997dbb · steps 9/9 · bugs none
+record: J7 · build 3997dbb · steps 0/1 · bugs #3931
 J7 step 1 — expected: "Downloaded on…" stamp not read. observed: transcript shows it in paragraph 1 of page 2. evidence: artifacts/lane/<id>/j7-step1.png
 crashes: none | 1 isolated SpringBoard crash (noted, continued)
 not verified: audible content (owner), Lock Screen (owner)
 tokens: J1 41k (9 screenshots), J7 38k (12) · desk 95k at the end
 ```
+
+The `record:` lines (#3903) are the Test Desk's run record, one per journey or one-off scenario the desk ran, in exactly the form `record: <J<n> or scenario> · build <sha7 of the installed build> · steps <passed>/<total> · bugs <#issue, #issue or none>`; `bugs` lists the issues the run filed or found already filed. They make agent-driven runs countable: `scripts/journey_runs.py` reads the last 30 days of desk reports and prints runs, steps passed, bugs found and the reports that have no record line. A report from the runner (`pr<N>-r<run>`, `integration-`, `journeys-` ids) is scripted and carries none. Without a `record:` line a desk's work leaves no count, so the desk writes them before it labels `lane:done`.
 
 The `tokens:` line gives each journey's helper `subagent_tokens` (from the Agent tool's usage line) and its screenshot count, and the lead desk's context when it posts, so the cost per journey can be compared across desks.
 
@@ -183,7 +187,7 @@ When main's tip has no integration report on #184, run one job on that tip, in t
    after a PASS. The scripted journeys in TestPlans/scripted-journeys.json (gating, then probation) are not
    run on a tip (#3669); `sm_integration_run.py --journeys --sha <sha>` runs them at a phone build or upload. The tour is never verdict input: its report line (`screen tour (not verdict input)`) names the
    screenshots, one per screen in light and dark, exported to `tour/screens/` of the run's evidence folder (the
-   hosted run's `hosted-integration-<sha>` artifact keeps them 14 days); a failed or empty tour is only that line. The scripts and the tour launch with --ui-testing,
+   hosted run's `hosted-integration-<sha>` artifact keeps them 14 days); an empty tour is only that line, and a failing tour test also gets one `ready` issue (or a comment on the open one) from the run, so it is tracked and never sits unread (#3822). The scripts and the tour launch with --ui-testing,
    which resets the app's library, so they all run before step 3 builds the journey library. A
    probation failure goes in the report but doesn't make it FAIL. Move a script to gating
    after two passes, and back to probation after two bad runs, in a PR into main
