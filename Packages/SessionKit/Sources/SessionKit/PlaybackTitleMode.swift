@@ -22,4 +22,16 @@ public enum PlaybackTitleMode: Equatable, Sendable {
         let name = sourceName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return name.isEmpty ? title : name
     }
+
+    /// The names Voice Control answers to on the title button. The button's accessibility label stays the full title
+    /// (the journeys compare it), so in compact mode the drawn words must be added as input labels, or "Tap The Show"
+    /// matches nothing (the #3849 class).
+    public func voiceControlNames(title: String, sourceName: String?) -> [String] {
+        let drawn = self == .compact ? Self.compactLine(title: title, sourceName: sourceName) : title
+        var names: [String] = []
+        for name in [drawn, title] where !name.isEmpty && !names.contains(name) {
+            names.append(name)
+        }
+        return names
+    }
 }

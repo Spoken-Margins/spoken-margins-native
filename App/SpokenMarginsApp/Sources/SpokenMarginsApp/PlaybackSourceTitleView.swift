@@ -36,6 +36,7 @@ struct PlaybackSourceTitleView: View {
             .contentShape(Rectangle())
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityHint("Opens details and listening-session history")
+            .accessibilityInputLabels(mode.voiceControlNames(title: title, sourceName: sourceName).map { Text($0) })
             .accessibilityIdentifier("playback.itemTitle.button")
 
             PlaybackSleepTagView(state: sleepTimerState, remainingSeconds: sleepTimerRemainingSeconds)
