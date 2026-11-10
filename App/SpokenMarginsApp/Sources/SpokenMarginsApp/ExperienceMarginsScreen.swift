@@ -95,7 +95,7 @@ struct ExperienceMarginsScreen: View {
     private var scopeRow: some View {
         MarginsScopeRow(
             title: scopeTitle,
-            countText: "\(model.marginCollectionQuery.filter == .shared ? model.visibleSharedMarginRows.count : filteredRows.count) Margins",
+            countText: MarginCountText.count(model.marginCollectionQuery.filter == .shared ? model.visibleSharedMarginRows.count : filteredRows.count),
             selection: scopeTag,
             collections: collections,
             items: model.marginScopeItems
@@ -201,7 +201,7 @@ struct ExperienceMarginsScreen: View {
                     .foregroundStyle(AppColors.text)
                     .multilineTextAlignment(.leading)
                     .fixedSize(horizontal: false, vertical: true)
-                Text(group.isNewest ? "Newest · \(group.rows.count) Margins" : "\(group.rows.count) Margins")
+                Text(MarginCountText.itemLine(group.rows.count, isNewest: group.isNewest))
                     .font(.caption)
                     .foregroundStyle(AppColors.secondaryText)
             }
@@ -210,7 +210,7 @@ struct ExperienceMarginsScreen: View {
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(group.isNewest ? "Newest. " : "")\(group.itemTitle), \(group.rows.count) Margins")
+        .accessibilityLabel("\(group.isNewest ? "Newest. " : "")\(group.itemTitle), \(MarginCountText.count(group.rows.count))")
         .accessibilityHint("Opens it.")
         .accessibilityAddTraits([.isButton, .isHeader])
         .accessibilityIdentifier("margins.openItem.\(group.itemID)")
