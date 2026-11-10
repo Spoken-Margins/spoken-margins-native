@@ -27,6 +27,9 @@ struct ExperienceSourcesScreen: View {
     @State private var openFriend: FollowingFriends.Friend?
 
     var body: some View {
+        #if DEBUG
+        let _ = ScreenRedrawProbe.record("following")
+        #endif
         NavigationStack(path: $path) {
             let list = model.followingShowListCache
             let friends = model.followingFriends

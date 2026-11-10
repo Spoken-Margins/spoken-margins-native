@@ -40,6 +40,9 @@ struct SettingsScreen: View {
     }
 
     var body: some View {
+        #if DEBUG
+        let _ = ScreenRedrawProbe.record("settings")
+        #endif
         NavigationStack {
             Form {
                 Section("Voice") {

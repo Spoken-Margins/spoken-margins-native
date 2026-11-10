@@ -27,6 +27,9 @@ struct ExperienceMarginsScreen: View {
     @State private var collections: [ItemCollection] = []
 
     var body: some View {
+        #if DEBUG
+        let _ = ScreenRedrawProbe.record("margins")
+        #endif
         NavigationStack {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
