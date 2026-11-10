@@ -163,8 +163,7 @@ struct MiniPlayerBar: View {
                             // A start is pending and a tap cancels it: a stop mark inside the spinner says so (#2098).
                             ZStack {
                                 ProgressView().tint(AppColors.onEvergreen)
-                                Image(systemName: "stop.fill")
-                                    .font(.system(size: 9, weight: .bold))
+                                StartPendingStopMark(baseSize: 9)
                             }
                         } else {
                             Image(systemName: model.activePlaybackIsPlaying ? "pause.fill" : "play.fill")
