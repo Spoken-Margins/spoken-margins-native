@@ -114,8 +114,7 @@ struct ExperienceLibraryScreen: View {
                 .environmentObject(model)
         }
         .sheet(isPresented: $isPlayQueuePresented) {
-            ExperiencePlayQueueScreen()
-                .environmentObject(model)
+            ExperiencePlayQueueScreen(model: model)
         }
         .onAppear { model.loadPlayQueue() }
         .fullScreenCover(item: $openedNote) { opening in

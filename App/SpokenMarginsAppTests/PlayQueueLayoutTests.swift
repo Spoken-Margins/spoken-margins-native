@@ -1,3 +1,4 @@
+import Combine
 import SessionKitPersistence
 import SwiftUI
 import UIKit
@@ -54,7 +55,7 @@ final class PlayQueueLayoutTests: XCTestCase {
         XCTAssertEqual(rows.count, 3)
 
         for size in Self.sizes {
-            let mounted = try mount(AnyView(ExperiencePlayQueueScreen().environmentObject(model)), size: size)
+            let mounted = try mount(AnyView(ExperiencePlayQueueScreen(model: model)), size: size)
             defer { mounted.close() }
             let list = try await settledList(in: mounted) { $0.totalItems >= 1 }
             attachScreenshot(of: mounted, name: "play-queue-sheet-\(size)")
@@ -97,7 +98,7 @@ final class PlayQueueLayoutTests: XCTestCase {
     func testTheQueueSheetIsNotRedrawnByModelPublishesThatLeaveTheQueueAsItWas() async throws {
         let model = try makeModel(itemCount: 3)
         for id in Self.itemIds(3) { model.queueAppend(itemId: id) }
-        let mounted = try mount(AnyView(ExperiencePlayQueueScreen().environmentObject(model)), size: .large)
+        let mounted = try mount(AnyView(ExperiencePlayQueueScreen(model: model)), size: .large)
         defer { mounted.close() }
         let settled = try await settledList(in: mounted) { $0.totalItems >= 3 }
         // The list's shape settles before the sheet stops drawing: the first rows' own async work (#3999: this failed on
@@ -110,6 +111,9 @@ final class PlayQueueLayoutTests: XCTestCase {
 
         for _ in 0..<20 {
             model.objectWillChange.send()
+            // A real change to a published property the screen follows, leaving every row as it was (#4033): the rows
+            // feed must absorb it, not pass it on to the sheet.
+            model.libraryItems = model.libraryItems
             try await Task.sleep(for: .milliseconds(20))
         }
         _ = try await settledList(in: mounted) { _ in true }
@@ -125,6 +129,29 @@ final class PlayQueueLayoutTests: XCTestCase {
         let afterRemoving = try await settledList(in: mounted) { $0.totalItems < settled.totalItems }
         XCTAssertGreaterThan(PlayQueueSheetProbe.bodyRuns, runsBefore, "Removing a queued item should redraw the sheet")
         XCTAssertEqual(afterRemoving.totalItems, settled.totalItems - 1, "The removed item's row should be gone")
+    }
+
+    /// #4033: the sheet's rows are published only when they differ, so a screen watching them is not invalidated by
+    /// the model's other publishes at all, whatever SwiftUI does with the sheet's `==`.
+    func testTheRowsFeedPublishesOnlyWhenTheRowsChange() throws {
+        let model = try makeModel(itemCount: 3)
+        for id in Self.itemIds(3) { model.queueAppend(itemId: id) }
+        let feed = PlayQueueRowsFeed(model: model)
+        XCTAssertEqual(feed.rows.map(\.id), Self.itemIds(3))
+
+        var publishes = 0
+        let watch = feed.objectWillChange.sink { publishes += 1 }
+        defer { watch.cancel() }
+        for _ in 0..<20 {
+            model.objectWillChange.send()
+            model.libraryItems = model.libraryItems
+            PlayQueueController.update(model) { _ in } // the queue's ids set again to what they were
+        }
+        XCTAssertEqual(publishes, 0, "Publishes that leave every row as it was reached the screen \(publishes) times")
+
+        model.removeFromQueue(itemId: Self.itemIds(3)[0])
+        XCTAssertEqual(publishes, 1, "Removing a queued item should publish the new rows once")
+        XCTAssertEqual(feed.rows.map(\.id), Array(Self.itemIds(3).dropFirst()))
     }
 
     // MARK: - Done when 2: the place in the list holds
