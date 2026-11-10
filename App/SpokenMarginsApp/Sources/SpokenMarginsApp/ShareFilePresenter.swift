@@ -18,7 +18,7 @@ enum ShareFilePresenter {
 
     /// The sheet itself, apart from presenting it, so a test can check what it carries and how it is anchored.
     static func makeController(fileURL: URL, anchoredIn view: UIView) -> UIActivityViewController {
-        let controller = UIActivityViewController(activityItems: [fileURL], applicationActivities: nil)
+        let controller = UIActivityViewController(activityItems: activityItems(for: fileURL), applicationActivities: nil)
         // On iPad the sheet is a popover and needs an anchor; a centred one with no arrow reads like the phone's sheet.
         if let popover = controller.popoverPresentationController {
             popover.sourceView = view
@@ -27,6 +27,9 @@ enum ShareFilePresenter {
         }
         return controller
     }
+
+    /// What the sheet carries: the file. A test reads this; `UIActivityViewController` doesn't give its items back.
+    static func activityItems(for fileURL: URL) -> [Any] { [fileURL] }
 
     /// The view controller a new sheet should go over: the front-most one, following presented sheets.
     static func topViewController() -> UIViewController? {
