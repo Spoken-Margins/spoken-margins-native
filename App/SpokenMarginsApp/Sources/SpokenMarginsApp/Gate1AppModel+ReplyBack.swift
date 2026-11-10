@@ -18,8 +18,9 @@ extension Gate1AppModel {
         )
     }
 
-    /// Opens the Share sheet as "Send replies to <friend>": the replies are included, the listener's other new
-    /// Margins are listed and left out, and nothing the friend sent is in it.
+    /// Opens the Share sheet as "Send replies to <friend>", on its review step: the replies are included (with no
+    /// linked reply, the Margins the ordinary Share would pick), the listener's other new Margins are listed and left
+    /// out, and nothing the friend sent is in it.
     func openReplyBackExport(itemID: String) {
         guard !rejectNavigationOrSessionMutationWhileRecording("open_reply_back") else { return }
         guard let offer = replyBackOffer(itemID: itemID) else {
@@ -27,8 +28,18 @@ extension Gate1AppModel {
         }
         do {
             selectedItem = try loadItemDetail(id: itemID, store: requireStore())
-            prepareShareInterjections(candidates: offer.candidates, replyBack: offer)
-            if isSharingInterjectionsPresented { sharingState.draftsPreparedForExport = true }
+            presentReplyBackShare(offer)
         } catch { reportFailure(error, context: "Open reply export failed") }
+    }
+
+    /// Prepares the sheet for the offer and opens it. Like every Share from the player (#1507), the reply sheet starts on
+    /// its review: with the answers picked the listener meets a receipt and the way to send; with nothing picked `begin`
+    /// still starts on the choice (#3792). "Back to selection" is one tap away.
+    func presentReplyBackShare(_ offer: ReplyBackOffer) {
+        prepareShareInterjections(candidates: offer.candidates, replyBack: offer)
+        if isSharingInterjectionsPresented {
+            sharingState.draftsPreparedForExport = true
+            sharingState.entry = .reviewDefaults
+        }
     }
 }

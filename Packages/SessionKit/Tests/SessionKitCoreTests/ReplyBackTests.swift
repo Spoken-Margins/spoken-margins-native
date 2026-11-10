@@ -79,11 +79,40 @@ final class ReplyBackTests: XCTestCase {
         }
     }
 
-    func testOnlyNewMarginsWithNoReplyAreStillOfferedWithNothingSelected() throws {
-        let offer = try XCTUnwrap(ReplyBackOffer.make(localMargins: [own("extra", madeAt: 200)], layers: [layer("ana")]))
-        XCTAssertEqual(offer.title, "Send replies to Ana")
-        XCTAssertEqual(ids(offer.candidates), ["extra"])
-        XCTAssertFalse(offer.isPreselected(offer.candidates[0]))
+    func testWithNoLinkedReplyTheOrdinarySharesRuleDecidesWhatStartsPicked() throws {
+        // #3792: the sheet never opens with nothing chosen. Every candidate starts included, as the ordinary Share
+        // does, unless some are starred for sharing: then only those.
+        let layers = [layer("ana")]
+        var starred = own("starred", madeAt: 210)
+        starred.isStarredForSharing = true
+        var unstarred = own("plain", madeAt: 200)
+        unstarred.isStarredForSharing = false
+
+        let single = try XCTUnwrap(ReplyBackOffer.make(localMargins: [own("extra", madeAt: 200)], layers: layers))
+        XCTAssertEqual(single.title, "Send replies to Ana")
+        XCTAssertEqual(ids(single.candidates), ["extra"])
+        XCTAssertEqual(single.candidates.map(single.isPreselected), [true])
+
+        let several = try XCTUnwrap(ReplyBackOffer.make(localMargins: [own("a", madeAt: 200), own("b", madeAt: 201)], layers: layers))
+        XCTAssertEqual(several.candidates.map(several.isPreselected), [true, true])
+
+        let mixed = try XCTUnwrap(ReplyBackOffer.make(localMargins: [unstarred, starred], layers: layers))
+        XCTAssertEqual(ids(mixed.candidates), ["plain", "starred"])
+        XCTAssertEqual(mixed.candidates.map(mixed.isPreselected), [false, true], "starred Margins only, when any is starred")
+
+        let before = own("before-import", madeAt: 10)
+        let onlyOld = ReplyBackOffer.make(localMargins: [before, starred], layers: layers)
+        XCTAssertEqual(ids(try XCTUnwrap(onlyOld).candidates), ["starred"], "a Margin made before the friend's packet is never on the sheet")
+    }
+
+    func testLinkedRepliesStayTheOnlyOnesPickedEvenWhenAnotherMarginIsStarred() throws {
+        // #3221, kept: with a linked reply the others stay unpicked, whatever their stars say.
+        var starredOther = own("other", madeAt: 210)
+        starredOther.isStarredForSharing = true
+        let offer = try XCTUnwrap(ReplyBackOffer.make(
+            localMargins: [own("reply", madeAt: 200, replyingTo: "ana"), starredOther], layers: [layer("ana")]
+        ))
+        XCTAssertEqual(offer.candidates.map(offer.isPreselected), [true, false])
     }
 
     func testNothingTheFriendSentIsInTheOffer() throws {

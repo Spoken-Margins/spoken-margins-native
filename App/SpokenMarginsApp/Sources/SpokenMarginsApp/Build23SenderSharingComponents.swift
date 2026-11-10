@@ -31,6 +31,8 @@ enum Build23SenderPresentation {
            let selected = included.first(where: { $0.id == selectedMarginID }) {
             return [selected]
         }
+        // The reply review is a receipt: no editor until a row is tapped, instead of the first Margin's (#3792).
+        if snapshot.isReplyBack { return [] }
         return included.first.map { [$0] } ?? []
     }
 
@@ -448,9 +450,9 @@ struct Build23ReviewSelectionRow: View {
         Button(action: onSelect) {
             ExperienceSurface(tint: isSelected ? AppColors.softGreen : nil) {
                 VStack(alignment: .leading, spacing: 6) {
+                    // The words carry the open or closed state, not an icon: the row's one checkmark means "Included" and
+                    // nothing else (#3792).
                     HStack(spacing: 6) {
-                        Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                            .accessibilityHidden(true)
                         Text(isSelected ? "Editor open" : "Open editor")
                             .font(.caption.weight(.semibold))
                         Spacer()

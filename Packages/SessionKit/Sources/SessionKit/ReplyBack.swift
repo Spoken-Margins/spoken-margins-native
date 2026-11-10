@@ -16,7 +16,14 @@ public struct ReplyBackOffer: Equatable, Sendable {
     public var title: String { "Send replies to \(friendName)" }
     /// Every Margin the share sheet lists, in the order they were made.
     public var candidates: [Interjection] { (replies + others).sorted(by: ReplyBackOffer.madeBefore) }
-    public func isPreselected(_ interjection: Interjection) -> Bool { replyIds.contains(interjection.id) }
+    /// Whether the sheet starts with this Margin included. With linked replies, those and only those (#3221). With none,
+    /// the ordinary Share's own rule: the Margins starred for sharing if any candidate is starred, otherwise every
+    /// candidate, so the sheet never opens with nothing picked (#3792, Design 2026-11-10, piece 2).
+    public func isPreselected(_ interjection: Interjection) -> Bool {
+        if !replies.isEmpty { return replyIds.contains(interjection.id) }
+        let anyStarred = others.contains { $0.isStarredForSharing == true }
+        return !anyStarred || interjection.isStarredForSharing == true
+    }
 
     private var replyIds: Set<String> { Set(replies.map(\.id)) }
 

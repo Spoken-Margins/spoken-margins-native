@@ -69,7 +69,7 @@
     },
     {
       "test": "SpokenMarginsAppUITests/J12SharingLoopJourneyUITests",
-      "journey": "J12 steps 2-5: record two Margins, send, a friend's Margin on the Margins tab and heard first (#3222)"
+      "journey": "J12 steps 2-6: record two Margins, send, a friend's Margin on the Margins tab and heard first (#3222); an answer opens the reply sheet on its receipt (#3792)"
     },
     {
       "test": "SpokenMarginsAppUITests/Gate1FlowUITests/testAddSourcePresentsEveryTypedIntakeRoute",

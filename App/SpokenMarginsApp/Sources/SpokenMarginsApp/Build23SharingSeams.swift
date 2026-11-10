@@ -131,6 +131,8 @@ struct Build23SharingSnapshot: Equatable {
     let preparationFailures: Int
     let autoCleanSelectedEnabled: Bool
     let needsAutoCleanDecision: Bool
+    /// The sheet was opened as "Send replies to <friend>" (#3792): its review is a receipt, not an editor.
+    let isReplyBack: Bool
     let previewState: Build23SharingPreviewState
     let verifiedPreview: Build23VerifiedRecipientPreview?
     let errorMessage: String?
@@ -139,6 +141,15 @@ struct Build23SharingSnapshot: Equatable {
 }
 
 extension Build23SharingSnapshot {
+    /// Whether the first-run cleanup question shows when the sheet opens (#3792): only when it can be true.
+    var asksAutoCleanQuestion: Bool {
+        ShareAutoCleanQuestion.asks(
+            hasRecordedDecision: !needsAutoCleanDecision,
+            isReplyBack: isReplyBack,
+            anyIncludedCanBeCleaned: margins.contains(where: \.canPrepareCleanup)
+        )
+    }
+
     /// What the packet will hold. The Review and Share buttons count this, not the include flags.
     var selectionSummary: SharedMarginSelectionSummary {
         SharedMarginSelectionSummary(margins, isIncluded: { $0.isIncluded }, text: { $0.reviewedText })
@@ -390,6 +401,7 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
             preparationFailures: state.bulkPreparationFailureCount,
             autoCleanSelectedEnabled: state.autoCleanSelectedEnabled,
             needsAutoCleanDecision: state.needsAutoCleanDecision,
+            isReplyBack: state.replyBackTitle != nil,
             previewState: previewState,
             verifiedPreview: verifiedPreview,
             errorMessage: state.errorMessage,
@@ -486,7 +498,9 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
             } else {
                 model.prepareShareInterjections()
             }
-            selectedMarginID = model.sharingState.drafts.first(where: \.isIncluded)?.id
+            // The reply sheet's review is a receipt: no editor is open until the listener taps a row (#3792).
+            selectedMarginID = model.sharingState.replyBackTitle != nil
+                ? nil : model.sharingState.drafts.first(where: \.isIncluded)?.id
             model.prepareAutomaticallyCleanedShareDraftsIfEnabled()
             // The playback screen's Share opens on the review, where Share is pinned (#1507).
             let entry = model.sharingState.entry
@@ -553,7 +567,7 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
         case .advanceToReview:
             guard snapshot.margins.contains(where: \.isIncluded) else { return }
             stage = .review
-            if selectedMarginID == nil {
+            if selectedMarginID == nil, !snapshot.isReplyBack {
                 selectedMarginID = snapshot.margins.first(where: \.isIncluded)?.id
             }
         case .buildRecipientPreview:

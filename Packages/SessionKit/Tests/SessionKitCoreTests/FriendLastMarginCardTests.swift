@@ -88,9 +88,21 @@ final class FriendLastMarginCardTests: XCTestCase {
         let mine = own("mine", madeAt: 200)
         XCTAssertEqual(PlaybackShareStart.start(localMargins: [mine], layers: []), .defaults, "the listener's own item")
         XCTAssertEqual(PlaybackShareStart.start(localMargins: [], layers: [layer("cole", label: "Cole")]), .defaults, "a friend's item, nothing made")
-        XCTAssertEqual(PlaybackShareStart.start(localMargins: [mine], layers: [layer("cole", label: "Cole")]), .defaults,
-                       "a Margin that answers nothing leaves Share as it was, with the default Margins picked")
+        XCTAssertEqual(PlaybackShareStart.start(localMargins: [own("old", madeAt: 10)], layers: [layer("cole", label: "Cole")]), .defaults,
+                       "a Margin made before the friend's packet arrived is not an answer")
         XCTAssertEqual(PlaybackShareStart.start(localMargins: [own("r", madeAt: 200, replyingTo: "cole")], layers: [layer("cole", label: "Cole", deleted: true)]), .defaults,
                        "a removed packet")
+    }
+
+    func testAMarginMadeOnAFriendsItemOpensTheReplySheetEvenWhenItIsNotLinkedAsAReply() throws {
+        // #3792: a Margin made after the 20-second window, or before the friend's Margin played, answers nothing by link,
+        // but it was made on the friend's item, so Share opens the reply sheet with it picked rather than the
+        // selection step with nothing chosen.
+        let mine = own("mine", madeAt: 200)
+        guard case .friendAnswersPicked(let offer) = PlaybackShareStart.start(localMargins: [mine], layers: [layer("cole", label: "Cole")]) else {
+            return XCTFail("a friend's item with a Margin made since the packet arrived must open the reply sheet")
+        }
+        XCTAssertEqual(offer.title, "Send replies to Cole")
+        XCTAssertEqual(offer.candidates.map(offer.isPreselected), [true], "the sheet never opens with nothing picked")
     }
 }
