@@ -40,7 +40,7 @@ struct LiveSessionSessionPane<Header: View>: View {
                     Picker("Kind", selection: Binding(get: { session.kind }, set: setKind)) {
                         ForEach(ElsewhereKind.allCases, id: \.self) { Text($0.label).tag($0) }
                     }
-                    .pickerStyle(.segmented)
+                    .segmentedUnlessLargeText()
                     .disabled(!isRunning)
                     .accessibilityIdentifier("liveSession.kind")
                     AppTextField(session.kind == .meeting ? "Meeting name" : "Title", text: $titleDraft)
