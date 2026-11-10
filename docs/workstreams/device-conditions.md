@@ -2,7 +2,7 @@
 
 Most phone-found bugs were not about a screen. They were about the phone's state when the listener used the app: locked, away, relaunched, offline, on AirPods. A host test can put the code in that state if the code has a seam for it. This page is the short list of those states, so a builder or a design pass names the ones a change meets and writes a test for each before the phone does.
 
-**Source.** `docs/workstreams/device-conditions-bugs.tsv` classes every `found-on-phone` + `bug` issue (135 on 2026-11-10) under one row, or under `none:<why>` when no device condition was behind it. 65 of the 135 (48%) sit under a row. `scripts/device_conditions.py` counts them. The what-catches-what report's 51 bugs (2026-11-09) are a subset of these; its own list lives on the Mac, so this one is rebuilt from the issue labels and is a superset (Default taken, #3899).
+**Source.** `docs/workstreams/device-conditions-bugs.tsv` classes every `found-on-phone` + `bug` issue (135 on 2026-11-10) under one row, or under `none:<why>` when no device condition was behind it. 65 of the 135 (48%) sit under a row. `scripts/device_conditions.py` counts them. The what-catches-what report's 51 bugs (2026-11-09) should be a subset of these, but that is not yet checked: its own list lives on the Mac, so this one is rebuilt from the issue labels (Default taken, #3899). #3899 stays open for the Mac step of checking that every one of the 51 is in the list.
 
 ## How to use it
 

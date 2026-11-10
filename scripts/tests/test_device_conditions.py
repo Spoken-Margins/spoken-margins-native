@@ -32,7 +32,7 @@ class ListTests(unittest.TestCase):
     def test_the_numbers_in_the_docs_match_the_list(self):
         primary, with_row, total = dc.counts(dc.load())
         text = DOC.read_text()
-        self.assertIn(f'{with_row} of {total} ({with_row * 100 // total}%)', text)
+        self.assertIn(f'{with_row} of {total} ({round(with_row * 100 / total)}%)', text)
         self.assertIn(f'**Source.**', text)
         self.assertIn(f'({total} on 2026-11-10)', text)
         self.assertIn(f'{with_row} of the {total} ({round(with_row * 100 / total)}%)', text)
