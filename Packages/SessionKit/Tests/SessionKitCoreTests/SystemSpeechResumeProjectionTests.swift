@@ -144,4 +144,17 @@ final class SystemSpeechResumeProjectionTests: XCTestCase {
         XCTAssertTrue(SpeechTextNormalizer.projectForSystemSpeech(text, fromSourceOffset: text.count).text.isEmpty)
         XCTAssertTrue(SpeechTextNormalizer.projectForSystemSpeech(text, fromSourceOffset: text.count + 10).text.isEmpty)
     }
+
+    /// A lead and a vowel jamo around an emoji join into one character once the emoji is dropped, so the projected
+    /// text has fewer characters than offsets. A resume past the last character must not run off the text.
+    func testAResumeAfterJoinedCharactersDoesNotRunOffTheText() {
+        let text = String(repeating: "Plain words to pad the text out. ", count: 700) + "\u{1100}😀\u{1161}\u{1100}😀\u{1161}"
+        XCTAssertGreaterThan(text.utf8.count, SpeechProjectionMemo.minimumBytes)
+        let whole = SpeechTextNormalizer.projectForSystemSpeech(text)
+        XCTAssertLessThan(whole.text.count, whole.sourceOffsets.count, "the case this test is about")
+        for offset in [text.count - 4, text.count - 3, text.count - 2, text.count - 1, text.count, text.count + 3] {
+            let tail = SpeechTextNormalizer.projectForSystemSpeech(text, fromSourceOffset: offset)
+            XCTAssertEqual(tail.sourceLength, text.count)
+        }
+    }
 }
