@@ -489,11 +489,16 @@ public enum SpeechTextNormalizer {
         return String(removeMarkdownLinks(in: mapped, onlyEmptyDestinations: true).map(\.character))
     }
 
+    /// A destination that is an address: a web address (`https://`, `www.`, or anything with a dot),
+    /// a place in the same page (`#executive-summary`, a table of contents' links), a path on the
+    /// same site (`/docs`, `./next`), or a mail or phone link. Only the link's words are read.
+    private static let linkDestinationPattern = #"(?i)^(?:https?://|www\.)\S|\S\.\S|^#|^\.{0,2}/|^(?:mailto|tel):"#
+
     /// A Markdown link keeps only its text. The destination may hold parentheses
     /// (`https://en.wikipedia.org/wiki/Margin_(typography)`) and may be followed by a title
     /// (`[book](https://en.wikipedia.org/wiki/Book "Book")`), which Wikipedia gives nearly every
-    /// link; the title was read aloud after the link text (#560). A destination that doesn't look
-    /// like a link (`[1](2)`) is left as written, unless it is empty and has a title: that is a
+    /// link; the title was read aloud after the link text (#560). A destination that isn't an
+    /// address (`[1](2)`) is left as written, unless it is empty and has a title: that is a
     /// link whose URL an earlier import already removed.
     private static func removeMarkdownLinks(in input: [MappedCharacter], onlyEmptyDestinations: Bool) -> [MappedCharacter] {
         let destination = #"(?:[^()\s"]|\([^()\s"]*\)|\()*"#
@@ -508,7 +513,7 @@ public enum SpeechTextNormalizer {
             let hasTitle = match.range(at: 3).location != NSNotFound
             let isLink = target.isEmpty
                 ? hasTitle
-                : !onlyEmptyDestinations && target.range(of: #"^(?:https?://|www\.)\S|\S\.\S"#, options: .regularExpression) != nil
+                : !onlyEmptyDestinations && target.range(of: linkDestinationPattern, options: .regularExpression) != nil
             guard isLink else { return matchedCharacters(match, text: text, characters: characters) }
             let lower = text.distance(from: text.startIndex, to: textRange.lowerBound)
             let upper = text.distance(from: text.startIndex, to: textRange.upperBound)
