@@ -3,8 +3,9 @@ import XCTest
 // #430 / #151: every playback dock control takes a tap anywhere in a 44 × 44 pt area around it. Accessibility frames
 // alone can't show this: a plain SwiftUI button reports its 44 pt frame but took taps only on its glyph or word, so
 // these tap by coordinate near each edge of the larger of the control's frame and a 44 pt square, then check the
-// control acted. Not tapped here: Add a Margin and the pencil (filled 52 pt shapes, J3's to tap), Skim (needs a
-// listening map the seeds don't have) and the finished-item Share; they use the same 44 pt target helper.
+// control acted. Not tapped here: Add a Margin and the pencil (filled 52 pt shapes, J3's to tap), Skim back and the
+// finished-item Share; they use the same 44 pt target helper. Skim forward is tapped as the chapter row's forward
+// control, where it goes to the next chapter (#460).
 final class PlaybackDockHitAreaUITests: XCTestCase {
     private var app: XCUIApplication!
 
@@ -197,18 +198,23 @@ final class PlaybackDockHitAreaUITests: XCTestCase {
         let playPause = app.buttons["playback.play.button"]
         if waitFor(playPause, "label == %@", "Pause", timeout: 20) { playPause.tap() }
 
-        XCTContext.runActivity(named: "Next chapter moves on from its leading and top edges") { _ in
+        XCTContext.runActivity(named: "The chapter row's forward control moves on from its leading and top edges") { _ in
             let chapter = app.buttons["playback.dock.chapter.button"]
             XCTAssertTrue(chapter.waitForExistence(timeout: 5), "The chapter title is missing")
             // Three chapters: two moves from chapter one. Leading and top are the edges a glyph-only target misses.
             for index in [0, 2] {
-                let next = app.buttons["playback.nextChapter.button"]
-                XCTAssertTrue(next.waitForExistence(timeout: 5), "Next chapter is missing")
+                // Since #460 the next chapter is a Skim stop, so the slot right of the title shows Skim forward even
+                // without a Listening Map; Next chapter shows there only when Skim has nowhere to go (#3920).
+                let next = app.buttons.matching(NSPredicate(format: "identifier IN %@",
+                    ["playback.skim.forward.button", "playback.nextChapter.button"])).firstMatch
+                XCTAssertTrue(next.waitForExistence(timeout: 5), "Neither Skim forward nor Next chapter is showing")
+                XCTAssertTrue(waitFor(next, "enabled == true"), "The chapter row's forward control is dimmed")
                 let before = chapter.label
                 // The dock can move after the first chapter change, so the position is worked out at tap time (#3152).
                 let edge = ["leading", "trailing", "top", "bottom"][index]
                 tapEdge(of: next, index)
-                XCTAssertTrue(waitFor(chapter, "label != %@", before), "A tap at the \(edge) edge did not move to the next chapter")
+                XCTAssertTrue(waitFor(chapter, "label != %@", before),
+                              "A tap at the \(edge) edge of \(next.identifier) did not move to the next chapter")
             }
         }
 
