@@ -71,7 +71,7 @@ final class J10OfflineJourneyUITests: XCTestCase {
                 "timeline.interjection.", ".open.", ".star."))
             waitUntil("The item does not show both Margins", timeout: 8) { margins.count == 2 }
             screenshot("J10 Timeline with a spoken and a written Margin")
-            tap("timeline.nowPlaying.button")
+            tap("playback.now.button")
             XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 5), "Could not return to Now Playing")
         }
 

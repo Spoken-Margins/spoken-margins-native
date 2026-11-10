@@ -74,7 +74,7 @@ final class J3RecordAndRejoinJourneyUITests: XCTestCase {
             XCTAssertTrue(margins.firstMatch.waitForExistence(timeout: 5), "The Margin is not on the timeline")
             XCTAssertEqual(margins.count, 1, "Recording made more than one Margin")
             marginId = margins.firstMatch.identifier
-            tap("timeline.nowPlaying.button")
+            tap("playback.now.button")
             XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 5), "Could not return to Now Playing")
         }
 
@@ -92,7 +92,7 @@ final class J3RecordAndRejoinJourneyUITests: XCTestCase {
 
         try XCTContext.runActivity(named: "J3 step 3: Return to the source; it continues at a sensible place") { _ in
             tap("marginDetail.done.button")
-            tap("timeline.nowPlaying.button")
+            tap("playback.now.button")
             XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 5), "Could not return to Now Playing")
             // The source was playing when the Margin opened, so it must play again by itself: no tap on Play here.
             try waitUntilPlaying("Podcast stayed stopped after the Margin (it must play again by itself)")
