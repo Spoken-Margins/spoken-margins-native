@@ -16,6 +16,8 @@ final class QuickAccessFolderState: ObservableObject {
     /// Added in #1990 slice 3. Absent in earlier builds' defaults, which reads as off and no baseline.
     static let inboxFeedsQueueKey = "quickFolderFeedsQueueV1"
     static let inboxSeenFilesKey = "quickFolderInboxSeenFilesV1"
+    /// Added in #3767. Absent in earlier builds' defaults, which reads as "the seen set only knows the newest eight files".
+    static let inboxSeenWholeFolderKey = "quickFolderInboxSeenWholeFolderV1"
 
     /// What the state reaches outside itself for, so a test can pin the order of scoped-access calls and
     /// hold a scan open. The defaults are the app's real behaviour.
@@ -67,6 +69,17 @@ final class QuickAccessFolderState: ObservableObject {
             if let newValue { defaults.set(newValue.sorted(), forKey: Self.inboxSeenFilesKey) } else { defaults.removeObject(forKey: Self.inboxSeenFilesKey) }
         }
     }
+
+    /// True once the seen set was taken against the whole folder (#3767). A baseline from an earlier build knew only the
+    /// newest eight files, which `QuickFolderInbox.plan` handles when this is false.
+    var inboxSeenCoversWholeFolder: Bool {
+        get { defaults.bool(forKey: Self.inboxSeenWholeFolderKey) }
+        set { defaults.set(newValue, forKey: Self.inboxSeenWholeFolderKey) }
+    }
+
+    /// Every importable file in the folder as of the last refresh, newest first, for the inbox (#3767). `recentFiles`
+    /// is the Quick Add list and stays at the eight newest. Not published: a view does not draw it, and it can be long.
+    private(set) var inboxFiles: [QuickAccessFile] = []
 
     /// Runs after a refresh stored the folder's files. The model installs it.
     var onFilesRefreshed: () -> Void = {}
@@ -211,6 +224,7 @@ final class QuickAccessFolderState: ObservableObject {
             refreshTask = nil
             isRefreshing = false
             recentFiles = []
+            inboxFiles = []
             return
         }
         let id = UUID()
@@ -230,20 +244,25 @@ final class QuickAccessFolderState: ObservableObject {
             self.isRefreshing = false
             if let errorDescription = scan.errorDescription {
                 self.recentFiles = []
+                self.inboxFiles = []
                 self.recordDiagnostic("quickAccessError", errorDescription)
                 return
             }
             let formatter = RelativeDateTimeFormatter()
             formatter.unitsStyle = .short
-            self.recentFiles = scan.files.map { entry in
+            func file(_ entry: QuickAccessFileCandidate, described: Bool = true) -> QuickAccessFile {
                 QuickAccessFile(
                     id: entry.id,
                     name: entry.name,
                     relativePath: entry.relativePath,
                     modifiedAt: entry.modifiedAt,
-                    modifiedAtDescription: formatter.localizedString(for: entry.modifiedAt, relativeTo: Date())
+                    modifiedAtDescription: described ? formatter.localizedString(for: entry.modifiedAt, relativeTo: Date()) : ""
                 )
             }
+            // Both lists are stored before `onFilesRefreshed` runs, which is where the inbox reads `inboxFiles`. The inbox
+            // never shows a row, so its files carry no relative-time wording: a big folder costs no formatting on the main actor.
+            self.inboxFiles = scan.inboxFiles.map { file($0, described: false) }
+            self.recentFiles = scan.files.map { file($0) }
             self.folderName = folderURL.lastPathComponent
             self.recordDiagnostic("quickAccessFolder", folderURL.lastPathComponent)
             self.recordDiagnostic("quickAccessRecentFiles", "\(self.recentFiles.count)")
