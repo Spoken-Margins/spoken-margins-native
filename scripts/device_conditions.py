@@ -6,7 +6,7 @@ The waste signal in #3899 ("over the next 30 phone-found bugs, device-condition 
 than half") is read from here, with no hand count.
 
   scripts/device_conditions.py                     count per row, and the share that has a device condition
-  scripts/device_conditions.py --after 2026-11-10  count only bugs created after that date (the next-30 reading)
+  scripts/device_conditions.py --after-issue 3897  count only bugs filed after that issue (the next-30 reading: pass --first 30)
   scripts/device_conditions.py --check             fail on an unknown row, a repeated issue or a malformed line
   scripts/device_conditions.py --unlisted          found-on-phone bugs on GitHub that the list does not have yet (needs gh)
 """
@@ -81,6 +81,12 @@ def report(bugs):
     return '\n'.join(lines)
 
 
+def after_issue(bugs, number, first=None):
+    """The bugs filed after issue `number`, oldest first, at most `first` of them."""
+    later = sorted((bug for bug in bugs if bug['issue'] > number), key=lambda bug: bug['issue'])
+    return later[:first] if first else later
+
+
 def unlisted(bugs):
     listed = {bug['issue'] for bug in bugs}
     out = subprocess.run(
@@ -93,7 +99,8 @@ def unlisted(bugs):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('--after', help='only bugs created after this date (YYYY-MM-DD)')
+    parser.add_argument('--after-issue', type=int, help='only bugs whose issue number is above this one')
+    parser.add_argument('--first', type=int, help='with --after-issue, only the first N of them (lowest issue numbers)')
     parser.add_argument('--check', action='store_true')
     parser.add_argument('--unlisted', action='store_true')
     args = parser.parse_args(argv)
@@ -108,8 +115,8 @@ def main(argv=None):
             print(f'{number}\t{title}')
         print(f'{len(missing)} not in the list', file=sys.stderr)
         return 0
-    if args.after:
-        bugs = [bug for bug in bugs if bug['created'] > args.after]
+    if args.after_issue is not None:
+        bugs = after_issue(bugs, args.after_issue, args.first)
     print(report(bugs))
     return 0
 

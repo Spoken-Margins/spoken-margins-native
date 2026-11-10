@@ -31,7 +31,7 @@
 854	2026-10-05	closed	background		Narration stays silent if you leave the app right after Save & resume or play
 866	2026-10-05	closed	none:logic		Add Margin is refused while a Margin is playing: record straight away instead
 872	2026-10-05	closed	none:logic		Shared Margins say unresolved while they're still being placed
-873	2026-10-05	open	hot		App ended for memory (2.7 GB) after Download Again on a two-hour podcast with shared Margins
+873	2026-10-05	open	long-source	hot	App ended for memory (2.7 GB) after Download Again on a two-hour podcast with shared Margins
 883	2026-10-06	closed	none:logic		"Library says ""45 queued"" for audio preparation when only about 7 items are unfinished"
 885	2026-10-06	closed	web-packet		Safari extension: X posts import the full post text as the item title
 905	2026-10-06	open	background	hot	Make available offline on a long article only finishes if the listener keeps the phone awake and cool

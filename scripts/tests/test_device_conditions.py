@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import device_conditions as dc
 
 DOC = Path(__file__).resolve().parents[2] / 'docs/workstreams/device-conditions.md'
+LANE = Path(__file__).resolve().parents[2] / 'docs/workstreams/test-lane.md'
 
 
 def write(text):
@@ -28,9 +29,26 @@ class ListTests(unittest.TestCase):
         for row in dc.ROWS:
             self.assertIn(f'`{row}`', text, f'{row} has no row in the doc')
 
+    def test_the_numbers_in_the_docs_match_the_list(self):
+        primary, with_row, total = dc.counts(dc.load())
+        text = DOC.read_text()
+        self.assertIn(f'{with_row} of {total} ({with_row * 100 // total}%)', text)
+        self.assertIn(f'**Source.**', text)
+        self.assertIn(f'({total} on 2026-11-10)', text)
+        self.assertIn(f'{with_row} of the {total} ({round(with_row * 100 / total)}%)', text)
+        self.assertIn(f'marks {total - with_row} bugs', text)
+        for reason in dc.NO_ROW_REASONS:
+            self.assertRegex(text, rf'`{reason}` \({primary["none:" + reason]}[,;)]')
+        self.assertIn(f'{round(with_row * 100 / total)}% of the {total}', LANE.read_text())
+
     def test_every_row_has_a_bug(self):
         used = {bug['row'] for bug in dc.load()}
         self.assertEqual(set(dc.ROWS) - used, set())
+
+    def test_after_issue_takes_the_oldest_first(self):
+        bugs = [dict(issue=n, created='', state='', row='lock', also='', title='') for n in (9, 3, 7, 5)]
+        self.assertEqual([b['issue'] for b in dc.after_issue(bugs, 4)], [5, 7, 9])
+        self.assertEqual([b['issue'] for b in dc.after_issue(bugs, 4, 2)], [5, 7])
 
     def test_counts_share_leaves_out_no_row_bugs(self):
         bugs = [dict(issue=1, created='2026-11-01', state='open', row='route', also='', title=''),
