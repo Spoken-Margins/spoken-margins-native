@@ -7,7 +7,8 @@ import Foundation
 public struct ReplyBackOffer: Equatable, Sendable {
     /// The listener's replies to a friend's Margins: pre-selected.
     public let replies: [Interjection]
-    /// The listener's other Margins made since they imported a friend's packet: offered, not selected.
+    /// The listener's other Margins made since they imported a friend's packet: offered, and selected only when there is
+    /// no linked reply (`isPreselected`).
     public let others: [Interjection]
     /// Whose Margins the replies answer, in the order the replies come; with no replies, every friend on the item.
     public let friendLabels: [String]

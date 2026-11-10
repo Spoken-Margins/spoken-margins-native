@@ -167,7 +167,7 @@ struct ExperienceMarginsScreen: View {
                     .frame(maxWidth: .infinity, minHeight: 44)
             }
             .buttonStyle(SecondaryButtonStyle())
-            .accessibilityHint("Opens the Share sheet with your replies selected.")
+            .accessibilityHint("Opens the Share sheet with your replies selected, or your new Margins when none is a reply.")
             .accessibilityIdentifier("margins.sendReplies.\(group.itemID)")
         }
     }
