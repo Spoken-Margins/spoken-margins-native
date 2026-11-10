@@ -9,10 +9,8 @@ import SwiftUI
 /// publish that leaves the rows as they were does not redraw the sheet. Redrawn on every publish, the list in Edit mode
 /// kept restarting its edit transition, so the rows hopped and the remove icons flickered (#3891).
 ///
-/// Nothing inside the sheet reads `dismiss` either. The Library presenting it also redraws on every publish, and each
-/// redraw hands the sheet a new `dismiss`, so every view reading it was redrawn too. With the rows reading it, each
-/// publish redrew every row, and in Edit mode a redrawn row faded its remove icon and handle in again: the flicker left
-/// after the sheet itself stopped redrawing (#3891, reopened). `close` comes from the presenter and does not change.
+/// Nothing in the sheet reads `dismiss` either: the Library redraws on every publish and hands the sheet a new one each
+/// time, so the rows reading it redrew, and in Edit mode faded their remove icons in again (#3891, reopened).
 struct ExperiencePlayQueueScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
     @ObservedObject private var state = PlayQueueState.shared

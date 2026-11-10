@@ -138,8 +138,9 @@ final class PlayQueueLayoutTests: XCTestCase {
         let mounted = try mount(AnyView(QueueSheetPresenter(model: model, startingEditMode: .active)), size: .large)
         defer { mounted.close() }
         let settled = try await settledList(in: mounted) { $0.totalItems >= 3 && $0.view.isEditing }
-        _ = try await bodyRunsOnceTheSheetIsQuiet()
+        let sheetBefore = try await bodyRunsOnceTheSheetIsQuiet()
         let rowsBefore = try await rowRunsOnceTheRowsAreQuiet()
+        try await waitForTheRowsToStopAnimating(in: settled.view)
 
         var notEditing = 0
         var animating: Set<String> = []
@@ -154,6 +155,8 @@ final class PlayQueueLayoutTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(300))
         animating.formUnion(Self.animatingLayers(in: settled.view.visibleCells))
 
+        XCTAssertEqual(PlayQueueSheetProbe.bodyRuns, sheetBefore,
+                       "20 model publishes with the queue unchanged redrew the sheet \(PlayQueueSheetProbe.bodyRuns - sheetBefore) times")
         XCTAssertEqual(PlayQueueSheetProbe.rowRuns, rowsBefore,
                        "20 model publishes with the queue unchanged redrew the rows \(PlayQueueSheetProbe.rowRuns - rowsBefore) times")
         XCTAssertEqual(notEditing, 0, "Edit mode went off in \(notEditing) of 40 looks with nothing touched")
@@ -301,6 +304,7 @@ final class PlayQueueLayoutTests: XCTestCase {
         let previousKeyWindow: UIWindow?
 
         func close() {
+            window.rootViewController?.presentedViewController?.dismiss(animated: false)
             window.isHidden = true
             window.rootViewController = nil
             previousKeyWindow?.makeKeyAndVisible()
@@ -385,16 +389,31 @@ final class PlayQueueLayoutTests: XCTestCase {
         throw NotSettled()
     }
 
-    /// Each layer in the cells with an animation running, as "layer's view class: animation keys".
+    /// Waits until no row layer has animated for 10 polls (0.4 s), so the sheet's arrival is over before idle counts.
+    private func waitForTheRowsToStopAnimating(in list: UICollectionView) async throws {
+        var quiet = 0
+        var seen: Set<String> = []
+        for _ in 0..<150 {
+            try await Task.sleep(for: .milliseconds(40))
+            seen = Self.animatingLayers(in: list.visibleCells)
+            quiet = seen.isEmpty ? quiet + 1 : 0
+            if quiet >= 10 { return }
+        }
+        XCTFail("The rows kept animating with nothing changing: \(seen.sorted())")
+        throw NotSettled()
+    }
+
+    /// Each layer in the cells with an animation running, as "layer's class (its view's class): animation keys".
     private static func animatingLayers(in cells: [UICollectionViewCell]) -> Set<String> {
         var found: Set<String> = []
-        func visit(_ view: UIView) {
-            if let keys = view.layer.animationKeys(), !keys.isEmpty {
-                found.insert("\(type(of: view)): \(keys.sorted().joined(separator: ","))")
+        func visit(_ layer: CALayer) {
+            if let keys = layer.animationKeys(), !keys.isEmpty {
+                let owner = (layer.delegate as? UIView).map { " (\(type(of: $0)))" } ?? ""
+                found.insert("\(type(of: layer))\(owner): \(keys.sorted().joined(separator: ","))")
             }
-            view.subviews.forEach(visit)
+            layer.sublayers?.forEach(visit)
         }
-        cells.forEach(visit)
+        cells.forEach { visit($0.layer) }
         return found
     }
 
