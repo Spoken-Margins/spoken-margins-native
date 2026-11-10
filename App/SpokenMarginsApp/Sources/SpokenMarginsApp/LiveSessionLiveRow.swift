@@ -62,7 +62,7 @@ struct LiveSessionLiveRows: View {
         if !board.rows.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(board.rows.prefix(Self.shownRows)) { row in
-                    AdaptiveStack(spacing: 8) {
+                    AdaptiveStack(spacing: 8, wrapsText: true) {
                         Button { opened = Opened(id: row.id) } label: { line(row) }
                             .buttonStyle(.plain)
                             .accessibilityIdentifier("library.liveRow.\(row.id)")
