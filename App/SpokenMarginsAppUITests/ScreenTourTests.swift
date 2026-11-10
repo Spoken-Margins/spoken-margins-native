@@ -214,7 +214,7 @@ final class ScreenTourTests: XCTestCase {
         // and the reply step below fails unless this Margin was heard, because then it would count two new Margins.
         captureRequired(element("review.comingUp"), timeout: 12, "26-now-review-lead-in",
                         "Now tab during the review's lead-in, the pinned card above the title (#3220)",
-                        failure: "The review never started after Hear only Sam's new Margin")
+                        failure: "The review never started after Skip to Sam's new Margin")
         captureWhenPresent(element("review.playing"), timeout: 40, "27-now-review-sam",
                            "Now tab while Sam's Margin plays in the review, the pinned card above the title (#3220)")
         XCTAssertTrue(waitForDisappearance(element("review.comingUp"), timeout: 40), "The review's lead-in never ended")
