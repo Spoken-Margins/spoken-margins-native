@@ -86,6 +86,7 @@
 2074	2026-10-18	closed	main-thread		Whole app lags while playing: every screen re-renders on each 500 ms playback tick
 2089	2026-10-19	closed	none:visual		Now pane: 'In this scene' summary is black on the dark green player
 2092	2026-10-19	closed	hot		Episode map job keeps transcribing at serious heat, and a background stop cancels it with no record
+2094	2026-10-19	closed	network	route	Resume after a Margin jumps back tens of seconds when the player clock freezes
 2097	2026-10-19	closed	main-thread		Play at the end of an episode hangs in a 28 s seek, and the pill's X does nothing for 26 s
 2098	2026-10-19	closed	main-thread		Play/pause: tapping the spinner pauses, the icon waits for the work, and dropped taps say nothing
 2099	2026-10-19	closed	main-thread		Hang telemetry: record main-thread stalls, MetricKit stacks and in-app taps in everyday Diagnostics
@@ -118,14 +119,22 @@
 2856	2026-10-28	closed	none:unclear		Kokoro never renders a word on the phone: first Play falls back to the iOS voice (render_too_slow at offset 0)
 2943	2026-10-30	closed	main-thread	store	Main-thread hangs up to 2.5 s on item open and play: skim.loadResources reads the store on the main thread (Build 35)
 2945	2026-10-30	closed	none:logic		Margins tab: the paper icon (Share as Markdown) may share only one Margin of the item
+2962	2026-10-30	closed	live-activity		Starting a Live session while an item's Live Activity is up keeps showing the item's
+2963	2026-10-30	closed	none:visual		Write a Margin: the submit button is below the keyboard, so he always has to scroll
+2964	2026-10-30	closed	relaunch		Apple Watch: tapping a pending Margin crashes the Watch app, and it crashes at every launch after
+2965	2026-10-30	closed	live-activity	lock	Lock Screen Live Activity: Skim forward works but shows a 'compact control failed' error
+2967	2026-10-30	closed	main-thread		Build 35 9c88103: 14 hangs in 30 minutes, 4.3 s after a play tap and about 1 s on every Margin save
 2968	2026-10-30	closed	none:logic		Playback screen: Mark complete never appeared at 96% through a Substack rendered voice
 3041	2026-10-31	closed	web-packet		Margins from a web packet never auto-play: the iPhone won't place a Margin sent with only the sender's clock time
 3243	2026-11-02	open	none:design		Apple Watch: add an icon, open the Watch app from the Live Activity, and check auto-launch
+3263	2026-11-02	closed	none:logic		After importing a friend's Margins, the Margins and Now tabs show none until restart
+3367	2026-11-04	closed	none:logic		Following: a show's row previews a finished episode, and ▶ plays a different one
 3489	2026-11-06	closed	lock		Live session: a spoken Margin is lost when the screen closes, the phone locks, or End is tapped while it records
 3492	2026-11-06	open	route		Live session: our own player resuming takes the microphone from a spoken Margin that is recording
 3547	2026-11-06	closed	none:visual		Live session setup: Done doesn't close the keyboard, and Start Session needs a scroll first
 3596	2026-11-06	closed	none:logic		After a Margin ends, the episode jumps back to the start instead of playing on
 3633	2026-11-07	closed	route		Tapping record in the app while playing over AirPlay crashes, then shows an error
+3674	2026-11-07	closed	none:visual		Apple Watch: Add a Margin overlaps the skip and play/pause buttons
 3691	2026-11-08	closed	none:logic		Following: completed episodes still show Play instead of the next unlistened episode (regression of #3367)
 3750	2026-11-08	closed	none:design		Share: the first Share button makes a file, and the link hides behind Preview (Build 36)
 3752	2026-11-08	open	relaunch	store	Build 36 is slow to open and may have crashed once; the export can't show either
