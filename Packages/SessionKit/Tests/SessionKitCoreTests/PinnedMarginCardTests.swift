@@ -218,6 +218,35 @@ final class PinnedMarginCardTests: XCTestCase {
         XCTAssertEqual(titles(card(.yours, .comingUp(msRemaining: 39 * 60_000), press: seek))[0], "Jump to 20 sec before it")
     }
 
+    /// #4001: the longest button held a six-line name at the largest text size and pushed the card past half the screen.
+    /// A button says a short name, the first word of a long one, or "it"; the headline keeps the whole name.
+    func testAButtonSaysAShortNameAndTheHeadlineKeepsTheWholeOne() {
+        let table: [(sender: String, button: String)] = [
+            ("Cole", "Cole"),
+            ("Alexandria Bartholomew-Featherstonehaugh the Third", "Alexandria"),
+            ("Alexandria  Bartholomew", "Alexandria"),          // 23 characters, two spaces: the first word
+            ("Maria Alejandra", "Maria"),                        // 15 characters
+            ("Elizabeth Smith", "Elizabeth"),                    // 15 characters
+            ("Fourteen Chars", "Fourteen Chars"),                // 14: the whole name still fits
+            ("Maria-Alejandra", "it"),                           // one 15-character word: nothing short to say
+            ("Featherstonehaughwhatever", "it"),
+            ("Zoë Müller-Lindström", "Zoë"),                     // accents count as one character each
+            ("Åsa", "Åsa"),
+            ("👩🏽‍🚀 Ada Lovelace-Byron", "👩🏽‍🚀"),                  // one emoji is one character, not seven scalars
+        ]
+        for (sender, button) in table {
+            let subject = PinnedMarginCard.Subject.friend(sender)
+            let hop = card(subject, .comingUp(msRemaining: 39 * 60_000), press: seek).actions[0].title
+            let now = card(subject, .comingUp(msRemaining: 8_000), press: .playMarginNow).actions[0].title
+            XCTAssertEqual(hop, "Skip to just before \(button)", sender)
+            XCTAssertEqual(now, "Skip to \(button) now", sender)
+            XCTAssertEqual(card(subject, .speaking).headline, "Margin from \(subject.name ?? "")", "\(sender): the headline keeps the whole name")
+        }
+        XCTAssertEqual(PinnedMarginCard.Subject.yours.buttonName, nil)
+        let own = card(.yours, .comingUp(msRemaining: 39 * 60_000), press: seek).actions[0].title
+        XCTAssertEqual(own, "Jump to 20 sec before it", "your own Margins keep their words")
+    }
+
     func testAPlainMomentsLeadInOffersPlayItNowAndKeepListening() {
         for press in [more, seek, .playMarginNow, .unavailable] {
             let c = card(cole, .comingUp(msRemaining: 8_000), press: press, run: .moment)

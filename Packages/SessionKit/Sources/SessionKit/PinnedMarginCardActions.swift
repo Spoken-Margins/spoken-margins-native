@@ -78,14 +78,18 @@ extension PinnedMarginCard {
     /// The two presses between a friend's Margins read as one action, "Skip to …", the words the owner said yes to on
     /// 2026-11-05 (#3791): the first goes to just before the Margin, the second to the Margin. Your own Margins keep
     /// "Jump to 20 sec before it" and "Play it now"; his answer was for a friend's.
+    ///
+    /// The name in a button is its short form (`Subject.buttonName`): at the largest text size a button wraps and stacks
+    /// under its words, and a full long name made the card taller than half the screen (#4001, the reason #3979 was
+    /// reverted). The headline and the other lines keep the full name.
     private var playNowTitle: String {
         guard case .friend = subject else { return "Play it now" }
-        return "Skip to \(subject.name ?? "it") now"
+        return "Skip to \(subject.buttonName ?? "it") now"
     }
 
     private func hopTitle(seconds: Int) -> String {
         guard case .friend = subject else { return "Jump to \(seconds) sec before it" }
-        return "Skip to just before \(subject.name ?? "it")"
+        return "Skip to just before \(subject.buttonName ?? "it")"
     }
 
     /// The lead-in. A review's main button is the press, as between a friend's Margins: far off it hops to the lead-in, near it
