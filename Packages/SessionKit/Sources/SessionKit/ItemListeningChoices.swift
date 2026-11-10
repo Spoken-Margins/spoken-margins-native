@@ -7,7 +7,7 @@ import Foundation
 /// "Review new Margins" and "Review Margins" side by side. A friend who had just imported a packet could not tell
 /// which to tap (owner, 2026-11-02). With unheard friend Margins the screen now offers two choices whose words never
 /// change: "Play", the episode with the Margins playing in place (the 2026-10-31 call, #3059), or
-/// "Skip to Cole's Margins · 3 min", each Margin with its lead-in. The words are the ones the owner reviewed on the
+/// "Hear only Cole's Margins · 3 min", each Margin with its lead-in. The words are the ones the owner reviewed on the
 /// #3247 screens; the length came from the blind test there, where newcomers asked how long the Margins take.
 /// Everything else keeps today's single button and words.
 public struct ItemListeningChoices: Equatable, Sendable {
@@ -57,8 +57,8 @@ public struct ItemListeningChoices: Equatable, Sendable {
             let minutes = Self.marginsOnlyMinutes(unheardFriendMargins)
             let count = unheardFriendMargins.count
             primaryTitle = Self.playTitle
-            marginsOnlyTitle = "Skip to \(whose) · \(minutes) min"
-            marginsOnlyAccessibilityLabel = "Skip to \(whose), \(count) new Margin\(count == 1 ? "" : "s"), "
+            marginsOnlyTitle = "Hear only \(whose) · \(minutes) min"
+            marginsOnlyAccessibilityLabel = "Hear only \(whose), \(count) new Margin\(count == 1 ? "" : "s"), "
                 + "about \(minutes) minute\(minutes == 1 ? "" : "s")"
             skipsNewMarginsQuestion = true
         } else {
@@ -82,7 +82,7 @@ public struct ItemListeningChoices: Equatable, Sendable {
         return "\(name)'s Margins"
     }
 
-    /// How long "Skip to …" takes, in whole minutes and never under one: each Margin, written ones at the on-device
+    /// How long "Hear only…" takes, in whole minutes and never under one: each Margin, written ones at the on-device
     /// voice's pace, plus the review's lead-in before each.
     static func marginsOnlyMinutes(_ margins: [WaitingMargin]) -> Int {
         let leadInMs = ListeningMoment.rule(for: .reviewNewMargins).leadInMs
