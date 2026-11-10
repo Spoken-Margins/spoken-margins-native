@@ -110,6 +110,10 @@ final class J7PDFJourneyUITests: XCTestCase {
             XCTAssertTrue(text.waitForExistence(timeout: 5), "The Margin does not show what was written")
             tap("marginDetail.playMoment.button")
             XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8), "Play this moment did not open Now Playing")
+            // A written Margin's moment keeps the Timeline pane the Margin was opened from (a spoken one switches to
+            // Now), and the sentence highlight lives on Now, so show Now before reading it (#3918).
+            tap("playback.now.button")
+            XCTAssertTrue(element("playback.now.passage").waitForExistence(timeout: 5), "Now did not show the PDF's passage")
             // One wait for both, so a PDF already playing on from the Margin's sentence can't move the id between two
             // checks. Percent alone allows a neighbouring sentence; the id is the sentence the Margin was written at.
             waitUntil("The Margin did not open at its passage (\(marginPassageID), \(marginPercent)%)", timeout: 10) {
