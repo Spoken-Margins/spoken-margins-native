@@ -39,8 +39,7 @@ final class J9HearNewMarginsJourneyUITests: XCTestCase {
         XCTContext.runActivity(named: "J9 step 1: The episode is in the Library (offline seed)") { _ in
             app.launch()
             XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8), "Library did not open")
-            XCTAssertTrue(element("library.row.\(itemId)").waitForExistence(timeout: 5),
-                          "Seeded episode did not appear in the Library")
+            XCTAssertTrue(revealLibraryRow(), "Seeded episode did not appear in the Library")
         }
 
         try XCTContext.runActivity(named: "J9 step 2: Listen to about 20:00, save a Margin of your own and pause") { _ in
@@ -76,8 +75,7 @@ final class J9HearNewMarginsJourneyUITests: XCTestCase {
             app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_COOP"] = "1"
             app.launch()
             XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8), "Library did not reopen")
-            XCTAssertTrue(element("library.row.\(itemId)").waitForExistence(timeout: 5),
-                          "Episode is missing from the Library after relaunch")
+            XCTAssertTrue(revealLibraryRow(), "Episode is missing from the Library after relaunch")
             tap("queue.start.\(itemId)")
 
             // The identifier is what the app sets; some iOS versions drop it from a dialog's buttons, so fall back to its words.
@@ -118,7 +116,7 @@ final class J9HearNewMarginsJourneyUITests: XCTestCase {
     func testItemScreenOffersTwoChoicesForAFriendsNewMargin() throws {
         XCTContext.runActivity(named: "J9 item screen, step 1: The episode is in the Library (offline seed)") { _ in
             app.launch()
-            XCTAssertTrue(element("library.row.\(itemId)").waitForExistence(timeout: 8), "Seeded episode did not appear in the Library")
+            XCTAssertTrue(revealLibraryRow(), "Seeded episode did not appear in the Library")
         }
 
         XCTContext.runActivity(named: "J9 item screen, step 2: Force-quit; a friend's Margin arrives; open the item") { _ in
@@ -126,6 +124,7 @@ final class J9HearNewMarginsJourneyUITests: XCTestCase {
             app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_KEEP_LIBRARY"] = "1"
             app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_COOP"] = "1"
             app.launch()
+            XCTAssertTrue(revealLibraryRow(), "The episode left the Library after the friend's Margin arrived")
             tap("library.row.\(itemId)")
             XCTAssertTrue(element("item.screen").waitForExistence(timeout: 8), "The item screen did not open")
         }
@@ -159,7 +158,7 @@ final class J9HearNewMarginsJourneyUITests: XCTestCase {
         app.launchArguments += ["-UIPreferredContentSizeCategoryName", UIContentSizeCategory.accessibilityExtraExtraExtraLarge.rawValue]
         XCTContext.runActivity(named: "J9 large text, step 1: The episode is in the Library (offline seed)") { _ in
             app.launch()
-            XCTAssertTrue(element("library.row.\(itemId)").waitForExistence(timeout: 8), "Seeded episode did not appear in the Library")
+            XCTAssertTrue(revealLibraryRow(), "Seeded episode did not appear in the Library")
         }
 
         XCTContext.runActivity(named: "J9 large text, step 2: Force-quit; a friend's Margin arrives; hear only the new Margin") { _ in
@@ -167,6 +166,7 @@ final class J9HearNewMarginsJourneyUITests: XCTestCase {
             app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_KEEP_LIBRARY"] = "1"
             app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_COOP"] = "1"
             app.launch()
+            XCTAssertTrue(revealLibraryRow(), "The episode left the Library after the friend's Margin arrived")
             tap("library.row.\(itemId)")
             XCTAssertTrue(element("item.screen").waitForExistence(timeout: 8), "The item screen did not open")
             tap("item.reviewNewMargins.button")
@@ -225,6 +225,20 @@ final class J9HearNewMarginsJourneyUITests: XCTestCase {
     }
 
     private var playPause: XCUIElement { app.buttons["playback.play.button"] }
+
+    /// Scrolls the Library until the episode's row exists (#3919). The seed resets the database but not the Live
+    /// sessions, which are files, so a Live session an earlier test left running keeps its row at the top. At the
+    /// largest text size that row and the search box fill the first screen, and the list builds no row below it.
+    private func revealLibraryRow() -> Bool {
+        guard element("home.screen").waitForExistence(timeout: 8) else { return false }
+        let row = element("library.row.\(itemId)")
+        if row.waitForExistence(timeout: 3) { return true }
+        for _ in 0..<6 {
+            app.swipeUp()
+            if row.waitForExistence(timeout: 1) { return true }
+        }
+        return false
+    }
 
     private func offerButton(_ identifier: String, orLabel label: String) -> XCUIElement {
         let byIdentifier = app.buttons[identifier].firstMatch
