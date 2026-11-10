@@ -11,6 +11,7 @@ extension Gate1AppModel {
     /// meets a microphone or Speech Recognition prompt.
     static func makeApplicationModel() -> Gate1AppModel {
         UITestingHooks.prepareFirstRunIfRequested()
+        UITestingHooks.clearLiveSessionsIfRequested()
         guard UITestingHooks.usesStandInAudioServices, let support = try? FileManager.default.url(
             for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true
         ) else { return Gate1AppModel() }

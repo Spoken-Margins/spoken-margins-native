@@ -62,6 +62,14 @@ public struct LiveSessionCollection {
         try? FileManager.default.removeItem(at: url(for: id))
     }
 
+    /// Deletes everything the live session keeps under `root`: the session files, `current.json`, `deletions.json` and
+    /// the Watch inbox and received recordings (#3967). Live sessions are files outside the SQLite store, so a store
+    /// reset leaves them. Only a UI-test launch that replaces the Library calls this, so an earlier test's session
+    /// never shows in a later test's Library. A normal launch never does.
+    public static func removeAllLiveSessionFiles(under root: URL) {
+        try? FileManager.default.removeItem(at: root.appending(path: "LiveSession", directoryHint: .isDirectory))
+    }
+
     public func loadDeletions() -> LiveSessionFiling.Deletions {
         guard let data = try? Data(contentsOf: deletionsURL),
               let deletions = try? Self.decoder.decode(LiveSessionFiling.Deletions.self, from: data) else { return .init() }

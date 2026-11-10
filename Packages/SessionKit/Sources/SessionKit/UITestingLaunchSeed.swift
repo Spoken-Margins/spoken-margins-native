@@ -94,6 +94,11 @@ public enum UITestingLaunchSeed: Equatable, Sendable {
         }
     }
 
+    /// Whether a launch with this seed also starts with no Live sessions (#3967). Live sessions are files outside the
+    /// store, so a Library reset leaves one that an earlier test started, at the top of every later test's Library.
+    /// It follows `writesLibrary`: a seed that replaces the Library starts clean, and a kept Library keeps them.
+    public var clearsLiveSessions: Bool { writesLibrary }
+
     /// Whether the Library bootstrap has work to do for this seed at launch: writing the Library, or adding the
     /// co-op relaunch's friend's layer to a kept one (#2918). The app used to keep only seeds that write, so a kept
     /// Library reached the bootstrap as `.none`, the friend's Margin never arrived, and J9's Continue had nothing
