@@ -105,14 +105,21 @@ final class PlayQueueLayoutTests: XCTestCase {
         // not a publish leaving the queue as it was, so count from when the sheet has gone quiet, not from when the rows
         // stopped moving.
         let runsBefore = try await bodyRunsOnceTheSheetIsQuiet()
+        let comparedBefore = PlayQueueSheetProbe.comparisons
+        let unequalBefore = PlayQueueSheetProbe.unequalComparisons
 
         for _ in 0..<20 {
             model.objectWillChange.send()
             try await Task.sleep(for: .milliseconds(20))
         }
         _ = try await settledList(in: mounted) { _ in true }
+        // A failure says which kind of redraw it was: SwiftUI found the rows different (unequal), found them the same and
+        // drew anyway (compared minus unequal, drawn more often than that means something else invalidated the sheet), or
+        // never asked (compared 0).
         XCTAssertEqual(PlayQueueSheetProbe.bodyRuns, runsBefore,
-                       "20 model publishes with the queue unchanged redrew the sheet \(PlayQueueSheetProbe.bodyRuns - runsBefore) times")
+                       "20 model publishes with the queue unchanged redrew the sheet \(PlayQueueSheetProbe.bodyRuns - runsBefore) times; "
+                           + "SwiftUI compared the sheet \(PlayQueueSheetProbe.comparisons - comparedBefore) times, "
+                           + "\(PlayQueueSheetProbe.unequalComparisons - unequalBefore) of them unequal")
 
         model.removeFromQueue(itemId: Self.itemIds(3)[0])
         let afterRemoving = try await settledList(in: mounted) { $0.totalItems < settled.totalItems }
