@@ -113,8 +113,11 @@ extension Gate1AppModel {
         if !plan.grandfatheredKeys.isEmpty {
             quickAccess.inboxSeenFileIds = (quickAccess.inboxSeenFileIds ?? []).union(plan.grandfatheredKeys)
         }
-        // This plan ran on a scan that worked (a failed scan never reaches here), so from now on the seen set covers the folder.
-        quickAccess.inboxSeenCoversWholeFolder = true
+        // A baseline taken now covers the folder, and so does a plan that saw files. An empty listing against an existing
+        // seen set may be a folder still syncing, which proves nothing about which files were already there.
+        if !quickAccess.inboxFiles.isEmpty || quickAccess.inboxSeenFileIds == nil {
+            quickAccess.inboxSeenCoversWholeFolder = true
+        }
         guard !plan.toImport.isEmpty else {
             if quickAccess.inboxSeenFileIds == nil { quickAccess.inboxSeenFileIds = plan.newSeenKeys }
             return

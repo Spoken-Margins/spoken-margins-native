@@ -250,18 +250,19 @@ final class QuickAccessFolderState: ObservableObject {
             }
             let formatter = RelativeDateTimeFormatter()
             formatter.unitsStyle = .short
-            func file(_ entry: QuickAccessFileCandidate) -> QuickAccessFile {
+            func file(_ entry: QuickAccessFileCandidate, described: Bool = true) -> QuickAccessFile {
                 QuickAccessFile(
                     id: entry.id,
                     name: entry.name,
                     relativePath: entry.relativePath,
                     modifiedAt: entry.modifiedAt,
-                    modifiedAtDescription: formatter.localizedString(for: entry.modifiedAt, relativeTo: Date())
+                    modifiedAtDescription: described ? formatter.localizedString(for: entry.modifiedAt, relativeTo: Date()) : ""
                 )
             }
-            // Both lists are stored before `onFilesRefreshed` runs, which is where the inbox reads `inboxFiles`.
-            self.inboxFiles = scan.inboxFiles.map(file)
-            self.recentFiles = scan.files.map(file)
+            // Both lists are stored before `onFilesRefreshed` runs, which is where the inbox reads `inboxFiles`. The inbox
+            // never shows a row, so its files carry no relative-time wording: a big folder costs no formatting on the main actor.
+            self.inboxFiles = scan.inboxFiles.map { file($0, described: false) }
+            self.recentFiles = scan.files.map { file($0) }
             self.folderName = folderURL.lastPathComponent
             self.recordDiagnostic("quickAccessFolder", folderURL.lastPathComponent)
             self.recordDiagnostic("quickAccessRecentFiles", "\(self.recentFiles.count)")
