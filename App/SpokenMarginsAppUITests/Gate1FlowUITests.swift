@@ -93,6 +93,8 @@ final class Gate1FlowUITests: XCTestCase {
         editor.tap()
         app.typeText(String(repeating: "This is a substantial response with a useful argument. ", count: 25))
         app.buttons["timeline.keyboard.done"].tap()
+        // The dock comes back once the keyboard has left, and the Reflect box scrolls above it (#4043).
+        XCTAssertTrue(app.buttons["playback.timeline.button"].waitForExistence(timeout: 4), "The playback dock did not come back")
         let action = scrollToElement("timeline.reflection.import.button")
         XCTAssertTrue(action.isHittable)
         XCTAssertLessThan(editor.frame.height, 320, "Response length must not expand the editor")
@@ -389,8 +391,8 @@ final class Gate1FlowUITests: XCTestCase {
         editor.tap()
         app.typeText("Keyboard dismissal probe.")
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 4))
-        // The Timeline editor's own keyboard Done shows the Timeline is still up. The `timeline.screen` container drops
-        // out of the accessibility tree while the keyboard is up, though the screen is drawn (#3926).
+        // The Timeline editor's own keyboard Done shows the Timeline is still up. At every cut `timeline.screen` was not
+        // found at this point, though the recording shows the Timeline drawn under the keyboard (#3926).
         let keyboardDone = app.buttons["timeline.keyboard.done"]
         XCTAssertTrue(keyboardDone.waitForExistence(timeout: 2), "Focusing the reflection editor left the Timeline")
         XCTAssertTrue(editor.isHittable, "Focusing the reflection editor blanked or displaced the Timeline content")
