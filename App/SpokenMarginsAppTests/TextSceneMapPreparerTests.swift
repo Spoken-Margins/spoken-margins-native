@@ -6,6 +6,17 @@ import XCTest
 /// #3450: on-device scene summaries for an article or a PDF, run for real against a temporary SQLite library. Only the
 /// model is scripted; the planner, the grounding check, the proposal and the save are the ones the app uses.
 final class TextSceneMapPreparerTests: XCTestCase {
+    override func setUp() {
+        super.setUp()
+        NoNetworkURLProtocol.reset()
+        URLProtocol.registerClass(NoNetworkURLProtocol.self)
+    }
+
+    override func tearDown() {
+        URLProtocol.unregisterClass(NoNetworkURLProtocol.self)
+        super.tearDown()
+    }
+
     private struct Fixture {
         let store: SQLiteSessionStore
         let itemId: String
@@ -295,17 +306,19 @@ final class TextSceneMapPreparerTests: XCTestCase {
     func testHeatDuringTheAudioRendersDoesNotSendTheListenerToAContinueButton() async throws {
         let fixture = try makeFixture()
         let asked = CountBox()
+        // The run asks twice while it makes the scenes' summaries; the third ask is the first render's (#3717).
+        let askOfTheFirstRender = 3
 
         let outcome = try await TextSceneMapPreparer.summarise(
             itemId: fixture.itemId, safeItemComponent: "article", store: fixture.store,
             client: ScriptedLabelClient(label: LocalListeningMapLabel(title: "Crossing", description: "how the caravans crossed the dunes", eligibility: .eligible)),
-            // Two asks before the scenes' model calls, then the first bridge render asks.
-            yieldReason: { asked.next() == 3 ? .heat(.serious) : nil },
+            yieldReason: { asked.next() == askOfTheFirstRender ? .heat(.serious) : nil },
             renderBridge: { _, _ in XCTFail("paused before the first render") }
         )
 
         XCTAssertEqual(outcome, .audioPaused(.heat(.serious)))
-        XCTAssertFalse(outcome.message.contains("Continue"))
+        // State, not wording: nothing is left to continue, so no Continue button is offered whatever the message says.
+        XCTAssertFalse(outcome.canBeContinued)
         let saved = try XCTUnwrap(try fixture.store.loadPortableListeningMapProposals(itemId: fixture.itemId).first)
         XCTAssertEqual(TextSceneSummaryProgress.state(proposals: [saved]), .complete)
     }
@@ -320,7 +333,30 @@ final class TextSceneMapPreparerTests: XCTestCase {
         )
 
         XCTAssertEqual(client.texts, [Self.section1.trimmingCharacters(in: .whitespaces), Self.section2.trimmingCharacters(in: .whitespaces)])
+        // The standing call: a publisher's page is fetched only on a listener's action, never in a run like this (#3717).
+        // The text above proves what the model read, not what the run asked of the network, so the network is watched.
+        XCTAssertEqual(NoNetworkURLProtocol.requested, [], "a Listening Map run asked the network for something")
     }
+}
+
+/// Fails any request made while it is registered, and records its URL so a test can say none was made.
+private final class NoNetworkURLProtocol: URLProtocol, @unchecked Sendable {
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var urls: [String] = []
+
+    static func reset() { lock.withLock { urls = [] } }
+    static var requested: [String] { lock.withLock { urls } }
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        Self.lock.withLock { Self.urls.append(request.url?.absoluteString ?? "(no URL)") }
+        XCTFail("unexpected network request: \(request.url?.absoluteString ?? "(no URL)")")
+        client?.urlProtocol(self, didFailWithError: URLError(.notConnectedToInternet))
+    }
+
+    override func stopLoading() {}
 }
 
 private final class CountBox: @unchecked Sendable {
