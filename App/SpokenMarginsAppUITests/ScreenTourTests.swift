@@ -208,12 +208,16 @@ final class ScreenTourTests: XCTestCase {
         hearOnly.tap()
         if !element("playback.screen").waitForExistence(timeout: 8) { tapButton("miniPlayer.open.button") }
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8), "Now Playing did not open")
-        captureWhenPresent(element("review.comingUp"), timeout: 8, "26-now-review-lead-in",
-                           "Now tab during the review's lead-in, the pinned card above the title (#3220)")
-        // The story depends on these three, so they fail the tour when they don't happen (#3713).
-        captureRequired(element("review.playing"), timeout: 40, "27-now-review-sam",
-                        "Now tab while Sam's Margin plays in the review, the pinned card above the title (#3220)",
-                        failure: "Sam's Margin never played in the review")
+        // The story depends on the review starting, running through and ending, so they fail the tour when they don't
+        // happen (#3713). Sam's fixture voice is about 2 s, too short a window for a poll to be sure of catching
+        // review.playing, so that capture stays cosmetic; the lead-in card (about 20 s) is what proves the review began,
+        // and the reply step below fails unless this Margin was heard, because then it would count two new Margins.
+        captureRequired(element("review.comingUp"), timeout: 12, "26-now-review-lead-in",
+                        "Now tab during the review's lead-in, the pinned card above the title (#3220)",
+                        failure: "The review never started after Hear only Sam's new Margin")
+        captureWhenPresent(element("review.playing"), timeout: 40, "27-now-review-sam",
+                           "Now tab while Sam's Margin plays in the review, the pinned card above the title (#3220)")
+        XCTAssertTrue(waitForDisappearance(element("review.comingUp"), timeout: 40), "The review's lead-in never ended")
         XCTAssertTrue(waitForDisappearance(element("review.playing"), timeout: 40), "The review card stayed after Sam's Margin")
 
         // Normal playback just before 5:00, where Sam's Margin sits: the same pinned card, with Next Margin (#3220). The
