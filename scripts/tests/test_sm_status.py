@@ -297,9 +297,22 @@ class RunnerIdHasOneCopy(unittest.TestCase):
         self.assertIs(desk.RUNNER_ID, runner_report_id.RUNNER_ID)
 
     def test_no_script_keeps_its_own_copy_again(self):
-        own = [path.name for path in sorted(SCRIPTS.glob('*.py'))
-               if path.name != 'runner_report_id.py'
-               and re.search(r'^\s*RUNNER_ID\s*=\s*re\.compile', path.read_text(), re.M)]
+        # the pattern's first alternative, `pr\d+-r\d+`, written out anywhere in scripts, ops or .github (any name,
+        # any file type) is a second copy; tests are excluded because they name ids as examples
+        root = SCRIPTS.parent
+        needle = 'pr' + chr(92) + 'd+-r' + chr(92) + 'd+'
+        own = []
+        for folder in (root / 'scripts', root / 'ops', root / '.github'):
+            for path in sorted(folder.rglob('*')):
+                if (not path.is_file() or path.name == 'runner_report_id.py' or 'tests' in path.relative_to(root).parts
+                        or '__pycache__' in path.parts):
+                    continue
+                try:
+                    text = path.read_text()
+                except (UnicodeDecodeError, OSError):
+                    continue
+                if needle in text:
+                    own.append(str(path.relative_to(root)))
         self.assertEqual(own, [], 'import RUNNER_ID from runner_report_id instead of copying the pattern')
 
 
