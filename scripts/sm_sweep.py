@@ -22,8 +22,9 @@ It looks for thirteen things:
   5. open PRs with a `/lane T4` request unanswered for over an hour, or the Mac tick's `Test Desk: GO`, with no
      Test Desk seen working for an hour
   6. `needs-mac` PRs with no finisher comment or commit for an hour after the hand-off
-  7. open issues with no milestone, however old (2026-10-16: the daily triage looked only at issues filed since its
-     last run, so 136 piled up unseen); the daily routine milestones and labels every one
+  7. open issues triage hasn't finished with, however old: no `area:` label (or two), or no state label (2026-10-16:
+     the daily triage looked only at issues filed since its last run, so 136 piled up unseen). Not the milestone: since
+     2026-11-07 a milestone is only for a release on deck, so "no milestone" read 133 of 278 on every run (#3885)
   8. ready issues whose fix already merged (2026-10-22): a `Closes`, `Fixes` or `Resolves #N` PR is merged into the
      trunk, no open PR touches the issue and no claim is recent
   Drift between GitHub and the code (#3350, report only; the 2026-11-04 audit found each by hand):
@@ -34,8 +35,8 @@ It looks for thirteen things:
      revert (#3310 was reverted by #3320 and re-landed by #3323 with nothing on #460)
   11. an open issue whose newest trusted comment holds it on a PR that has merged since, or waits on `next`, which
      is frozen (#1612's newest note held it on #1154, merged into `next` on 2026-10-20)
-  12. an open issue with a milestone other than Later and no state label (#3521: rule 7 reads only no-milestone, and
-     threads take only `ready`, so #3391 sat unseen for 39 hours); triage gives it a state, and only a person picks `ready`
+  12. (folded into rule 7, #3885) an open issue with a milestone other than Later and no state label (#3521: #3391
+     sat unseen for 39 hours); triage gives it a state, and only a person picks `ready`
   13. a `needs-owner` issue filed by a person or agent since 2026-11-10 with no `Checked:` line in its body or newest
      comments (#3872: on 2026-11-08 a stale record became a phone test the owner had already done)
   Silent `in-progress` claims (#3247, #1507) are rule 3.
@@ -56,7 +57,7 @@ Anything it can't read is reported as unreadable and never turned into a release
 
 Exit codes: 0 the sweep ran (actions or none), 2 GitHub unreachable or unreadable (nothing partial is printed as
 "nothing to do"). Needs GH_TOKEN or GITHUB_TOKEN (or `gh auth token`); --apply needs write access to issues.
-About 40 to 80 GitHub calls a run, none of them model tokens. Rules 9 to 12 add about 6: GraphQL pages of the open
+About 40 to 85 GitHub calls a run, none of them model tokens. Rules 9 to 13 add about 6: GraphQL pages of the open
 issues with their last three comments (100 a page), one page of PRs merged into `next`, one GraphQL lookup of the PRs
 a hold names, and at most DRIFT_READ_CAP issue-comment reads for reverts; what the cap leaves out is printed.
 """
@@ -96,8 +97,9 @@ HOLD_LABELS = {'blocked', 'needs-owner', 'deferred', 'validate-by-use', 'agent-v
                'status: needs-human-validation'}   # a released claim isn't made `ready` with one of these
 STATE_LABELS = {'ready', 'in-progress', 'needs-owner', 'deferred', 'blocked', 'parked', 'later', 'tracker',
                 'validate-by-use', 'agent-verify', 'needs-human-validation', 'status: needs-human-validation',
-                'type: research', OUTSIDE_LABEL}   # rule 12: any of these says what happens to the issue next
-PARKED_MILESTONE = 'Later'                     # rule 12: the milestone itself is the state
+                'type: research', OUTSIDE_LABEL}   # rule 7: any of these says what happens to the issue next
+PARKED_MILESTONE = 'Later'                     # rule 7: the milestone itself is the state
+AREA_PREFIX = 'area: '                         # rule 7: exactly one of these (docs/areas.md); none or two is untriaged
 DEAD = ('mac-tick-stale',)
 MERGED_PR_PAGES = 3                            # the newest 300 closed PRs into the trunk are as far back as a fix is looked for
 FROZEN_BASE = 'next'                           # frozen since 2026-10-20 (#1492); its merged PRs never closed an issue
@@ -310,7 +312,7 @@ def merged_fixes(pulls, ready, ctx):
     return found
 
 
-# ---- Drift between GitHub and the code (rules 9 to 12, report only) --------------------------------------------
+# ---- Drift between GitHub and the code (rules 9 to 11 and 13, report only) --------------------------------------------
 
 OPEN_ISSUES = """query($owner: String!, $name: String!, $after: String) {
   repository(owner: $owner, name: $name) {
@@ -469,10 +471,16 @@ def stale_holds(api, issues, pulls):
     return found
 
 
-def unlabelled(issues):
-    """Rule 12: what triage's no-milestone query can't see. Oldest first, as the scan reads them."""
-    return [row for row in issues
-            if row['milestone'] and row['milestone'] != PARKED_MILESTONE and not STATE_LABELS.intersection(row['labels'])]
+def needs_triage(issues):
+    """Rule 7: an open issue without exactly one `area:` label, or without a state (a state label, or the Later
+    milestone). The milestone itself says nothing, because most triaged issues keep none (#3885). Issues awaiting a
+    collaborator's review (OUTSIDE_LABEL) are listed apart. Oldest first: REST returns newest first."""
+    def untriaged(row):
+        areas = [label for label in row['labels'] if label.startswith(AREA_PREFIX)]
+        stateless = row['milestone'] != PARKED_MILESTONE and not STATE_LABELS.intersection(row['labels'])
+        return len(areas) != 1 or stateless
+    return sorted((row for row in issues if OUTSIDE_LABEL not in row['labels'] and untriaged(row)),
+                  key=lambda row: (row['created_at'], row['number']))
 
 
 def unchecked_cards(issues):
@@ -484,8 +492,8 @@ def unchecked_cards(issues):
 
 
 def drift(api, now, pulls, skip=()):
-    """Rules 9 to 12. Each part is None when its read failed, so a failure reads as unreadable, never as clean."""
-    out = {'merged_open': None, 'reverts': None, 'reverts_unchecked': [], 'holds': None, 'unlabelled': None,
+    """Rules 9 to 13. Each part is None when its read failed, so a failure reads as unreadable, never as clean."""
+    out = {'merged_open': None, 'reverts': None, 'reverts_unchecked': [], 'holds': None,
            'unchecked_cards': None, 'errors': []}
     try:
         issues = open_issues(api)
@@ -493,7 +501,6 @@ def drift(api, now, pulls, skip=()):
         issues = None
         out['errors'].append(f'open issues: {error}')
     if issues is not None:
-        out['unlabelled'] = unlabelled(issues)
         out['unchecked_cards'] = unchecked_cards(issues)
     if issues is not None and pulls is not None:
         out['merged_open'] = merged_but_open(pulls, issues, skip)
@@ -574,14 +581,15 @@ def collect(api, now, snapshot=None):
         found = api.pages(f'issues?state=open&labels={urllib.parse.quote(label)}')
         return [issue_row(i) for i in found if 'pull_request' not in i]
     ready, in_progress = listing('ready'), listing('in-progress')
-    try:    # every open issue with no milestone, however old: the daily triage once looked only at new ones
-        untriaged = [issue_row(i) for i in api.pages('issues?state=open&milestone=none') if 'pull_request' not in i]
+    try:    # every open issue, however old: the daily triage once looked only at new ones. REST, not the GraphQL scan
+        # rules 9 to 13 use, because GraphQL is not available from a Claude Code cloud session and rule 7 must work there
+        open_rows = [issue_row(i) for i in api.pages('issues?state=open') if 'pull_request' not in i]
     except sm_status.GitHubError:
-        untriaged = None
-    outside = None    # opened by someone we don't trust: triage labelled it and left it for a collaborator (#1822)
-    if untriaged is not None:
-        outside = [row for row in untriaged if OUTSIDE_LABEL in row['labels']]
-        untriaged = [row for row in untriaged if OUTSIDE_LABEL not in row['labels']]
+        open_rows = None
+    untriaged = outside = None    # outside: opened by someone we don't trust, left for a collaborator (#1822)
+    if open_rows is not None:
+        untriaged = needs_triage(open_rows)
+        outside = [row for row in open_rows if OUTSIDE_LABEL in row['labels']]
 
     active = [t for t in dial_gate.of_provider(threads) if t['state'] == 'active']
     codex_active = [t for t in dial_gate.of_provider(threads, 'codex') if t['state'] == 'active']
@@ -677,9 +685,9 @@ def decide(facts, window=STALE_AFTER):
     untriaged = facts.get('untriaged') or []
     if untriaged:
         oldest = min(untriaged, key=lambda row: row['created_at'])
-        act('untriaged', LOOK, f'{len(untriaged)} open issue(s) have no milestone (oldest #{oldest["number"]}, filed '
-            f'{oldest["created_at"][:10]}): the daily triage must milestone and label every one, not only the issues '
-            'filed since its last run (AGENTS.md, Current focus: the order of work).',
+        act('untriaged', LOOK, f'{len(untriaged)} open issue(s) lack exactly one `area:` label or a state label (oldest '
+            f'#{oldest["number"]}, filed {oldest["created_at"][:10]}): the daily triage must label every one, not only the '
+            'issues filed since its last run (AGENTS.md, Current focus: areas are labels).',
             issues=[row['number'] for row in untriaged[:10]])
 
     outside = facts.get('outside') or []
@@ -710,18 +718,13 @@ def decide(facts, window=STALE_AFTER):
         act('hold-lifted', LOOK, f'#{row["number"]} {row["title"][:60]}: its newest note ({row["said_at"][:10]}) {why}; '
             'check the code and close it or say what it waits on now', issues=[row['number']],
             prs=[row['pr']] if row['pr'] else [])
-    bare = gone.get('unlabelled') or []
-    if bare:
-        act('unlabelled', LOOK, f'{len(bare)} open issue(s) have a milestone and no state label (oldest #{bare[0]["number"]} '
-            f'{bare[0]["title"][:60]}), so no thread will take them: give each `ready`, `needs-owner`, `deferred` or '
-            '`tracker`, or close it (#3521)', issues=[row['number'] for row in bare[:10]])
     cards = gone.get('unchecked_cards') or []
     if cards:
         act('unchecked-card', LOOK, f'{len(cards)} `needs-owner` issue(s) have no `Checked:` line (oldest #{cards[0]["number"]} '
             f'{cards[0]["title"][:60]}): check each fact (scripts/sm_live.py, docs/decisions.md), then add where it came from, '
             'or drop the ask if he has already answered (#3872)', issues=[row['number'] for row in cards[:10]])
     if gone.get('errors'):
-        act('drift-unreadable', LOOK, 'rules 9 to 12 could not read everything, so missing findings are not a clean '
+        act('drift-unreadable', LOOK, 'rules 9 to 11 and 13 could not read everything, so missing findings are not a clean '
             'bill: ' + '; '.join(gone['errors']))
 
     for claim in claims:

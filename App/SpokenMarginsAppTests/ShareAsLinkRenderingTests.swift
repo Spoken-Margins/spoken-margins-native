@@ -43,19 +43,38 @@ final class ShareAsLinkRenderingTests: XCTestCase {
         }
     }
 
-    func testTheFileShareFitsAsTheSecondChoiceAtEveryTextSize() throws {
+    func testTheReviewStepButtonsFitAtEveryTextSize() throws {
+        for size in [DynamicTypeSize.large, .xxxLarge, .accessibility5] {
+            let back = try render(
+                Build23BackToSelectionButton(identifier: "back", action: {}), name: "back", size: size
+            )
+            let file = try render(
+                Build23SendFileButton(isEnabled: true, identifier: "file", action: {}), name: "send-file", size: size
+            )
+            let preview = try render(Build23PreviewRow(action: {}), name: "preview-row", size: size)
+            for (label, rendered) in [("Back to selection", back), ("Send as a file", file), ("Preview row", preview)] {
+                XCTAssertLessThanOrEqual(rendered.width, Self.narrowestWidth + 1, "\(size): \(label) ran off the screen")
+                XCTAssertGreaterThanOrEqual(rendered.height, 44, "\(size): \(label) is under 44 points high")
+            }
+            // At ordinary sizes the preview label takes at most two lines, not the five it broke into in a shared row (#3896).
+            if size != .accessibility5 {
+                XCTAssertLessThan(preview.height, 70, "\(size): the preview row wrapped")
+            }
+        }
+    }
+
+    func testThePreviewStepDrawsShareYourMarginsOnlyWithoutLinks() throws {
         for size in [DynamicTypeSize.large, .accessibility5] {
-            let first = try render(
-                Build23VerifiedShareActions(isFileShareEnabled: true, onEdit: {}, onShareFile: {}),
+            let withoutLinks = try render(
+                Build23VerifiedShareActions(isFileShareEnabled: true, onShareFile: {}),
                 name: "file-first", size: size
             )
-            let second = try render(
-                Build23VerifiedShareActions(isFileShareEnabled: true, fileIsSecondChoice: true, onEdit: {}, onShareFile: {}),
+            let withLinks = try render(
+                Build23VerifiedShareActions(isFileShareEnabled: true, fileIsSecondChoice: true, onShareFile: {}),
                 name: "file-second", size: size
             )
-            XCTAssertLessThanOrEqual(second.width, Self.narrowestWidth + 1, "\(size): Send as a file ran off the screen")
-            XCTAssertGreaterThan(second.height, 20, "\(size): Send as a file did not render")
-            XCTAssertGreaterThan(first.height, 20, "\(size): Share your Margins did not render")
+            XCTAssertGreaterThan(withoutLinks.height, 20, "\(size): Share your Margins did not render")
+            XCTAssertLessThan(withLinks.height, 4, "\(size): the pinned bar's Send as a file is drawn twice")
         }
     }
 
