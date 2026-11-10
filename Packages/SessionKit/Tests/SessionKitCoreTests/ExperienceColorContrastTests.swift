@@ -120,6 +120,86 @@ final class AppColorContrastCoverageTests: XCTestCase {
         }
     }
 
+    /// #4045: iOS draws a swipe button's words in white, and a normal token turns light in dark mode (white on it was
+    /// 1.75:1 to 2.23:1). Every tint inside a `swipeActions` block is one of the fixed `swipe…` tokens, whose white
+    /// pairs the audit measures. Whitespace is collapsed first, so a block or tint split over lines is still seen.
+    static func swipeTintsThatAreNotSwipeTokens(in text: String) -> [String] {
+        let collapsed = text.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+        var found: [String] = []
+        var searchRange = collapsed.startIndex..<collapsed.endIndex
+        while let match = collapsed.range(of: #"\.swipeActions\b"#, options: .regularExpression, range: searchRange) {
+            // Skip the call's own arguments if it has any, then take the braces that follow as the block.
+            var index = match.upperBound
+            if collapsed[index...].drop(while: { $0 == " " }).first == "(" {
+                index = collapsed[index...].firstIndex(of: "(") ?? index
+                var depth = 0
+                repeat {
+                    if collapsed[index] == "(" { depth += 1 } else if collapsed[index] == ")" { depth -= 1 }
+                    index = collapsed.index(after: index)
+                } while index < collapsed.endIndex && depth > 0
+            }
+            guard let open = collapsed[index...].firstIndex(of: "{") else { break }
+            var braces = 1
+            var cursor = collapsed.index(after: open)
+            while cursor < collapsed.endIndex, braces > 0 {
+                if collapsed[cursor] == "{" { braces += 1 } else if collapsed[cursor] == "}" { braces -= 1 }
+                cursor = collapsed.index(after: cursor)
+            }
+            let block = String(collapsed[open..<cursor])
+            let regex = try? NSRegularExpression(pattern: #"\.tint\(\s*([^)]*)\)"#)
+            for tint in regex?.matches(in: block, range: NSRange(block.startIndex..., in: block)) ?? [] {
+                guard let range = Range(tint.range(at: 1), in: block) else { continue }
+                let argument = block[range].trimmingCharacters(in: .whitespaces)
+                if !argument.hasPrefix("AppColors.swipe") { found.append(argument) }
+            }
+            searchRange = cursor..<collapsed.endIndex
+        }
+        return found
+    }
+
+    func testTheSwipeTintGuardSeesEveryWayToTintASwipeButton() {
+        let check = Self.swipeTintsThatAreNotSwipeTokens(in:)
+        XCTAssertEqual(check(".swipeActions(edge: .leading) { Button(action: a) { Label(\"A\", systemImage: \"x\") }.tint(AppColors.evergreen) }"), ["AppColors.evergreen"])
+        XCTAssertEqual(check(".swipeActions(edge: .leading) { Button(action: a) { Label(\"A\", systemImage: \"x\") }.tint(AppColors.swipeEvergreen) }"), [])
+        XCTAssertEqual(check(".swipeActions {\n Button(\"R\") { r() }\n .tint(\n AppColors.ochreText\n )\n }"), ["AppColors.ochreText"], "a tint split over lines")
+        XCTAssertEqual(check(".swipeActions(edge: .trailing, allowsFullSwipe: false) { Button(\"R\") { r() }.tint(.blue) }"), [".blue"], "a system colour")
+        XCTAssertEqual(check(".swipeActions { if x { Button(\"A\") {}.tint(AppColors.swipePlum) } else { Button(\"B\") {}.tint(AppColors.plum) } }"), ["AppColors.plum"], "inside an if")
+        XCTAssertEqual(check(".swipeActions(edge: .leading) { Button(\"A\") {}.tint(AppColors.swipeSlate) } .swipeActions(edge: .trailing) { Button(\"B\") {}.tint(AppColors.secondaryText) }"), ["AppColors.secondaryText"], "the second block after a clean one")
+        XCTAssertEqual(check(".tint(AppColors.evergreen) Text(\"x\")"), [], "a tint outside a swipe block is not this guard's business")
+        XCTAssertEqual(check(".swipeActions { Button(\"A\") {} } .tint(AppColors.evergreen)"), [], "a tint after the block")
+        XCTAssertEqual(check(".swipeActions(edge: .trailing) { Button(\"Delete\", role: .destructive) {} }"), [], "no tint at all")
+        XCTAssertEqual(check(""), [])
+    }
+
+    func testEverySwipeButtonIsTintedWithAFixedSwipeToken() throws {
+        let directory = try TestInputs.directory(.appSources)
+        let enumerator = try XCTUnwrap(FileManager.default.enumerator(at: directory, includingPropertiesForKeys: nil))
+        let files = enumerator.compactMap { $0 as? URL }.filter { $0.pathExtension == "swift" }
+        XCTAssertGreaterThan(files.count, 100)
+        var found: [String] = []
+        var blocks = 0
+        for file in files {
+            let text = try String(contentsOf: file, encoding: .utf8)
+            blocks += text.components(separatedBy: ".swipeActions").count - 1
+            found += Self.swipeTintsThatAreNotSwipeTokens(in: text).map { "\(file.lastPathComponent): \($0)" }
+        }
+        XCTAssertGreaterThanOrEqual(blocks, 6, "the guard must see the app's swipe blocks")
+        XCTAssertEqual(found, [], "a swipe button's white words need a fixed AppColors.swipe… token (#4045)")
+    }
+
+    func testTheSwipeTokensAreTheLightModeTintsInBothAppearances() {
+        let pairs: [(AppDynamicRGB, AppDynamicRGB)] = [
+            (AppSemanticColorRGB.swipeEvergreen, AppSemanticColorRGB.evergreen),
+            (AppSemanticColorRGB.swipeOchre, AppSemanticColorRGB.ochreText),
+            (AppSemanticColorRGB.swipePlum, AppSemanticColorRGB.plum),
+            (AppSemanticColorRGB.swipeSlate, AppSemanticColorRGB.secondaryText)
+        ]
+        for (swipe, source) in pairs {
+            XCTAssertEqual(swipe.light, source.light, "the same hue as light mode today")
+            XCTAssertEqual(swipe.dark, swipe.light, "fixed in both appearances")
+        }
+    }
+
     /// #1920: ochre in light mode is 2.8:1 on bone and the system orange about 2:1 on white. Text and icons use
     /// `ochreText` and `warningText`, which the audit measures; `ochre` stays a fill. The playback card is dark in both
     /// appearances, where ochre and the system orange are 7:1 and more, so its files are the only ones allowed.
