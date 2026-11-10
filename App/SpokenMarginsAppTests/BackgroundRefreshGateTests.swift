@@ -79,7 +79,9 @@ final class BackgroundRefreshGateTests: XCTestCase {
         let secondId = model.selectedItem.id
         XCTAssertNotEqual(firstId, secondId)
 
-        try await Task.sleep(for: .milliseconds(400))
+        // Returns once the item reload has published or been dropped, so the check below runs after the older read has
+        // had its say, however slow the simulator is. A fixed sleep passed whenever the read was slower than it (#3714).
+        await model.settleItemReload()
         XCTAssertEqual(model.selectedItem.id, secondId, "the older read finished after the newer item opened and must be dropped")
         XCTAssertEqual(model.activePlaybackItemId, secondId)
     }
