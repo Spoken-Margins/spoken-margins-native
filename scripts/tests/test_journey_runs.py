@@ -3,6 +3,7 @@ import contextlib
 import datetime as dt
 import importlib.util
 import io
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -31,8 +32,9 @@ record: J1 · build abc1234 · steps 1/1 · bugs none
 '''
 
 
-def comment(body, login='uncomposed'):
-    return {'body': body, 'user': {'login': login}, 'author_association': 'MEMBER'}
+def comment(body, login='uncomposed', created='2026-11-09T12:00:00Z', updated=None):
+    return {'body': body, 'user': {'login': login}, 'author_association': 'MEMBER', 'created_at': created,
+            'updated_at': updated or created}
 
 
 class FakeApi:
@@ -95,6 +97,17 @@ class SummaryTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn('runs: 2, 1 found at least one bug', out.getvalue())
         self.assertIn('bugs filed: #3931, #3932', out.getvalue())
+
+    def test_the_window_counts_when_a_report_was_posted_not_when_it_was_edited(self):
+        # GitHub's ?since= filters by updated_at: a report posted 45 days ago and edited yesterday comes back (#3951)
+        old_edited = comment(DESK_REPORT, created='2026-09-26T12:00:00Z', updated='2026-11-09T12:00:00Z')
+        recent = comment(DESK_REPORT, created='2026-10-20T12:00:00Z')
+        edge = comment(DESK_REPORT, created='2026-10-11T12:00:00Z')  # 30 days before NOW is 2026-10-11T12:00:00Z
+        just_outside = comment(DESK_REPORT, created='2026-10-11T11:59:59Z')
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            jr.main(['--json'], api=FakeApi([old_edited, just_outside, edge, recent]), now=NOW)
+        self.assertEqual(json.loads(out.getvalue())['desk_reports'], 2)
 
     def test_scripted_runner_reports_are_not_desk_reports(self):
         for report_id in ('pr3900-r1', 'integration-abc1234', 'journeys-abc1234', 'scripted-journeys-abc1234'):

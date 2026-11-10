@@ -61,6 +61,7 @@ PUBLIC = sm_paths.repo(__file__)  # the public checkout (SM_REPO): test-scope.py
 sys.path.insert(0, str(PUBLIC / 'scripts'))
 import comment_trust  # noqa: E402  (#1822: who may be believed)
 import merge_audit  # noqa: E402  (the lane's report and audit formats live there; reused so they can't drift)
+from runner_report_id import RUNNER_ID  # noqa: E402  (#3951: the same runner-id rule desk-batch.py uses)
 from trunk import trunk_branch  # noqa: E402  (#1492: the branch whose PRs it lists)
 
 REPO = os.environ.get('SM_STATUS_REPO', 'Spoken-Margins/spoken-margins-native')
@@ -291,7 +292,6 @@ def armed_since(events: list[dict]) -> str | None:
 
 
 HANDOFF = 'Handing to the Mac finisher:'
-RUNNER_ID = re.compile(r'(pr\d+-r\d+|integration-|journeys-)', re.I)   # desk-batch.py: the runner's report ids
 
 
 def is_desk_report(comment: dict) -> bool:
