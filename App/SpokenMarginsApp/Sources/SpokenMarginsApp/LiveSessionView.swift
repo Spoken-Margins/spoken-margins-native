@@ -220,7 +220,7 @@ struct LiveSessionView: View {
             Picker("Kind", selection: $kind) {
                 ForEach(ElsewhereKind.allCases, id: \.self) { Text($0.label).tag($0) }
             }
-            .pickerStyle(.segmented)
+            .segmentedUnlessLargeText()
             AppTextField(kind == .meeting ? "Meeting name" : "Title", text: $title)
                 .textFieldStyle(.roundedBorder)
                 .accessibilityIdentifier("liveSession.setup.title")
@@ -528,13 +528,33 @@ struct PositionNudgeRow: View {
     let label: String
     @Binding var adjustmentMs: Int
 
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    /// Unchanged at ordinary sizes. At accessibility sizes the buttons go under the label, two by two, so none is
+    /// squeezed or broken into letters beside it (#3721).
     var body: some View {
-        HStack(spacing: 6) {
-            Text(label).font(.subheadline.monospacedDigit()).frame(maxWidth: .infinity, alignment: .leading)
-            nudge("−1m", -60_000, "One minute earlier")
-            nudge("−5s", -5_000, "Five seconds earlier")
-            nudge("+5s", 5_000, "Five seconds later")
-            nudge("+1m", 60_000, "One minute later")
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(label).font(.subheadline.monospacedDigit())
+                Grid(horizontalSpacing: 6, verticalSpacing: 6) {
+                    GridRow {
+                        nudge("−1m", -60_000, "One minute earlier")
+                        nudge("−5s", -5_000, "Five seconds earlier")
+                    }
+                    GridRow {
+                        nudge("+5s", 5_000, "Five seconds later")
+                        nudge("+1m", 60_000, "One minute later")
+                    }
+                }
+            }
+        } else {
+            HStack(spacing: 6) {
+                Text(label).font(.subheadline.monospacedDigit()).frame(maxWidth: .infinity, alignment: .leading)
+                nudge("−1m", -60_000, "One minute earlier")
+                nudge("−5s", -5_000, "Five seconds earlier")
+                nudge("+5s", 5_000, "Five seconds later")
+                nudge("+1m", 60_000, "One minute later")
+            }
         }
     }
 
