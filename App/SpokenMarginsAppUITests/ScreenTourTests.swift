@@ -428,7 +428,7 @@ final class ScreenTourTests: XCTestCase {
         attachment.lifetime = .keepAlways
         add(attachment)
         index.append((attachment.name ?? screen, shows))
-        // A screen that did not come (`-missing`) shows whatever is behind it, and has its own failure.
+        // A `-missing` capture is a screen that did not come; it shows whatever is behind it, which another capture samples.
         if appearance == "dark", !screen.hasSuffix("-missing"), let pixels = screenshot.image.cgImage {
             let share = RenderedBrightness.lightShare(of: pixels)
             if share > RenderedBrightness.mostlyLightShare { lightDarkCaptures.append((attachment.name ?? screen, share)) }
@@ -495,7 +495,7 @@ final class ScreenTourTests: XCTestCase {
 /// for (#3838).
 private enum RenderedBrightness {
     /// A capture with more than this share of light pixels is a light screen. A dark screen with a bright card or image
-    /// stays well under it; the light theme's cream is above 0.95.
+    /// stays well under it; the light theme's cream is about 0.95.
     static let mostlyLightShare = 0.5
 
     /// The share of the image's pixels, averaged down to a 24 by 48 grid, whose luma is above 0.6.
@@ -508,7 +508,7 @@ private enum RenderedBrightness {
                 data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
                 space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
             ) else { return false }
-            context.interpolationQuality = .medium
+            context.interpolationQuality = .high
             context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
             return true
         }
