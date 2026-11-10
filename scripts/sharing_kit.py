@@ -65,7 +65,7 @@ ASSET_ROLE_VOICE = 'original_voice'
 ASSET_ROLE_SIGNATURE = 'acoustic_signature'
 ASSET_MIME_TYPES = {ASSET_ROLE_VOICE: 'audio/mp4', ASSET_ROLE_SIGNATURE: 'application/vnd.apple.shazam.signature'}
 FORBIDDEN_IN_PROCEDURE = ('reinstall', 'reset', 'erase', 'delete app', 'delete the app', 'offload')
-# Wording of SpokenMarginsPackageImportView, which no screen shows (the live sheet is Build23RecipientSharingExperience).
+# Wording of the old import sheet (SpokenMarginsPackageImportView, deleted in #3909; the live sheet is Build23RecipientSharingExperience).
 DEAD_SCREEN_TEXT = ('Import & Resolve Margins', 'found this item in your library', 'will reconstruct', 'Voice files',
                     'Acoustic anchor signatures')
 # Names the procedure may put in bold that are not in the app: iOS's own controls.

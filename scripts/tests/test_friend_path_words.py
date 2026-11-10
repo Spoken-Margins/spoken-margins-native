@@ -158,9 +158,6 @@ STAND_IN_ALLOWED = {
 # FriendArrivalWords or SharedPacketArrival.senderName instead.
 RAW_SHOWN = re.compile(r'Text\(\s*[\w.]*senderLabel\s*\)|\\\(\s*[\w.]*senderLabel\s*\)')
 RAW_SHOWN_ALLOWED = {
-    # SpokenMarginsPackageImportView is declared (SharingExperience.swift) and never instantiated anywhere under App/,
-    # so it shows nothing today. Left in place for now; delete it, or route it through FriendArrivalWords, with it.
-    'App/SpokenMarginsApp/Sources/SpokenMarginsApp/SharingExperience.swift',
     # These print a MarginLayerSynthesis label, not a snapshot label: MarginLayerSynthesis.label turns a blank label
     # into "Someone", and the app never writes a stand-in into a layer's displayLabel. The label also feeds the stored
     # summary's input and digest, so it must not change here. MarginLayerSummary.swift builds the model prompt.
@@ -207,10 +204,11 @@ class StandInGuardTests(unittest.TestCase):
         for rel in RAW_SHOWN_ALLOWED:
             self.assertTrue(raw_shown_uses((ROOT / rel).read_text(encoding='utf-8')), rel)
 
-    def test_the_unused_import_view_is_still_unused(self):
-        uses = [p for p in (ROOT / 'App').rglob('*.swift')
-                if 'SpokenMarginsPackageImportView(' in p.read_text(encoding='utf-8')]
-        self.assertEqual(uses, [], 'it is now used: route its sender label through FriendArrivalWords')
+    def test_the_old_import_sheet_stays_deleted(self):
+        # It drew review.senderLabel raw and nothing presented it (#3909); the live sheet is Build23RecipientSharingExperience.
+        back = [p for p in (ROOT / 'App').rglob('*.swift')
+                if 'SpokenMarginsPackageImportView' in p.read_text(encoding='utf-8')]
+        self.assertEqual(back, [], 'the old import sheet is back: use the live sheet, or route its sender through FriendArrivalWords')
 
     def test_the_guard_catches_each_way_to_show_a_stand_in(self):
         self.assertTrue(stand_in_uses('let x = SharedPacketArrival.importedCollectionLabel'))

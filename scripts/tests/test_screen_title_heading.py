@@ -26,7 +26,6 @@ NOT_HEADINGS = {
     ("ExperienceSourcesScreen.swift", 'Text(title.first.map { String($0).uppercased() } ?? "?")'): "a show artwork placeholder initial, hidden from VoiceOver",
     ("ExperienceStorageScreen.swift", 'Text("\\(Int(usageFraction * 100))%")'): "a value readout",
     ("PlaybackScreen.swift", "Text(model.compactPlaybackRateDescription)"): "a value readout",
-    ("SharingExperience.swift", "Text(review.contents.manifest.item.title)"): "the item named under the screen title",
     ("SpokenNoteRecordingView.swift", "Text(title)"): "the note's name inside the rename button, which carries the heading trait itself (#3663)",
 }
 
