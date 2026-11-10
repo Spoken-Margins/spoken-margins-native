@@ -756,8 +756,9 @@ class FakeOps(run.Ops):
         self.diagnosed_journeys = tuple(journeys)
         return run.fallback_groups(failed, journeys), None
 
-    def file_failures(self, groups, sha, report, evidence, cost):
+    def file_failures(self, groups, sha, report, evidence, cost, labels=run.FAIL_LABELS):
         self.filed.append([g['tests'] for g in groups])
+        self.filed_labels = getattr(self, 'filed_labels', []) + [labels]
         return [1200]
 
 
@@ -1708,6 +1709,16 @@ class HostedRunTests(unittest.TestCase):
         self.assertEqual([c[1] for c in ops.calls if c[0] == 'test_plan'], ['app', 'tour'])
         self.assertIn(run.JOURNEYS_NOT_ON_TIP, ops.posted[0])
 
+    def test_a_hosted_tip_run_files_a_failing_tour_test_and_a_proof_run_does_not(self):
+        # #3822: the hosted run tours the tip too, so its failing tour tests are tracked the same way.
+        failed = tour_manifest({'SpokenMarginsUISeamsUITests/ScreenTourTests/testTour': 'failed'}, screens=[])
+        for post, expected in ((True, [[['SpokenMarginsUISeamsUITests/ScreenTourTests/testTour']]]), (False, [])):
+            with tempfile.TemporaryDirectory() as tmp:
+                ops = HostedOps(tmp, [manifest({TEST: 'passed'}), failed], bodies=[report_comment(OLD[:7], 'PASS')])
+                with recording_slot(ops.events), patch.dict(os.environ, {'GITHUB_RUN_ID': '42'}):
+                    self.assertEqual(run.hosted_run(ops, SHA, post=post), 'PASS')
+            self.assertEqual(ops.filed, expected, post)
+
     def test_a_pass_names_the_hosted_runner_and_the_candidate(self):
         with tempfile.TemporaryDirectory() as tmp:
             ops, verdict = self.hosted_run(tmp, [manifest({TEST: 'passed'})])
@@ -1996,6 +2007,70 @@ class ScreenTourTests(unittest.TestCase):
         self.assertEqual(verdict, 'PASS')
         self.assertIn('screen tour (not verdict input): failed: ', ops.posted[0])
         self.assertIn('(failed: SpokenMarginsUISeamsUITests/ScreenTourTests/testTour)', ops.posted[0])
+
+    TOUR_TEST = 'SpokenMarginsUISeamsUITests/ScreenTourTests/testTour'
+
+    def test_a_failing_tour_test_files_one_tracked_issue_and_the_verdict_stays_pass(self):
+        # #3822: two tour tests failed in every report for a day as one unread line.
+        failed = tour_manifest({self.TOUR_TEST: 'failed'}, screens=[])
+        ops, verdict = self.tick([manifest({TEST: 'passed'}), failed])
+        self.assertEqual(verdict, 'PASS')
+        self.assertEqual(ops.filed, [[[self.TOUR_TEST]]])
+        self.assertEqual(ops.filed_labels, [run.TOUR_LABELS])
+        self.assertNotIn('priority', run.TOUR_LABELS)   # a tour failure is tracked, never a blocker
+
+    def test_a_tour_that_passed_or_could_not_run_files_nothing(self):
+        for plans in ([manifest({TEST: 'passed'}), tour_manifest()],              # captured
+                      [manifest({TEST: 'passed'}), tour_manifest(screens=[])],     # inconclusive: no screenshot
+                      [manifest({TEST: 'passed'})]):                               # the tour could not start
+            ops, _ = self.tick(list(plans))
+            self.assertEqual(ops.filed, [])
+
+    def test_a_second_run_comments_on_the_open_tour_issue_and_files_no_second_one(self):
+        class GhOps(run.Ops):
+            def __init__(self, tmp):
+                super().__init__(home=Path(tmp) / 'home', repo_root=Path(tmp) / 'repo', run=self.fake_run, echo=False)
+                self.open, self.cmds = [], []
+
+            def fake_run(self, cmd, cwd=None, timeout=None, stdin=None, env=None):
+                cmd = [str(c) for c in cmd]
+                self.cmds.append(cmd)
+                if cmd[:3] == ['gh', 'issue', 'create']:
+                    self.open.append({'number': 3900, 'title': cmd[cmd.index('--title') + 1],
+                                      'body': Path(cmd[cmd.index('--body-file') + 1]).read_text(), 'labels': [],
+                                      'comments': 0, 'author_association': 'OWNER', 'user': {'login': 'uncomposed'}})
+                    return run.Result(0, 'https://github.com/Spoken-Margins/spoken-margins-native/issues/3900\n')
+                return run.Result(0, '')
+
+            def open_issues_matching(self, test):
+                return list(self.open)
+
+            def issue_comments(self, number):
+                return ''
+
+        tour = {'status': 'failed', 'detail': 'x', 'screens': [], 'failed': [self.TOUR_TEST]}
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / 'repo').mkdir()
+            ops = GhOps(tmp)
+            for n in range(2):
+                evidence = Path(tmp) / f'evidence{n}'
+                evidence.mkdir()
+                self.assertEqual(run.file_tour_failures(ops, SHA, 'https://x/report', evidence, tour), [3900])
+        creates = [c for c in ops.cmds if c[:3] == ['gh', 'issue', 'create']]
+        comments = [c for c in ops.cmds if c[:3] == ['gh', 'issue', 'comment']]
+        self.assertEqual(len(creates), 1)
+        self.assertEqual(creates[0][creates[0].index('--label') + 1], run.TOUR_LABELS)
+        self.assertIn('testTour fails', creates[0][creates[0].index('--title') + 1])
+        self.assertEqual([c[3] for c in comments], ['3900'])
+
+    def test_a_github_fault_while_filing_a_tour_failure_never_stops_the_report(self):
+        class Broken(FakeOps):
+            def file_failures(self, *a, **k):
+                raise RuntimeError('gh is down')
+        with tempfile.TemporaryDirectory() as tmp:
+            ops = Broken(tmp, [])
+            tour = {'status': 'failed', 'detail': 'x', 'screens': [], 'failed': [self.TOUR_TEST]}
+            self.assertEqual(run.file_tour_failures(ops, SHA, 'r', Path(tmp), tour), [])
 
     def test_a_tour_that_passed_but_exported_nothing_is_not_called_captured(self):
         ops, verdict = self.tick([manifest({TEST: 'passed'}), tour_manifest(screens=[])])
