@@ -1175,8 +1175,11 @@ enum PDFStructuredTextExtractor {
         let pieces = selection.selectionsByLine().compactMap { piece -> (range: NSRange, bounds: CGRect)? in
             guard piece.numberOfTextRanges(on: page) > 0 else { return nil }
             let pieceRange = piece.range(at: 0, on: page)
-            guard pieceRange.location != NSNotFound, pieceRange.length > 0 else { return nil }
-            return (pieceRange, piece.bounds(for: page))
+            let pieceBounds = piece.bounds(for: page)
+            // A null rect's edges are infinite and would read as a page-wide gap.
+            guard pieceRange.location != NSNotFound, pieceRange.length > 0,
+                  !pieceBounds.isNull, !pieceBounds.isEmpty else { return nil }
+            return (pieceRange, pieceBounds)
         }.sorted { $0.range.location < $1.range.location }
         var starts: [Int] = []
         for (previous, next) in zip(pieces, pieces.dropFirst()) {
