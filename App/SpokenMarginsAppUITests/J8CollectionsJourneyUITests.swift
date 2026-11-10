@@ -100,12 +100,17 @@ final class J8CollectionsJourneyUITests: XCTestCase {
             let scoped = XCTNSPredicateExpectation(
                 predicate: NSPredicate(format: "value == %@", collectionName), object: picker)
             let scopeResult = XCTWaiter().wait(for: [scoped], timeout: 5)
+            var menuStillOpen = false
             if scopeResult != .completed {
-                // Keep what the screen showed, so the next failure says whether the menu stayed open.
+                // Keep what the screen showed, so the next failure says whether the menu stayed open. The
+                // integration artifact keeps only the log of a first attempt, so the message says it too.
                 attachScreenshot("margins-scope-did-not-change")
+                menuStillOpen = choice.exists
             }
+            // Suspected cause (#3605): this step runs while the article still speaks, the screen redrew on each
+            // playback progress change, and a menu rebuilt while open dropped the tapped choice and closed.
             XCTAssertEqual(scopeResult, .completed,
-                           "The Margins scope did not change to the collection; the picker reads \(String(describing: picker.value))")
+                           "The Margins scope did not change to the collection; the picker reads \(String(describing: picker.value)); the menu is \(menuStillOpen ? "still open" : "closed")")
             XCTAssertTrue(element("margins.openItem.\(itemId)").waitForExistence(timeout: 5),
                           "The collection's item has no Margins group in the collection's scope")
             let rows = app.buttons.matching(NSPredicate(
