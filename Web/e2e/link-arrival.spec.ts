@@ -67,7 +67,9 @@ async function journey(page: Page, info: { project: { name: string } } & Paramet
   // One of the two Margins is written, so "Margin" is explained in its second version (2026-11-02 call).
   await expect(arrival.getByText('A Margin is a note Web fixture left at a moment in this episode. You’ll hear each one there.')).toBeVisible();
   await expect(arrival.getByText('Starts at the beginning. Web fixture’s Margins play when the episode reaches them.')).toBeVisible();
-  await expect(arrival.getByText('Want the app? Ask Web fixture for an invite.')).toBeVisible();
+  // One app link, to the join guide; nobody is told to ask for an invite (2026-11-09 call, #3783).
+  await expect(arrival.getByRole('link', { name: 'Get Spoken Margins for iPhone' })).toHaveAttribute('href', 'https://spokenmargins.com/join');
+  await expect(arrival.getByText('for an invite', { exact: false })).toHaveCount(0);
   await expect(arrival.getByRole('link', { name: 'Report this link' })).toHaveAttribute('href', new RegExp(`/l/vectorvoice01\\?report$`));
   const play = arrival.getByRole('button', { name: 'Play' });
   const box = await play.boundingBox();

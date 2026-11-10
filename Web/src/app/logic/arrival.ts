@@ -125,6 +125,12 @@ export const ARRIVAL_WORDS = Object.freeze({
   episodeCantPlayDone: (who: string) => `That was ${possessive(who)} last Margin, and the episode can’t play here.`,
 });
 
+/** The one app link on the arrival page's foot (#3783): the join guide, not TestFlight, since the guide explains the "tap the link again" step TestFlight strands people on. */
+export const GET_APP_LINK = Object.freeze({
+  text: 'Get Spoken Margins for iPhone',
+  href: 'https://spokenmargins.com/join',
+});
+
 /** The Margins that come from a friend, in the order they come. Only these fire by themselves and get a countdown. */
 export function friendMargins(margins: readonly Margin[]): Margin[] {
   return margins.filter(firesByItself).sort((a, b) => a.atSeconds - b.atSeconds);

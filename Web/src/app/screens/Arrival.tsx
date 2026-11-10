@@ -4,7 +4,7 @@
 // the sender's first Margin and a Skip. Every failure says what happened and one thing to do.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { PlayIcon } from '../icons.tsx';
-import { arrivalResumeAt, playHint, ARRIVAL_WORDS, arrivalFacts, possessive, senderName, type ArrivalFacts } from '../logic/arrival.ts';
+import { arrivalResumeAt, playHint, ARRIVAL_WORDS, GET_APP_LINK, arrivalFacts, possessive, type ArrivalFacts } from '../logic/arrival.ts';
 import { UNNAMED_SENDER, placeImport } from '../logic/import.ts';
 import { plainError } from '../logic/messages.ts';
 import { ShareLinkError, linkFooterText, openSharedPacketWithExpiry, type ParsedLink, type ShareLinkRef } from '../logic/share-link.ts';
@@ -270,7 +270,11 @@ export function Arrival({ link, onDone }: { link: ParsedLink; onDone: (playing: 
               </a>
             </p>
           )}
-          <p>Want the app? Ask {senderName(read.sender)} for an invite.</p>
+          <p>
+            <a href={GET_APP_LINK.href} target="_blank" rel="noopener noreferrer">
+              {GET_APP_LINK.text}
+            </a>
+          </p>
         </footer>
       </div>
     </div>
