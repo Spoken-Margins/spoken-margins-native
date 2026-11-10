@@ -637,7 +637,9 @@ struct InterjectionSharingView: View {
                     .accessibilityIdentifier("sharing.readAloud.\(draft.id)")
                 }
 
-                AdaptiveStack {
+                // Each preview button keeps its player in @State and changes its label to "Stop" while it plays, so this row
+                // must not swap between a row and a column (a swap rebuilds the buttons and stops the audio).
+                AdaptiveStack(wrapsText: true) {
                     if let originalURL = model.originalAudioURL(forShareDraft: draft.id) {
                         ShareRevisionAudioPreviewButton(title: "Preview Original", url: originalURL)
                     }

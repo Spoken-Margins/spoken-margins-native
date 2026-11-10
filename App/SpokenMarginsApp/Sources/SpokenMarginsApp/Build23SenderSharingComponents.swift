@@ -299,7 +299,7 @@ struct Build23MarginSelectionRow: View {
 
     var body: some View {
         ExperienceSurface(tint: margin.isIncluded ? AppColors.softGreen : nil) {
-            AdaptiveStack(alignment: .top, spacing: 12) {
+            AdaptiveStack(alignment: .top, spacing: 12, wrapsText: true) {
                 Button {
                     onSetIncluded(!margin.isIncluded)
                 } label: {
