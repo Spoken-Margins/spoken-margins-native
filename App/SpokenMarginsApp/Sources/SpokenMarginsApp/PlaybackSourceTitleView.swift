@@ -28,7 +28,7 @@ struct PlaybackSourceTitleView: View {
                         .lineLimit(1)
                         .truncationMode(.tail)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .foregroundStyle(.white.opacity(0.85))
+                        .foregroundStyle(AppColors.watchSecondary)
                         .accessibilityLabel(title) // VoiceOver still reads the full title
                 }
             }
