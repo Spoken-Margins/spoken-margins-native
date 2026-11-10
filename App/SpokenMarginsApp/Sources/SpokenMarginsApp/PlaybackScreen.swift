@@ -588,6 +588,10 @@ struct PlaybackScreen: View {
                 libraryExitButton
                 PlaybackSourceTitleView(
                     title: model.playbackItemHeaderTitle,
+                    // Keyed on the card slot being held, the same test PinnedMarginCardView uses to draw it, so the
+                    // title is small for the whole friend listen and never changes with the card's stage (#3598, #3220).
+                    mode: PlaybackTitleMode.choose(cardSlotHeld: model.pinnedMarginCard != nil),
+                    sourceName: model.libraryItems.first(where: { $0.id == model.selectedItem.id })?.sourceTitle,
                     sleepTimerState: model.sleepTimerState,
                     sleepTimerRemainingSeconds: model.sleepTimerRemainingSeconds,
                     showItem: model.openCurrentPlaybackItem

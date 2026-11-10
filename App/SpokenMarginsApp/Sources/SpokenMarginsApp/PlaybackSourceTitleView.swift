@@ -4,6 +4,10 @@ import SwiftUI
 struct PlaybackSourceTitleView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let title: String
+    /// `.compact` while a friend's Margin card holds its slot: one small line, so the title never crowds the card (#3598).
+    var mode: PlaybackTitleMode = .full
+    /// The show or source name, for the compact line; the title itself when nil.
+    var sourceName: String?
     let sleepTimerState: SleepTimerState
     let sleepTimerRemainingSeconds: Int?
     let showItem: () -> Void
@@ -14,8 +18,19 @@ struct PlaybackSourceTitleView: View {
             : AnyLayout(HStackLayout(alignment: .top, spacing: 12))
         layout {
             Button(action: showItem) {
-                PlaybackHeaderTitle(title: title)
-                    .foregroundStyle(.white)
+                switch mode {
+                case .full:
+                    PlaybackHeaderTitle(title: title)
+                        .foregroundStyle(.white)
+                case .compact:
+                    Text(PlaybackTitleMode.compactLine(title: title, sourceName: sourceName))
+                        .font(.subheadline)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .foregroundStyle(.white.opacity(0.85))
+                        .accessibilityLabel(title) // VoiceOver still reads the full title
+                }
             }
             .buttonStyle(.plain)
             .contentShape(Rectangle())
@@ -38,6 +53,12 @@ struct PlaybackSourceTitleView: View {
 #Preview("Large text") {
     PlaybackSourceTitleView(title: "An article with a longer title", sleepTimerState: .expiryDeferred(mode: .minutes15), sleepTimerRemainingSeconds: 0, showItem: {})
         .environment(\.dynamicTypeSize, .accessibility3)
+        .padding()
+        .background(AppColors.listeningBackground)
+}
+
+#Preview("Margin card up") {
+    PlaybackSourceTitleView(title: "An article with a longer title", mode: .compact, sourceName: "The Show", sleepTimerState: .inactive, sleepTimerRemainingSeconds: nil, showItem: {})
         .padding()
         .background(AppColors.listeningBackground)
 }
