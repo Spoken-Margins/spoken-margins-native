@@ -1349,6 +1349,7 @@ def journeys_report_text(sha: str, result: dict, *, started: float, finished: fl
     day = dt.datetime.fromtimestamp(started).strftime('%Y-%m-%d')
     lines = ['```text',
              f'Lane report {JOURNEYS_KIND}-{sha[:7]} — {o.verdict}',
+             *result.get('red_lines', []),  # new red and what must end lead the report, before any PASS (#3881)
              f'commit {sha[:8]} · scripted journeys: --plan journeys · {clock(started)}–{clock(finished)} local, {day}',
              f'run by: {RUN_BY}',
              f'why it ran: {why}',
@@ -1442,6 +1443,17 @@ def refresh_phone_plan(ops: Ops, sha: str) -> None:
         pass  # no phone build waiting, or its build.json is unreadable: nothing to refresh
 
 
+def cut_red_lines(ops: Ops, sha: str, result: dict, comments: list[dict], previous_cut: Optional[str]) -> list[str]:
+    """The report's lead lines on red scripts (#3881): new since the last cut, and probation scripts that must end.
+    The history is #184's own reports, so a Mac whose state file was lost still counts; a re-run of this commit
+    does not count as another cut. Merges are read only when something is new."""
+    own = f'-{sha[:7]} \u2014 '
+    prior = [c['body'] for c in comments if not any(own in line for line in c['body'].splitlines()[:2])]
+    red = journey_promotion.red_report(result['listing'], prior, result['journeys'])
+    merges = ops.suspects(sha, previous_cut) if red['new'] and previous_cut else []
+    return journey_promotion.red_lines(red, previous_cut, merges)
+
+
 def journeys_run(ops: Ops, sha: str, why: str, *, now: Optional[float] = None, again: bool = False) -> str:
     """Run the scripted journeys on `sha` on this Mac and post `Lane report scripted-journeys-<sha7>` (#3669).
 
@@ -1456,6 +1468,7 @@ def journeys_run(ops: Ops, sha: str, why: str, *, now: Optional[float] = None, a
         ops.log(f'hold: #{REPORT_ISSUE} already has a scripted-journeys report for {sha[:7]}')
         return 'held'
     previous = next((s7 for s7, v in reversed(done) if v == 'PASS' and s7 != sha[:7]), None)
+    previous_cut = next((s7 for s7, v in reversed(done) if v != 'INCONCLUSIVE' and s7 != sha[:7]), None)
     path = ops.home / 'state.json'
     state = json.loads(path.read_text()) if path.exists() else {'results': {}}
     with contextlib.ExitStack() as stack:
@@ -1492,6 +1505,10 @@ def journeys_run(ops: Ops, sha: str, why: str, *, now: Optional[float] = None, a
                 save_state(path, state)
             except Exception as error:  # noqa: BLE001
                 ops.log('journey streaks failed: ' + str(error)[:300])
+            try:  # its own try: a fault here must not skip the streak update above
+                result['red_lines'] = cut_red_lines(ops, sha, result, comments, previous_cut)
+            except Exception as error:  # noqa: BLE001
+                ops.log('new red lines failed: ' + str(error)[:300])
         try:
             body = journeys_report_text(sha, result, started=now, finished=ops.now(), previous=previous,
                                         suspects=suspects, evidence=evidence, why=why)
