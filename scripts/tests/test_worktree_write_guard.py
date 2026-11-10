@@ -109,6 +109,33 @@ class WorktreeWriteGuardTests(unittest.TestCase):
                         f'cd {self.main} && rm -f /tmp/x 2>&1 <&3', f'cd {self.main} && touch /tmp/x 3>&-'):
             self.assert_allowed(command)
 
+    def test_an_input_redirect_does_not_hide_the_copys_destination(self):
+        target = f'{self.other}/b'
+        for command in (f'cp x {target} < /dev/null', f'cp x {target} </dev/null', f'mv x {target} 0< /dev/null',
+                        f'install x {target} <<< ""', f'ln -s x {target} <<< y', f"rsync -a x {target} <<'EOF'\nbody\nEOF",
+                        f'cp x {target} <<-EOF\n\tbody\n\tEOF', f'cp x {target} {{fd}}>/dev/null',
+                        f'cp x {target} {{fd}}>&-'):
+            self.assert_refused(command, target)
+
+    def test_an_input_redirect_or_heredoc_word_is_never_taken_for_a_file(self):
+        for command in (f"cd {self.main} && tee /tmp/n <<'EOF'\nbody\nEOF", f'cd {self.main} && rm -f /tmp/x < /dev/null',
+                        f'cd {self.main} && touch /tmp/x <<< ""', f'cd {self.main} && tee /tmp/n <<-EOF\n\tbody\n\tEOF',
+                        f'cd {self.main} && touch /tmp/x 0</dev/null'):
+            self.assert_allowed(command)
+
+    def test_a_file_opened_read_write_is_a_write(self):
+        self.assert_refused(f'exec 3<> {self.other}/a', f'{self.other}/a')
+        self.assert_refused(f'cat 0<>{self.other}/a', f'{self.other}/a')
+
+    def test_process_substitution_is_a_stream_not_a_file_and_its_commands_are_read(self):
+        target = f'{self.other}/a'
+        self.assert_refused(f'tee >(cat) {target}', target)
+        self.assert_refused(f'tee >(wc -l) {target} < x', target)
+        self.assert_refused(f'diff <(ls) b; touch {target}', target)
+        self.assert_refused(f'echo hi | tee >(cat > {target})', target)
+        self.assert_allowed(f'cd {self.main} && tee >(cat) /tmp/x')
+        self.assert_allowed(f'cd {self.main} && diff <(ls) <(ls -a) > /tmp/d')
+
     def test_cd_is_followed_within_the_command(self):
         self.assert_refused(f'cd {self.other} && touch a', f'{self.other}/a')
         self.assert_refused('cd ../other; echo hi > b', f'{self.other}/b')
@@ -177,7 +204,8 @@ class WorktreeWriteGuardTests(unittest.TestCase):
         for command in (f"perl -Mstrict -ne 'print if /x/' {self.other}/a.txt",
                         f"perl -MList::Util=sum -e 'print sum(1)' {self.main}/data.txt",
                         f"perl -Mwarnings -lne 'print' {self.main}/a", f"perl -V:intsize {self.main}/a", f"perl -I{self.main}/lib -e 1 {self.main}/a",
-                        f"sed -E 's/i/j/' {self.other}/a", f"sed --posix 's/i/j/' {self.other}/a"):
+                        f"sed -E 's/i/j/' {self.other}/a", f"sed --posix 's/i/j/' {self.other}/a",
+                        f"perl -CSDi -e 1 {self.other}/a", f"perl -Ci -ne 'print' {self.other}/a"):
             self.assert_allowed(command)
 
     def test_perl_and_sed_in_place_spellings_are_refused(self):

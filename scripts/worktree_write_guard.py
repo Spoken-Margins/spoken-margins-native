@@ -38,8 +38,10 @@ import sys
 
 ALLOWED_FOLDERS = ('artifacts', '.build', 'build', 'DerivedData', 'node_modules')
 REFUSAL_LOG = Path.home() / '.claude/hooks/state/worktree-write-guard.jsonl'
-REDIRECT = re.compile(r'\d*>>?\|?|&>>?')
+REDIRECT = re.compile(r'\d*>>?\|?|&>>?|\d*<>')  # `<>` opens its file read-write
 DUPLICATE = re.compile(r'\d*[<>]&')  # `2>&1`, `<&3`, `3>&-`; `>& file` alone names a file
+READ = re.compile(r'\d*<|<<-?|<<<')  # the word after is a file read, a here-document's end word or a here-string
+DESCRIPTOR = re.compile(r'\d+|\{\w+\}')  # the 2 of `2> file`, the {fd} of `{fd}> file`
 HEREDOC = re.compile(r"(?<!<)<<(?!<)-?\s*(['\"\\]?)([\w.-]+)\1")
 VARIABLE = re.compile(r'\$(?:\{(\w+)\}|(\w+))')
 ASSIGNMENT = re.compile(r'^([A-Za-z_]\w*)=(.*)$', re.DOTALL)
@@ -100,14 +102,30 @@ def simple_commands(command: str) -> list[list[str] | str]:
 
     Each `(` and `)` comes back as its own item, so the caller can put the folder back when a subshell ends. The lexer
     glues neighbouring punctuation into one token (`);`, `))`), so those are taken apart here.
+
+    A process substitution, `<(…)` or `>(…)`, is a pipe the shell names `/dev/fd/N`: the command gets that name as one
+    word, and the commands inside come back as a subshell of their own.
     """
     lexer = shlex.shlex(without_heredocs_and_comments(command).replace('\n', ' ; '), posix=True, punctuation_chars=True)
     lexer.whitespace_split = True
     lexer.commenters = ''
     result, current = [], []
+    waiting, opened = [], []  # commands set aside while a substitution is read; for each open `(`, if it began one
     for token in lexer:
         pieces = re.findall(r'[()]|[^()]+', token) if re.fullmatch(r'[();<>|&]+', token) else [token]
-        for piece in pieces:
+        for index, piece in enumerate(pieces):
+            if piece in ('<', '>') and pieces[index + 1:index + 2] == ['(']:
+                waiting.append(current + ['/dev/fd/63'])
+                current = []
+                continue
+            if piece == '(':
+                opened.append(bool(index and pieces[index - 1] in ('<', '>')))
+            elif piece == ')' and opened and opened.pop():
+                if current:
+                    result.append(current)
+                result.append(')')
+                current = waiting.pop()
+                continue
             if piece in SEPARATORS:
                 if current:
                     result.append(current)
@@ -180,13 +198,15 @@ def split_redirections(argv: list[str]) -> tuple[list[str], list[str]]:
     words, files, index = [], [], 0
     while index < len(argv):
         token = argv[index]
-        writes, duplicates = REDIRECT.fullmatch(token), DUPLICATE.fullmatch(token)
-        if not writes and not duplicates:
+        writes, duplicates, reads = REDIRECT.fullmatch(token), DUPLICATE.fullmatch(token), READ.fullmatch(token)
+        if not writes and not duplicates and not reads:
             words.append(token)
             index += 1
             continue
-        if words and words[-1].isdigit() and index > 0 and argv[index - 1] == words[-1]:
-            words.pop()  # the 2 of `2> file` or `2>&1`
+        if words and DESCRIPTOR.fullmatch(words[-1]) and index > 0 and argv[index - 1] == words[-1]:
+            words.pop()
+        if token == '<<' and index + 1 < len(argv) and argv[index + 1] == '-':
+            index += 1  # `<<- EOF` lexes as three words
         following = argv[index + 1] if index + 1 < len(argv) else None
         if following is not None and (writes or (token == '>&' and not re.fullmatch(r'\d+|-', following))):
             files.append(following)
