@@ -188,7 +188,8 @@ final class PlaybackDockHitAreaUITests: XCTestCase {
         }
     }
 
-    /// The bundled three-chapter article (J1 step 4's fixture) shows Next chapter in the chapter row.
+    /// The bundled three-chapter article (J1 step 4's fixture): the chapter row's forward control, Skim forward going
+    /// to the next chapter (#460), and the chapter title.
     func testChapterRowControlsTakeTapsAcrossTheirWholeTarget() throws {
         app.launch()
         let start = app.buttons["queue.start.item-pill"]
