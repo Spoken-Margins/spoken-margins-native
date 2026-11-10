@@ -453,4 +453,93 @@ final class AppColorUsageGuardTests: XCTestCase {
         }
         XCTAssertEqual(over.sorted(), [], "use AppTextField or AppSecureField so the placeholder meets contrast")
     }
+
+    // MARK: Colours drawn together (#3739, evidence d)
+
+    /// A token foreground and an opaque token background on one modifier chain, in either order, as `(foreground,
+    /// background)` token names: `.foregroundStyle(AppColors.secondaryText) ... .background(AppColors.panel)`. The chain
+    /// is the modifiers between the two, up to 300 characters, with no brace, semicolon or other view in between, so two
+    /// neighbouring views are never paired. Only the plain `foregroundStyle(AppColors.x)` form is seen: a colour chosen
+    /// by a ternary or a variable is not, and a tint has its own scan above.
+    static func tokenChains(in text: String) throws -> [(foreground: String, background: String)] {
+        let background = #"(?:\.background|\.fill)\(\s*AppColors\.(\w+)\s*[,)]"#
+        let foreground = #"(?:foregroundStyle|foregroundColor)\(\s*AppColors\.(\w+)\s*\)"#
+        let between = #"([^{};]{0,300}?)"#
+        let otherView = #"\b(?:Text|Image|Label|Button|HStack|VStack|ZStack|ForEach|Spacer|Section|Toggle|Picker|Link|NavigationLink)\("#
+        var chains: [(foreground: String, background: String)] = []
+        for (pattern, foregroundGroup, backgroundGroup) in [
+            (foreground + between + background, 1, 3), (background + between + foreground, 3, 1)
+        ] {
+            let regex = try NSRegularExpression(pattern: pattern)
+            for match in regex.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
+                func group(_ index: Int) -> String { Range(match.range(at: index), in: text).map { String(text[$0]) } ?? "" }
+                if group(2).range(of: otherView, options: .regularExpression) != nil { continue }
+                chains.append((group(foregroundGroup), group(backgroundGroup)))
+            }
+        }
+        return chains
+    }
+
+    /// `AppColors` names that are another token under a second name (`Gate1RootView.swift`), so a chain that uses one is
+    /// measured as the token it is.
+    private static let tokenAliases = ["watchSecondary": "listeningSecondary", "interjectText": "captureText"]
+
+    private static let tokensByName: [String: AppDynamicRGB] = {
+        var tokens = Dictionary(uniqueKeysWithValues: AppSemanticColorRGB.all.map { ($0.name, $0.color) })
+        for (alias, name) in tokenAliases { tokens[alias] = tokens[name] }
+        return tokens
+    }()
+
+    /// Whether the audit has a pair for this foreground on this background, in the same colours in both appearances.
+    private static func auditHasPair(
+        foreground: String, background: String, in pairs: [AppColorContrastAudit.Pair] = AppColorContrastAudit.allPairs
+    ) -> Bool {
+        guard let foregroundColor = tokensByName[foreground], let backgroundColor = tokensByName[background] else { return false }
+        return pairs.contains { $0.foreground == foregroundColor && $0.background == backgroundColor }
+    }
+
+    func testTokenChainScanSeesBothOrdersAndNeverPairsNeighbours() throws {
+        let both = "Text(\"a\").foregroundStyle(AppColors.secondaryText).padding().background(AppColors.dangerBackground, in: Capsule())"
+        let reversed = "Capsule().fill(AppColors.softGreen).frame(width: 4).foregroundStyle(AppColors.evergreen)"
+        let neighbours = "Text(\"a\").foregroundStyle(AppColors.secondaryText) Text(\"b\").background(AppColors.panel)"
+        let blocks = "Text(\"a\").foregroundStyle(AppColors.text) } VStack { Color.clear.background(AppColors.bone)"
+        XCTAssertEqual(try Self.tokenChains(in: both).map { "\($0.foreground)/\($0.background)" }, ["secondaryText/dangerBackground"])
+        XCTAssertEqual(try Self.tokenChains(in: reversed).map { "\($0.foreground)/\($0.background)" }, ["evergreen/softGreen"])
+        XCTAssertEqual(try Self.tokenChains(in: neighbours).count, 0)
+        XCTAssertEqual(try Self.tokenChains(in: blocks).count, 0)
+    }
+
+    /// The case the audit found by hand: a pair nobody listed (`secondaryText` on `dangerBackground` is 4.27:1 in light
+    /// mode) is invisible to the token list test, which proves only that each token is in some pair. Here a pair is taken
+    /// out of the real list, so the lookup has to say it is missing, and the whole list has to have it.
+    func testAPairNobodyListedIsSeen() {
+        let withoutIt = AppColorContrastAudit.allPairs.filter { $0.name != "secondary on panel" }
+        XCTAssertLessThan(withoutIt.count, AppColorContrastAudit.allPairs.count)
+        XCTAssertFalse(Self.auditHasPair(foreground: "secondaryText", background: "panel", in: withoutIt))
+        XCTAssertTrue(Self.auditHasPair(foreground: "secondaryText", background: "panel"))
+        XCTAssertEqual(Self.tokensByName["watchSecondary"], Self.tokensByName["listeningSecondary"], "an alias is measured as its token")
+    }
+
+    /// Every colour the app really draws on an opaque token fill, in one modifier chain, is a pair the audit measures, so
+    /// a new combination fails here until it has a pair (and a pair that fails is a known failure with an issue).
+    func testEveryTokenChainTheAppDrawsIsAPairInTheAudit() throws {
+        var found: Set<String> = []
+        for file in try appSwiftFiles() {
+            for chain in try Self.tokenChains(in: try collapsedText(file)) {
+                found.insert("\(chain.foreground) on \(chain.background)")
+                // Gate1RootView.swift defines `AppColors`; the scan sees no fill there, so an unknown name is a typo or a new token.
+                XCTAssertNotNil(Self.tokensByName[chain.foreground], "\(file.lastPathComponent): \(chain.foreground) is not an AppColors token or alias")
+                XCTAssertNotNil(Self.tokensByName[chain.background], "\(file.lastPathComponent): \(chain.background) is not an AppColors token or alias")
+            }
+        }
+        XCTAssertGreaterThan(found.count, 5, "the scan must see the app's colour chains")
+        let unlisted = found.filter { entry in
+            let parts = entry.components(separatedBy: " on ")
+            return !Self.auditHasPair(foreground: parts[0], background: parts[1])
+        }
+        XCTAssertEqual(
+            unlisted.sorted(), [],
+            "add a pair for it to AppColorContrastAudit.textBackgroundPairs (4.5:1 for text, 3:1 for an icon or shape) and let the audit measure it"
+        )
+    }
 }

@@ -302,6 +302,8 @@ public enum AppColorContrastAudit {
         .init(name: "green text on app background", foreground: AppSemanticColorRGB.green, background: AppSemanticColorRGB.background, minimumRatio: 4.5),
         .init(name: "green text on panel", foreground: AppSemanticColorRGB.green, background: AppSemanticColorRGB.panel, minimumRatio: 4.5),
         .init(name: "green text on soft green", foreground: AppSemanticColorRGB.green, background: AppSemanticColorRGB.softGreen, minimumRatio: 4.5),
+        // The selected tiles and chips draw the evergreen mark on soft green (found by the token-chain scan, #3739).
+        .init(name: "evergreen on soft green", foreground: AppSemanticColorRGB.evergreen, background: AppSemanticColorRGB.softGreen, minimumRatio: 4.5),
         .init(name: "coral text on app background", foreground: AppSemanticColorRGB.coral, background: AppSemanticColorRGB.background, minimumRatio: 4.5),
         .init(name: "coral text on panel", foreground: AppSemanticColorRGB.coral, background: AppSemanticColorRGB.panel, minimumRatio: 4.5),
         .init(name: "coral text on soft green", foreground: AppSemanticColorRGB.coral, background: AppSemanticColorRGB.softGreen, minimumRatio: 4.5),
