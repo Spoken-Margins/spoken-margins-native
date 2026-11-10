@@ -100,6 +100,7 @@ struct ExperienceMarginsScreen: View {
             collections: collections,
             items: model.marginScopeItems
         )
+        .equatable()
     }
 
     /// What the scope control reads: the collection, the item, or all items.
@@ -656,14 +657,36 @@ struct MarginParentContextView: View {
 /// The scope control and the Margins count. The control is a menu whose label is one line, cut with an ellipsis,
 /// so a long item title can't wrap into the filters and the group heading under it (#1631). The menu's own rows
 /// still show the full titles. A view of its own so a test can measure its height without the screen around it.
-struct MarginsScopeRow: View {
+/// It is Equatable over what it draws, and the screen shows it with `.equatable()`: the screen redraws whenever
+/// the model publishes, about once a second while something plays, and rebuilding the menu while it was open
+/// dropped the listener's choice, leaving the scope on Everything (#3605).
+struct MarginsScopeRow: View, Equatable {
     let title: String
     let countText: String
     @Binding var selection: String?
-    let collections: [ItemCollection]
-    let items: [LibraryItemRow]
+    /// The choice when this row was made, so a change of choice redraws it; the binding alone can't be compared.
+    private let selectedTag: String?
+    private let collectionChoices: [MarginScopeChoice]
+    private let itemChoices: [MarginScopeChoice]
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    init(
+        title: String, countText: String, selection: Binding<String?>,
+        collections: [ItemCollection], items: [LibraryItemRow]
+    ) {
+        self.title = title
+        self.countText = countText
+        _selection = selection
+        selectedTag = selection.wrappedValue
+        collectionChoices = MarginCollectionQuery.scopeChoices(collections: collections)
+        itemChoices = MarginCollectionQuery.scopeChoices(items: items)
+    }
+
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.title == rhs.title && lhs.countText == rhs.countText && lhs.selectedTag == rhs.selectedTag
+            && lhs.collectionChoices == rhs.collectionChoices && lhs.itemChoices == rhs.itemChoices
+    }
 
     var body: some View {
         // At accessibility sizes the count drops under the scope menu so the title keeps the full width (#1938).
@@ -683,15 +706,13 @@ struct MarginsScopeRow: View {
         Menu {
             Picker("Scope", selection: $selection) {
                 Text("Everything").tag(String?.none)
-                if !collections.isEmpty {
+                if !collectionChoices.isEmpty {
                     Section("Collections") {
-                        ForEach(collections) { collection in
-                            Text(collection.name).tag(Optional(MarginCollectionQuery.collectionTagPrefix + collection.id))
-                        }
+                        ForEach(collectionChoices) { choice in Text(choice.title).tag(Optional(choice.tag)) }
                     }
                 }
                 Section("In your Library") {
-                    ForEach(items) { item in Text(item.title).tag(Optional(item.id)) }
+                    ForEach(itemChoices) { choice in Text(choice.title).tag(Optional(choice.tag)) }
                 }
             }
         } label: {
