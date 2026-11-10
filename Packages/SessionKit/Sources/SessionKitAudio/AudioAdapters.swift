@@ -790,13 +790,11 @@ enum SpeechPlaybackPlanner {
         from requestedOffset: Int,
         targetChunkCharacters: Int = 700
     ) -> [SpeechPlaybackChunk] {
-        let sourceCharacters = Array(source)
-        let start = max(0, min(requestedOffset, sourceCharacters.count))
-        let remainingSource = String(sourceCharacters[start...])
-        let projection = SpeechTextNormalizer.projectForSystemSpeech(remainingSource)
+        let projection = SpeechTextNormalizer.projectForSystemSpeech(source, fromSourceOffset: requestedOffset)
         let characters = Array(projection.text)
         guard !characters.isEmpty else { return [] }
-        let sourceOffsets = projection.sourceOffsets.map { start + $0 }
+        let sourceOffsets = projection.sourceOffsets
+        let sourceLength = projection.sourceLength
         let target = max(240, targetChunkCharacters)
         var chunks: [SpeechPlaybackChunk] = []
         var fragmentStart = 0
@@ -809,7 +807,7 @@ enum SpeechPlaybackPlanner {
                   let finalSourceOffset = spokenSourceOffsets.last else { return }
             chunks.append(SpeechPlaybackChunk(
                 sourceStart: sourceStart,
-                sourceEnd: min(sourceCharacters.count, finalSourceOffset + 1),
+                sourceEnd: min(sourceLength, finalSourceOffset + 1),
                 spokenText: spokenText,
                 spokenSourceOffsets: spokenSourceOffsets
             ))
@@ -830,7 +828,7 @@ enum SpeechPlaybackPlanner {
         for index in chunks.indices.dropLast() {
             chunks[index].sourceEnd = chunks[index + 1].sourceStart
         }
-        chunks[chunks.count - 1].sourceEnd = sourceCharacters.count
+        chunks[chunks.count - 1].sourceEnd = sourceLength
         return chunks
     }
 }
