@@ -484,7 +484,7 @@ final class RealPlayerMarginMomentTests: XCTestCase {
         }
     }
 
-    fileprivate static func writeTone(to url: URL, seconds: Double, hz: Double) throws -> URL {
+    static func writeTone(to url: URL, seconds: Double, hz: Double) throws -> URL {
         let sampleRate = 44_100.0
         let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1))
         let file = try AVAudioFile(forWriting: url, settings: format.settings)
