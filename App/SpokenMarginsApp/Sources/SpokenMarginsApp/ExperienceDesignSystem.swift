@@ -275,7 +275,16 @@ struct SMExperienceEmptyState: View {
 
     var body: some View {
         ContentUnavailableView {
-            Label(title, systemImage: systemImage)
+            // The headline wraps to as many lines as it needs at every text size. Set on the Text itself, the line limit
+            // beats any one-line limit the system view sets around its label (#3837: "You’re not following anythin…").
+            Label {
+                Text(title)
+                    .lineLimit(nil)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            } icon: {
+                Image(systemName: systemImage)
+            }
         } description: {
             Text(detail)
         } actions: {
