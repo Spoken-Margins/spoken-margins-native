@@ -100,7 +100,11 @@ final class PlayQueueLayoutTests: XCTestCase {
         let mounted = try mount(AnyView(ExperiencePlayQueueScreen().environmentObject(model)), size: .large)
         defer { mounted.close() }
         let settled = try await settledList(in: mounted) { $0.totalItems >= 3 }
-        let runsBefore = PlayQueueSheetProbe.bodyRuns
+        // The list's shape settles before the sheet stops drawing: the first rows' own async work (#3999: this failed on
+        // its first run and passed on retry in three hosted runs) can draw the sheet once more after it. That draw is
+        // not a publish leaving the queue as it was, so count from when the sheet has gone quiet, not from when the rows
+        // stopped moving.
+        let runsBefore = try await bodyRunsOnceTheSheetIsQuiet()
 
         for _ in 0..<20 {
             model.objectWillChange.send()
@@ -285,6 +289,21 @@ final class PlayQueueLayoutTests: XCTestCase {
     }
 
     private struct NotSettled: Error {}
+
+    /// The sheet's body-run count once it has not moved for 10 polls (0.4 s).
+    private func bodyRunsOnceTheSheetIsQuiet() async throws -> Int {
+        var last = PlayQueueSheetProbe.bodyRuns
+        var quiet = 0
+        for _ in 0..<150 {
+            try await Task.sleep(for: .milliseconds(40))
+            let now = PlayQueueSheetProbe.bodyRuns
+            quiet = now == last ? quiet + 1 : 0
+            last = now
+            if quiet >= 10 { return now }
+        }
+        XCTFail("The sheet kept drawing with nothing changing (\(last) body runs)")
+        throw NotSettled()
+    }
 
     /// Where the row's top edge sits relative to the top of the visible list: 0 at the edge, negative above it.
     private func offsetFromTop(of index: Int, in list: ListState) throws -> CGFloat {
