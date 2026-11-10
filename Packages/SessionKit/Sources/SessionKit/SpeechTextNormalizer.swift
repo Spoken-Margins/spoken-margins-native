@@ -120,7 +120,9 @@ public enum SpeechTextNormalizer {
         }
         let whole = projectForSystemSpeech(source)
         var first = whole.spokenCharacterOffset(atOrAfterSourceOffset: sourceOffset)
-        var index = whole.text.index(whole.text.startIndex, offsetBy: first)
+        // Two separate characters can join into one once something between them is dropped (a Hangul lead and
+        // vowel jamo around an emoji), so the text can hold fewer characters than `sourceOffsets` does: stop at the end.
+        var index = whole.text.index(whole.text.startIndex, offsetBy: first, limitedBy: whole.text.endIndex) ?? whole.text.endIndex
         while index < whole.text.endIndex, whole.text[index].isWhitespace {
             index = whole.text.index(after: index)
             first += 1
