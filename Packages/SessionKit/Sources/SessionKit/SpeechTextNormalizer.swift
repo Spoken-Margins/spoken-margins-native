@@ -99,6 +99,36 @@ public enum SpeechTextNormalizer {
         projectionMemo.projection(of: source, kind: .systemSpeech) { computeProjectionForSystemSpeech(source) }
     }
 
+    /// `projectForSystemSpeech` of `source` from `sourceOffset` on: the spoken characters at or after that offset, each
+    /// still mapped to its offset in the whole `source`, and `sourceLength` that of the whole `source`.
+    ///
+    /// A text the memo holds is projected once, whole, and a play from a saved offset (a resume, a rate change, a
+    /// hand-over) takes the tail of that projection, so it does not project the remaining text again on the thread
+    /// that plays (#2256). The tail drops the space the cut leaves, so it reads as the projection of the remaining
+    /// text does. A text too short for the memo is cheap to project, and one too long for it is projected from the
+    /// offset, as before: a whole projection would cost more than the tail and nothing could keep it.
+    public static func projectForSystemSpeech(_ source: String, fromSourceOffset sourceOffset: Int) -> NormalizedSpeechText {
+        guard SpeechProjectionMemo.holds(utf8Count: source.utf8.count) else {
+            let characters = Array(source)
+            let start = max(0, min(sourceOffset, characters.count))
+            let tail = projectForSystemSpeech(String(characters[start...]))
+            return NormalizedSpeechText(
+                text: tail.text,
+                sourceOffsets: tail.sourceOffsets.map { start + $0 },
+                sourceLength: characters.count
+            )
+        }
+        let whole = projectForSystemSpeech(source)
+        var first = whole.spokenCharacterOffset(atOrAfterSourceOffset: sourceOffset)
+        let spoken = Array(whole.text)
+        while first < spoken.count, spoken[first].isWhitespace { first += 1 }
+        return NormalizedSpeechText(
+            text: String(spoken[first...]),
+            sourceOffsets: Array(whole.sourceOffsets[first...]),
+            sourceLength: whole.sourceLength
+        )
+    }
+
     private static func computeProjectionForSystemSpeech(_ source: String) -> NormalizedSpeechText {
         var rendered = source.enumerated().map { MappedCharacter(character: $0.element, sourceOffset: $0.offset) }
 
