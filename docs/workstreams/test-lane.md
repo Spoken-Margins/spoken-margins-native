@@ -182,7 +182,7 @@ When main's tip has no integration report on #184, run one job on that tip, in t
    after a PASS. The scripted journeys in TestPlans/scripted-journeys.json (gating, then probation) are not
    run on a tip (#3669); `sm_integration_run.py --journeys --sha <sha>` runs them at a phone build or upload. The tour is never verdict input: its report line (`screen tour (not verdict input)`) names the
    screenshots, one per screen in light and dark, exported to `tour/screens/` of the run's evidence folder (the
-   hosted run's `hosted-integration-<sha>` artifact keeps them 14 days); a failed or empty tour is only that line. The scripts and the tour launch with --ui-testing,
+   hosted run's `hosted-integration-<sha>` artifact keeps them 14 days); an empty tour is only that line, and a failing tour test also gets one `ready` issue (or a comment on the open one) from the run, so it is tracked and never sits unread (#3822). The scripts and the tour launch with --ui-testing,
    which resets the app's library, so they all run before step 3 builds the journey library. A
    probation failure goes in the report but doesn't make it FAIL. Move a script to gating
    after two passes, and back to probation after two bad runs, in a PR into main

@@ -43,6 +43,24 @@ enum Build23SenderPresentation {
         return ["fingerprint", "landmark", "assets/evidence/"].contains { lowered.contains($0) }
     }
 
+    /// The identifier of the top "Back to selection" button for this step, or nil when none is drawn there (#3896).
+    /// On the preview step it is drawn only once the preview is ready and verified, as the old button inside
+    /// `Build23VerifiedShareActions` was. While the preview builds, "back" would leave the build task running and a
+    /// failed build would then pull the listener off the selection screen; the other preview states already carry
+    /// their own "Back to selection" in the unavailable-preview notice.
+    static func topBackToSelectionIdentifier(
+        stage: Build23SharingStage, previewState: Build23SharingPreviewState, hasVerifiedPreview: Bool
+    ) -> String? {
+        switch stage {
+        case .review:
+            "build23.sender.review.back"
+        case .recipientPreview:
+            previewState == .ready && hasVerifiedPreview ? "build23.sender.preview.edit" : nil
+        case .select, .share:
+            nil
+        }
+    }
+
     static func stageOwnsDetailedEditor(_ stage: Build23SharingStage) -> Bool {
         stage == .review
     }
@@ -258,37 +276,97 @@ struct Build23TransportConsequenceCard: View {
     }
 }
 
-/// The recipient preview's share actions: back to the selection and the file share. In a build that makes links the
-/// pinned Share button makes the link, and the file share here becomes the second choice, "Send as a file" (#3750).
-/// One view, so a test can render the real buttons in each state.
+/// The recipient preview's share action for a build without share links: "Share your Margins" alone on its line.
+/// With links on, the pinned bar holds "Share link" and "Send as a file" instead (#3896), so this draws nothing.
+/// One view, so a test can render the real button in each state.
 struct Build23VerifiedShareActions: View {
     let isFileShareEnabled: Bool
     var fileIsSecondChoice = false
-    let onEdit: () -> Void
     let onShareFile: () -> Void
 
     var body: some View {
-        AdaptiveStack(spacing: 12) {
-            Button("Edit selection", systemImage: "arrow.left", action: onEdit)
-                .buttonStyle(.bordered)
-                .accessibilityIdentifier("build23.sender.preview.edit")
-
-            Spacer()
-
-            if fileIsSecondChoice {
-                Button("Send as a file", systemImage: "doc", action: onShareFile)
-                    .buttonStyle(.bordered)
-                    .disabled(!isFileShareEnabled)
-                    .accessibilityHint("Opens the share sheet with your Margins as a file")
-                    .accessibilityIdentifier("build23.sender.share.present")
-            } else {
-                Button("Share your Margins", systemImage: "square.and.arrow.up", action: onShareFile)
-                    .filledActionButton()
-                    .disabled(!isFileShareEnabled)
-                    .accessibilityHint("Opens the system share sheet with your Margins")
-                    .accessibilityIdentifier("build23.sender.share.present")
-            }
+        if !fileIsSecondChoice {
+            Button("Share your Margins", systemImage: "square.and.arrow.up", action: onShareFile)
+                .filledActionButton()
+                .disabled(!isFileShareEnabled)
+                .accessibilityHint("Opens the system share sheet with your Margins")
+                .accessibilityIdentifier("build23.sender.share.present")
         }
+    }
+}
+
+/// "Back to selection" on the review and preview steps (#3896): a plain text button with a leading chevron, on its
+/// own line under the header. The identifier is the caller's, so each step keeps its own.
+struct Build23BackToSelectionButton: View {
+    let identifier: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Label("Back to selection", systemImage: "chevron.left")
+                .frame(minHeight: 44, alignment: .leading)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .tint(AppColors.evergreen)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityIdentifier(identifier)
+    }
+}
+
+/// "Send as a file" in the pinned bar, under the filled "Share link" (#3896): a plain full-width text button, so the
+/// bar still holds one main action.
+struct Build23SendFileButton: View {
+    let isEnabled: Bool
+    let identifier: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Label("Send as a file", systemImage: "doc")
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .tint(AppColors.evergreen)
+        .disabled(!isEnabled)
+        .accessibilityHint("Opens the share sheet with your Margins as a file")
+        .accessibilityIdentifier(identifier)
+    }
+}
+
+/// "Preview what your friend gets": one full-width bordered row at the end of the review step's content (#3896),
+/// the last thing before the pinned send buttons. On a wide iPad it stops at a readable width.
+struct Build23PreviewRow: View {
+    @Environment(\.isEnabled) private var isEnabled
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: "doc.text.magnifyingglass")
+                Text("Preview what your friend gets")
+                    .multilineTextAlignment(.leading)
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.right")
+                    .font(.footnote.weight(.semibold))
+            }
+            .padding(.horizontal, 14)
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .padding(.vertical, 4)
+            .contentShape(Rectangle())
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .strokeBorder(AppColors.border, lineWidth: 1)
+                    .opacity(isEnabled ? 1 : 0.4)
+            )
+        }
+        .buttonStyle(.borderless)
+        .tint(AppColors.evergreen)
+        .frame(maxWidth: 480, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityHint("Optionally shows what your friend will get")
+        .accessibilityIdentifier("build23.sender.preview.build")
     }
 }
 
