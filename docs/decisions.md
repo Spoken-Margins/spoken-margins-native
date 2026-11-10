@@ -535,6 +535,8 @@ How it is used:
   - Rejected: ending after quiet (the 2.5-second timer in `HandsFreeMarginCoordinator`, built in #775 and never wired into the app). It is not to be wired in, and not raised again. The 5-minute cap stays as the only automatic end.
   - Chosen, not built: a spoken end phrase while recording. It needs on-device speech recognition during the recording, so it goes through a design pass (cost: battery, a phrase heard inside a sentence). The headset-press code stays; it acts only if iOS ever delivers a press.
   - Still true from 2026-11-07: no phone microphone with the headset in music mode, no CallKit.
+- **No spoken prompt or cue after saving a written Margin; the speech-recognition prompt after saving is left as it is (#3793, item 3).** Asked whether the app should give a spoken prompt or cue after a written Margin is saved, he answered: "no I don't think I requested this and it isn't nessasary". Item 3 of #3793 is dropped and the issue closes. Items 1 and 2 shipped in #3842 (the "Margin saved" confirmation, and "Saved · transcript failed" on the playback tag). Not to be raised again.
+  - Caveat, said when it was recorded: item 3 as filed is iOS's first-use speech-recognition permission prompt appearing right after saving, not a spoken cue. His answer is read as "do nothing about item 3". If he meant only the spoken cue, the permission prompt's timing is still open.
 
 ## Background moved out of the guide (2026-11-06)
 - **From the guide.** Explanations that stood next to rules in `AGENTS.md`, moved here to keep it under its 4,000-word cap (the rules themselves are unchanged):
