@@ -1136,8 +1136,12 @@ final class Gate1FlowUITests: XCTestCase {
         let filter = element("library.filter.menu")
         XCTAssertTrue(search.isHittable)
         XCTAssertTrue(filter.exists)
+        // The filter row sits under the search field, so whatever stands above it (a Live session row left by an
+        // earlier test, #3967) can put it behind the mini-player. The claim is that the list lets it clear the bar.
+        dragContent(above: element("miniPlayer.bar"), toReveal: filter)
         XCTAssertTrue(app.windows.firstMatch.frame.contains(filter.frame))
-        XCTAssertFalse(filter.frame.intersects(element("miniPlayer.bar").frame))
+        XCTAssertFalse(filter.frame.intersects(element("miniPlayer.bar").frame),
+                       "The Library filter stays behind the mini-player however far the list scrolls")
         // iOS 18 reports a visible native Menu as non-hittable. Verify its actual
         // activation and selection instead of trusting that accessibility flag.
         filter.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
@@ -1145,6 +1149,9 @@ final class Gate1FlowUITests: XCTestCase {
         app.buttons["Text"].tap()
         XCTAssertTrue(filter.waitForExistence(timeout: 4))
         XCTAssertTrue(filter.label.contains("active filters"))
+        // The filtered list is shorter and can settle lower; a tap on the bar would open playback instead.
+        dragContent(above: element("miniPlayer.bar"), toReveal: filter)
+        XCTAssertFalse(filter.frame.intersects(element("miniPlayer.bar").frame))
         filter.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         app.buttons["All"].firstMatch.tap()
         XCTAssertEqual(filter.label, "Filter Library")
@@ -1442,10 +1449,47 @@ final class Gate1FlowUITests: XCTestCase {
         if element("playback.timeline.adjacent").exists {
             return
         }
+        pullPlaybackDockDown(toReveal: app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Timeline")).firstMatch)
         let button = scrollToButton(containingLabel: "Timeline")
         XCTAssertTrue(button.isHittable, "Missing the iPhone Timeline route and iPad adjacent Timeline.")
         button.tap()
         XCTAssertTrue(element("timeline.screen").waitForExistence(timeout: 4))
+    }
+
+    /// At accessibility sizes the playback dock scrolls inside a capped height and opens scrolled to its bottom, so the
+    /// pane switch at its top (Timeline, Margins, Now) starts out of view (`PlaybackBoundedDock`). Swiping up only moves
+    /// it further off, which failed the AX5 layout test at the cut of 72ae8c3 (#3921). This drags the dock's content
+    /// down from its right margin beside the transport row, clear of the scrubber and the buttons.
+    private func pullPlaybackDockDown(toReveal target: XCUIElement) {
+        let play = element("playback.play.button")
+        guard play.exists else { return }
+        let window = app.windows.firstMatch
+        for _ in 0..<4 where !isReadyToTap(target) {
+            let origin = window.coordinate(withNormalizedOffset: .zero)
+            let x = window.frame.width - 16
+            let startY = play.frame.midY - window.frame.minY
+            let endY = min(window.frame.height - 20, startY + 240)
+            guard endY - startY > 60 else { return }
+            origin.withOffset(CGVector(dx: x, dy: startY))
+                .press(forDuration: 0.05, thenDragTo: origin.withOffset(CGVector(dx: x, dy: endY)),
+                       withVelocity: .slow, thenHoldForDuration: 0.1)
+        }
+    }
+
+    /// Drags the screen's scroll content up in short, slow steps, starting just above `bar`, until `target` sits wholly
+    /// above it. Each step moves only as far as the overlap needs, so the target is not flung past the top.
+    private func dragContent(above bar: XCUIElement, toReveal target: XCUIElement) {
+        let window = app.windows.firstMatch
+        for _ in 0..<6 where target.frame.maxY > bar.frame.minY {
+            let origin = window.coordinate(withNormalizedOffset: .zero)
+            let x = window.frame.width - 16
+            let startY = bar.frame.minY - 24 - window.frame.minY
+            let distance = min(target.frame.maxY - bar.frame.minY + 48, startY - 120)
+            guard distance > 20 else { return }
+            origin.withOffset(CGVector(dx: x, dy: startY))
+                .press(forDuration: 0.05, thenDragTo: origin.withOffset(CGVector(dx: x, dy: startY - distance)),
+                       withVelocity: .slow, thenHoldForDuration: 0.1)
+        }
     }
 
     private func returnToNowPlayingFromTimelineIfNeeded() {

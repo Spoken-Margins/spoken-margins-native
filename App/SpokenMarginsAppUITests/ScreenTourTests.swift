@@ -1,3 +1,4 @@
+import UIKit
 import XCTest
 
 /// Opens each main screen from the seeded launch and attaches one named screenshot per screen, in
@@ -18,6 +19,8 @@ final class ScreenTourTests: XCTestCase {
     private var appearance = "light"
     /// The screenshots this test took, with what each shows, for the run's INDEX.md.
     private var index: [(name: String, shows: String)] = []
+    /// Dark captures whose pixels are mostly light, with the share of light pixels (#3838).
+    private var lightDarkCaptures: [(name: String, lightShare: Double)] = []
 
     override func setUpWithError() throws {
         continueAfterFailure = false
@@ -43,6 +46,7 @@ final class ScreenTourTests: XCTestCase {
 
     func testTourInDarkAppearance() throws {
         tour(.dark, named: "dark")
+        assertDarkCapturesAreDark()
     }
 
     func testSharingLoopInLightAppearance() throws {
@@ -51,6 +55,30 @@ final class ScreenTourTests: XCTestCase {
 
     func testSharingLoopInDarkAppearance() throws {
         try sharingLoop(.dark, named: "dark")
+        assertDarkCapturesAreDark()
+    }
+
+    /// #3838: the dark captures of the tabs were light for weeks while the tour reported "light and dark". The check that
+    /// stops that has to be able to fail, so this feeds it the cream of the light theme, the near-black of the dark one,
+    /// and a dark screen with a bright block, and asks which of them it calls light. It launches nothing.
+    func testTheDarkCaptureCheckTellsALightScreenFromADarkOne() throws {
+        func image(_ background: UIColor, brightBlockShare: CGFloat = 0) -> CGImage {
+            let size = CGSize(width: 390, height: 844)
+            return UIGraphicsImageRenderer(size: size).image { context in
+                background.setFill()
+                context.fill(CGRect(origin: .zero, size: size))
+                UIColor.white.setFill()
+                context.fill(CGRect(x: 0, y: 0, width: size.width, height: size.height * brightBlockShare))
+            }.cgImage!
+        }
+        let cream = RenderedBrightness.lightShare(of: image(UIColor(red: 0.96, green: 0.94, blue: 0.88, alpha: 1)))
+        let nearBlack = RenderedBrightness.lightShare(of: image(UIColor(red: 0.07, green: 0.08, blue: 0.08, alpha: 1)))
+        let darkWithCard = RenderedBrightness.lightShare(
+            of: image(UIColor(red: 0.07, green: 0.08, blue: 0.08, alpha: 1), brightBlockShare: 0.25))
+        XCTAssertGreaterThan(cream, RenderedBrightness.mostlyLightShare, "the light theme's cream must read as a light screen")
+        XCTAssertLessThan(nearBlack, 0.05, "a dark screen has no light pixels")
+        XCTAssertLessThan(darkWithCard, RenderedBrightness.mostlyLightShare,
+                          "a dark screen with a bright card on a quarter of it is still a dark screen")
     }
 
     /// The Live Activity's Lock Screen card at the default and the largest text size (#1940). A UI test can't lock
@@ -201,10 +229,10 @@ final class ScreenTourTests: XCTestCase {
         capture("24-item-bottom", "The episode's item screen, scrolled to the bottom")
         for _ in 0..<3 { app.swipeDown() }
 
-        // The item offers two choices (#3219): the big Play starts the episode without asking, and "Hear only …"
+        // The item offers two choices (#3219): the big Play starts the episode without asking, and "Skip to …"
         // reviews Sam's Margin in place. Hear it on its own first.
         let hearOnly = scrollTo("item.reviewNewMargins.button")
-        capture("25-item-two-choices", "The item's two choices: Play, and Hear only Sam's new Margin")
+        capture("25-item-two-choices", "The item's two choices: Play, and Skip to Sam's new Margin")
         hearOnly.tap()
         if !element("playback.screen").waitForExistence(timeout: 8) { tapButton("miniPlayer.open.button") }
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8), "Now Playing did not open")
@@ -214,7 +242,7 @@ final class ScreenTourTests: XCTestCase {
         // and the reply step below fails unless this Margin was heard, because then it would count two new Margins.
         captureRequired(element("review.comingUp"), timeout: 12, "26-now-review-lead-in",
                         "Now tab during the review's lead-in, the pinned card above the title (#3220)",
-                        failure: "The review never started after Hear only Sam's new Margin")
+                        failure: "The review never started after Skip to Sam's new Margin")
         captureWhenPresent(element("review.playing"), timeout: 40, "27-now-review-sam",
                            "Now tab while Sam's Margin plays in the review, the pinned card above the title (#3220)")
         XCTAssertTrue(waitForDisappearance(element("review.comingUp"), timeout: 40), "The review's lead-in never ended")
@@ -394,11 +422,26 @@ final class ScreenTourTests: XCTestCase {
     private func capture(_ screen: String, _ shows: String) {
         // Let the navigation transition finish so the screenshot shows the screen, not the push.
         _ = XCTWaiter().wait(for: [XCTestExpectation(description: "settle")], timeout: 0.8)
-        let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        let screenshot = XCUIScreen.main.screenshot()
+        let attachment = XCTAttachment(screenshot: screenshot)
         attachment.name = "tour-\(appearance)-\(screen)"
         attachment.lifetime = .keepAlways
         add(attachment)
         index.append((attachment.name ?? screen, shows))
+        // A `-missing` capture is a screen that did not come; it shows whatever is behind it, which another capture samples.
+        if appearance == "dark", !screen.hasSuffix("-missing"), let pixels = screenshot.image.cgImage {
+            let share = RenderedBrightness.lightShare(of: pixels)
+            if share > RenderedBrightness.mostlyLightShare { lightDarkCaptures.append((attachment.name ?? screen, share)) }
+        }
+    }
+
+    /// Fails the dark tour when a capture that claims to be dark rendered light (#3838). It runs after the whole tour,
+    /// so every screen is still captured and the failure names all of them. If the tabs really ignore dark mode, that is
+    /// an app bug for its own issue; if the simulator did not apply the appearance, it is this test's.
+    private func assertDarkCapturesAreDark() {
+        let named = lightDarkCaptures.map { "\($0.name) (\(Int($0.lightShare * 100))% light)" }.joined(separator: ", ")
+        XCTAssertTrue(lightDarkCaptures.isEmpty,
+                      "Dark captures that rendered mostly light, so they do not show dark mode: \(named)")
     }
 
     /// SwiftUI can put one identifier on a wrapper (`Other`) and the `Button` inside it, so the bare query matches
@@ -445,5 +488,39 @@ final class ScreenTourTests: XCTestCase {
         if playPause.label == "Pause" {
             playPause.tap()
         }
+    }
+}
+
+/// How light a rendered screen is, read from its pixels, so a capture can be told apart from the appearance that was asked
+/// for (#3838).
+private enum RenderedBrightness {
+    /// A capture with more than this share of light pixels is a light screen. A dark screen with a bright card or image
+    /// stays well under it; the light theme's cream is about 0.95.
+    static let mostlyLightShare = 0.5
+
+    /// The share of the image's pixels, averaged down to a 24 by 48 grid, whose luma is above 0.6.
+    static func lightShare(of image: CGImage) -> Double {
+        let width = 24
+        let height = 48
+        var bytes = [UInt8](repeating: 0, count: width * height * 4)
+        let drawn = bytes.withUnsafeMutableBytes { buffer -> Bool in
+            guard let context = CGContext(
+                data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ) else { return false }
+            context.interpolationQuality = .high
+            context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+            return true
+        }
+        // A context that cannot be made says nothing about the screen; the self-test would catch it failing every time.
+        guard drawn else { return 0 }
+        var light = 0
+        for pixel in 0..<(width * height) {
+            let red = Double(bytes[pixel * 4]) / 255
+            let green = Double(bytes[pixel * 4 + 1]) / 255
+            let blue = Double(bytes[pixel * 4 + 2]) / 255
+            if 0.2126 * red + 0.7152 * green + 0.0722 * blue > 0.6 { light += 1 }
+        }
+        return Double(light) / Double(width * height)
     }
 }
