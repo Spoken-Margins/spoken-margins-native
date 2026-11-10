@@ -2,13 +2,19 @@
 
 Most phone-found bugs were not about a screen. They were about the phone's state when the listener used the app: locked, away, relaunched, offline, on AirPods. A host test can put the code in that state if the code has a seam for it. This page is the short list of those states, so a builder or a design pass names the ones a change meets and writes a test for each before the phone does.
 
-**Source.** `docs/workstreams/device-conditions-bugs.tsv` classes every `found-on-phone` + `bug` issue (135 on 2026-11-10) under one row, or under `none:<why>` when no device condition was behind it. 65 of the 135 (48%) sit under a row. `scripts/device_conditions.py` counts them. The what-catches-what report's 51 bugs (2026-11-09) should be a subset of these, but that is not yet checked: its own list lives on the Mac, so this one is rebuilt from the issue labels (Default taken, #3899). #3899 stays open for the Mac step of checking that every one of the 51 is in the list.
+**Source.** `docs/workstreams/device-conditions-bugs.tsv` classes every `found-on-phone` + `bug` issue (144 on 2026-11-10) under one row, or under `none:<why>` when no device condition was behind it. 70 of the 144 (49%) sit under a row. `scripts/device_conditions.py` counts them.
+
+**The report's 51.** The what-catches-what report's 51 bugs (2026-11-09) are all in the list, and saved in `device-conditions-report-51.txt`. Nine of them had `found-on-phone` but no `bug` label, so their lines were added by hand. `scripts/device_conditions.py --only docs/workstreams/device-conditions-report-51.txt` counts them: 31 of the 51 (61%) sit under a row. The report counted 29 (57%) with a device-condition or performance trigger. The two readings differ on 8 bugs, which is the report's own limit before its trigger table moves:
+
+1. Three it called data or contract edges sit here under a row: #2097 (`main-thread`), #2118 (`long-source`), #3041 (`web-packet`).
+2. Two it called plain flows sit here under a row: #3489 (`lock`), #3753 (`store`).
+3. Three it called device conditions have no row here: #2856 (cause unknown), #3243 (a Watch design call), #3674 (a Watch layout fault).
 
 ## How to use it
 
 1. **Builder.** A PR that touches playback, capture, import, sharing, the Library read path or a background job names, in its description, the rows below that its change can meet, and the host test for each, or says why a row does not apply. The test fails without the fix (`AGENTS.md`, Verification).
 2. **Design pass.** The **Design** comment lists the rows its flow meets (the one line added to the contents in `docs/decisions.md`, 2026-11-09), so the builder starts with them.
-3. **A bug the phone finds** gets its row in `device-conditions-bugs.tsv` in the fix PR. `scripts/device_conditions.py --unlisted` lists the ones not yet there.
+3. **A bug the phone finds** gets its row in `device-conditions-bugs.tsv` in the fix PR. `scripts/device_conditions.py --unlisted` lists the ones not yet there. It sees only issues labelled `bug`; a phone-found bug without that label gets its line by hand.
 
 ## The rows
 
@@ -33,7 +39,7 @@ A bug can meet two rows (`also` in the list); it counts once, under its main row
 
 ## Bugs with no row
 
-`none:<why>` marks 70 bugs. These are not device conditions, and most are host-testable already or are not tests at all: `logic` (33, a state machine or rule wrong on any phone), `visual` (22, layout, contrast, tap targets; the accessibility scans and screen checks cover them), `design` (5), `parse-fixture` (4, a page, feed or file shape; a fixture), `unclear` (4, the cause is unknown: #540, #937, #1696, #2856), `ears` (1) and `ops` (1).
+`none:<why>` marks 74 bugs. These are not device conditions, and most are host-testable already or are not tests at all: `logic` (35, a state machine or rule wrong on any phone), `visual` (24, layout, contrast, tap targets; the accessibility scans and screen checks cover them), `design` (5), `parse-fixture` (4, a page, feed or file shape; a fixture), `unclear` (4, the cause is unknown: #540, #937, #1696, #2856), `ears` (1) and `ops` (1).
 
 ## Missing seams
 
@@ -44,4 +50,4 @@ A condition the host cannot put the code in today. Two or more bugs needed each 
 
 ## Waste signal
 
-Over the next 30 phone-found bugs, run `scripts/device_conditions.py --after-issue 3897 --first 30` (#3897 is the last bug listed). If device-condition and performance bugs (every row above) are still more than half, the table is not finding scenarios, and the spend moves to an agent walking the changed flow (#3899). Today: 65 of 135 (48%).
+Over the next 30 phone-found bugs, run `scripts/device_conditions.py --after-issue 3897 --first 30` (#3897 is the last bug listed). If device-condition and performance bugs (every row above) are still more than half, the table is not finding scenarios, and the spend moves to an agent walking the changed flow (#3899). Today: 70 of 144 (49%).
