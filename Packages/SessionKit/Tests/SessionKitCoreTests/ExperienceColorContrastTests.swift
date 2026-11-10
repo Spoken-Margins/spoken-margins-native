@@ -206,6 +206,16 @@ final class AppColorContrastCoverageTests: XCTestCase {
         XCTAssertEqual(found, [], "a swipe button's white words need a fixed AppColors.swipe… token (#4045)")
     }
 
+    /// The app's swipe colours are defined outside `enum AppColors` (a hot file stays small), so the guard that every
+    /// `AppColors` colour comes from a shared token reads this file too.
+    func testTheAppSwipeColoursComeFromTheSharedSwipeTokens() throws {
+        let text = try TestInputs.text(.appSources, "AppColors+Swipe.swift")
+        for name in ["swipeEvergreen", "swipeOchre", "swipePlum", "swipeSlate"] {
+            XCTAssertTrue(text.contains("static let \(name) = dynamicColor(AppSemanticColorRGB.\(name))"), "\(name) must come from its token")
+        }
+        XCTAssertEqual(text.components(separatedBy: "static let ").count - 1, 4, "no swipe colour without a token and an audit pair")
+    }
+
     func testTheSwipeTokensAreTheLightModeTintsInBothAppearances() {
         let pairs: [(AppDynamicRGB, AppDynamicRGB)] = [
             (AppSemanticColorRGB.swipeEvergreen, AppSemanticColorRGB.evergreen),
