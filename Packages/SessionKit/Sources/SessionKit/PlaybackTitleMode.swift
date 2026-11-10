@@ -13,6 +13,10 @@ public enum PlaybackTitleMode: Equatable, Sendable {
         cardSlotHeld ? .compact : .full
     }
 
+    /// The separate show-name line under the title. The compact title already shows the show name, so it is drawn
+    /// only with the full title, and the show appears once (#3598).
+    public var showsSeparateShowLine: Bool { self == .full }
+
     /// The small line. VoiceOver keeps reading the full title.
     public static func compactLine(title: String, sourceName: String?) -> String {
         let name = sourceName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""

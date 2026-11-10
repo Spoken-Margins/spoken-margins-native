@@ -15,4 +15,9 @@ final class PlaybackTitleModeTests: XCTestCase {
         XCTAssertEqual(PlaybackTitleMode.compactLine(title: "An article", sourceName: "  \n"), "An article")
         XCTAssertEqual(PlaybackTitleMode.compactLine(title: "", sourceName: ""), "")
     }
+
+    func testShowNameAppearsOnce() {
+        XCTAssertTrue(PlaybackTitleMode.full.showsSeparateShowLine)
+        XCTAssertFalse(PlaybackTitleMode.compact.showsSeparateShowLine)
+    }
 }
