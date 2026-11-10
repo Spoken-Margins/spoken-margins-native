@@ -76,6 +76,7 @@ struct Build23SenderSharingExperience: View {
                     }
                     .accessibilityIdentifier("build23.sender.cancel")
                 }
+                backToSelectionLink(snapshot)
                 if let error = shareError(snapshot) {
                     FailureMessageLabel(error)
                         .accessibilityIdentifier("build23.sender.share.error")
@@ -118,6 +119,7 @@ struct Build23SenderSharingExperience: View {
                     primaryAction(snapshot)
                         .controlSize(.large)
                         .frame(maxWidth: .infinity)
+                    secondaryAction(snapshot)
                 }
                 .padding(.horizontal, 20)
                 .padding(.vertical, 12)
@@ -245,15 +247,44 @@ struct Build23SenderSharingExperience: View {
         #endif
     }
 
-    /// "Send as a file", the second choice beside a Share button that makes a link.
-    private func sendFileButton(enabled: Bool, identifier: String) -> some View {
-        Button("Send as a file", systemImage: "doc") {
-            share(.file)
+    /// "Back to selection", on its own line under the header on the review and preview steps (#3896). Each step keeps
+    /// its own identifier; the action is the same. The preview step draws it only once the preview is ready.
+    @ViewBuilder
+    private func backToSelectionLink(_ snapshot: Build23SharingSnapshot) -> some View {
+        if let identifier = Build23SenderPresentation.topBackToSelectionIdentifier(
+            stage: snapshot.stage,
+            previewState: snapshot.previewState,
+            hasVerifiedPreview: snapshot.verifiedPreview != nil
+        ) {
+            Build23BackToSelectionButton(identifier: identifier) {
+                coordinator.send(.returnToSelect)
+            }
         }
-        .buttonStyle(.bordered)
-        .disabled(!enabled)
-        .accessibilityHint("Opens the share sheet with your Margins as a file")
-        .accessibilityIdentifier(identifier)
+    }
+
+    /// "Send as a file", under the filled "Share link" in the pinned bar (#3896). Only a build that makes links has it.
+    @ViewBuilder
+    private func secondaryAction(_ snapshot: Build23SharingSnapshot) -> some View {
+        switch snapshot.stage {
+        case .review where sharesLink:
+            Build23SendFileButton(
+                isEnabled: snapshot.canAdvance && !isMakingLink,
+                identifier: "build23.sender.review.share.file"
+            ) {
+                share(.file)
+            }
+        case .recipientPreview where sharesLink:
+            if snapshot.previewState == .ready, snapshot.verifiedPreview != nil {
+                Build23SendFileButton(
+                    isEnabled: coordinator.verifiedShareFileURL != nil && !isMakingLink,
+                    identifier: "build23.sender.share.present"
+                ) {
+                    presentVerifiedSystemShare()
+                }
+            }
+        default:
+            EmptyView()
+        }
     }
 
     private func selectStage(_ snapshot: Build23SharingSnapshot) -> some View {
@@ -593,13 +624,13 @@ struct Build23SenderSharingExperience: View {
 
     private func reviewStage(_ snapshot: Build23SharingSnapshot) -> some View {
         VStack(alignment: .leading, spacing: 20) {
-            reviewComposition(snapshot)
-
             Text(VoiceOverAnnouncements.SharingStep.review.title)
                 .font(.headline)
                 .foregroundStyle(AppColors.text)
                 .screenTitle()
                 .accessibilityIdentifier("build23.sender.stage.review")
+
+            reviewComposition(snapshot)
 
             DisclosureGroup("Details") {
                 VStack(alignment: .leading, spacing: 16) {
@@ -620,25 +651,10 @@ struct Build23SenderSharingExperience: View {
                     .font(.subheadline)
             }
 
-            AdaptiveStack(spacing: 12) {
-                Button("Back to selection", systemImage: "arrow.left") {
-                    coordinator.send(.returnToSelect)
-                }
-                .buttonStyle(.bordered)
-                .accessibilityIdentifier("build23.sender.review.back")
-
-                if sharesLink {
-                    sendFileButton(enabled: snapshot.canAdvance && !isMakingLink, identifier: "build23.sender.review.share.file")
-                }
-
-                Button("Preview what your friend gets", systemImage: "doc.text.magnifyingglass") {
-                    coordinator.send(.buildRecipientPreview)
-                }
-                .buttonStyle(.bordered)
-                .disabled(!snapshot.canAdvance)
-                .accessibilityHint("Optionally shows what your friend will get")
-                .accessibilityIdentifier("build23.sender.preview.build")
+            Build23PreviewRow {
+                coordinator.send(.buildRecipientPreview)
             }
+            .disabled(!snapshot.canAdvance)
         }
         .onAppear(perform: normalizeReviewSelection)
     }
@@ -670,7 +686,6 @@ struct Build23SenderSharingExperience: View {
                     Build23VerifiedShareActions(
                         isFileShareEnabled: coordinator.verifiedShareFileURL != nil && !isMakingLink,
                         fileIsSecondChoice: sharesLink,
-                        onEdit: { coordinator.send(.returnToSelect) },
                         onShareFile: presentVerifiedSystemShare
                     )
 
