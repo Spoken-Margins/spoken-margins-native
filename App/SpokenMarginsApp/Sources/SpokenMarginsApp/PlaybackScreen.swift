@@ -583,18 +583,24 @@ struct PlaybackScreen: View {
     }
 
     private var playbackHeader: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        // Keyed on the card slot being held, the same test PinnedMarginCardView uses to draw it, so the
+        // title is small for the whole friend listen and never changes with the card's stage (#3598, #3220).
+        let titleMode = PlaybackTitleMode.choose(cardSlotHeld: model.pinnedMarginCard != nil)
+        return VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top, spacing: 4) {
                 libraryExitButton
                 PlaybackSourceTitleView(
                     title: model.playbackItemHeaderTitle,
+                    mode: titleMode,
+                    sourceName: model.libraryItems.first(where: { $0.id == model.selectedItem.id })?.sourceTitle,
                     sleepTimerState: model.sleepTimerState,
                     sleepTimerRemainingSeconds: model.sleepTimerRemainingSeconds,
                     showItem: model.openCurrentPlaybackItem
                 )
             }
 
-            if model.selectedItem.isNativeAudio,
+            // The compact title already is the show name, so the show appears once while a friend's card is up (#3598).
+            if titleMode.showsSeparateShowLine, model.selectedItem.isNativeAudio,
                let show = model.libraryItems.first(where: { $0.id == model.selectedItem.id })?.sourceTitle,
                !show.isEmpty {
                 Text(show)

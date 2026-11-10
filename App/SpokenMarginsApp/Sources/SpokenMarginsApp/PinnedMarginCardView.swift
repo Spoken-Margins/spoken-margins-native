@@ -7,15 +7,7 @@ import SessionKit
 /// its words: no blank row (#3597). The words and the buttons are `PinnedMarginCard`; this only draws them.
 struct PinnedMarginCardView: View {
     @EnvironmentObject private var model: Gate1AppModel
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var playbackTick = 0 // bumped by each progress tick: the countdown follows the playhead (#2074)
-    @AccessibilityFocusState private var focusedPart: Part?
-
-    /// The parts VoiceOver or Switch Control can focus, so the tone-only card's timer waits while one has focus (#3720).
-    private enum Part: Hashable {
-        case headline, detail
-        case button(PinnedMarginCard.Action.Job)
-    }
 
     private var moment: MarginMomentSequence? { model.marginMoment }
     private var isReview: Bool { moment?.isReview == true }
@@ -50,81 +42,10 @@ struct PinnedMarginCardView: View {
             marginID: model.pendingImportedCommentary?.interjection.id ?? model.playingImportedCommentary?.interjection.id)
     }
 
-    /// At the accessibility text sizes the headline and the buttons wrap and stack instead of clipping (#1933).
-    private var isLargeText: Bool { dynamicTypeSize >= .xLarge }
-
     private func content(_ card: PinnedMarginCard) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Image(systemName: icon(card))
-                    .foregroundStyle(.white)
-                    .accessibilityHidden(true)
-                Text(card.headline)
-                    .font(.headline)
-                    .accessibilityAddTraits(.isHeader)
-                    .foregroundStyle(.white)
-                    // One line at regular sizes, shrunk before it is cut, so a long name does not make the card taller
-                    // when a lead-in becomes a voice. It wraps at the larger sizes (#3597).
-                    .lineLimit(isLargeText ? nil : 1)
-                    .minimumScaleFactor(isLargeText ? 1 : 0.8)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .numericTextTransition()
-                    .accessibilityFocused($focusedPart, equals: .headline)
-                    .accessibilityIdentifier(headlineIdentifier(card))
-                Spacer(minLength: 8)
-                if let position = card.position {
-                    Text(position)
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(.white.opacity(0.85))
-                        .accessibilityIdentifier(isReview ? "review.progress" : "marginCard.position")
-                }
-            }
-            Text(detail(card))
-                .font(.footnote)
-                .foregroundStyle(.white.opacity(0.85))
-                // The transcript of a Margin waiting for a tap is capped at every size, so Listen and Dismiss stay on the screen.
-                .lineLimit(card.stage == .waitingForTap ? (isLargeText ? 4 : 2) : (isLargeText ? nil : 2))
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .topLeading)
-                .accessibilityFocused($focusedPart, equals: .detail)
-                .accessibilityIdentifier("marginCard.detail")
-            buttons(card)
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 16))
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("marginCard")
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 0)
-                .onChanged { _ in FeedbackBannerHold.marginCard.setTouched(true) }
-                .onEnded { _ in FeedbackBannerHold.marginCard.setTouched(false) }
-        )
-        .onChange(of: focusedPart) { _, part in FeedbackBannerHold.marginCard.setFocused(part != nil) }
-        .onDisappear { FeedbackBannerHold.marginCard.reset() }
-        .padding(.horizontal, 22)
-        .padding(.vertical, 8)
-        .frame(maxWidth: 620)
-        .frame(maxWidth: .infinity)
-        .background(AppColors.listeningBackground)
-    }
-
-    private func icon(_ card: PinnedMarginCard) -> String {
-        switch card.stage {
-        case .speaking, .reading, .voicePaused, .loading: "waveform"
-        case .failed: "exclamationmark.triangle"
-        case .comingUp, .waitingForTap, .upNext: "text.bubble"
-        case .answerSaved: "checkmark.circle"
-        case .lastMargin: "text.bubble"
-        }
-    }
-
-    /// The identifiers a review's UI tests already look for, kept on the same words.
-    private func headlineIdentifier(_ card: PinnedMarginCard) -> String {
-        guard isReview else { return "marginCard.headline" }
-        if case .comingUp = card.stage { return "review.comingUp" }
-        if card.stage == .speaking || card.stage == .reading || card.stage == .voicePaused { return "review.playing" }
-        return "marginCard.headline"
+        PinnedMarginCardBody(
+            card: card, detail: detail(card), isReview: isReview, navigationLocked: model.recordingNavigationIsLocked,
+            perform: perform)
     }
 
     /// The one line under the headline: what is wrong with the Margin first (being placed, an approximate place), then
@@ -149,9 +70,141 @@ struct PinnedMarginCardView: View {
         return card.detail
     }
 
+    private func perform(_ job: PinnedMarginCard.Action.Job) {
+        switch job {
+        case .goToNextMargin: model.goToNextMargin()
+        case .skipThisMargin: skip()
+        case .retry: model.retryImportedCommentary()
+        case .playMomentNow: model.playMarginMomentNow()
+        case .keepListening, .stopReview, .stopPlayingMine: model.endMarginMoment()
+        case .listen: model.listenToPendingImportedCommentary()
+        case .dismiss: model.dismissPendingImportedCommentary()
+        }
+    }
+
+    private func skip() {
+        if model.playingImportedCommentary != nil { model.returnToSourceFromImportedCommentary() } else { model.skipMarginMomentVoice() }
+    }
+}
+
+/// The card's drawing, with everything it needs handed in, so a layout test can draw it at each stage and text size
+/// without a `Gate1AppModel` (#3597, #1933).
+struct PinnedMarginCardBody: View {
+    let card: PinnedMarginCard
+    let detail: String
+    let isReview: Bool
+    let navigationLocked: Bool
+    let perform: (PinnedMarginCard.Action.Job) -> Void
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @AccessibilityFocusState private var focusedPart: Part?
+
+    /// The parts VoiceOver or Switch Control can focus, so the tone-only card's timer waits while one has focus (#3720).
+    private enum Part: Hashable {
+        case headline, detail
+        case button(PinnedMarginCard.Action.Job)
+    }
+
+    /// At the accessibility text sizes the headline and the buttons wrap and stack instead of clipping (#1933).
+    private var isLargeText: Bool { dynamicTypeSize >= .xLarge }
+
+    /// The tallest the card's words and buttons may be, inside its padding: with the padding the card stays under half
+    /// the 852 pt phone screen, so the title, the transport and the Auto-play switch keep their room below it. Only the
+    /// accessibility sizes reach it: a long name at accessibility3 drew the card 920 pt tall, taller than the screen (#3597).
+    static let maxContentHeight: CGFloat = 380
+
+    var body: some View {
+        HeightCap(maxHeight: Self.maxContentHeight) {
+            VStack(alignment: .leading, spacing: 8) {
+                // The words scroll inside the card once they would push it past its cap; the buttons are always whole.
+                ViewThatFits(in: .vertical) {
+                    words
+                    ScrollView { words }
+                        .scrollBounceBehavior(.basedOnSize)
+                }
+                buttons
+                    .fixedSize(horizontal: false, vertical: true)
+                    .layoutPriority(1)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 16))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("marginCard")
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { _ in FeedbackBannerHold.marginCard.setTouched(true) }
+                .onEnded { _ in FeedbackBannerHold.marginCard.setTouched(false) }
+        )
+        .onChange(of: focusedPart) { _, part in FeedbackBannerHold.marginCard.setFocused(part != nil) }
+        .onDisappear { FeedbackBannerHold.marginCard.reset() }
+        .padding(.horizontal, 22)
+        .padding(.vertical, 8)
+        .frame(maxWidth: 620)
+        .frame(maxWidth: .infinity)
+        .background(AppColors.listeningBackground)
+    }
+
+    /// The headline, the position and the detail line.
+    private var words: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Image(systemName: icon)
+                    .foregroundStyle(.white)
+                    .accessibilityHidden(true)
+                Text(card.headline)
+                    .font(.headline)
+                    .accessibilityAddTraits(.isHeader)
+                    .foregroundStyle(.white)
+                    // One line at regular sizes, shrunk before it is cut, so a long name does not make the card taller
+                    // when a lead-in becomes a voice. It wraps at the larger sizes (#3597).
+                    .lineLimit(isLargeText ? nil : 1)
+                    .minimumScaleFactor(isLargeText ? 1 : 0.8)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .numericTextTransition()
+                    .accessibilityFocused($focusedPart, equals: .headline)
+                    .accessibilityIdentifier(headlineIdentifier)
+                Spacer(minLength: 8)
+                if let position = card.position {
+                    Text(position)
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.white.opacity(0.85))
+                        .accessibilityIdentifier(isReview ? "review.progress" : "marginCard.position")
+                }
+            }
+            Text(detail)
+                .font(.footnote)
+                .foregroundStyle(.white.opacity(0.85))
+                // The transcript of a Margin waiting for a tap is capped at every size, so Listen and Dismiss stay on the screen.
+                .lineLimit(card.stage == .waitingForTap ? (isLargeText ? 4 : 2) : (isLargeText ? nil : 2))
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .accessibilityFocused($focusedPart, equals: .detail)
+                .accessibilityIdentifier("marginCard.detail")
+        }
+    }
+
+    private var icon: String {
+        switch card.stage {
+        case .speaking, .reading, .voicePaused, .loading: "waveform"
+        case .failed: "exclamationmark.triangle"
+        case .comingUp, .waitingForTap, .upNext: "text.bubble"
+        case .answerSaved: "checkmark.circle"
+        case .lastMargin: "text.bubble"
+        }
+    }
+
+    /// The identifiers a review's UI tests already look for, kept on the same words.
+    private var headlineIdentifier: String {
+        guard isReview else { return "marginCard.headline" }
+        if case .comingUp = card.stage { return "review.comingUp" }
+        if card.stage == .speaking || card.stage == .reading || card.stage == .voicePaused { return "review.playing" }
+        return "marginCard.headline"
+    }
+
     /// One row, one button per job; a stage with nowhere to go draws no row at all.
     @ViewBuilder
-    private func buttons(_ card: PinnedMarginCard) -> some View {
+    private var buttons: some View {
         let actions = card.actions
         if !actions.isEmpty {
             let row = isLargeText ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8)) : AnyLayout(HStackLayout(spacing: 8))
@@ -161,7 +214,7 @@ struct PinnedMarginCardView: View {
 
     private func button(_ action: PinnedMarginCard.Action) -> some View {
         // Held for a moment while a Margin is being recorded: dimmed, not hidden, and `SecondaryButtonStyle` has no disabled look.
-        let held = action.job.followsNavigationLock && model.recordingNavigationIsLocked
+        let held = action.job.followsNavigationLock && navigationLocked
         // The identifier goes on the button itself, not on a container around the switch (#2898).
         return styledButton(action)
             .disabled(held)
@@ -196,18 +249,6 @@ struct PinnedMarginCardView: View {
             .layoutPriority(shares ? 0 : 1)
     }
 
-    private func perform(_ job: PinnedMarginCard.Action.Job) {
-        switch job {
-        case .goToNextMargin: model.goToNextMargin()
-        case .skipThisMargin: skip()
-        case .retry: model.retryImportedCommentary()
-        case .playMomentNow: model.playMarginMomentNow()
-        case .keepListening, .stopReview, .stopPlayingMine: model.endMarginMoment()
-        case .listen: model.listenToPendingImportedCommentary()
-        case .dismiss: model.dismissPendingImportedCommentary()
-        }
-    }
-
     /// The identifiers the UI tests already look for, kept on the same jobs.
     private func identifier(_ job: PinnedMarginCard.Action.Job) -> String {
         switch job {
@@ -230,8 +271,19 @@ struct PinnedMarginCardView: View {
         case .keepListening, .stopReview, .stopPlayingMine, .dismiss: "xmark"
         }
     }
+}
 
-    private func skip() {
-        if model.playingImportedCommentary != nil { model.returnToSourceFromImportedCommentary() } else { model.skipMarginMomentVoice() }
+/// Offers its content no more than `maxHeight` and is as tall as the content then is. `.frame(maxHeight:)` would instead
+/// stretch a short card to the whole height it is offered.
+private struct HeightCap: Layout {
+    let maxHeight: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let capped = ProposedViewSize(width: proposal.width, height: min(proposal.height ?? maxHeight, maxHeight))
+        return subviews.first?.sizeThatFits(capped) ?? .zero
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        subviews.first?.place(at: bounds.origin, proposal: ProposedViewSize(bounds.size))
     }
 }
