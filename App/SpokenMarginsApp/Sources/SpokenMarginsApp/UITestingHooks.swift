@@ -124,6 +124,15 @@ enum UITestingHooks {
         guard isActive else { return nil }
         return environment("SPOKEN_MARGINS_UI_TEST_LIVE_ACTIVITY_PREVIEW")
     }
+
+    /// The appearance a UI test asks the app to draw in, `dark` or `light`, in `SPOKEN_MARGINS_UI_TEST_APPEARANCE`
+    /// (#4017). The screen tour also sets the device's appearance, but on iOS 26.5 and 27 the dark tour's tabs
+    /// rendered light anyway, so the tour asks the app directly. Nil for any other value and for a launch that
+    /// isn't a UI test, which then follows the device as ever.
+    static var appearanceRequest: String? {
+        guard isActive, let value = environment("SPOKEN_MARGINS_UI_TEST_APPEARANCE"), ["dark", "light"].contains(value) else { return nil }
+        return value
+    }
     #else
     static var isActive: Bool { false }
     static var keepsFirstRun: Bool { false }
@@ -140,6 +149,7 @@ enum UITestingHooks {
     static var usesSupertonic: Bool { false }
     static var summaryInterjectionNote: String? { nil }
     static var liveActivityPreviewTextSize: String? { nil }
+    static var appearanceRequest: String? { nil }
     static var marksListenerMarginShared: Bool { false }
     static func packetToOpen() -> URL? { nil }
     static func handedOffShareLink(_ url: URL) -> URL? { nil }

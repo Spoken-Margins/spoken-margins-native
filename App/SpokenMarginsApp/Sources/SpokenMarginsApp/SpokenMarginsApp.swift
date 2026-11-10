@@ -176,6 +176,8 @@ struct SpokenMarginsApp: App {
                 .environmentObject(sharingCoordinator)
                 .environmentObject(catalogDrawer)
                 .environmentObject(bridge)
+                // Nil outside a UI test that names an appearance: the app follows the device (#4017).
+                .preferredColorScheme(UITestingHooks.appearanceRequest.flatMap { $0 == "dark" ? ColorScheme.dark : ($0 == "light" ? .light : nil) })
                 .onReceive(NotificationCenter.default.publisher(for: ListeningReadyNotifications.opened)) { _ in model.openReadyListeningEdition() }
                 .onOpenURL(perform: open)
                 .onCompatibleChange(of: scenePhase) { phase in
