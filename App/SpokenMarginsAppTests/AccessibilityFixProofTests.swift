@@ -228,7 +228,7 @@ final class AccessibilityFixProofTests: XCTestCase {
 
     // MARK: - #3726 the pending-start stop mark scales with text, to a limit
 
-    func testThePendingStartStopMarkGrowsWithTextAndStopsAtOneAndAHalfTimesItsSize() {
+    func testThePendingStartStopMarkGrowsWithTextAndStopsAtOnePointSixTimesItsSize() {
         func height(_ size: DynamicTypeSize, base: CGFloat) -> CGFloat {
             UIHostingController(rootView: StartPendingStopMark(baseSize: base).environment(\.dynamicTypeSize, size))
                 .sizeThatFits(in: CGSize(width: 400, height: 400)).height
