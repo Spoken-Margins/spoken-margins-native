@@ -103,11 +103,18 @@ extension Gate1AppModel {
 extension Gate1AppModel {
     func quickFolderInboxRefreshed() {
         guard quickAccess.inboxFeedsQueue, !quickAccess.isRefreshing else { return }
+        // The whole folder, not the Quick Add list's eight: a batch of more than eight new files arrives in passes (#3767).
         let plan = QuickFolderInbox.plan(
-            files: quickAccess.recentFiles,
+            files: quickAccess.inboxFiles,
             seenKeys: quickAccess.inboxSeenFileIds,
-            dismissedKeys: quickAccess.dismissedFileKeys
+            dismissedKeys: quickAccess.dismissedFileKeys,
+            seenCoversWholeFolder: quickAccess.inboxSeenCoversWholeFolder
         )
+        if !plan.grandfatheredKeys.isEmpty {
+            quickAccess.inboxSeenFileIds = (quickAccess.inboxSeenFileIds ?? []).union(plan.grandfatheredKeys)
+        }
+        // This plan ran on a scan that worked (a failed scan never reaches here), so from now on the seen set covers the folder.
+        quickAccess.inboxSeenCoversWholeFolder = true
         guard !plan.toImport.isEmpty else {
             if quickAccess.inboxSeenFileIds == nil { quickAccess.inboxSeenFileIds = plan.newSeenKeys }
             return

@@ -160,11 +160,17 @@ public struct QuickAccessFileCandidate: Sendable {
 }
 
 public struct QuickAccessFolderScan: Sendable {
+    /// The Quick Add list: the newest few importable files (`QuickAccessFolderScanner.quickAddLimit`).
     public let files: [QuickAccessFileCandidate]
+    /// Every importable file in the folder, newest first, for the inbox that feeds the play queue (#3767). `files` is its
+    /// first few. Without it the inbox could only ever see the newest eight, so a ninth file dropped in at the same
+    /// time was never queued.
+    public let inboxFiles: [QuickAccessFileCandidate]
     public let errorDescription: String?
 
-    public init(files: [QuickAccessFileCandidate], errorDescription: String?) {
+    public init(files: [QuickAccessFileCandidate], errorDescription: String?, inboxFiles: [QuickAccessFileCandidate]? = nil) {
         self.files = files
+        self.inboxFiles = inboxFiles ?? files
         self.errorDescription = errorDescription
     }
 }
@@ -174,7 +180,10 @@ public enum QuickAccessFolderScanner {
     /// full of Listening Editions can't make a scan read without end. Each read is at most `LinkListFile.maxFileBytes`.
     public static let maxJSONReads = 40
 
-    /// The eight newest importable files directly in the folder: md, markdown, txt and pdf by extension, and `.json`
+    /// How many files the Quick Add list on Following shows.
+    public static let quickAddLimit = 8
+
+    /// The eight newest importable files directly in the folder (`files`; `inboxFiles` holds all of them): md, markdown, txt and pdf by extension, and `.json`
     /// only when the file itself says it is a structured link list (#3767, `LinkListFile.recognize`; never by name, so a
     /// Listening Edition or any other JSON never shows). Hidden files, subfolders and other extensions are skipped. An
     /// unreadable folder returns the error and no files. Reading happens here, so call it off the main actor.
@@ -205,7 +214,7 @@ public enum QuickAccessFolderScanner {
             }
             var accepted: [QuickAccessFileCandidate] = []
             var jsonReads = 0
-            for entry in newestFirst where accepted.count < 8 {
+            for entry in newestFirst {
                 if entry.isJSON {
                     guard jsonReads < maxJSONReads else { continue }
                     jsonReads += 1
@@ -213,7 +222,7 @@ public enum QuickAccessFolderScanner {
                 }
                 accepted.append(entry.candidate)
             }
-            return QuickAccessFolderScan(files: accepted, errorDescription: nil)
+            return QuickAccessFolderScan(files: Array(accepted.prefix(quickAddLimit)), errorDescription: nil, inboxFiles: accepted)
         } catch {
             return QuickAccessFolderScan(files: [], errorDescription: SafeErrorText.describe(error))
         }
