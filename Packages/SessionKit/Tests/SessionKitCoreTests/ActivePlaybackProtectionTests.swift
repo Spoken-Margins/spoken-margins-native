@@ -72,9 +72,17 @@ final class ActivePlaybackProtectionTests: XCTestCase {
             ActivePlaybackProtection.move(in: store, toItem: itemId, activePath: activePath)
             try wholeLedgerLoop(twin, itemId: itemId, activePath: activePath)
 
-            let mine = try store.loadOwnedOfflineAssets().map { [$0.id: $0.protections] }
-            let reference = try twin.loadOwnedOfflineAssets().map { [$0.id: $0.protections] }
-            XCTAssertEqual(mine, reference, name)
+            // Keyed by id, not in load order: the ledger reads back by `updated_at`, which is whole seconds, so
+            // twins written a moment apart can order rows that were saved across a second boundary differently (#3981).
+            // The test is about what each row holds, not where it sits in the list.
+            let mine = try store.loadOwnedOfflineAssets()
+            let reference = try twin.loadOwnedOfflineAssets()
+            XCTAssertEqual(Set(mine.map(\.id)), Set(ledger.map(\.id)), "\(name): the move neither adds nor drops a row")
+            XCTAssertEqual(
+                Dictionary(uniqueKeysWithValues: mine.map { ($0.id, $0.protections) }),
+                Dictionary(uniqueKeysWithValues: reference.map { ($0.id, $0.protections) }),
+                name
+            )
         }
     }
 
