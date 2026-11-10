@@ -1134,16 +1134,18 @@ enum PDFStructuredTextExtractor {
         }
         let source = attributed.string as NSString
         var result: [TextLine] = []
+        let quarterPage = page.bounds(for: .mediaBox).height / 4
         var location = 0
         while location < source.length {
             let fullRange = source.lineRange(for: NSRange(location: location, length: 0))
-            for (range, selection) in visualLines(of: fullRange, on: page) {
+            location = NSMaxRange(fullRange)
+            guard !cleaned(source.substring(with: fullRange)).isEmpty else { continue }
+            for (range, bounds) in visualLines(of: fullRange, on: page, splittingAt: quarterPage) {
                 let raw = source.substring(with: range)
                 let text = cleaned(raw)
                 if !text.isEmpty {
                     let visibleLocation = firstVisibleLocation(in: source, range: range)
                     let font = attributed.attribute(.font, at: visibleLocation, effectiveRange: nil) as? UIFont
-                    let bounds = selection?.bounds(for: page)
                     result.append(TextLine(
                         text: text,
                         pointSize: font?.pointSize ?? 0,
@@ -1156,7 +1158,6 @@ enum PDFStructuredTextExtractor {
                     ))
                 }
             }
-            location = NSMaxRange(fullRange)
         }
         return result
     }
@@ -1165,11 +1166,12 @@ enum PDFStructuredTextExtractor {
     /// footer and the top line of the next column ("…intelligence explosion? cept, an
     /// automated…", #1144). Bounds that span the page hide the footer from the margin check,
     /// so it was read aloud mid-sentence. The line is split where two consecutive pieces are
-    /// more than a quarter of the page apart, which no single printed line is.
-    private static func visualLines(of range: NSRange, on page: PDFPage) -> [(NSRange, PDFSelection?)] {
-        let selection = page.selection(for: range)
-        let quarterPage = page.bounds(for: .mediaBox).height / 4
-        guard let selection, selection.bounds(for: page).height > quarterPage else { return [(range, selection)] }
+    /// more than a quarter of the page apart, which no single printed line is. Returns each
+    /// part with its bounds.
+    private static func visualLines(of range: NSRange, on page: PDFPage, splittingAt quarterPage: CGFloat) -> [(NSRange, CGRect?)] {
+        guard let selection = page.selection(for: range) else { return [(range, nil)] }
+        let bounds = selection.bounds(for: page)
+        guard bounds.height > quarterPage else { return [(range, bounds)] }
         let pieces = selection.selectionsByLine().compactMap { piece -> (range: NSRange, bounds: CGRect)? in
             guard piece.numberOfTextRanges(on: page) > 0 else { return nil }
             let pieceRange = piece.range(at: 0, on: page)
@@ -1183,11 +1185,11 @@ enum PDFStructuredTextExtractor {
                 starts.append(next.range.location)
             }
         }
-        guard !starts.isEmpty else { return [(range, selection)] }
-        let bounds = [range.location] + starts + [NSMaxRange(range)]
-        return zip(bounds, bounds.dropFirst()).map { start, end in
+        guard !starts.isEmpty else { return [(range, bounds)] }
+        let edges = [range.location] + starts + [NSMaxRange(range)]
+        return zip(edges, edges.dropFirst()).map { start, end in
             let part = NSRange(location: start, length: end - start)
-            return (part, page.selection(for: part))
+            return (part, page.selection(for: part)?.bounds(for: page))
         }
     }
 
