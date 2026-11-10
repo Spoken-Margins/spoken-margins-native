@@ -179,8 +179,144 @@ final class PlaybackProjectionPrewarmTests: XCTestCase {
         let empty = Item(id: "item-empty", title: "Empty", mediaType: "text", text: nil, externalReference: nil, status: "ready")
         let repo = InMemorySessionRepository(items: [recording.id: recording, empty.id: empty])
         for id in [recording.id, empty.id, "item-missing"] {
-            ItemPlaybackText.prewarmProjection(itemId: id, repository: repo, kinds: .onDevice)
+            XCTAssertNil(ItemPlaybackText.prewarmProjection(itemId: id, repository: repo, kinds: .onDevice))
         }
         XCTAssertFalse(SpeechTextNormalizer.projectionMemo.remembers(longArticle(), kind: .speech))
+    }
+
+    // MARK: A PDF's listenable text (#2256)
+
+    /// A PDF whose page header and table are not read, so its listenable text differs from `Item.text`.
+    private func pdfFixture(id: String = "item-pdf", body: String = "Levels rose as expected in every cohort we followed.") -> (item: Item, document: StructuredDocument) {
+        let document = StructuredDocumentBuilder.build(lines: [
+            StructuredDocumentLine(text: "J Biol 12 (2020) 1-9", role: .pageHeader, pageIndex: 0),
+            StructuredDocumentLine(text: "Methods", role: .heading, pageIndex: 0, level: 2),
+            StructuredDocumentLine(text: body, role: .body, pageIndex: 0),
+            StructuredDocumentLine(text: "Participant Sessions P1 14", role: .table, pageIndex: 0),
+        ], engine: "pdfkit_baseline", version: 2, pageCount: 1)
+        let item = Item(id: id, title: "A paper", mediaType: "pdf", text: document.text, externalReference: nil, status: "ready")
+        return (item, document)
+    }
+
+    /// The listener opens the PDF (the prewarm reads its document off main), and the play that follows never reads the
+    /// document: it is deleted from the store between the two, so only the kept projection can supply the text.
+    func testAPlayOfAPrewarmedPDFSpeaksItsListenableTextWithoutReadingTheDocument() throws {
+        let (item, document) = pdfFixture()
+        let listenable = StructuredDocumentSpeech.listenableText(document).text
+        XCTAssertNotEqual(listenable, item.text, "the fixture must tell the listenable text from Item.text")
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        try repo.saveStructuredDocument(document, itemId: item.id)
+        let audio = RecordingSpeech()
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        let generation = engine.listenableProjectionGeneration
+        let prewarmed = try XCTUnwrap(ItemPlaybackText.prewarmProjection(itemId: item.id, repository: repo, kinds: .onDevice))
+        XCTAssertEqual(prewarmed.projection?.text, listenable)
+        engine.adoptPrewarmedListenableProjection(prewarmed, generation: generation)
+        repo.structuredDocuments = [:]
+
+        _ = try engine.startSession(itemId: item.id)
+        XCTAssertEqual(audio.prepared, [listenable], "the play used the prewarmed projection, not a document read")
+    }
+
+    /// The control for the test above: with nothing kept and the document gone, the play speaks `Item.text`, so the
+    /// test above can only pass through the kept projection.
+    func testWithoutAKeptProjectionAndNoDocumentThePlaySpeaksTheItemText() throws {
+        let (item, document) = pdfFixture()
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        try repo.saveStructuredDocument(document, itemId: item.id)
+        let audio = RecordingSpeech()
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+        repo.structuredDocuments = [:]
+        _ = try engine.startSession(itemId: item.id)
+        XCTAssertEqual(audio.prepared, [item.text])
+    }
+
+    /// A document saved after the prewarm began (a re-import, an upgrade) may differ from the one it read.
+    func testAProjectionReadBeforeADocumentWasSavedIsDropped() throws {
+        let (item, document) = pdfFixture()
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        try repo.saveStructuredDocument(document, itemId: item.id)
+        let audio = RecordingSpeech()
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        let generation = engine.listenableProjectionGeneration
+        let prewarmed = try XCTUnwrap(ItemPlaybackText.prewarmProjection(itemId: item.id, repository: repo, kinds: .onDevice))
+        // The same text, read differently: its body is now a reference, which is announced, not read.
+        let reread = StructuredDocumentBuilder.build(lines: [
+            StructuredDocumentLine(text: "J Biol 12 (2020) 1-9", role: .pageHeader, pageIndex: 0),
+            StructuredDocumentLine(text: "Methods", role: .heading, pageIndex: 0, level: 2),
+            StructuredDocumentLine(text: "Levels rose as expected in every cohort we followed.", role: .reference, pageIndex: 0),
+            StructuredDocumentLine(text: "Participant Sessions P1 14", role: .table, pageIndex: 0),
+        ], engine: "pdfkit_baseline", version: 2, pageCount: 1)
+        XCTAssertEqual(reread.text, document.text)
+        try repo.saveStructuredDocument(reread, itemId: item.id)
+        engine.forgetDocumentCaches(itemId: item.id) // what every save through the engine does
+
+        engine.adoptPrewarmedListenableProjection(prewarmed, generation: generation)
+        _ = try engine.startSession(itemId: item.id)
+        XCTAssertEqual(audio.prepared, [StructuredDocumentSpeech.listenableText(reread).text])
+        XCTAssertNotEqual(audio.prepared, [prewarmed.projection?.text ?? ""])
+    }
+
+    /// The projection comes back after the save, but was read before it: the generation is what tells them apart.
+    func testAProjectionKeptThenOvertakenBySaveIsForgotten() throws {
+        let (item, document) = pdfFixture()
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        try repo.saveStructuredDocument(document, itemId: item.id)
+        let audio = RecordingSpeech()
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+        let generation = engine.listenableProjectionGeneration
+        let prewarmed = try XCTUnwrap(ItemPlaybackText.prewarmProjection(itemId: item.id, repository: repo, kinds: .onDevice))
+        engine.adoptPrewarmedListenableProjection(prewarmed, generation: generation)
+        engine.forgetDocumentCaches(itemId: item.id)
+        repo.structuredDocuments = [:]
+        _ = try engine.startSession(itemId: item.id)
+        XCTAssertEqual(audio.prepared, [item.text], "the kept projection was dropped with the save; the play found no document")
+    }
+
+    /// Opening another PDF while one plays must not push the playing one's projection out.
+    func testOpeningAnotherPDFDoesNotEvictThePlayingOnesProjection() throws {
+        let (playing, playingDocument) = pdfFixture(id: "item-playing")
+        let (other, otherDocument) = pdfFixture(id: "item-other", body: "A second paper with different words entirely.")
+        let repo = InMemorySessionRepository(items: [playing.id: playing, other.id: other])
+        try repo.saveStructuredDocument(playingDocument, itemId: playing.id)
+        try repo.saveStructuredDocument(otherDocument, itemId: other.id)
+        let audio = RecordingSpeech()
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.startSession(itemId: playing.id) // reads the document once and caches the projection
+        let generation = engine.listenableProjectionGeneration
+        let prewarmed = try XCTUnwrap(ItemPlaybackText.prewarmProjection(itemId: other.id, repository: repo, kinds: .onDevice))
+        engine.adoptPrewarmedListenableProjection(prewarmed, generation: generation)
+        repo.structuredDocuments = [:]
+
+        _ = try engine.startSession(itemId: playing.id)
+        XCTAssertEqual(audio.prepared.last, StructuredDocumentSpeech.listenableText(playingDocument).text)
+    }
+
+    /// A projection for a different text length is not served: the length is the engine's match, as for its own cache.
+    func testAProjectionForADifferentTextLengthIsNotServed() throws {
+        let (item, document) = pdfFixture()
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        try repo.saveStructuredDocument(document, itemId: item.id)
+        let audio = RecordingSpeech()
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+        let wrong = PrewarmedListenableProjection(
+            itemId: item.id, textLength: (item.text ?? "").count + 1,
+            projection: NormalizedSpeechText(text: "WRONG", sourceOffsets: [], sourceLength: 0)
+        )
+        engine.adoptPrewarmedListenableProjection(wrong, generation: engine.listenableProjectionGeneration)
+        _ = try engine.startSession(itemId: item.id)
+        XCTAssertEqual(audio.prepared, [StructuredDocumentSpeech.listenableText(document).text])
+    }
+
+    /// A PDF the new reader has no document for has "no listenable text", and that answer is kept too.
+    func testAPDFWithNoDocumentIsPrewarmedAsHavingNoListenableText() throws {
+        let item = Item(id: "item-old-pdf", title: "Old", mediaType: "pdf", text: "Plain words from an older import.", externalReference: nil, status: "ready")
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        let prewarmed = try XCTUnwrap(ItemPlaybackText.prewarmProjection(itemId: item.id, repository: repo, kinds: .onDevice))
+        XCTAssertNil(prewarmed.projection)
+        XCTAssertEqual(prewarmed.textLength, item.text?.count)
     }
 }
