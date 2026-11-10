@@ -133,7 +133,8 @@ struct Build23SenderSharingExperience: View {
             guard !hasBegun else { return }
             hasBegun = true
             coordinator.send(.begin)
-            isAutoCleanChoicePresented = coordinator.snapshot.needsAutoCleanDecision
+            // Asks only when it can be true: never on the reply sheet, never when no included Margin can be cleaned (#3792).
+            isAutoCleanChoicePresented = coordinator.snapshot.asksAutoCleanQuestion
         }
         .onCompatibleChange(of: snapshot.previewState) { previewState in
             let stage = coordinator.snapshot.stage
@@ -546,11 +547,13 @@ struct Build23SenderSharingExperience: View {
 
         if horizontalSizeClass == .regular {
             HStack(alignment: .top, spacing: 20) {
-                reviewMarginList(includedMargins, selectedEditorID: selectedEditorID)
+                reviewMarginList(includedMargins, selectedEditorID: selectedEditorID, togglesEditor: snapshot.isReplyBack)
                     .frame(maxWidth: 340)
                 marginEditors(expandedMargins)
                     .frame(maxWidth: .infinity)
             }
+        } else if snapshot.isReplyBack {
+            replyReceipt(includedMargins, selectedEditorID: selectedEditorID)
         } else {
             VStack(alignment: .leading, spacing: 16) {
                 reviewMarginNavigator(includedMargins, selectedEditorID: selectedEditorID)
@@ -606,7 +609,8 @@ struct Build23SenderSharingExperience: View {
 
     private func reviewMarginList(
         _ margins: [Build23SharingMarginSnapshot],
-        selectedEditorID: String?
+        selectedEditorID: String?,
+        togglesEditor: Bool = false
     ) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Included Margins")
@@ -616,10 +620,36 @@ struct Build23SenderSharingExperience: View {
                 Build23ReviewSelectionRow(
                     margin: margin,
                     isSelected: selectedEditorID == margin.id,
-                    onSelect: { coordinator.send(.selectMargin(margin.id)) }
+                    onSelect: { selectReviewRow(margin.id, selectedEditorID: selectedEditorID, togglesEditor: togglesEditor) }
                 )
             }
         }
+    }
+
+    /// The reply review (#3792): one row per Margin going, with no editor open. A tap opens the editor under its row; a
+    /// second tap closes it. There is no navigator: with the editor closed there is nothing to move between.
+    private func replyReceipt(
+        _ margins: [Build23SharingMarginSnapshot],
+        selectedEditorID: String?
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ForEach(margins) { margin in
+                Build23ReviewSelectionRow(
+                    margin: margin,
+                    isSelected: selectedEditorID == margin.id,
+                    onSelect: { selectReviewRow(margin.id, selectedEditorID: selectedEditorID, togglesEditor: true) }
+                )
+                if selectedEditorID == margin.id {
+                    Build23MarginEditor(margin: margin) { action in
+                        coordinator.send(action)
+                    }
+                }
+            }
+        }
+    }
+
+    private func selectReviewRow(_ marginID: String, selectedEditorID: String?, togglesEditor: Bool) {
+        coordinator.send(.selectMargin(togglesEditor && selectedEditorID == marginID ? nil : marginID))
     }
 
     private func reviewStage(_ snapshot: Build23SharingSnapshot) -> some View {
@@ -794,6 +824,12 @@ struct Build23SenderSharingExperience: View {
 
     private func advanceToReview(from snapshot: Build23SharingSnapshot) {
         let includedMargins = snapshot.margins.filter(\.isIncluded)
+        if snapshot.isReplyBack {
+            // The reply review opens as a receipt, with every editor closed (#3792).
+            coordinator.send(.selectMargin(nil))
+            coordinator.send(.advanceToReview)
+            return
+        }
         guard !includedMargins.isEmpty else {
             coordinator.send(.advanceToReview)
             return
@@ -814,7 +850,8 @@ struct Build23SenderSharingExperience: View {
            includedMargins.contains(where: { $0.id == selectedMarginID }) {
             return
         }
-        coordinator.send(.selectMargin(includedMargins.first?.id))
+        // A reply review keeps its editors closed until a row is tapped (#3792).
+        coordinator.send(.selectMargin(snapshot.isReplyBack ? nil : includedMargins.first?.id))
     }
 
     private func applyFilter(_ filter: ShareMarginDraftFilter) {

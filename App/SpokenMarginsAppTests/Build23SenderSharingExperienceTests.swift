@@ -224,6 +224,54 @@ final class Build23SenderSharingExperienceTests: XCTestCase {
         XCTAssertNotEqual(reviewEditors[0].id, selectedMarginID)
     }
 
+    // MARK: The reply sheet (#3792)
+
+    /// The reply sheet opens on its review as a receipt: the answers are included, no editor is open, and the
+    /// first-run cleanup question stays away even with no decision recorded.
+    func testTheReplySheetOpensOnItsReviewWithNoEditorOpen() {
+        let (model, coordinator) = makeModelAndCoordinator(marginCount: 2)
+        let offer = ReplyBackOffer(replies: model.selectedItem.interjections, others: [], friendLabels: ["Cole"])
+        model.presentReplyBackShare(offer)
+        coordinator.send(.begin)
+
+        let snapshot = coordinator.snapshot
+        XCTAssertTrue(snapshot.isReplyBack)
+        XCTAssertEqual(coordinator.senderHeading, "Send replies to Cole")
+        XCTAssertEqual(snapshot.stage, .review, "two taps from the player: Share, then Share link")
+        XCTAssertEqual(snapshot.margins.filter(\.isIncluded).count, 2)
+        XCTAssertNil(snapshot.selectedMarginID)
+        XCTAssertTrue(Build23SenderPresentation.reviewExpandedMargins(in: snapshot).isEmpty, "a receipt: no editor until a row is tapped")
+        XCTAssertFalse(snapshot.asksAutoCleanQuestion)
+    }
+
+    func testATappedReplyRowOpensItsEditorAndTappingItAgainClosesIt() {
+        let (model, coordinator) = makeModelAndCoordinator(marginCount: 2)
+        model.presentReplyBackShare(ReplyBackOffer(replies: model.selectedItem.interjections, others: [], friendLabels: ["Cole"]))
+        coordinator.send(.begin)
+        let first = coordinator.snapshot.margins[0].id
+
+        coordinator.send(.selectMargin(first))
+        XCTAssertEqual(Build23SenderPresentation.reviewExpandedMargins(in: coordinator.snapshot).map(\.id), [first])
+        coordinator.send(.selectMargin(nil))
+        XCTAssertTrue(Build23SenderPresentation.reviewExpandedMargins(in: coordinator.snapshot).isEmpty)
+    }
+
+    func testAnOrdinaryShareKeepsItsOpenEditorAndAsksTheCleanupQuestionOnlyWhenAMarginCanBeCleaned() {
+        let defaults = UserDefaults.standard
+        let priorDecision = defaults.object(forKey: ShareAutoCleanPreference.decisionRecordedKey)
+        defer { restoreUserDefault(priorDecision, forKey: ShareAutoCleanPreference.decisionRecordedKey) }
+        defaults.removeObject(forKey: ShareAutoCleanPreference.decisionRecordedKey)
+
+        let coordinator = makeCoordinator(marginCount: 1)
+        coordinator.send(.begin)
+        let snapshot = coordinator.snapshot
+        XCTAssertFalse(snapshot.isReplyBack)
+        XCTAssertTrue(snapshot.needsAutoCleanDecision)
+        XCTAssertFalse(snapshot.margins[0].canPrepareCleanup, "these Margins have no word-level timing")
+        XCTAssertFalse(snapshot.asksAutoCleanQuestion, "nothing could be cleaned, so the question has no job")
+        XCTAssertEqual(Build23SenderPresentation.reviewExpandedMargins(in: snapshot).count, 1, "an ordinary review opens its first editor")
+    }
+
     func testReferenceTransportNeverRequiresPayloadRightsAssertion() {
         XCTAssertFalse(Build23SenderPresentation.showsLinklessRightsControl(for: .reference))
         XCTAssertFalse(Build23SenderPresentation.requiresPayloadRightsAssertion(for: .reference))

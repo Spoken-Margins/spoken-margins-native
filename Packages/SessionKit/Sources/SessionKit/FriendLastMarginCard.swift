@@ -36,21 +36,21 @@ extension PinnedMarginCard {
     }
 }
 
-/// How the player's Share opens (#3247, 2026-11-03): on a friend's item where the listener has answered, with those
-/// answers already picked and changeable, as the Margins screen's "Send replies" does; anywhere else as it always has.
+/// How the player's Share opens (#3247, 2026-11-03; #3792): on a friend's item where the listener has made a Margin
+/// since the friend's packet arrived, "Send replies to <friend>" with the answers already picked and changeable, as the
+/// Margins screen's "Send replies" does; anywhere else as it always has.
 public enum PlaybackShareStart: Equatable, Sendable {
     /// Open "Send replies to <friend>": the answers are chosen, the listener's other new Margins are listed and left out.
     case friendAnswersPicked(ReplyBackOffer)
     /// Open the ordinary share sheet with the default Margins.
     case defaults
 
-    /// A friend's answer is a Margin the listener made as a reply to one of the friend's (`replyTo`). A Margin made on a
-    /// friend's item that answers nothing leaves the sheet as it was, with every Margin picked, so Share never opens
-    /// with nothing chosen.
+    /// Every Margin made on a friend's item since their packet arrived is an answer for this Share, as it is on the
+    /// Margins screen (`ReplyBackOffer`), linked as a reply or not; the offer decides which start picked, so the sheet
+    /// never opens with nothing chosen. The 20-second window that links a reply is untouched: a Margin made later
+    /// travels back through the same sheet.
     public static func start(localMargins: [Interjection], layers: [ImportedCommentaryLayer]) -> PlaybackShareStart {
-        guard let offer = ReplyBackOffer.make(localMargins: localMargins, layers: layers), !offer.replies.isEmpty else {
-            return .defaults
-        }
+        guard let offer = ReplyBackOffer.make(localMargins: localMargins, layers: layers) else { return .defaults }
         return .friendAnswersPicked(offer)
     }
 }

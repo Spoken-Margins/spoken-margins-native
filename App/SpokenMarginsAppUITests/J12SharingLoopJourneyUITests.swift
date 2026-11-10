@@ -122,6 +122,52 @@ final class J12SharingLoopJourneyUITests: XCTestCase {
         }
     }
 
+    /// #3792: on a friend's item, an answer made after the friend's packet arrived opens the reply sheet on its review,
+    /// as a receipt: the reply heading, one row for the Margin going, no editor and no navigator open, Share link one
+    /// tap away, and no cleanup question. Two taps from the playback screen, as the ordinary Share (#1507).
+    func testAnAnswerOpensTheReplySheetOnItsReceipt() throws {
+        XCTContext.runActivity(named: "J12 reply, step 1: The episode is in the Library (offline seed)") { _ in
+            app.launch()
+            XCTAssertTrue(element("library.row.\(itemId)").waitForExistence(timeout: 8), "Seeded episode did not appear in the Library")
+        }
+
+        try XCTContext.runActivity(named: "J12 reply, step 2: A friend's packet arrives (fixture); answer with one Margin") { _ in
+            app.terminate()
+            app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_KEEP_LIBRARY"] = "1"
+            app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_COOP"] = "1"
+            app.launch()
+            XCTAssertTrue(element("library.row.\(itemId)").waitForExistence(timeout: 8), "Episode is missing after relaunch")
+            tap("queue.start.\(itemId)")
+            let skip = offerButton("newMarginsOffer.skip", orLabel: "Listen without them")
+            XCTAssertTrue(skip.waitForExistence(timeout: 5), "Continue did not offer the friend's Margin")
+            skip.tap() // listen on: the answer below is made on the friend's item either way
+            XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8), "Now Playing did not open")
+            try waitUntilPlaying("Episode never reached the playing state")
+            try recordAMargin(seconds: 3)
+        }
+
+        XCTContext.runActivity(named: "J12 reply, step 3: Share opens the reply sheet on its receipt") { _ in
+            beginStep()
+            tap("playback.shareMargins.button") // tap 1
+            XCTAssertTrue(element("build23.sender.experience").waitForExistence(timeout: 8), "The Share sheet did not open")
+            XCTAssertFalse(app.alerts["Clean selected Margins automatically?"].waitForExistence(timeout: 2),
+                           "The cleanup question showed on the reply sheet")
+            XCTAssertTrue(element("build23.sender.stage.review").waitForExistence(timeout: 8), "The reply sheet did not open on its review")
+            XCTAssertTrue(element("build23.sender.heading").label.hasPrefix("Send replies to"), "The sheet is not the reply sheet: \(element("build23.sender.heading").label)")
+            XCTAssertFalse(element("build23.sender.review.navigator").exists, "The reply review drew the Margin navigator")
+            let rows = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "build23.sender.review.selector."))
+            XCTAssertGreaterThanOrEqual(rows.count, 1, "The receipt should hold a row for the Margin going")
+            XCTAssertFalse(app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "build23.sender.margin.editor.")).firstMatch.exists,
+                           "An editor was open before any row was tapped")
+            let share = element("build23.sender.review.share")
+            XCTAssertTrue(share.waitForExistence(timeout: 5) && share.isHittable && share.isEnabled,
+                          "Share is not reachable on the reply review without scrolling")
+            XCTAssertLessThanOrEqual(taps - tapsAtStepStart, 1, "The reply review is more than one tap past Share")
+            note("reply sheet open on its receipt after \(taps - tapsAtStepStart) tap(s); the system share sheet is not scripted")
+            tap("build23.sender.cancel")
+        }
+    }
+
     // MARK: Steps
 
     private func recordAMargin(seconds minimum: Int) throws {
