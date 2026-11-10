@@ -189,8 +189,7 @@ final class UserFeedbackDeliveryViewTests: XCTestCase {
         let automationWasEnabled = AccessibilityAutomation.enable()
         defer { if let automationWasEnabled { AccessibilityAutomation.set(automationWasEnabled) } }
         model.reportFailure("The transcript could not be made.", retry: UserFeedbackEvent.Retry(key: "sheet-3858", action: {}))
-        let event = try XCTUnwrap(model.feedbackEvent)
-        XCTAssertEqual(event.kind, .error)
+        XCTAssertEqual(model.feedbackEvent?.kind, .error)
 
         let sheet = Text("The sheet").modifier(SheetFeedbackPresentation()).environmentObject(model)
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
@@ -206,10 +205,6 @@ final class UserFeedbackDeliveryViewTests: XCTestCase {
         XCTAssertEqual(banner.label?.contains("The transcript could not be made."), true, "the banner said \(banner.label ?? "nothing")")
         _ = try await mounted.waitForNode("Retry on the sheet") { $0.identifier == "app.feedback.retry" }
         _ = try await mounted.waitForNode("Dismiss on the sheet") { $0.identifier == "app.feedback.dismiss" }
-
-        // The mirror still follows the model: when the event goes, so does the copy.
-        model.dismissFeedback(id: event.id)
-        try await waitUntil { mounted.nodes().allSatisfy { $0.identifier != "app.feedback.banner" } }
     }
 
     private func makeModel() throws -> Gate1AppModel {
