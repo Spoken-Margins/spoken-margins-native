@@ -120,6 +120,121 @@ final class CantPlayListeningTests: XCTestCase {
         XCTAssertTrue(CantPlayListening.isCantPlayListening(conductor.sequence))
     }
 
+    #if os(macOS)
+    /// The conductor tests that name `/nonexistent/voice.m4a` only ever take the
+    /// "voice unavailable" branch. The two tests below use a real file for every beat, so the real `AVAudioPlayer`
+    /// path runs for a can't-play sequence (#3712). The voice is muted; the source closures record any touch.
+    private struct RealVoices {
+        let directory: URL
+        let urls: [String: URL]
+
+        init(beats: [CantPlayListening.Beat]) throws {
+            directory = FileManager.default.temporaryDirectory
+                .appending(path: "cant-play-voices-\(UUID().uuidString)", directoryHint: .isDirectory)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            var urls: [String: URL] = [:]
+            for (index, id) in CantPlayListening.anchors(for: beats, placeMs: 0).map(\.marginId).enumerated() {
+                urls[id] = try RealPlayerMarginMomentTests.writeTone(
+                    to: directory.appending(path: "voice-\(index).caf"), seconds: 0.3, hz: 440
+                )
+            }
+            self.urls = urls
+        }
+    }
+
+    @MainActor
+    private final class RealListening {
+        private final class Log {
+            var started: [String] = []
+            var unavailable: [String] = []
+            var touched: [String] = []
+        }
+
+        private let log = Log()
+        let conductor: MarginMomentConductor
+        var startedIDs: [String] { log.started }
+        var unavailableVoices: [String] { log.unavailable }
+        var sourceTouches: [String] { log.touched }
+
+        init(beats: [CantPlayListening.Beat], voices: RealVoices) throws {
+            let log = self.log
+            conductor = MarginMomentConductor(
+                sequence: try XCTUnwrap(CantPlayListening.sequence(for: beats, itemId: "item", placeMs: 5_000)),
+                source: .init(
+                    pause: { log.touched.append("pause") },
+                    resume: { log.touched.append("resume") },
+                    seek: { log.touched.append("seek \($0)") }
+                ),
+                voiceURL: { voices.urls[$0] }
+            )
+            conductor.voiceVolume = 0
+            conductor.onVoiceStarted = { log.started.append($0) }
+            conductor.onVoiceUnavailable = { id, reason in log.unavailable.append("\(id):\(reason)") }
+        }
+
+        func pump(until condition: () -> Bool, _ what: String, timeout: TimeInterval = 10) {
+            let deadline = Date().addingTimeInterval(timeout)
+            while !condition() {
+                guard Date() < deadline else { return XCTFail("timed out waiting until \(what)") }
+                RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+            }
+        }
+    }
+
+    /// Every beat's real voice starts, in order, and plays to its end. The words never share a Margin's id, so the
+    /// app's heard-marking (it looks the started id up among the Margins) marks the Margins and never the words.
+    @MainActor
+    func testARealVoicePlaysEachWordsAndMarginInOrderAndOnlyTheMarginsAreMarkedHeard() throws {
+        let beats = plan([entry("a", prefix: "One."), entry("b", prefix: "Two.")])
+        let voices = try RealVoices(beats: beats)
+        defer { try? FileManager.default.removeItem(at: voices.directory) }
+        let listening = try RealListening(beats: beats, voices: voices)
+        defer { listening.conductor.cancel() }
+        let conductor = listening.conductor
+        let everyVoice = CantPlayListening.anchors(for: beats, placeMs: 0).map(\.marginId)
+
+        conductor.start()
+        conductor.playTargetNow()
+        XCTAssertTrue(conductor.isPlayingVoice, "the words' real recording is sounding")
+        listening.pump(until: { listening.startedIDs.count == everyVoice.count }, "all four voices have started")
+        XCTAssertEqual(listening.startedIDs, everyVoice, "words, Margin, words, Margin, each started by the real player")
+        XCTAssertEqual(listening.unavailableVoices, [])
+
+        let marginIds = Set(beats.map(\.marginId))
+        XCTAssertEqual(listening.startedIDs.filter(marginIds.contains), beats.map(\.marginId), "the Margins the app marks heard")
+        XCTAssertTrue(listening.startedIDs.filter { !marginIds.contains($0) }.allSatisfy(CantPlayListening.isContextId),
+                      "everything else that sounded is words")
+
+        // The last voice plays out by itself; the sequence then ends without ever resuming the dead episode.
+        listening.pump(until: { !conductor.isPlayingVoice }, "the last voice has ended")
+        XCTAssertEqual(listening.sourceTouches, [], "no seek, pause or resume reached the episode")
+    }
+
+    /// Skipping each real voice moves on to the next at once, and the last skip ends the listening, never touching the episode.
+    @MainActor
+    func testSkippingEachRealVoiceMovesOnAndNeverTouchesTheEpisode() throws {
+        let beats = plan([entry("a", prefix: "One."), entry("b", prefix: "Two.")])
+        let voices = try RealVoices(beats: beats)
+        defer { try? FileManager.default.removeItem(at: voices.directory) }
+        let listening = try RealListening(beats: beats, voices: voices)
+        defer { listening.conductor.cancel() }
+        let conductor = listening.conductor
+        let everyVoice = CantPlayListening.anchors(for: beats, placeMs: 0).map(\.marginId)
+
+        conductor.start()
+        conductor.playTargetNow()
+        for step in everyVoice.indices {
+            XCTAssertTrue(conductor.isPlayingVoice, "voice \(step + 1) is sounding")
+            XCTAssertEqual(listening.startedIDs.last, everyVoice[step])
+            conductor.skipVoice()
+        }
+        XCTAssertFalse(conductor.isPlayingVoice, "the last skip ends the listening")
+        XCTAssertEqual(listening.startedIDs, everyVoice)
+        XCTAssertEqual(listening.unavailableVoices, [])
+        XCTAssertEqual(listening.sourceTouches, [], "skipping never resumes, pauses or seeks the dead episode")
+    }
+    #endif
+
     func testSeveralFriendsKeepTheOrderTheyArePlacedIn() {
         let beats = plan([
             entry("x", layerId: "ana", label: "Ana", at: 60_000, prefix: "Early."),

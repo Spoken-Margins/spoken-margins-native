@@ -16,7 +16,8 @@ public enum ShippedPacketReader {
     }
 
     /// Reads a packet and imports it into an empty in-memory Library, as the shipped build does.
-    /// Returns the package-scoped IDs of the Margins it imported.
+    /// Returns the package-scoped IDs of the Margins the shipped build saved, read back from that Library's
+    /// repository rather than from the parsed archive, so a Margin the importer drops on the way in is missing here.
     @discardableResult
     public static func importPacket(at packetURL: URL) throws -> [String] {
         let scratch = FileManager.default.temporaryDirectory
@@ -25,12 +26,12 @@ public enum ShippedPacketReader {
         do {
             try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
             let contents = try SpokenMarginsPackageArchive.read(from: packetURL, extractingAssetsTo: scratch)
-            let disposition = try SpokenMarginsPackageImporter.importPackage(
-                contents, repository: InMemorySessionRepository())
-            guard case .imported = disposition else {
+            let repository = InMemorySessionRepository()
+            let disposition = try SpokenMarginsPackageImporter.importPackage(contents, repository: repository)
+            guard case .imported(let layerId, _) = disposition else {
                 throw Rejected(description: "not imported: \(disposition)")
             }
-            return contents.commentaryLayers.flatMap { $0.interjections.map(\.packageScopedId) }
+            return try repository.loadImportedCommentaryInterjections(layerId: layerId).map(\.packageScopedId)
         } catch {
             throw Rejected(description: "\(build) could not import \(packetURL.lastPathComponent): \(error)")
         }
