@@ -14,7 +14,7 @@ format), next to the verdict:
   scripts/journey_runs.py --json            the same as JSON
 
 Only the desk's own reports count (the runner's `pr<N>-r<run>`, `integration-` and `journeys-` ids are scripted, not
-agent-driven), from trusted commenters (comment_trust). A desk report with no `record:` line is counted as
+agent-driven), from trusted commenters (comment_trust). A desk report with no valid `record:` line (none, or a malformed or impossible one) is counted as
 unrecorded, so the audit sees how much of the Test Desk's work the record covers. The script only reads GitHub.
 """
 from __future__ import annotations
@@ -36,7 +36,7 @@ _spec.loader.exec_module(desk)
 SEP = r'\s*[·|]\s*'
 RECORD = re.compile(
     rf'^\s*record:\s*(J\d+|scenario){SEP}build\s+(\S+){SEP}steps\s+(\d+)\s*/\s*(\d+){SEP}bugs\s+'
-    r'(none|#\d+(?:\s*,\s*#\d+)*)\s*$', re.I | re.M)
+    r'(none|#\d+(?:\s*,\s*#\d+)*)\s*$', re.I | re.M | re.A)
 BUG = re.compile(r'#(\d+)')
 
 
@@ -45,6 +45,8 @@ def parse_records(body):
     records = []
     for match in RECORD.finditer(body or ''):
         journey, build, passed, total, bugs = match.groups()
+        if int(total) == 0 or int(passed) > int(total):
+            continue  # not a possible count: left unrecorded, so the audit sees it
         records.append({'journey': journey.upper() if journey.lower() != 'scenario' else 'scenario', 'build': build,
                         'steps_passed': int(passed), 'steps_total': int(total),
                         'bugs': sorted({int(n) for n in BUG.findall(bugs)})})

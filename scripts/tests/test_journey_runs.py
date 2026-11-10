@@ -56,6 +56,11 @@ class ParseTests(unittest.TestCase):
         runs = jr.parse_records('record: scenario | build 3997dbb | steps 2/3 | bugs #3940\n')
         self.assertEqual((runs[0]['journey'], runs[0]['steps_passed'], runs[0]['bugs']), ('scenario', 2, [3940]))
 
+    def test_impossible_counts_and_non_ascii_digits_are_not_records(self):
+        for line in ('record: J7 · build x · steps 5/3 · bugs none', 'record: J7 · build x · steps 0/0 · bugs none',
+                     'record: J\uff17 · build x · steps 1/1 · bugs none'):
+            self.assertEqual(jr.parse_records(line), [], line)
+
     def test_lookalikes_are_not_records(self):
         for line in ('ran: J7 · build x · steps 1/1 · bugs none', 'record: J7 build x steps 1/1 bugs none',
                      'record: J7 · build x · steps one/3 · bugs none', 'note record: J7 · build x · steps 1/1 · bugs none',
@@ -90,6 +95,11 @@ class SummaryTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn('runs: 2, 1 found at least one bug', out.getvalue())
         self.assertIn('bugs filed: #3931, #3932', out.getvalue())
+
+    def test_scripted_runner_reports_are_not_desk_reports(self):
+        for report_id in ('pr3900-r1', 'integration-abc1234', 'journeys-abc1234', 'scripted-journeys-abc1234'):
+            body = f'Lane report {report_id} — PASS\nrecord: J1 · build abc1234 · steps 1/1 · bugs none\n'
+            self.assertEqual(jr.summarize([comment(body)])['desk_reports'], 0, report_id)
 
     def test_a_stranger_report_is_ignored(self):
         stranger = comment(DESK_REPORT, login='mallory')
