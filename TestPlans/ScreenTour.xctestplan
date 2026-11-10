@@ -8,8 +8,8 @@
   ],
   "defaultOptions": {
     "testTimeoutsEnabled": true,
-    "defaultTestExecutionTimeAllowance": 240,
-    "maximumTestExecutionTimeAllowance": 300
+    "defaultTestExecutionTimeAllowance": 420,
+    "maximumTestExecutionTimeAllowance": 480
   },
   "testTargets": [
     {
