@@ -1254,8 +1254,9 @@ def tour_groups(failed: list[str]) -> list[dict]:
     return [{'tests': [t], 'title': f'Screen tour test {t.rsplit("/", 1)[-1]} fails on {BASE_BRANCH}',
              'steps': f'Run `--plan tour --only-testing {t}` at the tip below.',
              'expected': 'The tour reaches each screen and exports its screenshot.',
-             'actual': 'The tour test fails; see xcode-tests.log in the tour folder of the evidence folder. The tour is not '
-                       'verdict input, so the integration report still said PASS.',
+             'actual': 'The tour test fails; see xcode-tests.log in the tour folder of the evidence the integration report '
+                       'below names (a hosted run keeps it as the hosted-integration-<sha> artifact for 14 days). The tour '
+                       'is not verdict input, so that report still said PASS.',
              'root_cause': 'Not diagnosed: the tour is not read by Claude. Read the test and its screenshots.',
              'suspect': 'unknown'}
             for t in failed]
@@ -1830,8 +1831,8 @@ def defer_to_hosted(ops: Ops, state: dict, path: Path, comments: list[dict], rep
 def hosted_run(ops: Ops, sha: str, *, post: bool = True) -> str:
     """Test this checkout on a GitHub-hosted Mac and post #184's report (hosted-integration.yml, #1389).
 
-    The same tests and report as a Mac tick, with less around it: no culprit search, revert, issues or Claude
-    (a PR opened with the job's token starts no workflows, and there is no Claude token here; the Mac handles a
+    The same tests and report as a Mac tick, with less around it: no culprit search, revert, failure issues or Claude
+    (a trunk-tip run does file one issue per failing screen tour test, #3822; a PR opened with the job's token starts no workflows, and there is no Claude token here; the Mac handles a
     confirmed FAIL, defer_to_hosted), no state, and no .xcresult bundles in the evidence the workflow uploads. No scripted journeys: a tip gets
     `--plan app` and the screen tour, and the journeys run at a phone build or an upload (`journeys_run`, #3669).
     The tip's simulator app is zipped for the workflow's `sim-app-<sha>` artifact instead of kept on disk.
