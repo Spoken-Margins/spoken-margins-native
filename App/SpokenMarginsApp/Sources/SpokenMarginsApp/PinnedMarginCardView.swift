@@ -107,7 +107,46 @@ struct PinnedMarginCardBody: View {
     /// At the accessibility text sizes the headline and the buttons wrap and stack instead of clipping (#1933).
     private var isLargeText: Bool { dynamicTypeSize >= .xLarge }
 
+    /// The tallest the card's words and buttons may be, inside its padding: with the padding the card stays under half
+    /// the 852 pt phone screen, so the title, the transport and the Auto-play switch keep their room below it. Only the
+    /// accessibility sizes reach it: a long name at accessibility3 drew the card 920 pt tall, taller than the screen (#3597).
+    static let maxContentHeight: CGFloat = 380
+
     var body: some View {
+        HeightCap(maxHeight: Self.maxContentHeight) {
+            VStack(alignment: .leading, spacing: 8) {
+                // The words scroll inside the card once they would push it past its cap; the buttons are always whole.
+                ViewThatFits(in: .vertical) {
+                    words
+                    ScrollView { words }
+                        .scrollBounceBehavior(.basedOnSize)
+                }
+                buttons
+                    .fixedSize(horizontal: false, vertical: true)
+                    .layoutPriority(1)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 16))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("marginCard")
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { _ in FeedbackBannerHold.marginCard.setTouched(true) }
+                .onEnded { _ in FeedbackBannerHold.marginCard.setTouched(false) }
+        )
+        .onChange(of: focusedPart) { _, part in FeedbackBannerHold.marginCard.setFocused(part != nil) }
+        .onDisappear { FeedbackBannerHold.marginCard.reset() }
+        .padding(.horizontal, 22)
+        .padding(.vertical, 8)
+        .frame(maxWidth: 620)
+        .frame(maxWidth: .infinity)
+        .background(AppColors.listeningBackground)
+    }
+
+    /// The headline, the position and the detail line.
+    private var words: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Image(systemName: icon)
@@ -142,25 +181,7 @@ struct PinnedMarginCardBody: View {
                 .frame(maxWidth: .infinity, alignment: .topLeading)
                 .accessibilityFocused($focusedPart, equals: .detail)
                 .accessibilityIdentifier("marginCard.detail")
-            buttons
         }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 16))
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("marginCard")
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 0)
-                .onChanged { _ in FeedbackBannerHold.marginCard.setTouched(true) }
-                .onEnded { _ in FeedbackBannerHold.marginCard.setTouched(false) }
-        )
-        .onChange(of: focusedPart) { _, part in FeedbackBannerHold.marginCard.setFocused(part != nil) }
-        .onDisappear { FeedbackBannerHold.marginCard.reset() }
-        .padding(.horizontal, 22)
-        .padding(.vertical, 8)
-        .frame(maxWidth: 620)
-        .frame(maxWidth: .infinity)
-        .background(AppColors.listeningBackground)
     }
 
     private var icon: String {
@@ -249,5 +270,20 @@ struct PinnedMarginCardBody: View {
         case .playMomentNow, .listen: "play.fill"
         case .keepListening, .stopReview, .stopPlayingMine, .dismiss: "xmark"
         }
+    }
+}
+
+/// Offers its content no more than `maxHeight` and is as tall as the content then is. `.frame(maxHeight:)` would instead
+/// stretch a short card to the whole height it is offered.
+private struct HeightCap: Layout {
+    let maxHeight: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let capped = ProposedViewSize(width: proposal.width, height: min(proposal.height ?? maxHeight, maxHeight))
+        return subviews.first?.sizeThatFits(capped) ?? .zero
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        subviews.first?.place(at: bounds.origin, proposal: ProposedViewSize(bounds.size))
     }
 }

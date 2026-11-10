@@ -11,6 +11,7 @@ import XCTest
 /// - every button's accessibility label is its action's title (the words and the buttons agree on screen too);
 /// - the headline and the detail are not empty;
 /// - the card stays under a height budget that leaves room for the rest of the Now screen;
+/// - every button is whole inside the card, so a capped card never hides a button below its edge;
 /// - every button is at least 44 pt tall.
 ///
 /// SwiftUI vends its accessibility tree only when an assistive client runs, so the class turns accessibility automation
@@ -23,7 +24,8 @@ final class PinnedMarginCardLayoutTests: XCTestCase {
     /// at the largest sizes it is meant to hold (the transport is two 44 pt rows with a scrubber, the Auto-play row about 60 pt,
     /// the title block and the safe areas the rest). So the card gets 200 pt at the default size, where it is one headline line,
     /// two detail lines and one 44 pt row (about 160 pt measured by hand, 40 pt of slack), and 430 pt (half the screen) at
-    /// accessibility3, where the buttons stack and the words wrap.
+    /// accessibility3, where the buttons stack and the words wrap. Uncapped, a long name there drew the card 920 pt tall
+    /// (first lane run, 2026-11-10); the words now scroll inside `PinnedMarginCardBody.maxContentHeight`.
     private static let budgets: [(size: DynamicTypeSize, label: String, maxHeight: CGFloat)] = [
         (.large, "large", 200),
         (.accessibility3, "accessibility3", 430),
@@ -101,6 +103,9 @@ final class PinnedMarginCardLayoutTests: XCTestCase {
                 XCTAssertEqual(buttons.map { $0.label ?? "" }, card.actions.map(\.title),
                                "\(context): the buttons' labels differ from the actions' titles")
                 for button in buttons {
+                    // `mount` draws the card from the window's top, so the card spans 0 to `height`.
+                    XCTAssertLessThanOrEqual(button.frame.maxY, height + 1,
+                                             "\(context): \"\(button.label ?? "")\" ends at \(button.frame.maxY) pt, below the \(height) pt card")
                     XCTAssertGreaterThanOrEqual(button.frame.height, Self.minimumTap,
                                                 "\(context): \"\(button.label ?? "")\" is \(button.frame.height) pt tall")
                     XCTAssertGreaterThanOrEqual(button.frame.width, Self.minimumTap,
@@ -120,7 +125,8 @@ final class PinnedMarginCardLayoutTests: XCTestCase {
     private func mount(_ body: PinnedMarginCardBody, size: DynamicTypeSize) throws -> MountedTree {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let previousKeyWindow = scene.windows.first { $0.isKeyWindow }
-        let host = UIHostingController(rootView: AnyView(body.environment(\.dynamicTypeSize, size)))
+        let host = UIHostingController(rootView: AnyView(
+            body.environment(\.dynamicTypeSize, size).frame(maxHeight: .infinity, alignment: .top)))
         host.safeAreaRegions = []
         let window = UIWindow(windowScene: scene)
         window.frame = CGRect(x: 0, y: 0, width: Self.width, height: Self.windowHeight)
