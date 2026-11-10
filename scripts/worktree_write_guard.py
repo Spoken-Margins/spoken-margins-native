@@ -10,8 +10,10 @@ guard saw it (#3665).
 
 It blocks (exit 2, reason on stderr) a command run by a session in a linked worktree when the command writes into the
 main checkout or another worktree of this repository: `>`/`>>`/`>|`, `tee`, `truncate`, `dd of=`, `cp`, `mv`,
-`install`, `ln`, `rsync`, `sed -i`, `perl -i`, `rm` and `touch`, also inside `bash -c`. Allowed anywhere: paths under
-ALLOWED_FOLDERS, and everything outside the repository (scratchpad, /tmp, memory).
+`install`, `ln`, `rsync`, `sed -i`, `perl -i`, `rm`, `unlink` and `touch`, also inside `bash -c`. Allowed anywhere:
+paths under ALLOWED_FOLDERS, and everything outside the repository (scratchpad, /tmp, memory). `rm`, `unlink`, `mv`
+and `ln -n` act on a symlink itself, so a worktree may remove or re-link its own `.venv` link into the main checkout.
+It follows `cd`, `pushd`, `popd` and subshells; once the folder can't be worked out, relative paths are let through.
 
 It cannot see what a program does once it runs: a Python script that writes files stays a written rule
 (docs/workstreams/clusters.md). A path it cannot work out, such as `$(...)`, is let through.
@@ -45,40 +47,74 @@ SHELLS = {'bash', 'sh', 'zsh', 'dash'}
 LEADERS = {'sudo', 'env', 'command', 'exec', 'time', 'nohup', 'nice', 'caffeinate', 'timeout', 'xargs',
            'then', 'do', 'else', 'elif', 'if', 'while', 'until', '!', '{'}
 LAST_OPERAND_IS_TARGET = {'cp', 'install', 'ln', 'rsync', 'mv'}
-EVERY_OPERAND_IS_TARGET = {'tee', 'truncate', 'rm', 'touch'}
+EVERY_OPERAND_IS_TARGET = {'tee', 'truncate', 'rm', 'touch', 'unlink'}
+ACTS_ON_THE_LINK = {'rm', 'unlink'}  # these change a symlink itself, never what it points to
+# How a target is turned into the place that changes: THROUGH follows every link, LINK keeps a final symlink as the
+# thing changed, and INTO follows a final symlink only when it points to a folder (`ln`/`mv` then write inside it).
+THROUGH, LINK, INTO = 'through', 'link', 'into'
 MESSAGE = ('Spoken Margins write guard: this session works in {own}, but this command writes to {path}, which is in '
            '{owner}. Write inside your own worktree, in artifacts/, or in your scratchpad. Do what this asks or stop '
            'and report it; do not hide the write from the guard (docs/workstreams/clusters.md).')
 
 
+def without_comment(line: str, quote: str) -> tuple[str, str]:
+    """(the line up to a `#` that starts a word outside quotes, the quote still open at its end).
+
+    shlex's own comment handling also cuts at a `#` inside a word (`a#b`, `${#x}`), which would hide a write after it.
+    """
+    escaped = False
+    for index, char in enumerate(line):
+        if escaped:
+            escaped = False
+        elif quote:
+            if char == quote:
+                quote = ''
+            elif char == '\\' and quote == '"':
+                escaped = True
+        elif char == '\\':
+            escaped = True
+        elif char in '\'"':
+            quote = char
+        elif char == '#' and (index == 0 or line[index - 1] in ' \t;&|()'):
+            return line[:index], quote
+    return line, quote
+
+
 def without_heredocs_and_comments(command: str) -> str:
-    """The command with here-document bodies and comment lines removed: both are text, not shell."""
-    kept, closing = [], []
+    """The command with here-document bodies and comments removed: both are text, not shell."""
+    kept, closing, quote = [], [], ''
     for line in command.split('\n'):
         if closing:
             if line.strip() == closing[0]:
                 closing.pop(0)
             continue
-        if line.lstrip().startswith('#'):
-            continue
+        line, quote = without_comment(line, quote)
         kept.append(line)
         closing = [match.group(2) for match in HEREDOC.finditer(line)]
     return '\n'.join(kept)
 
 
-def simple_commands(command: str) -> list[list[str]]:
-    """Split a shell command line into argv lists; redirect operators stay in as their own tokens."""
+def simple_commands(command: str) -> list[list[str] | str]:
+    """Split a shell command line into argv lists; redirect operators stay in as their own tokens.
+
+    Each `(` and `)` comes back as its own item, so the caller can put the folder back when a subshell ends. The lexer
+    glues neighbouring punctuation into one token (`);`, `))`), so those are taken apart here.
+    """
     lexer = shlex.shlex(without_heredocs_and_comments(command).replace('\n', ' ; '), posix=True, punctuation_chars=True)
     lexer.whitespace_split = True
     lexer.commenters = ''
     result, current = [], []
     for token in lexer:
-        if token in SEPARATORS:
-            if current:
-                result.append(current)
-            current = []
-        else:
-            current.append(token)
+        pieces = re.findall(r'[()]|[^()]+', token) if re.fullmatch(r'[();<>|&]+', token) else [token]
+        for piece in pieces:
+            if piece in SEPARATORS:
+                if current:
+                    result.append(current)
+                current = []
+                if piece in ('(', ')'):
+                    result.append(piece)
+            else:
+                current.append(piece)
     if current:
         result.append(current)
     return result
@@ -90,18 +126,40 @@ def strip_leaders(argv: list[str]) -> list[str]:
     return argv
 
 
+def perl_switches(word: str) -> tuple[bool, bool, bool]:
+    """(edits in place, carries the script, the next word is the script) for one perl switch bundle such as `-pie`.
+
+    Perl reads a bundle letter by letter. After `i` the rest is the backup suffix; after `e` or `E` the rest, or the
+    next word, is the script; after a switch that takes a value (`-M`, `-I`, `-0`...) the rest is that value. So
+    `-Mstrict` or `-MList::Util` never edit in place, while `-pi` and `-pie` do.
+    """
+    for index, letter in enumerate(word[1:], start=1):
+        if letter == 'i':
+            return True, False, False
+        if letter in 'eE':
+            return False, True, index == len(word) - 1
+        if letter in 'MmIxCdDFl0V':
+            return False, False, False
+    return False, False, False
+
+
 def in_place_targets(name: str, words: list[str]) -> list[str]:
     """The files `sed -i` or `perl -i` edits, or nothing when the command does not edit in place."""
     in_place, has_script, operands, takes_value = False, False, [], False
     for word in words:
         if takes_value:
             takes_value = False
-        elif word in ('-e', '-f'):
+        elif word == '--':
+            continue
+        elif name == 'perl' and word.startswith('-') and not word.startswith('--') and len(word) > 1:
+            edits, script, script_follows = perl_switches(word)
+            in_place, has_script, takes_value = in_place or edits, has_script or script, script_follows
+        elif word in ('-e', '-f') or re.fullmatch(r'-[nErsuz]*[ef]', word):
             has_script, takes_value = True, True
-        elif word == '--in-place' or word.startswith('--in-place=') or re.fullmatch(r'-[A-Za-z]*i.*', word):
-            in_place = True
-            if re.fullmatch(r'-[A-Za-z]*i.*e', word):  # perl -pie and friends: the script follows
-                has_script, takes_value = True, True
+        elif word.startswith(('--expression=', '--file=')):
+            has_script = True
+        elif word == '--in-place' or word.startswith('--in-place=') or re.fullmatch(r'-[nErsuz]*i.*', word):
+            in_place = True  # GNU reads everything after the i as the backup suffix, so `-ie` is suffix e
         elif not word.startswith('-') and word:  # BSD sed's `-i ''` leaves an empty word
             operands.append(word)
     if not in_place:
@@ -109,8 +167,11 @@ def in_place_targets(name: str, words: list[str]) -> list[str]:
     return operands if has_script else operands[1:]
 
 
-def write_targets(argv: list[str]) -> list[str]:
-    """Each path this simple command writes to, best effort. Nested `bash -c` scripts come back through `nested`."""
+def write_targets(argv: list[str]) -> list[tuple[str, str]]:
+    """(path, how to resolve it) for each path this simple command writes to, best effort.
+
+    Nested `bash -c` scripts come back through `nested_script`.
+    """
     found, words, skip = [], [], False
     for index, token in enumerate(argv):
         if skip:
@@ -118,7 +179,7 @@ def write_targets(argv: list[str]) -> list[str]:
         elif REDIRECT.fullmatch(token):
             skip = True
             if index + 1 < len(argv):
-                found.append(argv[index + 1])
+                found.append((argv[index + 1], THROUGH))
             if words and words[-1].isdigit() and index > 0 and argv[index - 1] == words[-1]:
                 words.pop()  # the 2 of `2> file`
         else:
@@ -127,7 +188,7 @@ def write_targets(argv: list[str]) -> list[str]:
     if not words:
         return found
     name, rest = os.path.basename(words[0]), words[1:]
-    found.extend(word[3:] for word in rest if word.startswith('of='))
+    found.extend((word[3:], THROUGH) for word in rest if word.startswith('of='))
     operands, target_dir, skip = [], None, False
     for index, word in enumerate(rest):
         if skip:
@@ -138,18 +199,23 @@ def write_targets(argv: list[str]) -> list[str]:
             target_dir = word.split('=', 1)[1]
         elif not word.startswith('-') and not word.startswith('of='):
             operands.append(word)
+    flags = ''.join(word[1:] for word in rest if re.fullmatch(r'-[A-Za-z]+', word))
+    no_dereference = ({'--no-dereference', '--no-target-directory'} & set(rest) or 'T' in flags
+                      or (name == 'ln' and ('n' in flags or 'h' in flags)))
     if name in LAST_OPERAND_IS_TARGET:
+        destination = LINK if name in ('ln', 'mv') and no_dereference else INTO if name in ('ln', 'mv') else THROUGH
         if target_dir:
-            found.append(target_dir)
+            found.append((target_dir, THROUGH))
         elif len(operands) >= 2:
-            found.append(operands[-1])
+            found.append((operands[-1], destination))
         if name == 'mv':
-            found.extend(operands[:-1])  # moving a file away changes the place it came from
+            found.extend((source, LINK) for source in operands[:-1])  # moving away changes the place it came from
     elif name in EVERY_OPERAND_IS_TARGET:
-        found.extend(operands)
+        found.extend((operand, LINK if name in ACTS_ON_THE_LINK else THROUGH) for operand in operands)
     elif name in ('sed', 'gsed', 'perl'):
-        found.extend(in_place_targets(name, rest))
-    return found
+        found.extend((target, THROUGH) for target in in_place_targets(name, rest))
+    # `rm -r link/` goes through the link to the folder it names, so a trailing slash always follows
+    return [(path, THROUGH if path.endswith('/') else how) for path, how in found]
 
 
 def nested_script(argv: list[str]) -> str | None:
@@ -178,10 +244,42 @@ def expand(path: str, known: dict[str, str]) -> str | None:
     return None if unknown or '$' in filled else os.path.expanduser(filled)
 
 
-def targets_in(command: str, cwd: str, known: dict[str, str]) -> list[str]:
-    """Absolute paths the command writes to, following `cd` and plain NAME=value lines through the command."""
-    found = []
+def changed_folder(argv: list[str], cwd: str | None, oldpwd: str | None, stack: list[str | None],
+                   known: dict[str, str]) -> tuple[str | None, str | None]:
+    """(folder, previous folder) after a `cd`, `pushd` or `popd`. None is a folder the guard cannot work out."""
+    name, operands = argv[0], [word for word in argv[1:] if not re.fullmatch(r'-[LPe@]+', word)]
+    if name == 'popd':
+        return (stack.pop() if stack else None), cwd
+    if not operands:
+        if name == 'pushd':  # swaps the top two folders
+            if not stack:
+                return None, cwd
+            top = stack.pop()
+            stack.append(cwd)
+            return top, cwd
+        return known.get('HOME'), cwd
+    if name == 'pushd':
+        stack.append(cwd)
+    if operands[0] == '-':
+        return oldpwd, cwd
+    filled = expand(operands[0], known)
+    if filled is None or (cwd is None and not os.path.isabs(filled)):
+        return None, cwd
+    return os.path.normpath(os.path.join(cwd or '/', filled)), cwd
+
+
+def targets_in(command: str, cwd: str | None, known: dict[str, str]) -> list[tuple[str, str]]:
+    """(absolute path, how to resolve it) for each write, following `cd`, `pushd`, `popd`, subshells and plain
+    NAME=value lines through the command. Once the folder can't be worked out, relative paths are let through."""
+    found, oldpwd, stack, saved = [], None, [], []
     for argv in simple_commands(command):
+        if argv == '(':
+            saved.append((cwd, oldpwd, list(stack), dict(known)))
+            continue
+        if argv == ')':
+            if saved:
+                cwd, oldpwd, stack, known = saved.pop()
+            continue
         if len(argv) == 1 and ASSIGNMENT.match(argv[0]):
             name, value = ASSIGNMENT.match(argv[0]).groups()
             filled = expand(value, known)
@@ -190,19 +288,28 @@ def targets_in(command: str, cwd: str, known: dict[str, str]) -> list[str]:
             else:
                 known[name] = filled
             continue
-        if argv[0] in ('cd', 'pushd') and len(argv) >= 2 and argv[1] != '-':
-            filled = expand(argv[1], known)
-            if filled is not None:
-                cwd = os.path.normpath(os.path.join(cwd, filled))
+        if argv[0] in ('cd', 'pushd', 'popd'):
+            cwd, oldpwd = changed_folder(argv, cwd, oldpwd, stack, known)
+            if cwd is None:
+                known.pop('PWD', None)
+            else:
+                known['PWD'] = cwd
             continue
         script = nested_script(argv)
         if script is not None:
             found.extend(targets_in(script, cwd, dict(known)))
-        for target in write_targets(argv):
+        for target, how in write_targets(argv):
             filled = expand(target, known)
-            if filled is not None:
-                found.append(os.path.normpath(os.path.join(cwd, filled)))
+            if filled is not None and (cwd is not None or os.path.isabs(filled)):
+                found.append((os.path.normpath(os.path.join(cwd or '/', filled)), how))
     return found
+
+
+def resolved(path: str, how: str) -> str:
+    """The real place a write to `path` changes. See THROUGH, LINK and INTO."""
+    if how == LINK or (how == INTO and not os.path.isdir(path)):
+        return os.path.join(os.path.realpath(os.path.dirname(path)), os.path.basename(path))
+    return os.path.realpath(path)
 
 
 def checkouts(repo: str) -> list[str]:
@@ -261,8 +368,8 @@ def decide(command: str, cwd: str, repo: str, transcript: str = '') -> tuple[str
     own = own_checkout(cwd, transcript, roots)
     if own is None or own == roots[0]:  # the main checkout's own sessions are outside this rule, as with the app's
         return None
-    for target in targets:
-        real = os.path.realpath(target)
+    for target, how in targets:
+        real = resolved(target, how)
         owner = checkout_holding(real, roots)
         if owner is None or owner == own:
             continue

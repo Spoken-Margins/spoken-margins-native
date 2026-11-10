@@ -64,6 +64,15 @@ class WorktreeWriteGuardTests(unittest.TestCase):
     def test_a_comment_line_is_not_a_command(self):
         self.assert_allowed(f'# then touch {self.other}/x\necho hi')
 
+    def test_an_inline_comment_is_not_a_command(self):
+        self.assert_allowed(f'ls  # then > {self.other}/x')
+        self.assert_allowed(f'git status  # done; rm {self.other}/x\necho hi')
+        target = f'{self.other}/a'
+        for command in (f'echo a#b > {target}', f'echo ${{#x}} > {target}', f'echo "# x" > {target}',
+                        f"echo '#' > {target}", f'echo hi # note\ntouch {target}', f"echo 'it''s # not' > {target}",
+                        f'echo \\# > {target}'):
+            self.assert_refused(command, target)
+
     def test_the_main_checkout_is_refused_too(self):
         self.assert_refused(f'echo hi > {self.main}/error.log', f'{self.main}/error.log')
         self.assert_refused(f'cp a {self.main}/.git/config', f'{self.main}/.git/config')
@@ -109,6 +118,69 @@ class WorktreeWriteGuardTests(unittest.TestCase):
     def test_a_symlink_into_another_checkout_counts_as_that_checkout(self):
         os.symlink(self.other, os.path.join(self.mine, 'link'))
         self.assert_refused('touch link/a', f'{self.other}/a')
+
+    def test_removing_or_relinking_the_worktrees_own_links_into_the_main_checkout_is_allowed(self):
+        os.makedirs(os.path.join(self.main, '.venv'))
+        os.makedirs(os.path.join(self.main, 'Config'))
+        Path(self.main, 'Config/Local.xcconfig').write_text('')
+        os.makedirs(os.path.join(self.mine, 'Config'))
+        os.symlink(os.path.join(self.main, '.venv'), os.path.join(self.mine, '.venv'))
+        os.symlink(os.path.join(self.main, 'Config/Local.xcconfig'), os.path.join(self.mine, 'Config/Local.xcconfig'))
+        for command in ('rm .venv', 'rm -f Config/Local.xcconfig', f'ln -sfn {self.main}/.venv .venv',
+                        f'ln -sfh {self.main}/.venv .venv', f'ln -sf {self.main}/Config/Local.xcconfig Config/Local.xcconfig',
+                        'mv .venv old-venv', f'unlink .venv'):
+            self.assert_allowed(command)
+
+    def test_a_command_that_writes_through_a_link_into_the_main_checkout_is_still_refused(self):
+        os.makedirs(os.path.join(self.main, '.venv'))
+        Path(self.main, 'Config.xcconfig').write_text('')
+        os.symlink(os.path.join(self.main, '.venv'), os.path.join(self.mine, '.venv'))
+        os.symlink(os.path.join(self.main, 'Config.xcconfig'), os.path.join(self.mine, 'Local.xcconfig'))
+        self.assert_refused('echo x > Local.xcconfig', f'{self.main}/Config.xcconfig')
+        self.assert_refused('cp a Local.xcconfig', f'{self.main}/Config.xcconfig')
+        self.assert_refused('touch .venv/a', f'{self.main}/.venv/a')
+        self.assert_refused('rm -rf .venv/', f'{self.main}/.venv')
+        self.assert_refused('mv a .venv', f'{self.main}/.venv')
+        self.assert_refused(f'ln -sf {self.main}/.venv .venv', f'{self.main}/.venv')  # no -n: ln writes inside it
+
+    def test_the_folder_comes_back_after_a_subshell_popd_or_cd_dash(self):
+        for command in (f'(cd {self.main} && git log -1) ; echo hi > notes.txt',
+                        f'(cd {self.main}); echo hi > notes.txt',
+                        f'pushd {self.main} >/dev/null; git status; popd >/dev/null; echo hi > notes.txt',
+                        f'cd {self.main} && git log -1; cd -; touch x',
+                        f'echo $(cd {self.main} && pwd) > notes.txt'):
+            self.assert_allowed(command)
+        self.assert_refused(f'(cd {self.main}; touch a)', f'{self.main}/a')
+        self.assert_refused(f'(cd {self.mine}); cd {self.other}; touch a', f'{self.other}/a')
+
+    def test_a_folder_it_cannot_work_out_lets_relative_writes_through_but_not_absolute_ones(self):
+        self.assert_allowed(f'cd {self.main}; popd; touch x')
+        self.assert_allowed('cd "$(git rev-parse --show-toplevel)"; touch x')
+        self.assert_refused(f'cd "$UNKNOWN"; touch {self.other}/a', f'{self.other}/a')
+
+    def test_a_bare_cd_goes_home(self):
+        self.assert_allowed(f'cd {self.main}; cd; touch x')
+
+    def test_pwd_follows_cd(self):
+        self.assert_refused(f'cd {self.other}; touch "$PWD/a"', f'{self.other}/a')
+        self.assert_allowed(f'cd {self.other}; cd {self.mine}; touch "$PWD/a"')
+
+    def test_perl_and_sed_switches_that_only_contain_an_i_do_not_edit_in_place(self):
+        for command in (f"perl -Mstrict -ne 'print if /x/' {self.other}/a.txt",
+                        f"perl -MList::Util=sum -e 'print sum(1)' {self.main}/data.txt",
+                        f"perl -Mwarnings -lne 'print' {self.main}/a", f"perl -V:intsize {self.main}/a", f"perl -I{self.main}/lib -e 1 {self.main}/a",
+                        f"sed -E 's/i/j/' {self.other}/a", f"sed --posix 's/i/j/' {self.other}/a"):
+            self.assert_allowed(command)
+
+    def test_perl_and_sed_in_place_spellings_are_refused(self):
+        target = f'{self.other}/a'
+        for command in (f"perl -pi -e 's/a/b/' {target}", f"perl -i.bak -pe 's/a/b/' {target}",
+                        f"perl -pie 's/a/b/' {target}", f"perl -Mstrict -pi -e 's/a/b/' {target}",
+                        f"perl -0777 -pi -e 's/a/b/' {target}", f"perl -i -pe 's/a/b/' {target}",
+                        f"sed -i 's/a/b/' {target}", f"sed -ni 's/a/b/p' {target}", f"sed -Ei 's/a/b/' {target}",
+                        f"sed -ie 's/a/b/' {target}", f"sed --in-place=.bak 's/a/b/' {target}",
+                        f"sed -i -ne 's/a/b/p' {target}"):
+            self.assert_refused(command, target)
 
     def test_reading_commands_are_not_writes(self):
         for command in (f'cat {self.other}/a', f'grep x {self.main}/a', f"sed -n 1,5p {self.other}/a",
