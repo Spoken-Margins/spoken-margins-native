@@ -210,9 +210,11 @@ final class ScreenTourTests: XCTestCase {
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8), "Now Playing did not open")
         captureWhenPresent(element("review.comingUp"), timeout: 8, "26-now-review-lead-in",
                            "Now tab during the review's lead-in, the pinned card above the title (#3220)")
-        captureWhenPresent(element("review.playing"), timeout: 25, "27-now-review-sam",
-                           "Now tab while Sam's Margin plays in the review, the pinned card above the title (#3220)")
-        _ = waitForDisappearance(element("review.playing"), timeout: 25)
+        // The story depends on these three, so they fail the tour when they don't happen (#3713).
+        captureRequired(element("review.playing"), timeout: 40, "27-now-review-sam",
+                        "Now tab while Sam's Margin plays in the review, the pinned card above the title (#3220)",
+                        failure: "Sam's Margin never played in the review")
+        XCTAssertTrue(waitForDisappearance(element("review.playing"), timeout: 40), "The review card stayed after Sam's Margin")
 
         // Normal playback just before 5:00, where Sam's Margin sits: the same pinned card, with Next Margin (#3220). The
         // review marked his Margin heard, so the card says it is up next rather than playing it by itself.
@@ -228,7 +230,8 @@ final class ScreenTourTests: XCTestCase {
         nextMargin.tap()
         _ = XCTWaiter().wait(for: [XCTestExpectation(description: "lead-in")], timeout: 2)
         capture("29-now-next-margin-lead-in", "Now tab after one press of Next Margin: the lead-in to Sam's Margin")
-        if nextMargin.exists { nextMargin.tap() }
+        XCTAssertTrue(nextMargin.waitForExistence(timeout: 5), "Next Margin was gone after its first press, so there was no second press")
+        nextMargin.tap()
         _ = XCTWaiter().wait(for: [XCTestExpectation(description: "margin")], timeout: 2)
         capture("29-now-next-margin-again", "Now tab after a second press of Next Margin: Sam's Margin itself")
         pausePlaybackIfPlaying()
@@ -237,6 +240,10 @@ final class ScreenTourTests: XCTestCase {
         try relaunchOpening("sharing-loop-sam-reply", markingListenerMarginShared: true)
         XCTAssertTrue(element("item.screen").waitForExistence(timeout: 20), "Sam's reply did not open its episode")
         XCTAssertFalse(element("build23.recipient.experience").exists, "Sam's reply opened the Import sheet")
+        // The reply is the one Margin from Sam that hasn't been heard: the item says so (#3219).
+        let replyCount = element("item.friendIntro.count")
+        XCTAssertTrue(replyCount.waitForExistence(timeout: 10), "The item doesn't say a new Margin from Sam is waiting")
+        XCTAssertTrue(replyCount.label.hasPrefix("1 Margin"), "Sam's reply is not the one new Margin: \(replyCount.label)")
         capture("30-reply-arrival", "Sam's reply: the episode's screen as it opens (\"1 new Margin from Sam\")")
         // The packet opened the item on its own, with no tab bar under it: back to the tabs first.
         tapButton("item.home.button")
@@ -293,6 +300,12 @@ final class ScreenTourTests: XCTestCase {
         } else {
             capture("\(screen)-missing", "Expected but did not appear within \(Int(timeout)) s: \(shows)")
         }
+    }
+
+    /// Captures `screen` when `target` appears in time; fails the test when it doesn't, for a screen the tour's story needs.
+    private func captureRequired(_ target: XCUIElement, timeout: TimeInterval, _ screen: String, _ shows: String, failure: String) {
+        XCTAssertTrue(target.waitForExistence(timeout: timeout), "\(failure) (\(screen) did not appear within \(Int(timeout)) s)")
+        capture(screen, shows)
     }
 
     private var playPause: XCUIElement { app.buttons["playback.play.button"].firstMatch }
