@@ -698,6 +698,45 @@ final class PDFStructuredTextExtractorTests: XCTestCase {
                        "What if automating AI R&D triggers an intelligence explosion?")
     }
 
+    func testV2SilencesARunningTitleThatPDFKitGluesToTheNextColumn() throws {
+        // #1144 (real paper, 2026-11-10): the footer's running title, set just under the left
+        // column, came back from PDFKit on one line with the right column's first line, so
+        // the margin check never saw it and it was read mid-word: "proof of con- What if
+        // automating AI R&D triggers an intelligence explosion? cept, an automated …".
+        let body: [NSAttributedString.Key: Any] = [.font: try XCTUnwrap(UIFont(name: "Helvetica", size: 9))]
+        let footer: [NSAttributedString.Key: Any] = [.font: try XCTUnwrap(UIFont(name: "Helvetica", size: 8))]
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 595, height: 842))
+        let data = renderer.pdfData { context in
+            for (index, word) in ["one", "two", "three", "four"].enumerated() {
+                context.beginPage()
+                let left = (0..<48).map { "Diary entry \(word), line \($0), kept by a listener." }
+                    + ["steps worth taking, page \(word). An early proof of con-"]
+                for (offset, line) in left.enumerated() {
+                    (line as NSString).draw(at: CGPoint(x: 46, y: 80 + CGFloat(offset) * 14), withAttributes: body)
+                }
+                // One string, as a print footer sets it: the title, spaces, the page number.
+                let running = "What if automating AI R&D triggers an intelligence explosion?"
+                    + String(repeating: " ", count: 40) + "page \(index + 1) of 4"
+                (running as NSString).draw(at: CGPoint(x: 46, y: 775), withAttributes: footer)
+                let right = ["cept, an automated pipeline wrote paper \(word)."]
+                    + (0..<48).map { "Margin note \(word), line \($0), from the diaries." }
+                for (offset, line) in right.enumerated() {
+                    (line as NSString).draw(at: CGPoint(x: 302, y: 80 + CGFloat(offset) * 14), withAttributes: body)
+                }
+            }
+        }
+        let pdf = try XCTUnwrap(PDFDocument(data: data))
+        XCTAssertTrue(pdf.page(at: 0)?.string?.contains("explosion? cept, an automated") == true,
+                      "the fixture no longer makes PDFKit join the two lines, so it tests nothing")
+
+        let spoken = StructuredDocumentSpeech.spokenLines(try PDFStructuredTextExtractor.structuredDocument(from: pdf))
+            .joined(separator: "\n")
+        XCTAssertFalse(spoken.contains("intelligence explosion"), spoken)
+        XCTAssertEqual(spoken.components(separatedBy: "early proof of concept, an automated pipeline").count, 5,
+                       "the word split over the columns is read whole on every page")
+        XCTAssertTrue(spoken.contains("Margin note four, line 47, from the diaries."))
+    }
+
     func testV2DoesNotTakeAFirstPageWithBodyTextForATitleOnlyCover() throws {
         // A first page that holds prose isn't a cover, so nothing on it is dropped.
         // Long lines, and short ones (under eight words, which the prose test passes over).

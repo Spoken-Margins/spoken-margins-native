@@ -130,7 +130,7 @@ func serve(args []string) error {
 	allowDev := fs.Bool("allow-development", false, "accept App Attest development-environment keys (debug builds)")
 	behindProxy := fs.Bool("behind-proxy", false, "take the client address from X-Forwarded-For when the peer is loopback")
 	idleDays := fs.Int("idle-days", 90, "delete install records unused for this many days")
-	installURL := fs.String("links-install-url", "", "App Store listing or TestFlight invitation (required for links)")
+	installURL := fs.String("links-install-url", "", "join guide path such as /join/, App Store listing or TestFlight invitation (required for links)")
 	relayOrigins := fs.String("relay-origins", "", "comma-separated web app origins that may use the feed relay (required for relay)")
 	linkOrigins := fs.String("link-origins", "", "comma-separated web app origins that may read sealed link packets and previews (CORS); empty sends no CORS headers")
 	requirePermit := fs.Bool("links-require-permit", false, "refuse a link upload that carries no sender permit (#2239); leave off until the app sends permits")
@@ -140,7 +140,7 @@ func serve(args []string) error {
 	fs.Parse(args)
 
 	if *installURL != "" && !links.ValidInstallURL(*installURL) {
-		return errors.New("links: install URL must be an App Store listing or TestFlight invitation")
+		return errors.New("links: install URL must be a path such as /join/, an App Store listing or a TestFlight invitation")
 	}
 	if *linkWebURL != "" && !links.ValidWebOrigin(*linkWebURL) {
 		return errors.New("links: -links-web-url must be an origin like https://app.example.com")

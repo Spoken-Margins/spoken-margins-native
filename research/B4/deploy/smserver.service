@@ -22,8 +22,10 @@
 # and "relay off" stops it at once. -link-origins lets those origins read
 # sealed share-link packets and previews (#3013); it creates no links, and
 # with the links switch off those routes answer 503 anyway.
-# -links-install-url is the install link a share page shows (the public TestFlight
-# invitation on spokenmargins.com/join). Without it the links routes answer 503 even
+# -links-install-url is the install link a share page shows: the join guide, a path on
+# the page's own host (spokenmargins.com/join, #3783), which walks through "install
+# TestFlight, then tap the link again" before sending the friend on to the public
+# TestFlight invitation. Without it the links routes answer 503 even
 # with the switch on (#3239); "smserver switch ... links on" still decides.
 # -links-web-url is the web app a share page hands a browser to, so the link plays the
 # Margins with the episode (#2168). The page's script sends only a browser that holds the
@@ -36,7 +38,7 @@ Wants=network-online.target
 [Service]
 User=smserver
 Group=smserver
-ExecStart=/usr/local/bin/smserver serve -listen 127.0.0.1:@PORT@ -state /var/lib/smserver -public @SERVER_ROOT@ -behind-proxy -maps-cap-usd 10 -maps-model claude-haiku-5-5 -maps-input-usd-per-mtok 0.10 -maps-output-usd-per-mtok 0.50 -relay-origins https://app.spokenmargins.com,https://app.spokenmargins.proximitytoprogress.com -link-origins https://app.spokenmargins.com,https://app.spokenmargins.proximitytoprogress.com -links-install-url https://testflight.apple.com/join/aXR7DWDA -links-web-url https://app.spokenmargins.com
+ExecStart=/usr/local/bin/smserver serve -listen 127.0.0.1:@PORT@ -state /var/lib/smserver -public @SERVER_ROOT@ -behind-proxy -maps-cap-usd 10 -maps-model claude-haiku-5-5 -maps-input-usd-per-mtok 0.10 -maps-output-usd-per-mtok 0.50 -relay-origins https://app.spokenmargins.com,https://app.spokenmargins.proximitytoprogress.com -link-origins https://app.spokenmargins.com,https://app.spokenmargins.proximitytoprogress.com -links-install-url /join/ -links-web-url https://app.spokenmargins.com
 EnvironmentFile=-/etc/smserver/maps.env
 StateDirectory=smserver
 StateDirectoryMode=0700
