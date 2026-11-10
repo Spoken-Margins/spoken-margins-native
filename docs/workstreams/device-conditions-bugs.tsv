@@ -1,0 +1,138 @@
+# Phone-found bugs by device condition (#3899). Columns: issue, created, state, row, also, title.
+# Rows are defined in docs/workstreams/device-conditions.md; scripts/device_conditions.py counts them.
+# A row of none:<why> is a bug with no device condition behind it. Add a line when a found-on-phone bug is filed.
+83	2026-08-25	closed	route		Native text can become unresumable after AirPod pause while Supersonic is still rendering
+144	2026-09-25	closed	none:parse-fixture		Link or Podcast field rejects web article URLs; fall back to the existing readable-page extractor
+148	2026-09-25	closed	burst		Recording: bring Save & resume within thumb reach and guard against the double tap directly
+180	2026-09-26	closed	none:logic		Native text doesn't resume after a second Margin: stuck starting for 10 s, then fails and pauses
+243	2026-09-29	closed	none:visual		"Follow on an article is labeled ""Follow Podcast"""
+244	2026-09-29	closed	none:logic		Following from an article failed on device; diagnostics don't say why
+245	2026-09-29	closed	live-activity	route	Live Activity stays on the Lock Screen after another app takes over the audio
+258	2026-09-29	closed	none:logic		Stopping playback deletes an article's durable prepared audio chunks
+259	2026-09-29	closed	none:logic		Offline storage ledger charges ~1.15 GB of deleted files, which can evict real audio and block downloads
+273	2026-09-29	closed	none:visual		Library: a stray swipe marks an item complete, and nothing can undo it after 10 seconds
+280	2026-09-29	closed	none:design		Show Follow on the Item screen only, not on the playback screen
+281	2026-09-29	closed	burst		Many Library text items prepare audio at once and none finishes; prepare one at a time, the playing item first
+283	2026-09-29	closed	none:logic		Diagnostics: a new item's playback events carry the previous item's failure
+288	2026-09-29	closed	route		Speech goes silent mid-article while the app says playing, after a switch to the iOS voice; only changing the audio output restores sound
+426	2026-09-30	closed	none:visual		Library: swipe to mark an item complete no longer works (phone build 9d422f6)
+536	2026-09-30	closed	none:logic		"Sharing a streamed podcast's Margins fails: ""episode fingerprint spine is out of bounds"", with no way forward"
+537	2026-09-30	closed	none:visual		Add to Library button on the Link route is unreadable (light green, label contrast too low)
+538	2026-09-30	closed	background		Supertonic stops when the app goes to the background in Low Power Mode, resumes on return
+540	2026-09-30	open	none:unclear		Supertonic player stalls mid-PDF (rate 0, 5 s); the watchdog pauses it, but the cause is unknown
+583	2026-10-01	closed	none:logic		Dismissing the mini player with its X opens the playing item's page
+585	2026-10-01	closed	none:visual		Library: completing the top row plays a broken animation
+586	2026-10-01	closed	hot		Supertonic leaves about a second of silence between chunks, worse in Low Power Mode
+588	2026-10-01	closed	none:logic		Podcast: scrubbing back after an episode ends tries to play, then fails with a start timeout
+621	2026-10-01	closed	network		"Read Later: a Reader 404 says ""try again later"" and leaves Choose Articles as an empty heading"
+658	2026-10-01	closed	web-packet		Safari extension on a PDF imports the PDF viewer's CSS as browser text instead of the PDF
+670	2026-10-01	closed	none:visual		Timeline Back button cannot be used to exit; Share-screen Back provides a workaround
+708	2026-10-02	closed	background		Build 29: James switches to default voice after 1–2 minutes (owner report)
+854	2026-10-05	closed	background		Narration stays silent if you leave the app right after Save & resume or play
+866	2026-10-05	closed	none:logic		Add Margin is refused while a Margin is playing: record straight away instead
+872	2026-10-05	closed	none:logic		Shared Margins say unresolved while they're still being placed
+873	2026-10-05	open	hot		App ended for memory (2.7 GB) after Download Again on a two-hour podcast with shared Margins
+883	2026-10-06	closed	none:logic		"Library says ""45 queued"" for audio preparation when only about 7 items are unfinished"
+885	2026-10-06	closed	web-packet		Safari extension: X posts import the full post text as the item title
+905	2026-10-06	open	background	hot	Make available offline on a long article only finishes if the listener keeps the phone awake and cool
+930	2026-10-07	closed	none:logic		Changing the Export Sessions folder also moves the notes folder and writes every Margin into it
+932	2026-10-07	closed	none:ears		No chime before a shared Margin played from the Timeline
+933	2026-10-07	open	network		Streamed Odd Lots episode took three tries to start and paused itself twice
+936	2026-10-07	closed	none:visual		Download Again gives no clear sign it is running or finished, so it gets tapped many times
+937	2026-10-07	closed	none:unclear		"A spoken Margin says ""Recording"" while the microphone captures nothing"
+1030	2026-10-07	closed	route		Hands-free capture: a headphone click, play/pause or skip-forward command ends the Margin and keeps what was said
+1101	2026-10-08	open	background		Narration pauses when you scrub past the pre-rendered part of an article and leave the app
+1102	2026-10-08	closed	none:logic		Text narration: repeated Back taps stay at the start of the same sentence instead of going further back
+1191	2026-10-09	closed	main-thread		Share Diagnostics shows a blank white sheet for about 30 seconds with no sign anything is happening
+1192	2026-10-09	closed	none:logic		Notes-folder delivery rebuilds every Margin note from scratch every minute (37 passes, 142 s of work in an 18-minute session)
+1337	2026-10-10	closed	live-activity		Native-text audio continues after playback state goes idle; mini-player disappears and Live Activity cannot reopen controls
+1434	2026-10-12	closed	route		AirPods notification interruption leaves playback paused until manual Play (regression)
+1435	2026-10-12	closed	none:parse-fixture		Markdown import ignores the file's headings and makes other chapters (test plan 744242e)
+1436	2026-10-12	closed	none:visual		Settings: only the words of Share Diagnostics are tappable, not the whole row
+1439	2026-10-12	closed	none:logic		AI Handoff export lists Margins out of order and repeats source passages
+1440	2026-10-12	closed	none:design		Following: remove the Top sort until it picks items worth listening to
+1475	2026-10-12	closed	none:visual		Now Playing screen redesign is blank and unusable on the phone (build 32 c9f8bbc)
+1506	2026-10-13	open	route		Add a Margin: the microphone takes seconds to open after the tap (Bluetooth)
+1527	2026-10-13	closed	none:logic		Add a Margin while another item's detail screen is open: the recording card names the wrong item
+1546	2026-10-13	closed	network	web-packet	Safari extension import silently lost when offline: link quarantined, no message, no retry
+1547	2026-10-13	closed	none:logic		Playback More > show text opens chapter 1 while chapter 4 is playing
+1577	2026-10-14	closed	none:logic		Play this moment plays the source and the owner never hears the Margin (30-second lead-in, no cue)
+1578	2026-10-14	closed	none:logic		Text item loses its text view after playback switches to the pre-rendered edition
+1589	2026-10-14	closed	none:parse-fixture		Following: in-app AI Explained feed floods New; Apple Podcasts-derived feed does not
+1624	2026-10-14	open	none:design		Timeline should show scenes and rich elements without generic Passage rows
+1628	2026-10-15	closed	none:visual		Hide the extra Next chapter button when forward Skim is available
+1630	2026-10-15	closed	none:visual		Preparing voice… line shifts the play button on the playback screen
+1631	2026-10-15	closed	none:visual		Margins: long selected-item title overlaps the filter buttons and group heading
+1666	2026-10-15	closed	none:visual		Playback screen: Skim moves into the chapter row and never vanishes; Return to Source is full width
+1667	2026-10-15	open	none:logic		Podcast Now: playing your own Margin shows no count-in, though text items do
+1668	2026-10-15	closed	route		Bluetooth Margin captures 9 seconds of audio but its transcript comes back empty
+1670	2026-10-15	closed	none:logic		Margin voice and podcast play faster than the 1× shown
+1671	2026-10-15	closed	burst		Two Margins play over each other
+1672	2026-10-15	closed	none:logic		A Margin recorded or paused during a Margin drops back to the source instead of resuming that Margin
+1673	2026-10-15	closed	background		Supertonic background: keep audio rendered ahead when iOS pauses rendering (follow-up to #538)
+1679	2026-10-15	closed	background	hot	Kitten voice renders flat out in the background, so iOS stops the app about a minute after locking
+1680	2026-10-15	closed	relaunch		Saved Kitten audio is never played again, so every restart renders the same chunks from scratch
+1681	2026-10-15	closed	hot		Live narration renders the whole rest of the article ahead, even on a hot phone or with the app away
+1696	2026-10-15	closed	none:unclear		Add a Margin on a podcast: source keeps playing and Cancel is stuck for 16 s before the microphone starts
+1708	2026-10-16	closed	route		Add a Margin on a podcast: the recording screen closes by itself a moment after it opens (Bluetooth)
+1716	2026-10-16	closed	none:visual		The playback pill hides controls at the bottom of screens (OPML import in Following)
+1762	2026-10-16	closed	lock		Supertonic with the phone locked repeats the first words of every chunk (since #1665)
+1763	2026-10-16	closed	lock		Supertonic stops a few seconds after locking the phone; the stall reseat doesn't restart it
+1786	2026-10-17	closed	hot		On a warm phone, narration bounces Kitten → Supertonic → iOS voice → Supertonic → Kitten instead of staying on Kitten
+1792	2026-10-17	closed	none:logic		Co-op: the Library doesn't show which items hold a friend's shared Margins
+2024	2026-10-18	closed	none:parse-fixture		Substack's voice is never found: Substack moved _preloads into a JSON script tag
+2029	2026-10-18	closed	route		Pressing a headphone button during a spoken Margin plays a repeated bump and doesn't end it
+2073	2026-10-18	closed	main-thread		Item screen freezes 5 to 10 seconds on every open after a Listening Map is made
+2074	2026-10-18	closed	main-thread		Whole app lags while playing: every screen re-renders on each 500 ms playback tick
+2089	2026-10-19	closed	none:visual		Now pane: 'In this scene' summary is black on the dark green player
+2092	2026-10-19	closed	hot		Episode map job keeps transcribing at serious heat, and a background stop cancels it with no record
+2097	2026-10-19	closed	main-thread		Play at the end of an episode hangs in a 28 s seek, and the pill's X does nothing for 26 s
+2098	2026-10-19	closed	main-thread		Play/pause: tapping the spinner pauses, the icon waits for the work, and dropped taps say nothing
+2099	2026-10-19	closed	main-thread		Hang telemetry: record main-thread stalls, MetricKit stacks and in-app taps in everyday Diagnostics
+2100	2026-10-19	closed	main-thread		Map summaries render synchronously on the main thread, spinning a nested run loop
+2101	2026-10-19	closed	main-thread		Supertonic re-activates the audio session on the main thread at every chunk seam and twice per tap
+2102	2026-10-19	closed	main-thread	store	Taps rebuild the whole Library or item detail from SQLite on the main thread (pill X, pause, Margins)
+2103	2026-10-19	closed	store		One locked SQLite connection: main-thread reads and the 2 Hz progress write wait behind background reads
+2118	2026-10-19	closed	long-source		"Sending Margins fails: ""The package manifest is too large"" (Build 35)"
+2121	2026-10-19	closed	none:logic		AI Handoff export ignores the Listening Map toggle for podcast maps
+2181	2026-10-19	closed	live-activity	lock	Lock Screen shows Live Activity but no system Now Playing playback controls
+2182	2026-10-19	closed	route	live-activity	Add a Margin from the Live Activity: a phantom Now Playing play ends the recording 2 s in (Bluetooth)
+2183	2026-10-19	closed	route		After an interruption, publisher audio doesn't resume in the background: Session activation failed (Low Power Mode)
+2184	2026-10-20	closed	background	main-thread	App killed by iOS (SIGKILL, no crash report) after the main thread froze in the background on a mapped podcast
+2185	2026-10-20	closed	none:logic		Skim on a mapped podcast reads no summaries; the button silently turns into Next chapter
+2186	2026-10-20	closed	relaunch		Podcast session loses progress: resumed at 42% after he had listened to at least 80%
+2225	2026-10-20	closed	none:visual		Settings › Voices: Supertonic's licence links are squeezed into one row and wrap mid-word
+2255	2026-10-20	closed	main-thread	long-source	Opening a downloaded, mapped podcast freezes the app 10–20 s; leaving during the freeze gets it killed (twice)
+2256	2026-10-20	open	main-thread		Systemic audit: the app reads far more than the screen needs, on the screen's thread
+2511	2026-10-23	open	main-thread		Audit fix 7: audio-session and player setup do not block a tap or a route change (#2256)
+2594	2026-10-24	closed	route		Add a Margin: the ready cue is too loud in headphones (fine on the speaker)
+2626	2026-10-24	closed	background		Podcast killed in the background after a seek: the post-seek fingerprint landmark repeats forever (Build 35)
+2694	2026-10-25	closed	relaunch		"Library audio renders in the background while on-device speech plays or right after a relaunch, and the ""Preparing audio for offline listening"" card then fails (Build 35)"
+2695	2026-10-25	closed	background		App killed by iOS for background CPU use while a text item plays on the Kitten stand-in voice (Build 35)
+2781	2026-10-27	closed	main-thread		Fingerprint landmark save runs on the main thread: a skip can freeze the controls and get the app killed
+2782	2026-10-27	closed	none:ops		"Desktop ""Install Spoken Margins on iPhone"" kept offering a 4-day-old build while newer hosted builds existed"
+2789	2026-10-27	closed	none:logic		Substack's voice is not ready when you press Start listening, so the post plays Supertonic for the whole listen (since #2368)
+2831	2026-10-28	closed	none:visual		Live sessions: End Session sheet closes by itself, so a session is hard to stop
+2833	2026-10-28	closed	live-activity		Live sessions: tapping the Live Activity opens the live session, with Write a Margin and Speak a Margin
+2835	2026-10-28	closed	none:visual		Library: Paste on the Link copied card does nothing visible; make it one compact line with one Paste
+2856	2026-10-28	closed	none:unclear		Kokoro never renders a word on the phone: first Play falls back to the iOS voice (render_too_slow at offset 0)
+2943	2026-10-30	closed	main-thread	store	Main-thread hangs up to 2.5 s on item open and play: skim.loadResources reads the store on the main thread (Build 35)
+2945	2026-10-30	closed	none:logic		Margins tab: the paper icon (Share as Markdown) may share only one Margin of the item
+2968	2026-10-30	closed	none:logic		Playback screen: Mark complete never appeared at 96% through a Substack rendered voice
+3041	2026-10-31	closed	web-packet		Margins from a web packet never auto-play: the iPhone won't place a Margin sent with only the sender's clock time
+3243	2026-11-02	open	none:design		Apple Watch: add an icon, open the Watch app from the Live Activity, and check auto-launch
+3489	2026-11-06	closed	lock		Live session: a spoken Margin is lost when the screen closes, the phone locks, or End is tapped while it records
+3492	2026-11-06	open	route		Live session: our own player resuming takes the microphone from a spoken Margin that is recording
+3547	2026-11-06	closed	none:visual		Live session setup: Done doesn't close the keyboard, and Start Session needs a scroll first
+3596	2026-11-06	closed	none:logic		After a Margin ends, the episode jumps back to the start instead of playing on
+3633	2026-11-07	closed	route		Tapping record in the app while playing over AirPlay crashes, then shows an error
+3691	2026-11-08	closed	none:logic		Following: completed episodes still show Play instead of the next unlistened episode (regression of #3367)
+3750	2026-11-08	closed	none:design		Share: the first Share button makes a file, and the link hides behind Preview (Build 36)
+3752	2026-11-08	open	relaunch	store	Build 36 is slow to open and may have crashed once; the export can't show either
+3753	2026-11-08	closed	store		Following: friends' old Margins show first, then snap away when the shows load (Build 36)
+3764	2026-11-08	closed	none:logic		"Library: ""Preparing audio"" card stays up when nothing is preparing, and counts more items than the Library holds"
+3891	2026-11-09	open	none:visual		Play queue: rows bounce and remove icons flicker continuously in Edit mode
+3893	2026-11-09	open	none:logic		"Siri sends ""Add a Margin to Spoken Margins"" to Reminders, though the app registers that phrase"
+3894	2026-11-09	open	none:logic		After Siri adds a Margin, Siri stays up listening until he taps or locks the phone
+3896	2026-11-09	open	none:visual		Share review: three buttons squeezed into one row, labels broken across up to five lines
+3897	2026-11-09	open	none:visual		Button rows squeeze at ordinary text sizes: AdaptiveStack stacks only at accessibility sizes
