@@ -1136,28 +1136,59 @@ enum PDFStructuredTextExtractor {
         var result: [TextLine] = []
         var location = 0
         while location < source.length {
-            let range = source.lineRange(for: NSRange(location: location, length: 0))
-            let raw = source.substring(with: range)
-            let text = cleaned(raw)
-            if !text.isEmpty {
-                let visibleLocation = firstVisibleLocation(in: source, range: range)
-                let font = attributed.attribute(.font, at: visibleLocation, effectiveRange: nil) as? UIFont
-                let selection = page.selection(for: range)
-                let bounds = selection?.bounds(for: page)
-                result.append(TextLine(
-                    text: text,
-                    pointSize: font?.pointSize ?? 0,
-                    isBold: font?.fontDescriptor.symbolicTraits.contains(.traitBold) == true,
-                    bounds: bounds,
-                    mainPointSize: mainPointSize(in: attributed, range: range) ?? font?.pointSize ?? 0,
-                    superscripts: detectSuperscripts
-                        ? superscriptRanges(in: attributed, lineRange: range, page: page, lineBounds: bounds, cleanedText: text)
-                        : []
-                ))
+            let fullRange = source.lineRange(for: NSRange(location: location, length: 0))
+            for (range, selection) in visualLines(of: fullRange, on: page) {
+                let raw = source.substring(with: range)
+                let text = cleaned(raw)
+                if !text.isEmpty {
+                    let visibleLocation = firstVisibleLocation(in: source, range: range)
+                    let font = attributed.attribute(.font, at: visibleLocation, effectiveRange: nil) as? UIFont
+                    let bounds = selection?.bounds(for: page)
+                    result.append(TextLine(
+                        text: text,
+                        pointSize: font?.pointSize ?? 0,
+                        isBold: font?.fontDescriptor.symbolicTraits.contains(.traitBold) == true,
+                        bounds: bounds,
+                        mainPointSize: mainPointSize(in: attributed, range: range) ?? font?.pointSize ?? 0,
+                        superscripts: detectSuperscripts
+                            ? superscriptRanges(in: attributed, lineRange: range, page: page, lineBounds: bounds, cleanedText: text)
+                            : []
+                    ))
+                }
             }
-            location = NSMaxRange(range)
+            location = NSMaxRange(fullRange)
         }
         return result
+    }
+
+    /// PDFKit sometimes returns two lines printed far apart as one: a running title in the
+    /// footer and the top line of the next column ("…intelligence explosion? cept, an
+    /// automated…", #1144). Bounds that span the page hide the footer from the margin check,
+    /// so it was read aloud mid-sentence. The line is split where two consecutive pieces are
+    /// more than a quarter of the page apart, which no single printed line is.
+    private static func visualLines(of range: NSRange, on page: PDFPage) -> [(NSRange, PDFSelection?)] {
+        let selection = page.selection(for: range)
+        let quarterPage = page.bounds(for: .mediaBox).height / 4
+        guard let selection, selection.bounds(for: page).height > quarterPage else { return [(range, selection)] }
+        let pieces = selection.selectionsByLine().compactMap { piece -> (range: NSRange, bounds: CGRect)? in
+            guard piece.numberOfTextRanges(on: page) > 0 else { return nil }
+            let pieceRange = piece.range(at: 0, on: page)
+            guard pieceRange.location != NSNotFound, pieceRange.length > 0 else { return nil }
+            return (pieceRange, piece.bounds(for: page))
+        }.sorted { $0.range.location < $1.range.location }
+        var starts: [Int] = []
+        for (previous, next) in zip(pieces, pieces.dropFirst()) {
+            let gap = max(previous.bounds.minY - next.bounds.maxY, next.bounds.minY - previous.bounds.maxY)
+            if gap > quarterPage, next.range.location > (starts.last ?? range.location), next.range.location < NSMaxRange(range) {
+                starts.append(next.range.location)
+            }
+        }
+        guard !starts.isEmpty else { return [(range, selection)] }
+        let bounds = [range.location] + starts + [NSMaxRange(range)]
+        return zip(bounds, bounds.dropFirst()).map { start, end in
+            let part = NSRange(location: start, length: end - start)
+            return (part, page.selection(for: part))
+        }
     }
 
     /// Citation and footnote markers set as superscripts ("aptitude,¹", "effects¹²,¹⁴"):
