@@ -129,4 +129,26 @@ final class SharedMarginReplyMemoryTests: XCTestCase {
         XCTAssertNil(MarginReplyChoice().caption)
         XCTAssertNil(MarginReplyChoice().switchTitle)
     }
+
+    /// #3792: the empty editor names the person the Margin answers, so the screen has one job; "Make independent"
+    /// flips it back at once, and a sender with no name is "your friend", never the stand-in label.
+    func testTheWritingPromptNamesWhoTheMarginAnswers() {
+        var choice = MarginReplyChoice(suggested: draft("a1", from: layer("a", label: "Ana")))
+        XCTAssertEqual(choice.writingPrompt, "What do you want to say to Ana?")
+        choice.toggle()
+        XCTAssertEqual(choice.writingPrompt, "What do you want to remember?", "independent: nobody is being answered")
+        choice.toggle()
+        XCTAssertEqual(choice.writingPrompt, "What do you want to say to Ana?")
+        XCTAssertEqual(MarginReplyChoice().writingPrompt, "What do you want to remember?")
+        XCTAssertEqual(MarginReplyChoice().writingPrompt, MarginReplyChoice.rememberPrompt)
+    }
+
+    func testTheWritingPromptNeverSaysTheStandInForANamelessSender() {
+        for label in ["", "   ", SharedPacketArrival.unsignedSenderLabel, SharedPacketArrival.importedCollectionLabel, MarginLayerSynthesis.unnamedSenderLabel, "someone"] {
+            let choice = MarginReplyChoice(suggested: draft("a1", from: layer("a", label: label)))
+            XCTAssertEqual(choice.writingPrompt, "What do you want to say to your friend?", "label: \(label)")
+        }
+        let padded = MarginReplyChoice(suggested: draft("a1", from: layer("a", label: "  Ana  ")))
+        XCTAssertEqual(padded.writingPrompt, "What do you want to say to Ana?")
+    }
 }

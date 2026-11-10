@@ -25,6 +25,9 @@ struct MarginWritingSheet<Accessory: View>: View {
     @FocusState private var isEditing: Bool
     @State private var confirmsDiscard = false
 
+    /// Names the friend this Margin answers while it does (#3792), and asks the ordinary question otherwise.
+    private var writingPrompt: String { reply?.writingPrompt ?? MarginReplyChoice.rememberPrompt }
+
     var body: some View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 16) {
@@ -57,7 +60,7 @@ struct MarginWritingSheet<Accessory: View>: View {
                     .frame(minHeight: dynamicTypeSize.isAccessibilitySize ? 140 : 100)
                     .overlay(alignment: .topLeading) {
                         if text.isEmpty {
-                            Text("What do you want to remember?")
+                            Text(writingPrompt)
                                 .foregroundStyle(AppColors.secondaryText)
                                 .padding(.top, 8)
                                 .padding(.leading, 5)
@@ -66,7 +69,7 @@ struct MarginWritingSheet<Accessory: View>: View {
                         }
                     }
                     .accessibilityLabel("Your Margin")
-                    .accessibilityHint("What do you want to remember?")
+                    .accessibilityHint(writingPrompt)
                     .accessibilityIdentifier("writtenMargin.text")
 
                 accessory()
