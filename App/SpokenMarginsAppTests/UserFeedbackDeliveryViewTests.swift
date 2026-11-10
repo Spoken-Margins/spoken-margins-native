@@ -182,6 +182,31 @@ final class UserFeedbackDeliveryViewTests: XCTestCase {
         XCTAssertEqual(probe.announcements, ["Saved."])
     }
 
+    /// #3858: a sheet that opens while an error is already showing (errors never time out) shows that error, with its
+    /// Retry and Dismiss. The sheet's copy used to start empty and fill only on a later change.
+    func testASheetOpenedWhileAnErrorIsUpShowsItWithItsControls() async throws {
+        let model = try makeModel()
+        let automationWasEnabled = AccessibilityAutomation.enable()
+        defer { if let automationWasEnabled { AccessibilityAutomation.set(automationWasEnabled) } }
+        model.reportFailure("The transcript could not be made.", retry: UserFeedbackEvent.Retry(key: "sheet-3858", action: {}))
+        XCTAssertEqual(model.feedbackEvent?.kind, .error)
+
+        let sheet = Text("The sheet").modifier(SheetFeedbackPresentation()).environmentObject(model)
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previousKeyWindow = scene.windows.first { $0.isKeyWindow }
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        window.rootViewController = UIHostingController(rootView: AnyView(sheet))
+        window.makeKeyAndVisible()
+        let mounted = MountedTree(window: window, previousKeyWindow: previousKeyWindow)
+        defer { mounted.close() }
+
+        let banner = try await mounted.waitForNode("the sheet's banner") { $0.identifier == "app.feedback.banner" }
+        XCTAssertEqual(banner.label?.contains("The transcript could not be made."), true, "the banner said \(banner.label ?? "nothing")")
+        _ = try await mounted.waitForNode("Retry on the sheet") { $0.identifier == "app.feedback.retry" }
+        _ = try await mounted.waitForNode("Dismiss on the sheet") { $0.identifier == "app.feedback.dismiss" }
+    }
+
     private func makeModel() throws -> Gate1AppModel {
         let preferences = VoicePreferencesSnapshot.capture()
         addTeardownBlock { @MainActor in preferences.restore() }
