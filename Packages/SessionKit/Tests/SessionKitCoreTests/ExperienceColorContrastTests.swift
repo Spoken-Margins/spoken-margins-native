@@ -124,7 +124,11 @@ final class AppColorContrastCoverageTests: XCTestCase {
     /// 1.75:1 to 2.23:1). Every tint inside a `swipeActions` block is one of the fixed `swipe…` tokens, whose white
     /// pairs the audit measures. Whitespace is collapsed first, so a block or tint split over lines is still seen.
     static func swipeTintsThatAreNotSwipeTokens(in text: String) -> [String] {
-        let collapsed = text.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+        // Strings and comments go first, so a brace or parenthesis in one cannot end a block early.
+        let collapsed = text
+            .replacingOccurrences(of: #""(?:\\.|[^"\\\n])*""#, with: "\"\"", options: .regularExpression)
+            .replacingOccurrences(of: #"//[^\n]*"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
         var found: [String] = []
         var searchRange = collapsed.startIndex..<collapsed.endIndex
         while let match = collapsed.range(of: #"\.swipeActions\b"#, options: .regularExpression, range: searchRange) {
@@ -146,11 +150,19 @@ final class AppColorContrastCoverageTests: XCTestCase {
                 cursor = collapsed.index(after: cursor)
             }
             let block = String(collapsed[open..<cursor])
-            let regex = try? NSRegularExpression(pattern: #"\.tint\(\s*([^)]*)\)"#)
-            for tint in regex?.matches(in: block, range: NSRange(block.startIndex..., in: block)) ?? [] {
-                guard let range = Range(tint.range(at: 1), in: block) else { continue }
-                let argument = block[range].trimmingCharacters(in: .whitespaces)
-                if !argument.hasPrefix("AppColors.swipe") { found.append(argument) }
+            // Each `.tint(` argument is read to its matching parenthesis, and must be exactly one swipe token: a
+            // modifier on it (`.opacity`) would change the contrast the audit measured.
+            var tintSearch = block.startIndex..<block.endIndex
+            while let tint = block.range(of: #"\.tint\("#, options: .regularExpression, range: tintSearch) {
+                var depth = 1
+                var end = tint.upperBound
+                while end < block.endIndex, depth > 0 {
+                    if block[end] == "(" { depth += 1 } else if block[end] == ")" { depth -= 1 }
+                    end = block.index(after: end)
+                }
+                let argument = String(block[tint.upperBound..<block.index(before: end)]).trimmingCharacters(in: .whitespaces)
+                if argument.range(of: #"^AppColors\.swipe[A-Za-z]+$"#, options: .regularExpression) == nil { found.append(argument) }
+                tintSearch = tint.upperBound..<block.endIndex
             }
             searchRange = cursor..<collapsed.endIndex
         }
@@ -168,13 +180,20 @@ final class AppColorContrastCoverageTests: XCTestCase {
         XCTAssertEqual(check(".tint(AppColors.evergreen) Text(\"x\")"), [], "a tint outside a swipe block is not this guard's business")
         XCTAssertEqual(check(".swipeActions { Button(\"A\") {} } .tint(AppColors.evergreen)"), [], "a tint after the block")
         XCTAssertEqual(check(".swipeActions(edge: .trailing) { Button(\"Delete\", role: .destructive) {} }"), [], "no tint at all")
+        XCTAssertEqual(check(".swipeActions { Button(\"A\") {}.tint(AppColors.swipePlum.opacity(0.5)) }"), ["AppColors.swipePlum.opacity(0.5)"], "a modifier on the token")
+        XCTAssertEqual(check(".swipeActions { Button(\"{\") {}.tint(AppColors.plum) }"), ["AppColors.plum"], "a brace in a string")
+        XCTAssertEqual(check(".swipeActions { Button(\"A\") {} // closes } early?\n .tint(AppColors.plum) }"), ["AppColors.plum"], "a brace in a comment")
+        XCTAssertEqual(check(".swipeActions { Button(\"A\") {}.tint(AppColors.swipePlum) } // .tint(AppColors.plum)"), [], "a tint in a comment after the block")
         XCTAssertEqual(check(""), [])
     }
 
     func testEverySwipeButtonIsTintedWithAFixedSwipeToken() throws {
-        let directory = try TestInputs.directory(.appSources)
-        let enumerator = try XCTUnwrap(FileManager.default.enumerator(at: directory, includingPropertiesForKeys: nil))
-        let files = enumerator.compactMap { $0 as? URL }.filter { $0.pathExtension == "swift" }
+        var files: [URL] = []
+        for input in [TestInputs.Input.appSources, .appSharedSources, .appShareExtension, .appGate2Widget, .appWatch, .appWatchApp] {
+            let directory = try TestInputs.directory(input)
+            let enumerator = try XCTUnwrap(FileManager.default.enumerator(at: directory, includingPropertiesForKeys: nil))
+            files += enumerator.compactMap { $0 as? URL }.filter { $0.pathExtension == "swift" }
+        }
         XCTAssertGreaterThan(files.count, 100)
         var found: [String] = []
         var blocks = 0
