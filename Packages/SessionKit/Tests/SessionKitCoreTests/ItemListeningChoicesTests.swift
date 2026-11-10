@@ -34,7 +34,7 @@ final class ItemListeningChoicesTests: XCTestCase {
                     let result = choices(colesThree, finished: finished, continuing: continuing, preparing: preparing)
                     let state = "finished \(finished), continuing \(continuing), preparing \(preparing)"
                     XCTAssertEqual(result.primaryTitle, "Play", state)
-                    XCTAssertEqual(result.marginsOnlyTitle, "Hear only Cole's Margins · 3 min", state)
+                    XCTAssertEqual(result.marginsOnlyTitle, "Skip to Cole's Margins · 3 min", state)
                     XCTAssertTrue(result.skipsNewMarginsQuestion, "the dialog no longer interrupts the big button: \(state)")
                 }
             }
@@ -44,11 +44,11 @@ final class ItemListeningChoicesTests: XCTestCase {
     func testVoiceOverHearsWhoseHowManyAndHowLong() {
         XCTAssertEqual(
             choices(colesThree).marginsOnlyAccessibilityLabel,
-            "Hear only Cole's Margins, 3 new Margins, about 3 minutes"
+            "Skip to Cole's Margins, 3 new Margins, about 3 minutes"
         )
         XCTAssertEqual(
             choices([spoken(10)]).marginsOnlyAccessibilityLabel,
-            "Hear only Cole's Margins, 1 new Margin, about 1 minute"
+            "Skip to Cole's Margins, 1 new Margin, about 1 minute"
         )
     }
 
