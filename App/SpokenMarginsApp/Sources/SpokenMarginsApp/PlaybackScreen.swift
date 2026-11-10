@@ -791,8 +791,7 @@ struct PlaybackScreen: View {
                             ZStack {
                                 ProgressView()
                                     .tint(.white)
-                                Image(systemName: "stop.fill")
-                                    .font(.system(size: 12, weight: .bold))
+                                StartPendingStopMark(baseSize: 12)
                             }
                         } else {
                             Image(systemName: model.snapshot.phase == .finished && model.playingImportedCommentary == nil ? "arrow.counterclockwise" : (model.snapshot.skimBridgeState?.status == .playing
