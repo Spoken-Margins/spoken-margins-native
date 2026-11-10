@@ -12,49 +12,43 @@
    "kind": "words",
    "text": "Acoustic signatures: …. These are opaque matching evidence, not item audio.",
    "count": 1,
-   "reason": "Packet README and its validation text: the importer and the frozen last-shipped reader compare it byte for byte (Packages/SessionKit/Tests/ShippedReader), so a new wording would break packet compatibility (AGENTS.md, Keep packets compatible). A listener never reads it in the app."
+   "reason": "Lines of the packet's preview.md, which the importer compares byte for byte and the frozen last-shipped reader (Packages/SessionKit/Tests/ShippedReader) writes the same way, so new wording would break packet compatibility (AGENTS.md, Keep packets compatible). A friend can open preview.md outside the app, so this is accepted for compatibility, not because nobody reads it."
   },
   {
    "kind": "words",
    "text": "Item audio is not included.",
    "count": 1,
-   "reason": "Packet README and its validation text: the importer and the frozen last-shipped reader compare it byte for byte (Packages/SessionKit/Tests/ShippedReader), so a new wording would break packet compatibility (AGENTS.md, Keep packets compatible). A listener never reads it in the app."
+   "reason": "Lines of the packet's preview.md, which the importer compares byte for byte and the frozen last-shipped reader (Packages/SessionKit/Tests/ShippedReader) writes the same way, so new wording would break packet compatibility (AGENTS.md, Keep packets compatible). A friend can open preview.md outside the app, so this is accepted for compatibility, not because nobody reads it."
   },
   {
    "kind": "words",
    "text": "Item reference: <…>",
    "count": 2,
-   "reason": "Packet README and its validation text: the importer and the frozen last-shipped reader compare it byte for byte (Packages/SessionKit/Tests/ShippedReader), so a new wording would break packet compatibility (AGENTS.md, Keep packets compatible). A listener never reads it in the app."
+   "reason": "Lines of the packet's preview.md, which the importer compares byte for byte and the frozen last-shipped reader (Packages/SessionKit/Tests/ShippedReader) writes the same way, so new wording would break packet compatibility (AGENTS.md, Keep packets compatible). A friend can open preview.md outside the app, so this is accepted for compatibility, not because nobody reads it."
   },
   {
    "kind": "words",
    "text": "Item reference: no public URL",
    "count": 2,
-   "reason": "Packet README and its validation text: the importer and the frozen last-shipped reader compare it byte for byte (Packages/SessionKit/Tests/ShippedReader), so a new wording would break packet compatibility (AGENTS.md, Keep packets compatible). A listener never reads it in the app."
+   "reason": "Lines of the packet's preview.md, which the importer compares byte for byte and the frozen last-shipped reader (Packages/SessionKit/Tests/ShippedReader) writes the same way, so new wording would break packet compatibility (AGENTS.md, Keep packets compatible). A friend can open preview.md outside the app, so this is accepted for compatibility, not because nobody reads it."
   },
   {
    "kind": "words",
    "text": "Item transport: full listened-to text included (… characters) after a private-sharing rights confirmation.",
    "count": 1,
-   "reason": "Packet README and its validation text: the importer and the frozen last-shipped reader compare it byte for byte (Packages/SessionKit/Tests/ShippedReader), so a new wording would break packet compatibility (AGENTS.md, Keep packets compatible). A listener never reads it in the app."
+   "reason": "Lines of the packet's preview.md, which the importer compares byte for byte and the frozen last-shipped reader (Packages/SessionKit/Tests/ShippedReader) writes the same way, so new wording would break packet compatibility (AGENTS.md, Keep packets compatible). A friend can open preview.md outside the app, so this is accepted for compatibility, not because nobody reads it."
   },
   {
    "kind": "words",
    "text": "Item transport: not included; the recipient must provide the same item.",
    "count": 1,
-   "reason": "Packet README and its validation text: the importer and the frozen last-shipped reader compare it byte for byte (Packages/SessionKit/Tests/ShippedReader), so a new wording would break packet compatibility (AGENTS.md, Keep packets compatible). A listener never reads it in the app."
+   "reason": "Lines of the packet's preview.md, which the importer compares byte for byte and the frozen last-shipped reader (Packages/SessionKit/Tests/ShippedReader) writes the same way, so new wording would break packet compatibility (AGENTS.md, Keep packets compatible). A friend can open preview.md outside the app, so this is accepted for compatibility, not because nobody reads it."
   },
   {
    "kind": "words",
    "text": "Item transport: reference only; the recipient reconstructs the item.",
    "count": 1,
-   "reason": "Packet README and its validation text: the importer and the frozen last-shipped reader compare it byte for byte (Packages/SessionKit/Tests/ShippedReader), so a new wording would break packet compatibility (AGENTS.md, Keep packets compatible). A listener never reads it in the app."
-  },
-  {
-   "kind": "words",
-   "text": "Item: …",
-   "count": 1,
-   "reason": "Plain-text session export line pinned by the golden fixture Contracts/fixtures/exports/mapless-session.md; changing it is a contract change, not a wording fix."
+   "reason": "Lines of the packet's preview.md, which the importer compares byte for byte and the frozen last-shipped reader (Packages/SessionKit/Tests/ShippedReader) writes the same way, so new wording would break packet compatibility (AGENTS.md, Keep packets compatible). A friend can open preview.md outside the app, so this is accepted for compatibility, not because nobody reads it."
   },
   {
    "kind": "words",
@@ -66,13 +60,13 @@
    "kind": "words",
    "text": "Player item Mark",
    "count": 1,
-   "reason": "Runtime profile display names stored with sessions; changing them would change stored data. Not shown in the app."
+   "reason": "Internal runtime profile display name (PlayerItemMargin.swift); never shown in the app, and only the profile id is exported."
   },
   {
    "kind": "words",
    "text": "Player item spoken Margin",
    "count": 1,
-   "reason": "Runtime profile display names stored with sessions; changing them would change stored data. Not shown in the app."
+   "reason": "Internal runtime profile display name (PlayerItemMargin.swift); never shown in the app, and only the profile id is exported."
   },
   {
    "kind": "words",
@@ -90,19 +84,19 @@
    "kind": "words",
    "text": "embedded item descriptor does not match artifact",
    "count": 1,
-   "reason": "Packet validation error from InterjectionPackageArchive: a diagnostic string tied to the packet format, not shown to a listener. Kept with the packet code (packet compatibility)."
+   "reason": "Packet validation error text from InterjectionPackageArchive. The import side maps these to fixed listener wording (SharedMarginsImportMessage). It shows to a listener only if the sender's own check of a packet they just built fails (Build23SharingSeams, rare). Kept with the packet code."
   },
   {
    "kind": "words",
    "text": "embedded item transport is inconsistent",
    "count": 1,
-   "reason": "Packet validation error from InterjectionPackageArchive: a diagnostic string tied to the packet format, not shown to a listener. Kept with the packet code (packet compatibility)."
+   "reason": "Packet validation error text from InterjectionPackageArchive. The import side maps these to fixed listener wording (SharedMarginsImportMessage). It shows to a listener only if the sender's own check of a packet they just built fails (Build23SharingSeams, rare). Kept with the packet code."
   },
   {
    "kind": "words",
    "text": "episode fingerprint spine identity conflicts with the item",
    "count": 1,
-   "reason": "Packet validation error from InterjectionPackageArchive: a diagnostic string tied to the packet format, not shown to a listener. Kept with the packet code (packet compatibility)."
+   "reason": "Packet validation error text from InterjectionPackageArchive. The import side maps these to fixed listener wording (SharedMarginsImportMessage). It shows to a listener only if the sender's own check of a packet they just built fails (Build23SharingSeams, rare). Kept with the packet code."
   },
   {
    "kind": "words",
@@ -120,25 +114,25 @@
    "kind": "words",
    "text": "item digest is invalid",
    "count": 1,
-   "reason": "Packet validation error from InterjectionPackageArchive: a diagnostic string tied to the packet format, not shown to a listener. Kept with the packet code (packet compatibility)."
+   "reason": "Packet validation error text from InterjectionPackageArchive. The import side maps these to fixed listener wording (SharedMarginsImportMessage). It shows to a listener only if the sender's own check of a packet they just built fails (Build23SharingSeams, rare). Kept with the packet code."
   },
   {
    "kind": "words",
    "text": "item fields are absent or out of bounds",
    "count": 1,
-   "reason": "Packet validation error from InterjectionPackageArchive: a diagnostic string tied to the packet format, not shown to a listener. Kept with the packet code (packet compatibility)."
+   "reason": "Packet validation error text from InterjectionPackageArchive. The import side maps these to fixed listener wording (SharedMarginsImportMessage). It shows to a listener only if the sender's own check of a packet they just built fails (Build23SharingSeams, rare). Kept with the packet code."
   },
   {
    "kind": "words",
    "text": "item removed",
    "count": 2,
-   "reason": "Diagnostic status string pinned by SharedLinkVoiceoverTests (the status list); not shown to a listener."
+   "reason": "Status string written only to diagnostics[\"sharedLinkVoiceover\"] and listed in SharedLinkVoiceoverTests; not shown to a listener."
   },
   {
    "kind": "words",
    "text": "item transport",
    "count": 1,
-   "reason": "Packet README and its validation text: the importer and the frozen last-shipped reader compare it byte for byte (Packages/SessionKit/Tests/ShippedReader), so a new wording would break packet compatibility (AGENTS.md, Keep packets compatible). A listener never reads it in the app."
+   "reason": "Lines of the packet's preview.md, which the importer compares byte for byte and the frozen last-shipped reader (Packages/SessionKit/Tests/ShippedReader) writes the same way, so new wording would break packet compatibility (AGENTS.md, Keep packets compatible). A friend can open preview.md outside the app, so this is accepted for compatibility, not because nobody reads it."
   },
   {
    "kind": "words",
@@ -156,13 +150,13 @@
    "kind": "words",
    "text": "recipient-supplied item transport is inconsistent",
    "count": 1,
-   "reason": "Packet validation error from InterjectionPackageArchive: a diagnostic string tied to the packet format, not shown to a listener. Kept with the packet code (packet compatibility)."
+   "reason": "Packet validation error text from InterjectionPackageArchive. The import side maps these to fixed listener wording (SharedMarginsImportMessage). It shows to a listener only if the sender's own check of a packet they just built fails (Build23SharingSeams, rare). Kept with the packet code."
   },
   {
    "kind": "words",
    "text": "referenced item transport is inconsistent",
    "count": 1,
-   "reason": "Packet validation error from InterjectionPackageArchive: a diagnostic string tied to the packet format, not shown to a listener. Kept with the packet code (packet compatibility)."
+   "reason": "Packet validation error text from InterjectionPackageArchive. The import side maps these to fixed listener wording (SharedMarginsImportMessage). It shows to a listener only if the sender's own check of a packet they just built fails (Build23SharingSeams, rare). Kept with the packet code."
   },
   {
    "kind": "words",
