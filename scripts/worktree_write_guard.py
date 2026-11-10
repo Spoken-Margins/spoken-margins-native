@@ -39,6 +39,7 @@ import sys
 ALLOWED_FOLDERS = ('artifacts', '.build', 'build', 'DerivedData', 'node_modules')
 REFUSAL_LOG = Path.home() / '.claude/hooks/state/worktree-write-guard.jsonl'
 REDIRECT = re.compile(r'\d*>>?\|?|&>>?')
+DUPLICATE = re.compile(r'\d*[<>]&')  # `2>&1`, `<&3`, `3>&-`; `>& file` alone names a file
 HEREDOC = re.compile(r"(?<!<)<<(?!<)-?\s*(['\"\\]?)([\w.-]+)\1")
 VARIABLE = re.compile(r'\$(?:\{(\w+)\}|(\w+))')
 ASSIGNMENT = re.compile(r'^([A-Za-z_]\w*)=(.*)$', re.DOTALL)
@@ -131,15 +132,22 @@ def perl_switches(word: str) -> tuple[bool, bool, bool]:
 
     Perl reads a bundle letter by letter. After `i` the rest is the backup suffix; after `e` or `E` the rest, or the
     next word, is the script; after a switch that takes a value (`-M`, `-I`, `-0`...) the rest is that value. So
-    `-Mstrict` or `-MList::Util` never edit in place, while `-pi` and `-pie` do.
+    `-Mstrict` or `-MList::Util` never edit in place, while `-pi` and `-pie` do. `-l` and `-0` take only digits, and
+    the bundle goes on after them, so `-lpi` edits in place too.
     """
-    for index, letter in enumerate(word[1:], start=1):
+    index = 1
+    while index < len(word):
+        letter = word[index]
+        index += 1
         if letter == 'i':
             return True, False, False
         if letter in 'eE':
-            return False, True, index == len(word) - 1
-        if letter in 'MmIxCdDFl0V':
+            return False, True, index == len(word)
+        if letter in 'MmIxCdDFV':
             return False, False, False
+        if letter in 'l0':
+            digits = re.compile(r'x[0-9A-Fa-f]*|[0-7]*' if letter == '0' else r'[0-7]*').match(word, index)
+            index = digits.end()
     return False, False, False
 
 
@@ -158,7 +166,7 @@ def in_place_targets(name: str, words: list[str]) -> list[str]:
             has_script, takes_value = True, True
         elif word.startswith(('--expression=', '--file=')):
             has_script = True
-        elif word == '--in-place' or word.startswith('--in-place=') or re.fullmatch(r'-[nErsuz]*i.*', word):
+        elif word == '--in-place' or word.startswith('--in-place=') or re.fullmatch(r'-[nErsuz]*[iI].*', word):
             in_place = True  # GNU reads everything after the i as the backup suffix, so `-ie` is suffix e
         elif not word.startswith('-') and word:  # BSD sed's `-i ''` leaves an empty word
             operands.append(word)
@@ -167,23 +175,32 @@ def in_place_targets(name: str, words: list[str]) -> list[str]:
     return operands if has_script else operands[1:]
 
 
+def split_redirections(argv: list[str]) -> tuple[list[str], list[str]]:
+    """The command's own words, and the files its redirections write to. Every redirection is read here, once."""
+    words, files, index = [], [], 0
+    while index < len(argv):
+        token = argv[index]
+        writes, duplicates = REDIRECT.fullmatch(token), DUPLICATE.fullmatch(token)
+        if not writes and not duplicates:
+            words.append(token)
+            index += 1
+            continue
+        if words and words[-1].isdigit() and index > 0 and argv[index - 1] == words[-1]:
+            words.pop()  # the 2 of `2> file` or `2>&1`
+        following = argv[index + 1] if index + 1 < len(argv) else None
+        if following is not None and (writes or (token == '>&' and not re.fullmatch(r'\d+|-', following))):
+            files.append(following)
+        index += 2
+    return words, files
+
+
 def write_targets(argv: list[str]) -> list[tuple[str, str]]:
     """(path, how to resolve it) for each path this simple command writes to, best effort.
 
     Nested `bash -c` scripts come back through `nested_script`.
     """
-    found, words, skip = [], [], False
-    for index, token in enumerate(argv):
-        if skip:
-            skip = False
-        elif REDIRECT.fullmatch(token):
-            skip = True
-            if index + 1 < len(argv):
-                found.append((argv[index + 1], THROUGH))
-            if words and words[-1].isdigit() and index > 0 and argv[index - 1] == words[-1]:
-                words.pop()  # the 2 of `2> file`
-        else:
-            words.append(token)
+    words, files = split_redirections(argv)
+    found = [(path, THROUGH) for path in files]
     words = strip_leaders(words)
     if not words:
         return found
@@ -219,7 +236,7 @@ def write_targets(argv: list[str]) -> list[tuple[str, str]]:
 
 
 def nested_script(argv: list[str]) -> str | None:
-    words = strip_leaders([token for token in argv if not REDIRECT.fullmatch(token)])
+    words = strip_leaders(split_redirections(argv)[0])
     if words and os.path.basename(words[0]) in SHELLS:
         for flag, script in zip(words[1:], words[2:]):
             if re.fullmatch(r'-[A-Za-z]*c[A-Za-z]*', flag):

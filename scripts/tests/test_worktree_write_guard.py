@@ -100,6 +100,14 @@ class WorktreeWriteGuardTests(unittest.TestCase):
         target = f'{self.other}/a'
         self.assert_refused(f'cp x {target} 2> /dev/null', target)
         self.assert_refused(f'cp x {target} 2>/dev/null', target)
+        for command in (f'cp x {target} 2>&1', f'cp x {target} >/dev/null 2>&1', f'install x {target} 2>&1',
+                        f'ln -s x {target} 2>&1', f'rsync -a x {target} >&2', f'cp x {target} 3>&-', f'echo hi >& {target}'):
+            self.assert_refused(command, target)
+
+    def test_a_duplicated_stream_is_never_taken_for_a_file(self):
+        for command in (f'cd {self.main} && rm -f /tmp/x >/dev/null 2>&1', f'cd {self.main} && cp docs/a.md /tmp/a.md 2>&1',
+                        f'cd {self.main} && rm -f /tmp/x 2>&1 <&3', f'cd {self.main} && touch /tmp/x 3>&-'):
+            self.assert_allowed(command)
 
     def test_cd_is_followed_within_the_command(self):
         self.assert_refused(f'cd {self.other} && touch a', f'{self.other}/a')
@@ -179,7 +187,9 @@ class WorktreeWriteGuardTests(unittest.TestCase):
                         f"perl -0777 -pi -e 's/a/b/' {target}", f"perl -i -pe 's/a/b/' {target}",
                         f"sed -i 's/a/b/' {target}", f"sed -ni 's/a/b/p' {target}", f"sed -Ei 's/a/b/' {target}",
                         f"sed -ie 's/a/b/' {target}", f"sed --in-place=.bak 's/a/b/' {target}",
-                        f"sed -i -ne 's/a/b/p' {target}"):
+                        f"sed -i -ne 's/a/b/p' {target}", f"perl -lpi -e 's/a/b/' {target}", f"perl -pli -e 's/a/b/' {target}",
+                        f"perl -l012pi -e 's/a/b/' {target}", f"perl -0777pi -e 's/a/b/' {target}", f"perl -0xFFpi -e 's/a/b/' {target}",
+                        f"sed -I '' 's/a/b/' {target}", f"sed -I.bak 's/a/b/' {target}"):
             self.assert_refused(command, target)
 
     def test_reading_commands_are_not_writes(self):
