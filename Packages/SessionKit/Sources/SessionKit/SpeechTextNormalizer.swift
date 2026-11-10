@@ -120,10 +120,13 @@ public enum SpeechTextNormalizer {
         }
         let whole = projectForSystemSpeech(source)
         var first = whole.spokenCharacterOffset(atOrAfterSourceOffset: sourceOffset)
-        let spoken = Array(whole.text)
-        while first < spoken.count, spoken[first].isWhitespace { first += 1 }
+        var index = whole.text.index(whole.text.startIndex, offsetBy: first)
+        while index < whole.text.endIndex, whole.text[index].isWhitespace {
+            index = whole.text.index(after: index)
+            first += 1
+        }
         return NormalizedSpeechText(
-            text: String(spoken[first...]),
+            text: String(whole.text[index...]),
             sourceOffsets: Array(whole.sourceOffsets[first...]),
             sourceLength: whole.sourceLength
         )
