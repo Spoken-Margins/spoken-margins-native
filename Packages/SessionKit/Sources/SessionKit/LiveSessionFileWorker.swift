@@ -329,6 +329,24 @@ public actor LiveSessionFileWorker {
         return session
     }
 
+    /// Files a written Margin (dictated to Siri, #3880) into the running named session at `markedAt`, whatever screen is
+    /// or isn't open. A screen save that hasn't seen it keeps it (`keepingUnseen`). Writes only into a running session:
+    /// returns nil when none runs, the text is empty or the save failed, and never starts or reopens one.
+    @discardableResult
+    public func addWrittenMargin(text: String, markedAt: Date) -> LiveSession? {
+        let words = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !words.isEmpty, let before = runningSession() else { return nil }
+        var session = before
+        session.add(LiveSessionMargin(id: "siri-\(makeId())", text: words, markedAt: markedAt))
+        noteUnseen(from: before, to: session)
+        do {
+            try persist([session])
+        } catch {
+            return nil
+        }
+        return session
+    }
+
     // MARK: Filing
 
     /// Files each received Watch Margin by `LiveSessionFiling`: stored in `WatchMarginInbox` first, then filed, and only
