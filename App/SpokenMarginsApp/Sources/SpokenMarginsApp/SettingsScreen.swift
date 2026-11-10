@@ -11,6 +11,9 @@ struct SettingsScreen: View {
     @AppStorage("playbackUsesVerboseActions") private var usesVerbosePlaybackActions = true
     @AppStorage(HeadphoneDoublePressAction.storageKey) private var headphoneDoublePress = HeadphoneDoublePressAction.default.rawValue
     @State private var showsDeveloperTools = false
+    #if DEBUG
+    @FocusState private var editingMapJSON: Bool
+    #endif
     @State private var showsImportInbox = false
     @State private var showsAboutAndLegal = false
     @State private var pendingPermanentDeletion: LibraryItemRow?
@@ -497,7 +500,11 @@ struct SettingsScreen: View {
                         .frame(minHeight: 130)
                         .accessibilityLabel("Listening Map JSON")
                         .accessibilityIdentifier("settings.developer.mapJSON.editor")
+                        .focused($editingMapJSON)
                     Button("Apply Listening Map JSON", systemImage: "checkmark.circle") {
+                        // Apply ends the editing, as Preview does for a Listening Edition: a keyboard left up
+                        // covers the tab bar, so the listener could not reach the Library to see the map (#3924).
+                        editingMapJSON = false
                         model.applyListeningMapJSON()
                     }
                     .disabled(model.listeningMapJSON.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)

@@ -321,6 +321,9 @@ final class Gate1FlowUITests: XCTestCase {
 
         let apply = scrollToElement("settings.developer.mapJSON.apply")
         apply.tap()
+        // The keyboard covers the tab bar; at the cuts of 275ceea and 6b118db it stayed up after Apply, the Library
+        // tab had no hit point and the Library never opened (#3924).
+        XCTAssertTrue(waitForDisappearance(app.keyboards.firstMatch, timeout: 4), "Apply left the keyboard over the tab bar")
 
         tapRoot("Library")
         XCTAssertTrue(element("home.screen").waitForExistence(timeout: 4))
