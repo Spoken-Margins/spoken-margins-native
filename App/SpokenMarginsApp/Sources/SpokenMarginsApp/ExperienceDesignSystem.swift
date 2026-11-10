@@ -197,6 +197,24 @@ extension View {
     }
 }
 
+/// The stop mark inside the spinner of a play button whose start is pending (#2098). It grows with the listener's text
+/// size, as the play and pause glyphs beside it do, but is held to 1.6 times its size: the spinner and the circle around
+/// it keep one size, and a mark any larger would overrun them (#3726).
+struct StartPendingStopMark: View {
+    private let baseSize: CGFloat
+    @ScaledMetric private var scaledSize: CGFloat
+
+    init(baseSize: CGFloat) {
+        self.baseSize = baseSize
+        _scaledSize = ScaledMetric(wrappedValue: baseSize, relativeTo: .caption)
+    }
+
+    var body: some View {
+        Image(systemName: "stop.fill")
+            .font(.system(size: min(scaledSize, baseSize * 1.6), weight: .bold))
+    }
+}
+
 struct SMExperienceTypeCover: View {
     let id: String
     let mediaType: String

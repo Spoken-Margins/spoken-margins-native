@@ -371,6 +371,8 @@ struct ReturnFixture {
     let model: Gate1AppModel
     let layer: ImportedCommentaryLayer
     let record: ImportedCommentaryInterjection
+    /// The real source player, so a test can read what is sounding, not only what the model reports.
+    let sourcePlayer: AVPlayerStreamPlaybackClient
     private let root: URL
     private let files: [URL]
 
@@ -416,7 +418,7 @@ struct ReturnFixture {
         _ = try store.importCommentaryLayer(layer, interjections: [record])
         model.selectedItem.importedCommentaryLayers = [layer]
         model.selectedItem.importedCommentaryInterjections = [layer.id: [record]]
-        return ReturnFixture(model: model, layer: layer, record: record, root: root, files: [sourceURL, voiceURL])
+        return ReturnFixture(model: model, layer: layer, record: record, sourcePlayer: sourcePlayer, root: root, files: [sourceURL, voiceURL])
     }
 
     /// One of your own spoken Margins on the source's current session, with a short voice and its place in the source.

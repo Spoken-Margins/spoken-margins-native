@@ -1,27 +1,37 @@
+import Combine
 import SessionKit
 import SwiftUI
 
 /// The play queue (#1990): what plays next, in order. Tap a row to play it now, drag to reorder (Edit), swipe to remove,
 /// Clear to empty it. It opens from the Library's "Play queue" row, which only shows while something is queued.
 ///
-/// This view only reads the queue and the Library, and hands the sheet its rows and what its buttons do. It watches
-/// `Gate1AppModel`, which publishes many times a second while audio plays, and the sheet is `.equatable()`: a model
-/// publish that leaves the rows as they were does not redraw the sheet. Redrawn on every publish, the list in Edit mode
-/// kept restarting its edit transition, so the rows hopped and the remove icons flickered (#3891).
+/// This view hands the sheet its rows and what its buttons do. It does not watch `Gate1AppModel`, which publishes many
+/// times a second while audio plays: it holds the model only to run the buttons, and a `PlayQueueRowsFeed` tells it when
+/// the rows change. Redrawn on every model publish, the list in Edit mode kept restarting its edit transition, so the
+/// rows hopped and the remove icons flickered (#3891). The sheet is also `.equatable()`, a second guard in case the
+/// Library redraws this screen. A hosted run showed the sheet drawn once per publish with SwiftUI never asking its `==`
+/// (#4033), so the first guard is that nothing here is invalidated by a model publish at all.
 ///
 /// Nothing in the sheet reads `dismiss` either: the Library redraws on every publish and hands the sheet a new one each
 /// time, so the rows reading it redrew, and in Edit mode faded their remove icons in again (#3891, reopened).
 struct ExperiencePlayQueueScreen: View {
-    @EnvironmentObject private var model: Gate1AppModel
-    @ObservedObject private var state = PlayQueueState.shared
+    let model: Gate1AppModel
+    @StateObject private var feed: PlayQueueRowsFeed
     /// Closes the sheet; the presenter's own flag, so calling it from an older copy of the sheet still closes it.
     let close: () -> Void
     /// Where Edit mode starts. Only a test starts it elsewhere than off.
-    var startingEditMode: EditMode = .inactive
+    let startingEditMode: EditMode
+
+    init(model: Gate1AppModel, close: @escaping () -> Void, startingEditMode: EditMode = .inactive) {
+        self.model = model
+        self.close = close
+        self.startingEditMode = startingEditMode
+        _feed = StateObject(wrappedValue: PlayQueueRowsFeed(model: model))
+    }
 
     var body: some View {
         PlayQueueSheet(
-            rows: PlayQueueRows.rows(for: PlayQueue(itemIds: state.itemIds), items: model.libraryItems),
+            rows: feed.rows,
             actions: PlayQueueSheetActions(
                 load: { model.loadPlayQueue() },
                 close: close,
@@ -33,6 +43,24 @@ struct ExperiencePlayQueueScreen: View {
             editMode: startingEditMode
         )
         .equatable()
+    }
+}
+
+/// The queue sheet's rows, published only when they differ from the last ones. It follows the queue's ids and the
+/// Library's items, not the model's every publish, so a screen that watches it is redrawn only when a row would change.
+@MainActor
+final class PlayQueueRowsFeed: ObservableObject {
+    @Published private(set) var rows: [PlayQueueRow]
+    private var subscription: AnyCancellable?
+
+    init(model: Gate1AppModel, state: PlayQueueState = .shared) {
+        rows = PlayQueueRows.rows(for: PlayQueue(itemIds: state.itemIds), items: model.libraryItems)
+        // `@Published` hands subscribers the new value before the property holds it, so the rows are built from the values
+        // the publishers carry, not from the model.
+        subscription = state.$itemIds.combineLatest(model.$libraryItems)
+            .map { ids, items in PlayQueueRows.rows(for: PlayQueue(itemIds: ids), items: items) }
+            .removeDuplicates()
+            .sink { [weak self] rows in self?.rows = rows }
     }
 }
 
