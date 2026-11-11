@@ -9,6 +9,8 @@ struct ExperienceSourcesScreen: View {
     @Environment(\.isEdgeSwipePreview) private var isEdgeSwipePreview
     @EnvironmentObject private var catalogDrawer: CatalogDrawerModel
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    /// A show row's queue button reads the queue as it is now (#4044).
+    @ObservedObject private var playQueue = PlayQueueState.shared
 
     /// Following's follow flow lives on its own sheet so this tab stays a list of shows (#141, #3205).
     @State private var isShowingFollowSheet = false
@@ -189,6 +191,27 @@ struct ExperienceSourcesScreen: View {
         .listRowBackground(AppColors.bone)
     }
 
+    /// What the show row's queue button does for its newest episode: Remove from Queue only when that episode is in the
+    /// Library and queued; every other episode would be saved first, so it is Add to Queue (#4044).
+    private func showRowQueueAction(_ row: FollowingShowRow) -> QueueRowAction? {
+        if row.isNewestInLibrary {
+            guard let itemId = row.playItemID else { return nil }
+            return QueueRowAction.action(forItem: itemId, queuedItemIds: playQueue.itemIds)
+        }
+        return row.addEntryID == nil ? nil : .add
+    }
+
+    @ViewBuilder
+    private func queueSwipeButton(_ row: FollowingShowRow) -> some View {
+        if let action = showRowQueueAction(row) {
+            Button { model.queueNewestEpisode(of: row) } label: {
+                Label(action.title, systemImage: action.systemImage)
+            }
+            .tint(AppColors.swipeSlate)
+            .accessibilityIdentifier("sources.show.\(row.id).queue")
+        }
+    }
+
     @ViewBuilder
     private func showRow(_ row: FollowingShowRow) -> some View {
         FollowingShowRowView(
@@ -198,10 +221,13 @@ struct ExperienceSourcesScreen: View {
             play: { model.playNewestEpisode(of: row) },
             add: { model.addPreviewedEpisode(of: row) },
             isPlayStarting: row.playEntryID.map { model.importingFollowedSourceEntryIds.contains($0) } ?? false,
-            isAdding: row.newestEntryID.map { model.importingFollowedSourceEntryIds.contains($0) } ?? false
+            isAdding: row.newestEntryID.map { model.importingFollowedSourceEntryIds.contains($0) } ?? false,
+            queueAction: showRowQueueAction(row),
+            queue: { model.queueNewestEpisode(of: row) }
         )
-        // Add the episode the row previews without opening the show (#2929). Once it is in the Library the
-        // button says so and does nothing; a show with no episode offers no swipe.
+        // Add the episode the row previews without opening the show (#2929), or Add to Queue, which saves it and queues it
+        // (#4044). Once it is in the Library the second button is the only one: Add to Queue or Remove from Queue, and no
+        // long swipe. A show with no episode offers no swipe.
         .swipeActions(edge: .leading, allowsFullSwipe: row.addEntryID != nil) {
             if row.addEntryID != nil {
                 Button { model.addPreviewedEpisode(of: row) } label: {
@@ -209,6 +235,9 @@ struct ExperienceSourcesScreen: View {
                 }
                 .tint(AppColors.swipeEvergreen)
                 .accessibilityIdentifier("sources.show.\(row.id).add")
+                queueSwipeButton(row)
+            } else if row.isNewestInLibrary, row.playItemID != nil {
+                queueSwipeButton(row)
             } else if row.isNewestInLibrary {
                 Button {} label: {
                     Label("In Library", systemImage: "checkmark.circle")
@@ -309,6 +338,9 @@ private struct FollowingShowRowView: View {
     let isPlayStarting: Bool
     /// The previewed episode is being fetched into the Library after a swipe (#2929).
     let isAdding: Bool
+    /// The row has no menu, so its queue action is a VoiceOver action only (#4044); nil when the show has no episode to queue.
+    var queueAction: QueueRowAction?
+    var queue: () -> Void = {}
 
     var body: some View {
         HStack(spacing: 0) {
@@ -366,6 +398,9 @@ private struct FollowingShowRowView: View {
             .accessibilityLabel(row.accessibilityLabel)
             .accessibilityHint("Opens the show.")
             .accessibilityAction(named: "Add newest episode to Library") { if row.addEntryID != nil { add() } }
+            .accessibilityActions {
+                if let queueAction { Button(queueAction.newestEpisodeTitle, action: queue) }
+            }
             .accessibilityIdentifier("sources.show.\(row.id)")
             if row.playEntryID != nil {
                 Button(action: play) {
@@ -489,6 +524,11 @@ struct SourceInboxRow: View {
     let artwork: FollowingArtworkCache
     @State private var confirmsUnfollow = false
 
+    /// A Quick Folder link list adds many links, so there is no one item to queue (#4044).
+    private var canQueue: Bool {
+        if case .localFile(let file) = candidate { !Gate1AppModel.isQuickFolderLinkList(file) } else { true }
+    }
+
     var body: some View {
         // The row is a Button and a More menu side by side, so the menu is not nested inside the Button. A
         // listener who can't swipe precisely or hold for the context menu reaches the same actions from the menu (#1932).
@@ -504,6 +544,14 @@ struct SourceInboxRow: View {
                 Label("Add", systemImage: "plus.circle.fill")
             }
             .tint(AppColors.swipeEvergreen)
+            // Second, so a long swipe still adds: Add to Queue saves the item and queues it once it lands (#4044).
+            if canQueue {
+                Button(action: addToQueue) {
+                    Label(QueueRowAction.add.title, systemImage: QueueRowAction.add.systemImage)
+                }
+                .tint(AppColors.swipeSlate)
+                .accessibilityIdentifier("\(identifier).queue")
+            }
         }
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
             Button(action: dismiss) {
@@ -560,6 +608,7 @@ struct SourceInboxRow: View {
         .accessibilityAction(named: "Add to Library", addAndOpen)
         .accessibilityAction(named: "Dismiss", dismiss)
         .accessibilityActions {
+            if canQueue { Button(QueueRowAction.add.title, action: addToQueue) }
             // A Quick Folder file has no show to play from, mute or unfollow.
             if let subscription {
                 Button("Play now", action: playNow)
@@ -573,6 +622,9 @@ struct SourceInboxRow: View {
     @ViewBuilder
     private var rowActions: some View {
         Button(action: addInPlace) { Label("Add to Library", systemImage: "plus.circle") }
+        if canQueue {
+            Button(action: addToQueue) { Label(QueueRowAction.add.title, systemImage: QueueRowAction.add.systemImage) }
+        }
         if isFeedEntry {
             Button(action: playNow) { Label("Play now", systemImage: "play.fill") }
         }
@@ -775,6 +827,14 @@ struct SourceInboxRow: View {
         switch candidate {
         case .localFile(let file): model.importQuickAccessFile(file)
         case .followedSource(let entry): model.importFollowedSourceEntry(entry)
+        }
+    }
+
+    /// Saves the item and queues it once the import lands (#4044).
+    private func addToQueue() {
+        switch candidate {
+        case .localFile(let file): model.addQuickFolderFileToQueue(file)
+        case .followedSource(let entry): model.addEntryToQueue(entry)
         }
     }
 
