@@ -5,8 +5,10 @@ import SessionKitPersistence
 /// The listener's Margins, grouped by item, and the Margins friends shared.
 ///
 /// It does not watch `Gate1AppModel`: it reads what it shows through a `ScreenInputsFeed`, so a model publish that
-/// leaves the list as it was does not rebuild it while the listener scrolls (#4028).
-struct ExperienceMarginsScreen: View {
+/// leaves the list as it was does not rebuild it while the listener scrolls (#4028). The tab bar redraws on every publish
+/// and shows it with `.equatable()`, as it does Following and Settings: it is equal to its last copy while the model is
+/// the same one, so the tab bar's redraw stops here.
+struct ExperienceMarginsScreen: View, Equatable {
     fileprivate struct MarginGroup: Identifiable, Equatable {
         let itemID: String
         let itemTitle: String
@@ -34,6 +36,13 @@ struct ExperienceMarginsScreen: View {
     init(model: Gate1AppModel) {
         self.model = model
         _feed = StateObject(wrappedValue: ScreenInputsFeed(model: model, read: Inputs.init))
+    }
+
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        #if DEBUG
+        ScreenRedrawProbe.recordEqualityCheck("margins")
+        #endif
+        return lhs.model === rhs.model
     }
 
     /// Everything the screen shows from the model. A publish that changes none of it leaves the screen alone.

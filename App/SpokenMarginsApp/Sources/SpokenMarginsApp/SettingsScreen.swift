@@ -8,9 +8,13 @@ import UIKit
 /// Settings: voice, controls, storage, import and export, help, and the developer tools in a debug build.
 ///
 /// It does not watch `Gate1AppModel`: it reads what it shows through a `ScreenInputsFeed`, so a model publish that
-/// leaves its rows as they were does not rebuild the form while the listener scrolls (#4028).
-struct SettingsScreen: View {
+/// leaves its rows as they were does not rebuild the form while the listener scrolls (#4028). The tab bar redraws on every
+/// publish and shows it with `.equatable()`: it is equal to its last copy while the model and the notice are the same
+/// ones, so the tab bar's redraw stops here. Without that, a hosted run drew it once per publish all the same (24 for 20).
+struct SettingsScreen: View, Equatable {
     let model: Gate1AppModel
+    /// The notice's identity, for `==`: the observed notice itself is read on the main actor only.
+    private let supertonicNoticeID: ObjectIdentifier
     @StateObject private var feed: ScreenInputsFeed<Inputs>
     @Environment(\.isEdgeSwipePreview) private var isEdgeSwipePreview
     @AppStorage("playbackUsesVerboseActions") private var usesVerbosePlaybackActions = true
@@ -39,7 +43,15 @@ struct SettingsScreen: View {
     init(model: Gate1AppModel, supertonicNotice: SupertonicDownloadNotice) {
         self.model = model
         _supertonicNotice = ObservedObject(wrappedValue: supertonicNotice)
+        supertonicNoticeID = ObjectIdentifier(supertonicNotice)
         _feed = StateObject(wrappedValue: ScreenInputsFeed(model: model, read: Inputs.init))
+    }
+
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        #if DEBUG
+        ScreenRedrawProbe.recordEqualityCheck("settings")
+        #endif
+        return lhs.model === rhs.model && lhs.supertonicNoticeID == rhs.supertonicNoticeID
     }
 
     /// Every value the form shows from the model. A publish that changes none of it leaves the screen alone. The

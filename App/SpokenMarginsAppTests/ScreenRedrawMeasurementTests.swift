@@ -72,15 +72,19 @@ final class ScreenRedrawMeasurementTests: XCTestCase {
         defer { mounted.close() }
         try await waitUntilQuiet(screen.rawValue)
         let before = ScreenRedrawProbe.count(screen.rawValue)
+        let checksBefore = ScreenRedrawProbe.equalityCheckCount(screen.rawValue)
         for index in 0..<Self.publishes {
             publish(Publish.allCases[index % Publish.allCases.count], index: index, on: model)
             try await Task.sleep(for: .milliseconds(25))
         }
         try await waitUntilQuiet(screen.rawValue)
         let afterPublishes = ScreenRedrawProbe.count(screen.rawValue)
+        // Few `==` checks with many runs: something the screen watches invalidated it. Many checks: the tab bar's redraw
+        // reached it and `.equatable()` was not enough.
+        let checks = ScreenRedrawProbe.equalityCheckCount(screen.rawValue) - checksBefore
         XCTAssertLessThanOrEqual(afterPublishes - before, Self.allowedRuns,
                                  "\(screen.rawValue): \(Self.publishes) model publishes that change nothing it shows ran its body "
-                                     + "\(afterPublishes - before) times")
+                                     + "\(afterPublishes - before) times; SwiftUI asked its == \(checks) times")
 
         shownChange(model)
         try await waitUntilQuiet(screen.rawValue)
@@ -98,13 +102,16 @@ final class ScreenRedrawMeasurementTests: XCTestCase {
                 let mounted = try mount(screen, model: model)
                 try await waitUntilQuiet(screen.rawValue)
                 let before = ScreenRedrawProbe.count(screen.rawValue)
+                let checksBefore = ScreenRedrawProbe.equalityCheckCount(screen.rawValue)
                 for index in 0..<Self.publishes {
                     publish(kind, index: index, on: model)
                     try await Task.sleep(for: .milliseconds(25))
                 }
                 try await waitUntilQuiet(screen.rawValue)
                 let runs = ScreenRedrawProbe.count(screen.rawValue) - before
-                lines.append("\(screen.rawValue) / \(kind.rawValue): \(runs) body runs for \(Self.publishes) publishes")
+                let checks = ScreenRedrawProbe.equalityCheckCount(screen.rawValue) - checksBefore
+                lines.append("\(screen.rawValue) / \(kind.rawValue): \(runs) body runs for \(Self.publishes) publishes "
+                                 + "(\(checks) == checks)")
                 mounted.close()
             }
         }

@@ -6,8 +6,10 @@ import SwiftUI
 /// at the bottom. The plus opens the Follow sheet (#3205): Paste, Browse and Import from another app.
 ///
 /// It does not watch `Gate1AppModel`: it reads what it shows through a `ScreenInputsFeed`, so a model publish that
-/// leaves the list as it was does not rebuild it while the listener scrolls (#4028).
-struct ExperienceSourcesScreen: View {
+/// leaves the list as it was does not rebuild it while the listener scrolls (#4028). The tab bar redraws on every publish
+/// and shows it with `.equatable()`: it is equal to its last copy while the model is the same one, so the tab bar's
+/// redraw stops here. Without that, a hosted run drew it once per publish all the same (36 runs for 20).
+struct ExperienceSourcesScreen: View, Equatable {
     let model: Gate1AppModel
     @StateObject private var feed: ScreenInputsFeed<Inputs>
     @Environment(\.isEdgeSwipePreview) private var isEdgeSwipePreview
@@ -35,6 +37,13 @@ struct ExperienceSourcesScreen: View {
     init(model: Gate1AppModel) {
         self.model = model
         _feed = StateObject(wrappedValue: ScreenInputsFeed(model: model, read: Inputs.init))
+    }
+
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        #if DEBUG
+        ScreenRedrawProbe.recordEqualityCheck("following")
+        #endif
+        return lhs.model === rhs.model
     }
 
     /// Everything the list shows from the model. A publish that changes none of it leaves the screen alone.
