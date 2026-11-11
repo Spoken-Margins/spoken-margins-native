@@ -491,7 +491,9 @@ enum PDFStructuredTextExtractor {
                     result.append(StructuredDocumentLine(text: line.text, role: .body, pageIndex: pageIndex, superscripts: line.superscripts))
                 }
             }
-            for (lineIndex, entries) in anchors {
+            // In line order: the two lines of a wrapped heading share one result line, and
+            // dictionary order would list their entries differently on each import (#3970).
+            for (lineIndex, entries) in anchors.sorted(by: { $0.key < $1.key }) {
                 guard let index = resultIndex[lineIndex] else { continue }
                 result[index].outlineEntries += entries
             }
