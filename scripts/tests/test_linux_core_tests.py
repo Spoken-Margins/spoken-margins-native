@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import linux_core_tests as core
@@ -207,11 +208,23 @@ class WhenTheContainerCannotReachApt(ScriptedRuns):
         self.assertEqual((code, self.attempts_made(), staged), (core.SETUP_FAULT_CODE, 2, 1))
         self.assertIn('lane-fault', out)
 
+    def test_a_network_that_drops_before_the_rerun_still_gets_the_hosts_debs_and_the_rerun(self):
+        code, out, staged = self.run_staged(True, f'echo "{FAIL}"; exit 1', f'echo "{APT_DOWN}"; exit 100',
+                                            f'echo "{PASS}"; exit 0')
+        self.assertEqual((code, self.attempts_made(), staged), (0, 3, 1))
+        self.assertIn('passed on retry: SessionKitCoreTests/ASuite/testOne', out)
+
+    def test_a_setup_fault_on_the_rerun_names_the_red_test_and_is_still_a_setup_fault(self):
+        code, out, _ = self.run_staged(False, f'echo "{FAIL}"; exit 1', f'echo "{APT_DOWN}"; exit 100')
+        self.assertEqual(code, core.SETUP_FAULT_CODE)
+        self.assertIn('Failed: SessionKitCoreTests/ASuite/testOne', out)
+        self.assertIn('lane-fault', out)
+
     def test_a_tests_own_output_that_mentions_the_network_is_not_a_setup_fault(self):
         text = f"{PASS}\nCould not resolve 'example.invalid'\n"
         self.assertFalse(core.setup_fault(1, text))
         self.assertFalse(core.setup_fault(75, text))
-        self.assertTrue(core.setup_fault(100, "Could not resolve 'archive.ubuntu.com'"))
+        self.assertTrue(core.setup_fault(100, "W: Failed to fetch http://x  Could not resolve 'archive.ubuntu.com'\nE: Unable to locate package libsqlite3-dev"))
         self.assertFalse(core.setup_fault(1, 'error: no such module'))
 
 
@@ -313,6 +326,12 @@ class StagingTheDebs(unittest.TestCase):
         run, calls = self.fake_run(['a.deb', 'b.deb'])
         self.assertFalse(self.stage(run, which=lambda name: None))
         self.assertEqual(calls, [])
+
+    def test_a_host_with_no_sudo_stages_nothing_instead_of_crashing(self):
+        def run(command, cwd=None, check=True):
+            raise FileNotFoundError('sudo')
+        with mock.patch.object(core.os, 'geteuid', return_value=1000):
+            self.assertFalse(self.stage(run))
 
     def test_an_old_staging_folder_is_cleared_first(self):
         self.dir.mkdir()

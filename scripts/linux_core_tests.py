@@ -38,8 +38,8 @@ STAGED = '.apt-staged'  # the host's copy of the SQLite .debs, there only after 
 SETUP_FAULT_CODE = 75  # EX_TEMPFAIL: the container could not install its headers; says nothing about the PR's code
 SETUP_FAULT_MARK = 'SETUP FAULT: could not reach apt'
 # What a failed apt prints when the container has no network, for a command that lacks SETUP_FAULT_MARK.
-APT_UNREACHABLE = re.compile(r"Could not resolve '|Failed to fetch http|Unable to locate package libsqlite3-dev|"
-                             r'Temporary failure resolving')
+APT_UNREACHABLE = re.compile(r"^(?:W|E|Err[:\d]*):.*(?:Could not resolve '|Failed to fetch http|"
+                             r'Unable to locate package libsqlite3-dev|Temporary failure resolving)', re.M)
 
 
 def install_script(mount: str = '/w') -> str:
@@ -109,19 +109,23 @@ def stage_debs(directory: Path, run=subprocess.run, which=shutil.which) -> bool:
     if not which('apt-get'):
         print('No apt-get on this host to fetch the SQLite .debs with.', flush=True)
         return False
-    shutil.rmtree(directory, ignore_errors=True)
-    directory.mkdir(parents=True)
     sudo = [] if os.geteuid() == 0 else ['sudo', '-n']
-    run([*sudo, 'apt-get', 'update', '-qq'], check=False)
-    done = run(['apt-get', 'download', 'libsqlite3-dev', 'libsqlite3-0'], cwd=directory, check=False)
+    try:
+        shutil.rmtree(directory, ignore_errors=True)
+        directory.mkdir(parents=True)
+        run([*sudo, 'apt-get', 'update', '-qq'], check=False)
+        done = run(['apt-get', 'download', 'libsqlite3-dev', 'libsqlite3-0'], cwd=directory, check=False)
+    except OSError as error:  # no sudo, or a folder that can't be cleared: no staging, and the fault line says so
+        print(f'Could not fetch the SQLite .debs on the host: {error}', flush=True)
+        return False
     ok = done.returncode == 0 and len(list(directory.glob('*.deb'))) >= 2
     print(f'SQLite .debs fetched on the host: {"yes" if ok else "no"}.', flush=True)
     return ok
 
 
-def say_setup_fault(code: int) -> int:
-    line = (f'{SETUP_FAULT_MARK} in the swift container, even from the host\'s own copy of the .debs: a runner '
-            "network fault, not this PR's code. No test ran. Run the check again.")
+def say_setup_fault() -> int:
+    line = (f'{SETUP_FAULT_MARK} in the swift container, and the host\'s copy of the .debs could not stand in: a '
+            "runner network fault, not this PR's code. Run the check again.")
     print(f'::error title=lane-fault::{line}\n{line}', flush=True)
     return SETUP_FAULT_CODE
 
@@ -149,6 +153,20 @@ def note_retry(names: list[str], first_code: int, ran: int, environ=None) -> Non
             output.write(f'retried={",".join(full) or WHOLE_RUN}\n')
 
 
+def attempt_installed(command: list[str], log: Path, stage=None) -> tuple[int, str, bool]:
+    """attempt(), and when the container could not install its SQLite headers, once more with the host's .debs
+    (stage() fetches them). (exit code, output, whether the setup is still at fault.) Used for the first run and the
+    rerun alike: a network that drops between them must not cost a test its rerun (#4082)."""
+    code, text = attempt(command, log)
+    if setup_fault(code, text):
+        print('SessionKitCoreTests: the container could not install the SQLite headers.', flush=True)
+        if not (stage and stage()):
+            return code, text, True
+        code, text = attempt(command, log)
+        return code, text, setup_fault(code, text)
+    return code, text, False
+
+
 def run_tests(command: list[str], log: Path, resolved: Path | None = None, environ=None, stage=None) -> int:
     """0 when SessionKitCoreTests passed, on the first run or its one rerun. On Linux SwiftPM rewrites Package.resolved
     (swift-crypto in, onnxruntime out; run-sessionkit-linux-tests.sh says so), so the Mac's copy goes back afterwards.
@@ -159,14 +177,9 @@ def run_tests(command: list[str], log: Path, resolved: Path | None = None, envir
         backup = Path(tempfile.mkdtemp()) / resolved.name
         shutil.copyfile(resolved, backup)
     try:
-        code, text = attempt(command, log)
-        if setup_fault(code, text):
-            print('SessionKitCoreTests: the container could not install the SQLite headers.', flush=True)
-            if not (stage and stage()):
-                return say_setup_fault(code)
-            code, text = attempt(command, log)
-            if setup_fault(code, text):
-                return say_setup_fault(code)
+        code, text, faulty = attempt_installed(command, log, stage)
+        if faulty:
+            return say_setup_fault()
         first, stopped = linux_results(text), unfinished(text)
         if not first and not stopped:
             print(f'SessionKitCoreTests ran no tests on Linux (exit {code}): a build failure or a broken step.', flush=True)
@@ -178,7 +191,10 @@ def run_tests(command: list[str], log: Path, resolved: Path | None = None, envir
             print(f'Stopped in: SessionKitCoreTests/{test}', flush=True)
         print('SessionKitCoreTests: the Linux run failed, so it runs once more (owner, 2026-10-24).', flush=True)
         log.replace(log.with_name('first-' + log.name))  # both runs' logs stay for the upload; the last is what stands
-        retry_code, retry_text = attempt(command, log)
+        retry_code, retry_text, faulty = attempt_installed(command, log, stage)
+        if faulty:
+            say_failed(first)
+            return say_setup_fault()
         second = linux_results(retry_text)
         if retry_code or not second:
             say_failed(second)
