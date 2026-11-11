@@ -93,6 +93,8 @@ final class Gate1FlowUITests: XCTestCase {
         editor.tap()
         app.typeText(String(repeating: "This is a substantial response with a useful argument. ", count: 25))
         app.buttons["timeline.keyboard.done"].tap()
+        // The dock comes back once the keyboard has left, and the Reflect box scrolls above it (#4043).
+        XCTAssertTrue(app.buttons["playback.timeline.button"].waitForExistence(timeout: 4), "The playback dock did not come back")
         let action = scrollToElement("timeline.reflection.import.button")
         XCTAssertTrue(action.isHittable)
         XCTAssertLessThan(editor.frame.height, 320, "Response length must not expand the editor")
@@ -389,11 +391,19 @@ final class Gate1FlowUITests: XCTestCase {
         editor.tap()
         app.typeText("Keyboard dismissal probe.")
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 4))
-        XCTAssertTrue(element("timeline.screen").exists)
+        // The Timeline editor's own keyboard Done shows the Timeline is still up. At every cut `timeline.screen` was not
+        // found at this point, though the recording shows the Timeline drawn under the keyboard (#3926).
+        let keyboardDone = app.buttons["timeline.keyboard.done"]
+        XCTAssertTrue(keyboardDone.waitForExistence(timeout: 2), "Focusing the reflection editor left the Timeline")
         XCTAssertTrue(editor.isHittable, "Focusing the reflection editor blanked or displaced the Timeline content")
-        app.buttons["timeline.keyboard.done"].tap()
+        keyboardDone.tap()
         XCTAssertTrue(waitForDisappearance(app.keyboards.firstMatch, timeout: 4))
-        XCTAssertTrue(editor.isHittable, "Dismissing the keyboard left the Timeline scrolled into an empty region")
+        // The dock comes back once the keyboard has left, with the Reflect box above it (#4043).
+        XCTAssertTrue(app.buttons["playback.timeline.button"].waitForExistence(timeout: 4), "The playback dock did not come back")
+        XCTAssertTrue(
+            waitUntil(editor, "isHittable == true", timeout: 2),
+            "Dismissing the keyboard left the Timeline scrolled into an empty region"
+        )
 
         let importButton = scrollToElement("timeline.reflection.import.button")
         XCTAssertTrue(importButton.isHittable, "The floating Now Playing bar covers the import action")

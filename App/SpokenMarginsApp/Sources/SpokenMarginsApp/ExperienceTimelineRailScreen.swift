@@ -9,6 +9,8 @@ struct ExperienceTimelineRailScreen: View {
     /// A playback pane reuses the rail and sheets, without a second player or navigation stack.
     var onReturnToPlayback: (() -> Void)? = nil
     var onEditorFocusChange: ((Bool) -> Void)? = nil
+    /// The playback screen hides its dock while the editor has focus and brings it back after the keyboard leaves.
+    var playbackDockHidden = false
 
     @State private var followsPlayback = true
     @State private var selectedSource: PlaybackTimelineSourceView.Selection?
@@ -18,6 +20,7 @@ struct ExperienceTimelineRailScreen: View {
     @State private var entries: [TimelineRailEntry] = []
     @State private var playbackTick = 0 // bumped by each progress tick: the current row follows the playhead (#2074)
     @FocusState private var responseEditorFocused: Bool
+    @State private var composerAnchor = TimelineComposerAnchor()
     @ScaledMetric(relativeTo: .body) private var responseEditorHeight: CGFloat = 160
 
     var body: some View {
@@ -121,18 +124,29 @@ struct ExperienceTimelineRailScreen: View {
                 if id != nil { focusTimeline(using: proxy) }
             }
             .onScrollPhaseChange { _, phase in
-                if phase == .interacting { followsPlayback = false }
+                if phase == .interacting {
+                    followsPlayback = false
+                    composerAnchor.listenerScrolled()
+                }
             }
             .onDisappear { onEditorFocusChange?(false) }
+            .onChange(of: playbackDockHidden) { _, hidden in
+                // The dock is back after the editor's keyboard left: keep the Reflect box and its Import button in
+                // view above it, not behind it (#4043). Scroll again once the dock's inset is laid out. Only after
+                // Done or Import from the box: focus also leaves when the listener drags up to read, or a row opens
+                // a sheet, and the rail stays where they put it (#4047).
+                guard !hidden, !responseEditorFocused, composerAnchor.dockReturned() else { return }
+                scrollComposerIntoView(using: proxy)
+            }
+            .onScrollGeometryChange(for: CGFloat.self) { $0.contentInsets.bottom } action: { old, new in
+                guard new > old, composerAnchor.dockInsetGrew() else { return }
+                scrollComposerIntoView(using: proxy)
+            }
             .onChange(of: responseEditorFocused) { _, isFocused in
                 onEditorFocusChange?(isFocused)
                 guard isFocused else { return }
-                Task { @MainActor in
-                    await Task.yield()
-                    withMotion(.easeOut(duration: 0.2)) {
-                        proxy.scrollTo("timeline.reflection.composer", anchor: .bottom)
-                    }
-                }
+                composerAnchor.editorGainedFocus()
+                scrollComposerIntoView(using: proxy)
             }
         }
         .accessibilityElement(children: .contain)
@@ -155,7 +169,10 @@ struct ExperienceTimelineRailScreen: View {
             }
             ToolbarItemGroup(placement: .keyboard) {
                 Spacer()
-                Button("Done") { responseEditorFocused = false }
+                Button("Done") {
+                    composerAnchor.editingEndedFromComposer()
+                    responseEditorFocused = false
+                }
                     .accessibilityIdentifier("timeline.keyboard.done")
             }
         }
@@ -196,6 +213,7 @@ struct ExperienceTimelineRailScreen: View {
                     }
                 }
                 Button("Import and play response", systemImage: "play.fill") {
+                    composerAnchor.editingEndedFromComposer()
                     responseEditorFocused = false
                     model.importPastedAssistantResponse()
                 }
@@ -588,6 +606,15 @@ struct ExperienceTimelineRailScreen: View {
 
     private var currentEntryIDs: Set<String> { playbackSelection.currentIDs }
     private var currentEntryID: String? { playbackSelection.focusID }
+
+    private func scrollComposerIntoView(using proxy: ScrollViewProxy) {
+        Task { @MainActor in
+            await Task.yield()
+            withMotion(.easeOut(duration: 0.2)) {
+                proxy.scrollTo("timeline.reflection.composer", anchor: .bottom)
+            }
+        }
+    }
 
     private func focusTimeline(using proxy: ScrollViewProxy) {
         guard !responseEditorFocused else { return }
