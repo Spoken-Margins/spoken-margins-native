@@ -1636,6 +1636,11 @@ public final class SessionEngine {
         let wasPlaying = pendingPause != nil || snapshot.status.isPlaybackActive
         let usesNativeMediaClock = session.currentTargetType == .transcriptBackedMedia
             || session.currentTargetType == .browserOwnedMedia
+        if textReadingEndedUnseen(session) {
+            // Read aloud to its end before the progress tick said so: a recap Margin on a finished item, not one at a
+            // place in progress whose Save would resume speech from the end of the text and fail (#3928).
+            session = markPlaybackComplete(session, item: currentItem)
+        }
         captureResume.captureStarting(finishedAtEnd: isFinishedAtEnd(session))
         if captureResume.startedOnFinishedSource {
             // A recap Margin on a finished item (#142). The saved end position is
@@ -1736,6 +1741,9 @@ public final class SessionEngine {
         guard readsAloud || session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia else {
             return snapshot
         }
+        // Text whose reading already ended has nothing to pause, and its held place would hide the end from the
+        // progress tick; `beginInterjection` settles it as finished (#3928).
+        guard !(readsAloud && textReadingEndedUnseen(session)) else { return snapshot }
         var timing = MarginCaptureTiming(request: request)
         var placed = session
         if readsAloud {
@@ -1880,8 +1888,12 @@ public final class SessionEngine {
         guard pendingWrittenInterjection == nil else {
             throw SessionKitError.invalidCommandForState("beginWrittenInterjection")
         }
+        // Read aloud to its end before the progress tick said so: a Margin on a finished item, with nothing for Save or
+        // Cancel to resume; resuming from the end of the text fails (#3928).
+        let endedUnseen = textReadingEndedUnseen(originalSession)
         // Add a Margin may already have paused it on the tap (#1696), when the listener switched to writing.
-        let wasPlaying = captureResume.takeOverTapPause() != nil || snapshot.status.isPlaybackActive
+        let tapPaused = captureResume.takeOverTapPause() != nil
+        let wasPlaying = !endedUnseen && (tapPaused || snapshot.status.isPlaybackActive)
         // Resolve the immutable target before changing transport. The native
         // media clock still has to be sampled after pause, but every other
         // fallible part of the transaction happens before audio is stopped.
@@ -1889,12 +1901,14 @@ public final class SessionEngine {
         _ = buildAnchor(for: originalSession, targetType: target.type, targetId: target.id)
 
         do {
-            var session = originalSession
+            var session = endedUnseen ? markPlaybackComplete(originalSession, item: currentItem) : originalSession
             let usesNativeMediaClock = session.currentTargetType == .transcriptBackedMedia
                 || session.currentTargetType == .browserOwnedMedia
             if usesNativeMediaClock {
                 try audio.pause()
                 session = try syncCurrentPositionFromAudio(session)
+            } else if endedUnseen {
+                try audio.pause() // the end of the text is the place; a stopped speech player's offset is not
             } else {
                 session = try syncCurrentPositionFromAudio(session)
                 try audio.pause()
@@ -4774,6 +4788,17 @@ public final class SessionEngine {
         default:
             return (.item, session.itemId)
         }
+    }
+
+    /// Text read aloud that has reached its end before the 0.5 s progress tick marked it finished (#3928). The
+    /// simulator's synthesizer reads a whole article at once; on a phone, a tap can land in the half second after the
+    /// last word. Its place is then the end of the text, which is not a place playback can resume from. A held place
+    /// (a skip or seek while paused after the end) outranks the client's completion, which only a new start clears,
+    /// as it does for the progress tick.
+    private func textReadingEndedUnseen(_ session: Session) -> Bool {
+        session.currentTargetType == .itemTextTTS && session.phase != .finished
+            && !protectedPosition.holdsPosition(for: session)
+            && audio.isPlaybackComplete(targetId: session.currentTargetId)
     }
 
     private func isFinishedAtEnd(_ session: Session) -> Bool {
