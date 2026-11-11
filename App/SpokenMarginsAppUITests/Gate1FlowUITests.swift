@@ -657,13 +657,20 @@ final class Gate1FlowUITests: XCTestCase {
     func testRecordingExclusivelyOwnsTheAccessibleExperience() throws {
         app.terminate()
         app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_RECORDING"] = "1"
+        // The generated offline podcast, as J3 uses: the simulator's synthesizer reads the seeded article to its end
+        // at once, so a Margin on it is a recap Margin on a finished item, which stays paused and hides the mini
+        // player (#3928). The episode keeps playing, so Save and Cancel have a source to resume.
+        app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_PODCAST"] = "1"
+        app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_SOURCE_TITLE"] = "Recording owns the screen: an episode"
         launchAllowingOneStall()
 
         XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8))
-        let seededStart = app.buttons["queue.start.item-pill"]
+        let seededStart = app.buttons["queue.start.item-ui-podcast"]
         XCTAssertTrue(seededStart.waitForExistence(timeout: 4), app.debugDescription)
         seededStart.tap()
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
+        let playPause = element("playback.play.button")
+        XCTAssertTrue(waitUntil(playPause, "label == %@ AND enabled == true", "Pause", timeout: 20), "The episode never reached the playing state")
         scrollToElement("playback.interject.button").tap()
 
         XCTAssertTrue(element("recording.screen").waitForExistence(timeout: 4))
@@ -684,7 +691,7 @@ final class Gate1FlowUITests: XCTestCase {
         finish.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).doubleTap()
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
         XCTAssertFalse(element("recording.screen").exists, "A second finish tap started another Margin")
-        XCTAssertEqual(element("playback.play.button").label, "Pause", "Saving a voice Margin did not resume playback")
+        XCTAssertTrue(waitUntil(playPause, "label == %@", "Pause", timeout: 10), "Saving a voice Margin did not resume playback")
         pausePlaybackIfNeeded()
         openRootMarginsFromPlayback()
         XCTAssertTrue(element("margins.screen").waitForExistence(timeout: 4))
@@ -709,13 +716,17 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertFalse(app.buttons["Open in Timeline"].exists)
         element("miniPlayer.open.button").tap()
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 4))
-        element("playback.interject.button").tap()
+        // Paused above for the Margins screen: play again, so Cancel has a playing source to put back.
+        XCTAssertTrue(waitUntil(playPause, "enabled == true AND hittable == true", timeout: 5), "The play button is not ready")
+        if playPause.label == "Play" { playPause.tap() }
+        XCTAssertTrue(waitUntil(playPause, "label == %@", "Pause", timeout: 10), "The episode did not play again")
+        scrollToElement("playback.interject.button").tap()
         XCTAssertTrue(element("recording.screen").waitForExistence(timeout: 4))
         element("recording.cancel.button").tap()
         app.alerts.buttons["Discard recording"].tap()
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
         XCTAssertFalse(element("recording.screen").exists)
-        XCTAssertEqual(element("playback.play.button").label, "Pause", "Voice capture cancellation did not resume the source")
+        XCTAssertTrue(waitUntil(playPause, "label == %@", "Pause", timeout: 10), "Voice capture cancellation did not resume the source")
     }
 
     /// #1942: at AX5 with the keyboard up, the editor keeps a usable height and sits inside the screen.
