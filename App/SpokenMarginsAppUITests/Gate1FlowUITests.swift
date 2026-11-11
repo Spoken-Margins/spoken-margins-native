@@ -883,7 +883,9 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertEqual(app.buttons["marginDetail.star.button"].label, "Unstar Margin")
         captureScreen(named: "second-edition-written-margin-detail")
         element("marginDetail.playMoment.button").tap()
-        XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 5))
+        guard element("playback.screen").waitForExistence(timeout: 5) else {
+            return XCTFail("Go to this moment did not open playback. \(recentFailureDiagnostic())")
+        }
         XCTAssertTrue(app.buttons["playback.itemTitle.button"].label.contains("A walk with room to think"))
         pausePlaybackIfNeeded()
         element("playback.write.button").tap()
@@ -1333,6 +1335,30 @@ final class Gate1FlowUITests: XCTestCase {
             ) == .completed
         }
         XCTAssertTrue(paused, "Playback did not pause: the play button still reads \(playPause.label)")
+    }
+
+    /// The banner shows only "Something went wrong" for an engine error; the raw text is the `recentFailure` row in
+    /// Settings' Developer tools (Debug builds). Reads it for a failure message, so a red cut names the cause (#3930).
+    /// Never asserts: the caller is already failing.
+    private func recentFailureDiagnostic() -> String {
+        let settings = app.buttons["Settings"].firstMatch
+        guard settings.waitForExistence(timeout: 4) else { return "recentFailure: no Settings tab to read it from" }
+        settings.tap()
+        let tools = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Developer tools")).firstMatch
+        for _ in 0..<12 where !isReadyToTap(tools) {
+            app.swipeUp()
+        }
+        guard isReadyToTap(tools) else { return "recentFailure: Developer tools not found" }
+        tools.tap()
+        // The row's text is "<context>: <raw error>"; the banner's own copy says "Something went wrong" instead.
+        let raw = NSPredicate(format: "(label CONTAINS %@ OR value CONTAINS %@) AND NOT (label CONTAINS %@)",
+                              "Margin's position: ", "Margin's position: ", "Something went wrong")
+        let row = app.descendants(matching: .any).matching(raw).firstMatch
+        for _ in 0..<20 where !row.exists {
+            app.swipeUp()
+        }
+        guard row.exists else { return "recentFailure: no row found" }
+        return "recentFailure: \(row.label) \(row.value as? String ?? "")"
     }
 
     private func openBuild23Review() {
