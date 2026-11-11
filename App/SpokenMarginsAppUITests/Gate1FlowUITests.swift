@@ -247,8 +247,9 @@ final class Gate1FlowUITests: XCTestCase {
         app.terminate()
         app.launchArguments += ["-UIPreferredContentSizeCategoryName", UIContentSizeCategory.accessibilityExtraExtraExtraLarge.rawValue]
         launchAllowingOneStall()
-        // At AX5 the seeded row can sit below the fold, so scroll to it before the long press (#2717).
-        XCTAssertTrue(app.buttons["library.row.item-pill"].waitForExistence(timeout: 8))
+        // At AX5 the guided tour's row fills the first screen and the seeded row sits below the fold, where the lazy
+        // list hasn't built it yet, so wait for the Library, not the row, then scroll to it (#2717, #3932).
+        XCTAssertTrue(element("library.screen").waitForExistence(timeout: 8))
         let row = scrollToButtonIdentified("library.row.item-pill")
         row.press(forDuration: 0.8)
         app.buttons["Mark Complete"].tap()
