@@ -207,14 +207,14 @@ struct ExperienceSourcesScreen: View {
                 Button { model.addPreviewedEpisode(of: row) } label: {
                     Label("Add", systemImage: "plus.circle.fill")
                 }
-                .tint(AppColors.evergreen)
+                .tint(AppColors.swipeEvergreen)
                 .accessibilityIdentifier("sources.show.\(row.id).add")
             } else if row.isNewestInLibrary {
                 Button {} label: {
                     Label("In Library", systemImage: "checkmark.circle")
                 }
                 .disabled(true)
-                .tint(AppColors.secondaryText)
+                .tint(AppColors.swipeSlate)
                 .accessibilityIdentifier("sources.show.\(row.id).inLibrary")
             }
         }
@@ -503,19 +503,19 @@ struct SourceInboxRow: View {
             Button(action: addInPlace) {
                 Label("Add", systemImage: "plus.circle.fill")
             }
-            .tint(AppColors.evergreen)
+            .tint(AppColors.swipeEvergreen)
         }
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
             Button(action: dismiss) {
                 Label("Dismiss", systemImage: "xmark")
             }
-            .tint(AppColors.plum)
+            .tint(AppColors.swipePlum)
             // Second and not a full swipe: the first button above is the one a long swipe takes.
             if subscription != nil {
                 Button { confirmsUnfollow = true } label: {
                     Label("Unfollow", systemImage: "minus.circle")
                 }
-                .tint(AppColors.secondaryText)
+                .tint(AppColors.swipeSlate)
             }
         }
         .contextMenu { rowActions }

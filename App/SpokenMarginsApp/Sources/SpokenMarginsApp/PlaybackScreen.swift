@@ -70,6 +70,14 @@ struct PlaybackScreen: View {
         .accessibilityIdentifier("playback.exit.button")
     }
 
+    private var leadingControlPane: PlaybackLeadingControl.Pane {
+        switch selectedPane {
+        case .now: .now
+        case .timeline: .timeline
+        case .margins: .margins
+        }
+    }
+
     var body: some View {
         let _ = playbackTick
         NavigationStack {
@@ -187,15 +195,18 @@ struct PlaybackScreen: View {
             .toolbarBackground(AppColors.listeningBackground, for: .navigationBar)
             .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
-                if selectedPane == .timeline {
+                // One meaning for the top-left arrow on every tab: leave the screen. The exception is the Timeline editor
+                // with the keyboard up, where the tab switch is hidden and this is the way back to Now (#4027).
+                let leading = PlaybackLeadingControl.control(pane: leadingControlPane, timelineEditorHasFocus: isTimelineEditing)
+                if leading == .libraryExit {
+                    ToolbarItem(placement: .topBarLeading) { libraryExitButton }
+                } else if leading == .returnToNow {
                     ToolbarItem(placement: .topBarLeading) {
                         Button { selectedPane = .now } label: {
                             Label("Now Playing", systemImage: "arrow.left")
                         }
                         .accessibilityIdentifier("timeline.nowPlaying.button")
                     }
-                } else if selectedPane == .margins {
-                    ToolbarItem(placement: .topBarLeading) { libraryExitButton }
                 }
             }
             .scrollDismissesKeyboard(.interactively)
@@ -780,8 +791,7 @@ struct PlaybackScreen: View {
                             ZStack {
                                 ProgressView()
                                     .tint(.white)
-                                Image(systemName: "stop.fill")
-                                    .font(.system(size: 12, weight: .bold))
+                                StartPendingStopMark(baseSize: 12)
                             }
                         } else {
                             Image(systemName: model.snapshot.phase == .finished && model.playingImportedCommentary == nil ? "arrow.counterclockwise" : (model.snapshot.skimBridgeState?.status == .playing

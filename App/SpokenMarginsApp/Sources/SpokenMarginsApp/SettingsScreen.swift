@@ -11,6 +11,9 @@ struct SettingsScreen: View {
     @AppStorage("playbackUsesVerboseActions") private var usesVerbosePlaybackActions = true
     @AppStorage(HeadphoneDoublePressAction.storageKey) private var headphoneDoublePress = HeadphoneDoublePressAction.default.rawValue
     @State private var showsDeveloperTools = false
+    #if DEBUG
+    @FocusState private var editingMapJSON: Bool
+    #endif
     @State private var showsImportInbox = false
     @State private var showsAboutAndLegal = false
     @State private var pendingPermanentDeletion: LibraryItemRow?
@@ -18,12 +21,8 @@ struct SettingsScreen: View {
     @State private var isEmptyRecentlyDeletedConfirmationPresented = false
     @State private var showsAllRecentlyDeleted = false
     @State private var isResetConfirmationPresented = false
-    @State private var diagnosticsExportURL: URL?
-    @State private var isDiagnosticsSharePresented = false
     @State private var isPreparingDiagnostics = false
-    @State private var listeningSignalsExportURL: URL?
     @State private var isExportingListeningSignals = false
-    @State private var isListeningSignalsSharePresented = false
     @State private var hasNoListeningSignals = false
     @AppStorage(CommunityMapUploadService.optInKey) private var helpsMakeListeningMaps = false
     @AppStorage(CommunityMapFetchService.optInKey) private var looksUpCommunityMaps = false
@@ -372,8 +371,9 @@ struct SettingsScreen: View {
                         isPreparingDiagnostics = true
                         Task {
                             defer { isPreparingDiagnostics = false }
-                            diagnosticsExportURL = await model.prepareDiagnosticsExportFileURL()
-                            isDiagnosticsSharePresented = diagnosticsExportURL != nil
+                            if let url = await model.prepareDiagnosticsExportFileURL() {
+                                ShareFilePresenter.present(fileURL: url)
+                            }
                         }
                     } label: {
                         Group {
@@ -391,11 +391,6 @@ struct SettingsScreen: View {
                     .buttonStyle(.borderless)
                     .disabled(isPreparingDiagnostics)
                     .accessibilityIdentifier("settings.shareDiagnostics.button")
-                    .sheet(isPresented: $isDiagnosticsSharePresented) {
-                        if let diagnosticsExportURL {
-                            ShareFileActivityView(fileURL: diagnosticsExportURL)
-                        }
-                    }
                     Text("App state and recent playback events, as a file for a bug report. It includes the titles and links of what is in your Library. It stays on this device unless you share it.")
                         .font(.footnote)
                         .foregroundStyle(AppColors.secondaryText)
@@ -403,9 +398,9 @@ struct SettingsScreen: View {
                         isExportingListeningSignals = true
                         Task {
                             defer { isExportingListeningSignals = false }
-                            listeningSignalsExportURL = await model.listeningSignals.exportFileURL()
-                            isListeningSignalsSharePresented = listeningSignalsExportURL != nil
-                            hasNoListeningSignals = listeningSignalsExportURL == nil
+                            let url = await model.listeningSignals.exportFileURL()
+                            if let url { ShareFilePresenter.present(fileURL: url) }
+                            hasNoListeningSignals = url == nil
                         }
                     } label: {
                         Label(
@@ -417,11 +412,6 @@ struct SettingsScreen: View {
                     .buttonStyle(.borderless)
                     .accessibilityIdentifier("settings.exportListeningSignals.button")
                     .disabled(isExportingListeningSignals)
-                    .sheet(isPresented: $isListeningSignalsSharePresented) {
-                        if let listeningSignalsExportURL {
-                            ShareFileActivityView(fileURL: listeningSignalsExportURL)
-                        }
-                    }
                     Text("A private log of listening time, Margins, shares and finishes for followed sources: titles, times and counts, never Margin text or audio. It stays on this device unless you export it.")
                         .font(.footnote)
                         .foregroundStyle(AppColors.secondaryText)
@@ -497,7 +487,11 @@ struct SettingsScreen: View {
                         .frame(minHeight: 130)
                         .accessibilityLabel("Listening Map JSON")
                         .accessibilityIdentifier("settings.developer.mapJSON.editor")
+                        .focused($editingMapJSON)
                     Button("Apply Listening Map JSON", systemImage: "checkmark.circle") {
+                        // Apply ends the editing, as Preview does for a Listening Edition: a keyboard left up
+                        // covers the tab bar, so the listener could not reach the Library to see the map (#3924).
+                        editingMapJSON = false
                         model.applyListeningMapJSON()
                     }
                     .disabled(model.listeningMapJSON.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -586,20 +580,6 @@ private struct RuntimeDiagnosticRows: View {
         }
     }
 }
-
-#if canImport(UIKit)
-/// Hands a file (the listening-signals log, #483, or the diagnostics export, #903) to the share sheet.
-/// Nothing is uploaded by the app.
-private struct ShareFileActivityView: UIViewControllerRepresentable {
-    let fileURL: URL
-
-    func makeUIViewController(context: Context) -> UIActivityViewController {
-        UIActivityViewController(activityItems: [fileURL], applicationActivities: nil)
-    }
-
-    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
-}
-#endif
 
 private extension View {
     /// A borderless button in a `Form` row only takes taps on its label's own size. Fill the row and

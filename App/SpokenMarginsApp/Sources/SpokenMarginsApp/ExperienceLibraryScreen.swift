@@ -114,8 +114,7 @@ struct ExperienceLibraryScreen: View {
                 .environmentObject(model)
         }
         .sheet(isPresented: $isPlayQueuePresented) {
-            ExperiencePlayQueueScreen()
-                .environmentObject(model)
+            ExperiencePlayQueueScreen(model: model)
         }
         .onAppear { model.loadPlayQueue() }
         .fullScreenCover(item: $openedNote) { opening in
@@ -689,11 +688,11 @@ private struct ExperienceLibraryCompactRow: View {
         .swipeActions(edge: .leading, allowsFullSwipe: !row.isCompleted) {
             if !row.isCompleted {
                 Button(action: onComplete) { Label("Complete", systemImage: "checkmark.circle.fill") }
-                    .tint(AppColors.evergreen)
+                    .tint(AppColors.swipeEvergreen)
                     .accessibilityIdentifier("library.complete.\(row.id)")
             } else if row.canMarkUnfinished {
                 Button(action: onMarkUnfinished) { Label("Unfinished", systemImage: "arrow.uturn.backward.circle.fill") }
-                    .tint(AppColors.ochreText)
+                    .tint(AppColors.swipeOchre)
                     .accessibilityIdentifier("library.unfinished.\(row.id)")
             }
         }
@@ -703,12 +702,12 @@ private struct ExperienceLibraryCompactRow: View {
             }
             if let onExport {
                 Button(action: onExport) { Label("Export", systemImage: "square.and.arrow.up") }
-                    .tint(AppColors.evergreen)
+                    .tint(AppColors.swipeEvergreen)
                     .accessibilityIdentifier("library.exportSwipe.\(row.id)")
             }
             if row.offlineState != .readyOffline {
                 Button(action: onPrepareOffline) { Label("Offline", systemImage: "arrow.down.circle") }
-                    .tint(AppColors.ochreText)
+                    .tint(AppColors.swipeOchre)
             }
         }
         .accessibilityAction(named: playActionTitle, onPlay)

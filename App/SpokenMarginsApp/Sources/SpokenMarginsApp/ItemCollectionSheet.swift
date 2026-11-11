@@ -48,7 +48,7 @@ struct ItemCollectionSheet: View {
                         }
                         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                             Button("Delete", role: .destructive) { delete(collection) }
-                            Button("Rename") { beginRename(collection) }.tint(AppColors.ochreText)
+                            Button("Rename") { beginRename(collection) }.tint(AppColors.swipeOchre)
                         }
                     }
                 } header: {

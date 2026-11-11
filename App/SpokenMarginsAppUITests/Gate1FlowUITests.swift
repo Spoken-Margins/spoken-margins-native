@@ -321,6 +321,9 @@ final class Gate1FlowUITests: XCTestCase {
 
         let apply = scrollToElement("settings.developer.mapJSON.apply")
         apply.tap()
+        // The keyboard covers the tab bar; at the cuts of 275ceea and 6b118db it stayed up after Apply, the Library
+        // tab had no hit point and the Library never opened (#3924).
+        XCTAssertTrue(waitForDisappearance(app.keyboards.firstMatch, timeout: 4), "Apply left the keyboard over the tab bar")
 
         tapRoot("Library")
         XCTAssertTrue(element("home.screen").waitForExistence(timeout: 4))
@@ -729,7 +732,7 @@ final class Gate1FlowUITests: XCTestCase {
         title.tap()
         let keyboard = app.keyboards.firstMatch
         XCTAssertTrue(keyboard.waitForExistence(timeout: 4))
-        let done = element("liveSession.keyboard.done")
+        let done = app.buttons["liveSession.keyboard.done"]
         XCTAssertTrue(done.waitForExistence(timeout: 4), "No Done on the setup keyboard")
         done.tap()
         XCTAssertTrue(waitForDisappearance(app.keyboards.firstMatch, timeout: 4), "Done left the keyboard up")
@@ -745,12 +748,12 @@ final class Gate1FlowUITests: XCTestCase {
     func testLiveSessionPencilOpensTheWritingSheetAndSaveAddsARow() throws {
         startLiveSession()
         app.buttons["liveSession.write.button"].tap()
-        let editor = element("writtenMargin.text")
+        let editor = app.textViews["writtenMargin.text"]
         XCTAssertTrue(editor.waitForExistence(timeout: 6), "The pencil did not open the writing sheet")
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 4), "The writing sheet opened with the keyboard down")
         editor.tap()
         editor.typeText("Johnny moved on to the budget.")
-        let save = element("writtenMargin.save.keyboard.button")
+        let save = app.buttons["writtenMargin.save.keyboard.button"]
         XCTAssertTrue(save.waitForExistence(timeout: 4) && save.isHittable, "Save is not reachable with the keyboard up")
         save.tap()
         let row = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'liveSession.margin.row.'")).firstMatch
@@ -763,11 +766,11 @@ final class Gate1FlowUITests: XCTestCase {
         startLiveSession()
         for index in 0..<8 {
             app.buttons["liveSession.write.button"].tap()
-            let editor = element("writtenMargin.text")
+            let editor = app.textViews["writtenMargin.text"]
             XCTAssertTrue(editor.waitForExistence(timeout: 6))
             editor.tap()
             editor.typeText("Margin number \(index) with enough words to fill about two lines of the row on a phone.")
-            element("writtenMargin.save.keyboard.button").tap()
+            app.buttons["writtenMargin.save.keyboard.button"].tap()
             XCTAssertTrue(waitForDisappearance(element("writtenMargin.screen"), timeout: 4))
         }
         let end = app.buttons["liveSession.endSession"]
@@ -1509,9 +1512,13 @@ final class Gate1FlowUITests: XCTestCase {
     }
 
     private func returnToNowPlayingFromTimelineIfNeeded() {
+        // The top-left arrow only returns to Now while the Timeline editor hides the tab switch (#4027); otherwise the
+        // Now tab does.
         let button = app.buttons["timeline.nowPlaying.button"]
         if button.exists {
             button.tap()
+        } else if element("timeline.screen").exists {
+            app.buttons["playback.now.button"].firstMatch.tap()
         } else {
             XCTAssertTrue(element("playback.timeline.adjacent").exists)
         }

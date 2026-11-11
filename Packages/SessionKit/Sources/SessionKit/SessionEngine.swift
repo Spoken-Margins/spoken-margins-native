@@ -130,6 +130,13 @@ public final class SessionEngine {
 
     /// The I14 projection of the current item's I13 document, cached by item.
     private var listenableCache: (itemId: String, textLength: Int, projection: NormalizedSpeechText?)?
+    /// A projection built off the main thread when the listener opened a PDF (#2256), kept apart from
+    /// `listenableCache` so opening another PDF never evicts the one that is playing. The first play of that item
+    /// moves it into `listenableCache`.
+    private var prewarmedListenable: PrewarmedListenableProjection?
+    /// Counts every moment a stored document may have changed (`forgetDocumentCaches`). A prewarm read at one count is
+    /// kept only if the count is still the same when it comes back: that is the whole version check.
+    private var documentGeneration = 0
     /// The structured document a paper's Margin pages come from (#206), cached by item, so
     /// the notes-folder gatherer decodes it once per paper rather than once per Margin.
     private var exportPageDocumentCache: (itemId: String, text: String?, document: StructuredDocument?)?
@@ -1111,7 +1118,22 @@ public final class SessionEngine {
         forgetDocumentCaches(itemId: itemId)
     }
 
-    private func forgetDocumentCaches(itemId: String) {
+    /// What `adoptPrewarmedListenableProjection` needs read before an off-main prewarm starts.
+    public var listenableProjectionGeneration: Int { documentGeneration }
+
+    /// Keeps a PDF's listenable projection that was built off the main thread, so its first play does not read the
+    /// document and build the text on the main thread (#2256). `generation` is `listenableProjectionGeneration` as read
+    /// before the prewarm began: if any document was saved or upgraded since, the projection may be of the old
+    /// document and is dropped. Call it where the engine is used.
+    public func adoptPrewarmedListenableProjection(_ prewarmed: PrewarmedListenableProjection, generation: Int) {
+        guard generation == documentGeneration else { return }
+        if let cache = listenableCache, cache.itemId == prewarmed.itemId, cache.textLength == prewarmed.textLength { return }
+        prewarmedListenable = prewarmed
+    }
+
+    func forgetDocumentCaches(itemId: String) {
+        documentGeneration &+= 1
+        if prewarmedListenable?.itemId == itemId { prewarmedListenable = nil }
         // The cache may hold "no document" for this item's text (#220 audit 5).
         if listenableCache?.itemId == itemId { listenableCache = nil }
         if exportPageDocumentCache?.itemId == itemId { exportPageDocumentCache = nil }
@@ -5907,6 +5929,11 @@ public final class SessionEngine {
         guard let item = currentItem, item.mediaType == "pdf", let text = item.text else { return nil }
         if let cache = listenableCache, cache.itemId == item.id, cache.textLength == text.count {
             return cache.projection
+        }
+        if let prewarmed = prewarmedListenable, prewarmed.itemId == item.id, prewarmed.textLength == text.count {
+            listenableCache = (prewarmed.itemId, prewarmed.textLength, prewarmed.projection)
+            prewarmedListenable = nil
+            return prewarmed.projection
         }
         let document = try? (repository as? StructuredDocumentRepository)?.loadStructuredDocument(itemId: item.id)
         let projection = StructuredDocumentSpeech.listenableProjection(item: item, document: document)

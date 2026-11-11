@@ -127,6 +127,45 @@ final class ItemCollectionEditingTests: XCTestCase {
         XCTAssertEqual(query.itemID, "i1")
     }
 
+    // MARK: Scope menu rows
+
+    /// #3605: while an item plays, its Library row's progress and audio preparation change about once a second.
+    /// The scope menu's rows must stay equal through those changes and differ only when a tag or title does.
+    func testScopeMenuRowsIgnoreAPlayingItemsProgressButNotItsTitle() {
+        let before = LibraryItemRow(id: "i1", title: "A short walk", status: "ready", canDelete: true,
+                                    hasContinuationSession: true, continuationProgressPercent: 12)
+        var playing = before
+        playing.continuationProgressPercent = 13
+        playing.startupAudioState = .preparing
+        playing.startupAudioCompletedChunkCount = 2
+        playing.marginCount = 1
+        XCTAssertNotEqual(before, playing, "precondition: the Library row itself changes while the item plays")
+        XCTAssertEqual(MarginCollectionQuery.scopeChoices(items: [before]),
+                       MarginCollectionQuery.scopeChoices(items: [playing]))
+
+        let renamed = LibraryItemRow(id: "i1", title: "A longer walk", status: "ready", canDelete: true)
+        XCTAssertNotEqual(MarginCollectionQuery.scopeChoices(items: [before]),
+                          MarginCollectionQuery.scopeChoices(items: [renamed]))
+    }
+
+    func testScopeMenuCollectionRowsCarryTheTagSelectScopeReads() {
+        let hist = collection("a", "HIST 210", ["i1"])
+        let choices = MarginCollectionQuery.scopeChoices(collections: [hist, collection("b", "Walks")])
+        XCTAssertEqual(choices.map(\.title), ["HIST 210", "Walks"])
+        var query = MarginCollectionQuery()
+        query.selectScope(tag: choices[0].tag, collections: [hist])
+        XCTAssertEqual(query.collection?.collectionID, "a")
+        XCTAssertEqual(query.scopeTag, choices[0].tag)
+
+        var withAnItem = hist
+        withAnItem.itemIDs.append("i2")
+        XCTAssertEqual(MarginCollectionQuery.scopeChoices(collections: [hist]),
+                       MarginCollectionQuery.scopeChoices(collections: [withAnItem]),
+                       "adding an item to a collection doesn't change its menu row")
+        XCTAssertNotEqual(MarginCollectionQuery.scopeChoices(collections: [hist]),
+                          MarginCollectionQuery.scopeChoices(collections: [hist, collection("b", "Walks")]))
+    }
+
     func testTheScopeKeepsTheOtherFilters() {
         var query = MarginCollectionQuery(text: "wages", filter: .starred)
         query.selectScope(tag: "collection:a", collections: [collection("a", "HIST", ["i1"])])
