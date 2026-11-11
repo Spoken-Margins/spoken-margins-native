@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Enforce AGENTS.md's 250k hand-off line in Spoken Margins sessions (owner, 2026-10-09).
+"""Enforce the owner overlay's 250k hand-off line in Spoken Margins sessions (owner, 2026-10-09).
 
 Why: in the week to 2026-10-09, 19 of 315 local sessions ran past 250k tokens of context and
 held 75% of all Claude cache reads; one ran 3,745 turns, another nine days. The rule was written

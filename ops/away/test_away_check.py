@@ -217,6 +217,24 @@ class OverlayTests(unittest.TestCase):
         self.assertIn('# docs/decisions.md', text)
         self.assertNotIn('OWNER.md', text)
 
+    def test_unscanned_overlay_is_named_in_the_report_line(self):
+        now = dt.datetime(2026, 10, 17, 13, 0, tzinfo=UTC)
+        dial = {'mode': 'paced', 'threads': 5, 'stop': 97, 'hours_early': 0, 'problems': []}
+        q = a.queue_verdict([issue(1, 'ready')], [], 5, 12)
+        p = a.pace(now, {'usage': {'percent': 1, 'at': now}, 'halted_by': []}, dial)
+        text = a.report(now, 12, dial, q, [], [], [], [], p, overlay_scanned=False)
+        self.assertIn('owner overlay was NOT scanned', text)
+        self.assertNotIn('NOT scanned', a.report(now, 12, dial, q, [], [], [], [], p))
+
+    def test_an_overlay_that_exists_but_cannot_be_read_is_unscanned_not_a_crash(self):
+        with tempfile.TemporaryDirectory() as home:
+            path = Path(home) / 'OWNER.md'  # never created: read_text raises OSError
+            run = mock.Mock(return_value=mock.Mock(stdout='A guide.\n'))
+            with mock.patch.object(a.subprocess, 'run', run), mock.patch.object(a, 'owner_overlay', return_value=path):
+                text, scanned = a.read_guide('main')
+        self.assertFalse(scanned)
+        self.assertNotIn('OWNER.md', text)
+
 
 if __name__ == '__main__':
     unittest.main()

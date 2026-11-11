@@ -84,7 +84,7 @@ The gates, in plain words:
 
 - **The root-view split (A2 M1).** Library, Following, Margins, Item and the tab shell already have their own files. Playback, Settings, Export, Batch Export and Help still live inside the 5,500-line `Gate1RootView.swift`, alongside about 1,200 lines of dead views. A2 M1 moves them out and adds stable UI identifiers. It gates the player redesign, Settings and the guides. Other UI streams can start without it; their shared risk is `Gate1AppModel`, covered by ground rule 4.
 - **The playback coordinator (A2 M2)** comes before any *new* feature that interleaves Margin audio with source audio: Skim to the next Margin, the weekly review's audio mode, and co-op. This is the fix the repo review recommended after four playback state machines collided. "Play this moment" (#158, #159) already exists on `play-this-moment` as `MarginMomentConductor`; the coordinator absorbs it rather than adding another.
-- **The server foundation (B4 M1)** comes before any app feature that calls a server. It runs on the owner's VPS, which is approved (`AGENTS.md`); deploying to it is the owner's step.
+- **The server foundation (B4 M1)** comes before any app feature that calls a server. It runs on the owner's VPS, which is approved (`docs/decisions.md`); deploying to it is the owner's step.
 - **The #168 → #177 chain.** Packets could leak private feed URLs (#168); the fix is on `private-feed-urls` (`ShareableLinkPolicy`). Storing episode GUIDs (#177) builds on it, and community maps need GUIDs to find an episode.
 - **Rights (owner call)** decide whether the community server may store transcripts or only derived maps (#14, #173).
 

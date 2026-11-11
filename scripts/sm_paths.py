@@ -105,7 +105,10 @@ def owner_overlay(anchor: str | os.PathLike, env: Optional[Mapping[str, str]] = 
     """
     setting = _setting('SM_OWNER_OVERLAY', env)
     if setting:
-        return _absolute(setting) if _absolute(setting).is_file() else None
+        try:
+            return _absolute(setting) if _absolute(setting).is_file() else None
+        except OSError:  # no folder access: no overlay is the honest answer
+            return None
     candidates = [ops_home(env, home) / 'ops' / OVERLAY_FILE, own_root(anchor).parent / OVERLAY_REPO_FOLDER / OVERLAY_FILE]
     for path in candidates:
         try:

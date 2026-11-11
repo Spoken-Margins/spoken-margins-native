@@ -231,7 +231,8 @@ def plural(n: int, word: str, many: str | None = None) -> str:
 
 
 def report(now: dt.datetime, hours: float, dial: dict, q: dict, holds: list[dict],
-           owner_prs: list[dict], needs_owner: list[dict], run_asks: list[dict], p: dict) -> str:
+           owner_prs: list[dict], needs_owner: list[dict], run_asks: list[dict], p: dict,
+           overlay_scanned: bool = True) -> str:
     local = now.astimezone(ZoneInfo('America/Chicago'))
     out = [f'Away check, {local:%a %-d %b %-I:%M %p} CT, for {hours:g} hours away.']
 
@@ -251,7 +252,9 @@ def report(now: dt.datetime, hours: float, dial: dict, q: dict, holds: list[dict
     suspect = [h for h in holds if h['backing'] == 'suspect']
     unbacked = [h for h in holds if h['backing'] == 'unbacked']
     owned = len(holds) - len(suspect) - len(unbacked)
-    line = (f'2. Holds in AGENTS.md, the owner overlay and docs/decisions.md: {plural(len(holds), "line")} make work wait; '
+    where = ('AGENTS.md, the owner overlay and docs/decisions.md' if overlay_scanned
+             else 'AGENTS.md and docs/decisions.md (the owner overlay was NOT scanned: Current focus holds are unchecked)')
+    line = (f'2. Holds in {where}: {plural(len(holds), "line")} make work wait; '
             f'{owned} quote the owner asking for it, with a date.')
     if suspect or unbacked:
         out.append(line + f' Check {len(suspect)} with no dated owner call and {len(unbacked)} '
@@ -352,12 +355,12 @@ def latest_comments() -> list[dict]:
 GUIDE_FILES = ('AGENTS.md', 'docs/decisions.md')
 
 
-def agents_md(ref: str) -> str:
+def read_guide(ref: str) -> tuple[str, bool]:
     """The guide and the decisions record on `ref`, joined, each under a heading that names its file; then the
-    owner overlay when it is on this machine (#1854).
+    owner overlay when it is on this machine and readable (#1854). The flag says whether the overlay was scanned.
 
     The overlay holds Current focus and the rest of the owner's private text, so holds written there are scanned
-    too. Without it the scan sees only the files in the repository."""
+    too. Without it the scan sees only the files in the repository, and the report says so."""
     parts = []
     for path in GUIDE_FILES:
         text = subprocess.run(
@@ -365,11 +368,20 @@ def agents_md(ref: str) -> str:
             check=True, capture_output=True, text=True).stdout
         parts.append(f'# {path}\n\n{text}')
     overlay = owner_overlay(__file__)
+    scanned = False
     if overlay:
-        parts.append(f'# {overlay.name}\n\n{overlay.read_text()}')
-    else:
-        print('note: the owner overlay (OWNER.md) was not found; holds in it were not scanned', file=sys.stderr)
-    return '\n\n'.join(parts)
+        try:
+            parts.append(f'# {overlay.name}\n\n{overlay.read_text()}')
+            scanned = True
+        except OSError:  # a launchd job without folder access can see the file and still not read it
+            pass
+    if not scanned:
+        print('note: the owner overlay (OWNER.md) was not found or not readable; holds in it were not scanned', file=sys.stderr)
+    return '\n\n'.join(parts), scanned
+
+
+def agents_md(ref: str) -> str:
+    return read_guide(ref)[0]
 
 
 def main(argv=None) -> int:
@@ -388,7 +400,8 @@ def main(argv=None) -> int:
     audits = [i for label in AUDIT_LABELS for i in issues(label)]
     q = queue_verdict(ready, audits, dial['threads'], args.hours, args.rate)
 
-    holds = scan_holds(agents_md(args.ref))
+    guide, overlay_scanned = read_guide(args.ref)
+    holds = scan_holds(guide)
 
     prs = gh_json('pr', 'list', '--repo', REPO, '--state', 'open', '--limit', '300',
                   '--json', 'number,title,files')
@@ -399,7 +412,7 @@ def main(argv=None) -> int:
     usage_info = dial_gate.parse_usage(all_comments(STATUS_ISSUE))
     p = pace(now, usage_info, dial)
 
-    print(report(now, args.hours, dial, q, holds, owner_prs, needs_owner, run_asks, p))
+    print(report(now, args.hours, dial, q, holds, owner_prs, needs_owner, run_asks, p, overlay_scanned))
     return 0
 
 
