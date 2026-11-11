@@ -41,7 +41,8 @@ struct ExperienceMarginsScreen: View {
         var query: MarginCollectionQuery
         var hasMargins: Bool
         var hasActiveSession: Bool
-        var scopeItems: [LibraryItemRow]
+        /// Only each item's id and title: a playing item's progress must not count as a change here (#3605).
+        var scopeItemChoices: [MarginScopeChoice]
         var privateRowCount: Int
         fileprivate var groups: [MarginGroup]
         /// "Send replies to Ana" for each group whose item has a friend's Margins (#3221).
@@ -54,7 +55,7 @@ struct ExperienceMarginsScreen: View {
             query = model.marginCollectionQuery
             hasMargins = !model.marginRows.isEmpty
             hasActiveSession = model.hasActiveSession
-            scopeItems = model.marginScopeItems
+            scopeItemChoices = MarginCollectionQuery.scopeChoices(items: model.marginScopeItems)
             let privateRows = model.visiblePrivateMarginRows
             privateRowCount = privateRows.count
             groups = ExperienceMarginsScreen.groupedRows(privateRows)
@@ -143,7 +144,7 @@ struct ExperienceMarginsScreen: View {
             countText: MarginCountText.count(inputs.query.filter == .shared ? inputs.sharedRowCount : inputs.privateRowCount),
             selection: scopeTag,
             collections: collections,
-            items: inputs.scopeItems
+            itemChoices: inputs.scopeItemChoices
         )
         .equatable()
     }
@@ -155,7 +156,7 @@ struct ExperienceMarginsScreen: View {
             return collections.first { $0.id == scope.collectionID }?.name ?? "Collection"
         }
         if let itemID = query.itemID {
-            return inputs.scopeItems.first { $0.id == itemID }?.title ?? "Untitled"
+            return inputs.scopeItemChoices.first { $0.tag == itemID }?.title ?? "Untitled"
         }
         return "Everything"
     }
@@ -717,12 +718,20 @@ struct MarginsScopeRow: View, Equatable {
         title: String, countText: String, selection: Binding<String?>,
         collections: [ItemCollection], items: [LibraryItemRow]
     ) {
+        self.init(title: title, countText: countText, selection: selection, collections: collections,
+                  itemChoices: MarginCollectionQuery.scopeChoices(items: items))
+    }
+
+    init(
+        title: String, countText: String, selection: Binding<String?>,
+        collections: [ItemCollection], itemChoices: [MarginScopeChoice]
+    ) {
         self.title = title
         self.countText = countText
         _selection = selection
         selectedTag = selection.wrappedValue
         collectionChoices = MarginCollectionQuery.scopeChoices(collections: collections)
-        itemChoices = MarginCollectionQuery.scopeChoices(items: items)
+        self.itemChoices = itemChoices
     }
 
     nonisolated static func == (lhs: Self, rhs: Self) -> Bool {

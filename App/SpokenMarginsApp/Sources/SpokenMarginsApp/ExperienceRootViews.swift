@@ -32,7 +32,7 @@ struct ExperienceRootTabs: View {
                 }
                 .tag(AppRoot.library)
 
-            MiniPlayerDock(showsMiniPlayer: showsMiniPlayer) { ExperienceSourcesScreen(model: model, scrollMemory: $navigation.followingScroll) }
+            MiniPlayerDock(showsMiniPlayer: showsMiniPlayer) { ExperienceSourcesScreen(model: model) }
                 .tabItem {
                     Label("Following", systemImage: AppRoot.sources.systemImage)
                         .accessibilityIdentifier("navigation.tab.sources")

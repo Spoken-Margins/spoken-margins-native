@@ -25,16 +25,15 @@ struct ExperienceSourcesScreen: View {
     @State private var isQuietExpanded = false
     /// Each followed show's artwork (#773), read from the coordinator's side file.
     @State private var artwork = FollowingArtworkCache()
-    /// Kept for the root view's signature. The shows are pushed inside this stack, so the list is not
-    /// destroyed when one opens and keeps its own place.
-    @Binding var scrollMemory: FollowingScrollMemory
 
     /// A friend with Margins on more than one item, whose items are open.
     @State private var openFriend: FollowingFriends.Friend?
 
-    init(model: Gate1AppModel, scrollMemory: Binding<FollowingScrollMemory>) {
+    /// The shows are pushed inside this stack, so the list is not destroyed when one opens and keeps its own place
+    /// (#2395). It takes no scroll binding from the root: the tab bar redraws on every model publish, and a fresh binding
+    /// each time could count as a change and redraw this screen anyway (#4028).
+    init(model: Gate1AppModel) {
         self.model = model
-        _scrollMemory = scrollMemory
         _feed = StateObject(wrappedValue: ScreenInputsFeed(model: model, read: Inputs.init))
     }
 
@@ -48,7 +47,6 @@ struct ExperienceSourcesScreen: View {
         var quickFolderFileCount: Int
         var isRefreshingQuickAddFeed: Bool
         var importingEntryIds: Set<String>
-        var showRowsKey: ShowRowsKey
         var subscriptionIDs: [String]
         var isRefreshingFollowedSources: Bool
 
@@ -63,18 +61,6 @@ struct ExperienceSourcesScreen: View {
             quickFolderFileCount = model.quickAddCandidates.filter { if case .localFile = $0 { true } else { false } }.count
             isRefreshingQuickAddFeed = model.isRefreshingQuickAddFeed
             importingEntryIds = model.importingFollowedSourceEntryIds
-            showRowsKey = ShowRowsKey(
-                subscriptions: model.feedSubscriptions.map { "\($0.id):\($0.state.rawValue)" },
-                unplayedCount: model.followedSourceEntries.count,
-                isRefreshing: model.isRefreshingFollowedSources,
-                // Finishing an episode moves its show's row to the next unread one, so a change in what the Library
-                // holds or has finished re-reads the rows.
-                libraryCount: model.libraryItems.count,
-                finishedCount: model.libraryItems.filter(\.isCompleted).count,
-                // An episode counts as heard before the Library calls it finished (95%, or its last two minutes;
-                // `FollowingHeardRule`), so each 1% of listening re-reads the rows too (#3691).
-                listeningSteps: model.libraryItems.reduce(0) { $0 + ($1.continuationProgressPercent ?? 0) }
-            )
             subscriptionIDs = model.feedSubscriptions.map(\.id)
             isRefreshingFollowedSources = model.isRefreshingFollowedSources
         }
@@ -197,11 +183,7 @@ struct ExperienceSourcesScreen: View {
             .task { if !isEdgeSwipePreview { model.refreshQuickAddFeed(force: false) } } // the swipe's preview fetches nothing (#106)
             // The catalog gives followed shows their artwork (#773).
             .task { if !isEdgeSwipePreview { await catalogDrawer.loadSnapshot() } }
-            // Re-read the rows' entries when the shows, the unplayed entries or a refresh change them. Played and
-            // Quiet shows' entries aren't in `followedSourceEntries`, so the rows read the store.
-            .task(id: inputs.showRowsKey) {
-                await model.reloadFollowingShowEntries()
-            }
+            .background { FollowingShowRowsReload(model: model) }
             // Re-read the artwork when the shows, the catalog or a refresh changes it (#773).
             .task(id: ArtworkKey(
                 subscriptionIDs: inputs.subscriptionIDs,
@@ -357,12 +339,42 @@ struct ExperienceSourcesScreen: View {
         var libraryCount: Int
         var finishedCount: Int
         var listeningSteps: Int
+
+        @MainActor init(_ model: Gate1AppModel) {
+            subscriptions = model.feedSubscriptions.map { "\($0.id):\($0.state.rawValue)" }
+            unplayedCount = model.followedSourceEntries.count
+            isRefreshing = model.isRefreshingFollowedSources
+            // Finishing an episode moves its show's row to the next unread one, so a change in what the Library
+            // holds or has finished re-reads the rows.
+            libraryCount = model.libraryItems.count
+            finishedCount = model.libraryItems.filter(\.isCompleted).count
+            // An episode counts as heard before the Library calls it finished (95%, or its last two minutes;
+            // `FollowingHeardRule`), so each 1% of listening re-reads the rows too (#3691).
+            listeningSteps = model.libraryItems.reduce(0) { $0 + ($1.continuationProgressPercent ?? 0) }
+        }
     }
 
     private struct ArtworkKey: Equatable {
         var subscriptionIDs: [String]
         var hasCatalog: Bool
         var isRefreshing: Bool
+    }
+}
+
+/// Re-reads the show rows' entries when the shows, the unplayed entries or a refresh change them. Played and Quiet
+/// shows' entries aren't in `followedSourceEntries`, so the rows read the store. This empty view holds the key in its own
+/// feed, so each 1% of listening wakes it and not the list (#4028); the rows redraw only if the re-read changes them.
+private struct FollowingShowRowsReload: View {
+    let model: Gate1AppModel
+    @StateObject private var key: ScreenInputsFeed<ExperienceSourcesScreen.ShowRowsKey>
+
+    init(model: Gate1AppModel) {
+        self.model = model
+        _key = StateObject(wrappedValue: ScreenInputsFeed(model: model, read: ExperienceSourcesScreen.ShowRowsKey.init))
+    }
+
+    var body: some View {
+        Color.clear.task(id: key.inputs) { await model.reloadFollowingShowEntries() }
     }
 }
 

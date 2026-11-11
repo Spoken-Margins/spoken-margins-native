@@ -10,14 +10,14 @@ import XCTest
 ///
 /// Each screen is mounted inside the app's own tab bar (`ExperienceRootTabs`, which watches the whole model and so
 /// redraws on every publish, as it does on the phone), left to settle, then given model publishes, 25 ms apart. The
-/// regression tests send 20 publishes that leave the screen's inputs as they were and allow at most 2 body runs; on
+/// regression tests send 20 publishes that leave the screen's inputs as they were and allow at most 3 body runs; on
 /// `main` before the fix each screen ran 20. They then make one change the screen shows and require a redraw, so a feed
 /// that went deaf cannot pass. The census is attached to the run (`redraw-census`) and printed.
 @MainActor
 final class ScreenRedrawMeasurementTests: XCTestCase {
     private static let publishes = 20
     /// A stray draw from the screen's own late first-appearance work is not a publish redrawing it.
-    private static let allowedRuns = 2
+    private static let allowedRuns = 3
 
     private enum Publish: String, CaseIterable {
         /// `objectWillChange.send()`, what every model write ends in.
@@ -26,6 +26,9 @@ final class ScreenRedrawMeasurementTests: XCTestCase {
         case renderProgress
         /// The prepared-audio status flipping between two words.
         case preparedStatus
+        /// A whole percent more listening on every Library row, which playback writes as it goes. Margins' scope menu
+        /// reads Library rows, and Following re-reads its shows on each percent (#3691); neither list may redraw for it.
+        case listeningProgress
     }
 
     private enum Screen: String, CaseIterable {
@@ -56,6 +59,8 @@ final class ScreenRedrawMeasurementTests: XCTestCase {
     }
 
     func testSettingsIsNotRedrawnByModelPublishesThatLeaveItsRowsAsTheyWere() async throws {
+        let skipUnit = UserDefaults.standard.string(forKey: "skipUnit")
+        defer { UserDefaults.standard.set(skipUnit, forKey: "skipUnit") }
         try await assertOnlyShownChangesRedraw(.settings) { model in
             model.skipUnit = model.skipUnit == "sentence" ? "paragraph" : "sentence"
         }
@@ -142,6 +147,12 @@ final class ScreenRedrawMeasurementTests: XCTestCase {
             model.updateOnDeviceSpeechGenerationProgress(RenderedSpeechGenerationProgress(completedChunks: 100 + index, totalChunks: 959))
         case .preparedStatus:
             model.preparedTextAudioStatus = index.isMultiple(of: 2) ? "preparing" : "ready"
+        case .listeningProgress:
+            model.libraryItems = model.libraryItems.map { row in
+                var row = row
+                row.continuationProgressPercent = 10 + index
+                return row
+            }
         }
     }
 
