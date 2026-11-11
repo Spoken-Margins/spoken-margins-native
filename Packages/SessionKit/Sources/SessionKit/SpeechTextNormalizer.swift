@@ -226,14 +226,17 @@ public enum SpeechTextNormalizer {
             output.append(contentsOf: input[lower..<upper])
         }
 
+        let fences = lines.map { codeFence(in: text($0)) }
         var openFence: (marker: Character, length: Int)?
+        // Openers known to have no closer anywhere after them, so a text of many stray fences is still one pass.
+        var unclosed: [String: Bool] = [:]
         var index = 0
         while index < lines.count {
             let line = text(lines[index])
-            if let fence = codeFence(in: line) {
+            if let fence = fences[index] {
                 if let open = openFence {
                     if fence.marker == open.marker, fence.length >= open.length, fence.closes { openFence = nil }
-                } else {
+                } else if opens(fence, at: index, in: fences, unclosed: &unclosed) {
                     openFence = (fence.marker, fence.length)
                 }
                 keep(index, index + 1)
@@ -245,8 +248,11 @@ public enum SpeechTextNormalizer {
                let headerCells = tableCells(in: line, allowingIndent: false),
                let separatorCells = tableSeparatorCells(in: text(lines[index + 1])),
                headerCells.count == separatorCells {
+                let edgePipes = line.drop(while: { $0 == " " }).first == "|"
                 var after = index + 2
-                while after < lines.count, tableCells(in: text(lines[after]), allowingIndent: true) != nil {
+                while after < lines.count,
+                      let cells = tableCells(in: text(lines[after]), allowingIndent: true),
+                      isTableBodyRow(text(lines[after]), cells: cells, edgePipes: edgePipes, columns: headerCells.count) {
                     after += 1
                 }
                 let start = input[lines[index].start].sourceOffset
@@ -259,6 +265,33 @@ public enum SpeechTextNormalizer {
             index += 1
         }
         return output
+    }
+
+    /// A line after the separator belongs to the table when it is shaped like a row of it: it starts with a pipe when
+    /// the header does, and otherwise has the header's number of cells. A sentence or list item that merely holds a
+    /// pipe ends the table and stays text (GFM would keep taking rows to the blank line; deleting prose costs more).
+    private static func isTableBodyRow(_ line: String, cells: [String], edgePipes: Bool, columns: Int) -> Bool {
+        if edgePipes { return line.drop(while: { $0 == " " }).first == "|" }
+        return cells.count == columns
+    }
+
+    /// Whether `fence` opens a code block: a closing fence of the same kind has to follow it. A stray fence line with
+    /// no closer is text, and must not switch table replacement off for the rest of the document.
+    private static func opens(
+        _ fence: (marker: Character, length: Int, closes: Bool),
+        at index: Int,
+        in fences: [(marker: Character, length: Int, closes: Bool)?],
+        unclosed: inout [String: Bool]
+    ) -> Bool {
+        let key = "\(fence.marker)\(fence.length)"
+        if unclosed[key] == true { return false }
+        var next = index + 1
+        while next < fences.count {
+            if let other = fences[next], other.marker == fence.marker, other.length >= fence.length, other.closes { return true }
+            next += 1
+        }
+        unclosed[key] = true
+        return false
     }
 
     /// The cells of a pipe row, or nil when the line has no unescaped pipe (or is code-indented and

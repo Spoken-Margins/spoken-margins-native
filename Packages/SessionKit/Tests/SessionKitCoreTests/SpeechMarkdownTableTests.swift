@@ -119,4 +119,36 @@ final class SpeechMarkdownTableTests: XCTestCase {
         let source = "Plain text.\n\nNo tables at all."
         XCTAssertEqual(SpeechTextNormalizer.normalize(source), "Plain text. No tables at all.")
     }
+
+    /// Review finding: a sentence or list item with a pipe right after a table was taken as one more row and deleted.
+    func testProseWithAPipeDirectlyAfterATableStaysText() {
+        XCTAssertEqual(
+            SpeechTextNormalizer.normalize("| a | b |\n| --- | --- |\n| 1 | 2 |\nThis sentence has a | pipe in it.\nNext line."),
+            "\(notice) This sentence has a | pipe in it. Next line."
+        )
+        XCTAssertEqual(
+            SpeechTextNormalizer.normalize("| a |\n| - |\n| 1 |\n- item | with pipe\n"),
+            "\(notice) - item | with pipe"
+        )
+        // No outer pipes: a row has the header's number of cells, so a line with one pipe and two cells ends a
+        // three-column table.
+        XCTAssertEqual(
+            SpeechTextNormalizer.normalize("a | b | c\n--- | --- | ---\n1 | 2 | 3\nSee x | y here."),
+            "\(notice) See x | y here."
+        )
+    }
+
+    func testRowsWithOddCellCountsStayInATableThatHasEdgePipes() {
+        let source = "| a | b | c |\n| --- | --- | --- |\n| merged cell |\n| 1 | 2 |\nAfter."
+        XCTAssertEqual(SpeechTextNormalizer.normalize(source), "\(notice) After.")
+    }
+
+    /// Review finding: one stray fence line with no closer switched table replacement off for the rest of the text.
+    func testAnUnclosedFenceLineDoesNotHideLaterTables() {
+        XCTAssertEqual(SpeechTextNormalizer.normalize("~~~\nfoo\n\n| a |\n| - |\n| 1 |"), "~~~ foo \(notice)")
+        XCTAssertEqual(SpeechTextNormalizer.normalize("```js\nlet x\n\n| a |\n| - |\n| 1 |"), "```js let x \(notice)")
+        // A fence that does close still protects what is inside it.
+        let closed = SpeechTextNormalizer.normalize("```\n| a |\n| - |\n| 1 |\n```")
+        XCTAssertFalse(closed.contains(notice), closed)
+    }
 }
