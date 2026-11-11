@@ -4,6 +4,7 @@ import io
 import re
 from pathlib import Path
 import stat
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -43,7 +44,7 @@ class ReadingResults(unittest.TestCase):
             self.assertEqual(core.mac_results(path), {'A/testA': 'passed', 'A/testB': 'failed', 'A/testC': 'skipped'})
 
 
-class RunningThem(unittest.TestCase):
+class ScriptedRuns(unittest.TestCase):
     """Real processes and real files: a shell script stands in for the docker command and changes as it is run."""
 
     def setUp(self):
@@ -81,6 +82,8 @@ class RunningThem(unittest.TestCase):
     def attempts_made(self):
         return int((self.dir / 'count').read_text())
 
+
+class RunningThem(ScriptedRuns):
     def test_a_pass_runs_once_and_says_no_retry(self):
         code, out = self.run_it(f'echo "{PASS}"; exit 0')
         self.assertEqual((code, self.attempts_made()), (0, 1))
@@ -153,6 +156,170 @@ class RunningThem(unittest.TestCase):
                 (self.dir / 'count').unlink(missing_ok=True)
                 self.run_it(*attempts)
                 self.assertEqual(self.resolved.read_text(), 'the Mac copy')
+
+
+APT_DOWN = ("W: Failed to fetch http://archive.ubuntu.com/ubuntu/dists/noble/InRelease  "
+            "Could not resolve 'archive.ubuntu.com'\\nE: Unable to locate package libsqlite3-dev")
+
+
+class WhenTheContainerCannotReachApt(ScriptedRuns):
+    """#4082: the image's SQLite headers come from apt, and a runner whose container has no DNS must not turn that
+    into a red check about the PR's code."""
+
+    def run_staged(self, staged_ok, *attempts):
+        calls = []
+        self.output = self.dir / 'output.txt'
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = core.run_tests(self.script(*attempts), self.log, self.resolved,
+                                  environ={'GITHUB_OUTPUT': str(self.output)},
+                                  stage=lambda: calls.append(1) or staged_ok)
+        return code, out.getvalue(), len(calls)
+
+    def test_apts_own_errors_are_a_setup_fault_not_a_build_failure(self):
+        code, out, staged = self.run_staged(False, f'echo "{APT_DOWN}"; exit 100')
+        self.assertEqual((code, self.attempts_made(), staged), (core.SETUP_FAULT_CODE, 1, 1))
+        self.assertNotIn('ran no tests', out)
+        self.assertNotIn('Failed:', out)
+        self.assertIn('::error title=lane-fault::', out)
+        self.assertIn('not this PR', out)
+
+    def test_the_scripts_own_marker_and_exit_code_count_too(self):
+        for body in (f'echo "{core.SETUP_FAULT_MARK} (three tries)"; exit 75', 'exit 75'):
+            with self.subTest(body=body):
+                (self.dir / 'count').unlink(missing_ok=True)
+                code, out, _ = self.run_staged(False, body)
+                self.assertEqual(code, core.SETUP_FAULT_CODE)
+                self.assertIn('lane-fault', out)
+
+    def test_the_hosts_debs_are_tried_and_the_tests_then_run_as_usual(self):
+        code, out, staged = self.run_staged(True, f'echo "{APT_DOWN}"; exit 100', f'echo "{PASS}"; exit 0')
+        self.assertEqual((code, self.attempts_made(), staged), (0, 2, 1))
+        self.assertNotIn('lane-fault', out)
+        self.assertIsNone(self.retried_output())  # a setup retry is not a test that passed on its rerun
+
+    def test_a_red_test_after_the_hosts_debs_is_still_red(self):
+        code, _, _ = self.run_staged(True, f'echo "{APT_DOWN}"; exit 100', f'echo "{FAIL}"; exit 1', f'echo "{FAIL}"; exit 1')
+        self.assertEqual((code, self.attempts_made()), (1, 3))
+
+    def test_the_hosts_debs_failing_too_is_still_a_setup_fault(self):
+        code, out, staged = self.run_staged(True, f'echo "{APT_DOWN}"; exit 100', f'echo "{core.SETUP_FAULT_MARK}"; exit 75')
+        self.assertEqual((code, self.attempts_made(), staged), (core.SETUP_FAULT_CODE, 2, 1))
+        self.assertIn('lane-fault', out)
+
+    def test_a_tests_own_output_that_mentions_the_network_is_not_a_setup_fault(self):
+        text = f"{PASS}\nCould not resolve 'example.invalid'\n"
+        self.assertFalse(core.setup_fault(1, text))
+        self.assertFalse(core.setup_fault(75, text))
+        self.assertTrue(core.setup_fault(100, "Could not resolve 'archive.ubuntu.com'"))
+        self.assertFalse(core.setup_fault(1, 'error: no such module'))
+
+
+class TheInstallScript(unittest.TestCase):
+    """The shell itself, run for real with apt-get, dpkg and sleep replaced by scripts that count their calls."""
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.dir = Path(temporary.name)
+        self.bin = self.dir / 'bin'
+        self.bin.mkdir()
+        self.mount = self.dir / 'w'
+        self.mount.mkdir()
+
+    def fake(self, name, body):
+        path = self.bin / name
+        path.write_text(f'#!/bin/sh\necho {name} >> {self.dir}/calls\n{body}\n')
+        path.chmod(path.stat().st_mode | stat.S_IEXEC)
+
+    def install(self):
+        env = {'PATH': f'{self.bin}:/usr/bin:/bin'}
+        done = subprocess.run(['bash', '-c', core.install_script(str(self.mount))], env=env, text=True,
+                              capture_output=True)
+        calls = (self.dir / 'calls').read_text().split() if (self.dir / 'calls').exists() else []
+        return done.returncode, done.stdout, calls
+
+    def test_a_working_apt_runs_once_and_does_not_wait(self):
+        self.fake('apt-get', 'exit 0')
+        self.fake('sleep', 'exit 0')
+        self.assertEqual(self.install(), (0, '', ['apt-get', 'apt-get']))
+
+    def test_apt_that_fails_twice_and_then_works_gets_its_third_try(self):
+        self.fake('apt-get', f'n=$(cat {self.dir}/n 2>/dev/null || echo 0); echo $((n + 1)) > {self.dir}/n; '
+                             '[ "$1" = update ] && [ $n -lt 2 ] && exit 100; exit 0')
+        self.fake('sleep', 'exit 0')
+        code, _, calls = self.install()
+        self.assertEqual(code, 0)
+        self.assertEqual(calls.count('sleep'), 2)
+
+    def test_apt_that_never_works_ends_in_the_setup_fault_after_three_tries(self):
+        self.fake('apt-get', 'echo "Could not resolve archive.ubuntu.com" >&2; exit 100')
+        self.fake('sleep', 'exit 0')
+        code, out, calls = self.install()
+        self.assertEqual(code, core.SETUP_FAULT_CODE)
+        self.assertIn(core.SETUP_FAULT_MARK, out)
+        self.assertEqual((calls.count('apt-get'), calls.count('sleep')), (3, 2))
+
+    def test_staged_debs_are_installed_and_apt_is_never_asked(self):
+        (self.mount / core.STAGED).mkdir()
+        (self.mount / core.STAGED / 'libsqlite3-dev.deb').write_text('x')
+        self.fake('apt-get', 'exit 100')
+        self.fake('dpkg', 'exit 0')
+        self.assertEqual(self.install(), (0, '', ['dpkg']))
+
+    def test_staged_debs_that_will_not_install_are_a_setup_fault(self):
+        (self.mount / core.STAGED).mkdir()
+        (self.mount / core.STAGED / 'libsqlite3-dev.deb').write_text('x')
+        self.fake('dpkg', 'exit 1')
+        code, out, _ = self.install()
+        self.assertEqual(code, core.SETUP_FAULT_CODE)
+        self.assertIn(core.SETUP_FAULT_MARK, out)
+
+
+class StagingTheDebs(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.dir = Path(temporary.name) / 'staged'
+
+    def fake_run(self, debs, code=0):
+        calls = []
+
+        def run(command, cwd=None, check=True):
+            calls.append(command)
+            if 'download' in command:
+                for name in debs:
+                    (Path(cwd) / name).write_text('x')
+            return subprocess.CompletedProcess(command, code if 'download' in command else 0)
+        return run, calls
+
+    def stage(self, run, which=lambda name: '/usr/bin/apt-get'):
+        with contextlib.redirect_stdout(io.StringIO()):
+            return core.stage_debs(self.dir, run=run, which=which)
+
+    def test_both_packages_are_downloaded_on_the_host(self):
+        run, calls = self.fake_run(['a.deb', 'b.deb'])
+        self.assertTrue(self.stage(run))
+        download = next(call for call in calls if 'download' in call)
+        self.assertEqual(download[-2:], ['libsqlite3-dev', 'libsqlite3-0'])
+
+    def test_a_failed_or_partial_download_is_not_staged(self):
+        for debs, code in ((['a.deb', 'b.deb'], 100), (['a.deb'], 0), ([], 0)):
+            with self.subTest(debs=debs, code=code):
+                run, _ = self.fake_run(debs, code)
+                self.assertFalse(self.stage(run))
+
+    def test_a_host_with_no_apt_stages_nothing_and_does_not_try(self):
+        run, calls = self.fake_run(['a.deb', 'b.deb'])
+        self.assertFalse(self.stage(run, which=lambda name: None))
+        self.assertEqual(calls, [])
+
+    def test_an_old_staging_folder_is_cleared_first(self):
+        self.dir.mkdir()
+        (self.dir / 'old.deb').write_text('x')
+        run, _ = self.fake_run(['a.deb', 'b.deb'])
+        self.assertTrue(self.stage(run))
+        self.assertEqual(sorted(path.name for path in self.dir.iterdir()), ['a.deb', 'b.deb'])
 
 
 class TheReport(unittest.TestCase):
@@ -255,6 +422,13 @@ class TheWorkflow(unittest.TestCase):
         self.assertIn(f'sessionkit-linux-swift{core.IMAGE.partition(":")[2]}-', str(self.steps('portable')))
         by_hand = self.yaml.safe_load((ROOT / '.github/workflows/hosted-sessionkit-linux.yml').read_text())
         self.assertEqual(by_hand['jobs']['sessionkit-core']['container'], core.IMAGE)
+
+    def test_the_other_swift_container_jobs_retry_apt_too(self):
+        for name in ('hosted-sessionkit-linux.yml', 'substack-canary.yml'):
+            with self.subTest(workflow=name):
+                text = (ROOT / '.github/workflows' / name).read_text()
+                self.assertIn('for n in 1 2 3; do', text)
+                self.assertNotIn('run: apt-get update -qq && apt-get install', text)
 
     def test_the_command_mounts_the_checkout_and_tests_with_the_cached_build_folder(self):
         command = core.docker_command(Path('/here'))

@@ -6,6 +6,11 @@ the PR's hosted-Mac slot before the Mac's own run of the same tests. The rerun r
 fails and passes on its rerun counts as a pass, and the run names it. The whole run goes again, as the Mac's serial
 fallback does; a build failure does not, because a rerun would only fail the same way.
 
+Setting up the image is not the PR's code (#4082). The SQLite headers come from apt inside the container; when the
+runner's network gives it no DNS, apt fails before any test builds. The install retries, then takes the two .debs from
+the host, which still reaches apt, and if even that fails the run says "setup fault" (exit 75 and a `lane-fault`
+annotation), never a test or build failure.
+
 `compare` reads a Linux log and the Mac's result file and writes a report: what each ran, and every test that runs on
 only one. Removing the Mac's run takes that list and a record of both agreeing; lost tests go to the owner.
 
@@ -29,8 +34,28 @@ IMAGE = 'swift:6.2.4'  # hosted-sessionkit-linux.yml's container and the job's c
 SCRATCH = '.build-linux'
 LOG = Path('artifacts/test-runs/linux-core/linux-core.log')
 RESOLVED = Path('Packages/SessionKit/Package.resolved')
-SWIFT = ('apt-get update -qq && apt-get install -y -qq libsqlite3-dev >/dev/null && '
-         f'swift test --scratch-path /w/{SCRATCH}')
+STAGED = '.apt-staged'  # the host's copy of the SQLite .debs, there only after the container's own apt failed (#4082)
+SETUP_FAULT_CODE = 75  # EX_TEMPFAIL: the container could not install its headers; says nothing about the PR's code
+SETUP_FAULT_MARK = 'SETUP FAULT: could not reach apt'
+# What a failed apt prints when the container has no network, for a command that lacks SETUP_FAULT_MARK.
+APT_UNREACHABLE = re.compile(r"Could not resolve '|Failed to fetch http|Unable to locate package libsqlite3-dev|"
+                             r'Temporary failure resolving')
+
+
+def install_script(mount: str = '/w') -> str:
+    """The shell that gives the swift image its SQLite headers, in the container with the checkout at <mount>. The
+    host's .debs when they are staged; else apt, three tries with a wait; else the setup fault (#4082)."""
+    return (f'if ls {mount}/{STAGED}/*.deb >/dev/null 2>&1; then '
+            f'dpkg -i {mount}/{STAGED}/*.deb >/dev/null || {{ echo "{SETUP_FAULT_MARK} (the staged .debs would not install)"; '
+            f'exit {SETUP_FAULT_CODE}; }}; else '
+            'for n in 1 2 3; do '
+            'apt-get update -qq -o Acquire::Retries=3 && '
+            'apt-get install -y -qq -o Acquire::Retries=3 libsqlite3-dev >/dev/null && break; '
+            f'if [ $n = 3 ]; then echo "{SETUP_FAULT_MARK} (three tries)"; exit {SETUP_FAULT_CODE}; fi; '
+            'sleep $((n * 10)); done; fi')
+
+
+SWIFT = f'{install_script()} && swift test --scratch-path /w/{SCRATCH}'
 RESULT = re.compile(r"Test Case '(\w+)\.(\w+)' (passed|failed|skipped)")
 STARTED = re.compile(r"Test Case '(\w+)\.(\w+)' started")
 WORST = ('failed', 'skipped', 'passed')
@@ -70,6 +95,37 @@ def attempt(command: list[str], log: Path) -> tuple[int, str]:
     return run.returncode, ''.join(lines)
 
 
+def setup_fault(code: int, text: str) -> bool:
+    """Whether a run stopped on installing the image's SQLite headers: its own marker, its exit code, or apt's raw
+    network errors from a command that lacks the marker. Only when no test ran, so a test's own output never counts."""
+    if linux_results(text) or unfinished(text):
+        return False
+    return code == SETUP_FAULT_CODE or SETUP_FAULT_MARK in text or bool(APT_UNREACHABLE.search(text))
+
+
+def stage_debs(directory: Path, run=subprocess.run, which=shutil.which) -> bool:
+    """Fetch the SQLite .debs on the host into <directory>, for the container to install without a network. True when
+    they are there. The host is the runner itself, whose apt reached the mirrors when the container's did not."""
+    if not which('apt-get'):
+        print('No apt-get on this host to fetch the SQLite .debs with.', flush=True)
+        return False
+    shutil.rmtree(directory, ignore_errors=True)
+    directory.mkdir(parents=True)
+    sudo = [] if os.geteuid() == 0 else ['sudo', '-n']
+    run([*sudo, 'apt-get', 'update', '-qq'], check=False)
+    done = run(['apt-get', 'download', 'libsqlite3-dev', 'libsqlite3-0'], cwd=directory, check=False)
+    ok = done.returncode == 0 and len(list(directory.glob('*.deb'))) >= 2
+    print(f'SQLite .debs fetched on the host: {"yes" if ok else "no"}.', flush=True)
+    return ok
+
+
+def say_setup_fault(code: int) -> int:
+    line = (f'{SETUP_FAULT_MARK} in the swift container, even from the host\'s own copy of the .debs: a runner '
+            "network fault, not this PR's code. No test ran. Run the check again.")
+    print(f'::error title=lane-fault::{line}\n{line}', flush=True)
+    return SETUP_FAULT_CODE
+
+
 def say_failed(results: dict[str, str]) -> list[str]:
     failed = sorted(test for test, status in results.items() if status == 'failed')
     for test in failed:
@@ -93,15 +149,24 @@ def note_retry(names: list[str], first_code: int, ran: int, environ=None) -> Non
             output.write(f'retried={",".join(full) or WHOLE_RUN}\n')
 
 
-def run_tests(command: list[str], log: Path, resolved: Path | None = None, environ=None) -> int:
+def run_tests(command: list[str], log: Path, resolved: Path | None = None, environ=None, stage=None) -> int:
     """0 when SessionKitCoreTests passed, on the first run or its one rerun. On Linux SwiftPM rewrites Package.resolved
-    (swift-crypto in, onnxruntime out; run-sessionkit-linux-tests.sh says so), so the Mac's copy goes back afterwards."""
+    (swift-crypto in, onnxruntime out; run-sessionkit-linux-tests.sh says so), so the Mac's copy goes back afterwards.
+    stage() puts the SQLite .debs where the container finds them (stage_debs); it runs only when the container's own
+    apt could not reach the network, and the run then goes again with them (#4082)."""
     backup = None
     if resolved:
         backup = Path(tempfile.mkdtemp()) / resolved.name
         shutil.copyfile(resolved, backup)
     try:
         code, text = attempt(command, log)
+        if setup_fault(code, text):
+            print('SessionKitCoreTests: the container could not install the SQLite headers.', flush=True)
+            if not (stage and stage()):
+                return say_setup_fault(code)
+            code, text = attempt(command, log)
+            if setup_fault(code, text):
+                return say_setup_fault(code)
         first, stopped = linux_results(text), unfinished(text)
         if not first and not stopped:
             print(f'SessionKitCoreTests ran no tests on Linux (exit {code}): a build failure or a broken step.', flush=True)
@@ -171,7 +236,11 @@ def main(argv=None) -> int:
     compare.add_argument('--out', type=Path, required=True)
     args = parser.parse_args(argv)
     if args.command == 'run':
-        return run_tests(docker_command(), ROOT / LOG, ROOT / RESOLVED)
+        staged = ROOT / STAGED
+        try:
+            return run_tests(docker_command(), ROOT / LOG, ROOT / RESOLVED, stage=lambda: stage_debs(staged))
+        finally:
+            shutil.rmtree(staged, ignore_errors=True)
     linux, mac = linux_results(args.linux.read_text(errors='replace')), mac_results(args.mac)
     if not linux or not mac:
         print(f'no tests read: {len(linux)} from {args.linux}, {len(mac)} from {args.mac}', file=sys.stderr)
