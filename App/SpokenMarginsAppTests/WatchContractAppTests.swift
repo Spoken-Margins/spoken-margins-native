@@ -139,19 +139,25 @@ final class WatchContractAppTests: XCTestCase {
     /// button. The board still goes out once more after the command, so the Watch ends up with the player's real state.
     func testTheBoardGoesOutOnceMoreAfterATransportCommandEvenWhenNothingChanged() async throws {
         let receiver = makeReceiver(LiveSessionFileWorker(root: root))
-        receiver.transportSettle = .milliseconds(50)
+        // #4058: the reply's own board and this settle board come from different tasks and can publish in either order.
+        // The test used to note the reply's board and wait for a newer one, so a reply slower than the settle (a loaded
+        // runner) left the settle board already published and nothing newer ever came. It now waits for a board computed
+        // at least one settle after the command, which only the settle board (or a reply that slow) can be.
+        let settle = Duration.milliseconds(300)
+        receiver.transportSettle = settle
         receiver.runTransport = { _ in } // the player refuses it
         let paused = WatchNowPlaying(itemId: "ep", title: "Episode", isPlaying: false, positionMs: 5_000, positionAt: Date())
         receiver.nowPlayingChanged(paused)
 
-        _ = try await receiver.handle(try overTheWire(envelope(.transport(.play), sentAt: Date()))).value
-        let afterReply = try XCTUnwrap(receiver.lastBoard).phoneTime
+        let commandAt = Date()
+        let settledAfter = commandAt.addingTimeInterval(0.3)
+        _ = try await receiver.handle(try overTheWire(envelope(.transport(.play), sentAt: commandAt))).value
 
-        for _ in 0..<60 where receiver.lastBoard?.phoneTime == afterReply {
+        for _ in 0..<100 where (receiver.lastBoard?.phoneTime ?? .distantPast) < settledAfter {
             try await Task.sleep(for: .milliseconds(50))
         }
         let settled = try XCTUnwrap(receiver.lastBoard)
-        XCTAssertGreaterThan(settled.phoneTime, afterReply, "a board goes out after the command, with nothing changed")
+        XCTAssertGreaterThanOrEqual(settled.phoneTime, settledAfter, "a board goes out after the command, with nothing changed")
         XCTAssertEqual(settled.nowPlaying?.isPlaying, false, "and it says the item is still paused")
     }
 
