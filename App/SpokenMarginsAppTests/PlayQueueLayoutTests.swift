@@ -29,6 +29,7 @@ final class PlayQueueLayoutTests: XCTestCase {
         try await super.setUp()
         UIPasteboard.general.items = [] // a copied link would add its card above the rows mid-test
         PlayQueueSheetProbe.setEditMode = nil
+        PlayQueueSheetProbe.editMode = .inactive
     }
 
     override func tearDown() async throws {
@@ -136,8 +137,9 @@ final class PlayQueueLayoutTests: XCTestCase {
     /// between full and half strength in Edit mode, row text still. The Library redraws on every model publish, and a
     /// `.sheet` on it re-ran the presentation each time. Presented the way the Library presents it, in Edit mode, nothing
     /// in the sheet may redraw, Edit mode must hold, and nothing in a row may be animating while nobody touches the screen.
-    /// Edit mode comes on once the sheet is up, as the owner's tap on Edit did: a sheet built already in Edit mode never
-    /// showed the list editing in a hosted run.
+    /// Edit mode comes on once the sheet is up, as the owner's tap on Edit did, and is read from SwiftUI's own state; the
+    /// list's UIKit flag did not follow it in the hosted run that failed (#4036), so it counts only if it ever does.
+    /// The control below runs the same steps against a plain `.sheet` and must show the fault this one guards.
     func testInEditModeTheQueueRowsHoldStillWhileTheirPresenterRedrawsOnEveryPublish() async throws {
         let model = try makeModel(itemCount: 3)
         for id in Self.itemIds(3) { model.queueAppend(itemId: id) }
@@ -148,12 +150,15 @@ final class PlayQueueLayoutTests: XCTestCase {
         let sheetBefore = try await bodyRunsOnceTheSheetIsQuiet()
         let rowsBefore = try await rowRunsOnceTheRowsAreQuiet()
         let hostBefore = PlayQueueSheetProbe.hostRuns
+        let screensBefore = PlayQueueSheetProbe.screenInits
         try await waitForTheRowsToStopAnimating(in: settled.view)
 
         let idle = try await editModeWhilePublishing(model, list: settled.view)
 
         XCTAssertEqual(PlayQueueSheetProbe.hostRuns, hostBefore,
                        "20 model publishes redrew the sheet's presentation \(PlayQueueSheetProbe.hostRuns - hostBefore) times")
+        XCTAssertEqual(PlayQueueSheetProbe.screenInits, screensBefore,
+                       "20 model publishes re-ran the presentation, building the queue screen \(PlayQueueSheetProbe.screenInits - screensBefore) more times")
         XCTAssertEqual(PlayQueueSheetProbe.bodyRuns, sheetBefore,
                        "20 model publishes with the queue unchanged redrew the sheet \(PlayQueueSheetProbe.bodyRuns - sheetBefore) times")
         XCTAssertEqual(PlayQueueSheetProbe.rowRuns, rowsBefore,
@@ -166,13 +171,17 @@ final class PlayQueueLayoutTests: XCTestCase {
         model.removeFromQueue(itemId: Self.itemIds(3)[0])
         let afterRemoving = try await settledList(in: mounted) { $0.totalItems < settled.totalItems }
         XCTAssertEqual(afterRemoving.totalItems, settled.totalItems - 1, "The removed item's row should be gone")
-        XCTAssertTrue(afterRemoving.view.isEditing, "Removing a row should leave Edit mode on: \(Self.editState(of: afterRemoving.view))")
+        XCTAssertEqual(PlayQueueSheetProbe.editMode, .active, "Removing a row should leave Edit mode on: \(Self.editState(of: afterRemoving.view))")
+        if listFlagFollowsEditMode {
+            XCTAssertTrue(afterRemoving.view.isEditing, "Removing a row took the list out of Edit mode: \(Self.editState(of: afterRemoving.view))")
+        }
     }
 
-    /// The control for the test above: it shows the presenter really does what the Library does. With a plain `.sheet`
-    /// on a presenter that watches the model, as the Library had, publishes that change nothing knock the list out of
-    /// Edit mode or set its rows animating (a hosted run: Edit mode off in 35 of 40 looks, remove icons fading). If this
-    /// fails, the test above no longer reproduces the owner's recording and its pass proves nothing.
+    /// The control for the test above, run against the plain `.sheet` the Library had. The test above only means something
+    /// if this presenter shows the fault it guards: with a plain `.sheet`, a publish that changes nothing must re-run the
+    /// presentation (its content closure), which the host's test says never happens, or knock Edit mode off, or set a row
+    /// animating. If none of these shows, the test above no longer reproduces the owner's recording and its pass proves
+    /// nothing. The failure message gives all four counts.
     func testWithAPlainSheetOnTheWatchingPresenterEditModeFlickersOnEveryPublish() async throws {
         let model = try makeModel(itemCount: 3)
         for id in Self.itemIds(3) { model.queueAppend(itemId: id) }
@@ -181,11 +190,13 @@ final class PlayQueueLayoutTests: XCTestCase {
         _ = try await settledList(in: mounted) { $0.totalItems >= 3 }
         let settled = try await enterEditMode(in: mounted)
         try await waitForTheRowsToStopAnimating(in: settled.view)
+        let buildsBefore = PlayQueueSheetProbe.screenInits
 
         let idle = try await editModeWhilePublishing(model, list: settled.view)
 
-        XCTAssertTrue(idle.notEditing > 0 || !idle.animating.isEmpty,
-                      "20 publishes under a plain sheet left Edit mode on in all \(idle.looks) looks with no row animating")
+        let rebuilt = PlayQueueSheetProbe.screenInits - buildsBefore
+        XCTAssertGreaterThan(rebuilt, 0, "Plain sheet: the queue screen was built \(rebuilt) times, Edit mode off in \(idle.notEditing) of \(idle.looks) looks, "
+                                         + "rows animating: \(idle.animating.sorted())")
     }
 
     /// #4033: the sheet's rows are published only when they differ, so a screen watching them is not invalidated by
@@ -426,30 +437,81 @@ final class PlayQueueLayoutTests: XCTestCase {
         throw NotSettled()
     }
 
-    /// Turns Edit mode on as the sheet's Edit button does, then waits until the list has been editing for 3 polls running.
+    /// Whether the list's UIKit flag followed SwiftUI's Edit mode when it came on. A hosted run (#4036) saw the sheet's
+    /// Edit mode on while `UICollectionView.isEditing` stayed false, so the flag only counts when it did follow.
+    private var listFlagFollowsEditMode = false
+    /// How Edit mode was turned on, for a failure message.
+    private var editModeHow = "not tried"
+
+    /// Turns Edit mode on the way a tap on Edit does: through the Edit button's accessibility activation, and, if no such
+    /// button is found or it changes nothing, through the sheet's own setter. Waits until SwiftUI's Edit mode has held
+    /// for 3 looks running, then gives the list's UIKit flag a second to follow.
     private func enterEditMode(in mounted: Mounted) async throws -> ListState {
         let setEditMode = try XCTUnwrap(PlayQueueSheetProbe.setEditMode, "The queue sheet never appeared")
-        withAnimation { setEditMode(.active) }
+        var visited = Set<ObjectIdentifier>()
+        let button = Self.accessibilityElement(withIdentifier: "playQueue.edit.button", in: mounted.window, visited: &visited)
+        if let button, button.accessibilityActivate() {
+            editModeHow = "the Edit button's activation"
+            if try await editModeHeld(in: mounted, looks: 40) == nil { editModeHow = "the setter, after the button changed nothing" }
+        } else {
+            editModeHow = button == nil ? "the setter, no Edit button found" : "the setter, the Edit button refused activation"
+        }
+        if PlayQueueSheetProbe.editMode != .active {
+            withAnimation { setEditMode(.active) }
+        }
+        guard let list = try await editModeHeld(in: mounted, looks: 100) else {
+            XCTFail("Edit mode never held for 3 looks (turned on by \(editModeHow)): SwiftUI's Edit mode is "
+                    + "\(PlayQueueSheetProbe.editMode == .active ? "active" : "inactive"), "
+                    + "\(Self.collectionView(in: mounted.window).map(Self.editState) ?? "no list")")
+            throw NotSettled()
+        }
+        let how = XCTAttachment(string: "Edit mode turned on by \(editModeHow)")
+        how.lifetime = .keepAlways
+        add(how)
+        for _ in 0..<25 {
+            if list.isEditing { listFlagFollowsEditMode = true; break }
+            try await Task.sleep(for: .milliseconds(40))
+        }
+        let paths = (0..<list.numberOfSections).flatMap { section in
+            (0..<list.numberOfItems(inSection: section)).map { IndexPath(item: $0, section: section) }
+        }
+        return ListState(view: list, paths: paths)
+    }
+
+    /// The list once SwiftUI's Edit mode has been active for 3 looks running, or nil after `looks` looks.
+    private func editModeHeld(in mounted: Mounted, looks: Int) async throws -> UICollectionView? {
         var steady = 0
-        var seen: UICollectionView?
-        for _ in 0..<100 {
+        for _ in 0..<looks {
             try await Task.sleep(for: .milliseconds(40))
             mounted.window.layoutIfNeeded()
-            seen = Self.collectionView(in: mounted.window)
-            if let list = seen, list.isEditing {
+            if PlayQueueSheetProbe.editMode == .active, let list = Self.collectionView(in: mounted.window) {
                 steady += 1
-                if steady >= 3 {
-                    let paths = (0..<list.numberOfSections).flatMap { section in
-                        (0..<list.numberOfItems(inSection: section)).map { IndexPath(item: $0, section: section) }
-                    }
-                    return ListState(view: list, paths: paths)
-                }
+                if steady >= 3 { return list }
             } else {
                 steady = 0
             }
         }
-        XCTFail("Edit mode never held for 3 looks after the Edit button's change: \(seen.map(Self.editState) ?? "no list")")
-        throw NotSettled()
+        return nil
+    }
+
+    /// The first element at or under `root` whose accessibility identifier is `identifier`, looking through views and
+    /// accessibility containers the way a UI test does.
+    private static func accessibilityElement(withIdentifier identifier: String, in root: NSObject, visited: inout Set<ObjectIdentifier>) -> NSObject? {
+        guard visited.insert(ObjectIdentifier(root)).inserted else { return nil }
+        if (root as? UIAccessibilityIdentification)?.accessibilityIdentifier == identifier { return root }
+        var children: [NSObject] = []
+        if let view = root as? UIView {
+            children += (view.accessibilityElements ?? []).compactMap { $0 as? NSObject }
+            children += view.subviews
+        }
+        let count = root.accessibilityElementCount()
+        if count != NSNotFound, count > 0 {
+            children += (0..<count).compactMap { root.accessibilityElement(at: $0) as? NSObject }
+        }
+        for child in children {
+            if let found = accessibilityElement(withIdentifier: identifier, in: child, visited: &visited) { return found }
+        }
+        return nil
     }
 
     /// What a failure needs to tell Edit mode on from off: the list's own flag, and how many rows show a reorder handle.
@@ -462,7 +524,8 @@ final class PlayQueueLayoutTests: XCTestCase {
         return "isEditing \(list.isEditing), \(cells.filter { handles(in: $0) > 0 }.count) of \(cells.count) rows show a reorder handle"
     }
 
-    /// Sends 20 model publishes that change nothing, looking twice after each: how often the list was out of Edit mode,
+    /// Sends 20 model publishes that change nothing, looking twice after each: how often the sheet's Edit mode (and the list's
+    /// flag, when it follows it) was off,
     /// and every row layer seen animating, including in the 0.3 s after the last.
     private func editModeWhilePublishing(_ model: Gate1AppModel, list: UICollectionView) async throws
         -> (notEditing: Int, looks: Int, animating: Set<String>) {
@@ -474,7 +537,7 @@ final class PlayQueueLayoutTests: XCTestCase {
             for _ in 0..<2 {
                 try await Task.sleep(for: .milliseconds(20))
                 looks += 1
-                if !list.isEditing { notEditing += 1 }
+                if PlayQueueSheetProbe.editMode != .active || (listFlagFollowsEditMode && !list.isEditing) { notEditing += 1 }
                 animating.formUnion(Self.animatingLayers(in: list.visibleCells))
             }
         }

@@ -22,6 +22,9 @@ struct ExperiencePlayQueueScreen: View {
     init(model: Gate1AppModel, close: @escaping () -> Void) {
         self.model = model
         self.close = close
+        #if DEBUG
+        PlayQueueSheetProbe.screenInits += 1
+        #endif
         _feed = StateObject(wrappedValue: PlayQueueRowsFeed(model: model))
     }
 
@@ -51,10 +54,10 @@ extension View {
 }
 
 /// Holds the queue sheet's presentation in a view the presenter's redraws do not reach (#3891, reopened). With `.sheet`
-/// on the Library itself, every model publish re-ran the presentation: neither the sheet nor its rows redrew, yet a
-/// hosted run saw the list leave Edit mode in 35 of 40 looks and its remove icons and handles fade, which is what the
-/// owner filmed. This view is equal to its last copy unless the flag changes, so SwiftUI skips it and the presentation
-/// is left alone.
+/// on the Library itself, every model publish may re-run the presentation while the sheet and its rows do not redraw,
+/// which is the theory for the remove icons and handles fading that the owner filmed (not yet shown on a device; the
+/// control test counts the re-runs). This view is equal to its last copy unless the flag changes, so SwiftUI skips it
+/// and the presentation is left alone.
 private struct PlayQueueSheetHost: View, Equatable {
     let model: Gate1AppModel
     @Binding var isPresented: Bool
@@ -112,8 +115,12 @@ enum PlayQueueSheetProbe {
     static var bodyRuns = 0
     static var rowRuns = 0
     static var hostRuns = 0
+    /// How often the queue screen was built: once per presentation under the host, once per presenter redraw under a plain `.sheet`.
+    static var screenInits = 0
     /// Sets the sheet's Edit mode as its Edit button does, so a test can enter Edit mode once the sheet is on screen.
     static var setEditMode: ((EditMode) -> Void)?
+    /// The sheet's own Edit mode as SwiftUI holds it, the truth a test compares the list's UIKit flag with.
+    static var editMode: EditMode = .inactive
     nonisolated(unsafe) static var comparisons = 0
     nonisolated(unsafe) static var unequalComparisons = 0
 }
@@ -199,6 +206,12 @@ struct PlayQueueSheet: View, Equatable {
                 actions.load()
                 #if DEBUG
                 PlayQueueSheetProbe.setEditMode = { editMode = $0 }
+                PlayQueueSheetProbe.editMode = editMode
+                #endif
+            }
+            .onChange(of: editMode) { _, mode in
+                #if DEBUG
+                PlayQueueSheetProbe.editMode = mode
                 #endif
             }
             .onChange(of: rows.isEmpty) { _, isEmpty in
