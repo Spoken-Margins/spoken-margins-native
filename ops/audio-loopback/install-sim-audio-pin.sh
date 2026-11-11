@@ -7,7 +7,7 @@ binary=$home_dir/sim-audio-pin
 label=com.spokenmargins.sim-audio-pin
 plist=~/Library/LaunchAgents/$label.plist
 mkdir -p "$home_dir"
-clang -O2 -fobjc-arc -framework Foundation "$here/sim-audio-pin.m" -o "$binary.new"
+clang -O2 -fobjc-arc -framework Foundation -framework CoreAudio "$here/sim-audio-pin.m" -o "$binary.new"
 mv -f "$binary.new" "$binary"
 cat > "$plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -28,3 +28,9 @@ PLIST
 launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
 launchctl bootstrap "gui/$(id -u)" "$plist"
 echo "installed: $binary"
+if ! "$binary" --blackhole; then
+  echo "BlackHole 2ch is not an audio device on this Mac, so Simulator sound will follow the Mac's output."
+  exit 1
+fi
+sleep 5
+"$binary" --status && echo "every booted Simulator is on BlackHole" || echo "not pinned yet: see $home_dir/sim-audio-pin.log"

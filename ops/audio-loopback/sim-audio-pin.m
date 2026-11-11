@@ -9,7 +9,12 @@
 // could change that call: `--status` then shows the Simulators back on "follows the Mac", and the log says why.
 //
 //   sim-audio-pin            run for good (launchd starts it; see install-sim-audio-pin.sh)
-//   sim-audio-pin --status   print each booted Simulator's output and exit
+//   sim-audio-pin --status   print each booted Simulator's output; exit 1 when one is not on BlackHole
+//   sim-audio-pin --blackhole  exit 0 when this Mac has BlackHole 2ch, 1 when not (the host test uses it)
+//
+// A failure it can't fix (BlackHole missing, the route call refused) also shows a Mac notification, at most once every
+// six hours, because a log nobody reads hid a dead pin for two days (2026-11-08 to 11-10).
+#import <CoreAudio/CoreAudio.h>
 #import <Foundation/Foundation.h>
 #import <dlfcn.h>
 #import <objc/message.h>
@@ -33,10 +38,26 @@ static void say(NSString *line) {
     fprintf(stderr, "%s %s\n", [clock stringFromDate:NSDate.date].UTF8String, line.UTF8String);
 }
 
+// A Mac notification, at most once every six hours across restarts, so a pin that can't work gets seen.
+static void notifyOwner(NSString *line) {
+    NSString *stamp = [NSHomeDirectory() stringByAppendingPathComponent:@"SpokenMarginsOps/audio-loopback/last-notice"];
+    NSDate *last = [NSFileManager.defaultManager attributesOfItemAtPath:stamp error:nil].fileModificationDate;
+    if (last && -last.timeIntervalSinceNow < 6 * 3600) return;
+    [@"" writeToFile:stamp atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    NSString *quoted = [[line stringByReplacingOccurrencesOfString:@"\\" withString:@""]
+                        stringByReplacingOccurrencesOfString:@"\"" withString:@"'"];
+    NSTask *task = [NSTask new];
+    task.executableURL = [NSURL fileURLWithPath:@"/usr/bin/osascript"];
+    task.arguments = @[@"-e", [NSString stringWithFormat:
+        @"display notification \"%@\" with title \"Simulator sound may reach your speakers\"", quoted]];
+    [task launchAndReturnError:nil];
+}
+
 static void complainOnce(NSString *line) {
     if ([complained containsObject:line]) return;
     [complained addObject:line];
     say(line);
+    notifyOwner(line);
 }
 
 static NSString *developerDir(void) {
@@ -82,13 +103,19 @@ static NSString *currentOutput(id router) {
     return [router performSelector:NSSelectorFromString(@"guestOutputHostDeviceUID")];
 }
 
-static BOOL blackHoleExists(id router) {
-    for (id device in [router performSelector:NSSelectorFromString(@"availableHostDevices")]) {
-        if ([[device description] containsString:kBlackHole]) return YES;
-        if ([device respondsToSelector:NSSelectorFromString(@"uid")] &&
-            [[device valueForKey:@"uid"] isEqual:kBlackHole]) return YES;
-    }
-    return NO;
+// Asks the Mac's own audio system. The router's availableHostDevices can't answer this: it returns remote proxies
+// whose description is only "ROCKImmutableProxy", so a check against it said "no BlackHole" every time and the pin
+// never pinned anything (2026-11-08 to 11-10). The check still matters: routing to a UID the Mac lacks reports no
+// error and quietly lands on the speakers (tried 2026-11-10).
+static BOOL blackHoleExists(void) {
+    CFStringRef uid = (__bridge CFStringRef)kBlackHole;
+    AudioObjectID device = kAudioObjectUnknown;
+    AudioValueTranslation query = {&uid, sizeof uid, &device, sizeof device};
+    UInt32 size = sizeof query;
+    AudioObjectPropertyAddress address = {kAudioHardwarePropertyDeviceForUID, kAudioObjectPropertyScopeGlobal,
+                                          kAudioObjectPropertyElementMain};
+    OSStatus status = AudioObjectGetPropertyData(kAudioObjectSystemObject, &address, 0, NULL, &size, &query);
+    return status == noErr && device != kAudioObjectUnknown;
 }
 
 static NSError *routeToBlackHole(id router) {
@@ -119,7 +146,7 @@ static void pinDevice(id device) {
         nextCheck[udid] = [NSDate dateWithTimeIntervalSinceNow:kRecheckSeconds];
         return;
     }
-    if (!blackHoleExists(router)) {
+    if (!blackHoleExists()) {
         complainOnce(@"BlackHole 2ch is not an audio device on this Mac; Simulators follow the Mac's output");
         return;
     }
@@ -129,7 +156,12 @@ static void pinDevice(id device) {
         complainOnce([NSString stringWithFormat:@"could not pin %@: %@", name, error.localizedDescription]);
         return;
     }
-    say([NSString stringWithFormat:@"pinned %@ (%@): output was %@, now %@", name, udid, before, currentOutput(router)]);
+    NSString *after = currentOutput(router);
+    if (![after isEqual:kBlackHole]) {
+        complainOnce([NSString stringWithFormat:@"could not pin %@: the route call answered but output is %@", name, after]);
+        return;
+    }
+    say([NSString stringWithFormat:@"pinned %@ (%@): output was %@, now %@", name, udid, before, after]);
     nextCheck[udid] = [NSDate dateWithTimeIntervalSinceNow:kRecheckSeconds];
 }
 
@@ -170,18 +202,20 @@ static void scan(NSArray *sets) {
 }
 
 static int status(NSArray *sets) {
-    int shown = 0;
+    int shown = 0, loose = 0;
     for (id set in sets) {
         for (id device in [set valueForKey:@"devices"]) {
             if ([[device valueForKey:@"state"] intValue] != kStateBooted) continue;
             id router = audioRouter(device);
-            printf("%s: %s\n", [[device valueForKey:@"name"] UTF8String],
-                   router ? currentOutput(router).UTF8String : "still starting");
+            NSString *output = router ? currentOutput(router) : @"still starting";
+            printf("%s: %s\n", [[device valueForKey:@"name"] UTF8String], output.UTF8String);
+            if (![output isEqual:kBlackHole]) loose++;
             shown++;
         }
     }
     if (!shown) printf("no Simulator is booted\n");
-    return 0;
+    if (!blackHoleExists()) { printf("BlackHole 2ch is not an audio device on this Mac\n"); return 1; }
+    return loose ? 1 : 0;
 }
 
 int main(int argc, char **argv) {
@@ -189,6 +223,7 @@ int main(int argc, char **argv) {
         nextCheck = [NSMutableDictionary dictionary];
         complained = [NSMutableSet set];
         started = NSDate.date;
+        if (argc > 1 && !strcmp(argv[1], "--blackhole")) return blackHoleExists() ? 0 : 1;
         if (!dlopen("/Library/Developer/PrivateFrameworks/CoreSimulator.framework/CoreSimulator", RTLD_NOW)) {
             say(@"CoreSimulator is not installed");
             return 1;

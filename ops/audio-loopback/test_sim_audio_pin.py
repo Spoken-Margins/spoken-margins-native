@@ -69,12 +69,28 @@ class PinnedTests(unittest.TestCase):
         self.assertFalse(self.pinned())
 
 
+BLACKHOLE_DRIVER = Path('/Library/Audio/Plug-Ins/HAL/BlackHole2ch.driver')
+
+
 @unittest.skipUnless(sys.platform == 'darwin' and shutil.which('clang'), 'builds a macOS program')
 class BuildTests(unittest.TestCase):
+    def build(self, folder):
+        pin = Path(folder) / 'pin'
+        subprocess.run(['clang', '-O2', '-fobjc-arc', '-framework', 'Foundation', '-framework', 'CoreAudio',
+                        str(HERE / 'sim-audio-pin.m'), '-o', str(pin)], check=True, capture_output=True, timeout=120)
+        return pin
+
     def test_the_pin_compiles(self):
         with tempfile.TemporaryDirectory() as folder:
-            subprocess.run(['clang', '-O2', '-fobjc-arc', '-framework', 'Foundation', str(HERE / 'sim-audio-pin.m'),
-                            '-o', str(Path(folder) / 'pin')], check=True, capture_output=True, timeout=120)
+            self.build(folder)
+
+    @unittest.skipUnless(BLACKHOLE_DRIVER.exists(), 'BlackHole 2ch is not installed on this Mac')
+    def test_the_pin_finds_blackhole_when_it_is_installed(self):
+        # The pin's first check used the Simulator's host device list, whose entries never show their UID, so it
+        # said "no BlackHole" on a Mac that had it and pinned nothing for two days (2026-11-08 to 11-10).
+        with tempfile.TemporaryDirectory() as folder:
+            found = subprocess.run([str(self.build(folder)), '--blackhole'], capture_output=True, timeout=30)
+        self.assertEqual(found.returncode, 0, 'the pin does not see BlackHole 2ch, so it would never pin')
 
 
 if __name__ == '__main__':
