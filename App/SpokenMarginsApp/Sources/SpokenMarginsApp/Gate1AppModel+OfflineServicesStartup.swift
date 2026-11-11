@@ -69,8 +69,10 @@ extension Gate1AppModel {
             }
             // A model built by a test must not ask the production server for the tour: on a runner with a network
             // the answer landed mid-test and put a `guided-onboarding` row into a library the test had counted (#2772).
+            // A UI-test launch doesn't either, unless its script covers the tour (#4071).
             guard !Task.isCancelled,
                   !Gate1AppModel.isRunningUnitTests,
+                  UITestingHooks.fetchesGuidedTour,
                   !UserDefaults.standard.bool(forKey: Gate1AppModel.guidedOnboardingTombstoneKey),
                   let coordinator = self?.guidedOnboardingCoordinator,
                   self?.store != nil else { return }
