@@ -21,6 +21,7 @@ import XCTest
 /// - #2900: the Margins pane's unselected filter chips and a Margin's play button take a tap over 44 × 44 pt.
 /// - #3723: the share review's Cancel preparation button stacks under its progress line at accessibility sizes.
 /// - #3724: the Supertonic download notice keeps Open Voices and Not Now on screen at accessibility5.
+/// - #3726: the stop mark in a pending play button's spinner grows with the text size, to a limit.
 ///
 /// SwiftUI builds its accessibility tree only when an assistive client is running, and an app-hosted test has none:
 /// an earlier mounted test found the tree empty (PlaybackDockLayoutTests, #1666) and UIKit's own traits missing
@@ -172,6 +173,33 @@ final class AccessibilityFixProofTests: XCTestCase {
         }
     }
 
+    /// The Library's Live row: a session that can be resumed shows its line and a Resume button. Side by side by default,
+    /// the button sits under the line at accessibility sizes, so the title keeps the whole row's width (#3723 item 1).
+    func testTheLiveRowsResumeButtonSitsUnderItsLineAtAccessibilitySizes() async throws {
+        let now = Date()
+        let ended = LiveSessionFileWorker.Summary(
+            id: "live-ax5", title: "Quarterly planning review with the whole product group", kind: .meeting, isQuick: false,
+            isRunning: false, startedAt: now.addingTimeInterval(-3_600), endedAt: now.addingTimeInterval(-60), marginCount: 2,
+            resumableUntil: now.addingTimeInterval(600))
+        for (size, stacked) in [(DynamicTypeSize.large, false), (.accessibility5, true)] {
+            let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+            let mounted = try mount(AnyView(LiveSessionLiveRows(board: LiveSessionBoard(rows: [ended])).environmentObject(model)),
+                                    textSize: size)
+            defer { mounted.close() }
+            let line = try await mounted.waitForNode("the Live row's line") {
+                $0.identifier == "library.liveRow.live-ax5" || $0.label?.contains("Quarterly planning review") == true
+            }
+            let resume = try await mounted.waitForNode("the Resume button") {
+                $0.identifier == "library.liveRow.resume.live-ax5" || $0.label == "Resume"
+            }
+            if stacked {
+                XCTAssertGreaterThanOrEqual(resume.frame.minY, line.frame.maxY - 1, "\(size): Resume is beside the line, not under it")
+            } else {
+                XCTAssertGreaterThanOrEqual(resume.frame.minX, line.frame.maxX - 1, "\(size): Resume is not beside the line")
+            }
+        }
+    }
+
     // MARK: - #3724 the Supertonic download notice keeps its buttons on screen
 
     /// At accessibility5 the notice's words are taller than the screen. Squeezed into one stack, SwiftUI would cut the
@@ -222,6 +250,23 @@ final class AccessibilityFixProofTests: XCTestCase {
             } else {
                 XCTAssertGreaterThanOrEqual(follow.frame.minX, title.frame.maxX - 1, "\(size): Follow is not beside the title")
             }
+        }
+    }
+
+    // MARK: - #3726 the pending-start stop mark scales with text, to a limit
+
+    func testThePendingStartStopMarkGrowsWithTextAndStopsAtOnePointSixTimesItsSize() {
+        func height(_ size: DynamicTypeSize, base: CGFloat) -> CGFloat {
+            UIHostingController(rootView: StartPendingStopMark(baseSize: base).environment(\.dynamicTypeSize, size))
+                .sizeThatFits(in: CGSize(width: 400, height: 400)).height
+        }
+        for base: CGFloat in [9, 12] {
+            let atDefault = height(.large, base: base)
+            let atLargest = height(.accessibility5, base: base)
+            XCTAssertGreaterThan(atLargest, atDefault + 1, "base \(base): the mark ignores the text size (\(atDefault) to \(atLargest) pt)")
+            // The limit is 1.6 times the base size; allow a point for the glyph's own rounding.
+            XCTAssertLessThanOrEqual(atLargest, atDefault * 1.6 + 1,
+                                     "base \(base): the mark outgrew its spinner (\(atDefault) to \(atLargest) pt)")
         }
     }
 

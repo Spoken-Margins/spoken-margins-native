@@ -247,6 +247,14 @@ public enum AppSemanticColorRGB {
     /// text in both appearances, since the card does not change with the system appearance (#1925).
     public static let watchDanger = fixed(1, 0.55, 0.48)
 
+    /// The tints of the swipe buttons (#4045). iOS draws a swipe button's icon and words in white in both appearances, but every
+    /// token above turns light in dark mode, which left white on a light tint at about 2:1. These are the light-mode values of
+    /// `evergreen`, `ochreText`, `plum` and `secondaryText`, fixed in both appearances, so the hues stay and the white stays readable.
+    public static let swipeEvergreen = fixed(0.08, 0.30, 0.21)
+    public static let swipeOchre = fixed(0.55, 0.33, 0.0)
+    public static let swipePlum = fixed(0.39, 0.24, 0.48)
+    public static let swipeSlate = fixed(0.37, 0.43, 0.40)
+
     /// Every token above, by name. `AppColors` in the app builds its colours from these and nowhere else, so
     /// the audit sees every colour the app draws with. A test fails when a token is missing from this list or
     /// from the pairs below (#1921).
@@ -260,7 +268,8 @@ public enum AppSemanticColorRGB {
         ("border", border), ("borderIncreased", borderIncreased), ("green", green), ("accent", accent), ("accentSoft", accentSoft),
         ("watchBackground", watchBackground), ("watchControl", watchControl), ("ochre", ochre), ("ochreText", ochreText),
         ("warningText", warningText), ("coral", coral),
-        ("star", star), ("watchDanger", watchDanger)
+        ("star", star), ("watchDanger", watchDanger),
+        ("swipeEvergreen", swipeEvergreen), ("swipeOchre", swipeOchre), ("swipePlum", swipePlum), ("swipeSlate", swipeSlate)
     ]
 }
 
@@ -325,7 +334,12 @@ public enum AppColorContrastAudit {
         // The follow-a-source card's two quiet buttons and its caption sit on a panel (#3732).
         .init(name: "evergreen text on panel", foreground: AppSemanticColorRGB.evergreen, background: AppSemanticColorRGB.panel, minimumRatio: 4.5),
         .init(name: "danger text on panel", foreground: AppSemanticColorRGB.dangerText, background: AppSemanticColorRGB.panel, minimumRatio: 4.5),
-        .init(name: "NOW badge label", foreground: AppSemanticColorRGB.text, background: AppSemanticColorRGB.accentSoft, minimumRatio: 4.5)
+        .init(name: "NOW badge label", foreground: AppSemanticColorRGB.text, background: AppSemanticColorRGB.accentSoft, minimumRatio: 4.5),
+        // iOS draws a swipe button's icon and words in white; the tints are fixed so they hold in dark mode too (#4045).
+        .init(name: "swipe label on swipeEvergreen", foreground: AppSemanticColorRGB.white, background: AppSemanticColorRGB.swipeEvergreen, minimumRatio: 4.5),
+        .init(name: "swipe label on swipeOchre", foreground: AppSemanticColorRGB.white, background: AppSemanticColorRGB.swipeOchre, minimumRatio: 4.5),
+        .init(name: "swipe label on swipePlum", foreground: AppSemanticColorRGB.white, background: AppSemanticColorRGB.swipePlum, minimumRatio: 4.5),
+        .init(name: "swipe label on swipeSlate", foreground: AppSemanticColorRGB.white, background: AppSemanticColorRGB.swipeSlate, minimumRatio: 4.5)
     ]
 
     /// Icons, borders, fills and state marks need 3:1 against what they sit on (WCAG 1.4.11).

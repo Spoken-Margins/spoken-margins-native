@@ -75,6 +75,22 @@ public actor LiveSessionFileWorker {
         public var marginCount: Int
         /// When Resume stops being offered, while it is (#2883).
         public var resumableUntil: Date?
+
+        /// Public so the app's tests can put rows on the Live row (#3723); the worker builds them the same way.
+        public init(
+            id: String, title: String, kind: ElsewhereKind, isQuick: Bool, isRunning: Bool, startedAt: Date,
+            endedAt: Date?, marginCount: Int, resumableUntil: Date?
+        ) {
+            self.id = id
+            self.title = title
+            self.kind = kind
+            self.isQuick = isQuick
+            self.isRunning = isRunning
+            self.startedAt = startedAt
+            self.endedAt = endedAt
+            self.marginCount = marginCount
+            self.resumableUntil = resumableUntil
+        }
     }
 
     /// Application Support: the store is `LiveSession/…` under it, and recording paths ("SpokenMargins/interjections/…")
