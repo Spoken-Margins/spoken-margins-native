@@ -32,21 +32,21 @@ struct ExperienceRootTabs: View {
                 }
                 .tag(AppRoot.library)
 
-            MiniPlayerDock(showsMiniPlayer: showsMiniPlayer) { ExperienceSourcesScreen(scrollMemory: $navigation.followingScroll) }
+            MiniPlayerDock(showsMiniPlayer: showsMiniPlayer) { ExperienceSourcesScreen(model: model).equatable() }
                 .tabItem {
                     Label("Following", systemImage: AppRoot.sources.systemImage)
                         .accessibilityIdentifier("navigation.tab.sources")
                 }
                 .tag(AppRoot.sources)
 
-            MiniPlayerDock(showsMiniPlayer: showsMiniPlayer) { ExperienceMarginsScreen() }
+            MiniPlayerDock(showsMiniPlayer: showsMiniPlayer) { ExperienceMarginsScreen(model: model).equatable() }
                 .tabItem {
                     Label("Margins", systemImage: AppRoot.margins.systemImage)
                         .accessibilityIdentifier("navigation.tab.margins")
                 }
                 .tag(AppRoot.margins)
 
-            MiniPlayerDock(showsMiniPlayer: showsMiniPlayer) { SettingsScreen(supertonicNotice: supertonicNotice) }
+            MiniPlayerDock(showsMiniPlayer: showsMiniPlayer) { SettingsScreen(model: model, supertonicNotice: supertonicNotice).equatable() }
                 .tabItem {
                     Label("Settings", systemImage: AppRoot.settings.systemImage)
                         .accessibilityIdentifier("navigation.tab.settings")
