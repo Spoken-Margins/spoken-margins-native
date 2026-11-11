@@ -16,6 +16,10 @@ final class TextSpeechAtTheEndTests: XCTestCase {
         try TextSpeechAtTheEndInventory.moveAwayAfterARefusedStart(audio: TextSpeechAtTheEndInventory.RefusingAtTheEndSpeech())
     }
 
+    func testARefusedStartStopsTheSpeechThatWasPlaying() throws {
+        try TextSpeechAtTheEndInventory.refusedStartStopsTheOldSpeech()
+    }
+
     func testTheReasonsTheClientsGiveAreRecognised() {
         XCTAssertTrue(EmptyTextStart.isNothingLeftToRead("playback_text_empty"))
         XCTAssertTrue(EmptyTextStart.isNothingLeftToRead("supertonic_playback_text_empty"))

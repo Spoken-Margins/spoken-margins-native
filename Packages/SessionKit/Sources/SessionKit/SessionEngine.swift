@@ -593,7 +593,9 @@ public final class SessionEngine {
         let endedBeforeStartConfirmed = snapshot.status == .starting
             && (session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia)
             && audio.isPlaybackComplete(targetId: session.currentTargetId)
-        if endedBeforeStartConfirmed {
+        // The same for text speech whose start found nothing left to read (#4067): there is no start to confirm.
+        let emptyStartWhileStarting = snapshot.status == .starting && emptyTextStart?.matches(session) == true
+        if endedBeforeStartConfirmed || emptyStartWhileStarting {
             startAttempt.clear()
             protectedPosition.release()
             playbackCompleted = true
@@ -1592,6 +1594,7 @@ public final class SessionEngine {
         }
         forgetFailure(unlessItemIs: session.itemId)
         protectedPosition.release()
+        emptyTextStart = nil
         if (session.phase == .finished || session.status == "finished"), session.completionPercent < 100 {
             if session.phase == .finished {
                 session.phase = .itemPlayback
@@ -2179,6 +2182,7 @@ public final class SessionEngine {
         let previousMap = currentMap
         let previousSnapshot = snapshot
         let previousProtectedPosition = protectedPosition
+        let previousEmptyTextStart = emptyTextStart
         let previousExternallyStreamedTurnId = externallyStreamedTurnId
 
         do {
@@ -2203,6 +2207,7 @@ public final class SessionEngine {
             currentItem = previousItem
             currentMap = previousMap
             protectedPosition = previousProtectedPosition
+            emptyTextStart = previousEmptyTextStart
             externallyStreamedTurnId = previousExternallyStreamedTurnId
             snapshot = previousSnapshot
             if let previousSession {
@@ -3241,6 +3246,7 @@ public final class SessionEngine {
         // A protected position belongs to the session that just ended. Left set, it would
         // pin a replay of the same target to this session's end until playback confirms.
         protectedPosition.release()
+        emptyTextStart = nil
         externallyStreamedTurnId = nil
         streamingBuffers.removeAll()
         spokenPrefixes.removeAll()
@@ -5634,6 +5640,8 @@ public final class SessionEngine {
             // end of the text, not a failure: remember it, and the progress tick finishes the item as it does when
             // the speech reached its end unseen (#3928). The one answer for every way of starting speech from here
             // (resume, a Margin's place, a chapter jump, a restart after a Margin) instead of a guard on each (#4067).
+            // A refusal leaves whatever was speaking before it speaking: stop it, as every other end of the text does.
+            try audio.stop()
             emptyTextStart = EmptyTextStart(session: session)
         }
         try audio.setPlaybackRate(session.playbackRate)

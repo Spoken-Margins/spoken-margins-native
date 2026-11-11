@@ -35,6 +35,8 @@ public enum TextSpeechAtTheEndInventory {
         var source = ""
         public init() {}
         private(set) var starts: [Int] = []
+        /// How often the speech was stopped: a refused start must not leave the old speech running.
+        public private(set) var stops = 0
         public func prepareSpeechText(_ text: String) throws -> String { source = text; return text }
         public func play(targetId: String) throws { try play(targetId: targetId, from: 0) }
         public func play(targetId: String, from charOffset: Int) throws {
@@ -46,7 +48,7 @@ public enum TextSpeechAtTheEndInventory {
         }
         public func play(targetId: String, seekingTo charOffset: Int) throws { try play(targetId: targetId, from: charOffset) }
         public func pause() throws {}
-        public func stop() throws {}
+        public func stop() throws { stops += 1 }
     }
 
     private final class Recorder: RecordingClient {
@@ -159,5 +161,19 @@ public enum TextSpeechAtTheEndInventory {
         _ = try rig.engine.syncPlaybackProgress(coalescingWrites: true)
         XCTAssertNotEqual(rig.engine.currentSession?.phase, .finished, file: file, line: line)
         XCTAssertLessThan(rig.engine.currentSession?.position.charOffset ?? .max, article.text?.count ?? 0, file: file, line: line)
+    }
+
+    /// Speech that is playing when a start inside the unspeakable tail is refused is stopped, not left speaking while
+    /// the item reads as finished.
+    public static func refusedStartStopsTheOldSpeech(
+        file: StaticString = #filePath, line: UInt = #line
+    ) throws {
+        let speech = RefusingAtTheEndSpeech()
+        let rig = try makeRig(paddedArticle, audio: speech)
+        XCTAssertTrue(rig.engine.snapshot.status.isPlaybackActive, file: file, line: line)
+        let stopsBefore = speech.stops
+        XCTAssertNoThrow(try rig.engine.seekText(toCharOffset: (paddedArticle.text?.count ?? 0) - 3), file: file, line: line)
+        XCTAssertGreaterThan(speech.stops, stopsBefore, "the old speech was stopped", file: file, line: line)
+        try assertLandedAtTheEnd(rig, "a seek into the tail while playing", file: file, line: line)
     }
 }
