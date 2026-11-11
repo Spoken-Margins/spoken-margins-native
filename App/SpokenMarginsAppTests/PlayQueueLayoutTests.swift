@@ -132,10 +132,9 @@ final class PlayQueueLayoutTests: XCTestCase {
     }
 
     /// #3891, reopened: with the sheet no longer redrawn, the owner's phone still showed the remove icon and handle fading
-    /// between full and half strength in Edit mode, row text still. The Library presenting the sheet redraws on every
-    /// model publish and hands the sheet a new `dismiss` each time; the rows read it, so every publish redrew every row,
-    /// and a redrawn row in Edit mode fades its edit controls in again. Presented the same way, in Edit mode, the rows
-    /// must not redraw, Edit mode must hold, and nothing in a row may be animating while nobody touches the screen.
+    /// between full and half strength in Edit mode, row text still. The Library redraws on every model publish, and a
+    /// `.sheet` on it re-ran the presentation each time. Presented the way the Library presents it, in Edit mode, nothing
+    /// in the sheet may redraw, Edit mode must hold, and nothing in a row may be animating while nobody touches the screen.
     func testInEditModeTheQueueRowsHoldStillWhileTheirPresenterRedrawsOnEveryPublish() async throws {
         let model = try makeModel(itemCount: 3)
         for id in Self.itemIds(3) { model.queueAppend(itemId: id) }
@@ -144,27 +143,19 @@ final class PlayQueueLayoutTests: XCTestCase {
         let settled = try await settledList(in: mounted) { $0.totalItems >= 3 && $0.view.isEditing }
         let sheetBefore = try await bodyRunsOnceTheSheetIsQuiet()
         let rowsBefore = try await rowRunsOnceTheRowsAreQuiet()
+        let hostBefore = PlayQueueSheetProbe.hostRuns
         try await waitForTheRowsToStopAnimating(in: settled.view)
 
-        var notEditing = 0
-        var animating: Set<String> = []
-        for _ in 0..<20 {
-            model.objectWillChange.send()
-            for _ in 0..<2 {
-                try await Task.sleep(for: .milliseconds(20))
-                if !settled.view.isEditing { notEditing += 1 }
-                animating.formUnion(Self.animatingLayers(in: settled.view.visibleCells))
-            }
-        }
-        try await Task.sleep(for: .milliseconds(300))
-        animating.formUnion(Self.animatingLayers(in: settled.view.visibleCells))
+        let idle = try await editModeWhilePublishing(model, list: settled.view)
 
+        XCTAssertEqual(PlayQueueSheetProbe.hostRuns, hostBefore,
+                       "20 model publishes redrew the sheet's presentation \(PlayQueueSheetProbe.hostRuns - hostBefore) times")
         XCTAssertEqual(PlayQueueSheetProbe.bodyRuns, sheetBefore,
                        "20 model publishes with the queue unchanged redrew the sheet \(PlayQueueSheetProbe.bodyRuns - sheetBefore) times")
         XCTAssertEqual(PlayQueueSheetProbe.rowRuns, rowsBefore,
                        "20 model publishes with the queue unchanged redrew the rows \(PlayQueueSheetProbe.rowRuns - rowsBefore) times")
-        XCTAssertEqual(notEditing, 0, "Edit mode went off in \(notEditing) of 40 looks with nothing touched")
-        XCTAssertTrue(animating.isEmpty, "Rows were animating with nothing touched: \(animating.sorted())")
+        XCTAssertEqual(idle.notEditing, 0, "Edit mode went off in \(idle.notEditing) of \(idle.looks) looks with nothing touched")
+        XCTAssertTrue(idle.animating.isEmpty, "Rows were animating with nothing touched: \(idle.animating.sorted())")
 
         // A real change still lands, and Edit mode survives it.
         model.removeFromQueue(itemId: Self.itemIds(3)[0])
@@ -173,23 +164,22 @@ final class PlayQueueLayoutTests: XCTestCase {
         XCTAssertTrue(afterRemoving.view.isEditing, "Removing a row should leave Edit mode on")
     }
 
-    /// The control for the test above: it shows the presenter really does what the Library does. Under it, a row that
-    /// reads `dismiss`, as the queue rows did, is redrawn by publishes that change nothing. If this fails, the test above
-    /// no longer reproduces the Library and its pass proves nothing.
-    func testWithoutAFixedCloseARowThatReadsDismissRedrawsOnEveryPublish() async throws {
-        let model = try makeModel(itemCount: 0)
-        let mounted = try mount(AnyView(DismissReadingSheetPresenter(model: model)), size: .large)
+    /// The control for the test above: it shows the presenter really does what the Library does. With a plain `.sheet`
+    /// on a presenter that watches the model, as the Library had, publishes that change nothing knock the list out of
+    /// Edit mode or set its rows animating (a hosted run: Edit mode off in 35 of 40 looks, remove icons fading). If this
+    /// fails, the test above no longer reproduces the owner's recording and its pass proves nothing.
+    func testWithAPlainSheetOnTheWatchingPresenterEditModeFlickersOnEveryPublish() async throws {
+        let model = try makeModel(itemCount: 3)
+        for id in Self.itemIds(3) { model.queueAppend(itemId: id) }
+        let mounted = try mount(AnyView(PlainSheetQueuePresenter(model: model)), size: .large)
         defer { mounted.close() }
-        _ = try await settledList(in: mounted) { $0.totalItems >= 3 }
+        let settled = try await settledList(in: mounted) { $0.totalItems >= 3 }
         try await Task.sleep(for: .milliseconds(500))
-        let before = DismissReadingRow.runs
 
-        for _ in 0..<20 {
-            model.objectWillChange.send()
-            try await Task.sleep(for: .milliseconds(40))
-        }
-        XCTAssertGreaterThanOrEqual(DismissReadingRow.runs - before, 20,
-                                    "3 rows reading dismiss, 20 publishes: redrawn \(DismissReadingRow.runs - before) times")
+        let idle = try await editModeWhilePublishing(model, list: settled.view)
+
+        XCTAssertTrue(idle.notEditing > 0 || !idle.animating.isEmpty,
+                      "20 publishes under a plain sheet left Edit mode on in all \(idle.looks) looks with no row animating")
     }
 
     /// #4033: the sheet's rows are published only when they differ, so a screen watching them is not invalidated by
@@ -430,6 +420,27 @@ final class PlayQueueLayoutTests: XCTestCase {
         throw NotSettled()
     }
 
+    /// Sends 20 model publishes that change nothing, looking twice after each: how often the list was out of Edit mode,
+    /// and every row layer seen animating, including in the 0.3 s after the last.
+    private func editModeWhilePublishing(_ model: Gate1AppModel, list: UICollectionView) async throws
+        -> (notEditing: Int, looks: Int, animating: Set<String>) {
+        var notEditing = 0
+        var looks = 0
+        var animating: Set<String> = []
+        for _ in 0..<20 {
+            model.objectWillChange.send()
+            for _ in 0..<2 {
+                try await Task.sleep(for: .milliseconds(20))
+                looks += 1
+                if !list.isEditing { notEditing += 1 }
+                animating.formUnion(Self.animatingLayers(in: list.visibleCells))
+            }
+        }
+        try await Task.sleep(for: .milliseconds(300))
+        animating.formUnion(Self.animatingLayers(in: list.visibleCells))
+        return (notEditing, looks, animating)
+    }
+
     /// Each layer in the cells with an animation running, as "layer's class (its view's class): animation keys".
     private static func animatingLayers(in cells: [UICollectionViewCell]) -> Set<String> {
         var found: Set<String> = []
@@ -524,8 +535,8 @@ private struct PlainListWithTopRow: View {
     }
 }
 
-/// The Library's shape around the queue sheet: a presenter that watches the model, so every publish redraws it and
-/// rebuilds the sheet's presentation, as the Library does while audio plays.
+/// The Library's shape around the queue sheet: a presenter that watches the model, so every publish redraws it, and
+/// presents the sheet the way the Library does.
 private struct QueueSheetPresenter: View {
     @ObservedObject var model: Gate1AppModel
     let startingEditMode: EditMode
@@ -533,34 +544,19 @@ private struct QueueSheetPresenter: View {
 
     var body: some View {
         Color.clear
-            .sheet(isPresented: $isPresented) {
-                ExperiencePlayQueueScreen(model: model, close: { isPresented = false }, startingEditMode: startingEditMode)
-            }
+            .playQueueSheet(isPresented: $isPresented, model: model, startingEditMode: startingEditMode)
     }
 }
 
-/// The same presenter over a list whose rows read `dismiss`, as the queue rows did before #3891 was reopened.
-private struct DismissReadingSheetPresenter: View {
+/// The same presenter with a plain `.sheet`, as the Library had before #3891 was reopened.
+private struct PlainSheetQueuePresenter: View {
     @ObservedObject var model: Gate1AppModel
     @State private var isPresented = true
 
     var body: some View {
         Color.clear
             .sheet(isPresented: $isPresented) {
-                List {
-                    ForEach(0..<3, id: \.self) { DismissReadingRow(index: $0) }
-                }
+                ExperiencePlayQueueScreen(model: model, close: { isPresented = false }, startingEditMode: .active)
             }
-    }
-}
-
-private struct DismissReadingRow: View {
-    @MainActor static var runs = 0
-    @Environment(\.dismiss) private var dismiss
-    let index: Int
-
-    var body: some View {
-        let _ = Self.runs += 1
-        Button("Row \(index)") { dismiss() }
     }
 }

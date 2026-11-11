@@ -12,8 +12,7 @@ import SwiftUI
 /// Library redraws this screen. A hosted run showed the sheet drawn once per publish with SwiftUI never asking its `==`
 /// (#4033), so the first guard is that nothing here is invalidated by a model publish at all.
 ///
-/// Nothing in the sheet reads `dismiss` either: the Library redraws on every publish and hands the sheet a new one each
-/// time, so the rows reading it redrew, and in Edit mode faded their remove icons in again (#3891, reopened).
+/// The Library presents it with `playQueueSheet(isPresented:model:)`, never a plain `.sheet`: see `PlayQueueSheetHost`.
 struct ExperiencePlayQueueScreen: View {
     let model: Gate1AppModel
     @StateObject private var feed: PlayQueueRowsFeed
@@ -43,6 +42,41 @@ struct ExperiencePlayQueueScreen: View {
             editMode: startingEditMode
         )
         .equatable()
+    }
+}
+
+extension View {
+    /// Presents the play queue from a view that redraws on every model publish, as the Library does while audio plays.
+    func playQueueSheet(isPresented: Binding<Bool>, model: Gate1AppModel, startingEditMode: EditMode = .inactive) -> some View {
+        background {
+            PlayQueueSheetHost(model: model, isPresented: isPresented, startingEditMode: startingEditMode).equatable()
+        }
+    }
+}
+
+/// Holds the queue sheet's presentation in a view the presenter's redraws do not reach (#3891, reopened). With `.sheet`
+/// on the Library itself, every model publish re-ran the presentation: neither the sheet nor its rows redrew, yet a
+/// hosted run saw the list leave Edit mode in 35 of 40 looks and its remove icons and handles fade, which is what the
+/// owner filmed. This view is equal to its last copy unless the flag changes, so SwiftUI skips it and the presentation
+/// is left alone.
+private struct PlayQueueSheetHost: View, Equatable {
+    let model: Gate1AppModel
+    @Binding var isPresented: Bool
+    let startingEditMode: EditMode
+
+    nonisolated static func == (lhs: PlayQueueSheetHost, rhs: PlayQueueSheetHost) -> Bool {
+        lhs.model === rhs.model && lhs.isPresented == rhs.isPresented && lhs.startingEditMode == rhs.startingEditMode
+    }
+
+    var body: some View {
+        #if DEBUG
+        let _ = PlayQueueSheetProbe.hostRuns += 1
+        #endif
+        Color.clear
+            .sheet(isPresented: $isPresented) {
+                // The binding writes the presenter's own flag, so an older copy of this closure still closes the sheet.
+                ExperiencePlayQueueScreen(model: model, close: { isPresented = false }, startingEditMode: startingEditMode)
+            }
     }
 }
 
@@ -82,6 +116,7 @@ struct PlayQueueSheetActions {
 enum PlayQueueSheetProbe {
     static var bodyRuns = 0
     static var rowRuns = 0
+    static var hostRuns = 0
     nonisolated(unsafe) static var comparisons = 0
     nonisolated(unsafe) static var unequalComparisons = 0
 }
@@ -180,8 +215,8 @@ struct PlayQueueSheet: View, Equatable {
     }
 }
 
-/// A queued row as a button. Its own view so a test can count its redraws: a row redrawn in Edit mode fades its remove
-/// icon and handle in again (#3891).
+/// A queued row as a button. Its own view so a test can count its redraws, and tell a redrawn row from an Edit mode
+/// the presentation upset (#3891).
 private struct PlayQueueRowButton: View {
     let row: PlayQueueRow
     let action: () -> Void

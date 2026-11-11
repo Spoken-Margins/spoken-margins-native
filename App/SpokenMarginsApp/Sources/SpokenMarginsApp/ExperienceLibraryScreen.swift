@@ -113,9 +113,7 @@ struct ExperienceLibraryScreen: View {
             ExperienceAudioPreparationQueueScreen()
                 .environmentObject(model)
         }
-        .sheet(isPresented: $isPlayQueuePresented) {
-            ExperiencePlayQueueScreen(model: model, close: { isPlayQueuePresented = false })
-        }
+        .playQueueSheet(isPresented: $isPlayQueuePresented, model: model)
         .onAppear { model.loadPlayQueue() }
         .fullScreenCover(item: $openedNote) { opening in
             SpokenNoteRecordingView(opening: opening).environmentObject(model)
