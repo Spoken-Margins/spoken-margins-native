@@ -37,9 +37,13 @@ RESOLVED = Path('Packages/SessionKit/Package.resolved')
 STAGED = '.apt-staged'  # the host's copy of the SQLite .debs, there only after the container's own apt failed (#4082)
 SETUP_FAULT_CODE = 75  # EX_TEMPFAIL: the container could not install its headers; says nothing about the PR's code
 SETUP_FAULT_MARK = 'SETUP FAULT: could not reach apt'
-# What a failed apt prints when the container has no network, for a command that lacks SETUP_FAULT_MARK.
+# What a failed apt, or SwiftPM fetching a dependency, prints when the container has no network, for a run that lacks
+# SETUP_FAULT_MARK (the dependency fetch happens in `swift test`, after the install, and the host's .debs don't help it).
 APT_UNREACHABLE = re.compile(r"^(?:W|E|Err[:\d]*):.*(?:Could not resolve '|Failed to fetch http|"
-                             r'Unable to locate package libsqlite3-dev|Temporary failure resolving)', re.M)
+                             r'Unable to locate package libsqlite3-dev|Temporary failure resolving)|'
+                             r'^error: .*(?:Could not resolve host|Temporary failure in name resolution|'
+                             r"Couldn't resolve host|getaddrinfo)", re.M)
+COMPILER_ERROR = re.compile(r'^\S+\.swift:\d+:\d+: error:', re.M)  # the build ran and the PR's code broke it
 
 
 def install_script(mount: str = '/w') -> str:
@@ -100,7 +104,10 @@ def setup_fault(code: int, text: str) -> bool:
     network errors from a command that lacks the marker. Only when no test ran, so a test's own output never counts."""
     if linux_results(text) or unfinished(text):
         return False
-    return code == SETUP_FAULT_CODE or SETUP_FAULT_MARK in text or bool(APT_UNREACHABLE.search(text))
+    if code == SETUP_FAULT_CODE or SETUP_FAULT_MARK in text:
+        return True
+    # A compile error means the build ran: a stray network warning beside it does not clear the PR's code.
+    return bool(APT_UNREACHABLE.search(text)) and not COMPILER_ERROR.search(text)
 
 
 def stage_debs(directory: Path, run=subprocess.run, which=shutil.which) -> bool:

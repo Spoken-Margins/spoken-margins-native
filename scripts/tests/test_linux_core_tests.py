@@ -208,6 +208,21 @@ class WhenTheContainerCannotReachApt(ScriptedRuns):
         self.assertEqual((code, self.attempts_made(), staged), (core.SETUP_FAULT_CODE, 2, 1))
         self.assertIn('lane-fault', out)
 
+    def test_swiftpm_failing_to_fetch_a_dependency_without_dns_is_a_setup_fault_after_the_hosts_debs(self):
+        fetch = ("error: Failed to clone repository https://github.com/x/y: Could not resolve host: github.com")
+        code, out, staged = self.run_staged(True, f'echo "{APT_DOWN}"; exit 100', f'echo "{fetch}"; exit 1')
+        self.assertEqual((code, staged), (core.SETUP_FAULT_CODE, 1))
+        self.assertIn('lane-fault', out)
+        self.assertNotIn('ran no tests', out)
+
+    def test_a_real_compile_error_is_never_called_a_setup_fault(self):
+        text = ("W: Failed to fetch http://archive.ubuntu.com/x  Temporary failure resolving 'archive.ubuntu.com'\n"
+                "/w/Sources/A.swift:12:5: error: cannot find 'x' in scope\n")
+        self.assertFalse(core.setup_fault(1, text))
+        code, out, staged = self.run_staged(False, f'printf "%s\\n" "{text.splitlines()[0]}" "{text.splitlines()[1]}"; exit 1')
+        self.assertEqual((code, staged), (1, 0))
+        self.assertIn('ran no tests', out)
+
     def test_a_network_that_drops_before_the_rerun_still_gets_the_hosts_debs_and_the_rerun(self):
         code, out, staged = self.run_staged(True, f'echo "{FAIL}"; exit 1', f'echo "{APT_DOWN}"; exit 100',
                                             f'echo "{PASS}"; exit 0')
