@@ -4,16 +4,20 @@ import XCTest
 @testable import SessionKit
 @testable import SpokenMarginsApp
 
-/// Measurement for #4028: how often Following, Margins and Settings rebuild their bodies while the model publishes the
-/// way it does as audio renders. Each screen is mounted alone, left to settle, then given 20 publishes of one kind, 25 ms
-/// apart; the count of body runs that follow is the number. The census is attached to the run (`redraw-census`) and
-/// printed, so a lane report's result bundle holds it.
+/// #4028: Following, Margins and Settings rebuilt their bodies on every model publish while audio rendered, 20 runs for
+/// 20 publishes each (the census below, first run on the lane for #4039), and the lists stuttered under the listener's
+/// finger. Each screen now reads the model through a `ScreenInputsFeed`.
 ///
-/// The one assertion is that the probe sees a real redraw: a count of zero everywhere could mean the screens never redraw,
-/// or that the probe is dead. A screen that redraws on a plain publish proves the probe works.
+/// Each screen is mounted inside the app's own tab bar (`ExperienceRootTabs`, which watches the whole model and so
+/// redraws on every publish, as it does on the phone), left to settle, then given model publishes, 25 ms apart. The
+/// regression tests send 20 publishes that leave the screen's inputs as they were and allow at most 2 body runs; on
+/// `main` before the fix each screen ran 20. They then make one change the screen shows and require a redraw, so a feed
+/// that went deaf cannot pass. The census is attached to the run (`redraw-census`) and printed.
 @MainActor
 final class ScreenRedrawMeasurementTests: XCTestCase {
     private static let publishes = 20
+    /// A stray draw from the screen's own late first-appearance work is not a publish redrawing it.
+    private static let allowedRuns = 2
 
     private enum Publish: String, CaseIterable {
         /// `objectWillChange.send()`, what every model write ends in.
@@ -26,11 +30,63 @@ final class ScreenRedrawMeasurementTests: XCTestCase {
 
     private enum Screen: String, CaseIterable {
         case following, margins, settings
+
+        var root: AppRoot {
+            switch self {
+            case .following: .sources
+            case .margins: .margins
+            case .settings: .settings
+            }
+        }
     }
+
+    // MARK: - Regression tests
+
+    func testFollowingIsNotRedrawnByModelPublishesThatLeaveItsListAsItWas() async throws {
+        try await assertOnlyShownChangesRedraw(.following) { model in
+            // Offline shows the "last local snapshot" line.
+            model.selectedProfileId = "phone-tablet-offline"
+        }
+    }
+
+    func testMarginsIsNotRedrawnByModelPublishesThatLeaveItsListAsItWas() async throws {
+        try await assertOnlyShownChangesRedraw(.margins) { model in
+            model.marginCollectionQuery.filter = .shared
+        }
+    }
+
+    func testSettingsIsNotRedrawnByModelPublishesThatLeaveItsRowsAsTheyWere() async throws {
+        try await assertOnlyShownChangesRedraw(.settings) { model in
+            model.skipUnit = model.skipUnit == "sentence" ? "paragraph" : "sentence"
+        }
+    }
+
+    private func assertOnlyShownChangesRedraw(_ screen: Screen, shownChange: (Gate1AppModel) -> Void) async throws {
+        let model = try makeModel()
+        let mounted = try mount(screen, model: model)
+        defer { mounted.close() }
+        try await waitUntilQuiet(screen.rawValue)
+        let before = ScreenRedrawProbe.count(screen.rawValue)
+        for index in 0..<Self.publishes {
+            publish(Publish.allCases[index % Publish.allCases.count], index: index, on: model)
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        try await waitUntilQuiet(screen.rawValue)
+        let afterPublishes = ScreenRedrawProbe.count(screen.rawValue)
+        XCTAssertLessThanOrEqual(afterPublishes - before, Self.allowedRuns,
+                                 "\(screen.rawValue): \(Self.publishes) model publishes that change nothing it shows ran its body "
+                                     + "\(afterPublishes - before) times")
+
+        shownChange(model)
+        try await waitUntilQuiet(screen.rawValue)
+        XCTAssertGreaterThan(ScreenRedrawProbe.count(screen.rawValue), afterPublishes,
+                             "\(screen.rawValue): a change it shows did not redraw it, so its feed missed the change")
+    }
+
+    // MARK: - Census
 
     func testCensusOfScreenRedrawsPerModelPublish() async throws {
         var lines: [String] = []
-        var plainCounts: [Screen: Int] = [:]
         for screen in Screen.allCases {
             for kind in Publish.allCases {
                 let model = try makeModel()
@@ -43,7 +99,6 @@ final class ScreenRedrawMeasurementTests: XCTestCase {
                 }
                 try await waitUntilQuiet(screen.rawValue)
                 let runs = ScreenRedrawProbe.count(screen.rawValue) - before
-                if kind == .plain { plainCounts[screen] = runs }
                 lines.append("\(screen.rawValue) / \(kind.rawValue): \(runs) body runs for \(Self.publishes) publishes")
                 mounted.close()
             }
@@ -54,11 +109,27 @@ final class ScreenRedrawMeasurementTests: XCTestCase {
         attachment.name = "redraw-census"
         attachment.lifetime = .keepAlways
         add(attachment)
+    }
 
-        for screen in Screen.allCases {
-            XCTAssertGreaterThan(plainCounts[screen] ?? 0, 0,
-                                 "\(screen.rawValue): a plain model publish ran no body, so the probe or the mount is not seeing redraws\n\(census)")
-        }
+    // MARK: - The feed
+
+    func testTheFeedPublishesOnlyWhenWhatItReadsChanges() async throws {
+        let model = try makeModel()
+        let feed = ScreenInputsFeed(model: model) { $0.skipUnit }
+        var published = 0
+        let subscription = feed.$inputs.dropFirst().sink { _ in published += 1 }
+        defer { subscription.cancel() }
+
+        for _ in 0..<5 { model.objectWillChange.send() }
+        model.preparedTextAudioStatus = "ready"
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(published, 0, "Publishes that leave the read value as it was must not reach the screen")
+
+        let next = model.skipUnit == "sentence" ? "paragraph" : "sentence"
+        model.skipUnit = next
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(published, 1)
+        XCTAssertEqual(feed.inputs, next, "The feed reads the model after the write, not the value it is about to replace")
     }
 
     // MARK: - Publishing
@@ -89,19 +160,23 @@ final class ScreenRedrawMeasurementTests: XCTestCase {
         return model
     }
 
-    private func screenView(_ screen: Screen, model: Gate1AppModel) -> AnyView {
-        switch screen {
-        case .following:
-            let drawer = CatalogDrawerModel(store: nil, subscriptions: { [] }, follow: { _ in "" })
-            return AnyView(ExperienceSourcesScreen(scrollMemory: .constant(FollowingScrollMemory()))
-                .environmentObject(model).environmentObject(drawer))
-        case .margins:
-            return AnyView(ExperienceMarginsScreen().environmentObject(model))
-        case .settings:
-            let notice = SupertonicDownloadNotice(defaults: UserDefaults(suiteName: "redraw-census-\(UUID().uuidString)")!,
-                                                  modelInstalled: { false })
-            return AnyView(SettingsScreen(supertonicNotice: notice).environmentObject(model))
+    /// The app's tab bar on one tab, as `Gate1RootView` shows it.
+    private struct TabsHost: View {
+        @State var navigation: AppNavigationState
+        let notice: SupertonicDownloadNotice
+
+        var body: some View {
+            ExperienceRootTabs(navigation: $navigation, supertonicNotice: notice)
         }
+    }
+
+    private func screenView(_ screen: Screen, model: Gate1AppModel) -> AnyView {
+        var navigation = AppNavigationState()
+        navigation.select(screen.root, recordingIsLocked: false)
+        let notice = SupertonicDownloadNotice(defaults: UserDefaults(suiteName: "redraw-census-\(UUID().uuidString)")!,
+                                              modelInstalled: { false })
+        let drawer = CatalogDrawerModel(store: nil, subscriptions: { [] }, follow: { _ in "" })
+        return AnyView(TabsHost(navigation: navigation, notice: notice).environmentObject(model).environmentObject(drawer))
     }
 
     // MARK: - Mounting

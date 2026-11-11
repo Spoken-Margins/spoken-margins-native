@@ -2,8 +2,12 @@ import SwiftUI
 import SessionKit
 import SessionKitPersistence
 
+/// The listener's Margins, grouped by item, and the Margins friends shared.
+///
+/// It does not watch `Gate1AppModel`: it reads what it shows through a `ScreenInputsFeed`, so a model publish that
+/// leaves the list as it was does not rebuild it while the listener scrolls (#4028).
 struct ExperienceMarginsScreen: View {
-    private struct MarginGroup: Identifiable {
+    fileprivate struct MarginGroup: Identifiable, Equatable {
         let itemID: String
         let itemTitle: String
         let rows: [MarginRow]
@@ -15,7 +19,8 @@ struct ExperienceMarginsScreen: View {
 
     }
 
-    @EnvironmentObject private var model: Gate1AppModel
+    let model: Gate1AppModel
+    @StateObject private var feed: ScreenInputsFeed<Inputs>
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
@@ -26,19 +31,56 @@ struct ExperienceMarginsScreen: View {
     @State private var preparingMarkdownItemID: String?
     @State private var collections: [ItemCollection] = []
 
+    init(model: Gate1AppModel) {
+        self.model = model
+        _feed = StateObject(wrappedValue: ScreenInputsFeed(model: model, read: Inputs.init))
+    }
+
+    /// Everything the screen shows from the model. A publish that changes none of it leaves the screen alone.
+    struct Inputs: Equatable {
+        var query: MarginCollectionQuery
+        var hasMargins: Bool
+        var hasActiveSession: Bool
+        var scopeItems: [LibraryItemRow]
+        var privateRowCount: Int
+        fileprivate var groups: [MarginGroup]
+        /// "Send replies to Ana" for each group whose item has a friend's Margins (#3221).
+        var replyBackOffers: [String: ReplyBackOffer]
+        var sharedRowCount: Int
+        /// Read only while the Shared filter is on; empty otherwise.
+        fileprivate var sharedEntries: [SharedListEntry]
+
+        @MainActor init(_ model: Gate1AppModel) {
+            query = model.marginCollectionQuery
+            hasMargins = !model.marginRows.isEmpty
+            hasActiveSession = model.hasActiveSession
+            scopeItems = model.marginScopeItems
+            let privateRows = model.visiblePrivateMarginRows
+            privateRowCount = privateRows.count
+            groups = ExperienceMarginsScreen.groupedRows(privateRows)
+            var offers: [String: ReplyBackOffer] = [:]
+            for group in groups { offers[group.itemID] = model.replyBackOffer(itemID: group.itemID) }
+            replyBackOffers = offers
+            let visibleShared = model.visibleSharedMarginRows
+            sharedRowCount = visibleShared.count
+            sharedEntries = query.filter == .shared ? ExperienceMarginsScreen.sharedEntries(visibleShared, model: model) : []
+        }
+    }
+
     var body: some View {
         #if DEBUG
         let _ = ScreenRedrawProbe.record("margins")
         #endif
+        let inputs = feed.inputs
         NavigationStack {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
-                    MarginsSearchField(text: $model.marginCollectionQuery.text)
+                    MarginsSearchField(text: model.screenBinding(\.marginCollectionQuery.text))
                         .padding(.bottom, 12)
-                    scopeRow
-                    filterBar
+                    scopeRow(inputs)
+                    filterBar(inputs)
                         .padding(.bottom, 8)
-                    if model.marginCollectionQuery.filter == .shared { sharedCollection } else { collection }
+                    if inputs.query.filter == .shared { sharedCollection(inputs) } else { collection(inputs) }
                 }
                 .padding(.horizontal, horizontalSizeClass == .regular ? 28 : 16)
                 .padding(.vertical, 12)
@@ -95,25 +137,25 @@ struct ExperienceMarginsScreen: View {
         }
     }
 
-    private var scopeRow: some View {
+    private func scopeRow(_ inputs: Inputs) -> some View {
         MarginsScopeRow(
-            title: scopeTitle,
-            countText: MarginCountText.count(model.marginCollectionQuery.filter == .shared ? model.visibleSharedMarginRows.count : filteredRows.count),
+            title: scopeTitle(inputs),
+            countText: MarginCountText.count(inputs.query.filter == .shared ? inputs.sharedRowCount : inputs.privateRowCount),
             selection: scopeTag,
             collections: collections,
-            items: model.marginScopeItems
+            items: inputs.scopeItems
         )
         .equatable()
     }
 
     /// What the scope control reads: the collection, the item, or all items.
-    private var scopeTitle: String {
-        let query = model.marginCollectionQuery
+    private func scopeTitle(_ inputs: Inputs) -> String {
+        let query = inputs.query
         if let scope = query.collection {
             return collections.first { $0.id == scope.collectionID }?.name ?? "Collection"
         }
         if let itemID = query.itemID {
-            return model.marginScopeItems.first { $0.id == itemID }?.title ?? "Untitled"
+            return inputs.scopeItems.first { $0.id == itemID }?.title ?? "Untitled"
         }
         return "Everything"
     }
@@ -137,12 +179,12 @@ struct ExperienceMarginsScreen: View {
         model.openBatchExport(scopedTo: model.marginCollectionQuery.collection)
     }
 
-    private var filterBar: some View {
+    private func filterBar(_ inputs: Inputs) -> some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 ForEach(MarginCollectionFilter.allCases.filter { $0 != .attention }, id: \.self) { option in
                     Button { model.marginCollectionQuery.filter = option } label: {
-                        ExperienceFilterChip(isActive: model.marginCollectionQuery.filter == option) { Text(option.title) }
+                        ExperienceFilterChip(isActive: inputs.query.filter == option) { Text(option.title) }
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("margins.filter.\(option.rawValue)")
@@ -154,18 +196,18 @@ struct ExperienceMarginsScreen: View {
     /// The item heading, then Share and Export as Markdown. At accessibility sizes the buttons take their own
     /// row under the title instead of squeezing it (#1938).
     @ViewBuilder
-    private func groupHeading(_ group: MarginGroup) -> some View {
+    private func groupHeading(_ group: MarginGroup, offer: ReplyBackOffer?) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             groupHeadingRow(group)
-            sendRepliesButton(group)
+            sendRepliesButton(group, offer: offer)
         }
     }
 
     /// "Send replies to Ana" under an item whose Margins the listener has answered or added since they opened a
     /// friend's (#3221): the two-tap way back to the person who shared.
     @ViewBuilder
-    private func sendRepliesButton(_ group: MarginGroup) -> some View {
-        if let offer = model.replyBackOffer(itemID: group.itemID) {
+    private func sendRepliesButton(_ group: MarginGroup, offer: ReplyBackOffer?) -> some View {
+        if let offer {
             Button { model.openReplyBackExport(itemID: group.itemID) } label: {
                 Label(offer.title, systemImage: "arrowshape.turn.up.left")
                     .frame(maxWidth: .infinity, minHeight: 44)
@@ -252,22 +294,22 @@ struct ExperienceMarginsScreen: View {
     }
 
     @ViewBuilder
-    private var collection: some View {
-        if filteredRows.isEmpty {
+    private func collection(_ inputs: Inputs) -> some View {
+        if inputs.privateRowCount == 0 {
             SMExperienceEmptyState(
                 systemImage: "quote.bubble",
-                title: model.marginRows.isEmpty ? "No Margins yet" : "Nothing in this view",
-                detail: model.marginRows.isEmpty ? "While listening, record or write what you want to remember." : "Try a different search or filter.",
-                actionTitle: model.marginRows.isEmpty ? (model.hasActiveSession ? "Open Now Playing" : "Choose something to play") : "Clear search & filters"
+                title: !inputs.hasMargins ? "No Margins yet" : "Nothing in this view",
+                detail: !inputs.hasMargins ? "While listening, record or write what you want to remember." : "Try a different search or filter.",
+                actionTitle: !inputs.hasMargins ? (inputs.hasActiveSession ? "Open Now Playing" : "Choose something to play") : "Clear search & filters"
             ) {
                 if model.marginRows.isEmpty {
                     if model.hasActiveSession { model.openPlayback() } else { model.openLibrary() }
                 } else { model.marginCollectionQuery = MarginCollectionQuery() }
             }
         } else {
-            ForEach(groupedRows) { group in
+            ForEach(inputs.groups) { group in
                 VStack(alignment: .leading, spacing: 0) {
-                    groupHeading(group)
+                    groupHeading(group, offer: inputs.replyBackOffers[group.itemID])
                     .padding(.top, 16)
                     .padding(.bottom, 6)
 
@@ -355,15 +397,15 @@ struct ExperienceMarginsScreen: View {
     }
 
     @ViewBuilder
-    private var sharedCollection: some View {
-        if model.visibleSharedMarginRows.isEmpty {
+    private func sharedCollection(_ inputs: Inputs) -> some View {
+        if inputs.sharedRowCount == 0 {
             ContentUnavailableView(
-                model.marginCollectionQuery.text.isEmpty ? "No shared Margins" : "No matches",
+                inputs.query.text.isEmpty ? "No shared Margins" : "No matches",
                 systemImage: "person.2",
                 description: Text("Imported Margins appear here separately from your own notes.")
             )
         } else {
-            ForEach(sharedEntries) { entry in
+            ForEach(inputs.sharedEntries) { entry in
                 if let row = entry.shared {
                     sharedRowButton(row, depth: entry.depth, note: entry.note)
                 } else if let own = entry.own {
@@ -374,7 +416,7 @@ struct ExperienceMarginsScreen: View {
     }
 
     /// One row of the Shared list: a friend's Margin, or the listener's own Margin in a conversation with it.
-    private struct SharedListEntry: Identifiable {
+    fileprivate struct SharedListEntry: Identifiable, Equatable {
         let id: String
         let depth: Int
         let note: String?
@@ -384,8 +426,7 @@ struct ExperienceMarginsScreen: View {
 
     /// The shared Margins the filters keep, in conversations: replies indented under the Margin they answer, the
     /// listener's own replies among them, and every conversation kept whole when one of its Margins matches (#473).
-    private var sharedEntries: [SharedListEntry] {
-        let visible = model.visibleSharedMarginRows
+    fileprivate static func sharedEntries(_ visible: [SharedMarginRow], model: Gate1AppModel) -> [SharedListEntry] {
         let visibleIDs = Set(visible.map(\.interjection.id))
         let sharedByID = Dictionary(model.sharedMarginRows.map { ($0.interjection.id, $0) }, uniquingKeysWith: { first, _ in first })
         let ownByID = Dictionary(model.marginRows.map { ($0.interjection.id, $0) }, uniquingKeysWith: { first, _ in first })
@@ -488,9 +529,7 @@ struct ExperienceMarginsScreen: View {
         }
     }
 
-    private var filteredRows: [MarginRow] { model.visiblePrivateMarginRows }
-
-    private var groupedRows: [MarginGroup] {
+    fileprivate static func groupedRows(_ filteredRows: [MarginRow]) -> [MarginGroup] {
         // Groups run by their newest Margin, and the first is marked Newest (#1866).
         let rowsByItem = Dictionary(grouping: filteredRows, by: \.interjection.itemId)
         let entries = filteredRows.map { MarginGroupOrdering.Entry(itemID: $0.interjection.itemId, createdAt: $0.interjection.createdAt) }

@@ -4,8 +4,12 @@ import SwiftUI
 /// Following (#1865): one row per followed show, newest episode first, with "N new", a play button for the
 /// newest unplayed episode and a chevron into the show's own screen. Quiet shows sit in a collapsed group
 /// at the bottom. The plus opens the Follow sheet (#3205): Paste, Browse and Import from another app.
+///
+/// It does not watch `Gate1AppModel`: it reads what it shows through a `ScreenInputsFeed`, so a model publish that
+/// leaves the list as it was does not rebuild it while the listener scrolls (#4028).
 struct ExperienceSourcesScreen: View {
-    @EnvironmentObject private var model: Gate1AppModel
+    let model: Gate1AppModel
+    @StateObject private var feed: ScreenInputsFeed<Inputs>
     @Environment(\.isEdgeSwipePreview) private var isEdgeSwipePreview
     @EnvironmentObject private var catalogDrawer: CatalogDrawerModel
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
@@ -28,30 +32,78 @@ struct ExperienceSourcesScreen: View {
     /// A friend with Margins on more than one item, whose items are open.
     @State private var openFriend: FollowingFriends.Friend?
 
+    init(model: Gate1AppModel, scrollMemory: Binding<FollowingScrollMemory>) {
+        self.model = model
+        _scrollMemory = scrollMemory
+        _feed = StateObject(wrappedValue: ScreenInputsFeed(model: model, read: Inputs.init))
+    }
+
+    /// Everything the list shows from the model. A publish that changes none of it leaves the screen alone.
+    struct Inputs: Equatable {
+        var list: FollowingShowList
+        var feedRows: [FollowingFeed.Row]
+        var showsEmptyState: Bool
+        var hasFollowCandidates: Bool
+        var isOfflineSnapshot: Bool
+        var quickFolderFileCount: Int
+        var isRefreshingQuickAddFeed: Bool
+        var importingEntryIds: Set<String>
+        var showRowsKey: ShowRowsKey
+        var subscriptionIDs: [String]
+        var isRefreshingFollowedSources: Bool
+
+        @MainActor init(_ model: Gate1AppModel) {
+            let friends = model.followingFriends
+            list = model.followingShowListCache
+            feedRows = model.followingFeedRows(friends: friends)
+            showsEmptyState = model.followingShowsEmptyState(friends: friends)
+            hasFollowCandidates = !model.followedSourceCandidates.isEmpty
+            isOfflineSnapshot = model.selectedProfileId.contains("offline")
+            // New files in the Quick Folder. They used to arrive in Following's stream; the folder is a place to open now.
+            quickFolderFileCount = model.quickAddCandidates.filter { if case .localFile = $0 { true } else { false } }.count
+            isRefreshingQuickAddFeed = model.isRefreshingQuickAddFeed
+            importingEntryIds = model.importingFollowedSourceEntryIds
+            showRowsKey = ShowRowsKey(
+                subscriptions: model.feedSubscriptions.map { "\($0.id):\($0.state.rawValue)" },
+                unplayedCount: model.followedSourceEntries.count,
+                isRefreshing: model.isRefreshingFollowedSources,
+                // Finishing an episode moves its show's row to the next unread one, so a change in what the Library
+                // holds or has finished re-reads the rows.
+                libraryCount: model.libraryItems.count,
+                finishedCount: model.libraryItems.filter(\.isCompleted).count,
+                // An episode counts as heard before the Library calls it finished (95%, or its last two minutes;
+                // `FollowingHeardRule`), so each 1% of listening re-reads the rows too (#3691).
+                listeningSteps: model.libraryItems.reduce(0) { $0 + ($1.continuationProgressPercent ?? 0) }
+            )
+            subscriptionIDs = model.feedSubscriptions.map(\.id)
+            isRefreshingFollowedSources = model.isRefreshingFollowedSources
+        }
+    }
+
     var body: some View {
         #if DEBUG
         let _ = ScreenRedrawProbe.record("following")
         #endif
+        let inputs = feed.inputs
         NavigationStack(path: $path) {
-            let list = model.followingShowListCache
-            let friends = model.followingFriends
+            let list = inputs.list
             List {
                 // An item's Follow can find several feeds; the choice shows here too, not only on the follow screen.
-                if !model.followedSourceCandidates.isEmpty {
+                if inputs.hasFollowCandidates {
                     VStack(alignment: .leading, spacing: 10) { FollowCandidateChoices() }
                         .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
                 }
-                if model.selectedProfileId.contains("offline") {
+                if inputs.isOfflineSnapshot {
                     Label("Showing the last local snapshot", systemImage: "wifi.slash")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(AppColors.secondaryText)
                         .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
                 }
-                if quickFolderFiles.count > 0 {
-                    quickFolderRow
+                if inputs.quickFolderFileCount > 0 {
+                    quickFolderRow(count: inputs.quickFolderFileCount)
                         .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
                 }
-                if model.followingShowsEmptyState(friends: friends) {
+                if inputs.showsEmptyState {
                     SMExperienceEmptyState(
                         systemImage: "dot.radiowaves.left.and.right",
                         title: "You’re not following anything yet",
@@ -71,7 +123,7 @@ struct ExperienceSourcesScreen: View {
                     .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
                 }
                 // Friends who sent Margins and followed shows in one list, newest first (#3291, #3343).
-                ForEach(model.followingFeedRows(friends: friends)) { row in
+                ForEach(inputs.feedRows) { row in
                     switch row {
                     case .friend(let friend): friendRow(friend)
                     case .show(let show): showRow(show)
@@ -99,11 +151,11 @@ struct ExperienceSourcesScreen: View {
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     Button(action: { model.refreshQuickAddFeed() }) {
                         Group {
-                            if model.isRefreshingQuickAddFeed { ProgressView() } else { Image(systemName: "arrow.clockwise") }
+                            if inputs.isRefreshingQuickAddFeed { ProgressView() } else { Image(systemName: "arrow.clockwise") }
                         }
                         .minimumTapTarget()
                     }
-                    .disabled(model.isRefreshingQuickAddFeed)
+                    .disabled(inputs.isRefreshingQuickAddFeed)
                     .accessibilityLabel("Refresh Following")
                     .accessibilityIdentifier("quickAdd.refresh.button")
                     Button(action: { isShowingFollowSheet = true }) {
@@ -147,25 +199,14 @@ struct ExperienceSourcesScreen: View {
             .task { if !isEdgeSwipePreview { await catalogDrawer.loadSnapshot() } }
             // Re-read the rows' entries when the shows, the unplayed entries or a refresh change them. Played and
             // Quiet shows' entries aren't in `followedSourceEntries`, so the rows read the store.
-            .task(id: ShowRowsKey(
-                subscriptions: model.feedSubscriptions.map { "\($0.id):\($0.state.rawValue)" },
-                unplayedCount: model.followedSourceEntries.count,
-                isRefreshing: model.isRefreshingFollowedSources,
-                // Finishing an episode moves its show's row to the next unread one, so a change in what the Library
-                // holds or has finished re-reads the rows.
-                libraryCount: model.libraryItems.count,
-                finishedCount: model.libraryItems.filter(\.isCompleted).count,
-                // An episode counts as heard before the Library calls it finished (95%, or its last two minutes;
-                // `FollowingHeardRule`), so each 1% of listening re-reads the rows too (#3691).
-                listeningSteps: model.libraryItems.reduce(0) { $0 + ($1.continuationProgressPercent ?? 0) }
-            )) {
+            .task(id: inputs.showRowsKey) {
                 await model.reloadFollowingShowEntries()
             }
             // Re-read the artwork when the shows, the catalog or a refresh changes it (#773).
             .task(id: ArtworkKey(
-                subscriptionIDs: model.feedSubscriptions.map(\.id),
+                subscriptionIDs: inputs.subscriptionIDs,
                 hasCatalog: catalogDrawer.catalog != nil,
-                isRefreshing: model.isRefreshingFollowedSources
+                isRefreshing: inputs.isRefreshingFollowedSources
             )) {
                 guard let coordinator = model.followedSourceCoordinator else { return }
                 artwork = await coordinator.followingArtwork(catalog: catalogDrawer.catalog)
@@ -223,8 +264,8 @@ struct ExperienceSourcesScreen: View {
             open: { path.append(row.id) },
             play: { model.playNewestEpisode(of: row) },
             add: { model.addPreviewedEpisode(of: row) },
-            isPlayStarting: row.playEntryID.map { model.importingFollowedSourceEntryIds.contains($0) } ?? false,
-            isAdding: row.newestEntryID.map { model.importingFollowedSourceEntryIds.contains($0) } ?? false,
+            isPlayStarting: row.playEntryID.map { feed.inputs.importingEntryIds.contains($0) } ?? false,
+            isAdding: row.newestEntryID.map { feed.inputs.importingEntryIds.contains($0) } ?? false,
             queueAction: showRowQueueAction(row),
             queue: { model.queueNewestEpisode(of: row) }
         )
@@ -287,18 +328,13 @@ struct ExperienceSourcesScreen: View {
         .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
     }
 
-    /// New files in the Quick Folder. They used to arrive in Following's stream; the folder is a place to open now.
-    private var quickFolderFiles: [QuickAddCandidate] {
-        model.quickAddCandidates.filter { if case .localFile = $0 { true } else { false } }
-    }
-
-    private var quickFolderRow: some View {
+    private func quickFolderRow(count: Int) -> some View {
         Button { isShowingQuickFolder = true } label: {
             HStack(spacing: 10) {
                 Image(systemName: "folder")
                     .foregroundStyle(AppColors.evergreen)
                     .accessibilityHidden(true)
-                Text("Quick Folder · \(quickFolderFiles.count) new")
+                Text("Quick Folder · \(count) new")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(AppColors.text)
                 Spacer()
@@ -314,7 +350,7 @@ struct ExperienceSourcesScreen: View {
         .accessibilityIdentifier("sources.quickFolder")
     }
 
-    private struct ShowRowsKey: Equatable {
+    struct ShowRowsKey: Equatable {
         var subscriptions: [String]
         var unplayedCount: Int
         var isRefreshing: Bool
