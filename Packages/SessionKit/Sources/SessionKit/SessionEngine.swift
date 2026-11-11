@@ -121,6 +121,9 @@ public final class SessionEngine {
     /// from there keeps it: every other change of position calls `forgetBackTapLanding()` (#1122).
     private var lastBackTapLanding: (targetKey: String, charOffset: Int)?
     private var protectedPosition = ProtectedResumePosition()
+    /// A start of text speech that found nothing left to read (#4067). It stands in for the speech client's own
+    /// completion, which a start that never began cannot set.
+    private var emptyTextStart: EmptyTextStart?
     private var pendingWrittenInterjection: WrittenInterjectionCapture?
 
     private struct PlaybackPlan {
@@ -576,8 +579,10 @@ public final class SessionEngine {
             return snapshot
         }
         let mediaSeekFailure = try reconcilePendingMediaSeek(for: &session)
+        // A start that found nothing left to read is the end, whatever place the engine was still holding (#4067).
+        if emptyTextStart?.matches(session) == true { protectedPosition.release() }
         let positionIsPending = protectedPosition.holdsPosition(for: session)
-        var playbackCompleted = positionIsPending ? false : audio.isPlaybackComplete(targetId: session.currentTargetId)
+        var playbackCompleted = positionIsPending ? false : playbackIsComplete(for: session)
         let transportState = audio.playbackTransportState(targetId: session.currentTargetId)
         var updated = try syncCurrentPositionFromAudio(session)
         // A start from the very end (resuming after a Margin at the last second) finds the episode
@@ -3192,7 +3197,7 @@ public final class SessionEngine {
             throw SessionKitError.invalidCommandForState("endSession")
         }
         let sourceWasComplete = session.completionPercent >= 100
-        let targetWasComplete = audio.isPlaybackComplete(targetId: session.currentTargetId)
+        let targetWasComplete = playbackIsComplete(for: session)
         // Inspecting completed history does not load that session into the audio
         // adapter. Its idle/stale position must not rewrite the completed record.
         if session.phase != .finished || !sourceWasComplete {
@@ -4213,7 +4218,7 @@ public final class SessionEngine {
         let progress = playbackProgress(for: session)
         let position = playbackPosition(for: session)
         snapshot.sourceProgressPercent = progress.sourcePercent
-        let completedFullTarget = audio.isPlaybackComplete(targetId: session.currentTargetId)
+        let completedFullTarget = playbackIsComplete(for: session)
             && !isPartialGeneratedTextPlayback(session)
         snapshot.currentPlaybackProgressPercent = completedFullTarget ? 100 : progress.currentPercent
         snapshot.currentMediaTimeMs = position.mediaTimeMs
@@ -4797,8 +4802,13 @@ public final class SessionEngine {
     /// as it does for the progress tick.
     private func textReadingEndedUnseen(_ session: Session) -> Bool {
         session.currentTargetType == .itemTextTTS && session.phase != .finished
-            && !protectedPosition.holdsPosition(for: session)
-            && audio.isPlaybackComplete(targetId: session.currentTargetId)
+            && (emptyTextStart?.matches(session) == true
+                || (!protectedPosition.holdsPosition(for: session) && playbackIsComplete(for: session)))
+    }
+
+    /// The client's completion, or a start that found nothing left to read at this very place (#4067).
+    private func playbackIsComplete(for session: Session) -> Bool {
+        audio.isPlaybackComplete(targetId: session.currentTargetId) || emptyTextStart?.matches(session) == true
     }
 
     private func isFinishedAtEnd(_ session: Session) -> Bool {
@@ -5609,12 +5619,22 @@ public final class SessionEngine {
             return
         }
         try audio.configureMediaContext(nil)
+        emptyTextStart = nil
         let plan = try playbackPlan(for: session)
         lastSpokenText = try audio.prepareSpeechText(plan.text)
-        if seeking {
-            try audio.play(targetId: session.currentTargetId, seekingTo: plan.audioOffset)
-        } else {
-            try audio.play(targetId: session.currentTargetId, from: plan.audioOffset)
+        do {
+            if seeking {
+                try audio.play(targetId: session.currentTargetId, seekingTo: plan.audioOffset)
+            } else {
+                try audio.play(targetId: session.currentTargetId, from: plan.audioOffset)
+            }
+        } catch SessionKitError.invalidCommandForState(let reason)
+            where session.currentTargetType == .itemTextTTS && EmptyTextStart.isNothingLeftToRead(reason) {
+            // The place is at (or past) the last speakable character, so there is no speech to start. That is the
+            // end of the text, not a failure: remember it, and the progress tick finishes the item as it does when
+            // the speech reached its end unseen (#3928). The one answer for every way of starting speech from here
+            // (resume, a Margin's place, a chapter jump, a restart after a Margin) instead of a guard on each (#4067).
+            emptyTextStart = EmptyTextStart(session: session)
         }
         try audio.setPlaybackRate(session.playbackRate)
     }
@@ -5828,6 +5848,7 @@ public final class SessionEngine {
         for session: Session,
         mediaSeekRequest: MediaSeekRequest? = nil
     ) {
+        emptyTextStart = nil // a move: the refused start is no longer where the listener is (#4067)
         protectedPosition.protect(session, mediaSeekRequest: mediaSeekRequest)
     }
 
