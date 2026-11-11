@@ -255,10 +255,12 @@ var runInfo: [String: Any] = [
     "failed": failed,
     "not_fetched": missing,
     "sha256_mismatches": checksumMismatches,
-    "repeats": options.repeats,
-    "unstable": unstable,
     "median_extract_ms": Int(median(timings).rounded()),
 ]
+if options.repeats > 1 {
+    runInfo["repeats"] = options.repeats
+    runInfo["unstable"] = unstable
+}
 if options.v2 {
     runInfo["extraction_version"] = PDFStructuredTextExtractor.structuredExtractionVersion
     runInfo["median_v1_paired_ms"] = Int(median(pairedV1Timings).rounded())
