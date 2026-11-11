@@ -33,6 +33,7 @@ final class TextTapPauseSystemSpeechTests: XCTestCase {
     private struct Rig {
         let engine: SessionEngine
         let speech: SystemSpeechPlaybackClient
+        let repository: InMemorySessionRepository
         var queued: () -> [(synthesizer: AVSpeechSynthesizer, utterance: AVSpeechUtterance)]
     }
 
@@ -44,7 +45,7 @@ final class TextTapPauseSystemSpeechTests: XCTestCase {
         let repository = InMemorySessionRepository(items: [article.id: article])
         let engine = SessionEngine(profile: profile, repository: repository, audio: speech, recorder: Recorder())
         _ = try engine.startSession(itemId: article.id)
-        return Rig(engine: engine, speech: speech, queued: { box.queued })
+        return Rig(engine: engine, speech: speech, repository: repository, queued: { box.queued })
     }
 
     /// Save keeps the Margin and leaves the finished item paused at its end, as a recap Margin does (#142).
@@ -134,6 +135,41 @@ final class TextTapPauseSystemSpeechTests: XCTestCase {
         let saved = try rig.engine.saveWrittenInterjection(captureId: capture.id, text: "A written note.")
         XCTAssertEqual(saved.status, .paused)
         XCTAssertEqual(rig.engine.currentSession?.phase, .finished)
+    }
+
+    /// #3930: "Go to this moment" on that written Margin. Its place is the end of the text, where nothing is left to
+    /// read, so playing from it threw ("Could not play this Margin's position") and the listener stayed where they were.
+    func testGoingToAWrittenMarginSavedAtTheEndOfFinishedText() throws {
+        let rig = try makeRig()
+        try finishEverySpokenUtteranceAtOnce(rig)
+        let capture = try rig.engine.beginWrittenInterjection()
+        _ = try rig.engine.saveWrittenInterjection(captureId: capture.id, text: "A written note.")
+        let sessionId = try XCTUnwrap(rig.engine.currentSession?.id)
+        let margin = try XCTUnwrap(rig.repository.loadInterjections(sessionId: sessionId).first)
+        XCTAssertEqual(margin.anchor.startChar, article.text?.count, "the Margin sits at the end of the text")
+
+        let moment = try rig.engine.playInterjectionAnchor(margin)
+
+        XCTAssertEqual(moment.itemId, article.id)
+        XCTAssertEqual(moment.status, .paused, "the item opens at its end, as a completed session does")
+        XCTAssertEqual(rig.engine.currentSession?.phase, .finished)
+        XCTAssertEqual(rig.engine.currentSession?.completionPercent, 100)
+    }
+
+    /// The same tap on a Margin with text after it still starts speech there.
+    func testGoingToAWrittenMarginWithTextAfterItStartsSpeech() throws {
+        let rig = try makeRig()
+        let capture = try rig.engine.beginWrittenInterjection()
+        _ = try rig.engine.saveWrittenInterjection(captureId: capture.id, text: "A written note.")
+        let sessionId = try XCTUnwrap(rig.engine.currentSession?.id)
+        let margin = try XCTUnwrap(rig.repository.loadInterjections(sessionId: sessionId).first)
+        XCTAssertLessThan(margin.anchor.startChar, article.text?.count ?? 0)
+        let queuedBefore = rig.queued().count
+
+        let moment = try rig.engine.playInterjectionAnchor(margin)
+
+        XCTAssertTrue(moment.status.isPlaybackActive)
+        XCTAssertGreaterThan(rig.queued().count, queuedBefore, "speech was queued from the Margin's place")
     }
 
     /// Cancel on a written Margin on the same text leaves the finished item where it is.

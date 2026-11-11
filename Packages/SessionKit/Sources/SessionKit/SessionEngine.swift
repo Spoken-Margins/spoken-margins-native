@@ -2163,6 +2163,13 @@ public final class SessionEngine {
         return InterjectionAnchorPlaybackPlan(originalSession: originalSession, session: session, item: playingItem, map: map)
     }
 
+    /// True when speech started at `session`'s place would have no words to say: the projection the system speech
+    /// player starts from is empty there.
+    private func nothingLeftToRead(_ session: Session) throws -> Bool {
+        let speech = try playbackPlan(for: session)
+        return SpeechTextNormalizer.projectForSystemSpeech(speech.text, fromSourceOffset: speech.audioOffset).text.isEmpty
+    }
+
     @discardableResult
     public func playInterjectionAnchor(_ interjection: Interjection) throws -> SessionSnapshot {
         playbackRequestedAt = now(); defer { playbackRequestedAt = nil } // time to first audio counts from here (#357)
@@ -2183,6 +2190,17 @@ public final class SessionEngine {
             currentItem = plan.item
             currentMap = plan.map
             externallyStreamedTurnId = nil
+            // A Margin made as the text was read to its end has nothing after it to read, and the speech player refuses
+            // an empty start. The item opens at its end, paused, as a completed session opens (#3930).
+            if plan.session.currentTargetType == .itemTextTTS, try nothingLeftToRead(plan.session) {
+                let finished = markPlaybackComplete(plan.session, item: plan.item)
+                currentSession = finished
+                try persistSession(finished)
+                protectPlaybackPosition(for: finished)
+                try audio.pause()
+                publish(status: .paused, phase: .finished)
+                return snapshot
+            }
             try persistSession(plan.session)
             protectPlaybackPosition(for: plan.session)
             try playCurrentTarget(plan.session)
