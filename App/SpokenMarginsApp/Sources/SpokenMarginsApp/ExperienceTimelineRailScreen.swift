@@ -20,7 +20,7 @@ struct ExperienceTimelineRailScreen: View {
     @State private var entries: [TimelineRailEntry] = []
     @State private var playbackTick = 0 // bumped by each progress tick: the current row follows the playhead (#2074)
     @FocusState private var responseEditorFocused: Bool
-    @State private var composerWaitsForDock = false
+    @State private var composerAnchor = TimelineComposerAnchor()
     @ScaledMetric(relativeTo: .body) private var responseEditorHeight: CGFloat = 160
 
     var body: some View {
@@ -124,25 +124,28 @@ struct ExperienceTimelineRailScreen: View {
                 if id != nil { focusTimeline(using: proxy) }
             }
             .onScrollPhaseChange { _, phase in
-                if phase == .interacting { followsPlayback = false }
+                if phase == .interacting {
+                    followsPlayback = false
+                    composerAnchor.listenerScrolled()
+                }
             }
             .onDisappear { onEditorFocusChange?(false) }
             .onChange(of: playbackDockHidden) { _, hidden in
                 // The dock is back after the editor's keyboard left: keep the Reflect box and its Import button in
-                // view above it, not behind it (#4043). Scroll again once the dock's inset is laid out.
-                guard !hidden, !responseEditorFocused else { return }
-                composerWaitsForDock = true
+                // view above it, not behind it (#4043). Scroll again once the dock's inset is laid out. Only after
+                // Done or Import from the box: focus also leaves when the listener drags up to read, or a row opens
+                // a sheet, and the rail stays where they put it (#4047).
+                guard !hidden, !responseEditorFocused, composerAnchor.dockReturned() else { return }
                 scrollComposerIntoView(using: proxy)
             }
             .onScrollGeometryChange(for: CGFloat.self) { $0.contentInsets.bottom } action: { old, new in
-                guard composerWaitsForDock, new > old else { return }
-                composerWaitsForDock = false
+                guard new > old, composerAnchor.dockInsetGrew() else { return }
                 scrollComposerIntoView(using: proxy)
             }
             .onChange(of: responseEditorFocused) { _, isFocused in
                 onEditorFocusChange?(isFocused)
                 guard isFocused else { return }
-                composerWaitsForDock = false
+                composerAnchor.editorGainedFocus()
                 scrollComposerIntoView(using: proxy)
             }
         }
@@ -166,7 +169,10 @@ struct ExperienceTimelineRailScreen: View {
             }
             ToolbarItemGroup(placement: .keyboard) {
                 Spacer()
-                Button("Done") { responseEditorFocused = false }
+                Button("Done") {
+                    composerAnchor.editingEndedFromComposer()
+                    responseEditorFocused = false
+                }
                     .accessibilityIdentifier("timeline.keyboard.done")
             }
         }
@@ -207,6 +213,7 @@ struct ExperienceTimelineRailScreen: View {
                     }
                 }
                 Button("Import and play response", systemImage: "play.fill") {
+                    composerAnchor.editingEndedFromComposer()
                     responseEditorFocused = false
                     model.importPastedAssistantResponse()
                 }
