@@ -135,7 +135,7 @@ let package = Package(
             dependencies: ["SessionKit", "SessionKitSupertonic"]
         ),
         // Every file a test reads from outside the package, by name (#1387). Not a product: only the tests link it.
-        .target(name: "SessionKitTestInputs", path: "Tests/TestInputs"),
+        .target(name: "SessionKitTestInputs", dependencies: ["SessionKit"], path: "Tests/TestInputs"),
         // Tests of the Foundation-only modules. Also runs on Linux (see the end of this file).
         .testTarget(
             name: "SessionKitCoreTests",
