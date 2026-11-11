@@ -1688,6 +1688,14 @@ class MergeTests_Runner(unittest.TestCase):
         real = [self.T3_REQUEST, self.t3_report('FAIL', commit=self.OLD), self.t2_report('PASS', HEAD)]
         self.assertEqual(lane.t3_gate(real)[0], 'FAIL')
 
+    def test_a_corrected_request_after_the_plan_miss_waits_for_its_report_whatever_t2_passes(self):
+        # The audit of #4073: request, plan-miss FAIL, the author's corrected /lane T3 (no report yet), then a T2 PASS
+        # on a newer head. The T2 PASS must not stand in for the T3 the author actually asked for.
+        request = comment('/lane T3\ncommit: ddddddd\ntests: Gate1FlowUITests/testProbation')
+        corrected = comment('/lane T3\ncommit: aaaaaaa\ntests: SupertonicSpeechTests')
+        history = [request, self.plan_miss_report(), corrected, self.t2_report('PASS', HEAD)]
+        self.assertIn('no lane report yet', lane.t3_gate(history)[1])
+
     def test_a_request_after_the_plan_miss_and_its_later_pass_still_waits_for_its_report(self):
         request = comment('/lane T3\ncommit: ddddddd\ntests: Gate1FlowUITests/testProbation')
         history = [request, self.plan_miss_report(), self.t2_report('PASS', HEAD), self.T3_REQUEST]

@@ -1776,7 +1776,9 @@ def t3_gate(comments: list[dict]) -> tuple[str, str] | None:
     A T3 FAIL that ran nothing because a named test is in no app test plan (#4059) is a request that could not run,
     not a failing test. A later T2 or T3 PASS on a different head answers it, as a T3 PASS would: #4016 sat unmerged
     for hours on a green T2 because its first T3 named a probation test no plan holds. A T3 that ran tests and
-    failed still holds, and so does a plan-miss FAIL that no later head has passed.
+    failed still holds, and so does a plan-miss FAIL that no later head has passed. Only a plan-miss FAIL that
+    answers the newest T3 request is waived: a corrected /lane T3 posted after it still waits for its own report,
+    whatever T2 passes meanwhile (the audit of #4073).
     """
     asked, latest, voided, named = -1, None, -1, -1
     plan_miss, passed = False, None  # latest is a ran-nothing plan-miss FAIL; the newest later T2/T3 PASS
@@ -1807,7 +1809,7 @@ def t3_gate(comments: list[dict]) -> tuple[str, str] | None:
         # The runner answers only the newest request, so a named request it never reached stays unanswered: keep
         # holding for it rather than falling back to an older verdict (the audit of #2556).
         asked = max(named, latest[0] if latest else -1)
-    if plan_miss and latest and passed and passed[0] > latest[0] and passed[1] != latest[2]:
+    if plan_miss and latest and passed and asked < latest[0] and passed[0] > latest[0] and passed[1] != latest[2]:
         latest = passed[0], 'PASS', passed[1], passed[2]  # a later head passed: the plan-miss FAIL holds nothing
     if asked < 0:
         return None
