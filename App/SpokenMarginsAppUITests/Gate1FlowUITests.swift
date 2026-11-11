@@ -176,6 +176,8 @@ final class Gate1FlowUITests: XCTestCase {
         returnToNowPlayingFromTimelineIfNeeded()
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
 
+        // The seeded article is one paragraph, so Next paragraph moves a sentence, or to the end, which finishes the
+        // article for good; Back then lands on a sentence. At every cut it reached the end (#3929).
         app.buttons["playback.forward.button"].tap()
         app.buttons["playback.back.button"].tap()
 
@@ -190,10 +192,17 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(element("miniPlayer.interject.button").exists)
         XCTAssertTrue(element("miniPlayer.playPause.button").exists)
         let hero = element("library.row.item-pill")
-        XCTAssertTrue(hero.waitForExistence(timeout: 4), app.debugDescription)
+        // A finished article leaves the Unfinished Library, as it should; Show completed brings its row back. The
+        // caught-up card has a Show completed button too, so take the one in the filter row.
+        if !hero.waitForExistence(timeout: 4) {
+            let showCompleted = element("library.completed.visibility").buttons["Show completed"]
+            XCTAssertTrue(showCompleted.waitForExistence(timeout: 4), app.debugDescription)
+            showCompleted.tap()
+            XCTAssertTrue(hero.waitForExistence(timeout: 4), app.debugDescription)
+        }
         app.swipeUp()
         XCTAssertLessThanOrEqual(hero.frame.maxY, element("miniPlayer.bar").frame.minY,
-                                 "The single Continue Listening card must scroll clear of the mini-player")
+                                 "The playing item's row must scroll clear of the mini-player")
         openLibrarySettings()
 
         XCTAssertTrue(element("settings.screen").waitForExistence(timeout: 4))
