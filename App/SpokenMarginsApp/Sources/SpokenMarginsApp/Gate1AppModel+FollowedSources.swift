@@ -448,7 +448,12 @@ extension Gate1AppModel {
         let intent = openWhenFinished || playWhenFinished ? followedPlayIntent.begin() : nil
         Task { [weak self] in
             guard let self else { return }
-            defer { self.importingFollowedSourceEntryIds.remove(entry.id) }
+            // The item this import saved, once it has; a wish to queue it hears it, or that nothing was saved (#4044).
+            var landedItemId: String?
+            defer {
+                self.importingFollowedSourceEntryIds.remove(entry.id)
+                self.settleQueueWish(key: entry.id, itemId: landedItemId)
+            }
             do {
                 guard let url = URL(string: entry.canonicalURL), url.scheme?.lowercased() == "https" else {
                     throw ReadablePageExtractionError.invalidURL
@@ -473,6 +478,7 @@ extension Gate1AppModel {
                     ), feedEntry: entry, subscription: subscription, declaredAudio: declaredAudio)
                     let stillWanted = intent.map { self.followedPlayIntent.finish($0) } ?? false
                     imported = importedItemId != nil
+                    landedItemId = importedItemId
                     self.recordFollowedPublisherAudio(lookup?.outcome, itemId: importedItemId, saved: false)
                     if let importedItemId, stillWanted { if openWhenFinished { self.openItem(id: importedItemId) }; if playWhenFinished { self.startItem(id: importedItemId) } } // Play now (#478)
                 } else {
@@ -484,6 +490,7 @@ extension Gate1AppModel {
                         let itemId = self.importBrowserTextItem(handoff).map { self.listeningSignals.followedArticleImported($0, for: entry) }
                         self.recordFollowedPublisherAudio(lookup?.outcome, itemId: itemId, saved: false)
                         imported = itemId != nil
+                        landedItemId = itemId
                     } else {
                         let itemId = self.listeningSignals.followedArticleImported(try self.importBrowserTextInBackground(handoff), for: entry)
                         // The earlier record's text map is kept and the save runs off the main actor (#2509), as for a shared link.
@@ -495,6 +502,7 @@ extension Gate1AppModel {
                         self.recordFollowedPublisherAudio(lookup?.outcome, itemId: audio?.itemId ?? itemId, saved: audio != nil)
                         if openWhenFinished { self.openItem(id: itemId) }; if playWhenFinished { self.startItem(id: itemId) } // Play now (#478)
                         imported = true
+                        landedItemId = audio?.itemId ?? itemId
                     }
                 }
                 guard imported else { return }
@@ -502,6 +510,7 @@ extension Gate1AppModel {
                 await self.performFollowedSourceRefresh(force: false)
                 self.reportConfirmation("Imported \(entry.title) into the library.")
             } catch {
+                landedItemId = nil
                 self.reportFailure(error, context: "Source entry import failed")
             }
         }

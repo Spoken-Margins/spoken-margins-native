@@ -74,10 +74,10 @@ extension Gate1AppModel {
 
     func queueAppend(itemId: String) {
         PlayQueueController.update(self) { $0.append(itemId) }
-        reportSuccess("Added \(queuedTitle(itemId)) to the queue.")
+        reportSuccess(QueueRowAction.add.banner(title: queuedTitle(itemId)))
     }
 
-    private func queuedTitle(_ itemId: String) -> String {
+    func queuedTitle(_ itemId: String) -> String {
         libraryItems.first(where: { $0.id == itemId })?.title ?? "Untitled"
     }
 

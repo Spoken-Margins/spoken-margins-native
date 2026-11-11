@@ -150,26 +150,82 @@ struct ExperienceShowScreen: View {
     }
 
     /// A waiting episode keeps the row actions Following's stream had: add, play now, dismiss. A played one is
-    /// already in the Library.
+    /// already in the Library; where an item resolves for it, it gets Add to Queue and Play (#4044).
     @ViewBuilder
     private func episodeRow(_ episode: FollowingShowEpisode) -> some View {
         if episode.isInLibrary {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(episode.entry.title)
-                    .font(.headline)
-                    .foregroundStyle(AppColors.text)
-                    .lineLimit(2)
-                Text("In your Library")
-                    .font(.caption)
-                    .foregroundStyle(AppColors.secondaryText)
-            }
-            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background(AppColors.panel)
-            .accessibilityElement(children: .combine)
+            InLibraryEpisodeRow(episode: episode, itemId: model.followingLibraryEpisodes[episode.entry.id]?.itemID)
         } else {
             SourceInboxRow(candidate: .followedSource(episode.entry), artwork: artwork)
         }
+    }
+}
+
+/// A show's episode that is already in the Library (#4044). With an item behind it the row has the leading swipe (Add to
+/// Queue or Remove from Queue, no long swipe), a More button of at least 44 pt and a long-press menu with Play and the
+/// queue action, so a listener who can't swipe precisely has a way in (#1932). The item comes from
+/// `FollowingLibraryEpisodes.resolve` and never from `isInLibrary` alone: an entry marked imported whose item was
+/// deleted keeps the plain row, as before.
+private struct InLibraryEpisodeRow: View {
+    @EnvironmentObject private var model: Gate1AppModel
+    @ObservedObject private var playQueue = PlayQueueState.shared
+    let episode: FollowingShowEpisode
+    let itemId: String?
+
+    var body: some View {
+        if let itemId {
+            let action = QueueRowAction.action(forItem: itemId, queuedItemIds: playQueue.itemIds)
+            HStack(spacing: 0) {
+                label
+                    .accessibilityAction(named: "Play") { model.startItem(id: itemId) }
+                    .accessibilityAction(named: action.title) { model.toggleQueue(itemId: itemId) }
+                Menu { actions(itemId: itemId, action: action) } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .font(.title3)
+                        .foregroundStyle(AppColors.evergreen)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .accessibilityLabel("More actions")
+                .accessibilityHint(episode.entry.title)
+                .accessibilityIdentifier("show.episode.\(episode.entry.id).more")
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(AppColors.panel)
+            .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                Button { model.toggleQueue(itemId: itemId) } label: {
+                    Label(action.title, systemImage: action.systemImage)
+                }
+                .tint(AppColors.swipeSlate)
+                .accessibilityIdentifier("show.episode.\(episode.entry.id).queue")
+            }
+            .contextMenu { actions(itemId: itemId, action: action) }
+        } else {
+            label
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(AppColors.panel)
+        }
+    }
+
+    private var label: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(episode.entry.title)
+                .font(.headline)
+                .foregroundStyle(AppColors.text)
+                .lineLimit(2)
+            Text("In your Library")
+                .font(.caption)
+                .foregroundStyle(AppColors.secondaryText)
+        }
+        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+        .accessibilityElement(children: .combine)
+    }
+
+    @ViewBuilder
+    private func actions(itemId: String, action: QueueRowAction) -> some View {
+        Button { model.startItem(id: itemId) } label: { Label("Play", systemImage: "play.fill") }
+        Button { model.toggleQueue(itemId: itemId) } label: { Label(action.title, systemImage: action.systemImage) }
     }
 }
