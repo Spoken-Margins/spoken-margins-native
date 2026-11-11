@@ -18,13 +18,10 @@ struct ExperiencePlayQueueScreen: View {
     @StateObject private var feed: PlayQueueRowsFeed
     /// Closes the sheet; the presenter's own flag, so calling it from an older copy of the sheet still closes it.
     let close: () -> Void
-    /// Where Edit mode starts. Only a test starts it elsewhere than off.
-    let startingEditMode: EditMode
 
-    init(model: Gate1AppModel, close: @escaping () -> Void, startingEditMode: EditMode = .inactive) {
+    init(model: Gate1AppModel, close: @escaping () -> Void) {
         self.model = model
         self.close = close
-        self.startingEditMode = startingEditMode
         _feed = StateObject(wrappedValue: PlayQueueRowsFeed(model: model))
     }
 
@@ -38,8 +35,7 @@ struct ExperiencePlayQueueScreen: View {
                 remove: { model.removeFromQueue(itemId: $0) },
                 move: { model.moveInQueue(fromOffsets: $0, toOffset: $1) },
                 clear: { model.clearPlayQueue() }
-            ),
-            editMode: startingEditMode
+            )
         )
         .equatable()
     }
@@ -47,9 +43,9 @@ struct ExperiencePlayQueueScreen: View {
 
 extension View {
     /// Presents the play queue from a view that redraws on every model publish, as the Library does while audio plays.
-    func playQueueSheet(isPresented: Binding<Bool>, model: Gate1AppModel, startingEditMode: EditMode = .inactive) -> some View {
+    func playQueueSheet(isPresented: Binding<Bool>, model: Gate1AppModel) -> some View {
         background {
-            PlayQueueSheetHost(model: model, isPresented: isPresented, startingEditMode: startingEditMode).equatable()
+            PlayQueueSheetHost(model: model, isPresented: isPresented).equatable()
         }
     }
 }
@@ -62,10 +58,9 @@ extension View {
 private struct PlayQueueSheetHost: View, Equatable {
     let model: Gate1AppModel
     @Binding var isPresented: Bool
-    let startingEditMode: EditMode
 
     nonisolated static func == (lhs: PlayQueueSheetHost, rhs: PlayQueueSheetHost) -> Bool {
-        lhs.model === rhs.model && lhs.isPresented == rhs.isPresented && lhs.startingEditMode == rhs.startingEditMode
+        lhs.model === rhs.model && lhs.isPresented == rhs.isPresented
     }
 
     var body: some View {
@@ -75,7 +70,7 @@ private struct PlayQueueSheetHost: View, Equatable {
         Color.clear
             .sheet(isPresented: $isPresented) {
                 // The binding writes the presenter's own flag, so an older copy of this closure still closes the sheet.
-                ExperiencePlayQueueScreen(model: model, close: { isPresented = false }, startingEditMode: startingEditMode)
+                ExperiencePlayQueueScreen(model: model, close: { isPresented = false })
             }
     }
 }
@@ -117,6 +112,8 @@ enum PlayQueueSheetProbe {
     static var bodyRuns = 0
     static var rowRuns = 0
     static var hostRuns = 0
+    /// Sets the sheet's Edit mode as its Edit button does, so a test can enter Edit mode once the sheet is on screen.
+    static var setEditMode: ((EditMode) -> Void)?
     nonisolated(unsafe) static var comparisons = 0
     nonisolated(unsafe) static var unequalComparisons = 0
 }
@@ -128,13 +125,7 @@ struct PlayQueueSheet: View, Equatable {
 
     @State private var isConfirmingClear = false
     /// Held here, not left to the navigation stack, so Edit mode is the sheet's own and a redraw cannot reset it.
-    @State private var editMode: EditMode
-
-    init(rows: [PlayQueueRow], actions: PlayQueueSheetActions, editMode: EditMode = .inactive) {
-        self.rows = rows
-        self.actions = actions
-        _editMode = State(initialValue: editMode)
-    }
+    @State private var editMode: EditMode = .inactive
 
     nonisolated static func == (lhs: PlayQueueSheet, rhs: PlayQueueSheet) -> Bool {
         let same = lhs.rows == rhs.rows
@@ -204,7 +195,12 @@ struct PlayQueueSheet: View, Equatable {
             } message: {
                 Text("Everything in your Library stays.")
             }
-            .onAppear { actions.load() }
+            .onAppear {
+                actions.load()
+                #if DEBUG
+                PlayQueueSheetProbe.setEditMode = { editMode = $0 }
+                #endif
+            }
             .onChange(of: rows.isEmpty) { _, isEmpty in
                 // With nothing left there is no Edit button to leave Edit mode with.
                 if isEmpty { editMode = .inactive }

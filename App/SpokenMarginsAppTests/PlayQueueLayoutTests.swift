@@ -28,6 +28,7 @@ final class PlayQueueLayoutTests: XCTestCase {
     override func setUp() async throws {
         try await super.setUp()
         UIPasteboard.general.items = [] // a copied link would add its card above the rows mid-test
+        PlayQueueSheetProbe.setEditMode = nil
     }
 
     override func tearDown() async throws {
@@ -135,12 +136,15 @@ final class PlayQueueLayoutTests: XCTestCase {
     /// between full and half strength in Edit mode, row text still. The Library redraws on every model publish, and a
     /// `.sheet` on it re-ran the presentation each time. Presented the way the Library presents it, in Edit mode, nothing
     /// in the sheet may redraw, Edit mode must hold, and nothing in a row may be animating while nobody touches the screen.
+    /// Edit mode comes on once the sheet is up, as the owner's tap on Edit did: a sheet built already in Edit mode never
+    /// showed the list editing in a hosted run.
     func testInEditModeTheQueueRowsHoldStillWhileTheirPresenterRedrawsOnEveryPublish() async throws {
         let model = try makeModel(itemCount: 3)
         for id in Self.itemIds(3) { model.queueAppend(itemId: id) }
-        let mounted = try mount(AnyView(QueueSheetPresenter(model: model, startingEditMode: .active)), size: .large)
+        let mounted = try mount(AnyView(QueueSheetPresenter(model: model)), size: .large)
         defer { mounted.close() }
-        let settled = try await settledList(in: mounted) { $0.totalItems >= 3 && $0.view.isEditing }
+        _ = try await settledList(in: mounted) { $0.totalItems >= 3 }
+        let settled = try await enterEditMode(in: mounted)
         let sheetBefore = try await bodyRunsOnceTheSheetIsQuiet()
         let rowsBefore = try await rowRunsOnceTheRowsAreQuiet()
         let hostBefore = PlayQueueSheetProbe.hostRuns
@@ -154,14 +158,15 @@ final class PlayQueueLayoutTests: XCTestCase {
                        "20 model publishes with the queue unchanged redrew the sheet \(PlayQueueSheetProbe.bodyRuns - sheetBefore) times")
         XCTAssertEqual(PlayQueueSheetProbe.rowRuns, rowsBefore,
                        "20 model publishes with the queue unchanged redrew the rows \(PlayQueueSheetProbe.rowRuns - rowsBefore) times")
-        XCTAssertEqual(idle.notEditing, 0, "Edit mode went off in \(idle.notEditing) of \(idle.looks) looks with nothing touched")
+        XCTAssertEqual(idle.notEditing, 0, "Edit mode went off in \(idle.notEditing) of \(idle.looks) looks with nothing touched; "
+                           + "after: \(Self.editState(of: settled.view))")
         XCTAssertTrue(idle.animating.isEmpty, "Rows were animating with nothing touched: \(idle.animating.sorted())")
 
         // A real change still lands, and Edit mode survives it.
         model.removeFromQueue(itemId: Self.itemIds(3)[0])
         let afterRemoving = try await settledList(in: mounted) { $0.totalItems < settled.totalItems }
         XCTAssertEqual(afterRemoving.totalItems, settled.totalItems - 1, "The removed item's row should be gone")
-        XCTAssertTrue(afterRemoving.view.isEditing, "Removing a row should leave Edit mode on")
+        XCTAssertTrue(afterRemoving.view.isEditing, "Removing a row should leave Edit mode on: \(Self.editState(of: afterRemoving.view))")
     }
 
     /// The control for the test above: it shows the presenter really does what the Library does. With a plain `.sheet`
@@ -173,8 +178,9 @@ final class PlayQueueLayoutTests: XCTestCase {
         for id in Self.itemIds(3) { model.queueAppend(itemId: id) }
         let mounted = try mount(AnyView(PlainSheetQueuePresenter(model: model)), size: .large)
         defer { mounted.close() }
-        let settled = try await settledList(in: mounted) { $0.totalItems >= 3 }
-        try await Task.sleep(for: .milliseconds(500))
+        _ = try await settledList(in: mounted) { $0.totalItems >= 3 }
+        let settled = try await enterEditMode(in: mounted)
+        try await waitForTheRowsToStopAnimating(in: settled.view)
 
         let idle = try await editModeWhilePublishing(model, list: settled.view)
 
@@ -420,6 +426,42 @@ final class PlayQueueLayoutTests: XCTestCase {
         throw NotSettled()
     }
 
+    /// Turns Edit mode on as the sheet's Edit button does, then waits until the list has been editing for 3 polls running.
+    private func enterEditMode(in mounted: Mounted) async throws -> ListState {
+        let setEditMode = try XCTUnwrap(PlayQueueSheetProbe.setEditMode, "The queue sheet never appeared")
+        withAnimation { setEditMode(.active) }
+        var steady = 0
+        var seen: UICollectionView?
+        for _ in 0..<100 {
+            try await Task.sleep(for: .milliseconds(40))
+            mounted.window.layoutIfNeeded()
+            seen = Self.collectionView(in: mounted.window)
+            if let list = seen, list.isEditing {
+                steady += 1
+                if steady >= 3 {
+                    let paths = (0..<list.numberOfSections).flatMap { section in
+                        (0..<list.numberOfItems(inSection: section)).map { IndexPath(item: $0, section: section) }
+                    }
+                    return ListState(view: list, paths: paths)
+                }
+            } else {
+                steady = 0
+            }
+        }
+        XCTFail("Edit mode never held for 3 looks after the Edit button's change: \(seen.map(Self.editState) ?? "no list")")
+        throw NotSettled()
+    }
+
+    /// What a failure needs to tell Edit mode on from off: the list's own flag, and how many rows show a reorder handle.
+    private static func editState(of list: UICollectionView) -> String {
+        func handles(in view: UIView) -> Int {
+            let own = "\(type(of: view))".contains("ReorderControl") && !view.isHidden && view.alpha > 0.5 ? 1 : 0
+            return view.subviews.reduce(own) { $0 + handles(in: $1) }
+        }
+        let cells = list.visibleCells
+        return "isEditing \(list.isEditing), \(cells.filter { handles(in: $0) > 0 }.count) of \(cells.count) rows show a reorder handle"
+    }
+
     /// Sends 20 model publishes that change nothing, looking twice after each: how often the list was out of Edit mode,
     /// and every row layer seen animating, including in the 0.3 s after the last.
     private func editModeWhilePublishing(_ model: Gate1AppModel, list: UICollectionView) async throws
@@ -539,12 +581,11 @@ private struct PlainListWithTopRow: View {
 /// presents the sheet the way the Library does.
 private struct QueueSheetPresenter: View {
     @ObservedObject var model: Gate1AppModel
-    let startingEditMode: EditMode
     @State private var isPresented = true
 
     var body: some View {
         Color.clear
-            .playQueueSheet(isPresented: $isPresented, model: model, startingEditMode: startingEditMode)
+            .playQueueSheet(isPresented: $isPresented, model: model)
     }
 }
 
@@ -556,7 +597,7 @@ private struct PlainSheetQueuePresenter: View {
     var body: some View {
         Color.clear
             .sheet(isPresented: $isPresented) {
-                ExperiencePlayQueueScreen(model: model, close: { isPresented = false }, startingEditMode: .active)
+                ExperiencePlayQueueScreen(model: model, close: { isPresented = false })
             }
     }
 }
