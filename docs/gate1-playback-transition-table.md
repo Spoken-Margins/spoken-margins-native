@@ -155,3 +155,14 @@ The claim owns one cell column: "does the source come back after the shared Marg
 | Remote Play and Stop | none. While a voice plays, remote Play and Pause go to the voice; every other command warns "Return to Source before using source controls." | `performGate2CompactCommand` | existing `verifyImportedMarginTransport` |
 
 For each: what is audible, which item and position, whether resume is allowed, and which screen is shown are checked on the phone for audio, and by the host and app tests named above for state. A later user pause or item switch cancels any stale voice intent (R15) but, today, **not** a stale prompt intent (R17, R19). Fixing that is a behaviour change, and gets its own issue and evidence.
+
+### When the return itself fails (#4110)
+
+The claim decides *whether* the source comes back; `MarginReturnResume` (SessionKit) runs the resume and says what happened. Every place a Margin's end brings the source back (a shared Margin's voice ending or its card dismissed, your own Margin ending, a moment or review voice ending, a hidden sender, read-aloud turned off) calls `resumePlayback(afterMargin: true)`.
+
+| Resume threw, app is | What happens |
+| --- | --- |
+| in front | A `resume.failed` event (error type, domain/code, text class, no message text), then a warning with a Resume button. No retry. |
+| in the background (screen locked counts) | The same event, then one retry after 1.5 s. It runs only while the source is still paused where the Margin left it with no other Margin, offer card or recording in the way, and not past the retry window (`InterruptionResumeRetrier`). If it works: `resume.retried` with `outcome: resumed`. If it fails: `gave_up` and the Resume button. If the listener moved on: `abandoned`, nothing shown. |
+
+A listener's own failed resume (play button, Lock Screen) writes the same `resume.failed` event and shows the error banner as before.
