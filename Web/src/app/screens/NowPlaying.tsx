@@ -13,6 +13,7 @@ import {
   candidateLabel, nothingPickedReason, pickedMargins, preselected, replyBackOffer, savedFileNextStep, savedMarginCard,
 } from '../logic/reply-back.ts';
 import { plainError } from '../logic/messages.ts';
+import { sendFile, sendRefusedNextStep } from '../logic/share-send.ts';
 import { NotSavedError } from '../logic/storage.ts';
 import { shareNativePacket } from '../logic/native-packets.ts';
 import { SKIP_SECONDS, usePlayer } from '../player.tsx';
@@ -409,6 +410,8 @@ function ShareMargins({ episode, margins, show }: { episode: Episode; margins: M
   const whyNot = nothingPickedReason(offer, toWrite.length);
   // What to do with a saved file, kept on the panel: a toast is gone in six seconds.
   const [nextStep, setNextStep] = useState<string>();
+  // The browser refused its share sheet (#4095): Send is replaced by the sentence and Save as a file.
+  const [sendRefused, setSendRefused] = useState(false);
 
   const share = async (how: 'save' | 'send') => {
     setBusy(true);
@@ -422,11 +425,15 @@ function ShareMargins({ episode, margins, show }: { episode: Episode; margins: M
       }
       const file = new File([written.bytes as BlobPart], written.fileName, { type: written.mimeType });
       if (how === 'send') {
-        try {
-          await navigator.share({ files: [file], title: episode.title });
-        } catch (error) {
-          if (error instanceof DOMException && error.name === 'AbortError') return;
-          throw error;
+        // The browser may refuse the sheet (#4095); then Send goes away and Save as a file says what to do instead.
+        const outcome = await sendFile((data) => navigator.share(data), file, episode.title);
+        if (outcome === 'cancelled') return;
+        if (outcome === 'refused') {
+          // The sentence sits on the panel, whose status region announces it; the focused Send is about to go, so focus moves to Save.
+          setSendRefused(true);
+          setNextStep(sendRefusedNextStep(offer));
+          requestAnimationFrame(() => document.getElementById('share-save')?.focus());
+          return;
         }
       } else {
         downloadFile(file);
@@ -476,12 +483,12 @@ function ShareMargins({ episode, margins, show }: { episode: Episode; margins: M
             Save or send
           </button>
         ) : (
-          <button type="button" className="button" disabled={busy || nothingPicked} aria-describedby={whyNot ? 'share-why-not' : undefined} onClick={() => void share('save')}>
+          <button type="button" id="share-save" className="button" disabled={busy || nothingPicked} aria-describedby={whyNot || nextStep ? 'share-why-not' : undefined} onClick={() => void share('save')}>
             <DownloadIcon />
             Save as a file
           </button>
         )}
-        {!bridge && sendable && (
+        {!bridge && sendable && !sendRefused && (
           <button type="button" className="button" disabled={busy || nothingPicked} aria-describedby={whyNot ? 'share-why-not' : undefined} onClick={() => void share('send')}>
             <ShareIcon />
             Send

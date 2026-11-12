@@ -148,6 +148,37 @@ test('saving a Margin on a friend\u2019s item says what Share does with it, unti
   await context.close();
 });
 
+test('a browser that refuses the share sheet: Send goes, Save as a file stays, and the listener reads the next step, not "Permission denied" (#4095)', async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'block' });
+  // Chrome on Android refuses a share that runs after the tap has gone stale; stand in for it.
+  await context.addInitScript(() => {
+    Object.defineProperty(navigator, 'canShare', { configurable: true, value: () => true });
+    Object.defineProperty(navigator, 'share', {
+      configurable: true,
+      value: () => Promise.reject(Object.assign(new Error('Permission denied'), { name: 'NotAllowedError' })),
+    });
+  });
+  const page = await friendPage(context);
+  await page.goto(LINK);
+  await page.getByTestId('arrival').getByRole('button', { name: 'Play' }).click();
+  const playing = page.getByRole('dialog', { name: EPISODE });
+  await expect(playing.getByTestId('margin-cue')).toContainText('Web fixture\u2019s first Margin in');
+  await playing.getByRole('button', { name: 'Write a Margin' }).click();
+  await playing.getByLabel(/Your Margin at/).fill('My answer.');
+  await playing.getByRole('button', { name: 'Save Margin' }).click();
+  await expect(playing.getByTestId('margin-cue')).toContainText('Your Margin is saved.');
+  const send = playing.getByRole('button', { name: 'Send', exact: true });
+  await expect(send).toBeEnabled();
+  await send.click();
+  const next = 'This browser wouldn\u2019t open its share sheet. Tap Save as a file, then send the file to Web fixture in a message.';
+  await expect(playing.locator('#share-why-not')).toHaveText(next);
+  await expect(page.getByText('Permission denied')).toHaveCount(0);
+  await expect(page.getByText(/weren\u2019t shared/)).toHaveCount(0);
+  await expect(send).toHaveCount(0);
+  await expect(playing.getByRole('button', { name: 'Save as a file' })).toBeEnabled();
+  await context.close();
+});
+
 test('after the last Margin has been heard, the card stops saying the sender is speaking and the cue says it was the last (#3797)', async ({ browser }) => {
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'block' });
   const page = await friendPage(context);
