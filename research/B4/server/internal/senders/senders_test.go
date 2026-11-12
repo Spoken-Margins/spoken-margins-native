@@ -319,3 +319,93 @@ func TestSweepDeletesTempFilesACrashLeftBehind(t *testing.T) {
 		t.Fatal("a write in progress must be left alone")
 	}
 }
+
+func TestTheLadderIsActiveOnlyOnceSomeoneIsStruckAndStaysSo(t *testing.T) {
+	s, dir := open(t)
+	cfg := reportrules.DefaultConfig()
+	h := s.Handle([]byte("sender"))
+	if s.Active() {
+		t.Fatal("a server nobody has struck is not on the ladder")
+	}
+	// One reported link is a report, not a strike.
+	s.Report(cfg, bound(t, s, h, 1, t0.Add(30*24*time.Hour)), t0)
+	if s.Active() {
+		t.Fatal("a report that is not a strike must not turn it on")
+	}
+	s.Report(cfg, bound(t, s, h, 2, t0.Add(30*24*time.Hour)), t0)
+	if !s.Active() {
+		t.Fatal("a strike turns it on")
+	}
+	if st, _ := s.Check(h, t0); st.Step != reportrules.StepStrike1 {
+		t.Fatalf("standing carries the step: %+v", st)
+	}
+	// The marker outlives every sender file, a restart and a sweep.
+	if _, err := s.Sweep(cfg, t0.Add(400*24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := senders.Open(dir)
+	if err != nil || !reopened.Active() {
+		t.Fatalf("after a restart: %v", err)
+	}
+}
+
+func TestAdoptRaisesTheStepToTheDeviceBitsAndNeverLowersIt(t *testing.T) {
+	s, dir := open(t)
+	cfg := reportrules.DefaultConfig()
+	fresh := s.Handle([]byte("the reinstalled app's new key"))
+	if st, err := s.Adopt(fresh, reportrules.StepClean, t0); err != nil || st.Step != reportrules.StepClean || !st.SharingAllowed {
+		t.Fatalf("bits 00 change nothing: %+v %v", st, err)
+	}
+	if s.Active() {
+		t.Fatal("adopting a clean step must not turn the ladder on")
+	}
+	if e, _ := os.ReadDir(filepath.Join(dir, "senders")); len(e) != 0 {
+		t.Fatal("adopting a clean step must not make a sender file")
+	}
+
+	st, err := s.Adopt(fresh, reportrules.StepStrike2, t0)
+	if err != nil || st.Step != reportrules.StepStrike2 || !st.SharingAllowed || !st.View.SharingPausedUntil.IsZero() || st.View.Notice != "" {
+		t.Fatalf("strike 2 on the device, no pause and no notice for a link nobody here took down: %+v %v", st, err)
+	}
+	if !s.Active() {
+		t.Fatal("adopting a strike turns the ladder on")
+	}
+	// The next strike on this install steps up from the device's step, not from clean.
+	s.Report(cfg, bound(t, s, fresh, 1, t0.Add(30*24*time.Hour)), t0)
+	if out, _ := s.Report(cfg, bound(t, s, fresh, 2, t0.Add(30*24*time.Hour)), t0); out.Step != reportrules.StepEnded {
+		t.Fatalf("a reinstall must not skip a step: %+v", out)
+	}
+	// Lower bits never lower it, and 11 ends sharing for good.
+	if st, _ := s.Adopt(fresh, reportrules.StepClean, t0); st.Step != reportrules.StepEnded || st.SharingAllowed {
+		t.Fatalf("a step does not go down: %+v", st)
+	}
+	other := s.Handle([]byte("another"))
+	if st, _ := s.Adopt(other, reportrules.StepEnded, t0); st.Step != reportrules.StepEnded || st.SharingAllowed || !st.View.SharingEnded {
+		t.Fatalf("bits 11: %+v", st)
+	}
+	if _, err := s.Adopt("../key", reportrules.StepStrike1, t0); err == nil {
+		t.Fatal("a bad handle was accepted")
+	}
+}
+
+func TestOpeningAnOlderFolderWithAStruckSenderTurnsTheLadderOn(t *testing.T) {
+	s, dir := open(t)
+	cfg := reportrules.DefaultConfig()
+	h := s.Handle([]byte("sender"))
+	s.Report(cfg, bound(t, s, h, 1, t0.Add(30*24*time.Hour)), t0)
+	s.Report(cfg, bound(t, s, h, 2, t0.Add(30*24*time.Hour)), t0)
+	// A server from before the marker existed: same files, no marker.
+	if err := os.Remove(filepath.Join(dir, "ladder")); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := senders.Open(dir)
+	if err != nil || !reopened.Active() {
+		t.Fatalf("a struck sender on file must turn it on: %v", err)
+	}
+	// A folder whose only sender file is clean stays off.
+	clean, cdir := open(t)
+	clean.Report(cfg, bound(t, clean, clean.Handle([]byte("c")), 1, t0.Add(30*24*time.Hour)), t0)
+	if again, err := senders.Open(cdir); err != nil || again.Active() {
+		t.Fatalf("one report is not a strike: %v", err)
+	}
+}

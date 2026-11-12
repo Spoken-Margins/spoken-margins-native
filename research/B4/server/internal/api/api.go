@@ -133,6 +133,9 @@ type Server struct {
 	// without one: leave it off until the app sends permits, so the app that exists keeps working.
 	Senders           *senders.Store
 	RequireLinkPermit bool
+	// DeviceCheck is Apple's two bits per device (#1728, sender.go). Nil, the server never asks an app for
+	// a device token and a reinstall starts clean. Set, it is used only once someone has been struck.
+	DeviceCheck DeviceChecker
 
 	// Clubs stores club mailboxes (#1799, clubs.go). Nil answers 503 like the clubs switch being off.
 	// A club request carries no install identity: the club's proof is its only credential.

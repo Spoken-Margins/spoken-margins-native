@@ -45,6 +45,7 @@ var (
 
 const (
 	keyFile     = "key"
+	ladderFile  = "ladder" // exists once any sender has been struck (see Active)
 	sendersDir  = "senders"
 	bindingsDir = "bindings"
 	handleLen   = 64 // hex of a SHA-256
@@ -82,7 +83,29 @@ func Open(dir string) (*Store, error) {
 	case len(key) != 32:
 		return nil, ErrNoKey
 	}
-	return &Store{dir: dir, key: key}, nil
+	st := &Store{dir: dir, key: key}
+	// A server upgraded with strikes already on file has no marker yet: make it from the files.
+	if !st.Active() {
+		if err := st.markIfAnyStruck(); err != nil {
+			return nil, err
+		}
+	}
+	return st, nil
+}
+
+// markIfAnyStruck makes the ladder marker when any sender file holds a step above clean.
+func (s *Store) markIfAnyStruck() error {
+	entries, err := os.ReadDir(filepath.Join(s.dir, sendersDir))
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		var r record
+		if readJSON(filepath.Join(s.dir, sendersDir, e.Name()), &r) == nil && r.Step > 0 {
+			return s.markLadder()
+		}
+	}
+	return nil
 }
 
 // Handle is the keyed hash of an attested install key id: the only name a sender has here.
@@ -107,6 +130,8 @@ func (s *Store) linkRef(linkID string) string {
 // Standing is what the sender's next check learns. View is built from state that holds no category.
 type Standing struct {
 	View reportrules.SenderView
+	// Step is the sender's place on the ladder, for the DeviceCheck bits (#1728).
+	Step reportrules.Step
 	// SharingAllowed: may this sender make a link now?
 	SharingAllowed bool
 }
@@ -159,6 +184,13 @@ func (s *Store) Report(cfg reportrules.Config, linkID string, now time.Time) (Ou
 	st, res := cfg.RecordReportedLink(rec.state(), s.linkRef(linkID), now)
 	rec.set(st)
 	rec.NoticePending = true
+	if res.Struck {
+		// Before the file is saved: a marker without a strike is harmless, a strike without a marker
+		// would leave the DeviceCheck bits unwritten.
+		if err := s.markLadder(); err != nil {
+			return Outcome{}, err
+		}
+	}
 	if err := s.save(b.Sender, rec); err != nil {
 		return Outcome{}, err
 	}
@@ -181,7 +213,49 @@ func (s *Store) Check(handle string, now time.Time) (Standing, error) {
 		return Standing{}, err
 	}
 	st := rec.state()
-	return Standing{View: reportrules.ViewFor(st, rec.NoticePending, now), SharingAllowed: st.SharingAllowed(now)}, nil
+	return Standing{View: reportrules.ViewFor(st, rec.NoticePending, now), Step: st.Step, SharingAllowed: st.SharingAllowed(now)}, nil
+}
+
+// Active is true once any sender has been struck. Until then the DeviceCheck bits of every device are
+// 00, so the server asks nobody for a token; after it, every sender check is asked for one (#1728).
+// The marker is one empty file and is never swept: a step does not decay, so neither does this.
+func (s *Store) Active() bool {
+	_, err := os.Stat(filepath.Join(s.dir, ladderFile))
+	return err == nil
+}
+
+func (s *Store) markLadder() error {
+	if s.Active() {
+		return nil
+	}
+	return writeAtomic(filepath.Join(s.dir, ladderFile), nil, 0o600)
+}
+
+// Adopt raises a sender's step to the one Apple's DeviceCheck bits hold for their device: the install
+// key is new after a reinstall, so the new sender file starts clean, but the device is not. It never
+// lowers a step and starts no pause (a reinstall may clear a pause; the bits keep the strike). It
+// returns the standing after the change.
+func (s *Store) Adopt(handle string, step reportrules.Step, now time.Time) (Standing, error) {
+	if !hexOf(handle, handleLen) {
+		return Standing{}, ErrBadID
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rec, err := s.load(handle)
+	if err != nil {
+		return Standing{}, err
+	}
+	if step.Bits() > rec.Step {
+		rec.Step = step.Bits()
+		if err := s.markLadder(); err != nil {
+			return Standing{}, err
+		}
+		if err := s.save(handle, rec); err != nil {
+			return Standing{}, err
+		}
+	}
+	st := rec.state()
+	return Standing{View: reportrules.ViewFor(st, rec.NoticePending, now), Step: st.Step, SharingAllowed: st.SharingAllowed(now)}, nil
 }
 
 // ClearNotice marks the takedown notice as shown.
