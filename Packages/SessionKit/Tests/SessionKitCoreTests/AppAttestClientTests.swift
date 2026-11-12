@@ -17,6 +17,7 @@ final class AppAttestClientTests: XCTestCase {
         private(set) var attestedHashes: [Data] = []
         private(set) var assertedHashes: [Data] = []
         var failAttest = false
+        var failGenerate = false
         /// A one-off Apple error while signing, with the key itself fine.
         var failAssertion = false
         /// Key ids Apple has no key for (a key id restored from a backup).
@@ -24,7 +25,9 @@ final class AppAttestClientTests: XCTestCase {
         init(supported: Bool = true) { self.supported = supported }
         var isSupported: Bool { supported }
         func generateKey() async throws -> String {
-            lock.withLock { keysMade += 1; return Data(repeating: UInt8(keysMade), count: 32).base64EncodedString() }
+            try lock.withLock {
+                if failGenerate { throw URLError(.cancelled) }
+                keysMade += 1; return Data(repeating: UInt8(keysMade), count: 32).base64EncodedString() }
         }
         func attestKey(_ keyID: String, clientDataHash: Data) async throws -> Data {
             try lock.withLock {
@@ -54,9 +57,11 @@ final class AppAttestClientTests: XCTestCase {
         /// Statuses the attested endpoint answers in turn; the last one repeats.
         var answers: [(Int, String)] = [(200, #"{"ok":true}"#)]
         var offline = false
+        /// The phone drops off between the challenge and the register call, after the key is made.
+        var offlineAtRegister = false
         func handle(_ url: URL, _ headers: [String: String], _ body: Data) async throws -> (status: Int, body: Data) {
             let index: Int = try lock.withLock {
-                if offline { throw URLError(.notConnectedToInternet) }
+                if offline || (offlineAtRegister && url.path == "/api/v1/attest/register") { throw URLError(.notConnectedToInternet) }
                 sent.append(Sent(path: url.path, headers: headers, body: body))
                 return sent.filter { $0.path == "/api/v1/links/sender" }.count - 1
             }
@@ -391,10 +396,42 @@ final class AppAttestClientTests: XCTestCase {
         let answer = try await attested.send(path: "/api/v1/links/sender", body: Data())
         XCTAssertEqual(answer.status, 200)
         XCTAssertNotNil(store.keyID)
-        // A later lost key attests at once: the earlier failure no longer counts.
+        // The success cleared the count: the next failure waits the first wait again, not the second.
         store.forget()
-        let again = try await attested.send(path: "/api/v1/links/sender", body: Data())
-        XCTAssertEqual(again.status, 200)
+        provider.failAttest = true
+        let failedAgain = await tap(attested)
+        XCTAssertEqual(failedAgain, .failed)
+        XCTAssertEqual(provider.counts.keys, 3)
+        clock.advance(AttestedServerClient.registrationBackoffBase)
+        provider.failAttest = false
+        let answerAfter = try await attested.send(path: "/api/v1/links/sender", body: Data())
+        XCTAssertEqual(answerAfter.status, 200, "one first-sized wait after the new failure, not twice that")
+    }
+
+    /// The key exists once attested, so a register call that is cut off has orphaned it: remembered, unlike an
+    /// offline challenge. The cut-off is itself `.offline`; the taps after it during the wait are `.failed`.
+    func testARegisterCallThatIsCutOffIsRemembered() async {
+        let provider = Provider(), server = Server()
+        server.offlineAtRegister = true
+        let attested = client(provider, server, store: AppAttestKeyStore(defaults: defaults()))
+        let first = await tap(attested), second = await tap(attested)
+        XCTAssertEqual(first, .offline)
+        XCTAssertEqual(second, .failed)
+        XCTAssertEqual(provider.counts.keys, 1, "the second tap made no key")
+    }
+
+    /// Apple failing to make a key leaves nothing orphaned, so the next tap may try again.
+    func testAFailureToMakeTheKeyIsNotRemembered() async {
+        let provider = Provider(), server = Server()
+        provider.failGenerate = true
+        let attested = client(provider, server, store: AppAttestKeyStore(defaults: defaults()))
+        let first = await tap(attested), second = await tap(attested)
+        XCTAssertEqual(first, .failed)
+        XCTAssertEqual(second, .failed)
+        XCTAssertEqual(server.paths().filter { $0.hasSuffix("/challenge") }.count, 2, "no wait: the second tap asked again")
+        provider.failGenerate = false
+        let third = await tap(attested)
+        XCTAssertNil(third)
     }
 
     /// No key was made, so there is nothing to protect: a phone that is only offline retries on the next tap.

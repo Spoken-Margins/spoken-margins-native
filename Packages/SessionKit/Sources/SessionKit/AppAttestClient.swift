@@ -162,7 +162,9 @@ public final class AttestedServerClient: @unchecked Sendable {
             registering = created
             return created
         }
-        defer { lock.withLock { registering = nil } }
+        // Clear the slot only if it still holds this task: a caller that joined an earlier, finished registration must
+        // not empty the slot of a newer one still running (it would let a third start beside it).
+        defer { lock.withLock { if registering == task { registering = nil } } }
         return try await task.value
     }
 
@@ -174,10 +176,16 @@ public final class AttestedServerClient: @unchecked Sendable {
               let challengeBytes = Data(base64Encoded: challenge.challenge), !challengeBytes.isEmpty else {
             throw AppAttestFailure.failed
         }
+        // No key yet, so a failure here orphans nothing and is not remembered (a transient Secure Enclave error, or the
+        // listener withdrawing agreement meanwhile, must not lock registration for 10 minutes).
         let keyID: String
-        let attestation: Data
         do {
             keyID = try await provider.generateKey()
+        } catch {
+            throw AppAttestFailure.failed
+        }
+        let attestation: Data
+        do {
             // The server checks Apple's certificate against SHA-256 of its own challenge.
             attestation = try await provider.attestKey(keyID, clientDataHash: Data(SHA256.hash(data: challengeBytes)))
         } catch {
