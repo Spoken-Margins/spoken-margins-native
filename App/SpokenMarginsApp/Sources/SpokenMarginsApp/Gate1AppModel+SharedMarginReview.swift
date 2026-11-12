@@ -52,30 +52,25 @@ extension Gate1AppModel {
         )
     }
 
-    /// Continue for an item. Starts it, and a friend's Margins play in place as it reaches them (owner's call on
-    /// #3059: the big button plays the episode with them on auto-play, no question first). The one case it still asks
-    /// is the one the episode would skip: new Margins behind the listener's place, after an import into an episode
-    /// they were partway through (owner's co-op test, #474). `offer` gets the item with only those Margins. An offer
-    /// the listener already turned down isn't made again until another Margin arrives.
-    func continueListening(itemId: String, offer: (NewMarginsOfferRequest) -> Void) {
-        let entries = SharedMarginReview.entriesBehind(newSharedMargins(itemId: itemId), placeMs: listenerPlaceMs(itemId: itemId))
-        let new = entries.map(\.marginId)
-        if new.isEmpty || Self.declinedNewMargins.isDeclined(itemId: itemId, margins: new) {
-            startItem(id: itemId)
-        } else {
-            offer(NewMarginsOfferRequest(itemId: itemId, entries: entries))
+    /// Play or Continue for an item. What it does, and whether it asks first, is `PlayRule` (SessionKit, #4099): a
+    /// friend's Margins play in place as the episode reaches them (owner's call on #3059: no question first), and the
+    /// one case it asks is the one the episode would skip: new Margins behind the listener's place, after an import
+    /// into an episode they were partway through (owner's co-op test, #474). `offer` gets the item with only those
+    /// Margins. An offer the listener already turned down isn't made again until another Margin arrives. This reads
+    /// only what the model already holds (no store read on the main thread); `startItem` reads the sessions.
+    func continueListening(itemId: String, surface: PlayRule.Surface = .libraryRow, offer: (NewMarginsOfferRequest) -> Void) {
+        let outcome = PlayRule.decide(PlayRule.Context(
+            itemId: itemId, surface: surface,
+            nowPlaying: hasActiveSession ? snapshot.itemId.map { PlayRule.NowPlaying(itemId: $0, mediaTimeMs: snapshot.currentMediaTimeMs) } : nil,
+            openItem: PlayRule.OpenItem(id: selectedItem.id, sessions: selectedItem.sessions),
+            libraryRow: libraryItems.first(where: { $0.id == itemId }),
+            // Only the Library row asks about Margins, so the item screen skips the read.
+            newMargins: surface == .libraryRow ? newSharedMargins(itemId: itemId) : [],
+            declined: Self.declinedNewMargins))
+        switch outcome {
+        case .play: startItem(id: itemId)
+        case .askFirst(let entries): offer(NewMarginsOfferRequest(itemId: itemId, entries: entries))
         }
-    }
-
-    /// Where Continue would start `itemId`, in media milliseconds, from what the model already holds (no store read on
-    /// the main thread): the open item's playhead, else the place of the session Continue resumes (`SessionContinuation`,
-    /// the rule `startItem` follows). Nil when it can't be told cheaply, and then Continue asks about every new
-    /// Margin: a Library row's place isn't held, and an item "completed" on its row may still resume at its end (#4097).
-    private func listenerPlaceMs(itemId: String) -> Int? {
-        if hasActiveSession, snapshot.itemId == itemId { return snapshot.currentMediaTimeMs ?? 0 }
-        if selectedItem.id == itemId { return SessionContinuation.continuePlaceMs(sessions: selectedItem.sessions) }
-        guard let row = libraryItems.first(where: { $0.id == itemId }) else { return 0 }
-        return row.continuePlaceMs
     }
 
     /// "Listen without them" on the offer: starts the item, and doesn't ask about these Margins again.

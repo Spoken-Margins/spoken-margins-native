@@ -391,12 +391,9 @@ struct ExperienceItemDetailScreen: View {
         }
         let choices = listeningChoices
         Button {
-            if choices.skipsNewMarginsQuestion {
-                // The friend's Margins play in place as the episode reaches them; no question first (#3219).
-                model.startItem(id: model.selectedItem.id)
-            } else {
-                model.continueListening(itemId: model.selectedItem.id) { pendingNewMarginsOffer = $0 }
-            }
+            // Play on this screen asks nothing today: the friend's Margins play in place as the episode reaches them
+            // (#3219). `PlayRule.Surface.itemScreen` is where that is decided.
+            model.continueListening(itemId: model.selectedItem.id, surface: .itemScreen) { pendingNewMarginsOffer = $0 }
         } label: {
             Label(choices.primaryTitle, systemImage: "play.fill")
                 .frame(maxWidth: .infinity, minHeight: 52)

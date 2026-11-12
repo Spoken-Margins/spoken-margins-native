@@ -35,7 +35,6 @@ final class ItemListeningChoicesTests: XCTestCase {
                     let state = "finished \(finished), continuing \(continuing), preparing \(preparing)"
                     XCTAssertEqual(result.primaryTitle, "Play", state)
                     XCTAssertEqual(result.marginsOnlyTitle, "Skip to Cole's Margins · 3 min", state)
-                    XCTAssertTrue(result.skipsNewMarginsQuestion, "the dialog no longer interrupts the big button: \(state)")
                 }
             }
         }
@@ -93,7 +92,6 @@ final class ItemListeningChoicesTests: XCTestCase {
             let result = choices([], continuing: continuing)
             XCTAssertNil(result.marginsOnlyTitle)
             XCTAssertNil(result.marginsOnlyAccessibilityLabel)
-            XCTAssertFalse(result.skipsNewMarginsQuestion, "Continue keeps its question where it still has one to ask")
         }
     }
 }

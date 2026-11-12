@@ -35,9 +35,6 @@ public struct ItemListeningChoices: Equatable, Sendable {
     public let marginsOnlyTitle: String?
     /// What VoiceOver reads for the second choice: whose Margins, how many, and about how long.
     public let marginsOnlyAccessibilityLabel: String?
-    /// True when the big button starts the episode directly, with friend Margins playing in place, instead of
-    /// asking "hear new Margins first?" (the dialog the two choices replace).
-    public let skipsNewMarginsQuestion: Bool
 
     /// - Parameters:
     ///   - unheardFriendMargins: the friend Margins on this item that the listener can hear and hasn't.
@@ -60,7 +57,6 @@ public struct ItemListeningChoices: Equatable, Sendable {
             marginsOnlyTitle = "Skip to \(whose) · \(minutes) min"
             marginsOnlyAccessibilityLabel = "Skip to \(whose), \(count) new Margin\(count == 1 ? "" : "s"), "
                 + "about \(minutes) minute\(minutes == 1 ? "" : "s")"
-            skipsNewMarginsQuestion = true
         } else {
             if isPreparingAudio {
                 primaryTitle = "Listen now"
@@ -71,7 +67,6 @@ public struct ItemListeningChoices: Equatable, Sendable {
             }
             marginsOnlyTitle = nil
             marginsOnlyAccessibilityLabel = nil
-            skipsNewMarginsQuestion = false
         }
     }
 
