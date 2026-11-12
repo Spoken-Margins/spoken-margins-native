@@ -68,18 +68,14 @@ extension Gate1AppModel {
     }
 
     /// Where Continue would start `itemId`, in media milliseconds, from what the model already holds (no store read on
-    /// the main thread): the open item's playhead, else the place the selected item's continuing session was left at.
-    /// An episode not begun, or finished, starts at 0. Nil when it can't be told cheaply: a started episode in the
-    /// Library that isn't the selected item. Continue then asks about every new Margin, as it always did.
+    /// the main thread): the open item's playhead, else the place of the session Continue resumes (`SessionContinuation`,
+    /// the rule `startItem` follows). Nil when it can't be told cheaply, and then Continue asks about every new
+    /// Margin: a Library row's place isn't held, and an item "completed" on its row may still resume at its end (#4097).
     private func listenerPlaceMs(itemId: String) -> Int? {
         if hasActiveSession, snapshot.itemId == itemId { return snapshot.currentMediaTimeMs ?? 0 }
-        if selectedItem.id == itemId {
-            guard let continuation = selectedItemPreferredContinuationSession,
-                  continuation.phase != .finished, continuation.status != "finished", continuation.completionPercent < 100 else { return 0 }
-            return continuation.position.mediaTimeMs ?? 0
-        }
+        if selectedItem.id == itemId { return SessionContinuation.continuePlaceMs(sessions: selectedItem.sessions) }
         guard let row = libraryItems.first(where: { $0.id == itemId }) else { return 0 }
-        return row.hasContinuationSession && !row.isCompleted ? nil : 0
+        return row.continuePlaceMs
     }
 
     /// "Listen without them" on the offer: starts the item, and doesn't ask about these Margins again.

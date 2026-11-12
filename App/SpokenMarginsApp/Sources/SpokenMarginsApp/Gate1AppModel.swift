@@ -1616,7 +1616,7 @@ final class Gate1AppModel: ObservableObject {
         do {
             let store = try requireStore()
             if let continuation = Self.preferredContinuationSession(in: try store.loadSessions(itemId: id)),
-               continuation.phase != .finished, continuation.status != "finished", continuation.completionPercent < 100 {
+               SessionContinuation.continueResumes(continuation) {
                 resumeSession(continuation)
             } else {
                 startNewSession(id: id)
