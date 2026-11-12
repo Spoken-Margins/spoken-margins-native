@@ -155,3 +155,16 @@ The claim owns one cell column: "does the source come back after the shared Marg
 | Remote Play and Stop | none. While a voice plays, remote Play and Pause go to the voice; every other command warns "Return to Source before using source controls." | `performGate2CompactCommand` | existing `verifyImportedMarginTransport` |
 
 For each: what is audible, which item and position, whether resume is allowed, and which screen is shown are checked on the phone for audio, and by the host and app tests named above for state. A later user pause or item switch cancels any stale voice intent (R15) but, today, **not** a stale prompt intent (R17, R19). Fixing that is a behaviour change, and gets its own issue and evidence.
+
+### When the return itself fails (#4110)
+
+The claim decides *whether* the source comes back; `MarginReturnResume` (SessionKit) runs the resume and says what happened. Every place a Margin's end brings the source back (a shared Margin's voice ending or its card dismissed, your own Margin ending, a moment or review voice ending, a hidden sender, read-aloud turned off, Skim) calls `resumePlayback(returningFromMargin: true)`.
+
+| The resume | What happens |
+| --- | --- |
+| works | `Resumed.` as before. Nothing is recorded. |
+| is refused (iOS declining the audio session, most often in the background) | A `margin.return_resume` playback event (outcome, attempt, error domain/code/case; never a message). Then `InterruptionResumeRetrier`'s waits (1, 2, 4, 8 s) while the source is still paused where the Margin left it. Nothing is shown for a refusal a retry cures. |
+| is refused every time, or the app was suspended past the retry window | An error banner with Retry that stays until acted on. The Lock Screen play control reaches the same `resumePlayback()`. |
+| is overtaken (the listener seeked, played, paused; another Margin, an offer card, a recording or a Skim took the transport) | `abandoned`; nothing is shown and nothing starts. A text or PDF source is held to its text offset and progress, since it has no media time. |
+
+A listener's own failed resume (play button, Lock Screen) is not part of this path and shows the error banner as before.

@@ -157,7 +157,9 @@ public enum ImportedMarginResends {
         }
         // A sender whose earlier packet carried no id (an older build) now has one. Give it to the layers holding
         // the Margins this packet repeats, so hiding that sender hides those too, and still works when the packet
-        // brings nothing new (#2846). The same goes for the share link this packet came through: a layer first
+        // brings nothing new (#2846). A Margin is "repeated" only when its share token matches too (`Fingerprint`
+        // holds it, and a Margin without a valid token never matches), so a label and words alone never tie an id to
+        // a layer (owner's call 2026-11-09). Keep it that way: take the layers from `plan`, never from the label. The same goes for the share link this packet came through: a layer first
         // imported from a file, or through an older link, gets a Report this link action too (#2846). One loop and
         // one save per layer, so neither back-fill saves a stale copy over the other.
         let matchedLayerIds = Set(held.filter { plan.identitiesByHeldMargin[$0.margin.id] != nil }.map(\.layerId))
