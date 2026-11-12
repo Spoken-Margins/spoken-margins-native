@@ -67,7 +67,7 @@ extension Gate1AppModel {
         // profile for the microphone send a `play` nobody pressed, so one in the first moment of a recording
         // or just after the route changed is logged and ignored (#1708). A bare `play` on a hands-free input is
         // that profile's noise at any time, so it never ends a Margin (#2182).
-        if snapshot.isRecording, command.endsRecordingMargin, origin.hasPrefix("now_playing") {
+        if snapshot.isRecording, RecordingTransportGuard.isEndCandidate(command: command, origin: origin) {
             guard !isFinishingInterjection else { return }
             let recordingMs = captureWatcher.elapsedMs
             let sinceRouteChangeMs = captureWatcher.msSinceRouteChange
