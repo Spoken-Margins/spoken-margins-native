@@ -32,7 +32,13 @@ jobs:
         run: echo "STARTED=$(date +%s)" >> "$GITHUB_ENV"
       # Package.swift's Linux SQLite3 system library needs the headers; the swift image ships only the runtime.
       - name: Install SQLite headers
-        run: apt-get update -qq && apt-get install -y -qq libsqlite3-dev
+        run: |
+          # Three tries: a runner whose network drops DNS for a minute must not fail a job over apt (#4082).
+          for n in 1 2 3; do
+            apt-get update -qq -o Acquire::Retries=3 && apt-get install -y -qq -o Acquire::Retries=3 libsqlite3-dev && break
+            [ "$n" = 3 ] && { echo "::error title=lane-fault::could not reach apt: a runner network fault, not this change"; exit 75; }
+            sleep $((n * 10))
+          done
       # A full (shallow) checkout without LFS: the tests read fixtures from Contracts/, Site/ and research/,
       # and none of the LFS files (the app's voice models).
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0

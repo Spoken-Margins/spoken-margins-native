@@ -56,7 +56,13 @@ jobs:
       # Package.swift's Linux SQLite3 system library needs the headers, and the issue step needs Python; the swift
       # image ships neither for certain.
       - name: Install SQLite headers and Python
-        run: apt-get update -qq && apt-get install -y -qq libsqlite3-dev python3
+        run: |
+          # Three tries: a runner whose network drops DNS for a minute must not fail a job over apt (#4082).
+          for n in 1 2 3; do
+            apt-get update -qq -o Acquire::Retries=3 && apt-get install -y -qq -o Acquire::Retries=3 libsqlite3-dev python3 && break
+            [ "$n" = 3 ] && { echo "::error title=lane-fault::could not reach apt: a runner network fault, not this change"; exit 75; }
+            sleep $((n * 10))
+          done
       # The scheduled run checks the trunk's parser, the code the next phone build carries; a push or a
       # dispatch checks the commit it ran for.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
