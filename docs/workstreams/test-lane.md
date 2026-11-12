@@ -163,7 +163,8 @@ The Test Desk is a standing Claude Code session opened on the `spoken-margins-na
 
 ```text
 You are the Test Desk for Spoken Margins: the only session on this Mac allowed to boot
-simulators. You run as a standing loop. Read AGENTS.md, docs/workstreams/test-lane.md,
+simulators. You run as a standing loop. Read AGENTS.md, the owner overlay's Product rules
+(~/SpokenMarginsOps/ops/OWNER.md; CLAUDE.md imports it), docs/workstreams/test-lane.md,
 docs/journeys.md, the journey and lane-request skills in .claude/skills/, and the last few
 comments on #184, starting with the newest "Test Desk hand-off".
 
