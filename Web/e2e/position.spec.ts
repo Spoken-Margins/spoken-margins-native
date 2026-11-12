@@ -68,8 +68,9 @@ test('play on after a scrub and refresh within seconds: back where it was, not a
   await open(page);
   await expect.poll(() => audioTime(page)).toBeGreaterThan(1);
   await scrubTo(page, 100);
-  await expect.poll(() => audioTime(page)).toBeGreaterThan(103.5);
-  // Four seconds on: IndexedDB last committed at the scrub (100 s), and the next timed save is a second away.
+  // A few seconds on, whatever the runner's speed (the hosted one reached only 102 s inside the default 5 s poll): IndexedDB last
+  // committed at the scrub (100 s) and the next timed save is not due yet, so only the mirror holds the later place.
+  await expect.poll(() => audioTime(page), { timeout: 30_000 }).toBeGreaterThan(102.5);
   const at = await audioTime(page);
   const r = await reopenAndRead(page);
   expect(Math.abs(r.shown - at)).toBeLessThanOrEqual(1.5); // the Library's "Resume at"
