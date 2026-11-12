@@ -13,7 +13,7 @@ Most phone-found bugs were not about a screen. They were about the phone's state
 ## How to use it
 
 1. **Builder.** A PR that touches playback, capture, import, sharing, the Library read path or a background job names, in its description, the rows below that its change can meet, and the host test for each, or says why a row does not apply. The test fails without the fix (`AGENTS.md`, Verification).
-2. **Design pass.** The **Design** comment lists the rows its flow meets (the one line added to the contents in `docs/decisions.md`, 2026-11-09), so the builder starts with them.
+2. **Design pass.** The **Design** comment lists the rows its flow meets (the one line added to the contents in `docs/decisions.md`, 2026-11-09), and the listener's starting states from "Listener history" below (added 2026-11-12), so the builder starts with them.
 3. **A bug the phone finds** gets its row in `device-conditions-bugs.tsv` in the fix PR. `scripts/device_conditions.py --unlisted` lists the ones not yet there. It sees only issues labelled `bug`; a phone-found bug without that label gets its line by hand.
 
 ## The rows
@@ -36,6 +36,19 @@ Each row: the condition, how a host test expresses it, the seams that exist toda
 | `long-source` | A source far bigger than the test fixtures: a two-hour podcast, a long PDF | Generate the big input in the test (a fake spine of N thousand entries) and assert size limits and time | `SessionKit/EpisodeFingerprintSpineCompaction`, `BridgeManifest` | #2118 (manifest too large), #873 (app ended for memory on a two-hour podcast; also `hot`) |
 
 A bug can meet two rows (`also` in the list); it counts once, under its main row.
+
+## Listener history
+
+The rows above are states of the phone. These are states of the listener's history: who they are when the flow starts (#4102). A PR or a **Design** comment that touches playback, sharing, Continue, the Library or first run names the rows its flow meets, with the host test for each, or says why one does not apply, the same as for a device condition. They are not in `device-conditions-bugs.tsv` and `scripts/device_conditions.py` does not count them: that script reads the list, and its row names are fixed in its code, so adding these would need bugs filed under them first. Add them to the script when a phone-found bug is filed under one.
+
+| Row | Condition | How a host test expresses it | Seams today | Examples |
+| --- | --- | --- | --- | --- |
+| `finished` | The item is at the end: 99%, a finished session, or marked complete (three different facts that a Library row calls one) | Build the session at 99%, at 100%, with an older finished session plus a newer in-progress one, and with the source marked complete; assert where Continue and Play start and whether the app asks first | `SessionKit/SessionContinuation` (`continueResumes`, `continuePlaceMs`, from #4097), `PreparationChunkGate` (`itemAlreadyListened`), `LibraryRowBuilder` | #4097 (Continue on an episode finished at 99% resumed at the end and skipped every friend's Margin), #2097 (Play at the end of an episode hung in a 28 s seek), #3367 (a show's row previewed a finished episode and its play button played a different one) |
+| `first-run` and `returning` | A fresh install with an empty Library, against a Library with history, old containers and earlier builds' data | Run the same flow once on an empty temporary store and once on a store written by an earlier build or seeded with several items; assert the first screen, the defaults and that nothing old is lost | `SessionKit/FirstLaunchWelcomeOrder`, `FirstRunListenChoice`, `FirstRunVoiceDefault`; `UITestingLaunchSeed` (`FIRST_RUN`, `KEEP_LIBRARY`) | J11 covers first run; `docs/journeys.md` asks for a Library with content for the rest. No phone-found bug is filed under this row yet |
+| `already-heard` | A friend's Margins arrive on an item the listener has already heard, to or past where the Margins sit | Import a packet whose Margins sit behind the listener's place; assert which are marked new, the question or choices offered, and that Margins ahead of the place still play in place | `SessionKit/SharedMarginPlacement`, `ImportedPodcastPlacementPolicy`, `FriendArrivalWords`, `FriendMarginsIntro` | #4097 (the same bug: the Margins were behind the place and nobody asked). J9 steps 1 to 3 |
+| `other-item-playing` | Another item or another Margin is playing, paused or recording when the listener acts on this one | Start the other item in the test model, then act on this one (Continue, Play, import, Skip to a friend's Margins); assert which item plays, what happens to the first and that the on-screen state names the right one | `SessionKit/LiveSessionTransportGuard`, `RunAgainGate`; the `burst` row's seams | #3367 (play on the row started a different episode than the one shown). No other phone-found bug is filed under this row yet |
+
+Also name the entry point a flow can start from (a Library row, the item screen, Now, a link, the Share sheet): two entry points reaching one result are two places that can decide differently, as in #4097, where `startItem`, the new-Margins question and the Library row's place each decided where Continue starts, and disagreed.
 
 ## Bugs with no row
 
