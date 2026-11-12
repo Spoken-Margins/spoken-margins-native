@@ -105,30 +105,33 @@ struct ExperienceMarginsScreen: View, Equatable {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    // Export all Margins is one toolbar tap to the share sheet; the tab makes it two (#1866).
-                    Button {
-                        guard !isPreparingExportAll, preparingMarkdownItemID == nil else { return }
-                        isPreparingExportAll = true
-                        Task {
-                            markdownFileURL = await model.prepareAllMarginsMarkdownFileURL()
-                            isPreparingExportAll = false
+                    // One Export control, not two (#3211): Export means yourself or your tools, so both ways of taking
+                    // Margins out sit in one menu and the document glyph says it is not Share.
+                    Menu {
+                        Button("All Margins, one file", systemImage: "doc.text") {
+                            guard !isPreparingExportAll, preparingMarkdownItemID == nil else { return }
+                            isPreparingExportAll = true
+                            Task {
+                                markdownFileURL = await model.prepareAllMarginsMarkdownFileURL()
+                                isPreparingExportAll = false
+                            }
                         }
+                        .disabled(isPreparingExportAll || preparingMarkdownItemID != nil)
+                        .accessibilityIdentifier("margins.exportAll.button")
+                        Button("One file per session", systemImage: "doc.on.doc", action: openBatchExport)
+                            .accessibilityIdentifier("margins.export.button")
                     } label: {
                         if isPreparingExportAll {
                             ProgressView().frame(minWidth: 44, minHeight: 44)
                         } else {
-                            Label("Export all Margins", systemImage: "square.and.arrow.up")
+                            Label("Export", systemImage: "doc.text")
                                 .labelStyle(.iconOnly)
                                 .frame(minWidth: 44, minHeight: 44)
                         }
                     }
-                    .disabled(isPreparingExportAll || preparingMarkdownItemID != nil)
-                    .accessibilityLabel(isPreparingExportAll ? "Preparing Margins" : "Export all Margins")
-                    .accessibilityIdentifier("margins.exportAll.button")
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Export Sessions", systemImage: "square.and.arrow.up.on.square", action: openBatchExport)
-                        .accessibilityIdentifier("margins.export.button")
+                    .disabled(isPreparingExportAll)
+                    .accessibilityLabel(isPreparingExportAll ? "Preparing Margins" : "Export Margins")
+                    .accessibilityIdentifier("margins.exportMenu.button")
                 }
             }
             .task {

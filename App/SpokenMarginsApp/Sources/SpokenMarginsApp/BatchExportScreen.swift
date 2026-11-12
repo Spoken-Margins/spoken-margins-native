@@ -202,7 +202,7 @@ struct BatchExportScreen: View {
 
     private var exportAction: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Share")
+            Text("Export")
                 .font(.headline)
             ProductPanel {
                 VStack(alignment: .leading, spacing: 14) {
@@ -213,7 +213,7 @@ struct BatchExportScreen: View {
                             .font(.subheadline)
                     }
                     Button { model.prepareSelectedSessionsForSharing() } label: {
-                        Label("Export \(model.selectedBatchExportSessionIds.count) Session\(model.selectedBatchExportSessionIds.count == 1 ? "" : "s")", systemImage: "square.and.arrow.up")
+                        Label("Export \(model.selectedBatchExportSessionIds.count) Session\(model.selectedBatchExportSessionIds.count == 1 ? "" : "s")", systemImage: "doc.text")
                     }
                     .buttonStyle(PrimaryButtonStyle())
                     .disabled(model.batchExportShare != nil || model.isPreparingBatchShare)

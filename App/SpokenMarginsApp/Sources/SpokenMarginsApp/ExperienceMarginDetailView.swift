@@ -59,7 +59,7 @@ struct ExperienceMarginDetailView: View {
             .accessibilityIdentifier("marginDetail.copyWithContext.button")
             // Share means another listener (#3211): this opens the friend sheet with only this Margin.
             if ItemShareSessionSelection.isShareable(current.interjection) {
-                Button("Share this Margin", systemImage: "person.wave.2") {
+                Button("Share this Margin", systemImage: "square.and.arrow.up") {
                     pendingNavigation = .share // the friend sheet opens once this screen has closed
                     dismiss()
                 }
@@ -68,7 +68,7 @@ struct ExperienceMarginDetailView: View {
             }
             // Export means yourself or your tools: this Margin's note as a Markdown file (#1866, #3211).
             if MarginMarkdownShare.hasNote(current.interjection) {
-                Button("Export this Margin as Markdown", systemImage: "square.and.arrow.up") {
+                Button("Export this Margin", systemImage: "doc.text") {
                     guard !isPreparingMarkdown else { return }
                     isPreparingMarkdown = true
                     let margin = current.interjection

@@ -496,7 +496,7 @@ struct SettingsScreen: View, Equatable {
                     } label: {
                         Label(
                             hasNoListeningSignals ? "Nothing Recorded Yet" : "Export Listening Signals",
-                            systemImage: "square.and.arrow.up"
+                            systemImage: "doc.text"
                         )
                         .fullRowTapTarget()
                     }

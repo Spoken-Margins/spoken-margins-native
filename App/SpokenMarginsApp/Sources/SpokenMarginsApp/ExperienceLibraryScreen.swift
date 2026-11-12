@@ -671,7 +671,7 @@ private struct ExperienceLibraryCompactRow: View {
             Button("Add to Collection…", systemImage: "folder.badge.plus", action: onAddToCollection)
                 .accessibilityIdentifier("library.addToCollection.\(row.id)")
             if let onExport {
-                Button("Export…", systemImage: "square.and.arrow.up", action: onExport)
+                Button("Export…", systemImage: "doc.text", action: onExport)
                     .accessibilityIdentifier("library.export.\(row.id)")
             }
             if let onRename {
@@ -709,7 +709,7 @@ private struct ExperienceLibraryCompactRow: View {
                 Button(role: .destructive, action: onDelete) { Label("Delete", systemImage: "trash") }
             }
             if let onExport {
-                Button(action: onExport) { Label("Export", systemImage: "square.and.arrow.up") }
+                Button(action: onExport) { Label("Export", systemImage: "doc.text") }
                     .tint(AppColors.swipeEvergreen)
                     .accessibilityIdentifier("library.exportSwipe.\(row.id)")
             }

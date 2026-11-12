@@ -162,7 +162,7 @@ struct ExperienceTimelineRailScreen: View {
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Button(action: model.openExport) {
-                    Image(systemName: "square.and.arrow.up")
+                    Image(systemName: "doc.text")
                         .frame(width: 44, height: 44)
                 }
                 .accessibilityLabel("Export session")

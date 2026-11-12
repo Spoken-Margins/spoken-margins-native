@@ -11,14 +11,14 @@
 | Unfollow a show | 5 | 3 | Following tab > Show row |
 | Find the Margin you added most recently | 1 | 1 | Margins tab |
 | Hear a Margin's moment | 3 | 2 | Margins tab > Margin row (plays this moment) |
-| Share one Margin with a friend | 6 | 4 | Margins tab > chevron on a Margin row (details) > More > Share this Margin (person.wave.2) > Share N |
+| Share one Margin with a friend | 6 | 4 | Margins tab > chevron on a Margin row (details) > More > Share this Margin (square.and.arrow.up) > Share N |
 | See an item's details | 1 | 1 | Library row (title area) |
 | Add an article from the clipboard | 2 | 2 | Add (plus) |
 | Write a Margin while listening | 2 | 2 | Mini player (Open Now Playing) > square.and.pencil 'Write a Margin' |
 | Open the Timeline for what's playing | 2 | 2 | Mini player (Open Now Playing) > Timeline (pane switch) |
 | Change the reading voice | 4 | 3 | Settings tab |
 | Free up storage | 5 | 3 | Settings tab |
-| Export all Margins | 6 | 2 | Margins tab > Export all Margins (toolbar) |
+| Export all Margins | 6 | 3 | Margins tab > Export (doc.text, toolbar) > All Margins, one file |
 | Get help | 2 | 2 | Settings tab > "How Spoken Margins Works" (questionmark.circle) |
 | See new episodes from a show you follow | 1 | 1 | Following tab |
 | Open a Margin packet a friend sent | 2 | 2 | open a .spokenmargins packet file (Files, Mail, AirDrop, Messages) |
