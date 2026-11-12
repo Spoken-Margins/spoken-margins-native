@@ -126,6 +126,30 @@ final class MarginReturnResumeTests: XCTestCase {
         XCTAssertEqual(events.last, .abandoned(attempts: 0))
     }
 
+    /// The audit's scenario on cbe4653: the listener presses Play on the Lock Screen while a retry waits, then Pause a
+    /// moment later in the same place. The source is paused where the Margin left it, so the position check alone says
+    /// "still owed". The app model cancels the retry when playback goes active; the retry must then not start the source.
+    func testARetryCancelledWhenTheListenerPlayedIsNotRevivedByAPauseInTheSamePlace() async throws {
+        let (engine, audio) = try pausedForAMargin()
+        audio.refusals = 1
+        let gate = AsyncGate()
+        let resumer = MarginReturnResume(retrier: InterruptionResumeRetrier(delaysMs: [10], sleep: { _ in await gate.wait() }))
+        var events: [MarginReturnResume.Event] = []
+        resumer.resume(stillWaiting: { engine.snapshot.status == .paused }, attempt: { _ = try engine.resumePlayback() }, report: { events.append($0) })
+        XCTAssertTrue(resumer.isRetrying)
+
+        _ = try engine.resumePlayback() // the listener plays...
+        _ = try engine.pause() // ...and pauses again, still in the same place
+        XCTAssertEqual(engine.snapshot.status, .paused)
+        XCTAssertEqual(audio.starts, 1, "the listener's own Play started the episode once")
+        resumer.cancel() // what the model does the moment playback goes active
+        await gate.open()
+        await resumer.waitUntilIdle()
+
+        XCTAssertEqual(audio.starts, 1, "a retry that ran now would start the episode the listener just paused")
+        XCTAssertEqual(events, [.failed(reason: "SessionKit.SessionKitError#1:invalidCommandForState")])
+    }
+
     func testTheRecordCarriesTheOutcomeAndErrorTypeButNeverAMessage() {
         struct Leaky: LocalizedError { var errorDescription: String? { "Could not open /Users/someone/My Secret Plans.mp3" } }
         let failed = MarginReturnResume.Event.failed(reason: SafeErrorText.describe(Leaky()))
@@ -153,5 +177,20 @@ final class MarginReturnResumeTests: XCTestCase {
         XCTAssertTrue(second)
         XCTAssertEqual(audio.starts, 1, "one start, not a second from the replaced retry")
         XCTAssertFalse(resumer.isRetrying)
+    }
+
+    /// A sleep that returns when released, so a test can act while the retry waits.
+    private actor AsyncGate {
+        private var continuation: CheckedContinuation<Void, Never>?
+        private var isOpen = false
+        func wait() async {
+            if isOpen { return }
+            await withCheckedContinuation { continuation = $0 }
+        }
+        func open() {
+            isOpen = true
+            continuation?.resume()
+            continuation = nil
+        }
     }
 }

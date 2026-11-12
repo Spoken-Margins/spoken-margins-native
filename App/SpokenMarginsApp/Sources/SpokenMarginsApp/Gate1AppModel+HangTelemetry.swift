@@ -92,7 +92,12 @@ extension Gate1AppModel {
             || oldValue.targetId != snapshot.targetId || snapshot.status.isPlaybackActive {
             labels.scoped("snapshot.stopSharedMargin") { stopImportedCommentaryPlayback(resumeSource: false) }
         }
-        if snapshot.status.isPlaybackActive { releaseOwnMarginReturn(); libraryAudioLoop.renderPolicy.noteListenerEngaged() }
+        if snapshot.status.isPlaybackActive {
+            releaseOwnMarginReturn(); libraryAudioLoop.renderPolicy.noteListenerEngaged()
+            // The source is playing, so nothing is owed: a retry still waiting must not start it again after a Play and a
+            // Pause in the same place, which the retry's own position check can't tell from "never touched" (#4110).
+            Self.marginReturnResume.cancel()
+        }
         if let status = snapshot.preparedTextAudioStatus, status != preparedTextAudioStatus { preparedTextAudioStatus = status } // an equal write still publishes
         if let snapshotSourceTranscriptStatus = snapshot.sourceTranscriptStatus, snapshotSourceTranscriptStatus != sourceTranscriptStatus,
            !(sourceTranscriptStatus == "transcribing" && snapshotSourceTranscriptStatus == "not_started") {

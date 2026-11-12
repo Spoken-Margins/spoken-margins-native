@@ -25,7 +25,7 @@ extension Gate1AppModel {
         guard engine != nil else { return false }
         let sessionId = snapshot.sessionId
         let targetId = snapshot.targetId
-        let pausedAtMs = snapshot.currentMediaTimeMs // a seek, skip, Play or Pause by the listener moves this, and then the source is theirs
+        let pausedAtMs = snapshot.currentMediaTimeMs // a seek or skip by the listener moves this, and then the source is theirs; a Play cancels the retry outright (snapshotDidChange), since a Play and Pause in one place leaves it unchanged
         // A text or PDF source has no media time, so its place is the text offset and progress.
         let pausedAtText = snapshot.currentTextStart
         let pausedAtPercent = snapshot.progressPercent
