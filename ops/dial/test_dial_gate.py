@@ -770,5 +770,107 @@ class RequestHeaderTests(unittest.TestCase):
         self.assertIsNone(read.get_header('Content-type'))
 
 
+class StaleEstimateChargesForWhatRan(unittest.TestCase):
+    """#4111: on 2026-11-12 a 65% report 12 h old read 90% while real usage was 66%. The gate was holding, so nothing ran,
+    and the estimate rose by 2 points an hour from the clock alone."""
+    REPORT = dt.datetime(2026, 11, 11, 18, 15, tzinfo=UTC)     # Wed 14:15 Eastern, 65%
+    NOW12 = dt.datetime(2026, 11, 12, 6, 32, tzinfo=UTC)       # the read that showed 90%
+    U = {'percent': 65, 'at': REPORT}
+
+    def test_nothing_running_for_twelve_hours_barely_moves_the_estimate(self):
+        est = g.usage_estimate(self.NOW12, self.U, {'thread_hours': 0.0, 'covered_from': self.REPORT})
+        self.assertAlmostEqual(est['percent'], 65 + g.IDLE_BURN * 12.28, delta=0.05)
+        self.assertLess(est['percent'], 70)
+        self.assertIn('0 thread-hours'.replace('0 ', '0.0 '), est['words'])
+
+    def test_without_activity_data_the_old_rate_still_applies(self):
+        est = g.usage_estimate(self.NOW12, self.U)
+        self.assertAlmostEqual(est['percent'], 65 + 2 * 12.28, delta=0.05)
+        self.assertIn('plus 2 points an hour', est['words'])
+
+    def test_three_threads_all_the_time_read_as_the_old_busiest_rate(self):
+        hours = (self.NOW12 - self.REPORT).total_seconds() / 3600
+        est = g.usage_estimate(self.NOW12, self.U, {'thread_hours': 3 * hours, 'covered_from': self.REPORT})
+        self.assertAlmostEqual(est['percent'], 65 + g.STALE_BURN * hours, delta=0.5)
+
+    def test_time_before_the_threads_could_be_read_counts_at_the_old_rate(self):
+        covered = self.REPORT + dt.timedelta(hours=6)
+        est = g.usage_estimate(self.NOW12, self.U, {'thread_hours': 0.0, 'covered_from': covered})
+        hours = (self.NOW12 - self.REPORT).total_seconds() / 3600
+        self.assertAlmostEqual(est['percent'], 65 + 2 * 6 + g.IDLE_BURN * (hours - 6), delta=0.05)
+        self.assertIn('could not be read', est['words'])
+
+    def test_a_report_from_before_the_reset_counts_idle_from_the_reset(self):
+        sat = dt.datetime(2026, 11, 7, 20, 0, tzinfo=UTC)          # 9 hours into the new week
+        report = dt.datetime(2026, 11, 7, 10, 30, tzinfo=UTC)
+        est = g.usage_estimate(sat, {'percent': 96, 'at': report}, {'thread_hours': 2.0, 'covered_from': dt.datetime(2026, 11, 7, 11, 0, tzinfo=UTC)})
+        self.assertAlmostEqual(est['percent'], g.IDLE_BURN * 9 + g.THREAD_BURN * 2, delta=0.05)
+
+    def test_thread_hours_counts_each_thread_for_its_own_span(self):
+        a, b = dt.datetime(2026, 11, 12, 0, 0, tzinfo=UTC), dt.datetime(2026, 11, 12, 6, 0, tzinfo=UTC)
+        threads = g.parse_threads([claim('A', 1, a), stop('A', 1, a + dt.timedelta(hours=1)),      # 1 h, stopped
+                                   claim('B', 2, a + dt.timedelta(hours=2)),                       # active until now
+                                   claim('Codex worker 1', 3, a)], [], b)
+        by = {t['title']: t for t in threads}
+        by['B'].update(state='active')   # B shows life through now
+        self.assertAlmostEqual(g.thread_hours(threads, a, b, b), 1 + 4, places=3)   # Codex worker 1 is not Claude
+        self.assertAlmostEqual(g.thread_hours(threads, a + dt.timedelta(minutes=30), a + dt.timedelta(hours=3), b), 0.5 + 1, places=3)
+
+    def test_a_quiet_thread_counts_to_its_last_sign_of_life_and_a_second_run_counts_too(self):
+        a = dt.datetime(2026, 11, 12, 0, 0, tzinfo=UTC)
+        now = a + dt.timedelta(hours=10)
+        comments = [claim('Q', 1, a), claim('R', 2, a), stop('R', 2, a + dt.timedelta(hours=1)),
+                    claim('R', 3, a + dt.timedelta(hours=2))]        # R's second run is quiet from 02:00
+        threads = g.parse_threads(comments, [], now)
+        self.assertEqual({t['title']: t['state'] for t in threads}, {'Q': 'quiet', 'R': 'quiet'})
+        self.assertAlmostEqual(g.thread_hours(threads, a, now, now), 0 + 1 + 0, places=3)  # Q none, R's first run 1 h
+
+    def test_a_full_comment_read_trusts_threads_only_after_its_oldest_comment_plus_the_pad(self):
+        start = dt.datetime(2026, 11, 11, 18, 0, tzinfo=UTC)
+        full = [comment(1, start + dt.timedelta(hours=3) + dt.timedelta(seconds=i)) for i in range(g.COMMENT_PAGES * 100)]
+        self.assertEqual(g.covered_from_of(full, start), start + dt.timedelta(hours=3) + g.THREAD_READ_PAD)
+        self.assertEqual(g.covered_from_of(full[:-1], start), start)           # under the cap: nothing was dropped
+        old = [comment(1, start - dt.timedelta(hours=9)) for _ in range(g.COMMENT_PAGES * 100)]
+        self.assertEqual(g.covered_from_of(old, start), start)                 # never earlier than the window
+
+    def run_main(self, comments, ticks):
+        def since_of(path):
+            return g.parse_time(path.split('since=')[1].split('&')[0])
+
+        def pages(path, token, max_pages=20):
+            source = ticks if '/issues/337/comments' in path else comments if '/issues/comments' in path else []
+            hits = [c for c in source if g.parse_time(c['created_at']) >= since_of(path)]
+            return sorted(hits, key=lambda c: c['created_at'], reverse='/issues/comments' in path)   # the gate asks for newest first
+
+        def one(method, path, token, body=None):
+            if path.endswith('issues/589'):
+                return {'body': BODY.replace('- [x] Fri noon', '- [ ] Fri noon').replace('- [ ] Sat 7 AM', '- [x] Sat 7 AM')}
+            if path.startswith('search/'):
+                return {'total_count': 10}
+            return []
+
+        out = io.StringIO()
+        with mock.patch.object(g, 'gh', one), mock.patch.object(g, 'gh_pages', pages), \
+                mock.patch.object(g, 'load_state', lambda: {}), mock.patch.dict('os.environ', {'SM_DIAL_GITHUB_TOKEN': 'x'}), \
+                contextlib.redirect_stdout(out):
+            g.main(['--dry-run'], now=self.NOW12)
+        return out.getvalue()
+
+    def test_the_gate_does_not_hold_on_the_2026_11_12_report(self):
+        # 65% twelve hours ago, no thread since: about 69%, inside the ~67% trend plus 10. On main this read 90% and held.
+        text = self.run_main([], [tick(65, self.REPORT)])
+        self.assertNotIn('Holding', text)
+        self.assertIn('Usage: about 69%', text)
+        self.assertIn('0.0 thread-hours', text)
+
+    def test_threads_that_ran_since_the_report_are_charged(self):
+        start = self.REPORT + dt.timedelta(hours=1)
+        comments = [claim(f'T{i}', 100 + i, start) for i in range(3)] + [stop(f'T{i}', 100 + i, self.NOW12 - dt.timedelta(hours=1)) for i in range(3)]
+        text = self.run_main(comments, [tick(65, self.REPORT)])
+        # three threads for about 10.3 hours each
+        self.assertIn('30.9 thread-hours', text)
+        self.assertIn('Holding', text)       # about 65 + 4 + 17 = 86%, far ahead of the trend
+
+
 if __name__ == '__main__':
     unittest.main()

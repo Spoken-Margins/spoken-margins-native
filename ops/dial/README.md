@@ -3,14 +3,14 @@
 The usage figure comes only from the Mac tick on #337, and threads run in the cloud without the Mac. So since #3518 a report that is out of date no longer stops the work by itself.
 
 1. **A report under 3 hours old reads at face value**, as it always did. A Mac that is awake holds no earlier than before.
-2. **An older report gets 2 points an hour for its whole age.** Paced holds when that estimate reaches the hold line (stop line minus 3) or runs more than 10 points ahead of the trend, and the status comment says it is an estimate.
+2. **An older report is charged for what ran since it (#4111).** The estimate adds 0.33 points an hour for the whole age (the idle rate), plus 0.55 points for each hour a Claude thread was active since the report, read from the claim and stop notes. Three threads running all the time add up to the old 2 points an hour. Any part of the age the gate could not read threads for (the repo's comment read hit its page cap) is charged at the full 2 points an hour, so missing data holds more, never less. Paced holds when the estimate reaches the hold line (stop line minus 3) or runs more than 10 points ahead of the trend, and the status comment says it is an estimate and shows the thread-hours it charged. Before #4111 the full 2 points an hour was charged for the whole age, so a gate that was holding (nothing running) still saw usage climb: on 2026-11-12 a 65% report 12 hours old read 90% while real usage was 66%.
 3. **A report from before this week's reset** counts up from 0% at the reset.
 4. **No report in 8 days** holds. A `HALT (usage breaker: Claude)` holds until its `RESUMED`, including one from before the reset.
 5. **An unanswered fire with no thread active** is retried after 30 minutes, then 1, 2 and 3 hours. With a thread active it waits 3 hours.
 
 The Mac worker (`ops/claude/sm_claude_worker.py`) keeps the plain 3-hour hold: it runs on the Mac, so a stale report there means something is wrong.
 
-**Re-measure the 2 points an hour** when the thread count or the plan changes. Read every `Claude N% used` from #337 with its `created_at`, take the points gained over 6-hour and 12-hour spans inside one week, and look at the high end. Don't use the gaps where the Mac was off: the gate was holding through them, so they read low (0.09 to 0.33 points an hour).
+**Re-measure the rates** (`IDLE_BURN`, `THREAD_BURN` and the 2-point `STALE_BURN` they must add up to with three threads) when the thread count or the plan changes. Read every `Claude N% used` from #337 with its `created_at`, take the points gained over 6-hour and 12-hour spans inside one week, and look at the high end. The gaps where the Mac was off and the gate was holding read low (0.09 to 0.33 points an hour): that is the idle rate, and the top of it is `IDLE_BURN`. For `THREAD_BURN`, divide the busy-span gain, less the idle rate, by the thread-hours in that span.
 
 **The sign it's wrong:** the first report after a long gap comes in above the estimate on the status comment's edit log for that time (GraphQL `userContentEdits` on the comment marked `dial-gate-status`).
 
