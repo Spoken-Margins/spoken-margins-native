@@ -816,6 +816,23 @@ class StaleEstimateChargesForWhatRan(unittest.TestCase):
         self.assertAlmostEqual(g.thread_hours(threads, a, b, b), 1 + 4, places=3)   # Codex worker 1 is not Claude
         self.assertAlmostEqual(g.thread_hours(threads, a + dt.timedelta(minutes=30), a + dt.timedelta(hours=3), b), 0.5 + 1, places=3)
 
+    def test_a_quiet_thread_counts_to_its_last_sign_of_life_and_a_second_run_counts_too(self):
+        a = dt.datetime(2026, 11, 12, 0, 0, tzinfo=UTC)
+        now = a + dt.timedelta(hours=10)
+        comments = [claim('Q', 1, a), claim('R', 2, a), stop('R', 2, a + dt.timedelta(hours=1)),
+                    claim('R', 3, a + dt.timedelta(hours=2))]        # R's second run is quiet from 02:00
+        threads = g.parse_threads(comments, [], now)
+        self.assertEqual({t['title']: t['state'] for t in threads}, {'Q': 'quiet', 'R': 'quiet'})
+        self.assertAlmostEqual(g.thread_hours(threads, a, now, now), 0 + 1 + 0, places=3)  # Q none, R's first run 1 h
+
+    def test_a_full_comment_read_trusts_threads_only_after_its_oldest_comment_plus_the_pad(self):
+        start = dt.datetime(2026, 11, 11, 18, 0, tzinfo=UTC)
+        full = [comment(1, start + dt.timedelta(hours=3) + dt.timedelta(seconds=i)) for i in range(g.COMMENT_PAGES * 100)]
+        self.assertEqual(g.covered_from_of(full, start), start + dt.timedelta(hours=3) + g.THREAD_READ_PAD)
+        self.assertEqual(g.covered_from_of(full[:-1], start), start)           # under the cap: nothing was dropped
+        old = [comment(1, start - dt.timedelta(hours=9)) for _ in range(g.COMMENT_PAGES * 100)]
+        self.assertEqual(g.covered_from_of(old, start), start)                 # never earlier than the window
+
     def run_main(self, comments, ticks):
         def since_of(path):
             return g.parse_time(path.split('since=')[1].split('&')[0])

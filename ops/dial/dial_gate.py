@@ -368,6 +368,16 @@ def thread_hours(threads: list[dict], start: dt.datetime, end: dt.datetime, now:
     return total
 
 
+def covered_from_of(comments: list[dict], window_start: dt.datetime) -> dt.datetime:
+    """How far back the thread read can be trusted. A thread is built from its claim comment, so one claimed before
+    the read began is invisible. The read starts THREAD_READ_PAD before the report, which covers any normal run. The
+    comment read is newest first, so a page cap drops the oldest comments: then threads are readable only from the
+    oldest comment kept plus the same pad, and the span before that is charged at the full STALE_BURN."""
+    if comments and len(comments) >= COMMENT_PAGES * 100:
+        return max(window_start, parse_time(comments[0]['created_at']) + THREAD_READ_PAD)
+    return window_start
+
+
 def usage_estimate(now: dt.datetime, u: dict, activity: dict | None = None) -> dict:
     """What Paced believes about usage, given the Mac's newest report.
 
@@ -645,10 +655,7 @@ def main(argv=None, now: dt.datetime | None = None) -> int:
     since = window_start.strftime('%Y-%m-%dT%H:%M:%SZ')
     all_comments = gh_pages(f'repos/{REPO}/issues/comments?since={since}&sort=created'
                             f'&direction=desc&per_page=100', token, max_pages=COMMENT_PAGES)[::-1]
-    # Newest first, so a page cap drops the oldest comments: then threads are readable only back to the oldest one.
-    covered_from = window_start
-    if all_comments and len(all_comments) >= COMMENT_PAGES * 100:
-        covered_from = max(window_start, parse_time(all_comments[0]['created_at']))
+    covered_from = covered_from_of(all_comments, window_start)
     events = gh_pages(f'repos/{REPO}/events?per_page=100', token, max_pages=3)
     threads = parse_threads(all_comments, events, now)
     if usage_info['usage']:
