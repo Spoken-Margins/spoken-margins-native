@@ -69,6 +69,11 @@ final class ShareFilePresenterTests: XCTestCase {
     /// Share Diagnostics button does, and publishes about two seconds' worth of every kind of model write audio makes.
     /// The same `UIActivityViewController` must stay presented from the first look to the last: a rebuilt or re-presented
     /// sheet is a different controller (or one briefly not presented).
+    ///
+    /// What this does and does not guard: the presentation is called directly, not by tapping Share Diagnostics, so it
+    /// guards that a sheet UIKit presents over the window survives the app's publishes and redraws. It does not catch
+    /// Settings going back to hosting the sheet itself; `SettingsScreen` calls `ShareFilePresenter.present` at both buttons
+    /// and has no `.sheet` for a share view, and a reviewer must keep it so.
     func testTheSheetOverSettingsIsNotReloadedByModelPublishes() async throws {
         let model = try makeModel()
         let mounted = try mount(settingsInTheTabBar(model: model))
@@ -76,9 +81,14 @@ final class ShareFilePresenterTests: XCTestCase {
         try await waitUntilQuiet { ScreenRedrawProbe.count("settings") }
         let file = try exportFile()
         defer { try? FileManager.default.removeItem(at: file) }
+        var modelPublishes = 0
+        let watch = model.objectWillChange.sink { modelPublishes += 1 }
+        defer { watch.cancel() }
 
         ShareFilePresenter.present(fileURL: file)
         let sheet = try await presentedActivitySheet(in: mounted.window)
+        // Let the sheet finish coming up, so the looks below are of a settled sheet, not one still animating in.
+        try await Task.sleep(for: .milliseconds(500))
         var presentations = 1
         var lostLooks = 0
         var lastSeen: UIViewController? = sheet
@@ -91,6 +101,7 @@ final class ShareFilePresenterTests: XCTestCase {
             if now !== sheet || sheet.isBeingDismissed || sheet.presentingViewController == nil { lostLooks += 1 }
         }
 
+        XCTAssertGreaterThanOrEqual(modelPublishes, Self.publishes, "Only \(modelPublishes) of \(Self.publishes) writes reached the model's observers, so the sheet was not tested against publishes")
         XCTAssertEqual(lostLooks, 0, "The share sheet was gone or replaced in \(lostLooks) of \(Self.publishes) looks "
                            + "while the model published; it was presented \(presentations) times")
         XCTAssertEqual(presentations, 1, "The share sheet was presented \(presentations) times for one tap")
@@ -105,8 +116,12 @@ final class ShareFilePresenterTests: XCTestCase {
         let model = try makeModel()
         let mounted = try mount(AnyView(PlainSheetSharePresenter(model: model)))
         defer { mounted.close() }
+        for _ in 0..<125 where PlainSheetShareProbe.builds == 0 { try await Task.sleep(for: .milliseconds(40)) }
+        XCTAssertGreaterThan(PlainSheetShareProbe.builds, 0, "The plain sheet's content was never built, so there is nothing to compare")
         try await waitUntilQuiet { PlainSheetShareProbe.builds }
         let before = PlainSheetShareProbe.builds
+        try await Task.sleep(for: .milliseconds(500))
+        XCTAssertEqual(PlainSheetShareProbe.builds, before, "The plain sheet kept rebuilding with no publish, so a count after the publishes proves nothing")
 
         for index in 0..<Self.publishes {
             publish(index, on: model)
