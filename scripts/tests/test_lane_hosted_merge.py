@@ -126,15 +126,17 @@ class HostedRestChecksTests(unittest.TestCase):
         self.assertEqual(found, STOOD)
         self.assertEqual(dispatched, [0.0])  # one dispatch: the second answer was the faulted run still newest
 
-    def test_a_lane_fault_with_no_way_to_run_again_stays_a_fail(self):
-        # Nothing starts a new run there (the pair, a merge after T3): INCONCLUSIVE would repeat on every re-add of
-        # automerge, because the same failed run is still the newest. So it is the FAIL it was before #4085.
-        (found, why), waited, dispatched = self.wait([(None, FAULT)], run_again=False)
+    def test_a_lane_fault_is_run_again_in_the_pair_path_too(self):
+        # Audit on 9d98b41: with the Mac-rest switch off run_again is false, and Done when 1 holds there as well.
+        (found, why), _, dispatched = self.wait([(None, FAULT), (None, RUNNING), (STOOD, '')], run_again=False)
+        self.assertEqual(found, STOOD)
+        self.assertEqual(dispatched, [0.0])
+
+    def test_a_lane_fault_that_cannot_be_run_again_reports_inconclusive_with_the_reason(self):
+        (found, why), _, dispatched = self.wait([(None, FAULT)], run_again=False, dispatch_result='not from here')
         self.assertIsNone(found)
-        self.assertEqual((waited, dispatched), (0, []))
-        self.assertFalse(lane.HOSTED_LANE_FAULT.search(why), why)
-        self.assertIn('ended failure', why)
-        self.assertEqual(lane.hosted_checks_missing(why, lane.NEEDS_MAC)[0], 'FAIL')
+        self.assertIn('not from here', why)
+        self.assertEqual(lane.hosted_checks_missing(why, lane.NEEDS_MAC)[0], 'INCONCLUSIVE')
 
     def test_hosted_checks_missing_reports_a_marked_fault_inconclusive(self):
         verdict, _, ran, details = lane.hosted_checks_missing(FAULT, lane.NEEDS_MAC)

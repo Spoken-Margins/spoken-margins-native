@@ -1327,7 +1327,10 @@ def hosted_fast_records(github, head: str, checks: dict = HOSTED_FAST_CHECKS) ->
         if run.get('status') != 'completed':
             return None, f'"{name}" {NOT_FINISHED} on {head[:7]}'
         if run.get('conclusion') != 'success':
-            fault = hosted_lane_fault(github, run, name, head) if run.get('conclusion') in HOSTED_FAILED_CONCLUSIONS else ''
+            # Not the app build (plan None): dispatch() starts hosted-portable.yml, never it, so a fault there could not be
+            # run again and would report INCONCLUSIVE on every re-add; it stays the FAIL it was (audit on 9d98b41).
+            fault = (hosted_lane_fault(github, run, name, head)
+                     if plan is not None and run.get('conclusion') in HOSTED_FAILED_CONCLUSIONS else '')
             return None, f'"{name}" ended {run.get("conclusion")} on {head[:7]}{fault}'
         if plan is None:  # the app build (#3539): green on this head is all it says
             found[name] = {'head': head, 'url': run.get('html_url', '')}
@@ -1507,7 +1510,6 @@ HOSTED_MISSING_GRACE = 5 * 60
 HOSTED_REST_POLL = 120
 HOSTED_FAILED = re.compile(r'" ended (failure|timed_out) on ')
 HOSTED_LANE_FAULT = re.compile(r' with a lane-fault annotation \(run (\d+)\)')  # hosted_lane_fault's words (#4085)
-HOSTED_LANE_FAULT_TEXT = re.compile(r' with a lane-fault annotation \(run \d+\).*', re.S)
 HOSTED_MISSING = re.compile(r'^no ".+" check ran on ')
 HOSTED_SKIPPED = re.compile(r'" ended skipped on ')
 HOSTED_UNREADABLE = 'could not read the fast checks'  # says nothing about the checks themselves
@@ -1553,6 +1555,8 @@ def hosted_rest_checks(github, tree: Path, base: str, head: str, base_sha: str, 
     newest_base: a callable that fetches and returns the base branch's tip. Each poll compares the checks with it, not
     with the tip this job started on, because a fresh run is merged onto the newest tip and main moves while the job
     waits (#2596). The caller reads back the tip the last poll used.
+    A check that failed with a lane-fault annotation (hosted_lane_fault) is started again once, whatever run_again says,
+    and waited for; a second faulted run of it on the head is a plain failure (#4085).
     run_again: there is no Mac to fall back on (#3501), so a check that can't be had (cancelled, skipped, never ran) is
     started again as a stale one is, within the same limits, rather than given up on. A read that failed says nothing
     about the checks, so it is only waited out. A check a fresh run skips as well won't change with more runs: the
@@ -1576,10 +1580,6 @@ def hosted_rest_checks(github, tree: Path, base: str, head: str, base_sha: str, 
                 pass  # keep comparing with the tip we have; the push says if it moved
         found, why = _hosted_fast_checks_once(github, tree, base, head, base_sha, env, records, checks)
         fault = None if found is not None else HOSTED_LANE_FAULT.search(why)
-        if fault and not run_again:
-            # Nothing here starts a new run (the pair, or a merge after T3), so re-adding automerge would read this same
-            # run and report INCONCLUSIVE again forever: it is the FAIL it was before #4085.
-            return None, HOSTED_LANE_FAULT_TEXT.sub('', why)
         if fault:  # #4085: the runner failed it, not the PR: start the check again once, and wait for that run
             if fault.group(1) not in faulted:
                 faulted.add(fault.group(1))
@@ -3480,7 +3480,10 @@ NOT_LANE_FAULTS = (('does not merge cleanly', 'a merge conflict'),
                    ('names no tests', 'a T3 request with no tests'), ('Nothing to run.', 'nothing to run'),
                    ('lane fault: no audio output', "the Mac's sound output, not a lane change (#909)"),
                    (MACOS_PRIVACY_NOTE, "the Mac's privacy settings, not a lane change (#2493)"),
-                   ('too: not this PR', 'a test broken on the base too, filed as its own issue (#1204)'))
+                   ('too: not this PR', 'a test broken on the base too, filed as its own issue (#1204)'),
+                   # hosted_checks_missing's words for a lane-fault: a GitHub runner's network, not a lane change. Before
+                   # #4085 it was a FAIL, which never counted toward the auto-revert (audit on 9d98b41).
+                   ("Runner fault, not this PR's code: run again", 'a GitHub-hosted runner fault, not a lane change (#4085)'))
 PENDING_T3_HOLD = re.compile(r'^not merged: held for T3:', re.M)
 LANE_MERGE_LOOKBACK = 300
 
