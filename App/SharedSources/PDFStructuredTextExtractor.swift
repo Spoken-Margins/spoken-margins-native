@@ -491,7 +491,9 @@ enum PDFStructuredTextExtractor {
                     result.append(StructuredDocumentLine(text: line.text, role: .body, pageIndex: pageIndex, superscripts: line.superscripts))
                 }
             }
-            for (lineIndex, entries) in anchors {
+            // In line order: the two lines of a wrapped heading share one result line, and
+            // dictionary order would list their entries differently on each import (#3970).
+            for (lineIndex, entries) in anchors.sorted(by: { $0.key < $1.key }) {
                 guard let index = resultIndex[lineIndex] else { continue }
                 result[index].outlineEntries += entries
             }
@@ -1216,7 +1218,13 @@ enum PDFStructuredTextExtractor {
             lengthBySize[size, default: 0] += range.length
             runs.append((range, size))
         }
-        guard runs.count > 1, let main = lengthBySize.max(by: { $0.value < $1.value })?.key, main > 0 else { return [] }
+        // On a tie the smaller size is the main one. A tie means as much small type as
+        // large ("fcc =", "Ael,st =Pmts"): math with subscripts, not prose with a marker.
+        // Leaving the tie to dictionary order read the same line differently on each
+        // import (#3970).
+        guard runs.count > 1,
+              let main = lengthBySize.max(by: { lhs, rhs in lhs.value == rhs.value ? lhs.key > rhs.key : lhs.value < rhs.value })?.key,
+              main > 0 else { return [] }
         let source = attributed.string as NSString
         var raised: [NSRange] = []
         for run in runs where run.size > 0 && run.size <= main * 0.8 && run.range.location > lineRange.location {

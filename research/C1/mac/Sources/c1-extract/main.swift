@@ -1,11 +1,14 @@
 // c1-extract: runs the app's PDF extractor over the C1 corpus.
 //
-//   swift run -c release c1-extract --root <repo>/research/C1 [--v2] [--only <id> ...]
+//   swift run -c release c1-extract --root <repo>/research/C1 [--v2] [--repeat <n>] [--only <id> ...]
 //
 // --v2 scores extraction v2 (I13 roles, C1 M3) as extractor `app-v2`:
 // `markdown` is the structured document's canonical text (Item.text for a v2
 // import), `spoken` is StructuredDocumentSpeech.spokenLines (I14 applied, then
 // SpeechTextNormalizer), and the I13 document goes to cache/i13-app-v2/.
+// --repeat <n> (with --v2) extracts each PDF n times in this one process and
+// exits 1 if the spoken lines differ between any two, naming the first line
+// that does (#3970: the same file read differently on two imports).
 // It also times v1 on the same PDF right before v2, so the import-time budget
 // is a per-paper ratio that other work on the Mac affects on both sides. v1's
 // time includes normalizeImportedText on each line, which the import's
@@ -31,6 +34,7 @@ struct Options {
     var root: URL
     var only: Set<String> = []
     var v2 = false
+    var repeats = 1
 }
 
 func dumpDirectory() -> URL? {
@@ -43,6 +47,7 @@ func parseOptions() -> Options {
     var root: URL?
     var only: Set<String> = []
     var v2 = false
+    var repeats = 1
     while !arguments.isEmpty {
         let flag = arguments.removeFirst()
         switch flag {
@@ -51,6 +56,10 @@ func parseOptions() -> Options {
             root = URL(fileURLWithPath: arguments.removeFirst(), isDirectory: true)
         case "--v2":
             v2 = true
+        case "--repeat":
+            guard let value = arguments.first.flatMap({ Int($0) }), value >= 1 else { fail("--repeat needs a count of 1 or more") }
+            arguments.removeFirst()
+            repeats = value
         case "--only":
             while let next = arguments.first, !next.hasPrefix("--") {
                 only.insert(arguments.removeFirst())
@@ -59,8 +68,9 @@ func parseOptions() -> Options {
             fail("unknown argument \(flag)")
         }
     }
-    guard let root else { fail("usage: c1-extract --root <repo>/research/C1 [--v2] [--only <id> ...]") }
-    return Options(root: root, only: only, v2: v2)
+    guard let root else { fail("usage: c1-extract --root <repo>/research/C1 [--v2] [--repeat <n>] [--only <id> ...]") }
+    guard repeats == 1 || v2 else { fail("--repeat needs --v2") }
+    return Options(root: root, only: only, v2: v2, repeats: repeats)
 }
 
 func fail(_ message: String) -> Never {
@@ -134,6 +144,7 @@ var extracted = 0
 var failed: [String: String] = [:]
 var missing: [String] = []
 var checksumMismatches: [String] = []
+var unstable: [String: String] = [:]
 
 for entry in entries {
     guard let id = entry["id"] as? String else { continue }
@@ -179,7 +190,19 @@ for entry in entries {
                 record["markdown"] = document.text
                 record["markdown_sha256"] = document.extraction.textSHA256 ?? ""
                 record["extraction_version"] = document.extraction.version
-                record["spoken"] = StructuredDocumentSpeech.spokenLines(document).joined(separator: "\n")
+                let spoken = StructuredDocumentSpeech.spokenLines(document)
+                record["spoken"] = spoken.joined(separator: "\n")
+                for run in 1..<options.repeats {
+                    let again = try StructuredDocumentSpeech.spokenLines(
+                        PDFStructuredTextExtractor.structuredDocument(from: pdfURL, wordListURL: wordListURL))
+                    guard again != spoken else { continue }
+                    let line = spoken.indices.first(where: { $0 < again.count && spoken[$0] != again[$0] }) ?? min(spoken.count, again.count)
+                    let first = line < spoken.count ? spoken[line] : "(none)"
+                    let other = line < again.count ? again[line] : "(none)"
+                    unstable[id] = "read \(run + 1) differs at spoken line \(line + 1): \"\(first)\" then \"\(other)\""
+                    log("unstable \(id): \(unstable[id]!)")
+                    break
+                }
                 record["elapsed_ms"] = Int(elapsed.rounded())
                 record["elapsed_ms_v1_paired"] = Int(v1Elapsed.rounded())
                 let encoder = JSONEncoder()
@@ -234,6 +257,10 @@ var runInfo: [String: Any] = [
     "sha256_mismatches": checksumMismatches,
     "median_extract_ms": Int(median(timings).rounded()),
 ]
+if options.repeats > 1 {
+    runInfo["repeats"] = options.repeats
+    runInfo["unstable"] = unstable
+}
 if options.v2 {
     runInfo["extraction_version"] = PDFStructuredTextExtractor.structuredExtractionVersion
     runInfo["median_v1_paired_ms"] = Int(median(pairedV1Timings).rounded())
@@ -242,4 +269,7 @@ if options.v2 {
 }
 try write(runInfo, to: resultsDirectory.appendingPathComponent("run-info.json"))
 log("done: \(extracted) extracted, \(failed.count) failed, \(missing.count) not fetched; median \(Int(median(timings))) ms")
-if !missing.isEmpty || !checksumMismatches.isEmpty { exit(1) }
+if options.repeats > 1 {
+    log("repeat check: \(unstable.count) of \(extracted) PDFs read differently across \(options.repeats) reads")
+}
+if !missing.isEmpty || !checksumMismatches.isEmpty || !unstable.isEmpty { exit(1) }

@@ -171,6 +171,35 @@ final class PDFStructuredTextExtractorTests: XCTestCase {
         XCTAssertEqual(StructuredDocumentSpeech.spokenLines(document), ["Reasoning and the aptitude, is revised, and CO2 levels rose in every cohort we studied."])
     }
 
+    func testV2ReadsAMathLineTheSameWayOnEveryImport() throws {
+        // #3970: "Fij = vij" holds as much small type as large (the line break takes the
+        // last run's size), and the citation check picked the line's main size from
+        // dictionary order, so one import read "F = v" and the next "Fij = vij".
+        // macOS runs of the old code read "F = v" 7 times in 10.
+        let body: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 11)]
+        let small: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 7)]
+        let math = NSMutableAttributedString(string: "F", attributes: body)
+        math.append(NSAttributedString(string: "ij", attributes: small))
+        math.append(NSAttributedString(string: " = v", attributes: body))
+        math.append(NSAttributedString(string: "ij", attributes: small))
+        let cited = NSMutableAttributedString(string: "Reasoning and the aptitude,", attributes: body)
+        cited.append(NSAttributedString(string: "1", attributes: small))
+        cited.append(NSAttributedString(string: " is revised, and the levels rose in every cohort.", attributes: body))
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792))
+        let data = renderer.pdfData { context in
+            context.beginPage()
+            ("Reasoning and the aptitude of listeners rose in every cohort we studied." as NSString).draw(at: CGPoint(x: 60, y: 80), withAttributes: body)
+            math.draw(at: CGPoint(x: 60, y: 120))
+            cited.draw(at: CGPoint(x: 60, y: 160))
+        }
+        for read in 1...5 {
+            let document = try PDFStructuredTextExtractor.structuredDocument(from: XCTUnwrap(PDFDocument(data: data)))
+            let spoken = StructuredDocumentSpeech.spokenLines(document)
+            XCTAssertTrue(spoken.contains("Fij = vij"), "read \(read): \(spoken)")
+            XCTAssertTrue(spoken.contains("Reasoning and the aptitude, is revised, and the levels rose in every cohort."), "read \(read): the citation stays silent; \(spoken)")
+        }
+    }
+
     func testV2ReadsEachOutlineHeadingOnceWhereItIsPrinted() throws {
         // #355: outline titles no line matched ("A.1" labels, wrapped headings, run-in
         // headings) were inserted at the top of their page and read, then the printed
