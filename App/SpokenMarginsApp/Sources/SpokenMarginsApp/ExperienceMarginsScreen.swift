@@ -135,8 +135,8 @@ struct ExperienceMarginsScreen: View, Equatable {
                 }
             }
             .task {
+                loadCollections() // first, so the menu's collections don't wait for the Margins read (#4022)
                 await model.refreshMarginRowsAsync() // off the main thread (#2505)
-                loadCollections()
             }
             .refreshable { await model.refreshMarginRowsAsync() }
             .scrollDismissesKeyboard(.interactively)
@@ -154,7 +154,7 @@ struct ExperienceMarginsScreen: View, Equatable {
         MarginsScopeRow(
             title: scopeTitle(inputs),
             countText: MarginCountText.count(inputs.query.filter == .shared ? inputs.sharedRowCount : inputs.privateRowCount),
-            selection: scopeTag,
+            selection: Self.scopeTag(model),
             collections: collections,
             itemChoices: inputs.scopeItemChoices
         )
@@ -173,11 +173,20 @@ struct ExperienceMarginsScreen: View, Equatable {
         return "Everything"
     }
 
-    /// The scope picker's choice: one item, one collection (#490) or all items.
-    private var scopeTag: Binding<String?> {
+    /// The scope picker's choice: one item, one collection (#490) or all items. A picked collection is read from the
+    /// store when it is picked, not from the screen's copy, which is only as new as the last `.task`: an item added to
+    /// it since must be in scope (#4022). A failed read keeps the scope as it was.
+    static func scopeTag(_ model: Gate1AppModel) -> Binding<String?> {
         Binding(
             get: { model.marginCollectionQuery.scopeTag },
-            set: { model.marginCollectionQuery.selectScope(tag: $0, collections: collections) }
+            set: { tag in
+                var collections: [ItemCollection] = []
+                if tag?.hasPrefix(MarginCollectionQuery.collectionTagPrefix) == true {
+                    guard let stored = try? model.store?.loadItemCollections() else { return }
+                    collections = stored
+                }
+                model.marginCollectionQuery.selectScope(tag: tag, collections: collections)
+            }
         )
     }
 

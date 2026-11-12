@@ -100,6 +100,25 @@ final class ItemCollectionAppTests: XCTestCase {
         XCTAssertEqual(model.batchExportRows.map(\.id), [first.sessionID])
     }
 
+    /// The Margins scope menu is made from the screen's copy of the collections, which is only as new as its last
+    /// `.task` (#4022). Picking a collection must still list an item added to it after the menu was made.
+    func testPickingACollectionScopeListsAnItemAddedAfterTheMenuWasMade() throws {
+        let model = makeModel()
+        let first = try importItem(model, title: "Course Reading One", margin: "Margin on the first reading.")
+        let added = try importItem(model, title: "Course Reading Two", margin: "Margin on the added reading.")
+        let collection = ItemCollection(id: "collection-hist-210", name: "HIST 210", itemIDs: [first.itemID], createdAt: Date())
+        try save(collection, in: model)
+        model.refreshMarginRows()
+        let selection = ExperienceMarginsScreen.scopeTag(model)
+
+        try save(ItemCollectionEditing.toggling(itemID: added.itemID, in: collection, now: Date()), in: model)
+        selection.wrappedValue = MarginCollectionQuery.collectionTagPrefix + collection.id
+
+        XCTAssertEqual(model.marginCollectionQuery.collection?.collectionID, collection.id)
+        XCTAssertEqual(Set(model.visiblePrivateMarginRows.map(\.interjection.sessionId)), [first.sessionID, added.sessionID],
+                       "the item added after the menu was made is in scope")
+    }
+
     func testDeletingACollectionKeepsItsItemsSessionsAndMargins() throws {
         let model = makeModel()
         let first = try importItem(model, title: "Course Reading One", margin: "Margin on the first reading.")
