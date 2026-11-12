@@ -251,6 +251,9 @@ public final class AttestedServerClient: @unchecked Sendable {
         if let saved = store.keyID { return saved }
         let task: Task<String, Error> = try lock.withLock {
             if let registering { return registering }
+            // A registration that finished while this caller was on its way here has saved the key: use it, don't make
+            // a second one beside it.
+            if let saved = store.keyID { return Task { saved } }
             // A request that joins a registration already running shares its outcome; only a new one waits out a failure.
             if let retryAfter = registrationRetryAfter, now() < retryAfter { throw AppAttestFailure.failed }
             let created = Task { try await self.register() }

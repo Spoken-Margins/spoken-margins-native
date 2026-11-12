@@ -620,6 +620,8 @@ final class AppAttestClientTests: XCTestCase {
         XCTAssertEqual(provider.keys, 1, "and must not make another key")
         XCTAssertEqual(server.paths().filter { $0.hasSuffix("/register") }.count, registersBefore, "or spend another challenge")
         XCTAssertEqual(server.paths().filter { $0.hasSuffix("/challenge") }.count, registersBefore)
+        let senderBodies = server.all().filter { $0.path == "/api/v1/links/sender" }.map { String(decoding: $0.body, as: UTF8.self) }
+        XCTAssertEqual(senderBodies, ["second"], "the abandoned send posted nothing after it woke")
     }
 
     /// The same class without a timeout: a send forgets only the key it used. If the saved key changed while its request
