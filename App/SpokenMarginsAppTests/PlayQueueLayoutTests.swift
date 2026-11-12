@@ -483,10 +483,11 @@ final class PlayQueueLayoutTests: XCTestCase {
         return ListState(view: list, paths: paths)
     }
 
-    /// The list once SwiftUI's Edit mode has been active for 3 looks running, or nil after `looks` looks.
+    /// The list once SwiftUI's Edit mode has been active for 3 looks running, or nil once `looks` looks (40 ms each) or 30 s have passed, whichever is longer.
     private func editModeHeld(in mounted: Mounted, looks: Int) async throws -> UICollectionView? {
         var steady = 0
-        for _ in 0..<looks {
+        let pollDeadline = ContinuousClock.now + .seconds(max(30, Double(looks) * 0.04))
+        while ContinuousClock.now < pollDeadline {
             try await Task.sleep(for: .milliseconds(40))
             mounted.window.layoutIfNeeded()
             if PlayQueueSheetProbe.editMode == .active, let list = Self.collectionView(in: mounted.window) {

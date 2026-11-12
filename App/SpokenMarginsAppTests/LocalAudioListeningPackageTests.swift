@@ -321,7 +321,7 @@ final class LocalAudioListeningPackageTests: XCTestCase {
     /// The import runs until its flag clears. A fixed 5 s wait ended while the import was still going on a slow hosted
     /// Mac and the asserts after it read a half-imported layer (#2792), so this waits far longer and says so if it still runs.
     private func waitForPackageImport(_ model: Gate1AppModel, file: StaticString = #filePath, line: UInt = #line) async throws {
-        try await pollUntil { !model.isImportingSpokenMarginsPackage }
+        try await pollUntil(timeout: .seconds(60)) { !model.isImportingSpokenMarginsPackage }
         XCTAssertFalse(model.isImportingSpokenMarginsPackage, "the package import was still running after 60 s", file: file, line: line)
     }
 

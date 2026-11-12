@@ -179,7 +179,7 @@ final class SupertonicClientHarness {
 
     /// Waits until the client is playing the chunk that starts at `start`; true when it is.
     func waitForPlayingChunk(_ start: Int, seconds: Double = 3) async -> Bool {
-        for _ in 0..<Int(seconds * 50) where playingChunkStart != start { try? await Task.sleep(for: .milliseconds(20)) }
+        try? await pollUntil(timeout: .seconds(max(seconds, 30))) { playingChunkStart == start }
         return playingChunkStart == start
     }
 

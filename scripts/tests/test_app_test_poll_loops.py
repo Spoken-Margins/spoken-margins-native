@@ -37,6 +37,10 @@ class WhichLoopsAreFlagged(unittest.TestCase):
             'no where clause, early return': 'for _ in 0..<100 {\n    if ready { return }\n    try await Task.sleep(for: .milliseconds(20))\n}',
             'no where clause, break': 'for _ in 0..<100 {\n    if ready { break }\n    try? await Task.sleep(for: .milliseconds(20))\n}',
             'one line, semicolons': 'for _ in 0..<150 { if await condition() { return }; try? await Task.sleep(for: .milliseconds(20)) }',
+            'a count that is a name': 'for _ in 0..<bridgePolls where !ready { try await Task.sleep(for: .milliseconds(20)) }',
+            'a count that is an expression': 'for _ in 0..<Int(seconds * 50) where playingChunkStart != start { try? await Task.sleep(for: .milliseconds(20)) }',
+            'a count in parentheses': 'for _ in 0..<(seconds * 4) {\n    if ready { return }\n    try await Task.sleep(for: .milliseconds(250))\n}',
+            'a where clause over two lines': 'for _ in 0..<bridgePolls where state != "ready"\n    && state?.hasPrefix("failed:") != true {\n    try await Task.sleep(for: .milliseconds(20))\n}',
             'tabs': '\tfor _ in 0..<100 where !ready { try await Task.sleep(for: .milliseconds(20)) }',
         }
         for name, source in cases.items():
@@ -51,7 +55,7 @@ class WhichLoopsAreFlagged(unittest.TestCase):
             'a loop over an index': 'for index in 0..<100 {\n    model.snapshot.currentMediaTimeMs = index * 500\n}',
             'a sleep after the loop': 'for _ in 0..<3 { model.tick() }\ntry await Task.sleep(for: .milliseconds(20))',
             'a loop that only yields': 'for _ in 0..<100 where gate.continuation == nil { await Task.yield() }',
-            'a range from zero to a variable': 'for _ in 0..<count where !done { try await Task.sleep(for: .milliseconds(20)) }',
+            'a counted loop over two lines that does not sleep': 'for _ in 0..<(seconds * 4)\n    where model.busy {\n    model.tick()\n}',
         }
         for name, source in cases.items():
             with self.subTest(name):

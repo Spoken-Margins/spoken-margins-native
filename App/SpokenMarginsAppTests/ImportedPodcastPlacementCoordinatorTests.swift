@@ -775,7 +775,7 @@ private final class PlacementCoordinatorHarness {
         return finished
     }
 
-    /// Polls for up to five seconds. The coordinator's tasks run on the main actor, so the condition is read between
+    /// Polls for up to thirty seconds. The coordinator's tasks run on the main actor, so the condition is read between
     /// their steps and never mid-way through one.
     func waitUntil(_ condition: () -> Bool) async throws -> Bool {
         let pollDeadline = ContinuousClock.now + .seconds(30)

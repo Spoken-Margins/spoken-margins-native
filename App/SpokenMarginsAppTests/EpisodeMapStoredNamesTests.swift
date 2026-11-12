@@ -219,10 +219,9 @@ final class EpisodeMapStoredNamesTests: XCTestCase {
         XCTAssertFalse(model.isImportingSpokenMarginsPackage)
         XCTAssertNil(model.spokenMarginsPackageImportError)
         // The injected renderer is immediate; James's summary is rendered by Kitten, which loads its bundled model on a busy lane.
-        let bridgePolls = voice == .james ? 3_000 : 500
-        for _ in 0..<bridgePolls where model.diagnostics["localAudioSkim:\(itemID)"] != "ready"
-            && model.diagnostics["localAudioSkim:\(itemID)"]?.hasPrefix("failed:") != true {
-            try await Task.sleep(for: .milliseconds(20))
+        try await pollUntil(timeout: voice == .james ? .seconds(60) : .seconds(30)) {
+            let state = model.diagnostics["localAudioSkim:\(itemID)"]
+            return state == "ready" || state?.hasPrefix("failed:") == true
         }
         XCTAssertEqual(model.diagnostics["localAudioSkim:\(itemID)"], "ready")
         let assets = try store.loadOwnedOfflineAssets().filter { $0.itemId == itemID && $0.category == .summaryBridge }

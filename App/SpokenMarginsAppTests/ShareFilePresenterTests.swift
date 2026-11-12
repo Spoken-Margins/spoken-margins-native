@@ -234,7 +234,7 @@ final class ShareFilePresenterTests: XCTestCase {
             if let sheet = window.rootViewController?.presentedViewController as? UIActivityViewController { return sheet }
             try await Task.sleep(for: .milliseconds(40))
         }
-        XCTFail("No share sheet was presented over the window's root within 5 s")
+        XCTFail("No share sheet was presented over the window's root within 30 s")
         throw NotPresented()
     }
 
