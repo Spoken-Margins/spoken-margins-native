@@ -226,7 +226,8 @@ final class ScreenRedrawMeasurementTests: XCTestCase {
     private func waitUntilQuiet(_ screen: String) async throws {
         var last = ScreenRedrawProbe.count(screen)
         var quiet = 0
-        for _ in 0..<150 {
+        let pollDeadline = ContinuousClock.now + .seconds(30)
+        while ContinuousClock.now < pollDeadline {
             try await Task.sleep(for: .milliseconds(40))
             let now = ScreenRedrawProbe.count(screen)
             quiet = now == last ? quiet + 1 : 0

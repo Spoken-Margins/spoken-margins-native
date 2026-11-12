@@ -277,7 +277,7 @@ final class WrittenMarginTapAppTests: XCTestCase {
 
         model.moveItemToTrash(id: "item-pill")
         model.permanentlyDeleteItem(id: "item-pill")
-        for _ in 0..<100 where FileManager.default.fileExists(atPath: file.path) { try await Task.sleep(for: .milliseconds(50)) }
+        try await pollUntil { !FileManager.default.fileExists(atPath: file.path) }
         XCTAssertFalse(FileManager.default.fileExists(atPath: file.path), "a permanent delete removes it")
     }
 }

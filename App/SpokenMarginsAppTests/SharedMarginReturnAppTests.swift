@@ -396,10 +396,10 @@ struct ReturnFixture {
             media: ItemMedia(sourceType: .nativeMediaFile, url: sourceURL.absoluteString, durationMs: 30_000, nativeMediaId: "source-audio")))
         model.startItem(id: itemID)
         if sourcePlaying {
-            for _ in 0..<150 where (sourcePlayer.currentMediaTimeMs() ?? 0) < 200 { try await Task.sleep(for: .milliseconds(20)) }
+            try await pollUntil { (sourcePlayer.currentMediaTimeMs() ?? 0) >= 200 }
             XCTAssertGreaterThan(sourcePlayer.currentMediaTimeMs() ?? 0, 100, "the source is playing before the test starts")
             // The player's clock running is not the model's `.playing`: the model confirms the start on a later tick (#3332).
-            for _ in 0..<150 where model.snapshot.status != .playing { try await Task.sleep(for: .milliseconds(20)) }
+            try await pollUntil { model.snapshot.status == .playing }
             XCTAssertEqual(model.snapshot.status, .playing, "the model reports the source playing before the test starts")
         }
         let layer = ImportedCommentaryLayer(id: "received", itemId: itemID, packageDigest: "digest", packageId: "package",

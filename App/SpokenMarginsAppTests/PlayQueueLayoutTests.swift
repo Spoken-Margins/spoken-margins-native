@@ -111,7 +111,7 @@ final class PlayQueueLayoutTests: XCTestCase {
         let comparedBefore = PlayQueueSheetProbe.comparisons
         let unequalBefore = PlayQueueSheetProbe.unequalComparisons
 
-        for _ in 0..<20 {
+        for _ in 0..<20 { // fixed-count ok: it makes 20 changes 20 ms apart, not waiting for anything
             model.objectWillChange.send()
             // A real change to a published property the screen follows, leaving every row as it was (#4033): the rows
             // feed must absorb it, not pass it on to the sheet.
@@ -368,7 +368,8 @@ final class PlayQueueLayoutTests: XCTestCase {
         var last: [CGFloat] = []
         var steady = 0
         var seen: ListState?
-        for _ in 0..<150 {
+        let pollDeadline = ContinuousClock.now + .seconds(30)
+        while ContinuousClock.now < pollDeadline {
             mounted.window.layoutIfNeeded()
             if let view = Self.collectionView(in: mounted.window) {
                 let paths = (0..<view.numberOfSections).flatMap { section in
@@ -397,7 +398,8 @@ final class PlayQueueLayoutTests: XCTestCase {
     private func bodyRunsOnceTheSheetIsQuiet() async throws -> Int {
         var last = PlayQueueSheetProbe.bodyRuns
         var quiet = 0
-        for _ in 0..<150 {
+        let pollDeadline = ContinuousClock.now + .seconds(30)
+        while ContinuousClock.now < pollDeadline {
             try await Task.sleep(for: .milliseconds(40))
             let now = PlayQueueSheetProbe.bodyRuns
             quiet = now == last ? quiet + 1 : 0
@@ -412,7 +414,8 @@ final class PlayQueueLayoutTests: XCTestCase {
     private func rowRunsOnceTheRowsAreQuiet() async throws -> Int {
         var last = PlayQueueSheetProbe.rowRuns
         var quiet = 0
-        for _ in 0..<150 {
+        let pollDeadline = ContinuousClock.now + .seconds(30)
+        while ContinuousClock.now < pollDeadline {
             try await Task.sleep(for: .milliseconds(40))
             let now = PlayQueueSheetProbe.rowRuns
             quiet = now == last ? quiet + 1 : 0
@@ -427,7 +430,8 @@ final class PlayQueueLayoutTests: XCTestCase {
     private func waitForTheRowsToStopAnimating(in list: UICollectionView) async throws {
         var quiet = 0
         var seen: Set<String> = []
-        for _ in 0..<150 {
+        let pollDeadline = ContinuousClock.now + .seconds(30)
+        while ContinuousClock.now < pollDeadline {
             try await Task.sleep(for: .milliseconds(40))
             seen = Self.animatingLayers(in: list.visibleCells)
             quiet = seen.isEmpty ? quiet + 1 : 0
@@ -468,7 +472,8 @@ final class PlayQueueLayoutTests: XCTestCase {
         let how = XCTAttachment(string: "Edit mode turned on by \(editModeHow)")
         how.lifetime = .keepAlways
         add(how)
-        for _ in 0..<25 {
+        let pollDeadline = ContinuousClock.now + .seconds(30)
+        while ContinuousClock.now < pollDeadline {
             if list.isEditing { listFlagFollowsEditMode = true; break }
             try await Task.sleep(for: .milliseconds(40))
         }
@@ -532,9 +537,9 @@ final class PlayQueueLayoutTests: XCTestCase {
         var notEditing = 0
         var looks = 0
         var animating: Set<String> = []
-        for _ in 0..<20 {
+        for _ in 0..<20 { // fixed-count ok: it makes 20 changes, not waiting for anything
             model.objectWillChange.send()
-            for _ in 0..<2 {
+            for _ in 0..<2 { // fixed-count ok: it takes two looks per change, not waiting for anything
                 try await Task.sleep(for: .milliseconds(20))
                 looks += 1
                 if PlayQueueSheetProbe.editMode != .active || (listFlagFollowsEditMode && !list.isEditing) { notEditing += 1 }

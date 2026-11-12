@@ -81,7 +81,7 @@ final class LocalAudioListeningPackageTests: XCTestCase {
         XCTAssertNil(model.snapshot.sessionId, "Import must not autoplay")
         XCTAssertEqual(try store.loadResolvedListeningMapProjection(itemId: item.id)?.projectedRecipientTime(for: 5_000), 5_000)
         // Supplied bridges must be ready without any system or inference synthesis.
-        for _ in 0..<750 where model.diagnostics["localAudioSkim:\(item.id)"] != "ready" { try await Task.sleep(for: .milliseconds(20)) }
+        try await pollUntil { model.diagnostics["localAudioSkim:\(item.id)"] == "ready" }
         XCTAssertEqual(model.diagnostics["localAudioSkim:\(item.id)"], "ready")
         model.startItem(id: item.id)
         XCTAssertFalse(model.isTermsOfUsePresented, "the first-use voice choice must not hold playback (#286)")
@@ -107,7 +107,7 @@ final class LocalAudioListeningPackageTests: XCTestCase {
         // on the main thread; a 77-minute episode froze for 20 s. The pass now reads once, off main, and Skim keeps what it has.
         model.openItem(id: item.id)
         XCTAssertNotNil(model.preparingLocalAudioMapItems[item.id], "precondition: reopening starts a summary pass")
-        for _ in 0..<250 where model.preparingLocalAudioMapItems[item.id] != nil { try await Task.sleep(for: .milliseconds(20)) }
+        try await pollUntil { model.preparingLocalAudioMapItems[item.id] == nil }
         XCTAssertNil(model.preparingLocalAudioMapItems[item.id], "the summary pass must finish")
         XCTAssertEqual(model.diagnostics["localAudioSkim:\(item.id)"], "ready")
         await model.settleSkimResources()
@@ -143,7 +143,7 @@ final class LocalAudioListeningPackageTests: XCTestCase {
         XCTAssertEqual(model.skimForwardDestinationMs, model.snapshot.skimBridgeState?.destinationMediaTimeMs)
         model.skimForward()
         XCTAssertNil(model.snapshot.skimBridgeState, "Second Skim tap exits instead of restarting or chaining a summary")
-        for _ in 0..<500 where model.snapshot.skimBridgeState != nil { try await Task.sleep(for: .milliseconds(20)) }
+        try await pollUntil { model.snapshot.skimBridgeState == nil }
         XCTAssertNil(model.snapshot.skimBridgeState)
         // Crossing the test Margin opens Companion's intentional pause.
         // The wait dismisses it just as the listener would before expecting progress.
@@ -235,13 +235,13 @@ final class LocalAudioListeningPackageTests: XCTestCase {
             ((try? fixture.store.loadOwnedOfflineAssets()) ?? [])
                 .filter { $0.itemId == fixture.itemId && $0.category == .summaryBridge && $0.integrity == .valid }.count
         }
-        for _ in 0..<500 where bridgeCount() < 2 { try await Task.sleep(for: .milliseconds(20)) }
+        try await pollUntil { bridgeCount() >= 2 }
         XCTAssertEqual(bridgeCount(), 2, "One summary per eligible scene")
         model.startItem(id: fixture.itemId)
         let player = try XCTUnwrap(fixture.sourcePlayer)
         let started = try await waitForSourceProgress(model: model, player: player, toMs: 200)
         XCTAssertGreaterThan(player.currentMediaTimeMs() ?? 0, 100, "The downloaded copy must actually play before Skim: \(started)")
-        for _ in 0..<150 where !model.snapshot.canSkimForward { try await Task.sleep(for: .milliseconds(20)) }
+        try await pollUntil { model.snapshot.canSkimForward }
         XCTAssertTrue(model.snapshot.canSkimForward, "Skim uses the friend's map and its summaries")
         XCTAssertEqual(model.skimForwardDestinationMs, 5_000)
         model.skimForward()
@@ -261,7 +261,7 @@ final class LocalAudioListeningPackageTests: XCTestCase {
             ((try? fixture.store.loadOwnedOfflineAssets()) ?? [])
                 .filter { $0.itemId == fixture.itemId && $0.category == .summaryBridge && $0.integrity == .valid }
         }
-        for _ in 0..<500 where bridges().count < 2 { try await Task.sleep(for: .milliseconds(20)) }
+        try await pollUntil { bridges().count >= 2 }
         XCTAssertEqual(bridges().count, 2, "precondition: the placement rendered both summaries")
         model.startItem(id: fixture.itemId)
         let player = try XCTUnwrap(fixture.sourcePlayer)
@@ -275,7 +275,7 @@ final class LocalAudioListeningPackageTests: XCTestCase {
         XCTAssertEqual(model.chapterRowForwardControl, .skim, "the slot stays Skim, not a silent Next chapter")
 
         model.skimForward()
-        for _ in 0..<500 where model.snapshot.skimBridgeState == nil { try await Task.sleep(for: .milliseconds(20)) }
+        try await pollUntil { model.snapshot.skimBridgeState != nil }
         XCTAssertEqual(model.snapshot.skimBridgeState?.destinationMediaTimeMs, 5_000, "the prepared summary plays, heading for the next scene")
         XCTAssertGreaterThanOrEqual(bridges().count, 1, "the summary was prepared again, in the current voice")
         let outcomes = model.playbackEventRecording.events.filter { $0.kind == "skim.press" }.compactMap { $0.fields["outcome"] }
@@ -321,7 +321,7 @@ final class LocalAudioListeningPackageTests: XCTestCase {
     /// The import runs until its flag clears. A fixed 5 s wait ended while the import was still going on a slow hosted
     /// Mac and the asserts after it read a half-imported layer (#2792), so this waits far longer and says so if it still runs.
     private func waitForPackageImport(_ model: Gate1AppModel, file: StaticString = #filePath, line: UInt = #line) async throws {
-        for _ in 0..<3_000 where model.isImportingSpokenMarginsPackage { try await Task.sleep(for: .milliseconds(20)) }
+        try await pollUntil { !model.isImportingSpokenMarginsPackage }
         XCTAssertFalse(model.isImportingSpokenMarginsPackage, "the package import was still running after 60 s", file: file, line: line)
     }
 
@@ -551,9 +551,7 @@ final class LocalAudioListeningPackageTests: XCTestCase {
         try await waitForPackageImport(model)
         XCTAssertNil(model.spokenMarginsPackageImportError)
         let key = "importedPodcastAnchorResolution:\(item.id)"
-        for _ in 0..<500 where model.diagnostics[key]?.hasPrefix("complete") != true {
-            try await Task.sleep(for: .milliseconds(20))
-        }
+        try await pollUntil { model.diagnostics[key]?.hasPrefix("complete") == true }
         XCTAssertEqual(model.diagnostics[key]?.hasPrefix("complete"), true, model.diagnostics[key] ?? "never scheduled")
         return SharedPodcastMapFixture(model: model, store: store, itemId: item.id, databaseURL: db, sourcePlayer: sourcePlayer) {
             try? FileManager.default.removeItem(at: download)

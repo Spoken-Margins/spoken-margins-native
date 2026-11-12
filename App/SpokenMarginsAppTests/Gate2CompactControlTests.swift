@@ -368,7 +368,7 @@ final class Gate2CompactControlTests: XCTestCase {
         watcher.start(reading: { nil }, restart: {}, changed: { _, _ in })
         nowMs += 300
         center.post(name: AVAudioSession.routeChangeNotification, object: nil)
-        for _ in 0..<50 where watcher.msSinceRouteChange == nil { try await Task.sleep(for: .milliseconds(20)) }
+        try await pollUntil { watcher.msSinceRouteChange != nil }
         nowMs += 50
 
         XCTAssertEqual(watcher.msSinceRouteChange, 50)

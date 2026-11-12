@@ -385,7 +385,7 @@ final class BackgroundRefreshGateTests: XCTestCase {
         held.releaseAll()
 
         model.importObsidianMarkdownFiles(urls: [file])
-        for _ in 0..<600 where model.isImportingSources { try await Task.sleep(for: .milliseconds(100)) }
+        try await pollUntil { !model.isImportingSources }
 
         XCTAssertFalse(model.isImportingSources, "the import finished")
         XCTAssertGreaterThanOrEqual(held.count, 1, "the Library is read through the off-main read")

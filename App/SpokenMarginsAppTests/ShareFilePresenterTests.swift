@@ -116,7 +116,7 @@ final class ShareFilePresenterTests: XCTestCase {
         let model = try makeModel()
         let mounted = try mount(AnyView(PlainSheetSharePresenter(model: model)))
         defer { mounted.close() }
-        for _ in 0..<125 where PlainSheetShareProbe.builds == 0 { try await Task.sleep(for: .milliseconds(40)) }
+        try await pollUntil { PlainSheetShareProbe.builds != 0 }
         XCTAssertGreaterThan(PlainSheetShareProbe.builds, 0, "The plain sheet's content was never built, so there is nothing to compare")
         try await waitUntilQuiet { PlainSheetShareProbe.builds }
         let before = PlainSheetShareProbe.builds
@@ -217,7 +217,8 @@ final class ShareFilePresenterTests: XCTestCase {
     private func waitUntilQuiet(_ read: () -> Int) async throws {
         var last = read()
         var quiet = 0
-        for _ in 0..<150 {
+        let pollDeadline = ContinuousClock.now + .seconds(30)
+        while ContinuousClock.now < pollDeadline {
             try await Task.sleep(for: .milliseconds(40))
             let now = read()
             quiet = now == last ? quiet + 1 : 0
@@ -228,7 +229,8 @@ final class ShareFilePresenterTests: XCTestCase {
     }
 
     private func presentedActivitySheet(in window: UIWindow) async throws -> UIActivityViewController {
-        for _ in 0..<125 {
+        let pollDeadline = ContinuousClock.now + .seconds(30)
+        while ContinuousClock.now < pollDeadline {
             if let sheet = window.rootViewController?.presentedViewController as? UIActivityViewController { return sheet }
             try await Task.sleep(for: .milliseconds(40))
         }

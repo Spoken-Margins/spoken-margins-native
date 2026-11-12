@@ -428,7 +428,8 @@ final class QuickAccessFolderStateTests: XCTestCase {
     }
 
     private func waitFor(_ description: String, _ condition: @MainActor () -> Bool, file: StaticString = #filePath, line: UInt = #line) async throws {
-        for _ in 0..<200 {
+        let pollDeadline = ContinuousClock.now + .seconds(30)
+        while ContinuousClock.now < pollDeadline {
             if condition() { return }
             try await Task.sleep(for: .milliseconds(10))
         }

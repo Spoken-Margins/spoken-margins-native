@@ -153,9 +153,7 @@ final class WatchContractAppTests: XCTestCase {
         let settledAfter = commandAt.addingTimeInterval(0.3)
         _ = try await receiver.handle(try overTheWire(envelope(.transport(.play), sentAt: commandAt))).value
 
-        for _ in 0..<100 where (receiver.lastBoard?.phoneTime ?? .distantPast) < settledAfter {
-            try await Task.sleep(for: .milliseconds(50))
-        }
+        try await pollUntil { (receiver.lastBoard?.phoneTime ?? .distantPast) >= settledAfter }
         let settled = try XCTUnwrap(receiver.lastBoard)
         XCTAssertGreaterThanOrEqual(settled.phoneTime, settledAfter, "a board goes out after the command, with nothing changed")
         XCTAssertEqual(settled.nowPlaying?.isPlaying, false, "and it says the item is still paused")
