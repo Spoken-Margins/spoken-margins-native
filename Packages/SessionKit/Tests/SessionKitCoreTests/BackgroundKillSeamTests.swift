@@ -227,8 +227,8 @@ final class BackgroundKillSeamTests: XCTestCase {
         }
     }
 
-    /// #2695's second half: the governor watches the app's lifecycle, and in the front nothing is held back, so the
-    /// first chunks start at once; the same voices flat out in front never meet iOS's background limit.
+    /// While the app is in front the governor does not pace live narration (Kitten runs flat out) and holds nothing to the
+    /// shared budget; Library work (`.always`) is still paced. None of that CPU is held against the background limit.
     func testTheSameVoicesFlatOutInFrontAreNotAgainstTheBackgroundLimit() {
         let ios = SimulatedIOSBackground(idleCPUShare: 0.1)
         let governor = OnDeviceVoiceGovernor(readings: ios, conditions: { SpeechEngineConditions() })
@@ -236,10 +236,15 @@ final class BackgroundKillSeamTests: XCTestCase {
         var renderers = ownersTwoVoices()
         replay(&renderers, pacing: .sharedBudget, ios: ios, governor: governor, duration: 300)
         XCTAssertNil(ios.kill)
+        XCTAssertEqual(ios.busiestBackgroundWindowCPU, 0, "nothing was metered: the app never went to the background")
+        XCTAssertGreaterThan(ios.processCPUTime(), 300, "the voices used more than a core between them")
+        XCTAssertGreaterThan(renderers[0].inferences, 100, "Kitten ran flat out: no rest between inferences")
+        XCTAssertGreaterThan(renderers[1].inferences, 150, "Library work is paced to its duty cycle even in front, and still ran")
+        XCTAssertLessThan(renderers[1].inferences, 250, "Supertonic's Library render rested between inferences")
         XCTAssertNil(governor.budgetStart(for: .always), "in front the budget holds nothing")
     }
 
-    // MARK: - #2184: the main thread frozen as the app comes back
+    // MARK: - #2184: the main thread frozen as the app comes back (the rule, not the app's code)
 
     /// The Build 35 shape: backgrounded for a minute and a half, then, as the app returns, a synchronous reload of
     /// the Skim resources (the listening map and every owned offline asset) runs on the main thread. 10 s is what
@@ -257,8 +262,9 @@ final class BackgroundKillSeamTests: XCTestCase {
         XCTAssertEqual(summary.fields["reason"], "foreground_watchdog")
     }
 
-    /// What the fix leaves: the same work in slices the main thread answers between (the 250 ms the hang probe calls a
-    /// hang is far under iOS's limit), so the return completes.
+    /// The same work in slices the main thread answers between (the 250 ms the hang probe calls a hang is far under the
+    /// limit). The numbers are the test's; it pins the rule that slicing is what keeps the app alive, and the app test for
+    /// the Skim reload is the guard for the code that slices it.
     func testTheSameWorkInSlicesUnderTheHangThresholdLeavesTheAppAlone() {
         let ios = SimulatedIOSBackground(idleCPUShare: 0.05)
         ios.enterBackground()

@@ -111,23 +111,42 @@ public final class SimulatedIOSBackground: SystemReadings, @unchecked Sendable {
     /// Time passes: `wall` seconds, during which the app's threads together used `cpu` seconds of CPU (more than
     /// `wall` when several threads ran), plus `idleCPUShare` of the wall time.
     public func advance(wall seconds: TimeInterval, cpu used: TimeInterval = 0) {
+        lock.withLock { advanceLocked(wall: seconds, cpu: used) }
+    }
+
+    /// A long step is metered in slices of at most a second, so the busiest trailing minute is found to the second even
+    /// when the test moves time in one big step.
+    private func advanceLocked(wall seconds: TimeInterval, cpu used: TimeInterval) {
         guard seconds > 0 || used > 0 else { return }
-        lock.withLock {
-            let total = used + idleCPUShare * seconds
-            segments.append(Segment(start: wall, end: wall + seconds, cpu: total))
-            wall += seconds
+        let slices = max(1, Int((seconds / Self.meterStep).rounded(.up)))
+        for _ in 0..<slices {
+            let share = 1 / TimeInterval(slices)
+            let length = seconds * share
+            let total = (used + idleCPUShare * seconds) * share
+            segments.append(Segment(start: wall, end: wall + length, cpu: total))
+            wall += length
             cpu += total
             meterCPU()
         }
     }
 
+    private static let meterStep: TimeInterval = 1
+
     /// The main thread is blocked for `seconds` (a synchronous store read, a daemon call): wall time passes, and the
     /// blocked thread itself burns `cpu` (none by default: a thread waiting on a daemon burns none, one reading a table burns it all).
+    ///
+    /// One call is one continuous stall: two 6 s calls are two stalls, not one of 12 s.
     public func blockMainThread(for seconds: TimeInterval, cpu used: TimeInterval = 0) {
-        advance(wall: seconds, cpu: used)
         lock.withLock {
-            guard firstKill == nil, backgroundedAt != nil || changingScenes, seconds >= rules.mainThreadStallLimit else { return }
-            firstKill = Kill(at: wall, reason: .watchdog(stall: seconds), whileBackgrounded: backgroundedAt != nil)
+            let watched = backgroundedAt != nil || changingScenes
+            let alreadyDead = firstKill != nil
+            advanceLocked(wall: seconds, cpu: used)
+            guard !alreadyDead, watched, seconds >= rules.mainThreadStallLimit else { return }
+            // The watchdog fires when the stall reaches its limit, which is before a CPU kill that only the end of the stall shows.
+            let at = wall - seconds + rules.mainThreadStallLimit
+            if firstKill == nil || at < firstKill!.at {
+                firstKill = Kill(at: at, reason: .watchdog(stall: seconds), whileBackgrounded: backgroundedAt != nil)
+            }
         }
     }
 
@@ -149,10 +168,11 @@ public final class SimulatedIOSBackground: SystemReadings, @unchecked Sendable {
 
     /// Called with the lock held after every advance.
     private func meterCPU() {
+        segments.removeAll { $0.end < wall - rules.cpuWindow }
         guard let since = backgroundedAt else { return }
         let from = max(wall - rules.cpuWindow, since)
         var inWindow: TimeInterval = 0
-        for segment in segments where segment.end > from {
+        for segment in segments where segment.end > from || (segment.start == segment.end && segment.end >= from) {
             let length = segment.end - segment.start
             let overlap = segment.end - max(segment.start, from)
             inWindow += length > 0 ? segment.cpu * min(1, overlap / length) : segment.cpu
@@ -162,6 +182,5 @@ public final class SimulatedIOSBackground: SystemReadings, @unchecked Sendable {
             firstKill = Kill(at: wall, reason: .cpuResource(cpuSeconds: inWindow, window: min(rules.cpuWindow, wall - since)),
                              whileBackgrounded: true)
         }
-        segments.removeAll { $0.end <= wall - rules.cpuWindow }
     }
 }
