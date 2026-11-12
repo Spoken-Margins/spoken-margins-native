@@ -987,6 +987,11 @@ final class Gate1FlowUITests: XCTestCase {
         tapRoot("Margins")
         XCTAssertTrue(element("margins.scope.picker").waitForExistence(timeout: 4))
         captureScreen(named: "margins-scoped-workspace")
+        // One Export menu on the Margins toolbar (#3211); its second row opens the one-file-per-session screen.
+        let exportMenu = app.buttons["margins.exportMenu.button"]
+        XCTAssertTrue(exportMenu.waitForExistence(timeout: 2))
+        exportMenu.tap()
+        XCTAssertTrue(app.buttons["margins.exportAll.button"].waitForExistence(timeout: 2), "All Margins, one file is the menu's first row")
         let exportSessions = app.buttons["margins.export.button"]
         XCTAssertTrue(exportSessions.waitForExistence(timeout: 2))
         exportSessions.tap()
@@ -1016,7 +1021,9 @@ final class Gate1FlowUITests: XCTestCase {
         scrollToElement("playback.home.button").tap()
         XCTAssertTrue(element("library.screen").waitForExistence(timeout: 4))
         tapRoot("Margins")
-        let exportSessions = scrollToElement("margins.export.button")
+        scrollToElement("margins.exportMenu.button").tap()
+        let exportSessions = app.buttons["margins.export.button"]
+        XCTAssertTrue(exportSessions.waitForExistence(timeout: 2))
         exportSessions.tap()
         XCTAssertTrue(element("batchExport.screen").waitForExistence(timeout: 4))
         let filter = scrollToElement("batchExport.filter.picker")

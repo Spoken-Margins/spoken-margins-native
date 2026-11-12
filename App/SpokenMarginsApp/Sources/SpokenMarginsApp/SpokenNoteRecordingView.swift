@@ -79,7 +79,7 @@ struct SpokenNoteRecordingView: View {
                         guard let note = recorder.snapshot?.note, let folder = recorder.noteFolder else { return }
                         noteExport.export(note: note, noteFolder: folder, title: recorder.title ?? opening?.title ?? SpokenNoteItem.defaultTitle)
                     } label: {
-                        Label("Export", systemImage: "square.and.arrow.up")
+                        Label("Export", systemImage: "doc.text")
                     }
                     // Nothing to export before the first take, none while a take is being made or saved, and none while a take
                     // is not yet in the note or its words are still being written down: those would leave it out.

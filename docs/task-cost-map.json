@@ -363,7 +363,7 @@
             },
             {
               "do": "tap",
-              "label": "Export as Markdown",
+              "label": "Export this Margin",
               "marker": "\"marginDetail.exportMarkdown.button",
               "file": "ExperienceMarginDetailView.swift"
             },

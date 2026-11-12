@@ -455,7 +455,7 @@ struct PlaybackScreen: View {
             Button {
                 closeOptions(to: .item)
             } label: {
-                Image(systemName: "doc.text")
+                Image(systemName: "info.circle")
                     .frame(width: 48, height: 48)
             }
             .accessibilityLabel("Details")
@@ -472,7 +472,7 @@ struct PlaybackScreen: View {
             Button {
                 closeOptions(to: .export)
             } label: {
-                Image(systemName: "square.and.arrow.up")
+                Image(systemName: "doc.text")
                     .frame(width: 48, height: 48)
             }
             .disabled(!model.hasActiveSession)
