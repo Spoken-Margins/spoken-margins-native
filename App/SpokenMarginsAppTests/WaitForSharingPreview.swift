@@ -10,10 +10,15 @@ import XCTest
 func waitForSharingPreview(
     _ coordinator: Build23SharingCoordinator,
     timeout: Duration = .seconds(60),
-    until isDone: (Build23SharingCoordinator) -> Bool = { $0.snapshot.previewState == .ready }
+    until isDone: ((Build23SharingCoordinator) -> Bool)? = nil
 ) async throws {
+    // The default is read here, in the main actor's body: a default argument is evaluated outside it (lane build error).
+    func finished() -> Bool {
+        if let isDone { return isDone(coordinator) }
+        return coordinator.snapshot.previewState == .ready
+    }
     let deadline = ContinuousClock.now + timeout
-    while !isDone(coordinator), ContinuousClock.now < deadline {
+    while !finished(), ContinuousClock.now < deadline {
         try await Task.sleep(for: .milliseconds(20))
     }
 }
