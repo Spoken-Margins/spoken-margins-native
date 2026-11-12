@@ -429,10 +429,10 @@ function ShareMargins({ episode, margins, show }: { episode: Episode; margins: M
         const outcome = await sendFile((data) => navigator.share(data), file, episode.title);
         if (outcome === 'cancelled') return;
         if (outcome === 'refused') {
-          const why = sendRefusedNextStep(offer);
+          // The sentence sits on the panel, whose status region announces it; the focused Send is about to go, so focus moves to Save.
           setSendRefused(true);
-          setNextStep(why);
-          toast(why, 'problem');
+          setNextStep(sendRefusedNextStep(offer));
+          requestAnimationFrame(() => document.getElementById('share-save')?.focus());
           return;
         }
       } else {
@@ -483,7 +483,7 @@ function ShareMargins({ episode, margins, show }: { episode: Episode; margins: M
             Save or send
           </button>
         ) : (
-          <button type="button" className="button" disabled={busy || nothingPicked} aria-describedby={whyNot ? 'share-why-not' : undefined} onClick={() => void share('save')}>
+          <button type="button" id="share-save" className="button" disabled={busy || nothingPicked} aria-describedby={whyNot || nextStep ? 'share-why-not' : undefined} onClick={() => void share('save')}>
             <DownloadIcon />
             Save as a file
           </button>
