@@ -22,7 +22,7 @@ import (
 const (
 	PathClubs = "/api/v1/clubs"
 	// routeClubs is how the request log names every club request, so a club id, a proof or a post number
-	// is never written to disk. routeClubPage is the landing page's, kept for it now (slice 4).
+	// is never written to disk. routeClubPage is the invitation page's and its script's (club_page.go).
 	routeClubs    = "/api/v1/clubs/*"
 	routeClubPage = "/c/*"
 

@@ -11,7 +11,7 @@ spokenmargins.proximitytoprogress.com {
 	encode gzip
 
 	@smpublic path /api/v1/config.json /bridge/v1/manifest.json
-	@machine path /api/* /l/* /bridge/* /onboarding/* /voices/* /assets/* /.well-known/*
+	@machine path /api/* /l/* /c/* /bridge/* /onboarding/* /voices/* /assets/* /.well-known/*
 
 	route {
 		handle @smpublic {
@@ -20,6 +20,10 @@ spokenmargins.proximitytoprogress.com {
 			file_server
 		}
 		handle /l/* {
+			reverse_proxy 127.0.0.1:@PORT@
+		}
+		# A club invite's page (#1799): the same smserver page for every id, which never reads the # part.
+		handle /c/* {
 			reverse_proxy 127.0.0.1:@PORT@
 		}
 		handle /api/* {

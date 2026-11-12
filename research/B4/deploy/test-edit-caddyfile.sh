@@ -64,6 +64,7 @@ done
 grep -q 'reverse_proxy 127.0.0.1:8795' "${work}/c1" || die "port not rendered"
 grep -q 'root \* /srv/www/spokenmargins-server' "${work}/c1" || die "server root not rendered"
 grep -q 'handle /l/\*' "${work}/c1" || die "share link routing missing"
+grep -q 'handle /c/\*' "${work}/c1" || die "club invite page routing missing"
 grep -Fq 'request>uri regexp (^/api/v1/maps/|^/api/v1/clubs/|^/l/|^/c/|[?]).* $1*' "${work}/c1" || die "share link, episode and query privacy filter missing"
 # Everything outside the managed blocks is byte-for-byte unchanged.
 diff <(sed -n '/^proximitytoprogress.com {/,/^}/p;/^other.proximitytoprogress.com {/,/^}/p' "${work}/live") \
@@ -97,16 +98,16 @@ grep -q '^other.proximitytoprogress.com {$' "${work}/c1" || die "other site lost
 # Old host: what a shipped build or Apple fetches is served, never redirected;
 # only human pages redirect, to the new host with the path kept.
 old_block="$(block spokenmargins.proximitytoprogress.com "${work}/c1")"
-for served in 'handle /l/\*' 'handle /api/\*' 'handle @smpublic' 'handle @machine' '@aasa path /.well-known/apple-app-site-association'; do
+for served in 'handle /l/\*' 'handle /c/\*' 'handle /api/\*' 'handle @smpublic' 'handle @machine' '@aasa path /.well-known/apple-app-site-association'; do
   grep -q -e "${served}" <<<"${old_block}" || die "old host must still serve: ${served}"
 done
-grep -qF '@machine path /api/* /l/* /bridge/* /onboarding/* /voices/* /assets/* /.well-known/*' <<<"${old_block}" || die "old host machine paths changed"
+grep -qF '@machine path /api/* /l/* /c/* /bridge/* /onboarding/* /voices/* /assets/* /.well-known/*' <<<"${old_block}" || die "old host machine paths changed"
 grep -qF 'redir https://spokenmargins.com{uri} permanent' <<<"${old_block}" || die "old host must 301 other paths to spokenmargins.com with the path kept"
 grep -qF 'redir https://spokenmargins.com{uri} permanent' <(block www.spokenmargins.com "${work}/c1") || die "www must 301 to spokenmargins.com"
 grep -qF 'redir https://app.spokenmargins.com{uri} permanent' <(block app.spokenmargins.proximitytoprogress.com "${work}/c1") || die "old web host must 301 to app.spokenmargins.com"
 # The product host serves the same machine routes and never redirects.
 new_block="$(block spokenmargins.com "${work}/c1")"
-for served in 'handle /l/\*' 'handle /api/\*' 'handle @smpublic'; do
+for served in 'handle /l/\*' 'handle /c/\*' 'handle /api/\*' 'handle @smpublic'; do
   grep -q -e "${served}" <<<"${new_block}" || die "product host must serve: ${served}"
 done
 ! grep -q 'redir' <<<"${new_block}" || die "product host must not redirect"
@@ -209,6 +210,8 @@ if [[ -n "${CADDY:-}" && -n "${SMSERVER:-}" ]]; then
   curl -s -X POST -H 'X-SM-Key-Id: SECRETKEYID' http://127.0.0.1:18443/api/v1/ping >/dev/null
   linkid=8badf00d8badf00d8badf00d8badf00d
   [[ "$(code http://127.0.0.1:18443/l/${linkid})" == 502 ]] || die "link should 502 with smserver down"
+  clubid=c1ab0c1ab0c1ab0c1ab0c1ab0c1ab0c1
+  [[ "$(code http://127.0.0.1:18443/c/${clubid})" == 502 ]] || die "club invite page should 502 with smserver down, not fall to the static site"
   mapkey=5ec2e7a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1
   [[ "$(code http://127.0.0.1:18443/api/v1/maps/${mapkey})" == 502 ]] || die "map fetch should 502 with smserver down"
   [[ "$(code http://127.0.0.1:18443/api/v1/health)" == 502 ]] || die "api should 502 with smserver down"
@@ -222,6 +225,8 @@ if [[ -n "${CADDY:-}" && -n "${SMSERVER:-}" ]]; then
   ! grep -qE 'SECRETKEYID|remote_ip|client_ip|"headers"' "${work}/caddy.log" || die "Caddy error log leaked IP or headers"
   ! grep -q "${linkid}" "${work}/caddy.log" || die "Caddy error log leaked a share link id"
   grep -q '"uri":"/l/\*"' "${work}/caddy.log" || die "share link not logged as /l/*"
+  ! grep -q "${clubid}" "${work}/caddy.log" || die "Caddy error log leaked a club id"
+  grep -q '"uri":"/c/\*"' "${work}/caddy.log" || die "club invite page not logged as /c/*"
   ! grep -q "${mapkey}" "${work}/caddy.log" || die "Caddy error log leaked an episode key"
   grep -q '"uri":"/api/v1/maps/\*"' "${work}/caddy.log" || die "map fetch not logged as /api/v1/maps/*"
   ! grep -qE 'RELAYSECRET|url=' "${work}/caddy.log" || die "Caddy error log leaked a relay URL"

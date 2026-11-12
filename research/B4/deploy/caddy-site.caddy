@@ -16,6 +16,10 @@ spokenmargins.com {
 		handle /l/* {
 			reverse_proxy 127.0.0.1:@PORT@
 		}
+		# A club invite's page (#1799): the same smserver page for every id, which never reads the # part.
+		handle /c/* {
+			reverse_proxy 127.0.0.1:@PORT@
+		}
 		handle /api/* {
 			reverse_proxy 127.0.0.1:@PORT@
 		}
