@@ -127,6 +127,23 @@ final class ShareLinkSenderCheckClientTests: XCTestCase {
         XCTAssertEqual(recorder.uploads, [["X-SM-Link-Permit": "p-1"]])
     }
 
+    /// The server's refusals of a permit (links.go): told apart, not all "links aren't available".
+    func testThePermitRefusalsAreToldApart() async throws {
+        let preview = try ShareLinkPreviewBuilder.make(title: "T", show: nil, pageURL: nil, enclosureURL: nil, marginTexts: ["Hello."])
+        let cases: [(String, ShareLinkFallback)] = [
+            ("sharing_paused", .sharingPaused), ("bad_permit", .busy), ("permit_required", .busy), ("other", .failed)
+        ]
+        for (code, expected) in cases {
+            let client = ShareLinkClient(
+                consent: { true },
+                senderCheck: { @Sendable in .standing(ShareLinkSenderStanding(permit: "p", sharingPausedUntil: nil, sharingEnded: false, hasTakedownNotice: false)) },
+                post: { _, _, _, _ in (403, Data(#"{"error":"\#(code)"}"#.utf8)) }
+            )
+            let result = await client.makeLink(packet: Data([1]), preview: preview, linksState: .on)
+            XCTAssertEqual(result, .useFile(expected), code)
+        }
+    }
+
     func testWithNoSenderCheckTheUploadCarriesNoIdentity() async throws {
         let recorder = Recorder()
         let result = try await run(check: nil, recorder: recorder)

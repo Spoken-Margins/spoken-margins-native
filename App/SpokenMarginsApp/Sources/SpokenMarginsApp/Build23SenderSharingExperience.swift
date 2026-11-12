@@ -245,7 +245,8 @@ struct Build23SenderSharingExperience: View {
         let lines = ShareLinkStatusLines(
             state: linkSender.state,
             companionNote: linkSender.companionNote,
-            showsTakedownNotice: linkSender.showsTakedownNotice
+            showsTakedownNotice: linkSender.showsTakedownNotice,
+            onTakedownNoticeDrawn: { linkSender.takedownNoticeWasDrawn() }
         )
         if sharesLink, lines.hasLines {
             lines

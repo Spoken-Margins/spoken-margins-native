@@ -104,8 +104,8 @@ public final class AttestedServerClient: @unchecked Sendable {
     /// Whether an attested request can be made on this phone at all. Asks nothing of Apple and sends nothing.
     public var isSupported: Bool { provider.isSupported }
 
-    /// Sends one attested POST and returns the server's answer. One request at a time: each assertion carries a
-    /// counter the server requires to rise.
+    /// Sends one attested POST and returns the server's answer. Callers must not overlap sends: each assertion carries
+    /// a counter the server requires to rise (the share screen makes one link at a time).
     public func send(path: String, body: Data) async throws -> (status: Int, body: Data) {
         // Before the key, the challenge or any request: the listener's agreement, then whether this phone can attest.
         guard hasConsent() else { throw AppAttestFailure.needsConsent }
@@ -113,7 +113,17 @@ public final class AttestedServerClient: @unchecked Sendable {
         var attestedAgain = false
         while true {
             let keyID = try await registeredKeyID()
-            let response = try await sendOnce(keyID: keyID, path: path, body: body)
+            let response: (status: Int, body: Data)
+            do {
+                response = try await sendOnce(keyID: keyID, path: path, body: body)
+            } catch is KeyUnusable {
+                // A key id came back from a backup or a new phone, but the Secure Enclave key did not. Attest a new
+                // one, once.
+                guard !attestedAgain else { throw AppAttestFailure.failed }
+                store.forget()
+                attestedAgain = true
+                continue
+            }
             switch response.status {
             case 401 where Self.errorCode(response.body) == "unknown_key" && !attestedAgain:
                 // The server lost this key (its records expire after 90 days). Attest a new one, once.
@@ -170,6 +180,9 @@ public final class AttestedServerClient: @unchecked Sendable {
         return keyID
     }
 
+    /// Apple would not sign with the saved key.
+    private struct KeyUnusable: Error {}
+
     private struct Challenge: Decodable {
         var challenge: String
     }
@@ -183,7 +196,7 @@ public final class AttestedServerClient: @unchecked Sendable {
         do {
             assertion = try await provider.generateAssertion(keyID, clientDataHash: Data(SHA256.hash(data: clientData)))
         } catch {
-            throw AppAttestFailure.failed
+            throw KeyUnusable()
         }
         let headers = [
             "Content-Type": "application/json",

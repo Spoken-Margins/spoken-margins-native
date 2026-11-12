@@ -271,6 +271,13 @@ public struct ShareLinkClient: Sendable {
                   Self.isLinkPath(created.path),
                   let link = ShareLinkSealing.linkURL(base: server(created.path), key: key) else { return .useFile(.failed) }
             return .link(link, expiresAt: created.expiresAt)
+        case 403:
+            // The permit from the sender check: spent, expired (ten minutes, or a server restart) or paused in between.
+            switch AttestedServerClient.errorCode(response.body) {
+            case "sharing_paused": return .useFile(.sharingPaused)
+            case "bad_permit", "permit_required": return .useFile(.busy)
+            default: return .useFile(.failed)
+            }
         case 413: return .useFile(.tooLarge)
         case 429: return .useFile(.busy)
         case 503: return .useFile(.unavailable)

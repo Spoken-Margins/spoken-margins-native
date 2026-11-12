@@ -36,6 +36,7 @@ final class ShareLinkSender: ObservableObject {
     @Published private(set) var showsTakedownNotice: Bool
     private let bridge = BridgeService.makeStore()
     private let noticeStore = ShareLinkTakedownNoticeStore()
+    private var noticeDrawn = false
     /// One App Attest identity per install, made only after the listener agreed (`AttestedServerClient`).
     private let attested = AttestedServerClient(
         provider: AppAttestDeviceProvider(),
@@ -127,9 +128,16 @@ final class ShareLinkSender: ObservableObject {
         }
     }
 
-    /// The sender screen has been on show with the takedown line: the server won't say it again, so neither will we.
+    /// The takedown line was drawn on the sender screen. Only then may it be cleared: a screen that never drew it
+    /// (links not offered, or left before the switch was read) leaves it for the next one.
+    func takedownNoticeWasDrawn() {
+        noticeDrawn = true
+    }
+
+    /// The sender screen has gone. If it had the takedown line on show, the server won't say it again, so neither will we.
     func takedownNoticeWasShown() {
-        guard showsTakedownNotice else { return }
+        guard showsTakedownNotice, noticeDrawn else { return }
+        noticeDrawn = false
         noticeStore.clear()
         showsTakedownNotice = false
     }
@@ -206,6 +214,8 @@ struct ShareLinkStatusLines: View {
     let companionNote: String?
     /// A link this install made was taken down after a report (#2239): one line, never a button.
     var showsTakedownNotice = false
+    /// Called when the takedown line appears on screen.
+    var onTakedownNoticeDrawn: () -> Void = {}
 
     /// Whether there is anything to draw, so the screen leaves no gap above its button when there isn't.
     var hasLines: Bool {
@@ -223,6 +233,7 @@ struct ShareLinkStatusLines: View {
                     .foregroundStyle(AppColors.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("build23.sender.share.link.takedown")
+                    .onAppear(perform: onTakedownNoticeDrawn)
             }
             if let companionNote {
                 Text(companionNote)

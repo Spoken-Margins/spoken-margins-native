@@ -17,6 +17,8 @@ final class AppAttestClientTests: XCTestCase {
         private(set) var attestedHashes: [Data] = []
         private(set) var assertedHashes: [Data] = []
         var failAttest = false
+        /// Key ids Apple has no key for (a key id restored from a backup).
+        var unknownToApple: Set<String> = []
         init(supported: Bool = true) { self.supported = supported }
         var isSupported: Bool { supported }
         func generateKey() async throws -> String {
@@ -30,7 +32,10 @@ final class AppAttestClientTests: XCTestCase {
             return Data("attestation-of-\(keyID)".utf8)
         }
         func generateAssertion(_ keyID: String, clientDataHash: Data) async throws -> Data {
-            lock.withLock { assertedHashes.append(clientDataHash) }
+            try lock.withLock {
+                if unknownToApple.contains(keyID) { throw URLError(.cancelled) }
+                assertedHashes.append(clientDataHash)
+            }
             return Data("assertion".utf8)
         }
         var counts: (keys: Int, attested: Int, asserted: Int) { lock.withLock { (keysMade, attestedHashes.count, assertedHashes.count) } }
@@ -192,6 +197,32 @@ final class AppAttestClientTests: XCTestCase {
         XCTAssertEqual(provider.counts.keys, 1)
         XCTAssertNotEqual(store.keyID, Data(repeating: 9, count: 32).base64EncodedString())
         XCTAssertEqual(server.paths(), ["/api/v1/links/sender", "/api/v1/attest/challenge", "/api/v1/attest/register", "/api/v1/links/sender"])
+    }
+
+    /// UserDefaults comes back from a backup or to a new phone; the Secure Enclave key does not.
+    func testAKeyIdRestoredFromABackupIsReplacedWhenAppleHasNoKeyForIt() async throws {
+        let provider = Provider(), server = Server()
+        let restored = Data(repeating: 9, count: 32).base64EncodedString()
+        provider.unknownToApple = [restored]
+        let store = AppAttestKeyStore(defaults: defaults())
+        store.save(restored)
+        let answer = try await client(provider, server, store: store).send(path: "/api/v1/links/sender", body: Data())
+        XCTAssertEqual(answer.status, 200)
+        XCTAssertNotEqual(store.keyID, restored)
+        XCTAssertEqual(provider.counts.keys, 1)
+    }
+
+    func testAnAssertionThatKeepsFailingIsAFailureNotALoop() async {
+        let provider = Provider(), server = Server()
+        let store = AppAttestKeyStore(defaults: defaults())
+        provider.unknownToApple = Set([1, 2, 3].map { Data(repeating: $0, count: 32).base64EncodedString() })
+        do {
+            _ = try await client(provider, server, store: store).send(path: "/api/v1/links/sender", body: Data())
+            XCTFail("should throw")
+        } catch {
+            XCTAssertEqual(error as? AppAttestFailure, .failed)
+        }
+        XCTAssertEqual(provider.counts.keys, 2, "one fresh key after the first failed to sign, then it stops")
     }
 
     func testAServerThatKeepsForgettingIsAskedOnlyOnce() async throws {
