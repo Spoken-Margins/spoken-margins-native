@@ -40,18 +40,23 @@ func TestReviewCaddyErrorLogDropsRelayURL(t *testing.T) {
 func TestCaddyErrorLogKeepsOnlyRoutes(t *testing.T) {
 	filter := caddyURIFilter(t)
 	for in, want := range map[string]string{
-		"/api/v1/relay?url=https%3A%2F%2Fa.example%2Ffeed": "/api/v1/relay?*",
-		"/api/v1/relay?url=x&url=y":                        "/api/v1/relay?*",
-		"/l/8badf00d8badf00d8badf00d8badf00d":              "/l/*",
-		"/l/8badf00d8badf00d/packet":                       "/l/*",
-		"/l/8badf00d/report?x=1":                           "/l/*",
-		"/api/v1/maps/5ec2e7a1a1a1":                        "/api/v1/maps/*",
-		"/api/v1/maps/transcripts":                         "/api/v1/maps/*",
-		"/api/v1/health":                                   "/api/v1/health",
-		"/api/v1/health?token=secret":                      "/api/v1/health?*",
-		"/api/v1/ping?":                                    "/api/v1/ping?*",
-		"/library?a=b?c=d":                                 "/library?*",
-		"/":                                                "/",
+		"/api/v1/relay?url=https%3A%2F%2Fa.example%2Ffeed":               "/api/v1/relay?*",
+		"/api/v1/relay?url=x&url=y":                                      "/api/v1/relay?*",
+		"/l/8badf00d8badf00d8badf00d8badf00d":                            "/l/*",
+		"/l/8badf00d8badf00d/packet":                                     "/l/*",
+		"/l/8badf00d/report?x=1":                                         "/l/*",
+		"/api/v1/clubs/8badf00d8badf00d8badf00d8badf00d/posts/3?after=1": "/api/v1/clubs/*",
+		"/api/v1/clubs/8badf00d8badf00d8badf00d8badf00d":                 "/api/v1/clubs/*",
+		"/api/v1/clubs":                                                  "/api/v1/clubs",
+		"/c/8badf00d8badf00d8badf00d8badf00d":                            "/c/*",
+		"/c/8badf00d8badf00d?x=1":                                        "/c/*",
+		"/api/v1/maps/5ec2e7a1a1a1":                                      "/api/v1/maps/*",
+		"/api/v1/maps/transcripts":                                       "/api/v1/maps/*",
+		"/api/v1/health":                                                 "/api/v1/health",
+		"/api/v1/health?token=secret":                                    "/api/v1/health?*",
+		"/api/v1/ping?":                                                  "/api/v1/ping?*",
+		"/library?a=b?c=d":                                               "/library?*",
+		"/":                                                              "/",
 	} {
 		if got := filter(in); got != want {
 			t.Errorf("%s logged as %q, want %q", in, got, want)

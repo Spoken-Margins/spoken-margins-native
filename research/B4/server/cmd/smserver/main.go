@@ -35,6 +35,7 @@ import (
 	"spokenmargins.dev/bridge/internal/api"
 	"spokenmargins.dev/bridge/internal/appattest"
 	"spokenmargins.dev/bridge/internal/appattest/fakeattest"
+	"spokenmargins.dev/bridge/internal/clubs"
 	"spokenmargins.dev/bridge/internal/config"
 	"spokenmargins.dev/bridge/internal/links"
 	"spokenmargins.dev/bridge/internal/manifest"
@@ -182,6 +183,13 @@ func serve(args []string) error {
 			linkStore = nil
 		}
 	}
+	// Club mailboxes (#1799). Optional like links: if the folder cannot be opened, health and the
+	// bridge stay up and club routes answer 503.
+	clubStore, err := clubs.OpenStore(filepath.Join(*stateDir, "clubs"))
+	if err != nil {
+		log.Print("clubs: unavailable")
+		clubStore = nil
+	}
 	rootPEM := appattest.AppleRootPEM()
 	if *rootPath != "" {
 		data, err := os.ReadFile(*rootPath)
@@ -235,6 +243,7 @@ func serve(args []string) error {
 		Maps:              mapService,
 		Tokens:            issuer,
 		Links:             linkStore,
+		Clubs:             clubStore,
 		Reports:           reportStore,
 		Senders:           senderStore,
 		RequireLinkPermit: *requirePermit,
@@ -286,6 +295,13 @@ func serve(args []string) error {
 					log.Print("links: held-link sweep failed")
 				} else if n > 0 {
 					log.Printf("links: deleted %d held links at one year", n)
+				}
+			}
+			if clubStore != nil {
+				if n, err := clubStore.Sweep(time.Now()); err != nil {
+					log.Print("clubs: daily sweep failed")
+				} else if n > 0 {
+					log.Printf("clubs: ended %d expired clubs", n)
 				}
 			}
 			if reportStore != nil {

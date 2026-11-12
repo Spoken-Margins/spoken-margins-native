@@ -131,6 +131,8 @@ Add a section:
 >
 > *What the server records.* The server does not keep IP addresses. Its logs are an hourly count of which services were used and whether they worked, and are deleted after 14 days. If an installation sends more requests than the service allows, the server notes that installation's random key for 30 days so repeated abuse can be blocked.
 >
+> *Clubs (draft; the app has no club screens yet, and clubs are switched off on the server).* A club is a box of locked packets. We keep the box and cannot open it. It is deleted after 90 days with no use. (`docs/design/club-mailbox.md`, section 9.)
+>
 > *If the server is unavailable.* Everything else in Spoken Margins keeps working. Sites that depend on the server show "Not updating" until it's back.
 
 **App Store privacy label (owner decision; my recommendation):** once an attested feature ships, declare *Identifiers → Device ID*, **not linked to you**, **not used for tracking**, purpose *App Functionality* (Apple lists fraud prevention there). The random per-install key is stored longer than one request, so declaring it is the safe reading. The bridge read path alone collects nothing.
@@ -220,8 +222,9 @@ Plain statement, to check against the code before each new server feature ships.
 - Listening maps made from public episodes. Transcripts are held in memory only and never written to disk.
 - Token signing keys (one per month) and spent-token nonces. A token carries no install identity, so the keys cannot be used to link a token back to an install.
 - Share links: ciphertext only. The key travels in the part of the link after the `#`, which the server never receives, so a breach of the server alone does not reveal what a link held.
+- Club mailboxes (#1799, `internal/clubs`): a club's mailbox is ciphertext, a club id and two hashes of proofs. The key is in the invite link and never reaches the server. There is no member list, and a stolen club id with no key opens nothing. File times in a club's folder are midnight UTC of a day, so even the disk does not say when in a day anyone posted or read. The exception is a club reported as abuse material: it is held with its invite link, key included, for a year in the restricted store, the same as a held share link (not built yet: slice 3 of `docs/design/club-mailbox.md`).
 
-**What the server does not hold:** listeners' names, accounts, Libraries, Margins, recordings, reading or listening history, or the key that opens a share link.
+**What the server does not hold:** listeners' names, accounts, Libraries, Margins, recordings, reading or listening history, the key that opens a share link, or the key that opens a club.
 
 **So whom would we notify?** There is no list of people to notify: the server holds no identities, and a stolen install record names nobody. If the server were breached anyway, the steps are:
 

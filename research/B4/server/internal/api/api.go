@@ -37,6 +37,7 @@ import (
 	"time"
 
 	"spokenmargins.dev/bridge/internal/appattest"
+	"spokenmargins.dev/bridge/internal/clubs"
 	"spokenmargins.dev/bridge/internal/config"
 	"spokenmargins.dev/bridge/internal/links"
 	"spokenmargins.dev/bridge/internal/maps"
@@ -133,6 +134,10 @@ type Server struct {
 	Senders           *senders.Store
 	RequireLinkPermit bool
 
+	// Clubs stores club mailboxes (#1799, clubs.go). Nil answers 503 like the clubs switch being off.
+	// A club request carries no install identity: the club's proof is its only credential.
+	Clubs *clubs.Store
+
 	// Relay fetches feeds and pages for the web app (#2985). Nil, or no
 	// origins, answers 503 like the switch being off.
 	Relay *relay.Relay
@@ -151,6 +156,11 @@ type Server struct {
 	// year-long hold (#3120). Zero means 5. Past it the link is disabled with its content kept for the
 	// owner to hold by hand, and the owner is alerted in the log; it is never silently taken down.
 	HoldsPerClientPerDay int
+	// ClubWritesPerIPPerHour caps club creates and posts per client network and hour, zero meaning 30
+	// (as link uploads). ClubBytesPerIPPerHour caps the bytes of posts, zero meaning 200 MB, so one
+	// network cannot fill the clubs folder in less than a day. Reads are not counted, as link reads are not.
+	ClubWritesPerIPPerHour int
+	ClubBytesPerIPPerHour  int64
 
 	once             sync.Once
 	ipSecret         []byte
@@ -161,6 +171,8 @@ type Server struct {
 	linkWindow       window
 	relayWindow      window
 	linkReportWindow window
+	clubWindow       window
+	clubBytes        byteWindow
 	linkSlots        chan struct{}
 	linkReports      map[linkReportKey]int
 	uploadSlots      chan struct{}
@@ -241,6 +253,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /l/{id}/report", s.reportLink)
 	mux.HandleFunc("POST /l/{id}/report/reason", s.reportReason)
 	mux.HandleFunc("GET "+PathRelay, s.relay)
+	mux.HandleFunc("POST "+PathClubs, s.createClub)
+	mux.HandleFunc("POST "+PathClubs+"/{id}/posts", s.postClub)
+	mux.HandleFunc("GET "+PathClubs+"/{id}/posts", s.listClubPosts)
+	mux.HandleFunc("GET "+PathClubs+"/{id}/posts/{seq}", s.getClubItem)
 	if len(s.LinkOrigins) > 0 {
 		// Registered only with origins listed, so an empty list leaves
 		// OPTIONS answering 405 as it always has.
@@ -261,6 +277,9 @@ var loggedRoutes = map[string]bool{
 
 // logRoute is the route name the request log may record for path.
 func logRoute(path string) string {
+	if route, ok := isClubRoute(path); ok {
+		return route
+	}
 	switch {
 	case isLinkRoute(path):
 		return routeLinks

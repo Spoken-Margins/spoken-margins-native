@@ -58,13 +58,13 @@ for filter_line in \
   'log default {' 'level INFO' 'format filter {' 'wrap json' \
   'request>remote_ip delete' 'request>remote_port delete' 'request>client_ip delete' \
   'request>headers delete' 'request>tls delete' \
-  'request>uri regexp (^/api/v1/maps/|^/l/|[?]).* $1*'; do
+  'request>uri regexp (^/api/v1/maps/|^/api/v1/clubs/|^/l/|^/c/|[?]).* $1*'; do
   grep -qxF -e "${filter_line}" <<<"${global_block}" || die "log filter line missing from the global block: ${filter_line}"
 done
 grep -q 'reverse_proxy 127.0.0.1:8795' "${work}/c1" || die "port not rendered"
 grep -q 'root \* /srv/www/spokenmargins-server' "${work}/c1" || die "server root not rendered"
 grep -q 'handle /l/\*' "${work}/c1" || die "share link routing missing"
-grep -Fq 'request>uri regexp (^/api/v1/maps/|^/l/|[?]).* $1*' "${work}/c1" || die "share link, episode and query privacy filter missing"
+grep -Fq 'request>uri regexp (^/api/v1/maps/|^/api/v1/clubs/|^/l/|^/c/|[?]).* $1*' "${work}/c1" || die "share link, episode and query privacy filter missing"
 # Everything outside the managed blocks is byte-for-byte unchanged.
 diff <(sed -n '/^proximitytoprogress.com {/,/^}/p;/^other.proximitytoprogress.com {/,/^}/p' "${work}/live") \
   <(sed -n '/^proximitytoprogress.com {/,/^}/p;/^other.proximitytoprogress.com {/,/^}/p' "${work}/c1") >/dev/null ||

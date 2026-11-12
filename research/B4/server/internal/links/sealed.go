@@ -15,6 +15,9 @@ import (
 const (
 	PartPreview byte = 1
 	PartPacket  byte = 2
+	// PartClubHeader is a club's sealed header: its name and the creator's label, the first item in the
+	// box (internal/clubs, docs/design/club-mailbox.md section 2). A club's posts are PartPacket.
+	PartClubHeader byte = 3
 
 	sealedVersion  = 1
 	nonceBytes     = 12
