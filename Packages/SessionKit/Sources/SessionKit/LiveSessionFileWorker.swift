@@ -196,6 +196,13 @@ public actor LiveSessionFileWorker {
         sessions()[id]
     }
 
+    /// When each Margin saved from a live session was made there, by its id in the database (`LiveSessionRecord`). The
+    /// database holds the save time for these; the record keeps the real one.
+    public func savedMarginTimes() -> [String: Date] {
+        guard let root else { return [:] }
+        return TodaysMarginsDigest.madeAt(records: LiveSessionRecord.loadAll(from: root))
+    }
+
     public func allSessions() -> [LiveSession] {
         sessions().values.sorted { ($0.startedAt, $0.id) < ($1.startedAt, $1.id) }
     }
