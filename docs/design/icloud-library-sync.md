@@ -117,6 +117,14 @@ Each is a separate challenge issue. "Cloud" slices are host-testable in SessionK
 6. **Pasted text and other item text**, only if the lawyer and the owner agree to syncing publisher content.
 7. **Owner validation on two physical devices** (airplane-mode edits on both, then reconnect; rewind on one; delete on one; reinstall one; sign out of iCloud).
 
+**Slice 1 as built (#4152, `Packages/SessionKit/Sources/SessionKit/Sync/`).** The rules above are code now, with no CloudKit in them. Where the build had to choose:
+
+- Every field is a **multi-value register**: a write replaces every version the device holds, and a version the writer had not seen stays beside it (the "Other version"). So the Margin screen must show an "Other version" before it lets the listener edit that field; an edit is then their choice. Edits to different fields never conflict.
+- The **place** is two registers (`place`, `completion`) stamped when playback advanced or the listener moved it, not when saved. `ListeningPlaceSync.decide` is a pure rule for what a device does with an arrived place (adopt, keep, offer, defer while playing, mark finished). Applying a place never writes one back.
+- A device back after **90 days** is told to start over: it merges the cloud into its own data and pushes its own again. A Margin deleted elsewhere whose marker has since expired comes back on that device. That is the safe failure, and it is a stated cost of "keeps its local data".
+- A cloud response that outlived a reinstall or a restore never moves the device's position (`pullCompleted(since:)`).
+- Not built here: the CloudKit adapter, the mapping of these records to `CKRecord` and `encryptedValues` (the field list is `SyncFieldSchema`), the "On your other device" list, Settings, and any change to the database. Sync state lives outside it.
+
 Compatibility checks that go with every slice: `scripts/check-build29-database.sh` (the previous builds open the database), packet round trip through `ShippedReader`, and "a failed sync never blocks a local save".
 
 ## Decisions for Cole

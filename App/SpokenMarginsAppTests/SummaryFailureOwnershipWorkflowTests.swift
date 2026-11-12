@@ -68,7 +68,8 @@ final class SummaryFailureOwnershipWorkflowTests: XCTestCase {
     }
 
     private func waitForRequests(_ count: Int, _ provider: HeldSummaryProvider) async throws {
-        for _ in 0..<500 {
+        let pollDeadline = ContinuousClock.now + .seconds(30)
+        while ContinuousClock.now < pollDeadline {
             if await provider.requests.count >= count { return }
             try await Task.sleep(for: .milliseconds(10))
         }
@@ -81,7 +82,8 @@ final class SummaryFailureOwnershipWorkflowTests: XCTestCase {
         let aRequest = try XCTUnwrap(initialRequests.first)
         XCTAssertEqual(try summaryNoteIDs(in: aRequest.context), [f.noteA], "The held request must actually belong to A")
         try await f.provider.fail(aRequest.id)
-        for _ in 0..<500 {
+        let pollDeadline = ContinuousClock.now + .seconds(30)
+        while ContinuousClock.now < pollDeadline {
             if f.model.diagnostics["lastSummaryMode"] == "apple_foundation_failed" { break }
             try await Task.sleep(for: .milliseconds(10))
         }
@@ -161,7 +163,8 @@ final class SummaryFailureOwnershipWorkflowTests: XCTestCase {
         var navigatedToOriginalScope = false
         var refusal: UserFeedbackEvent?
         var performedNavigation: UUID?
-        for _ in 0..<500 {
+        let pollDeadline = ContinuousClock.now + .seconds(30)
+        while ContinuousClock.now < pollDeadline {
             if await f.provider.requests.count > beforeRequests { break }
             let hasPendingJob = try store.loadAIJobs(sessionId: f.a).contains { $0.status == "pending" || $0.status == "deferred" }
             if !hasPendingJob, f.model.snapshot.sessionId == f.a,

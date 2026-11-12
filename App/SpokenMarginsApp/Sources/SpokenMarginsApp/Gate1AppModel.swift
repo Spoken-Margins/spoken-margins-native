@@ -2819,9 +2819,7 @@ final class Gate1AppModel: ObservableObject {
                 layer.deletedAt == nil && layer.isEnabled ? layer.id : nil
             }
             for layerID in layerIDs {
-                guard var layer = try store.loadImportedCommentaryLayer(id: layerID) else { continue }
-                layer.revealMode = enabled ? .guided : .companion
-                try store.saveImportedCommentaryLayer(layer)
+                try ImportedLayerChange.apply(toLayerWithId: layerID, on: store) { $0.revealMode = enabled ? .guided : .companion }
             }
             refreshSelectedItemInBackground() // #2505
             reportConfirmation(enabled
@@ -2838,9 +2836,8 @@ final class Gate1AppModel: ObservableObject {
     ) {
         do {
             let store = try requireStore()
-            guard var layer = try store.loadImportedCommentaryLayer(id: layerID) else { return }
-            mutation(&layer)
-            try store.saveImportedCommentaryLayer(layer)
+            // Load and save as one transaction (#3601), so a repair landing meanwhile is not saved over.
+            guard try ImportedLayerChange.apply(toLayerWithId: layerID, on: store, mutation) else { return }
             refreshSelectedItemInBackground() // #2505
         } catch {
             reportFailure(error, context: "Shared Margin settings could not be saved")

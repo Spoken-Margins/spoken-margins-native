@@ -219,7 +219,7 @@ final class ListeningSignalsCoordinatorTests: XCTestCase {
         XCTAssertTrue(model.snapshot.isRecording)
         if interruptedByACall {
             savedFileRecorder.onInterruption?(.interruptionBegan, 5)
-            for _ in 0..<50 where model.snapshot.isRecording { try await Task.sleep(for: .milliseconds(10)) }
+            try await pollUntil { !model.snapshot.isRecording }
             XCTAssertNotNil(model.diagnostics["lastMarginCutShort"])
         } else if compact { model.dispatchGate2CompactCommand(.finishInterjection) }
         else { model.finishInterjection() }

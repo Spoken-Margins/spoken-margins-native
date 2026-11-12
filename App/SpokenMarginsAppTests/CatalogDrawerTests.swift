@@ -123,7 +123,7 @@ final class CatalogDrawerTests: XCTestCase {
 
         let picks = Array(drawer.entries.prefix(5))
         for entry in picks { drawer.toggleFollow(entry) } // one tap each
-        for _ in 0..<100 where drawer.followedCount < 5 { try await Task.sleep(for: .milliseconds(20)) }
+        try await pollUntil { drawer.followedCount >= 5 }
         XCTAssertEqual(drawer.followedCount, 5)
         XCTAssertEqual(log.feeds, picks.map(\.feedURL))
         XCTAssertTrue(picks.allSatisfy { drawer.state(for: $0) == .followed })
@@ -147,7 +147,7 @@ final class CatalogDrawerTests: XCTestCase {
         let entry = try XCTUnwrap(drawer.entries.first)
         log.moves[entry.feedURL] = "https://feeds.example.net/moved/feed.xml"
         drawer.toggleFollow(entry)
-        for _ in 0..<100 where drawer.followedCount < 1 { try await Task.sleep(for: .milliseconds(20)) }
+        try await pollUntil { drawer.followedCount >= 1 }
         XCTAssertEqual(drawer.state(for: entry), .followed)
 
         let relaunched = try makeDrawer(defaults: defaults, log: log)
@@ -167,7 +167,7 @@ final class CatalogDrawerTests: XCTestCase {
         await drawer.load()
         let entry = try XCTUnwrap(drawer.entries.first)
         drawer.toggleFollow(entry)
-        for _ in 0..<100 where drawer.followedCount < 1 { try await Task.sleep(for: .milliseconds(20)) }
+        try await pollUntil { drawer.followedCount >= 1 }
         XCTAssertEqual(drawer.state(for: entry), .followed)
 
         drawer.isPresented = false
@@ -178,7 +178,7 @@ final class CatalogDrawerTests: XCTestCase {
         XCTAssertNil(drawer.state(for: entry), "shows Follow again")
         XCTAssertNil(drawer.followStates(for: drawer.entries)[entry.id])
         drawer.toggleFollow(entry)
-        for _ in 0..<100 where drawer.followedCount < 1 { try await Task.sleep(for: .milliseconds(20)) }
+        try await pollUntil { drawer.followedCount >= 1 }
         XCTAssertEqual(log.feeds, [entry.feedURL, entry.feedURL], "the second tap really follows it again")
         XCTAssertEqual(log.subscriptions.count, 1)
         XCTAssertEqual(drawer.state(for: entry), .followed)
@@ -194,13 +194,13 @@ final class CatalogDrawerTests: XCTestCase {
         let newsletter = try XCTUnwrap(drawer.entries.first)
         XCTAssertEqual(newsletter.contentKind, .newsletter)
         drawer.toggleFollow(newsletter)
-        for _ in 0..<100 where drawer.followedCount < 1 { try await Task.sleep(for: .milliseconds(20)) }
+        try await pollUntil { drawer.followedCount >= 1 }
         XCTAssertEqual(drawer.followedSummary, "Following 1 newsletter")
 
         drawer.selectedSubject = nil
         let show = try XCTUnwrap(drawer.entries.first { $0.contentKind == .podcast })
         drawer.toggleFollow(show)
-        for _ in 0..<100 where drawer.followedCount < 2 { try await Task.sleep(for: .milliseconds(20)) }
+        try await pollUntil { drawer.followedCount >= 2 }
         XCTAssertEqual(drawer.followedSummary, "Following 1 show and 1 newsletter")
     }
 
@@ -214,7 +214,7 @@ final class CatalogDrawerTests: XCTestCase {
         let entries = drawer.entries
         XCTAssertGreaterThanOrEqual(entries.count, 100)
         drawer.toggleFollow(entries[0])
-        for _ in 0..<100 where drawer.followedCount < 1 { try await Task.sleep(for: .milliseconds(20)) }
+        try await pollUntil { drawer.followedCount >= 1 }
         log.subscriptions.append(FeedSubscription(
             id: "subscription-elsewhere",
             source: SourceIdentity(id: "source-elsewhere", kind: .podcastFeed, canonicalURL: entries[2].feedURL, host: "example")
@@ -254,7 +254,7 @@ final class CatalogDrawerTests: XCTestCase {
         let entry = try XCTUnwrap(drawer.entries.first)
         XCTAssertEqual(entry.contentKind, .newsletter)
         drawer.toggleFollow(entry)
-        for _ in 0..<150 where drawer.state(for: entry) != .followed { try await Task.sleep(for: .milliseconds(20)) }
+        try await pollUntil { drawer.state(for: entry) == .followed }
         XCTAssertEqual(drawer.state(for: entry), .followed)
 
         let subscription = try XCTUnwrap(repository.loadFeedSubscriptions().first)
@@ -275,14 +275,15 @@ final class CatalogDrawerTests: XCTestCase {
         log.failing = true
         let entry = try XCTUnwrap(drawer.entries.first)
         drawer.toggleFollow(entry)
-        for _ in 0..<100 {
+        let pollDeadline = ContinuousClock.now + .seconds(30)
+        while ContinuousClock.now < pollDeadline {
             if case .failed = drawer.state(for: entry) { break }
             try await Task.sleep(for: .milliseconds(20))
         }
         guard case .failed = drawer.state(for: entry) else { return XCTFail("failure shows on the row") }
         log.failing = false
         drawer.toggleFollow(entry) // Retry
-        for _ in 0..<100 where drawer.state(for: entry) != .followed { try await Task.sleep(for: .milliseconds(20)) }
+        try await pollUntil { drawer.state(for: entry) == .followed }
         XCTAssertEqual(drawer.state(for: entry), .followed)
     }
 
@@ -444,7 +445,7 @@ final class CatalogDrawerTests: XCTestCase {
     }
 
     private func waitFor(_ condition: () -> Bool) async throws {
-        for _ in 0..<250 where !condition() { try await Task.sleep(for: .milliseconds(20)) }
+        try await pollUntil { condition() }
     }
 
     func testSearchingByNameShowsTheMatchingShowFirstAndOneTapFollowsIt() async throws {

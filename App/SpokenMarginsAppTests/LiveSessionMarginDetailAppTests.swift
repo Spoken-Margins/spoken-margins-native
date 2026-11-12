@@ -105,7 +105,7 @@ final class LiveSessionMarginDetailAppTests: XCTestCase {
         model.toggle(audioPath: "SpokenMargins/interjections/not-there.m4a", prepare: { paused += 1 })
         XCTAssertEqual(paused, 1, "Starting pauses whatever else is playing")
         XCTAssertTrue(model.isPlaying, "The button shows playing at once")
-        for _ in 0..<100 where model.message == nil { try await Task.sleep(for: .milliseconds(50)) }
+        try await pollUntil { model.message != nil }
         XCTAssertNotNil(model.message)
         XCTAssertFalse(model.isPlaying)
     }

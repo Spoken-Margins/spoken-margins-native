@@ -34,9 +34,7 @@ final class TimelineExitTests: XCTestCase {
             XCTAssertTrue(model.shouldShowMiniPlayer, "The Timeline shows the mini player, with its close button.")
 
             model.dismissMiniPlayer()
-            for _ in 0..<50 where model.hasActiveSession {
-                try? await Task.sleep(for: .milliseconds(10))
-            }
+            try? await pollUntil { !model.hasActiveSession }
             XCTAssertFalse(model.hasActiveSession)
             XCTAssertEqual(model.screen, .timeline, "Closing the mini player keeps the page the listener is on (#583).")
             XCTAssertEqual(model.timelineExitTitle, "Home", "Back must not promise Now Playing when nothing is playing.")

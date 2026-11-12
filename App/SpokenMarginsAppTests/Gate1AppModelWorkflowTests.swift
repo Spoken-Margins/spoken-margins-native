@@ -1333,10 +1333,8 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
             model.sharingState.drafts.first?.isPreparingCleanup == true
         }
         var heldDestination: URL?
-        for _ in 0..<200 where heldDestination == nil {
-            heldDestination = await render.heldDestination
-            if heldDestination == nil { try await Task.sleep(for: .milliseconds(10)) }
-        }
+        try await pollUntil { await render.heldDestination != nil }
+        heldDestination = await render.heldDestination
         let destination = try XCTUnwrap(heldDestination, "the renderer was handed its destination")
         defer { try? FileManager.default.removeItem(at: destination.deletingLastPathComponent()) }
 
@@ -1350,11 +1348,8 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertNil(cancelled.cleanup)
 
         await render.finish()
-        var returned = false
-        for _ in 0..<200 where !returned {
-            returned = await render.hasReturned
-            if !returned { try await Task.sleep(for: .milliseconds(10)) }
-        }
+        try await pollUntil { await render.hasReturned }
+        let returned = await render.hasReturned
         XCTAssertTrue(returned, "the stale render came back after Cancel")
         // Checked by the renderer as it returns: the model's cleanup runs on the main actor as soon as the render
         // returns, which can be before this test's poll sees `hasReturned`, so the file may already be gone here.
@@ -2683,9 +2678,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.dismissMiniPlayer()
 
         XCTAssertFalse(model.shouldShowMiniPlayer)
-        for _ in 0..<50 where model.hasActiveSession {
-            try? await Task.sleep(for: .milliseconds(10))
-        }
+        try? await pollUntil { !model.hasActiveSession }
         XCTAssertFalse(model.hasActiveSession)
     }
 
@@ -2704,9 +2697,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertTrue(model.shouldShowMiniPlayer)
 
         model.dismissMiniPlayer()
-        for _ in 0..<50 where model.hasActiveSession {
-            try? await Task.sleep(for: .milliseconds(10))
-        }
+        try? await pollUntil { !model.hasActiveSession }
 
         XCTAssertFalse(model.hasActiveSession)
         XCTAssertEqual(model.screen, .item)
@@ -2724,9 +2715,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.openItem(id: "item-pill")
 
         model.dismissMiniPlayer()
-        for _ in 0..<50 where model.hasActiveSession {
-            try? await Task.sleep(for: .milliseconds(10))
-        }
+        try? await pollUntil { !model.hasActiveSession }
 
         XCTAssertFalse(model.hasActiveSession)
         XCTAssertEqual(model.selectedItem.id, "item-pill")
@@ -4508,7 +4497,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         let playsBefore = audio.playCount
 
         recorder.onInterruption?(.interruptionBegan, 5)
-        for _ in 0..<50 where model.snapshot.isRecording { try await Task.sleep(for: .milliseconds(10)) }
+        try await pollUntil { !model.snapshot.isRecording }
         await model.settleItemReload() // the item detail reloads off the main thread after a save (#2505)
 
         XCTAssertFalse(model.snapshot.isRecording, "the recording screen closes")
@@ -4518,7 +4507,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertTrue(model.diagnostics["lastMarginCutShort"]?.contains("call_or_siri") == true)
 
         recorder.onInterruption?(.interruptionEnded(.audioMayStart), nil)
-        for _ in 0..<50 where !model.snapshot.status.isPlaybackActive { try await Task.sleep(for: .milliseconds(10)) }
+        try await pollUntil { model.snapshot.status.isPlaybackActive }
         XCTAssertTrue(model.snapshot.status.isPlaybackActive, "the source plays on after the call")
         XCTAssertEqual(audio.playCount, playsBefore + 1)
     }
@@ -4537,7 +4526,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         let interruptedSession = model.snapshot.sessionId
         model.beginInterjection()
         recorder.onInterruption?(.interruptionBegan, 5)
-        for _ in 0..<50 where model.snapshot.isRecording { try await Task.sleep(for: .milliseconds(10)) }
+        try await pollUntil { !model.snapshot.isRecording }
         XCTAssertEqual(model.snapshot.status, .paused)
 
         model.startNewSession(id: "item-pill")
@@ -4565,7 +4554,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
 
         model.beginInterjection()
         recorder.onInterruption?(.routeLost, 4)
-        for _ in 0..<50 where model.snapshot.isRecording { try await Task.sleep(for: .milliseconds(10)) }
+        try await pollUntil { !model.snapshot.isRecording }
         await model.settleItemReload() // the item detail reloads off the main thread after a save (#2505)
         XCTAssertFalse(model.snapshot.isRecording)
         XCTAssertEqual(model.snapshot.status, .paused)
@@ -4574,7 +4563,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
 
         model.beginInterjection()
         recorder.onInterruption?(.interruptionBegan, 0.3)
-        for _ in 0..<50 where model.snapshot.isRecording { try await Task.sleep(for: .milliseconds(10)) }
+        try await pollUntil { !model.snapshot.isRecording }
         await model.settleItemReload() // the item detail reloads off the main thread after a save (#2505)
         XCTAssertFalse(model.snapshot.isRecording)
         XCTAssertEqual(model.selectedItem.interjections.count, marginCount + 1, "a stray start isn't kept")
@@ -5171,11 +5160,11 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
 
         model.continueMicrophonePrimer()
         model.continueMicrophonePrimer()
-        for _ in 0..<200 where gate.continuation == nil { try await Task.sleep(for: .milliseconds(10)) }
+        try await pollUntil { gate.continuation != nil }
         XCTAssertFalse(model.microphonePrimer.isShowing)
         XCTAssertEqual(gate.requests, 1, "A second Continue tap must not ask twice")
         gate.finish(true)
-        for _ in 0..<200 where !model.snapshot.isRecording { try await Task.sleep(for: .milliseconds(10)) }
+        try await pollUntil { model.snapshot.isRecording }
         XCTAssertTrue(model.snapshot.isRecording)
         model.cancelInterjection()
     }
@@ -5195,7 +5184,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.addFirstMargin()
         XCTAssertTrue(model.microphonePrimer.isShowing)
         model.continueMicrophonePrimer()
-        for _ in 0..<200 where model.writtenMarginDraft == nil { try await Task.sleep(for: .milliseconds(10)) }
+        try await pollUntil { model.writtenMarginDraft != nil }
         XCTAssertNotNil(model.writtenMarginDraft, "falls back to a written Margin")
         XCTAssertFalse(model.recordingPermissionDenied)
         XCTAssertFalse(model.snapshot.isRecording)
@@ -5339,7 +5328,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
             model.beginInterjection()
             XCTAssertFalse(model.microphonePrimer.isShowing, "\(status)")
             // The injected answer is async and leaves the main actor, so wait on time, not yields.
-            for _ in 0..<200 where model.isRequestingRecordingPermission { try await Task.sleep(for: .milliseconds(10)) }
+            try await pollUntil { !model.isRequestingRecordingPermission }
             XCTAssertEqual(model.snapshot.isRecording, granted, "\(status)")
             XCTAssertEqual(model.recordingPermissionDenied, !granted, "\(status)")
             if granted { model.cancelInterjection() }
