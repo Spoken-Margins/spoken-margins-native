@@ -8,6 +8,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { formatClock } from '../shared/clock.ts';
 import type { Episode, Margin, PlaybackPosition, Show } from '../shared/model.ts';
+import { browserStorage, forgetMirrored, mergeMirror, pruneMirror, readMirror } from './logic/position-mirror.ts';
 import { mergeRefresh } from './logic/refresh.ts';
 import { FailureGate, NotSavedError, notSavedMessage, shouldAskToPersist, type PersistState, type WriteKind } from './logic/storage.ts';
 import type { FeedRead } from './ports.ts';
@@ -61,7 +62,14 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     loadAll()
-      .then((snapshot) => setData(snapshot))
+      .then((snapshot) => {
+        // A place copied to localStorage that IndexedDB never got (the page went mid-write) wins if it is newer (#4096).
+        const storage = browserStorage();
+        const { positions, written } = mergeMirror(snapshot.positions, readMirror(storage), new Set(snapshot.episodes.map((e) => e.id)));
+        setData({ ...snapshot, positions });
+        if (written.length > 0) void putMany('positions', written).then(() => pruneMirror(storage, positions), () => undefined);
+        else pruneMirror(storage, positions);
+      })
       .catch((error: unknown) => {
         console.error('Could not open storage', error);
         toast(notSavedMessage('Your saved shows and Margins couldn’t be opened in this browser.', error), 'problem');
@@ -135,6 +143,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       const failed = await run('unfollow', `Unfollowing ${title} wasn’t saved.`, () => removeShow(showId, doomed));
       if (failed) throw failed;
       const gone = new Set(doomed);
+      forgetMirrored(browserStorage(), gone);
       setData((d) => ({
         ...d,
         shows: d.shows.filter((s) => s.id !== showId),
