@@ -106,7 +106,7 @@ STRING_RULES = {
     'result': r'pass|fail|fault', 'runner': r'hosted|self-hosted|unknown', 'branch': r'pr|trunk|other',
     'event': r'pull_request|push|schedule|workflow_dispatch|workflow_run|other',
     'conclusion': r'success|failure|cancelled|skipped|timed_out|neutral|action_required|startup_failure|unknown',
-    'class': r'code|flake|trunk-moved|trunk-red|compile|fault|unresolved|cancelled|catch|wrong-test|next-moved|other',
+    'class': r'code|flake|trunk-moved|trunk-red|compile|fault|hold|unresolved|cancelled|catch|wrong-test|next-moved|other',
     'by': r'heuristic|human',
 }
 STRING_RULES = {key: re.compile(rule) for key, rule in STRING_RULES.items()}

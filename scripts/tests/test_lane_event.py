@@ -143,6 +143,49 @@ class ParseTests(unittest.TestCase):
         self.assertIsNone(lane_event.parse(None))
 
 
+class HoldTests(unittest.TestCase):
+    """#4089: a report held for T3 says so, and a hold is not a runner fault."""
+
+    def test_a_hold_is_not_a_fault_and_says_so(self):
+        event = build(verdict='INCONCLUSIVE', hold=True, runs=[])
+        self.assertEqual((event['verdict'], event['fault'], event['hold']), ('INCONCLUSIVE', False, True))
+        self.assertTrue(build(verdict='INCONCLUSIVE', hold=False)['fault'])  # a runner INCONCLUSIVE still is
+        self.assertTrue(build(verdict='INCONCLUSIVE')['fault'])
+
+    def test_a_line_that_is_no_hold_is_byte_for_byte_what_it_was(self):
+        for verdict in ('PASS', 'FAIL', 'INCONCLUSIVE'):
+            self.assertNotIn('hold', build(verdict=verdict))
+        self.assertNotIn('"hold"', lane_event.note(build(verdict='INCONCLUSIVE')))
+
+    def test_only_an_inconclusive_report_can_be_held(self):
+        for verdict in ('PASS', 'FAIL'):
+            self.assertNotIn('hold', build(verdict=verdict, hold=True))
+            self.assertEqual(build(verdict=verdict, hold=True)['fault'], False)
+
+    def test_a_hold_round_trips_and_an_old_reader_still_reads_the_line(self):
+        event = build(verdict='INCONCLUSIVE', hold=True, runs=[])
+        line = lane_event.note(event)
+        self.assertEqual(lane_event.parse(line), event)
+        # A reader from before the key: it builds the event from the keys it knows and ignores `hold`.
+        old_reader_keys = {'v', 'verdict', 'fault', 'tier', 'head', 'trunk', 'seconds', 'queue_seconds', 'steps', 'tests',
+                           'classes', 'slowest'}
+        self.assertLessEqual(old_reader_keys, set(json.loads(line.split(' ', 3)[3][:-4])))
+
+    def test_a_hold_key_on_a_line_that_says_fault_cannot_make_both_true_and_a_line_without_it_is_no_hold(self):
+        forged = dict(build(verdict='INCONCLUSIVE'), hold=True)  # fault true, hold true
+        self.assertEqual((lane_event.parse(lane_event.note(forged))['hold'], lane_event.parse(lane_event.note(forged))['fault']),
+                         (True, False))
+        self.assertNotIn('hold', lane_event.parse(lane_event.note(dict(build(verdict='FAIL'), hold=True))))
+        self.assertNotIn('hold', lane_event.parse(lane_event.note(dict(build(verdict='INCONCLUSIVE'), hold='yes'))))
+
+    def test_the_prose_fallback_never_guesses_a_hold(self):
+        body = lane.report('pr1-r1', 'INCONCLUSIVE', HEAD, BASE, 'auto', 'hosted', 0, 'nothing',
+                           ['not merged: held for T3: the /lane T3 request has no lane report yet'], 'none', '/e', 'n', {})
+        event = lane_event.collect(body)
+        self.assertEqual((event['source'], event['fault']), ('prose', True))
+        self.assertNotIn('hold', event)
+
+
 class CollectTests(unittest.TestCase):
     def test_the_line_wins_when_it_is_there(self):
         body = lane.report('pr1-r1', 'FAIL', HEAD, BASE, 'T3', 'x', 345, 'x', [], 'none', '/e', 'n', {},
@@ -240,6 +283,47 @@ class RunnerTests(unittest.TestCase):
         event = lane_event.parse(released)
         self.assertIsNotNone(event, released)
         self.assertEqual((event['tier'], [step['step'] for step in event['steps']]), ('auto', ['host tests']))
+
+    def test_held_for_t3_report_reads_the_line_the_auto_revert_reads(self):
+        held = ['not merged: held for T3: the /lane T3 request for this head (abc) has no lane report yet.']
+        self.assertTrue(lane.held_for_t3_report('INCONCLUSIVE', held))
+        self.assertTrue(lane.held_for_t3_report('INCONCLUSIVE', ['moved', *held]))
+        for verdict, lines in (('FAIL', held), ('PASS', held), ('INCONCLUSIVE', []),
+                               ('INCONCLUSIVE', ['no Mac build slot was free']),
+                               # other "not merged" holds are not the T3 hold (is_hold, the green/red rule, is broader)
+                               ('INCONCLUSIVE', ['not merged by the runner: it touches .github/']),
+                               ('INCONCLUSIVE', ['not merged: the PR moved on']),
+                               ('INCONCLUSIVE', ['not merged: no Codex or Claude audit of its head']),
+                               # words in the middle of a line, as the "checks did not finish" note has them: a fault
+                               ('INCONCLUSIVE', ['The checks did not finish, so: ' + held[0]]),
+                               ('INCONCLUSIVE', ['  not merged: held for T3: indented test output'])):
+            with self.subTest(verdict=verdict, lines=lines):
+                self.assertFalse(lane.held_for_t3_report(verdict, lines))
+
+    def test_a_held_report_is_no_fault_to_the_event_the_ledger_or_the_auto_revert(self):
+        lane.STEP_RUNS.clear()
+        held = ['not merged: held for T3: the /lane T3 request for this head (abc1234) has no lane report yet.']
+        wanted = lane.identity('auto', HEAD, BASE, [])
+        note = lane.event_note('INCONCLUSIVE', 'auto', HEAD, BASE, 0, None, hold=lane.held_for_t3_report('INCONCLUSIVE', held))
+        body = lane.report('pr1-r1', 'INCONCLUSIVE', HEAD, BASE, 'auto', 'hosted', 0, 'nothing', held, 'none', '/e', 'n',
+                           wanted, event=note)
+        event = lane_event.parse(body)
+        self.assertEqual((event['fault'], event['hold'], event['steps']), (False, True, []))
+        # The ledger takes its results from the step runs, and a hold ran no step: nothing for it to call a fault.
+        import lane_ledger
+        with tempfile.TemporaryDirectory() as state:
+            self.assertEqual(lane_ledger.record_runs(Path(state), list(lane.STEP_RUNS), 1, HEAD), [])
+            self.assertEqual(json.loads(lane_ledger.path(Path(state)).read_text())['steps'], {})
+        # The auto-revert already reads a hold as no fault (PENDING_T3_HOLD), and still reads a runner fault as one.
+        self.assertEqual(lane.lane_report_verdict(body)[0], False)
+        fault = lane.report('pr1-r2', 'INCONCLUSIVE', HEAD, BASE, 'auto', 'hosted', 0, 'nothing',
+                            ['The lane itself failed: x'], 'none', '/e', 'n', wanted)
+        self.assertEqual(lane.lane_report_verdict(fault)[0], True)
+        # "The checks did not finish" is a fault that also waits for T3: its event line keeps fault true.
+        unfinished = ['The checks did not finish, so: ' + held[0]]
+        self.assertFalse(lane.held_for_t3_report('INCONCLUSIVE', unfinished))
+        self.assertEqual(lane.lane_report_verdict(lane.report('pr1-r3', 'INCONCLUSIVE', HEAD, BASE, 'auto', 'x', 0, 'nothing',
+                                                              unfinished, 'none', '/e', 'n', wanted))[0], True)
 
     def test_a_failing_measurement_leaves_the_report_without_a_line(self):
         with mock.patch.object(lane_event, 'build', side_effect=RuntimeError('boom')):

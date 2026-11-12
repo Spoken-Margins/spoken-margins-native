@@ -575,6 +575,68 @@ class FileTests(unittest.TestCase):
             events.normalise_since('last tuesday')
 
 
+HOLD_LINES = 'not merged: held for T3: the /lane T3 request for this head (abc1234) has no lane report yet, and this is a test.\n'
+
+
+def held_report(request, hold, head=HEAD, tier='auto', extra=HOLD_LINES, verdict='INCONCLUSIVE'):
+    """A lane report as lane-runner writes it, with its lane-event line (hold says whether the runner marked it)."""
+    line = lane_event.note(lane_event.build(verdict, tier, head, TRUNK, 0, None, [], {}, hold=hold))
+    return report_body(request, verdict, ran='nothing', seconds='0s', head=head, extra=extra) + line + '\n'
+
+
+class HoldTests(unittest.TestCase):
+    """#4089: a report the lane held for T3 is the lane working as designed, not a fault: 736 of 764 `auto` INCONCLUSIVE
+    reports from 10-22 to 11-11 ran nothing in 0 seconds and were counted as faults."""
+
+    def test_a_marked_hold_is_class_hold_and_a_runner_inconclusive_is_still_a_fault(self):
+        held, fault = lanes(held_report('pr1-r1', True), held_report('pr2-r1', False, extra='The lane itself failed: x\n'))
+        self.assertEqual(held['label'], {'class': 'hold', 'by': 'heuristic', 'signal': 'held-for-t3'})
+        self.assertEqual(fault['label'], {'class': 'fault', 'by': 'heuristic', 'signal': 'inconclusive'})
+        self.assertEqual(held['verdict'], 'INCONCLUSIVE')  # still INCONCLUSIVE to the lane; only the class differs
+
+    def test_old_reports_keep_their_class_even_when_they_look_like_a_hold(self):
+        # No hold marker: the prose and an empty step list say hold-ish things, but a no-slot fault has none either.
+        for name, body in (('a line from before the key', held_report('pr3-r1', False)),
+                           ('prose only', report_body('pr4-r1', 'INCONCLUSIVE', ran='nothing', seconds='0s', extra=HOLD_LINES)),
+                           ('no steps, no hold words',
+                            report_body('pr5-r1', 'INCONCLUSIVE', ran='nothing', seconds='0s',
+                                        extra='no Mac build slot was free for 5 minutes\n'))):
+            with self.subTest(name):
+                event = lanes(body)[0]
+                self.assertEqual(event['label']['class'], 'fault')
+        self.assertEqual(event['steps'], [])
+
+    def test_a_stored_hold_label_survives_a_collect_and_an_old_fault_label_stays_a_fault(self):
+        held, old = lanes(held_report('pr1-r1', True), held_report('pr2-r1', False))
+        for event in (held, old):
+            event.pop('label')
+        held['label'] = {'class': 'hold', 'by': 'heuristic', 'signal': 'held-for-t3'}
+        old['label'] = {'class': 'fault', 'by': 'heuristic', 'signal': 'inconclusive'}
+        labelled = {e['id']: e['label']['class'] for e in events.label([held, old])}
+        self.assertEqual(labelled, {held['id']: 'hold', old['id']: 'fault'})
+
+    def test_a_held_report_is_counted_apart_in_every_table(self):
+        found = events.collect_events(
+            [comment(held_report('pr1-r1', True), pr=1),
+             comment(held_report('pr2-r1', False, extra='no slot\n'), pr=2, at='2026-10-20T11:00:00Z'),
+             comment(report_body('pr3-r1', 'PASS'), pr=3, at='2026-10-20T12:00:00Z'),
+             comment(report_body('pr4-r1', 'PASS'), pr=4, at='2026-10-20T13:00:00Z')],
+            [], [], '2026-10-01T00:00:00Z', [], 'main')
+        text = events.report(found)
+        self.assertIn('| auto | 4 | 50% (2/4) | 0% (0/4) | 25% (1/4) | 25% (1/4) |', text)  # PASS FAIL INCONCLUSIVE held
+        self.assertIn('| all | 4 | 0% (0/4) | 25% (1/4) | 25% (1/4) |', text)  # first try: FAIL, INCONCLUSIVE, held
+        self.assertIn('held for T3 as the first report: 25% (1/4)', text)
+        self.assertIn('a hold for T3 left out (the pooled number a hand count gives): 25% (1/4)', text)
+        self.assertIn('| INCONCLUSIVE | 1 |', text)
+        self.assertIn('| held for T3 | 1 |', text)
+
+    def test_a_hold_label_is_a_value_the_dashboard_will_store(self):
+        import pipeline_dashboard
+        event = lanes(held_report('pr1-r1', True))[0]
+        stored = pipeline_dashboard.clean(event)
+        self.assertEqual(stored['label']['class'], 'hold')
+
+
 class ReportTests(unittest.TestCase):
     def test_an_empty_file_reports_no_events(self):
         self.assertIn('No events.', events.report([]))
@@ -586,7 +648,7 @@ class ReportTests(unittest.TestCase):
              comment(report_body('pr2-r1', 'PASS'), pr=2, at='2026-10-20T12:00:00Z')],
             [(run(), [job()])], [], '2026-10-01T00:00:00Z', [], 'main')
         text = events.report(found)
-        self.assertIn('| auto | 3 | 67% (2/3) | 33% (1/3) | 0% (0/3) | 9m21s | - |', text)
+        self.assertIn('| auto | 3 | 67% (2/3) | 33% (1/3) | 0% (0/3) | 0% (0/3) | 9m21s | - |', text)
         self.assertIn('FAIL reports that later passed on the same head: 100% (1/1)', text)
         self.assertIn('| hosted-portable / portable tests | hosted | 1 | 0% (0/1) | 100% (1/1) | 0 | trunk-red 1 |', text)
         self.assertIn('No test-catches.jsonl was read', text)

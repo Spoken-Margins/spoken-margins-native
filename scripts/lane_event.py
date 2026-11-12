@@ -13,7 +13,11 @@ comment can't smuggle text through the collector. The visible report doesn't cha
 
 Fields:
 - verdict: PASS, FAIL or INCONCLUSIVE. `fault` is true for INCONCLUSIVE, the runner's own trouble, as opposed
-  to a FAIL on the PR's code. Each step also says pass, fail or fault (lane_ledger.outcome).
+  to a FAIL on the PR's code, except a hold (#4089): an INCONCLUSIVE report whose lines say "not merged: held for
+  T3" is the lane working as designed, so it carries `"hold":true` and `fault` is false. The key is there only
+  when true, so every other line is as it was and a reader from before the key reads a hold as a non-fault
+  INCONCLUSIVE; a line with no key, old or new, is not a hold and keeps the `fault` it was written with.
+  Each step also says pass, fail or fault (lane_ledger.outcome).
 - tier (auto, T2, T3), head and trunk (the commit the job tested against), seconds, and queue_seconds from the
   request to the job's start (null for an automerge run, whose request is a label).
 - steps: [{step, result, seconds}] in the order they ran.
@@ -75,11 +79,14 @@ def test_records(evidence: Path) -> dict:
     return records
 
 
-def build(verdict: str, tier: str, head: str, trunk: str, seconds, queue_seconds, runs, records) -> dict:
+def build(verdict: str, tier: str, head: str, trunk: str, seconds, queue_seconds, runs, records,
+          hold: bool = False) -> dict:
     """The event for one lane report. runs: the job's step runs (lane-runner STEP_RUNS), records: test_records().
+    hold: the report is held for T3 (lane-runner's held_for_t3_report), which is not a runner fault.
     Anything that doesn't fit the patterns is dropped."""
     import lane_ledger
     verdict = verdict if verdict in VERDICTS else 'INCONCLUSIVE'
+    hold = hold is True and verdict == 'INCONCLUSIVE'
     classes, slowest, ran, failed = {}, [], 0, 0
     for name, record in records.items():
         if not TEST.fullmatch(name):
@@ -102,13 +109,15 @@ def build(verdict: str, tier: str, head: str, trunk: str, seconds, queue_seconds
             steps.append({'step': step,
                           'result': lane_ledger.outcome(run.get('verdict'), bool(run.get('zero_tests'))),
                           'seconds': took})
-    event = {'v': VERSION, 'verdict': verdict, 'fault': verdict == 'INCONCLUSIVE',
+    event = {'v': VERSION, 'verdict': verdict, 'fault': verdict == 'INCONCLUSIVE' and not hold,
              'tier': tier if tier in TIERS else 'auto',
              'head': head[:12] if COMMIT.fullmatch(head[:12] or '-') else '',
              'trunk': trunk[:12] if COMMIT.fullmatch(trunk[:12] or '-') else '',
              'seconds': _seconds(seconds) or 0, 'queue_seconds': _seconds(queue_seconds),
              'steps': steps, 'tests': {'ran': ran, 'failed': failed},
              'classes': dict(sorted(classes.items())), 'slowest': slowest[:SLOWEST]}
+    if hold:
+        event['hold'] = True
     return _fit(event)
 
 
@@ -160,6 +169,9 @@ def parse(body: str):
         return None
     if raw.get('classes_trimmed') is True:
         event['classes_trimmed'] = True
+    if raw.get('hold') is True and event['verdict'] == 'INCONCLUSIVE':
+        event['hold'] = True
+        event['fault'] = False  # a hold is never a fault, whatever else the line says
     return event
 
 

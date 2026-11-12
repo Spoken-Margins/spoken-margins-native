@@ -30,6 +30,10 @@ re-derives every heuristic label from all events in the file and keeps one whose
 
     fault        the lane's or the runner's own trouble: INCONCLUSIVE, a kill (exit -15, 124), a budget, no slot,
                  no tests run; for a job, timed out or failed in job setup
+    hold         the lane working as designed: an INCONCLUSIVE report that says "not merged: held for T3" because the
+                 PR's /lane T3 request has no report yet (#4089). Counted apart from `fault`, from the lane-event
+                 line's `hold`. A report from before the line carried it keeps the class it had: a hold is not
+                 guessed from the prose or from "no steps" (a no-slot fault has none either)
     compile      the app or a test target didn't compile
     trunk-red    the trunk itself is red: the report re-ran the test on plain trunk and it failed there too, or the
                  same test failed on two PRs tested against the same trunk commit, or a job failed on the trunk
@@ -94,7 +98,7 @@ SETUP_STEPS = ('Set up job', 'Initialize containers', 'Complete job')
 
 JOB_THREADS = 8
 STEP_RED_PRS = 3  # PRs failing the same step against one trunk commit, with none passing it, read as a red trunk
-CLASSES = ('code', 'flake', 'trunk-moved', 'trunk-red', 'compile', 'fault', 'unresolved', 'cancelled')
+CLASSES = ('code', 'flake', 'trunk-moved', 'trunk-red', 'compile', 'fault', 'hold', 'unresolved', 'cancelled')
 HEURISTIC = 'heuristic'
 
 
@@ -205,7 +209,8 @@ def lane_events(comments: list[dict]) -> list[dict]:
             'tests': found['tests'], 'requested': _requested(request), 'source': found['source']}
         trunk_red = bool(TRUNK_TOO.search(body))
         names = failed_tests(body) if found['verdict'] != 'PASS' else {}
-        signal = _report_signal(body, found['verdict'], trunk_red or any(names.values()))
+        signal = _report_signal(body, found['verdict'], trunk_red or any(names.values()),
+                                hold=found.get('hold') is True)
         if signal:
             event['label'] = {'class': signal[0], 'by': HEURISTIC, 'signal': signal[1]}
         events.append(event)
@@ -219,10 +224,16 @@ def lane_events(comments: list[dict]) -> list[dict]:
     return events
 
 
-def _report_signal(body: str, verdict: str, trunk_red: bool):
-    """(class, signal) a report settles by itself, or None: a PASS, or a failure that only later runs can classify."""
+HOLD_SIGNAL = 'held-for-t3'
+
+
+def _report_signal(body: str, verdict: str, trunk_red: bool, hold: bool = False):
+    """(class, signal) a report settles by itself, or None: a PASS, or a failure that only later runs can classify.
+    hold: the lane-event line says the report is the T3 hold (#4089)."""
     if verdict == 'PASS':
         return None
+    if hold and verdict == 'INCONCLUSIVE':
+        return 'hold', HOLD_SIGNAL
     if trunk_red:
         return 'trunk-red', 'trunk-rerun'
     if COMPILE.search(body):
@@ -493,7 +504,7 @@ def label(events: list[dict]) -> list[dict]:
 def _report_signal_of(event: dict):
     """What a lane event already carries: its stored label when it is one of the report's own signals."""
     current = event.get('label') or {}
-    if current.get('signal') in ('trunk-rerun', 'swift-error', 'build-failed', 'inconclusive', 'runner-kill'):
+    if current.get('signal') in ('trunk-rerun', 'swift-error', 'build-failed', 'inconclusive', 'runner-kill', HOLD_SIGNAL):
         return current['class'], current['signal']
     if event['verdict'] == 'INCONCLUSIVE':
         return 'fault', 'inconclusive'
@@ -697,6 +708,17 @@ def table(header: list[str], rows: list[list]) -> list[str]:
     return lines + ['| ' + ' | '.join(str(cell) for cell in row) + ' |' for row in rows]
 
 
+def is_hold(lane: dict) -> bool:
+    """A lane report the lane itself held for T3 (#4089): its class label is `hold`."""
+    return (lane.get('label') or {}).get('class') == 'hold'
+
+
+def verdict_counts(group: list[dict]) -> collections.Counter:
+    """PASS, FAIL, INCONCLUSIVE and `hold` over <group>: an INCONCLUSIVE report held for T3 counts as `hold`, not as
+    INCONCLUSIVE, which is left for the runner's own trouble (#4089)."""
+    return collections.Counter('hold' if is_hold(lane) else lane['verdict'] for lane in group)
+
+
 def first_tries(lanes: list[dict]) -> list[dict]:
     """The first lane report for each (PR, head): what the author's push got on its first try."""
     seen, first = set(), []
@@ -739,12 +761,13 @@ def report(events: list[dict]) -> str:
     for tier in ('auto', 'T2', 'T3', 'all'):
         group = [l for l in lanes if tier == 'all' or l['tier'] == tier]
         if group:
-            count = collections.Counter(l['verdict'] for l in group)
+            count = verdict_counts(group)
             rows.append([tier, len(group), pct(count['PASS'], len(group)), pct(count['FAIL'], len(group)),
-                         pct(count['INCONCLUSIVE'], len(group)),
+                         pct(count['INCONCLUSIVE'], len(group)), pct(count['hold'], len(group)),
                          duration(median(l['seconds'] for l in group)),
                          duration(median(l['queue_seconds'] for l in group))])
-    out += table(['tier', 'reports', 'PASS', 'FAIL', 'INCONCLUSIVE', 'median time', 'median queue wait'], rows)
+    out += table(['tier', 'reports', 'PASS', 'FAIL', 'INCONCLUSIVE', 'held for T3', 'median time',
+                  'median queue wait'], rows)
 
     # first-try
     firsts = first_tries(lanes)
@@ -752,25 +775,29 @@ def report(events: list[dict]) -> str:
     days = collections.defaultdict(list)
     for lane in firsts:
         days[lane['at'][:10]].append(lane)
-    rows = [[day, len(group), pct(sum(l['verdict'] == 'FAIL' for l in group), len(group)),
-             pct(sum(l['verdict'] == 'INCONCLUSIVE' for l in group), len(group))]
+    rows = [[day, len(group), pct(verdict_counts(group)['FAIL'], len(group)),
+             pct(verdict_counts(group)['INCONCLUSIVE'], len(group)), pct(verdict_counts(group)['hold'], len(group))]
             for day, group in sorted(days.items())]
-    rows.append(['all', len(firsts), pct(sum(l['verdict'] == 'FAIL' for l in firsts), len(firsts)),
-                 pct(sum(l['verdict'] == 'INCONCLUSIVE' for l in firsts), len(firsts))])
-    out += table(['day', 'heads', 'first-try FAIL', 'first-try INCONCLUSIVE'], rows)
+    rows.append(['all', len(firsts), pct(verdict_counts(firsts)['FAIL'], len(firsts)),
+                 pct(verdict_counts(firsts)['INCONCLUSIVE'], len(firsts)),
+                 pct(verdict_counts(firsts)['hold'], len(firsts))])
+    out += table(['day', 'heads', 'first-try FAIL', 'first-try INCONCLUSIVE', 'first-try held for T3'], rows)
     pr_firsts = {}
     for lane in sorted((l for l in lanes if l['via'] == 'pr'), key=lambda e: (e['at'], e['id'])):
         pr_firsts.setdefault(lane['pr'], lane)
-    out += ['', f'The first report for each PR, FAIL or INCONCLUSIVE (the pooled number a hand count gives): '
-            f'{pct(sum(l["verdict"] != "PASS" for l in pr_firsts.values()), len(pr_firsts))}.']
+    out += ['', f'The first report for each PR, FAIL or INCONCLUSIVE, a hold for T3 left out (the pooled number a hand '
+            f'count gives): {pct(sum(l["verdict"] != "PASS" and not is_hold(l) for l in pr_firsts.values()), len(pr_firsts))}'
+            f'; held for T3 as the first report: {pct(sum(is_hold(l) for l in pr_firsts.values()), len(pr_firsts))}.']
 
     # what failures were
     out += ['', '## What each non-PASS report was (class labels)', '']
     rows = []
     for verdict in ('FAIL', 'INCONCLUSIVE'):
-        group = [l for l in lanes if l['verdict'] == verdict]
+        group = [l for l in lanes if l['verdict'] == verdict and (verdict == 'FAIL' or not is_hold(l))]
         count = collections.Counter((l.get('label') or {}).get('class', 'unlabelled') for l in group)
         rows.append([verdict, len(group)] + [pct(count[c], len(group)) for c in CLASSES[:-1]])
+    held = [l for l in lanes if is_hold(l)]
+    rows.append(['held for T3', len(held)] + [pct(len(held) if c == 'hold' else 0, len(held)) for c in CLASSES[:-1]])
     out += table(['verdict', 'reports'] + list(CLASSES[:-1]), rows)
     fails = [l for l in lanes if l['verdict'] == 'FAIL']
     same_head = sum((l.get('label') or {}).get('class') in ('flake', 'trunk-moved') for l in fails)
