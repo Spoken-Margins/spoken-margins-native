@@ -100,6 +100,19 @@ public struct LiveSessionRecord: Codable, Equatable, Sendable {
         try encoder.encode(self).write(to: target, options: .atomic)
     }
 
+    /// Every saved session's record under `directory` (the folder `save(in:)` writes to). A file that doesn't read is
+    /// skipped and left alone.
+    public static func loadAll(from directory: URL) -> [LiveSessionRecord] {
+        let folder = directory.appending(path: "LiveSessions", directoryHint: .isDirectory)
+        let files = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601withFractions
+        return files
+            .filter { $0.pathExtension == "json" }
+            .compactMap { try? Data(contentsOf: $0) }
+            .compactMap { try? decoder.decode(LiveSessionRecord.self, from: $0) }
+    }
+
     public static func load(itemId: String, from directory: URL) -> LiveSessionRecord? {
         guard let data = try? Data(contentsOf: url(itemId: itemId, in: directory)) else { return nil }
         let decoder = JSONDecoder()

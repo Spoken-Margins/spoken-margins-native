@@ -6,8 +6,11 @@ import SessionKit
 /// sessions and a SQL count of each session's active Margins, and decodes Margins only for sessions that have some.
 /// Items in Recently Deleted and their Margins are left out, as they are in the Margins tab. Only the finished entries
 /// come back; the reads and the sort run on `StoreReader`'s background task.
+/// - `madeAt`: when each Margin saved from a live session was made there (`TodaysMarginsDigest.madeAt(records:)`).
 extension StoreReader {
-    public func todaysMargins(on day: Date, calendar: Calendar = .current) async throws -> [TodaysMarginsDigest.Entry] {
+    public func todaysMargins(
+        on day: Date, calendar: Calendar = .current, madeAt: [String: Date] = [:]
+    ) async throws -> [TodaysMarginsDigest.Entry] {
         try await read(priority: .userInitiated) { store in
             let titles = Dictionary(
                 try store.listItemSummaries().filter { $0.deletedAt == nil }.map { ($0.id, $0.title) },
@@ -20,7 +23,7 @@ extension StoreReader {
                     candidates.append((margin, title, session))
                 }
             }
-            return TodaysMarginsDigest.entries(from: candidates, on: day, calendar: calendar)
+            return TodaysMarginsDigest.entries(from: candidates, on: day, calendar: calendar, madeAt: madeAt)
         }
     }
 }

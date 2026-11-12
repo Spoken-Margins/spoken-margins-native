@@ -174,6 +174,66 @@ final class TodaysMarginsDigestTests: XCTestCase {
         XCTAssertEqual(Set(found.map(\.id)), ["first", "last"])
     }
 
+    // MARK: Margins saved from a live session
+
+    /// Saving a live session stamps each Margin in the database with the save time. The digest uses the time it was
+    /// made, from the session's record: a Margin made at 10:05 and saved at 16:00 sorts at 10:05, and one saved the next
+    /// morning is counted on the day it was made and not on the day it was saved.
+    func testAMarginSavedFromALiveSessionIsDatedByWhenItWasMade() {
+        let calendar = calendar("UTC")
+        let day = date("2026-11-12T12:00:00Z")
+        let madeMorning = date("2026-11-12T10:05:00Z")
+        let saved = date("2026-11-13T09:00:00Z")
+        var session = LiveSession(id: "live", kind: .meeting, startedAt: madeMorning, savedItemId: "item")
+        session.margins = [liveMargin("live-1", at: madeMorning)]
+        let record = LiveSessionRecord(itemId: "item", session: session, transcript: nil, placed: [], savedMarginIds: ["live-1": "stored-1"])
+        let madeAt = TodaysMarginsDigest.madeAt(records: [record])
+        XCTAssertEqual(madeAt, ["stored-1": madeMorning])
+        // The database copy carries the save time, a day later.
+        let stored = margin("stored-1", at: saved)
+        let another = margin("lib-noon", at: date("2026-11-12T11:00:00Z"))
+
+        let made = TodaysMarginsDigest.entries(
+            from: [(stored, "Meeting item", nil), (another, "Other", nil)], on: day, calendar: calendar, madeAt: madeAt)
+        XCTAssertEqual(made.map(\.id), ["stored-1", "lib-noon"], "10:05 comes before 11:00")
+        XCTAssertEqual(made.first?.takenAt, madeMorning)
+
+        let nextDay = TodaysMarginsDigest.entries(
+            from: [(stored, "Meeting item", nil)], on: saved, calendar: calendar, madeAt: madeAt)
+        XCTAssertEqual(nextDay, [], "saved on the 13th, made on the 12th: not a Margin of the 13th")
+        let withoutRecord = TodaysMarginsDigest.entries(from: [(stored, "Meeting item", nil)], on: saved, calendar: calendar)
+        XCTAssertEqual(withoutRecord.map(\.id), ["stored-1"], "with no record the stored time is all there is")
+    }
+
+    func testRecordsWithoutLinksAndLinksToUnknownMarginsAddNothing() {
+        let now = date("2026-11-12T10:00:00Z")
+        var session = LiveSession(id: "live", kind: .meeting, startedAt: now, savedItemId: "item")
+        session.margins = [liveMargin("live-1", at: now)]
+        let oldRecord = LiveSessionRecord(itemId: "item", session: session, transcript: nil, placed: [])
+        let strayLink = LiveSessionRecord(itemId: "item", session: session, transcript: nil, placed: [], savedMarginIds: ["gone": "stored-x"])
+        XCTAssertEqual(TodaysMarginsDigest.madeAt(records: [oldRecord, strayLink]), [:])
+    }
+
+    /// The real record files: `save(in:)` writes them, `loadAll` reads every one back, and a file that isn't a record
+    /// is skipped and left alone.
+    func testSavedRecordsReadBackFromTheirFolder() throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: "records-\(UUID().uuidString)", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let made = date("2026-11-12T10:05:00Z")
+        for (itemId, liveId, storedId) in [("item-a", "a1", "sa1"), ("item-b", "b1", "sb1")] {
+            var session = LiveSession(id: "live-\(itemId)", kind: .meeting, startedAt: made, savedItemId: itemId)
+            session.margins = [liveMargin(liveId, at: made)]
+            try LiveSessionRecord(itemId: itemId, session: session, transcript: nil, placed: [], savedMarginIds: [liveId: storedId])
+                .save(in: directory)
+        }
+        let folder = directory.appending(path: "LiveSessions", directoryHint: .isDirectory)
+        try Data("not json".utf8).write(to: folder.appending(path: "broken.json"))
+        XCTAssertEqual(LiveSessionRecord.loadAll(from: directory).count, 2)
+        XCTAssertEqual(TodaysMarginsDigest.madeAt(records: LiveSessionRecord.loadAll(from: directory)), ["sa1": made, "sb1": made])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: folder.appending(path: "broken.json").path))
+        XCTAssertEqual(LiveSessionRecord.loadAll(from: directory.appending(path: "missing")), [])
+    }
+
     // MARK: Words and places
 
     func testWordsFollowTheNotesFolderRule() {

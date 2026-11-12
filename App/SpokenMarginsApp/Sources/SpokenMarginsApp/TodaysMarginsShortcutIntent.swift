@@ -11,13 +11,17 @@ import SessionKitPersistence
 /// are `TodaysMarginsDigest` in SessionKit. Nothing here writes, and nothing leaves the phone until the listener's own
 /// shortcut passes the text on.
 enum TodaysMarginsShortcutAction {
-    /// - `liveSessions`: the sessions to read; nil reads the app's own session files.
+    /// - `liveSessions`, `savedMarginTimes`: the sessions to read and the made-at times of Margins saved from a live
+    ///   session; nil reads the app's own session files. Saving a session stamps its Margins in the database with the
+    ///   save time, so their real time comes from the session's record.
     static func text(
-        store: SQLiteSessionStore?, liveSessions: [LiveSession]? = nil, now: Date = Date(),
-        calendar: Calendar = .current, locale: Locale = .current
+        store: SQLiteSessionStore?, liveSessions: [LiveSession]? = nil, savedMarginTimes: [String: Date]? = nil,
+        now: Date = Date(), calendar: Calendar = .current, locale: Locale = .current
     ) async throws -> String {
         guard let store else { throw AddMarginShortcutError.libraryUnavailable }
-        let library = try await StoreReader(store).todaysMargins(on: now, calendar: calendar)
+        let madeAt: [String: Date]
+        if let savedMarginTimes { madeAt = savedMarginTimes } else { madeAt = await LiveSessionFileWorker.shared.savedMarginTimes() }
+        let library = try await StoreReader(store).todaysMargins(on: now, calendar: calendar, madeAt: madeAt)
         let sessions: [LiveSession]
         if let liveSessions { sessions = liveSessions } else { sessions = await LiveSessionFileWorker.shared.allSessions() }
         let live = TodaysMarginsDigest.entries(fromLiveSessions: sessions, on: now, calendar: calendar)

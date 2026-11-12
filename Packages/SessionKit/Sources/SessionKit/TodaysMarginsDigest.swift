@@ -60,16 +60,20 @@ public enum TodaysMarginsDigest {
     /// stored counter date from before #624 is read as its session's start, as the notes folder does), and either
     /// has words or was spoken. Margins on the same moment keep a stable order by id.
     /// - `margins`: every active Margin to consider, each with its item's title and its session (for the old dates).
+    /// - `madeAt`: for a Margin saved from a live session, the moment it was made there (`madeAt(records:)`). Saving a
+    ///   session writes each Margin to the database stamped with the save time, so without this a Margin made at 10:05
+    ///   and saved at 16:00, or the next morning, would be dated by the save.
     public static func entries(
         from margins: [(margin: Interjection, itemTitle: String, session: Session?)],
         on day: Date,
-        calendar: Calendar = .current
+        calendar: Calendar = .current,
+        madeAt: [String: Date] = [:]
     ) -> [Entry] {
         let found = margins
             .compactMap { candidate -> Entry? in
                 let margin = candidate.margin
                 guard margin.status == "active" else { return nil }
-                let takenAt = margin.recordedAt(in: candidate.session)
+                let takenAt = madeAt[margin.id] ?? margin.recordedAt(in: candidate.session)
                 guard calendar.isDate(takenAt, inSameDayAs: day) else { return nil }
                 let words = words(of: margin)
                 let isSpoken = margin.captureKind != .written
@@ -79,6 +83,20 @@ public enum TodaysMarginsDigest {
                     place: place(of: margin), isSpoken: isSpoken)
             }
         return ordered(found)
+    }
+
+    /// When each Margin that was saved from a live session was made there, by the id it has in the database. A record
+    /// saved before the links were kept (`savedMarginIds` nil) adds nothing, and its Margins keep their stored time.
+    public static func madeAt(records: [LiveSessionRecord]) -> [String: Date] {
+        var made: [String: Date] = [:]
+        for record in records {
+            guard let links = record.savedMarginIds else { continue }
+            let markedAt = Dictionary(record.session.margins.map { ($0.id, $0.markedAt) }, uniquingKeysWith: { first, _ in first })
+            for (liveId, storedId) in links {
+                if let at = markedAt[liveId] { made[storedId] = at }
+            }
+        }
+        return made
     }
 
     /// Earliest first; the same moment keeps a stable order by id.

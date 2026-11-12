@@ -64,6 +64,25 @@ final class TodaysMarginsShortcutIntentTests: XCTestCase {
         XCTAssertLessThan(quickAt.lowerBound, libraryAt.lowerBound, "the quick one was made a minute earlier")
     }
 
+    /// A Margin saved from a live session is stored with the save time; the action dates it by the record's time.
+    func testAMarginSavedFromALiveSessionIsListedAtWhenItWasMade() async throws {
+        let model = makeModel()
+        model.startItem(id: "item-pill")
+        let store = try XCTUnwrap(model.store)
+        let sessionId = try XCTUnwrap(model.snapshot.sessionId)
+        model.beginWrittenMargin()
+        model.saveWrittenMargin(text: "Saved from a meeting.")
+        let stored = try XCTUnwrap(try store.loadInterjections(sessionId: sessionId).first)
+        let now = Date()
+
+        // Made two days ago, so today's digest leaves it out even though the database stamps it with now.
+        let old = try await TodaysMarginsShortcutAction.text(
+            store: store, liveSessions: [], savedMarginTimes: [stored.id: now.addingTimeInterval(-2 * 86_400)], now: now)
+        XCTAssertFalse(old.contains("Saved from a meeting."), old)
+        let current = try await TodaysMarginsShortcutAction.text(store: store, liveSessions: [], savedMarginTimes: [:], now: now)
+        XCTAssertTrue(current.contains("> Saved from a meeting."), current)
+    }
+
     func testTheIntentSaysSoWhenTheLibraryIsUnavailable() async {
         let priorModel = ListeningEditionShortcutBridge.model
         ListeningEditionShortcutBridge.model = nil

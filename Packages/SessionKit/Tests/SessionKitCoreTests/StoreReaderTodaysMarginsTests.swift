@@ -48,6 +48,23 @@ final class StoreReaderTodaysMarginsTests: XCTestCase {
         XCTAssertEqual(found.map(\.words), ["early", "late"])
     }
 
+    /// A Margin saved from a live session is stamped with the save time in the database; given the time it was made, the
+    /// real read dates it by that.
+    func testAMarginSavedFromALiveSessionIsReadAtWhenItWasMade() async throws {
+        let store = try makeStore()
+        let noon = Date(timeIntervalSince1970: 1_794_484_800) // 2026-11-12 12:00 UTC
+        let nextMorning = noon.addingTimeInterval(21 * 3_600)
+        try seed(store, itemId: "m", title: "Meeting", margins: [("saved-1", nextMorning, "made yesterday, saved today")])
+        let madeAt = ["saved-1": noon.addingTimeInterval(-7_200)]
+        let reader = StoreReader(store)
+
+        let onTheDayMade = try await reader.todaysMargins(on: noon, calendar: calendar, madeAt: madeAt)
+        XCTAssertEqual(onTheDayMade.map(\.id), ["saved-1"])
+        XCTAssertEqual(onTheDayMade.first?.takenAt, noon.addingTimeInterval(-7_200))
+        let onTheSaveDay = try await reader.todaysMargins(on: nextMorning, calendar: calendar, madeAt: madeAt)
+        XCTAssertEqual(onTheSaveDay, [])
+    }
+
     func testAnEmptyLibraryGivesAnEmptyDay() async throws {
         let found = try await StoreReader(try makeStore()).todaysMargins(on: Date(), calendar: calendar)
         XCTAssertEqual(found, [])
