@@ -11,6 +11,8 @@ final class UITestingLaunchSeedTests: XCTestCase {
         "SPOKEN_MARGINS_UI_TEST_PODCAST": "1",
         "SPOKEN_MARGINS_UI_TEST_PDF": "1",
         "SPOKEN_MARGINS_UI_TEST_SOURCE_TITLE": "Title",
+        "SPOKEN_MARGINS_UI_TEST_PODCAST_PLACE": "1490",
+        "SPOKEN_MARGINS_UI_TEST_PODCAST_COMPLETED": "1",
     ]
 
     func testANormalLaunchSeedsNothingWhateverTheEnvironmentHolds() {
@@ -22,7 +24,11 @@ final class UITestingLaunchSeedTests: XCTestCase {
             XCTAssertFalse(seed.seedsGeneratedTimeline, key)
             XCTAssertFalse(UITestingLaunchSeed.importsCoopLayer(arguments: ["SpokenMarginsApp"], environment: [key: value]), key)
             XCTAssertFalse(UITestingLaunchSeed.marksListenerMarginShared(arguments: ["SpokenMarginsApp"], environment: [key: value]), key)
+            XCTAssertNil(UITestingLaunchSeed.podcastPlaceSeconds(arguments: ["SpokenMarginsApp"], environment: [key: value]), key)
+            XCTAssertFalse(UITestingLaunchSeed.podcastStartsCompleted(arguments: ["SpokenMarginsApp"], environment: [key: value]), key)
         }
+        XCTAssertNil(UITestingLaunchSeed.podcastPlaceSeconds(arguments: ["SpokenMarginsApp"], environment: everySeedVariable))
+        XCTAssertFalse(UITestingLaunchSeed.podcastStartsCompleted(arguments: ["SpokenMarginsApp"], environment: everySeedVariable))
         XCTAssertEqual(UITestingLaunchSeed(arguments: ["SpokenMarginsApp"], environment: everySeedVariable), .none)
         XCTAssertFalse(UITestingLaunchSeed.importsCoopLayer(arguments: ["SpokenMarginsApp"], environment: everySeedVariable))
         XCTAssertFalse(UITestingLaunchSeed.marksListenerMarginShared(arguments: ["SpokenMarginsApp"], environment: everySeedVariable))
@@ -249,5 +255,92 @@ final class UITestingLaunchSeedTests: XCTestCase {
         XCTAssertEqual(marked.sharedAs, [UITestingLaunchSeed.listenerSharedIdentity])
         XCTAssertNil(UITestingLaunchSeed.listenerMarginMarkedShared([marked]), "a second relaunch marks nothing")
         XCTAssertNil(UITestingLaunchSeed.listenerMarginMarkedShared([margin("other-item", item: "item-other", at: 50)]))
+    }
+
+    // MARK: - J14: a listener with history (#4100)
+
+    private let podcast = ["SPOKEN_MARGINS_UI_TEST_PODCAST": "1"]
+    private let ui = ["--ui-testing"]
+
+    func testThePodcastPlaceComesOnlyWithTheLaunchThatSeedsThePodcast() {
+        let place = "SPOKEN_MARGINS_UI_TEST_PODCAST_PLACE"
+        func seconds(_ arguments: [String], _ extra: [String: String]) -> Int? {
+            UITestingLaunchSeed.podcastPlaceSeconds(arguments: arguments, environment: podcast.merging(extra) { $1 })
+        }
+        XCTAssertEqual(seconds(ui, [place: "1490"]), 1_490)
+        XCTAssertEqual(seconds(ui, [place: "1"]), 1)
+        XCTAssertNil(seconds(ui, [:]), "No place is not started")
+        XCTAssertNil(seconds(ui, [place: "0"]), "0 is not started: no session")
+        XCTAssertNil(seconds(ui, [place: "-5"]))
+        XCTAssertNil(seconds(ui, [place: "soon"]))
+        XCTAssertNil(seconds(ui, [place: ""]))
+        XCTAssertNil(seconds(ui, [place: "12.5"]))
+        XCTAssertNil(seconds([], [place: "1490"]), "A normal launch never moves a place")
+        XCTAssertNil(seconds(ui, [place: "1490", "SPOKEN_MARGINS_UI_TEST_KEEP_LIBRARY": "1"]),
+                     "A kept-Library relaunch keeps the place the script reached")
+        XCTAssertNil(seconds(ui, [place: "1490", "SPOKEN_MARGINS_UI_TEST_SOURCE_TEXT": "An article."]),
+                     "Text wins over the podcast seed, which then has no place to give")
+        XCTAssertNil(UITestingLaunchSeed.podcastPlaceSeconds(arguments: ui, environment: [place: "1490"]),
+                     "Without the podcast seed there is no episode")
+    }
+
+    func testThePodcastStartsCompletedOnlyOnTheLaunchThatSeedsThePodcast() {
+        let completed = "SPOKEN_MARGINS_UI_TEST_PODCAST_COMPLETED"
+        func starts(_ arguments: [String], _ extra: [String: String]) -> Bool {
+            UITestingLaunchSeed.podcastStartsCompleted(arguments: arguments, environment: podcast.merging(extra) { $1 })
+        }
+        XCTAssertTrue(starts(ui, [completed: "1"]))
+        XCTAssertFalse(starts(ui, [:]))
+        XCTAssertFalse(starts(ui, [completed: "0"]))
+        XCTAssertFalse(starts(ui, [completed: "yes"]))
+        XCTAssertFalse(starts([], [completed: "1"]))
+        XCTAssertFalse(starts(ui, [completed: "1", "SPOKEN_MARGINS_UI_TEST_KEEP_LIBRARY": "1"]))
+        XCTAssertFalse(starts(ui, [completed: "1", "SPOKEN_MARGINS_UI_TEST_SOURCE_TEXT": "An article."]))
+        XCTAssertFalse(UITestingLaunchSeed.podcastStartsCompleted(arguments: ui, environment: [completed: "1"]))
+    }
+
+    /// A place at the end that is not the end: Continue resumes it, at its end, with the friend's Margins behind it (#4097).
+    func testAPlaceNearTheEndIsASessionContinueResumesAtThatPlace() throws {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let session = UITestingLaunchSeed.podcastSession(placeSeconds: 1_490, durationSeconds: 1_500, now: now)
+        XCTAssertEqual(session.itemId, UITestingLaunchSeed.podcastItemId)
+        XCTAssertEqual(session.status, "in_progress")
+        XCTAssertEqual(session.phase, .itemPlayback)
+        XCTAssertEqual(session.completionPercent, 99)
+        XCTAssertNil(session.completedAt)
+        XCTAssertEqual(session.currentTargetType, .transcriptBackedMedia)
+        XCTAssertEqual(session.currentTargetId, UITestingLaunchSeed.podcastRemoteURL, "The target the engine gives the seeded item")
+        XCTAssertEqual(SessionContinuation.preferredContinuationSession(in: [session])?.id, session.id)
+        XCTAssertTrue(SessionContinuation.continueResumes(session))
+        XCTAssertEqual(SessionContinuation.continuePlaceMs(sessions: [session]), 1_490_000)
+    }
+
+    func testAPlaceAtOrPastTheEndIsAFinishedSessionContinueStartsAgainFrom() throws {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        for place in [1_500, 1_501, 99_999] {
+            let session = UITestingLaunchSeed.podcastSession(placeSeconds: place, durationSeconds: 1_500, now: now)
+            XCTAssertEqual(session.status, "finished", "\(place)")
+            XCTAssertEqual(session.phase, .finished, "\(place)")
+            XCTAssertEqual(session.completionPercent, 100, "\(place)")
+            XCTAssertEqual(session.completedAt, now, "\(place)")
+            XCTAssertEqual(session.position.mediaTimeMs, 1_500_000, "The place is clamped to the episode: \(place)")
+            XCTAssertFalse(SessionContinuation.continueResumes(session), "\(place)")
+            XCTAssertEqual(SessionContinuation.continuePlaceMs(sessions: [session]), 0, "\(place)")
+        }
+    }
+
+    func testThePodcastPlacePercentNeverReachesAHundredBeforeTheEnd() {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        func percent(_ place: Int, of duration: Int) -> Int {
+            UITestingLaunchSeed.podcastSession(placeSeconds: place, durationSeconds: duration, now: now).completionPercent
+        }
+        XCTAssertEqual(percent(1, of: 1_500), 0)
+        XCTAssertEqual(percent(750, of: 1_500), 50)
+        XCTAssertEqual(percent(1_499, of: 1_500), 99)
+        XCTAssertEqual(percent(599, of: 600), 99)
+        XCTAssertEqual(percent(9, of: 10), 90)
+        XCTAssertEqual(percent(10, of: 10), 100)
+        XCTAssertEqual(percent(5, of: 0), 100, "A zero-length episode is over at once, not a divide by zero")
+        XCTAssertEqual(percent(-3, of: 1_500), 0, "A negative place is the start")
     }
 }

@@ -63,6 +63,16 @@ enum UITestingHooks {
         UITestingLaunchSeed.importsCoopLayer(arguments: CommandLine.arguments, environment: ProcessInfo.processInfo.environment)
     }
 
+    /// A fresh podcast launch starts with the listener part way, or at the end, of the episode (J14, #4100).
+    static var podcastPlaceSeconds: Int? {
+        UITestingLaunchSeed.podcastPlaceSeconds(arguments: CommandLine.arguments, environment: ProcessInfo.processInfo.environment)
+    }
+
+    /// A fresh podcast launch starts with the episode marked complete by hand (J14, #4100).
+    static var podcastStartsCompleted: Bool {
+        UITestingLaunchSeed.podcastStartsCompleted(arguments: CommandLine.arguments, environment: ProcessInfo.processInfo.environment)
+    }
+
     /// The first shared-source fetch fails once, to exercise the retry path.
     static var forcesFirstSharedSourceMiss: Bool {
         isActive && environment("SPOKEN_MARGINS_UI_TEST_FORCE_FIRST_SHARED_SOURCE_MISS") == "1"
@@ -148,6 +158,8 @@ enum UITestingHooks {
     static let seed = UITestingLaunchSeed.none
     static var usesStandInAudioServices: Bool { false }
     static var importsCoopLayer: Bool { false }
+    static var podcastPlaceSeconds: Int? { nil }
+    static var podcastStartsCompleted: Bool { false }
     static var fetchesGuidedTour: Bool { true }
     static var forcesFirstSharedSourceMiss: Bool { false }
     static var ambiguousSourceLinkResolver: LinkResolutionClient? { nil }
