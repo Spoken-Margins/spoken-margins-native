@@ -298,15 +298,21 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
     private var modelChangeCancellables: Set<AnyCancellable> = []
     private var modelChangePending = false
     @Published private(set) var importedLayers: [Build23ImportedLayerSnapshot] = []
+    /// The links the item's friend Margins came from, for "Report" in the item's ⋯ menu (#2239). Empty for Margins
+    /// from a file.
+    @Published private(set) var reportEntries: [ShareLinkReport.Entry] = []
 
     init(model: Gate1AppModel) {
         self.model = model
         episodeRecovery = SharedEpisodeRecovery(services: SharedEpisodeRecovery.services(model: model))
         importedLayers = makeImportedLayers(from: model.selectedItem)
+        reportEntries = ShareLinkReport.entries(for: model.selectedItem.importedCommentaryLayers)
         model.$selectedItem.sink { [weak self] item in
             guard let self else { return }
             let layers = self.makeImportedLayers(from: item)
             if self.importedLayers != layers { self.importedLayers = layers }
+            let entries = ShareLinkReport.entries(for: item.importedCommentaryLayers)
+            if self.reportEntries != entries { self.reportEntries = entries }
         }.store(in: &modelChangeCancellables)
         // A different package (or none) starts the episode recovery over.
         model.$spokenMarginsPackageImportReview
