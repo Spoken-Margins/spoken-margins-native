@@ -24,7 +24,7 @@ final class ReadLaterConnectionStatusAppTests: XCTestCase {
     }
 
     private func settle(_ model: ReadLaterModel) async {
-        for _ in 0..<200 where model.isLoading { try? await Task.sleep(nanoseconds: 10_000_000) }
+        try? await pollUntil { !model.isLoading }
         XCTAssertFalse(model.isLoading)
     }
 

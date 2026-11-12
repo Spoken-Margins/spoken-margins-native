@@ -760,9 +760,7 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
             let preparation = try XCTUnwrap(coordinator.preparationTasks["episode"], row.note)
             await preparation.value
             let requests = row.requests + ["GET \(row.path)"]
-            for _ in 0..<200 where DownloadProbeURLProtocol.requests.count < requests.count {
-                try await Task.sleep(for: .milliseconds(25))
-            }
+            try await pollUntil { DownloadProbeURLProtocol.requests.count >= requests.count }
             XCTAssertEqual(DownloadProbeURLProtocol.requests, requests, "the real download GET follows the probes: \(row.note)")
             XCTAssertEqual(try fixture.store.loadOfflineStorageReservations().map(\.byteCount), [row.reserved], row.note)
             XCTAssertEqual(coordinator.recordsByItemId["episode"]?.expectedBytes, row.announced, row.note)
@@ -771,9 +769,7 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
             // The server held the GET body while the reservation was checked. Let URLSession write its
             // own temporary file and deliver didFinishDownloadingTo; only that delegate may commit it.
             DownloadProbeURLProtocol.releaseDownloads()
-            for _ in 0..<200 where coordinator.status(itemId: "episode") == .downloading {
-                try await Task.sleep(for: .milliseconds(25))
-            }
+            try await pollUntil { coordinator.status(itemId: "episode") != .downloading }
 
             XCTAssertEqual(coordinator.status(itemId: "episode"), .availableOffline, row.note)
             let local = try XCTUnwrap(coordinator.validatedLocalURL(for: "episode"), row.note)
@@ -806,16 +802,12 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
         coordinator.register(itemId: "episode", remoteURL: URL(string: "https://probe.example.com/announces-nothing.mp3")!,
                              userInitiated: true)
         await coordinator.preparationTasks["episode"]?.value
-        for _ in 0..<200 where DownloadProbeURLProtocol.requests.count < 3 {
-            try await Task.sleep(for: .milliseconds(25))
-        }
+        try await pollUntil { DownloadProbeURLProtocol.requests.count >= 3 }
         XCTAssertEqual(DownloadProbeURLProtocol.requests,
                        ["HEAD /announces-nothing.mp3", "GET /announces-nothing.mp3 range", "GET /announces-nothing.mp3"])
         XCTAssertEqual(try fixture.store.loadOfflineStorageReservations().map(\.byteCount), [1_000])
         DownloadProbeURLProtocol.releaseDownloads()
-        for _ in 0..<200 where coordinator.status(itemId: "episode") == .downloading {
-            try await Task.sleep(for: .milliseconds(25))
-        }
+        try await pollUntil { coordinator.status(itemId: "episode") != .downloading }
 
         XCTAssertEqual(coordinator.status(itemId: "episode"), .failed, "the real audio response exceeds the 1,000-byte budget")
         XCTAssertNil(coordinator.validatedLocalURL(for: "episode"))
@@ -1057,9 +1049,7 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
         coordinator.register(itemId: "episode", remoteURL: URL(string: "https://probe.example.com/error-503.mp3")!,
                              userInitiated: true)
         await coordinator.preparationTasks["episode"]?.value
-        for _ in 0..<200 where coordinator.status(itemId: "episode") == .downloading {
-            try await Task.sleep(for: .milliseconds(25))
-        }
+        try await pollUntil { coordinator.status(itemId: "episode") != .downloading }
 
         XCTAssertEqual(DownloadProbeURLProtocol.requests, ["HEAD /error-503.mp3", "GET /error-503.mp3"],
                        "the episode was really downloaded")
@@ -1109,9 +1099,7 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
             coordinator.setNetworkTransportForTesting(.wifi)
             coordinator.register(itemId: "episode", remoteURL: url, userInitiated: true)
             await coordinator.preparationTasks["episode"]?.value
-            for _ in 0..<200 where coordinator.status(itemId: "episode") == .downloading {
-                try await Task.sleep(for: .milliseconds(25))
-            }
+            try await pollUntil { coordinator.status(itemId: "episode") != .downloading }
 
             XCTAssertEqual(coordinator.status(itemId: "episode"), .availableOffline, row.note)
             let local = try XCTUnwrap(coordinator.validatedLocalURL(for: "episode"), row.note)
@@ -1125,7 +1113,7 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
     /// Waits up to 10 s (the first test in a fresh simulator process took about 7 s on a hosted runner) and stops the
     /// test when the downloads did not start, so a later `started[1]` can't crash the whole test process.
     private func waitForStarts(_ count: Int, starts: () -> Int) async throws {
-        for _ in 0..<1000 where starts() < count { try await Task.sleep(for: .milliseconds(10)) }
+        try await pollUntil { starts() >= count }
         guard starts() == count else {
             XCTFail("expected \(count) download start(s), saw \(starts())")
             throw CancellationError()

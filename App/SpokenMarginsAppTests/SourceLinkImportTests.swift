@@ -3296,7 +3296,8 @@ private actor GatedInterjectionTranscriber {
 
     /// True once `count` calls have reached the transcriber, false after about two seconds.
     func waitUntilRequested(_ count: Int) async -> Bool {
-        for _ in 0..<200 {
+        let pollDeadline = ContinuousClock.now + .seconds(30)
+        while ContinuousClock.now < pollDeadline {
             if requestCount >= count { return true }
             try? await Task.sleep(for: .milliseconds(10))
         }

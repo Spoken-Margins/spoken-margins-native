@@ -1,0 +1,34 @@
+{
+  "_comment": "Club mailbox sealing test vector (#1799, docs/design/club-mailbox.md sections 2 and 5). Made once with Python's cryptography (HKDF, AESGCM) from a fixed 32-byte secret; the Swift tests (ClubSealingTests) and the Go server's tests (internal/clubs, vector_test.go) both check it, so the phone and the server's rules provably agree. Sealed item = header (\"SMLINK\", version 1, part) || 12-byte nonce || ciphertext || 16-byte tag. Part 3 is the club header (item 0), part 2 a post (items 1..n). AES-GCM additional data = the 8-byte header || the 16 club id bytes. The item number is not in it: the server assigns post numbers on arrival, so a phone cannot know its post's number when it seals. The four values come from HKDF-SHA-256 over the secret with an empty salt. Not a real club: never reuse this key.",
+  "keyFragment": "QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8",
+  "inviteURL": "https://spokenmargins.proximitytoprogress.com/c/cc3cff691e0598cdbfd8d4b202afeb3a#QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8",
+  "id": "cc3cff691e0598cdbfd8d4b202afeb3a",
+  "readProof": "ff938c5786b706879c758a071d8434ae1cf4fbec3f1f08153556d336dddde490",
+  "postProof": "c7d0ac079f2e35fab870e20321798433e0195d50d6e51130e9368096a0d11832",
+  "readHash": "a99b931e9c7df0f6d9485bdc2aaff891379f2ccfc95af04b662280f3a871e28d",
+  "postHash": "1e2441d5e397c896c1f9023bd7fb255a63b67b1f66ec3908d155a0ae00d3ac6c",
+  "sealKeyHex": "1b7e33c6806a3e203786635c9bf1c84b30785a38a9289f3a43365e232f32a806",
+  "header": {
+    "part": 3,
+    "nonceHex": "a0a1a2a3a4a5a6a7a8a9aaab",
+    "aadHex": "534d4c494e4b0103cc3cff691e0598cdbfd8d4b202afeb3a",
+    "plaintextBase64": "eyJjcmVhdG9yTGFiZWwiOiJEYW5hIiwibmFtZSI6IlR1ZXNkYXkgTmlnaHQgQm9vayBDbHViIOKYlSIsInNjaGVtYSI6InNwb2tlbm1hcmdpbnMuY2x1Yi1oZWFkZXIudjEifQ==",
+    "sealedBase64": "U01MSU5LAQOgoaKjpKWmp6ipqqtSXKZUjwWRnH1Wq0Ysk7pau7dFoYA2yAlSHs1xliV1nQ7jHf4NO4gtJ8+MW+WGBEs6nPeAqyj4YP+OCaD3q8mz0LBa3+AmbCky6c9+iIRUSEbn63s5cpK2ZWuEL0d9sea0eF6h2WnnyMwRbW/b+xkktqEk3Q=="
+  },
+  "posts": [
+    {
+      "part": 2,
+      "nonceHex": "b0b1b2b3b4b5b6b7b8b9babb",
+      "aadHex": "534d4c494e4b0102cc3cff691e0598cdbfd8d4b202afeb3a",
+      "plaintextBase64": "UEsDBGZpcnN0IHBhY2tldCBieXRlcywgbm90IGEgcmVhbCBhcmNoaXZlIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4fICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8=",
+      "sealedBase64": "U01MSU5LAQKwsbKztLW2t7i5urtGabt0pmWfSkXWxXIaMAI6MF1ynQQ+x05sN1ruqbMpL/5G2dZihMxPYgkObzymcwa5YQlBIXxSZsr6n3l1GwQeO4TAYYKs0R0NAN6tUi0IlbLU0SgJN/hu1CpcDlGFX1SsTzQHvqd+Pyd0JfThncfcUwNCTm20a08Rj3U="
+    },
+    {
+      "part": 2,
+      "nonceHex": "c0c1c2c3c4c5c6c7c8c9cacb",
+      "aadHex": "534d4c494e4b0102cc3cff691e0598cdbfd8d4b202afeb3a",
+      "plaintextBase64": "YSBsYXRlciBwYWNrZXQg4oCUIG51bWJlciBzZXZlbiDimJXIycrLzM3Oz9DR0tPU1dbX2Nna29zd3t/g4eLj5OXm5+jp6uvs7e7v8PHy8/T19vf4+fr7/P3+/w==",
+      "sealedBase64": "U01MSU5LAQLAwcLDxMXGx8jJyssqxShlFY1HaieqRL/PSUxQ1hjvDc711cbheCfXfqTPvz/y/aCYsOsl+EcSyHMZZqWTQFNfEJ7/FSgayAWpIEcWFw0YsnjA9OP97WdUE6xGX5T3wckgZSFU212CAAowBieDz1PZuPb9PIRG5g=="
+    }
+  ]
+}

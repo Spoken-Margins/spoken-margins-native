@@ -240,9 +240,9 @@ final class NarrationOwnershipRepairTests: XCTestCase {
         model.importText = "One. Two. Three. Four."
         model.importTextItem()
         XCTAssertNil(model.lastError)
-        for _ in 0..<150 where model.snapshot.status != .playing {
-            try await Task.sleep(for: .milliseconds(20))
+        try await pollUntil {
             model.syncPlaybackProgressForLifecycle()
+            return model.snapshot.status == .playing
         }
         XCTAssertEqual(model.snapshot.status, .playing)
         return try XCTUnwrap(model.snapshot.itemId)
