@@ -15,7 +15,7 @@ card), merge taps (open PRs labelled `needs-owner-tap`), phone checks (`status: 
 `needs-human-validation`). `needs-owner` with no card is listed apart as "needs a card": the owner has nothing to
 answer yet, and `scripts/owner_card_guard.py` tells the thread.
 
-The fixed card (AGENTS.md "A question he can answer"): a line starting `**Decision for Cole**` (or
+The fixed card (the owner overlay, "A question he can answer"): a line starting `**Decision for Cole**` (or
 `**Step for Cole**`), then what this is in one sentence, the question, the pick, the other options with their
 cost, and what it blocks. The card runs to the next line that is only `---`. A card inside a code block or a quoted
 line is not a card. Only a card from a trusted author counts (scripts/comment_trust.py, #1822): a stranger's

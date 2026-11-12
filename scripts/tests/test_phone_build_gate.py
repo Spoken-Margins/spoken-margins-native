@@ -9,10 +9,14 @@ only the Mac one, so the GitHub-hosted build the owner installs had neither sett
 import importlib.util
 import re
 import shlex
+import sys
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / 'scripts'))
+from sm_paths import owner_overlay  # noqa: E402
+
 PHONE_BUILDS = {'scripts/phone-build', '.github/workflows/phone-build.yml'}
 XCCONFIG = 'Config/PhoneBuild.xcconfig'
 _spec = importlib.util.spec_from_file_location('phone_build_settings', ROOT / 'scripts/phone_build_settings.py')
@@ -123,12 +127,21 @@ class PhoneBuildGateTests(unittest.TestCase):
         self.assertEqual(uses_file - {'scripts/phone_build_settings.py'}, PHONE_BUILDS)
 
     def test_the_upload_steps_never_pass_the_settings(self):
-        """The upload steps are prose in AGENTS.md that agents follow by hand; this keeps the prose clean."""
-        guide = (ROOT / 'AGENTS.md').read_text()
-        upload = guide[guide.index('## Releasing a build'):]
-        self.assertIn('-configuration Release', upload)
-        for word in ('SM_PHONE_BUILD', 'PhoneBuild.xcconfig', '-xcconfig'):
-            self.assertNotIn(word, upload)
+        """The upload steps are prose that agents follow by hand; this keeps the prose clean.
+
+        The public guide carries the generic steps; the full ones are in the owner overlay (#1854), which is checked
+        too where it is on the machine."""
+        guides = [ROOT / 'AGENTS.md']
+        overlay = owner_overlay(__file__)
+        if overlay:
+            guides.append(overlay)
+        for path in guides:
+            guide = path.read_text()
+            upload = guide[guide.index('## Releasing a build'):]
+            for word in ('SM_PHONE_BUILD', 'PhoneBuild.xcconfig', '-xcconfig'):
+                self.assertNotIn(word, upload, f'{path.name}: {word}')
+        if overlay:
+            self.assertIn('-configuration Release', overlay.read_text())
         # The export plists can't change compiled settings, but none may name the file either.
         for plist in [*(ROOT / 'Config').glob('ExportOptions-*.plist'), ROOT / 'scripts/TestFlightUploadOptions.plist']:
             self.assertNotIn('PhoneBuild', plist.read_text(), plist.name)
