@@ -17,6 +17,7 @@ final class AppAttestClientTests: XCTestCase {
         private(set) var attestedHashes: [Data] = []
         private(set) var assertedHashes: [Data] = []
         var failAttest = false
+        var failGenerate = false
         /// A one-off Apple error while signing, with the key itself fine.
         var failAssertion = false
         /// Key ids Apple has no key for (a key id restored from a backup).
@@ -24,7 +25,9 @@ final class AppAttestClientTests: XCTestCase {
         init(supported: Bool = true) { self.supported = supported }
         var isSupported: Bool { supported }
         func generateKey() async throws -> String {
-            lock.withLock { keysMade += 1; return Data(repeating: UInt8(keysMade), count: 32).base64EncodedString() }
+            try lock.withLock {
+                if failGenerate { throw URLError(.cancelled) }
+                keysMade += 1; return Data(repeating: UInt8(keysMade), count: 32).base64EncodedString() }
         }
         func attestKey(_ keyID: String, clientDataHash: Data) async throws -> Data {
             try lock.withLock {
@@ -54,9 +57,11 @@ final class AppAttestClientTests: XCTestCase {
         /// Statuses the attested endpoint answers in turn; the last one repeats.
         var answers: [(Int, String)] = [(200, #"{"ok":true}"#)]
         var offline = false
+        /// The phone drops off between the challenge and the register call, after the key is made.
+        var offlineAtRegister = false
         func handle(_ url: URL, _ headers: [String: String], _ body: Data) async throws -> (status: Int, body: Data) {
             let index: Int = try lock.withLock {
-                if offline { throw URLError(.notConnectedToInternet) }
+                if offline || (offlineAtRegister && url.path == "/api/v1/attest/register") { throw URLError(.notConnectedToInternet) }
                 sent.append(Sent(path: url.path, headers: headers, body: body))
                 return sent.filter { $0.path == "/api/v1/links/sender" }.count - 1
             }
@@ -79,11 +84,18 @@ final class AppAttestClientTests: XCTestCase {
         return defaults
     }
 
-    private func client(_ provider: Provider, _ server: Server, store: AppAttestKeyStore, consent: Bool = true) -> AttestedServerClient {
+    private final class Clock: @unchecked Sendable {
+        private let lock = NSLock()
+        private var seconds: TimeInterval = 1_700_000_000
+        var date: Date { lock.withLock { Date(timeIntervalSince1970: seconds) } }
+        func advance(_ by: TimeInterval) { lock.withLock { seconds += by } }
+    }
+
+    private func client(_ provider: Provider, _ server: Server, store: AppAttestKeyStore, consent: Bool = true, clock: Clock = Clock()) -> AttestedServerClient {
         AttestedServerClient(
             provider: provider, store: store, consent: { consent },
             server: { URL(string: "https://links.example.test\($0)")! },
-            now: { Date(timeIntervalSince1970: 1_700_000_000) },
+            now: { clock.date },
             post: { url, headers, body in try await server.handle(url, headers, body) }
         )
     }
@@ -302,5 +314,285 @@ final class AppAttestClientTests: XCTestCase {
         _ = try await (one, two)
         XCTAssertEqual(provider.counts.keys, 1)
         XCTAssertEqual(server.paths().filter { $0.hasSuffix("/register") }.count, 1)
+    }
+
+    // MARK: A failed registration is remembered (#4135)
+
+    private func tap(_ attested: AttestedServerClient) async -> AppAttestFailure? {
+        do {
+            _ = try await attested.send(path: "/api/v1/links/sender", body: Data())
+            return nil
+        } catch {
+            return error as? AppAttestFailure
+        }
+    }
+
+    /// Attestation that can't succeed (no entitlement, a development key against the production server): the second and
+    /// third Share tap must not mint another key or ask for another challenge.
+    func testARegistrationThatFailedIsNotRetriedOnEveryTap() async {
+        let provider = Provider(), server = Server()
+        provider.failAttest = true
+        let attested = client(provider, server, store: AppAttestKeyStore(defaults: defaults()))
+        for _ in 0..<3 { let failure = await tap(attested); XCTAssertEqual(failure, .failed) }
+        XCTAssertEqual(provider.counts.keys, 1, "one orphaned key, not three")
+        XCTAssertEqual(server.paths().filter { $0.hasSuffix("/challenge") }.count, 1, "one challenge spent, not three")
+    }
+
+    func testAServerRefusalOfTheKeyIsRememberedToo() async {
+        let provider = Provider(), server = Server()
+        server.registerStatus = 401
+        let attested = client(provider, server, store: AppAttestKeyStore(defaults: defaults()))
+        for _ in 0..<3 { let failure = await tap(attested); XCTAssertEqual(failure, .failed) }
+        XCTAssertEqual(provider.counts.keys, 1)
+        XCTAssertEqual(server.paths().filter { $0.hasSuffix("/register") }.count, 1)
+    }
+
+    /// The wait doubles: 10 minutes after the first failure, 20 after the second, so a phone that can never attest
+    /// costs a key every few hours at most, not one per tap.
+    func testTheWaitDoublesAndNothingIsTriedBeforeItEnds() async {
+        let provider = Provider(), server = Server()
+        provider.failAttest = true
+        let clock = Clock()
+        let attested = client(provider, server, store: AppAttestKeyStore(defaults: defaults()), clock: clock)
+        _ = await tap(attested)
+        XCTAssertEqual(provider.counts.keys, 1)
+        clock.advance(AttestedServerClient.registrationBackoffBase - 1)
+        _ = await tap(attested)
+        XCTAssertEqual(provider.counts.keys, 1, "still waiting, a second before the first wait ends")
+        clock.advance(1)
+        _ = await tap(attested)
+        XCTAssertEqual(provider.counts.keys, 2, "the first wait is over: one more try")
+        clock.advance(AttestedServerClient.registrationBackoffBase)
+        _ = await tap(attested)
+        XCTAssertEqual(provider.counts.keys, 2, "the second wait is twice as long")
+        clock.advance(AttestedServerClient.registrationBackoffBase)
+        _ = await tap(attested)
+        XCTAssertEqual(provider.counts.keys, 3)
+    }
+
+    func testTheWaitHasACap() async {
+        let provider = Provider(), server = Server()
+        provider.failAttest = true
+        let clock = Clock()
+        let attested = client(provider, server, store: AppAttestKeyStore(defaults: defaults()), clock: clock)
+        for _ in 0..<30 {
+            _ = await tap(attested)
+            clock.advance(AttestedServerClient.registrationBackoffCap)
+        }
+        XCTAssertEqual(provider.counts.keys, 30, "after a cap's wait the next tap always tries, however many failures came before")
+    }
+
+    func testARegistrationThatWorksAfterTheWaitClearsIt() async throws {
+        let provider = Provider(), server = Server()
+        provider.failAttest = true
+        let clock = Clock()
+        let store = AppAttestKeyStore(defaults: defaults())
+        let attested = client(provider, server, store: store, clock: clock)
+        _ = await tap(attested)
+        provider.failAttest = false
+        let during = await tap(attested)
+        XCTAssertEqual(during, .failed, "the wait holds even though Apple would now succeed")
+        clock.advance(AttestedServerClient.registrationBackoffBase)
+        let answer = try await attested.send(path: "/api/v1/links/sender", body: Data())
+        XCTAssertEqual(answer.status, 200)
+        XCTAssertNotNil(store.keyID)
+        // The success cleared the count: the next failure waits the first wait again, not the second.
+        store.forget()
+        provider.failAttest = true
+        let failedAgain = await tap(attested)
+        XCTAssertEqual(failedAgain, .failed)
+        XCTAssertEqual(provider.counts.keys, 3)
+        clock.advance(AttestedServerClient.registrationBackoffBase)
+        provider.failAttest = false
+        let answerAfter = try await attested.send(path: "/api/v1/links/sender", body: Data())
+        XCTAssertEqual(answerAfter.status, 200, "one first-sized wait after the new failure, not twice that")
+    }
+
+    /// The key exists once attested, so a register call that is cut off has orphaned it: remembered, unlike an
+    /// offline challenge. The cut-off is itself `.offline`; the taps after it during the wait are `.failed`.
+    func testARegisterCallThatIsCutOffIsRemembered() async {
+        let provider = Provider(), server = Server()
+        server.offlineAtRegister = true
+        let attested = client(provider, server, store: AppAttestKeyStore(defaults: defaults()))
+        let first = await tap(attested), second = await tap(attested)
+        XCTAssertEqual(first, .offline)
+        XCTAssertEqual(second, .failed)
+        XCTAssertEqual(provider.counts.keys, 1, "the second tap made no key")
+    }
+
+    /// Apple failing to make a key leaves nothing orphaned, so the next tap may try again.
+    func testAFailureToMakeTheKeyIsNotRemembered() async {
+        let provider = Provider(), server = Server()
+        provider.failGenerate = true
+        let attested = client(provider, server, store: AppAttestKeyStore(defaults: defaults()))
+        let first = await tap(attested), second = await tap(attested)
+        XCTAssertEqual(first, .failed)
+        XCTAssertEqual(second, .failed)
+        XCTAssertEqual(server.paths().filter { $0.hasSuffix("/challenge") }.count, 2, "no wait: the second tap asked again")
+        provider.failGenerate = false
+        let third = await tap(attested)
+        XCTAssertNil(third)
+    }
+
+    /// No key was made, so there is nothing to protect: a phone that is only offline retries on the next tap.
+    func testBeingOfflineBeforeAnyKeyExistsIsNotRemembered() async {
+        let provider = Provider(), server = Server()
+        server.offline = true
+        let attested = client(provider, server, store: AppAttestKeyStore(defaults: defaults()))
+        let first = await tap(attested), second = await tap(attested)
+        XCTAssertEqual(first, .offline)
+        XCTAssertEqual(second, .offline)
+        server.offline = false
+        let third = await tap(attested)
+        XCTAssertNil(third)
+        XCTAssertEqual(provider.counts.keys, 1)
+    }
+
+    /// The wait is only for making a new key: a request with a registered key signs and goes, whatever failed before.
+    func testTheWaitDoesNotTouchAKeyThatIsAlreadyRegistered() async throws {
+        let provider = Provider(), server = Server()
+        let store = AppAttestKeyStore(defaults: defaults())
+        let attested = client(provider, server, store: store)
+        _ = try await attested.send(path: "/api/v1/links/sender", body: Data())
+        provider.failAttest = true
+        store.forget()
+        _ = await tap(attested)
+        store.save(Data(repeating: 1, count: 32).base64EncodedString())
+        let answer = try await attested.send(path: "/api/v1/links/sender", body: Data())
+        XCTAssertEqual(answer.status, 200, "a saved key never waits")
+    }
+
+    // MARK: One client, many callers (#4137)
+
+    /// A post that holds each attested request until the test lets it go, and counts how many are on the wire at once.
+    private final class GatedWire: @unchecked Sendable {
+        private let lock = NSLock()
+        private(set) var inFlight = 0
+        private(set) var maxInFlight = 0
+        private(set) var order: [String] = []
+        private var waiting: [CheckedContinuation<Void, Never>] = []
+        private var arrived = 0
+        let server: Server
+        init(_ server: Server) { self.server = server }
+
+        func post(_ url: URL, _ headers: [String: String], _ body: Data) async throws -> (status: Int, body: Data) {
+            guard url.path == "/api/v1/links/sender" else { return try await server.handle(url, headers, body) }
+            lock.withLock {
+                inFlight += 1
+                maxInFlight = max(maxInFlight, inFlight)
+                order.append(String(decoding: body, as: UTF8.self))
+                arrived += 1
+            }
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in lock.withLock { waiting.append(continuation) } }
+            lock.withLock { inFlight -= 1 }
+            return try await server.handle(url, headers, body)
+        }
+        var arrivedCount: Int { lock.withLock { arrived } }
+        func releaseOne() {
+            let next: CheckedContinuation<Void, Never>? = lock.withLock { waiting.isEmpty ? nil : waiting.removeFirst() }
+            next?.resume()
+        }
+    }
+
+    private func waitUntil(_ condition: () -> Bool) async {
+        for _ in 0..<2000 where !condition() { try? await Task.sleep(nanoseconds: 1_000_000) }
+    }
+
+    /// Scenario 1: two screens at once on a fresh install. They share the client, so one key is registered.
+    /// Scenario 2: a reset screen's old send is still on the wire when the next tap sends. The newer request waits for
+    /// the older one's answer, so the counters reach the server in the order they were signed.
+    func testSendsFromManyCallersGoOutOneAtATimeInOrderWithOneKey() async throws {
+        let provider = Provider(), server = Server()
+        let wire = GatedWire(server)
+        let attested = AttestedServerClient(
+            provider: provider, store: AppAttestKeyStore(defaults: defaults()), consent: { true },
+            server: { URL(string: "https://links.example.test\($0)")! },
+            now: { Date(timeIntervalSince1970: 1_700_000_000) },
+            post: { url, headers, body in try await wire.post(url, headers, body) }
+        )
+        let first = Task { try await attested.send(path: "/api/v1/links/sender", body: Data("first".utf8)) }
+        await waitUntil { wire.arrivedCount >= 1 }
+        let second = Task { try await attested.send(path: "/api/v1/links/sender", body: Data("second".utf8)) }
+        // Give the second send every chance to overtake the first.
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        XCTAssertEqual(wire.arrivedCount, 1, "the second send waits for the first one's answer")
+        wire.releaseOne()
+        await waitUntil { wire.arrivedCount >= 2 }
+        wire.releaseOne()
+        _ = try await (first.value, second.value)
+        XCTAssertEqual(wire.maxInFlight, 1)
+        XCTAssertEqual(wire.order, ["first", "second"], "the older send reaches the server first")
+        XCTAssertEqual(provider.counts.keys, 1, "one key for both callers")
+        XCTAssertEqual(server.paths().filter { $0.hasSuffix("/register") }.count, 1)
+        XCTAssertEqual(provider.counts.asserted, 2)
+    }
+
+    func testASendQueuedBehindAnotherReadsTheAgreementAgain() async throws {
+        let provider = Provider(), server = Server()
+        let wire = GatedWire(server)
+        let agreed = AgreementFlag()
+        let attested = AttestedServerClient(
+            provider: provider, store: AppAttestKeyStore(defaults: defaults()), consent: { agreed.value },
+            server: { URL(string: "https://links.example.test\($0)")! },
+            now: { Date(timeIntervalSince1970: 1_700_000_000) },
+            post: { url, headers, body in try await wire.post(url, headers, body) }
+        )
+        let first = Task { try await attested.send(path: "/api/v1/links/sender", body: Data("first".utf8)) }
+        await waitUntil { wire.arrivedCount >= 1 }
+        let second = Task { () -> AppAttestFailure? in
+            do { _ = try await attested.send(path: "/api/v1/links/sender", body: Data("second".utf8)); return nil } catch { return error as? AppAttestFailure }
+        }
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        agreed.value = false
+        wire.releaseOne()
+        _ = try await first.value
+        let failure = await second.value
+        XCTAssertEqual(failure, .needsConsent, "the listener withdrew while it waited: nothing more is signed or sent")
+        XCTAssertEqual(provider.counts.asserted, 1)
+    }
+
+    private final class AgreementFlag: @unchecked Sendable {
+        private let lock = NSLock()
+        private var stored = true
+        var value: Bool {
+            get { lock.withLock { stored } }
+            set { lock.withLock { stored = newValue } }
+        }
+    }
+
+    /// Apple's calls have no timeout. One that never returns must not hold every later send until the app is relaunched.
+    func testASigningCallThatNeverReturnsDoesNotBlockLaterSends() async throws {
+        let server = Server()
+        let hanging = HangingFirstAssertionProvider()
+        let attested = AttestedServerClient(
+            provider: hanging, store: AppAttestKeyStore(defaults: defaults()), consent: { true },
+            server: { URL(string: "https://links.example.test\($0)")! },
+            now: { Date(timeIntervalSince1970: 1_700_000_000) },
+            gateTimeout: 0.2,
+            post: { url, headers, body in try await server.handle(url, headers, body) }
+        )
+        let first = Task { () -> AppAttestFailure? in
+            do { _ = try await attested.send(path: "/api/v1/links/sender", body: Data()); return nil } catch { return error as? AppAttestFailure }
+        }
+        await waitUntil { hanging.signCalls >= 1 }
+        let second = try await attested.send(path: "/api/v1/links/sender", body: Data())
+        let firstFailure = await first.value
+        XCTAssertEqual(firstFailure, .failed, "the hung send gave up")
+        XCTAssertEqual(second.status, 200, "the next send got through")
+    }
+
+    /// Signs normally except the first assertion, which waits forever.
+    private final class HangingFirstAssertionProvider: AppAttestKeyProvider, @unchecked Sendable {
+        private let lock = NSLock()
+        private var calls = 0
+        var isSupported: Bool { true }
+        var signCalls: Int { lock.withLock { calls } }
+        func generateKey() async throws -> String { Data(repeating: 7, count: 32).base64EncodedString() }
+        func attestKey(_ keyID: String, clientDataHash: Data) async throws -> Data { Data("attestation".utf8) }
+        func generateAssertion(_ keyID: String, clientDataHash: Data) async throws -> Data {
+            let n = lock.withLock { calls += 1; return calls }
+            if n == 1 { await withCheckedContinuation { (_: CheckedContinuation<Void, Never>) in } }
+            return Data("assertion".utf8)
+        }
     }
 }

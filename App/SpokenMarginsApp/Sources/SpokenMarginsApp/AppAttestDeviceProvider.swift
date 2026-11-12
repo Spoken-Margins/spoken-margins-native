@@ -34,10 +34,17 @@ struct AppAttestDeviceProvider: AppAttestKeyProvider {
         guard ServerSendConsent.hasConsented(to: .shareLinks) else { throw AppAttestFailure.needsConsent }
         do {
             return try await DCAppAttestService.shared.generateAssertion(keyID, clientDataHash: clientDataHash)
-        } catch let error as DCError where error.code == .invalidKey {
-            // The key id is saved in UserDefaults and came back without its Secure Enclave key: make a new one.
-            throw AppAttestFailure.keyUnusable
+        } catch {
+            throw Self.signingFailure(error)
         }
+    }
+
+    /// What `AttestedServerClient` is told when Apple's signing call throws `error`. `DCError.invalidKey` means the key
+    /// id is saved in UserDefaults and came back without its Secure Enclave key, so the client makes a new one; any
+    /// other error passes through unchanged and the client keeps the key (#4135; a test reads this directly).
+    static func signingFailure(_ error: Error) -> Error {
+        if let dcError = error as? DCError, dcError.code == .invalidKey { return AppAttestFailure.keyUnusable }
+        return error
     }
 }
 
