@@ -229,7 +229,7 @@ struct ExperienceAddSourceFlow: View {
             }
         }
         .fullScreenCover(isPresented: $showsLiveSession, onDismiss: { dismiss() }) {
-            LiveSessionView().environmentObject(model)
+            LiveSessionView(model: model).equatable()
         }
         .fullScreenCover(isPresented: $showsSpokenNote, onDismiss: { dismiss() }) {
             SpokenNoteRecordingView().environmentObject(model)
