@@ -24,8 +24,6 @@
         "Gate1FlowUITests/testLibraryUnfinishedCompletionUndoAndSearchDiscovery()",
         "Gate1FlowUITests/testRecordingExclusivelyOwnsTheAccessibleExperience()",
         "Gate1FlowUITests/testAmbiguousPodcastImportImmediatelyReplacesAddSourceWithEpisodePicker()",
-        "Gate1FlowUITests/testBuild23RecipientMissingSourceReturnsWithoutAutoplayAndShowsProvenance()",
-        "Gate1FlowUITests/testBuild23LayoutRegressionsRemainOperableAtAccessibilityType()",
         "Gate1FlowUITests/testSeededGate1FlowHasPlaybackMiniPlayerExportAndSettings()",
         "Gate1FlowUITests/testPlaybackPrimaryActionsRemainVisibleWithLongTitleAndAccessibilityText()",
         "Gate1FlowUITests/testWrittenMarginSaveSearchStarAndDiscardPreserveTheSource()",

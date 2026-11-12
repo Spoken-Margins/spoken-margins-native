@@ -28,10 +28,6 @@
       "journey": "J3"
     },
     {
-      "test": "SpokenMarginsAppUITests/J7PDFJourneyUITests",
-      "journey": "J7"
-    },
-    {
       "test": "SpokenMarginsAppUITests/J9HearNewMarginsJourneyUITests",
       "journey": "J9"
     },
@@ -93,21 +89,6 @@
     {
       "test": "SpokenMarginsAppUITests/Gate1FlowUITests/testBatchExportPickersBecomeMenusAtAccessibilitySizes",
       "journey": "Export Sessions at AX5: the pickers become menus that stay on screen (#1939)",
-      "batch": 2
-    },
-    {
-      "test": "SpokenMarginsAppUITests/Gate1FlowUITests/testBuild23LayoutRegressionsRemainOperableAtAccessibilityType",
-      "journey": "Layout at accessibility type: Create, imported layers, export and share controls stay operable (#2760, #2922, #3097)",
-      "batch": 2
-    },
-    {
-      "test": "SpokenMarginsAppUITests/Gate1FlowUITests/testBuild23RecipientMissingSourceReturnsWithoutAutoplayAndShowsProvenance",
-      "journey": "Receiving: a packet whose source is missing returns to the Library without autoplay and shows its provenance",
-      "batch": 2
-    },
-    {
-      "test": "SpokenMarginsAppUITests/Gate1FlowUITests/testBuild23SenderStagesInvalidateStalePreviewAndUseSystemShare",
-      "journey": "Sending: editing a selection invalidates the preview, and Share opens the system share sheet",
       "batch": 2
     },
     {
