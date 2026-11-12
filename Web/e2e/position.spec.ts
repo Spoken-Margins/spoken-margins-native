@@ -35,10 +35,12 @@ async function reopenAndRead(page: Page) {
   await page.reload();
   await page.getByRole('navigation', { name: 'Sections' }).getByRole('button', { name: 'Library' }).click();
   const resume = page.getByRole('button', { name: new RegExp(TITLE) }).getByText(/Resume at/);
-  const shown = await resume.isVisible().then(async (v) => (v ? seconds((await resume.textContent())!.replace('Resume at ', '')) : -1));
+  await expect(resume).toBeVisible();
+  const shown = seconds((await resume.textContent())!.replace('Resume at ', ''));
   await page.getByRole('button', { name: new RegExp(TITLE) }).click();
   await expect(page.getByRole('dialog', { name: TITLE })).toBeVisible();
-  await expect.poll(() => audioTime(page)).toBeGreaterThan(-1);
+  // Past zero: the saved place is applied when the audio's metadata arrives, not when the dialog opens.
+  await expect.poll(() => audioTime(page)).toBeGreaterThan(1);
   return { shown, at: await audioTime(page) };
 }
 
@@ -49,6 +51,7 @@ test('play, scrub, pause, refresh: back at the scrub', async ({ page }) => {
   await playing.getByRole('button', { name: 'Pause' }).click();
   const at = await audioTime(page);
   const r = await reopenAndRead(page);
+  expect(Math.abs(r.shown - at)).toBeLessThanOrEqual(1.5); // the Library's "Resume at"
   expect(Math.abs(r.at - at)).toBeLessThanOrEqual(1.5);
 });
 test('scrub while paused and refresh at once: back at the scrub', async ({ page }) => {
@@ -58,6 +61,7 @@ test('scrub while paused and refresh at once: back at the scrub', async ({ page 
   await scrubTo(page, 70);
   const at = await audioTime(page);
   const r = await reopenAndRead(page);
+  expect(Math.abs(r.shown - at)).toBeLessThanOrEqual(1.5); // the Library's "Resume at"
   expect(Math.abs(r.at - at)).toBeLessThanOrEqual(1.5);
 });
 test('play on after a scrub and refresh within seconds: back where it was, not at the scrub', async ({ page }) => {
@@ -68,5 +72,6 @@ test('play on after a scrub and refresh within seconds: back where it was, not a
   // Four seconds on: IndexedDB last committed at the scrub (100 s), and the next timed save is a second away.
   const at = await audioTime(page);
   const r = await reopenAndRead(page);
+  expect(Math.abs(r.shown - at)).toBeLessThanOrEqual(1.5); // the Library's "Resume at"
   expect(Math.abs(r.at - at)).toBeLessThanOrEqual(1.5);
 });

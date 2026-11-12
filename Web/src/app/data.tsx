@@ -8,7 +8,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { formatClock } from '../shared/clock.ts';
 import type { Episode, Margin, PlaybackPosition, Show } from '../shared/model.ts';
-import { browserStorage, mergeMirror, pruneMirror, readMirror } from './logic/position-mirror.ts';
+import { browserStorage, forgetMirrored, mergeMirror, pruneMirror, readMirror } from './logic/position-mirror.ts';
 import { mergeRefresh } from './logic/refresh.ts';
 import { FailureGate, NotSavedError, notSavedMessage, shouldAskToPersist, type PersistState, type WriteKind } from './logic/storage.ts';
 import type { FeedRead } from './ports.ts';
@@ -143,6 +143,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       const failed = await run('unfollow', `Unfollowing ${title} wasn’t saved.`, () => removeShow(showId, doomed));
       if (failed) throw failed;
       const gone = new Set(doomed);
+      forgetMirrored(browserStorage(), gone);
       setData((d) => ({
         ...d,
         shows: d.shows.filter((s) => s.id !== showId),

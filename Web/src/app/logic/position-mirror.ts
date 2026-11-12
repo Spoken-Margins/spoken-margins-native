@@ -46,12 +46,22 @@ function writeMirror(storage: MirrorStorage | undefined, rows: Map<string, Playb
   }
 }
 
-/** Writes one place into the mirror, synchronously. An older place never replaces a newer one for the same episode. */
+/**
+ * Writes one place into the mirror, synchronously. The writer is the live player, so its place replaces the episode's
+ * row whatever the clock says: a device clock set back must not leave an old row that later beats the real place.
+ */
 export function mirrorPosition(storage: MirrorStorage | undefined, position: PlaybackPosition): void {
   const rows = readMirror(storage);
-  if (when(position) < when(rows.get(position.episodeId))) return;
   rows.set(position.episodeId, position);
   writeMirror(storage, rows);
+}
+
+/** Unfollowing resets an episode's place, so its mirrored copy goes too, or a re-follow would bring it back. */
+export function forgetMirrored(storage: MirrorStorage | undefined, episodeIds: Iterable<string>): void {
+  const rows = readMirror(storage);
+  let changed = false;
+  for (const id of episodeIds) changed = rows.delete(id) || changed;
+  if (changed) writeMirror(storage, rows);
 }
 
 /**
