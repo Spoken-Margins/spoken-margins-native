@@ -23,7 +23,7 @@ extension Gate1AppModel {
             // A reading sounding through a moment (Play this moment, Skim, a review) stops too; the source it paused comes back.
             if marginMomentConductor?.sequence.playing?.marginId == SharedMarginReview.marginId(layerId: margin.layerId, interjectionId: margin.id),
                endMarginMomentVoiceIfPlaying() {
-                resumePlayback()
+                resumePlayback(returningFromMargin: true)
             }
         }
         showSharedMarginReadAloud(chosen)

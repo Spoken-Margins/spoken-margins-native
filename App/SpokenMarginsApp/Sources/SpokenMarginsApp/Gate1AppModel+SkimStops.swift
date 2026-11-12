@@ -54,7 +54,7 @@ extension Gate1AppModel {
         case .skipVoice: skipMarginMomentVoice()
         case .endMomentThenNavigate:
             // A voice that was sounding had paused the source: bringing it back is the moment's to do (#1538).
-            if endMarginMomentVoiceIfPlaying() { resumePlayback() } else { endMarginMoment() }
+            if endMarginMomentVoiceIfPlaying() { resumePlayback(returningFromMargin: true) } else { endMarginMoment() }
         }
     }
 
