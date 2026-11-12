@@ -94,8 +94,9 @@ struct HelpScreen: View {
                     Text("Paste a podcast episode, RSS, or direct audio URL into Add to Library (the plus on the Library tab). For Spotify, share the specific episode; a show or podcast-page link does not identify one episode.")
                 }
                 Section("Share and Export") {
-                    Text("Choose the listening session, format, and included material. Share Session opens the iOS share sheet; Copy puts the generated Markdown or JSON on the clipboard.")
-                    Text("From Margins, tap Export Sessions to select multiple listening sessions and share one Markdown file per session. The share sheet lets you choose AirDrop, Save to Files or another app each time.")
+                    Text("Share sends your Margins to a friend who also has Spoken Margins. Export takes the text out for yourself or your tools, as Markdown or JSON.")
+                    Text("To export a listening session, tap Export in Listening options, in the menu on the Details screen or on the Timeline. Choose the session, format, and included material. Export Session opens the iOS share sheet; Copy puts the generated Markdown or JSON on the clipboard.")
+                    Text("From Margins, tap Export for all your Margins in one file, or for one file per listening session. The share sheet lets you choose AirDrop, Save to Files or another app each time.")
                 }
             }
             .navigationTitle("Help")

@@ -5,7 +5,7 @@ import AppIntents
 /// `AppShortcutsProvider` only shows up in the Shortcuts app, where the listener has to build a shortcut
 /// around it before Siri can run it. With this provider, "Hey Siri, add a Margin in Spoken Margins" works
 /// with no setup, whether Spoken Margins or another app is playing. Siri asks "What should the Margin say?"
-/// for the text and the intent writes it into the running live session, else on the playing item (it says so if neither is running).
+/// for the text and the intent writes it into the running live session, else on the playing item, else into a quick session in the Library.
 ///
 /// The first phrase is the one Help teaches; the second is the fallback if Siri sends the first elsewhere. "Add a
 /// Margin to/with <app>" is left out because Siri gave it to Reminders (#3893).

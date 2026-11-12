@@ -363,6 +363,26 @@ public actor LiveSessionFileWorker {
         return session
     }
 
+    /// Files a written Margin (dictated to Siri, #3880 slice 2) when no live session runs and the player has nothing: by
+    /// the same rule as `fileAsQuickSession` with the player left out, so it joins a quick session that holds this moment,
+    /// else starts one, and never goes to a Library item. Returns the session it went into, or nil when the text is empty
+    /// or the save failed. Like `addWrittenMargin`, a screen save that hasn't seen it keeps it (`keepingUnseen`).
+    @discardableResult
+    public func fileWrittenMarginAsQuick(text: String, markedAt: Date, now: Date = Date()) -> LiveSession? {
+        let words = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !words.isEmpty else { return nil }
+        sessions() // loads the deletions too
+        let margin = LiveSessionMargin(id: "siri-\(makeId())", text: words, markedAt: markedAt)
+        let decision = LiveSessionFiling.decide(
+            .init(marginId: margin.id, markedAt: markedAt, allowsPlayerItem: false),
+            sessions: candidates(), deletions: deletions, playerRuns: [], now: now
+        )
+        guard let placed = (try? place(margin, by: decision)) ?? nil else { return nil }
+        var pass = Pass()
+        tidy(now: now, pass: &pass)
+        return sessions()[placed.id] ?? placed
+    }
+
     // MARK: Filing
 
     /// Files each received Watch Margin by `LiveSessionFiling`: stored in `WatchMarginInbox` first, then filed, and only

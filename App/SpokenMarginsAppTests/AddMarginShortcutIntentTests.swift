@@ -131,8 +131,10 @@ final class AddMarginShortcutIntentTests: XCTestCase {
         model.refreshMarginRows()
         let before = model.marginRows.count
 
+        // The player path itself still refuses. The intent no longer does: with nothing running it keeps the Margin in
+        // a quick session (#3880, AddMarginSiriRouteAppTests), so this calls the player's action, not the intent.
         do {
-            try await run("Orphan.", on: model)
+            _ = try AddMarginShortcutAction.addWrittenMargin(text: "Orphan.", to: model)
             XCTFail("The action must refuse when nothing is playing.")
         } catch let error as AddMarginShortcutError {
             XCTAssertEqual(error, .nothingRunning)

@@ -9,7 +9,7 @@
   "Margins stay grouped by item, with Share beside each item's heading. Groups are ordered by their most recent Margin and that Margin carries a Newest label, so the newest one is in the first group. Inside a group the Margins keep source order. A Margin row plays its moment; its chevron opens its details.",
   "Margin details offer Share this Margin (a one-Margin packet to the share sheet).",
   "Item details show the published date and the date added.",
-  "Export all Margins is one toolbar button on the Margins tab that hands a Markdown bundle to the share sheet; the folder export moves under Settings.",
+  "Export is one toolbar menu on the Margins tab (doc.text): All Margins, one file hands a Markdown bundle to the share sheet, and One file per session opens the per-session screen; the folder export moves under Settings.",
   "Settings is a tab. The Library's options menu is removed; Help lives in Settings.",
   "Clear reproducible audio is a button on Settings itself; Offline Storage keeps the detail.",
   "Unfollow lives on the Show screen with an Undo toast instead of a confirmation alert; no landing tab manages a feed.",
@@ -148,7 +148,7 @@
    "id": "p011",
    "from": "ExperienceMarginDetailView",
    "to": "SHARE_SHEET",
-   "control": "Share this Margin (person.wave.2)",
+   "control": "Share this Margin (square.and.arrow.up)",
    "control_kind": "button",
    "presentation": "sheet",
    "file": null,
@@ -163,7 +163,7 @@
    "id": "p012",
    "from": "ExperienceMarginsScreen",
    "to": "SHARE_SHEET",
-   "control": "Export all Margins (toolbar)",
+   "control": "Export (toolbar menu) > All Margins, one file",
    "control_kind": "toolbar",
    "presentation": "system",
    "file": null,
@@ -630,7 +630,7 @@
      "Margins tab",
      "chevron on a Margin row (details)",
      "More",
-     "Share this Margin (person.wave.2)",
+     "Share this Margin (square.and.arrow.up)",
      "Share N"
     ]
    }
@@ -751,10 +751,11 @@
    "note": "The folder workflow stays under Settings, Export sessions to a folder: gear, row, Choose Folder, pick, Export (5).",
    "taps": {
     "as_built": 6,
-    "proposed": 2,
+    "proposed": 3,
     "route": [
      "Margins tab",
-     "Export all Margins (toolbar)"
+     "Export (toolbar menu)",
+     "All Margins, one file"
     ]
    }
   },

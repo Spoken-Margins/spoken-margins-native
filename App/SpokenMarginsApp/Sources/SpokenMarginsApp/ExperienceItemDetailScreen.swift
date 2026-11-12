@@ -95,7 +95,7 @@ struct ExperienceItemDetailScreen: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
-                        Button("Export latest session", systemImage: "square.and.arrow.up") {
+                        Button("Export", systemImage: "doc.text") {
                             model.openExport(sessionId: model.selectedItem.sessions.first?.id)
                         }
                         .disabled(model.selectedItem.sessions.isEmpty)
@@ -648,7 +648,7 @@ struct ExperienceItemDetailScreen: View {
                                 .accessibilityLabel(RowAccessibilityLabel.label("Resume this session", row: sessionTitle(row.session, index: index), "\(row.session.completionPercent)%"))
                                 .accessibilityIdentifier("session.resume.\(row.session.id)")
                                 Button { model.openExport(sessionId: row.session.id) } label: {
-                                    Image(systemName: "square.and.arrow.up").frame(width: 44, height: 44)
+                                    Image(systemName: "doc.text").frame(width: 44, height: 44)
                                 }
                                 .buttonStyle(.plain)
                                 .accessibilityLabel(RowAccessibilityLabel.label("Export this session", row: sessionTitle(row.session, index: index), "\(row.session.completionPercent)%"))

@@ -52,7 +52,7 @@ struct PlaybackMarginsView: View {
                     }
                 }
                 Button(action: model.openMargins) {
-                    Label("All Margins and export", systemImage: "square.and.arrow.up").frame(minHeight: 44).contentShape(Rectangle())
+                    Label("All Margins and export", systemImage: "quote.bubble").frame(minHeight: 44).contentShape(Rectangle())
                 }
                     .accessibilityIdentifier("playback.margins.collection.button")
             }

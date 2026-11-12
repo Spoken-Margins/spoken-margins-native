@@ -89,7 +89,7 @@ struct ExportScreen: View {
                             Button {
                                 isSharePresented = true
                             } label: {
-                                Label("Export Session", systemImage: "square.and.arrow.up")
+                                Label("Export Session", systemImage: "doc.text")
                             }
                             .buttonStyle(PrimaryButtonStyle())
                             .accessibilityIdentifier("export.share.button")
@@ -101,7 +101,7 @@ struct ExportScreen: View {
                             }
                             #else
                             ShareLink(item: model.exportPreview) {
-                                Label("Export Session", systemImage: "square.and.arrow.up")
+                                Label("Export Session", systemImage: "doc.text")
                             }
                             .buttonStyle(PrimaryButtonStyle())
                             .accessibilityIdentifier("export.share.button")
