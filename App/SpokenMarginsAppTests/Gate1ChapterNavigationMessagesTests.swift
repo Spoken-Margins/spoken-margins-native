@@ -110,7 +110,7 @@ final class Gate1ChapterNavigationMessagesTests: XCTestCase {
         model.generateListeningMapFromTap()
         XCTAssertTrue(model.isGeneratingListeningMap, "the button is held while the map is made off the main thread")
         XCTAssertNil(model.diagnostics["lastListeningMapMode"], "nothing is generated on the main thread before the tap returns")
-        for _ in 0..<500 where model.isGeneratingListeningMap { try? await Task.sleep(nanoseconds: 10_000_000) }
+        try? await pollUntil { !model.isGeneratingListeningMap }
         XCTAssertFalse(model.isGeneratingListeningMap)
 
         XCTAssertNil(model.lastError)

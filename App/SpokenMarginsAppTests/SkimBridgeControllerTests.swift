@@ -235,7 +235,7 @@ final class SkimBridgeControllerTests: XCTestCase {
     }
 
     private func waitForRecords(_ host: ScriptedSkimHost, count: Int) async throws {
-        for _ in 0..<200 where host.records.count < count { try await Task.sleep(for: .milliseconds(10)) }
+        try await pollUntil { host.records.count >= count }
     }
 
     /// The bug: a scene with a summary but no saved audio had no Skim, so the slot silently became Next chapter.

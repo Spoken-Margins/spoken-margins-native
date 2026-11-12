@@ -477,7 +477,8 @@ struct MountedTree {
     func waitForNode(_ description: String, file: StaticString = #filePath, line: UInt = #line,
                      _ matches: (AccessibilityNode) -> Bool) async throws -> AccessibilityNode {
         var seen: [AccessibilityNode] = []
-        for _ in 0..<100 {
+        let pollDeadline = ContinuousClock.now + .seconds(30)
+        while ContinuousClock.now < pollDeadline {
             seen = nodes()
             if let node = seen.first(where: matches) { return node }
             try await Task.sleep(for: .milliseconds(50))

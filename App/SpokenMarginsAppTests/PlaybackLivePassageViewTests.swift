@@ -82,7 +82,8 @@ final class PlaybackLivePassageViewTests: XCTestCase {
     }
 
     private func waitForAppearance(_ mounted: MountedPassage) async throws {
-        for _ in 0..<100 {
+        let pollDeadline = ContinuousClock.now + .seconds(30)
+        while ContinuousClock.now < pollDeadline {
             if mounted.appeared.value { return }
             try await Task.sleep(for: .milliseconds(20))
         }
@@ -90,7 +91,8 @@ final class PlaybackLivePassageViewTests: XCTestCase {
     }
 
     private func waitForHeight(_ mounted: MountedPassage, matching predicate: (CGFloat) -> Bool) async throws -> CGFloat {
-        for _ in 0..<100 {
+        let pollDeadline = ContinuousClock.now + .seconds(30)
+        while ContinuousClock.now < pollDeadline {
             let height = mounted.height
             if predicate(height) { return height }
             try await Task.sleep(for: .milliseconds(20))

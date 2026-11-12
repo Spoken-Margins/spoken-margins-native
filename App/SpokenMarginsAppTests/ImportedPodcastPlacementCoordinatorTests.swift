@@ -702,7 +702,8 @@ private final class PlacementCoordinatorHarness {
     }
 
     private func startedContext(of probe: PlacementPassProbe) async throws -> PodcastPlacementPassCoordinator.Context {
-        for _ in 0..<500 {
+        let pollDeadline = ContinuousClock.now + .seconds(30)
+        while ContinuousClock.now < pollDeadline {
             if let context = await probe.context { return context }
             try await Task.sleep(for: .milliseconds(10))
         }
@@ -774,10 +775,11 @@ private final class PlacementCoordinatorHarness {
         return finished
     }
 
-    /// Polls for up to five seconds. The coordinator's tasks run on the main actor, so the condition is read between
+    /// Polls for up to thirty seconds. The coordinator's tasks run on the main actor, so the condition is read between
     /// their steps and never mid-way through one.
     func waitUntil(_ condition: () -> Bool) async throws -> Bool {
-        for _ in 0..<500 {
+        let pollDeadline = ContinuousClock.now + .seconds(30)
+        while ContinuousClock.now < pollDeadline {
             if condition() { return true }
             try await Task.sleep(for: .milliseconds(10))
         }

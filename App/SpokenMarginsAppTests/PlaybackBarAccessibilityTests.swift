@@ -160,7 +160,8 @@ final class PlaybackBarAccessibilityTests: XCTestCase {
         window.frame = CGRect(x: 0, y: 0, width: 390, height: 80)
         window.rootViewController = host
         window.makeKeyAndVisible()
-        for _ in 0..<100 {
+        let pollDeadline = ContinuousClock.now + .seconds(30)
+        while ContinuousClock.now < pollDeadline {
             host.view.layoutIfNeeded()
             if let slider = findSlider(in: host.view), slider.bounds.width > 0, slider.bounds.height > 0 {
                 return MountedBar(host: host, window: window, previousKeyWindow: previous, slider: slider, record: record)

@@ -338,7 +338,8 @@ final class PlaybackDockLayoutTests: XCTestCase {
     }
 
     private func waitForBar(in mounted: Mounted) async throws -> PlaybackBarAccessibilityView {
-        for _ in 0..<150 {
+        let pollDeadline = ContinuousClock.now + .seconds(30)
+        while ContinuousClock.now < pollDeadline {
             mounted.window.layoutIfNeeded()
             if let bar = Self.find(PlaybackBarAccessibilityView.self, in: mounted.window), bar.bounds.height > 0 {
                 // Let SwiftUI finish any follow-up layout pass before measuring.

@@ -30,7 +30,7 @@ final class SpokenNoteRecorderModelTests: XCTestCase {
     }
 
     private func waitForSnapshot(_ model: SpokenNoteRecorderModel) async {
-        for _ in 0..<40 where model.snapshot == nil { try? await Task.sleep(for: .milliseconds(50)) }
+        try? await pollUntil { model.snapshot != nil }
     }
 
     func testAReopenedNoteShowsItsTakesAndKnowsItsFolder() async throws {
@@ -89,7 +89,7 @@ final class SpokenNoteRecorderModelTests: XCTestCase {
 
         model.titleChanged(to: "Sink repair")
         XCTAssertEqual(model.title, "Sink repair")
-        for _ in 0..<40 where model.snapshot?.title != "Sink repair" { try? await Task.sleep(for: .milliseconds(50)) }
+        try? await pollUntil { model.snapshot?.title == "Sink repair" }
         XCTAssertEqual(model.snapshot?.title, "Sink repair", "the recording reports the new name too")
         XCTAssertEqual(model.title, "Sink repair")
         await model.finish()

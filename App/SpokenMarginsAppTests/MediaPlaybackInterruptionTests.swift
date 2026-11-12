@@ -61,9 +61,7 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
             playbackURL: audioURL.absoluteString, durationMs: 10_000
         ))
         try client.play(targetId: target, fromMediaTimeMs: 0)
-        for _ in 0..<150 where (client.currentMediaTimeMs() ?? 0) < 200 {
-            try await Task.sleep(for: .milliseconds(20))
-        }
+        try await pollUntil { (client.currentMediaTimeMs() ?? 0) >= 200 }
         XCTAssertGreaterThan(client.currentMediaTimeMs() ?? 0, 100)
         try client.pause()
         let request = try client.requestMediaSeek(toMediaTimeMs: 5_000)
@@ -72,16 +70,12 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         try client.play(targetId: target, fromMediaTimeMs: 5_000)
         XCTAssertEqual(client.mediaSeekResolution(for: request), .pending,
                        "Resume at the same destination must retain the navigation transaction")
-        for _ in 0..<150 where client.mediaSeekResolution(for: request) == .pending {
-            try await Task.sleep(for: .milliseconds(20))
-        }
+        try await pollUntil { client.mediaSeekResolution(for: request) != .pending }
         guard case .accepted(let acceptedTime) = client.mediaSeekResolution(for: request) else {
             return XCTFail("Matching seek was not accepted: \(client.mediaSeekResolution(for: request))")
         }
         XCTAssertEqual(acceptedTime, 5_000, accuracy: 250)
-        for _ in 0..<150 where (client.currentMediaTimeMs() ?? 0) < 5_300 {
-            try await Task.sleep(for: .milliseconds(20))
-        }
+        try await pollUntil { (client.currentMediaTimeMs() ?? 0) >= 5_300 }
         XCTAssertGreaterThan(client.currentMediaTimeMs() ?? 0, 5_100)
         // A genuinely different destination must still supersede the old one.
         let replaced = try client.requestMediaSeek(toMediaTimeMs: 2_000)
@@ -106,9 +100,7 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         ))
 
         try client.play(targetId: "duration-correction-audio", fromMediaTimeMs: 0)
-        for _ in 0..<100 where client.currentPlaybackDurationMs() != 3_000 {
-            try? await Task.sleep(for: .milliseconds(20))
-        }
+        try? await pollUntil { client.currentPlaybackDurationMs() == 3_000 }
 
         XCTAssertEqual(client.currentPlaybackDurationMs(), 3_000)
         try client.stop()
@@ -261,7 +253,7 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
 
     /// The observers deliver on the main queue, after the post returns.
     private func settle(_ condition: () -> Bool) async {
-        for _ in 0..<100 where !condition() { try? await Task.sleep(for: .milliseconds(10)) }
+        try? await pollUntil { condition() }
     }
 
     private func post(
@@ -307,7 +299,7 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         model.startItem(id: itemID)
         defer { model.returnToSourceFromImportedCommentary(); model.pause() }
         if nativeMedia {
-            for _ in 0..<150 where (sourcePlayer.currentMediaTimeMs() ?? 0) < 200 { try await Task.sleep(for: .milliseconds(20)) }
+            try await pollUntil { (sourcePlayer.currentMediaTimeMs() ?? 0) >= 200 }
             XCTAssertGreaterThan(sourcePlayer.currentMediaTimeMs() ?? 0, 100)
         }
         let layer = ImportedCommentaryLayer(id: "received", itemId: itemID, packageDigest: "digest", packageId: "package",
@@ -324,12 +316,12 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         model.selectedItem.importedCommentaryInterjections = [layer.id: [record]]
         if guided {
             XCTAssertTrue(model.handleGate2CompactApplicationCommand(Gate2CompactApplicationCommand.jumpToSharedMargin, targetID: record.id))
-            for _ in 0..<150 where model.playingImportedCommentary == nil { try await Task.sleep(for: .milliseconds(20)) }
+            try await pollUntil { model.playingImportedCommentary != nil }
         } else {
             model.listenToImportedCommentary(layerID: layer.id, interjectionID: record.id)
         }
         let player = try XCTUnwrap(model.marginVoicePlayer.currentPlayer)
-        for _ in 0..<150 where player.currentTime().seconds < 0.2 { try await Task.sleep(for: .milliseconds(20)) }
+        try await pollUntil { player.currentTime().seconds >= 0.2 }
         XCTAssertGreaterThan(player.currentTime().seconds, 0.1)
         XCTAssertEqual(model.snapshot.status, .paused)
         let sourcePausedAt = sourcePlayer.currentMediaTimeMs() ?? 0
@@ -343,7 +335,7 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         XCTAssertLessThanOrEqual(abs((sourcePlayer.currentMediaTimeMs() ?? 0) - sourcePausedAt), 30)
         XCTAssertEqual(model.playingImportedCommentary?.id, record.id)
         model.dispatchGate2CompactCommand(.play, origin: "imported_margin_remote")
-        for _ in 0..<150 where player.currentTime().seconds < marginPausedAt + 0.2 { try await Task.sleep(for: .milliseconds(20)) }
+        try await pollUntil { player.currentTime().seconds >= marginPausedAt + 0.2 }
         XCTAssertGreaterThan(player.currentTime().seconds, marginPausedAt + 0.1)
         XCTAssertEqual(model.snapshot.status, .paused)
         model.dispatchGate2CompactCommand(.pause, origin: "imported_margin_remote")
@@ -357,16 +349,16 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
             // Natural completion uses the same once-only source restoration as Return.
             model.resumePlayback()
             await player.seek(to: CMTime(seconds: 29.8, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
-            for _ in 0..<150 where model.playingImportedCommentary != nil { try await Task.sleep(for: .milliseconds(20)) }
+            try await pollUntil { model.playingImportedCommentary == nil }
         } else {
             model.returnToSourceFromImportedCommentary()
         }
         XCTAssertNil(model.playingImportedCommentary)
         XCTAssertNil(player.currentItem)
-        for _ in 0..<150 where model.snapshot.status == .starting { try await Task.sleep(for: .milliseconds(20)) }
+        try await pollUntil { model.snapshot.status != .starting }
         XCTAssertEqual(model.snapshot.status, .playing)
         if nativeMedia {
-            for _ in 0..<150 where (sourcePlayer.currentMediaTimeMs() ?? 0) < sourcePausedAt + 200 { try await Task.sleep(for: .milliseconds(20)) }
+            try await pollUntil { (sourcePlayer.currentMediaTimeMs() ?? 0) >= sourcePausedAt + 200 }
             XCTAssertGreaterThan(sourcePlayer.currentMediaTimeMs() ?? 0, sourcePausedAt + 100)
         }
         model.pause()
