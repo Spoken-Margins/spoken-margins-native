@@ -11,6 +11,8 @@ Six flows, each redesigned in one pass: where the flow is today, three direction
 | [First run](first-run.md) | "A Margin is waiting" | none |
 | [Sharing with a friend](sharing-with-a-friend.md) | Share a moment; friends reply by voice | [clickable mockup](https://claude.ai/artifact/E6LrL8jUiETYVyr4Uj58qP) |
 
+Also in this folder: [Syncing the Library across a listener's Apple devices](icloud-library-sync.md) (a design note for #1769, with the decisions it needs from the owner).
+
 The mockups and the owner's review of these designs ([review](https://claude.ai/artifact/LwPCHsuUZDrvbXCwV4KAkv)) are private claude.ai pages. The docs are the spec; the pages only illustrate them.
 
 ## Reading the slices
