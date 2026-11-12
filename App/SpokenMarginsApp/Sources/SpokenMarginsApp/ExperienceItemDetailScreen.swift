@@ -119,6 +119,14 @@ struct ExperienceItemDetailScreen: View {
                                     .disabled(isChangingEpisodeLink)
                             }
                         }
+                        // A friend's link opens its share page, where the report form is; no account and no key (#2239).
+                        ForEach(sharingCoordinator.reportEntries) { entry in
+                            Link(destination: entry.url) {
+                                Label(entry.title, systemImage: "flag")
+                            }
+                            .accessibilityHint("Opens the share page in your browser, where you can report this link.")
+                            .accessibilityIdentifier("item.reportLink.\(entry.id)")
+                        }
                         if !model.selectedItem.id.isEmpty {
                             Button("Move to Recently Deleted", systemImage: "trash", role: .destructive) {
                                 confirmsTrash = true

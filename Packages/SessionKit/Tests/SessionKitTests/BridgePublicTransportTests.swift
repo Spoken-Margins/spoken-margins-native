@@ -219,6 +219,25 @@ final class ShareLinkTransportTests: XCTestCase {
         XCTAssertNil(request.authorization)
     }
 
+    /// #2239: the upload carries the sender check's permit and nothing else of an identity.
+    func testTheSenderCheckPermitRidesTheUploadAndNoOtherIdentity() async throws {
+        BridgeResponseProtocol.reply(.answer(status: 201, body: Data("{}".utf8), declaredLength: nil))
+        _ = try await ShareLinkTransport.post(url, contentType, Data([1]), headers: ["X-SM-Link-Permit": "p-1"], configuration: stubbedConfiguration())
+        let request = try XCTUnwrap(BridgeResponseProtocol.requests.first)
+        XCTAssertEqual(request.headers["X-SM-Link-Permit"], "p-1")
+        XCTAssertEqual(request.contentType, contentType)
+        XCTAssertNil(request.headers["X-SM-Key-Id"])
+        XCTAssertNil(request.headers["X-SM-Assertion"])
+        XCTAssertNil(request.cookie)
+        XCTAssertNil(request.authorization)
+    }
+
+    func testAnUploadWithNoPermitSendsNoPermitHeader() async throws {
+        BridgeResponseProtocol.reply(.answer(status: 201, body: Data("{}".utf8), declaredLength: nil))
+        _ = try await ShareLinkTransport.post(url, contentType, Data([1]), configuration: stubbedConfiguration())
+        XCTAssertNil(try XCTUnwrap(BridgeResponseProtocol.requests.first).headers["X-SM-Link-Permit"])
+    }
+
     func testStatusesPassThroughToTheClient() async throws {
         for status in [201, 413, 429, 503, 500] {
             BridgeResponseProtocol.reset()
@@ -283,6 +302,7 @@ final class BridgeResponseProtocol: URLProtocol, @unchecked Sendable {
         let contentType: String?
         let cookie: String?
         let authorization: String?
+        let headers: [String: String]
         let body: Data
     }
 
@@ -316,6 +336,7 @@ final class BridgeResponseProtocol: URLProtocol, @unchecked Sendable {
             contentType: request.value(forHTTPHeaderField: "Content-Type"),
             cookie: request.value(forHTTPHeaderField: "Cookie"),
             authorization: request.value(forHTTPHeaderField: "Authorization"),
+            headers: request.allHTTPHeaderFields ?? [:],
             body: Self.body(of: request)
         )
         let reply = Self.state.lock.withLock {
@@ -363,5 +384,77 @@ final class BridgeResponseProtocol: URLProtocol, @unchecked Sendable {
             data.append(buffer, count: count)
         }
         return data
+    }
+}
+
+/// The attested JSON request (#2239): identified on purpose, and only to the pinned host.
+final class AttestedTransportTests: XCTestCase {
+    private let url = URL(string: "https://spokenmargins.proximitytoprogress.com/api/v1/links/sender")!
+
+    override func setUp() {
+        super.setUp()
+        BridgeResponseProtocol.reset()
+    }
+
+    override func tearDown() {
+        BridgeResponseProtocol.reset()
+        super.tearDown()
+    }
+
+    private func stubbedConfiguration() -> URLSessionConfiguration {
+        let configuration = BridgePublicTransport.configuration()
+        configuration.protocolClasses = [BridgeResponseProtocol.self]
+        return configuration
+    }
+
+    func testSendsTheBodyAndTheAssertionHeadersToThePinnedHostWithNoCookies() async throws {
+        BridgeResponseProtocol.reply(.answer(status: 200, body: Data(#"{"sharingAllowed":true}"#.utf8), declaredLength: nil))
+        let headers = ["Content-Type": "application/json", "X-SM-Key-Id": "k", "X-SM-Assertion": "a", "X-SM-Time": "1"]
+        let answer = try await AttestedTransport.post(url, headers, Data("{}".utf8), configuration: stubbedConfiguration())
+        XCTAssertEqual(answer.status, 200)
+        let request = try XCTUnwrap(BridgeResponseProtocol.requests.first)
+        XCTAssertEqual(request.url, url)
+        XCTAssertEqual(request.method, "POST")
+        for (name, value) in headers { XCTAssertEqual(request.headers[name], value, name) }
+        XCTAssertEqual(request.body, Data("{}".utf8))
+        XCTAssertNil(request.cookie)
+        XCTAssertNil(request.authorization)
+    }
+
+    func testRedirectIsNotFollowed() async throws {
+        let elsewhere = URL(string: "https://elsewhere.example.org/x")!
+        BridgeResponseProtocol.reply(.redirect(status: 307, to: elsewhere))
+        let answer = try await AttestedTransport.post(url, [:], Data(), configuration: stubbedConfiguration())
+        XCTAssertEqual(answer.status, 307)
+        XCTAssertEqual(BridgeResponseProtocol.requests.map(\.url), [url])
+    }
+
+    func testAnOversizedAnswerIsRefused() async {
+        BridgeResponseProtocol.reply(.answer(status: 200, body: Data(count: AttestedTransport.maximumAnswerBytes + 1), declaredLength: nil))
+        do {
+            _ = try await AttestedTransport.post(url, [:], Data(), configuration: stubbedConfiguration())
+            XCTFail("an oversized answer must be refused")
+        } catch let error as URLError {
+            XCTAssertEqual(error.code, .dataLengthExceedsMaximum)
+        } catch {
+            XCTFail("unexpected error: \(error)")
+        }
+    }
+
+    /// The identity headers never leave for another host, a plain-http one or another port.
+    func testAnUntrustedEndpointIsRefusedBeforeAnyHeaderIsSent() async {
+        for untrusted in [
+            "https://elsewhere.example.org/api/v1/links/sender",
+            "http://spokenmargins.proximitytoprogress.com/api/v1/links/sender",
+            "https://spokenmargins.proximitytoprogress.com:8443/api/v1/links/sender",
+        ] {
+            do {
+                _ = try await AttestedTransport.post(URL(string: untrusted)!, ["X-SM-Key-Id": "k"], Data(), configuration: stubbedConfiguration())
+                XCTFail("\(untrusted) must be refused")
+            } catch {
+                XCTAssertEqual(error as? BridgeRefreshError, .untrustedURL, untrusted)
+            }
+        }
+        XCTAssertTrue(BridgeResponseProtocol.requests.isEmpty)
     }
 }

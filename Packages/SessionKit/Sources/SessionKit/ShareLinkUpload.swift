@@ -152,6 +152,10 @@ public enum ShareLinkFallback: Error, Equatable, Sendable {
     case offline
     /// The server answered something the app doesn't expect.
     case failed
+    /// Link sharing is paused for this phone for a while (the strike ladder, #2239). The file share still works.
+    case sharingPaused
+    /// Link sharing has ended for this phone. The file share still works.
+    case sharingEnded
 
     /// The one line the sender sees, with the file share still on offer.
     public var message: String {
@@ -159,6 +163,8 @@ public enum ShareLinkFallback: Error, Equatable, Sendable {
         case .tooLarge: "These Margins are too big for a link. Send them as a file instead?"
         case .nothingToSay: "None of these Margins has words yet, so a link would show nothing. Send them as a file instead?"
         case .busy: "Couldn't make a link right now. Try again in a little while, or send them as a file instead?"
+        case .sharingPaused: "Sharing links is paused for a while. You can still send them as a file."
+        case .sharingEnded: "Sharing links isn't available on this phone any more. You can still send them as a file."
         case .unavailable, .offline, .failed: "Links aren't available right now. Send as a file instead?"
         }
     }
@@ -168,29 +174,55 @@ public enum ShareLinkFallback: Error, Equatable, Sendable {
 /// recording one.
 public typealias ShareLinkPost = @Sendable (_ url: URL, _ contentType: String, _ body: Data) async throws -> (status: Int, body: Data)
 
+/// The same, with the headers the upload sets besides its content type (today: the sender check's permit).
+public typealias ShareLinkPostWithHeaders = @Sendable (_ url: URL, _ contentType: String, _ headers: [String: String], _ body: Data) async throws -> (status: Int, body: Data)
+
 public struct ShareLinkClient: Sendable {
     public static let linksPath = "/api/v1/links"
+    /// Carries the one-use permit from the sender check (`HeaderLinkPermit` in the server's sender.go).
+    public static let permitHeader = "X-SM-Link-Permit"
     /// The server's limit on the sealed packet.
     public static let maximumSealedPacketBytes = 20 << 20
     private static let maximumPreviewPartBytes = 16 << 10
 
     private let server: @Sendable (String) -> URL
-    private let post: ShareLinkPost
+    private let post: ShareLinkPostWithHeaders
+    private let senderCheck: (@Sendable () async -> ShareLinkSenderCheckOutcome)?
+    private let takedownNoticeSeen: @Sendable () -> Void
     private let makeKey: @Sendable () -> ShareLinkSealing.Key
     private let hasConsent: @Sendable () -> Bool
 
     /// `consent` has no default on purpose: a caller must say where the listener's agreement is read from, so no
     /// upload path can skip it (#2842).
+    ///
+    /// `senderCheck` asks the server for the install's standing and a permit before anything is sealed (#2239). With
+    /// none, the link is made as it always was, with no identity attached. `takedownNotice` is called when the
+    /// server says a link this install made was taken down, so the screen can say so once.
+    public init(
+        server: @escaping @Sendable (String) -> URL = { ProductServer.url(path: $0) },
+        key: @escaping @Sendable () -> ShareLinkSealing.Key = { ShareLinkSealing.Key.random() },
+        consent: @escaping @Sendable () -> Bool,
+        senderCheck: (@Sendable () async -> ShareLinkSenderCheckOutcome)? = nil,
+        takedownNotice: @escaping @Sendable () -> Void = {},
+        post: @escaping ShareLinkPostWithHeaders
+    ) {
+        self.server = server
+        self.makeKey = key
+        self.hasConsent = consent
+        self.senderCheck = senderCheck
+        self.takedownNoticeSeen = takedownNotice
+        self.post = post
+    }
+
     public init(
         server: @escaping @Sendable (String) -> URL = { ProductServer.url(path: $0) },
         key: @escaping @Sendable () -> ShareLinkSealing.Key = { ShareLinkSealing.Key.random() },
         consent: @escaping @Sendable () -> Bool,
         post: @escaping ShareLinkPost
     ) {
-        self.server = server
-        self.makeKey = key
-        self.hasConsent = consent
-        self.post = post
+        self.init(server: server, key: key, consent: consent, post: { url, contentType, _, body in
+            try await post(url, contentType, body)
+        })
     }
 
     /// Seals and uploads. Never throws: every way it can fail comes back as `.useFile`, so the sender screen has
@@ -198,6 +230,20 @@ public struct ShareLinkClient: Sendable {
     public func makeLink(packet: Data, preview: ShareLinkPreview, linksState: ServerFeatureState) async -> ShareLinkResult {
         guard hasConsent() else { return .needsConsent }
         guard linksState.isOn else { return .useFile(.unavailable) }
+        // Who is asking, before the packet is read or sealed: a paused or ended sender makes no link, and the
+        // permit the server hands back is what ties this link to the install for the strike ladder.
+        var permit: String?
+        if let senderCheck {
+            switch await senderCheck() {
+            case .notChecked: break
+            case .failed(let fallback): return .useFile(fallback)
+            case .standing(let standing):
+                if standing.hasTakedownNotice { takedownNoticeSeen() }
+                if standing.sharingEnded { return .useFile(.sharingEnded) }
+                guard let granted = standing.permit else { return .useFile(.sharingPaused) }
+                permit = granted
+            }
+        }
         let sealed: ShareLinkSealing.SealedLink
         let key = makeKey()
         do {
@@ -214,7 +260,8 @@ public struct ShareLinkClient: Sendable {
         let body = Self.multipartBody(boundary: boundary, preview: sealed.preview, packet: sealed.packet)
         let response: (status: Int, body: Data)
         do {
-            response = try await post(server(Self.linksPath), "multipart/form-data; boundary=\(boundary)", body)
+            let headers = permit.map { [Self.permitHeader: $0] } ?? [:]
+            response = try await post(server(Self.linksPath), "multipart/form-data; boundary=\(boundary)", headers, body)
         } catch {
             return .useFile(.offline)
         }
@@ -224,6 +271,13 @@ public struct ShareLinkClient: Sendable {
                   Self.isLinkPath(created.path),
                   let link = ShareLinkSealing.linkURL(base: server(created.path), key: key) else { return .useFile(.failed) }
             return .link(link, expiresAt: created.expiresAt)
+        case 403:
+            // The permit from the sender check: spent, expired (ten minutes, or a server restart) or paused in between.
+            switch AttestedServerClient.errorCode(response.body) {
+            case "sharing_paused": return .useFile(.sharingPaused)
+            case "bad_permit", "permit_required": return .useFile(.busy)
+            default: return .useFile(.failed)
+            }
         case 413: return .useFile(.tooLarge)
         case 429: return .useFile(.busy)
         case 503: return .useFile(.unavailable)

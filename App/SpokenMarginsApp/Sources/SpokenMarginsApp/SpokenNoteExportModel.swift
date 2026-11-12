@@ -102,7 +102,7 @@ final class SpokenNoteExportModel: ObservableObject {
         resolvePartial(share: false)
     }
 
-    private static let afterAlertCloses = Duration.milliseconds(350)
+    static let afterAlertCloses = Duration.milliseconds(350)
 
     /// The share sheet is shown a beat after the question closes.
     private func present(discarding discard: @escaping @Sendable () -> Void, _ show: @escaping @MainActor (SpokenNoteExportModel) -> Void) {
