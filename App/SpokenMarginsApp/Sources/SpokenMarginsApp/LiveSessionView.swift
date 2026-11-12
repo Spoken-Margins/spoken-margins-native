@@ -8,16 +8,46 @@ import SwiftUI
 /// The running state is the playback screen's layout (#3491): a Margins pane and a Session pane, and a dock with
 /// the pane switch, the clock with End, and Add a Margin with the pencil. Add a Margin opens the normal recording
 /// screen and the pencil the normal writing sheet; neither is a control that changes shape on this screen.
-struct LiveSessionView: View {
-    @EnvironmentObject private var model: Gate1AppModel
+///
+/// It does not watch `Gate1AppModel` (#4091). Watching it reran this whole screen on every model publish while an item
+/// was loaded in the mini player, the same whole-screen redraw that once closed this screen's menus and sheets (#2831).
+/// That is the likely cause, read from the code and not yet reproduced on a device, of a listener on an ended session
+/// seeing the screen flash and being unable to tap Discard Session. It reads what it shows from the model through a
+/// `ScreenInputsFeed`, and presenters show it with `.equatable()`, so a presenter that redraws on every publish (the
+/// Library, the root) stops here too.
+struct LiveSessionView: View, Equatable {
+    let model: Gate1AppModel
+    private let sessionId: String?
     @Environment(\.dismiss) private var dismiss
     @StateObject private var controller: LiveSessionController
+    @StateObject private var feed: ScreenInputsFeed<ModelInputs>
     @ObservedObject private var links = LiveSessionLinkRouter.shared
     @ObservedObject private var capture = LiveSessionSpokenCapture.shared
 
     /// `sessionId` opens that session (from the Library's Live row); nil opens the running one, or the setup card.
-    init(sessionId: String? = nil) {
+    init(model: Gate1AppModel, sessionId: String? = nil) {
+        self.model = model
+        self.sessionId = sessionId
         _controller = StateObject(wrappedValue: LiveSessionController(sessionId: sessionId))
+        _feed = StateObject(wrappedValue: ScreenInputsFeed(model: model, read: ModelInputs.init))
+    }
+
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        #if DEBUG
+        ScreenRedrawProbe.recordEqualityCheck("liveSession")
+        #endif
+        return lhs.model === rhs.model && lhs.sessionId == rhs.sessionId
+    }
+
+    /// Everything this screen's body shows from the model. Buttons still read the model when they run.
+    struct ModelInputs: Equatable {
+        var showsMiniPlayer: Bool
+        var recordingNavigationIsLocked: Bool
+
+        @MainActor init(_ model: Gate1AppModel) {
+            showsMiniPlayer = model.shouldShowMiniPlayer
+            recordingNavigationIsLocked = model.recordingNavigationIsLocked
+        }
     }
 
     /// The two full-screen screens this screen opens. One cover, so two can never stack.
@@ -51,6 +81,9 @@ struct LiveSessionView: View {
     private var isRunningScreen: Bool { controller.session != nil }
 
     var body: some View {
+        #if DEBUG
+        let _ = ScreenRedrawProbe.record("liveSession")
+        #endif
         NavigationStack {
             Group {
                 if let session = controller.session {
@@ -98,7 +131,7 @@ struct LiveSessionView: View {
         .onChange(of: controller.hasEnded, initial: true) { _, ended in if ended { pane = .session } }
         // The mini player's mic starts the item's recording on the root, which sits under this screen. This screen
         // closes so that recording shows (the mini player acts on the root and can't be told otherwise).
-        .onChange(of: model.recordingNavigationIsLocked) { _, locked in
+        .onChange(of: feed.inputs.recordingNavigationIsLocked) { _, locked in
             if locked && cover == nil { leave() }
         }
         .onChange(of: wantsWrite) { _, wanted in
@@ -144,6 +177,8 @@ struct LiveSessionView: View {
                 dismiss()
             }
         }
+        // Outermost, so the mini player and every sheet and cover this screen opens have the model to watch themselves.
+        .environmentObject(model)
     }
 
     /// Back to where the listener came from. The session keeps running; a spoken Margin still recording is saved, not
@@ -285,14 +320,14 @@ struct LiveSessionView: View {
             end: { dismissKeyboard(); showsEndCard = true },
             resume: { controller.resume() },
             record: beginRecording, write: { beginWriting() },
-            addIsDisabled: model.recordingNavigationIsLocked)
+            addIsDisabled: feed.inputs.recordingNavigationIsLocked)
     }
 
     /// The existing mini player above the dock while an item is playing. Its mic files on the item (this screen closes
     /// so the item's recording shows); Add a Margin files on the session.
     @ViewBuilder
     private var pill: some View {
-        if model.shouldShowMiniPlayer {
+        if feed.inputs.showsMiniPlayer {
             MiniPlayerBar(openNowPlaying: {
                 controller.stopSpokenMargin()
                 dismiss()
