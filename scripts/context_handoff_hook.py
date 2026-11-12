@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Enforce AGENTS.md's 250k hand-off line in Spoken Margins sessions (owner, 2026-10-09).
+"""Enforce the owner overlay's 250k hand-off line in Spoken Margins sessions (owner, 2026-10-09).
 
 Why: in the week to 2026-10-09, 19 of 315 local sessions ran past 250k tokens of context and
 held 75% of all Claude cache reads; one ran 3,745 turns, another nine days. The rule was written
@@ -210,7 +210,7 @@ def main():
             'hookEventName': 'PreToolUse',
             'permissionDecision': 'deny',
             'permissionDecisionReason': (
-                f'Context is {k}k, past the {hard_at // 1000}k backstop for {kind} sessions (AGENTS.md '
+                f'Context is {k}k, past the {hard_at // 1000}k backstop for {kind} sessions (owner overlay '
                 'hand-off rule). Allowed now: saving work (git status/diff/log/add/commit/push), opening '
                 'or arming the PR (gh pr create, sm-gh automerge), posting a comment (gh issue|pr '
                 'comment), editing memory files, and handing work on (start_session, '
@@ -225,7 +225,7 @@ def main():
             'hookEventName': 'PostToolUse',
             'additionalContext': (
                 f'Context is {k}k, past the {nudge_at // 1000}k hand-off line for {kind} sessions in '
-                'AGENTS.md. Finish the push you are on: get the current PR open and armed (do not '
+                'the owner overlay. Finish the push you are on: get the current PR open and armed (do not '
                 'stop mid-PR, do not start another issue). Hand every remaining task to a fresh '
                 'session with a full brief (start_session), post your stop note, then end. At '
                 f'{hard_at // 1000}k only saving work, comments and hand-offs will be allowed.'),

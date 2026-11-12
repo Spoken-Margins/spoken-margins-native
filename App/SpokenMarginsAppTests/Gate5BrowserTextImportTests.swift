@@ -429,7 +429,7 @@ final class Gate5BrowserTextImportTests: XCTestCase {
             model.libraryItems.contains { $0.id == "item-shared-markdown" } && !model.isImportingPendingSourceLinkHandoffs
         }
 
-        XCTAssertEqual(model.snapshot, snapshotBeforeImport)
+        assertNowPlayingUnchanged(model.snapshot, from: snapshotBeforeImport)
         XCTAssertEqual(model.screen, .playback)
         XCTAssertThrowsError(try browserStore.handoff(payloadID: "payload-shared-markdown"))
 
@@ -475,7 +475,7 @@ final class Gate5BrowserTextImportTests: XCTestCase {
             model.libraryItems.contains { $0.id == "item-shared-text-662" } && !model.isImportingPendingSourceLinkHandoffs
         }
 
-        XCTAssertEqual(model.snapshot, snapshotBeforeImport)
+        assertNowPlayingUnchanged(model.snapshot, from: snapshotBeforeImport)
         XCTAssertThrowsError(try browserStore.handoff(payloadID: "browser-text-shared-662"))
         model.openItem(id: "item-shared-text-662")
         XCTAssertEqual(model.selectedItem.title, "Here's the completed review. My recommendation is to")

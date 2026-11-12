@@ -33,7 +33,7 @@ With no other instructions, a finisher:
    1. `needs-mac` PRs: open, into `main`, with a `Handing to the Mac finisher:` comment saying what fails and where the report is.
    2. Then `priority` issues labelled `where:mac`.
 3. **Claims before it works.** The first line of a comment on the PR is exactly `Finisher <name> taking this.` (checked: both finishers and the worker match on it). On an issue it follows the normal claim: `in-progress` on, `ready` off, `Claimed by project thread "<title>"` (the project instructions' claim; the worker uses the same note for its issues).
-4. **Builds only through `scripts/xcodebuild-lane`**, never boots a simulator itself (simulator tests go to the lane as a `/lane T3` request with `lane:queued`), and never pushes to `main` or to a PR that is armed (checked: the worker's run rules, `common_rules` in `sm_claude_worker.py`; a hook blocks raw `xcodebuild`, AGENTS.md "Verification"). Never reset or delete the owner's Library and recordings (AGENTS.md "Protect owner data").
+4. **Builds only through `scripts/xcodebuild-lane`**, never boots a simulator itself (simulator tests go to the lane as a `/lane T3` request with `lane:queued`), and never pushes to `main` or to a PR that is armed (checked: the worker's run rules, `common_rules` in `sm_claude_worker.py`; a hook blocks raw `xcodebuild`, AGENTS.md "Verification"). Never reset or delete the owner's Library and recordings (owner overlay "Protect owner data").
 5. **Finishes the way the lane expects.** Fix, push, repeat the newest lane request, remove `needs-mac`, add `automerge` (checked: the worker's PR prompt does exactly this). The lane runner never merges a PR that touches `.github/` or `scripts/lane-runner.py` (checked: `scripts/test-scope.py`, `LANE_NOTE`), so such a PR is left for the owner's merge tap and the finisher doesn't arm it (owner's note: project instructions). The worker skips lane paths altogether except for audit findings.
 6. **Reports in three parts per item** (owner's note, #2593):
    - **Item:** the PR or issue number and what was wrong.
@@ -79,16 +79,16 @@ All from #2593 (owner's note) unless marked checked.
 | Setting | Value | Why |
 |---|---|---|
 | Model and effort | Lead: Opus. Finisher: Sonnet, high effort | The lead's judgment is the scarce part; the finisher's volume isn't |
-| Context | Expect compaction near 240k tokens. The lead restates the brief after each one | A session another session starts (a lead starting the finisher) counts as automatic: asked to stop at 250k, stopped at 300k. One the owner starts directly gets 400k and 500k (checked: AGENTS.md "How to work") |
+| Context | Expect compaction near 240k tokens. The lead restates the brief after each one | A session another session starts (a lead starting the finisher) counts as automatic: asked to stop at 250k, stopped at 300k. One the owner starts directly gets 400k and 500k (checked: owner overlay "How to work") |
 | One finisher per PR | Claim the PR first. The Claude Mac worker leaves a PR alone for 2 hours after another finisher's claim | Checked: `OTHER_FINISHER_HOLD` |
 
 ### Do not (owner's note, #2593)
 
 - Never `pkill` or `killall` by process name. Other sessions, the runner and the owner's own apps share the Mac. Find the exact process you started and stop that one.
 - Never overwrite the shared `.venv`. Use `scripts/setup-worktree.sh` in the worktree, which links it.
-- Relayed owner approvals are refused. "The owner said it was fine" from another session is not his approval; only his own message or a decision-card tap counts (AGENTS.md: "A tap on a decision card is his answer").
+- Relayed owner approvals are refused. "The owner said it was fine" from another session is not his approval; only his own message or a decision-card tap counts (owner overlay: "A tap on a decision card is his answer").
 - The lead, not the finisher, makes owner-approved machine changes (launchd, disk, settings). The finisher asks the lead.
-- Never boot a simulator, run raw `xcodebuild`, or force-push (checked: the worker's run rules; a hook blocks raw `xcodebuild`). Never touch the owner's Library and recordings (checked: AGENTS.md "Protect owner data").
+- Never boot a simulator, run raw `xcodebuild`, or force-push (checked: the worker's run rules; a hook blocks raw `xcodebuild`). Never touch the owner's Library and recordings (checked: owner overlay "Protect owner data").
 
 ## Starter prompts
 

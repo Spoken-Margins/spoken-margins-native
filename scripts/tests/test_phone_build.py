@@ -16,11 +16,14 @@ import plistlib
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 import unittest.mock
 
 SCRIPTS = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(SCRIPTS))
+import sm_paths  # noqa: E402
 INSTALLER = SCRIPTS / 'install-phone-build.command'
 
 
@@ -2326,7 +2329,7 @@ class PlanGroupingTests(unittest.TestCase):
     def test_held_milestones_wait_outside_the_ten_minutes(self):
         # fdda29c: a Later diagnostics fix led the plan and two Co-op Experience checks filled it, though co-op
         # work starts only after Solid Ground ships (docs/decisions.md, owner 2026-10-08). The milestones are that
-        # day's; CurrentFocusTests checks the real constants against AGENTS.md.
+        # day's; CurrentFocusTests checks the real constants against the owner overlay.
         self.module.CURRENT_MILESTONE = 'Solid Ground'
         self.module.HELD_MILESTONES = frozenset({'Co-op Experience', 'Later', 'Public beta'})
         later = self.issue(1682, 'Play an article until the phone is warm.', phone=True)
@@ -3353,18 +3356,23 @@ class Plan13515daTests(unittest.TestCase):
 
 
 class CurrentFocusTests(unittest.TestCase):
-    """The plan's milestones come from AGENTS.md's "Order of work" line; they drifted for two weeks after the
-    focus moved off Solid Ground (the 13515da plan, 2026-11-04). This fails the next time they disagree."""
+    """The plan's milestones come from the "Order of work" line in the owner overlay (#1854); they drifted for two
+    weeks after the focus moved off Solid Ground (the 13515da plan, 2026-11-04). This fails the next time they
+    disagree, on every machine that has the overlay (the owner's Mac, a cloud session with ops-private beside the
+    checkout). The public checkout alone does not hold the line, so there the test skips."""
 
-    def test_the_milestone_constants_match_agents_md(self):
+    def test_the_milestone_constants_match_the_owner_overlay(self):
+        overlay = sm_paths.owner_overlay(__file__)
+        if overlay is None:
+            self.skipTest('the owner overlay (OWNER.md) is not on this machine')
         module = load_phone_build()
-        agents = (SCRIPTS.parent / 'AGENTS.md').read_text()
+        agents = overlay.read_text()
         line = next(line for line in agents.splitlines() if line.startswith('- **Order of work:**'))
         named = re.findall(r'`([^`]+)`', line)
         self.assertIn(module.CURRENT_MILESTONE, named, line)
         self.assertEqual(named.index(module.CURRENT_MILESTONE), min(
             named.index(m) for m in named if m != 'priority'), 'the current milestone is the first one named')
-        # AGENTS.md no longer says which milestones are held, so phone-build's own list is pinned here: changing it is
+        # The overlay no longer says which milestones are held, so phone-build's own list is pinned here: changing it is
         # a decision to make in this test too (#3707). The held ones are never the order of work's.
         self.assertEqual(module.HELD_MILESTONES, frozenset({'Later', 'Public beta'}))
         for milestone in module.HELD_MILESTONES:
