@@ -75,9 +75,26 @@ enum AddMarginShortcutAction {
         let route = SiriMarginRoute.decide(.init(
             choseItem: itemId != nil, runningSession: await files.runningSession(), playerHasSession: model.hasActiveSession
         ))
+        // Nothing runs: the Margin is kept in a quick session, where the Library's Live row shows it (#3880).
+        func fileAsQuick() async throws -> String {
+            guard let session = await files.fileWrittenMarginAsQuick(text: words, markedAt: now, now: now) else {
+                throw AddMarginShortcutError.notSaved(nil)
+            }
+            NotificationCenter.default.post(name: LiveSessionSpokenMargins.changedOnDisk, object: nil)
+            LiveSessionBoard.shared.refresh()
+            WatchMarginReceiver.shared.processInbox()
+            return SiriMarginRoute.filedName(session)
+        }
         switch route {
-        case .chosenItem, .playerItem:
+        case .chosenItem:
             return try addWrittenMargin(text: words, toItemId: itemId, in: model)
+        case .playerItem:
+            do {
+                return try addWrittenMargin(text: words, toItemId: itemId, in: model)
+            } catch AddMarginShortcutError.nothingRunning {
+                // The player's session ended between the decision and the save: the Margin is kept, not refused.
+                return try await fileAsQuick()
+            }
         case let .liveSession(name):
             guard await files.addWrittenMargin(text: words, markedAt: now) != nil else {
                 throw AddMarginShortcutError.notSaved(nil)
@@ -88,14 +105,7 @@ enum AddMarginShortcutAction {
             WatchMarginReceiver.shared.processInbox()
             return name
         case .quickSession:
-            // Nothing runs: the Margin is kept in a quick session, where the Library's Live row shows it (#3880).
-            guard let session = await files.fileWrittenMarginAsQuick(text: words, markedAt: now, now: now) else {
-                throw AddMarginShortcutError.notSaved(nil)
-            }
-            NotificationCenter.default.post(name: LiveSessionSpokenMargins.changedOnDisk, object: nil)
-            LiveSessionBoard.shared.refresh()
-            WatchMarginReceiver.shared.processInbox()
-            return SiriMarginRoute.filedName(session)
+            return try await fileAsQuick()
         }
     }
 

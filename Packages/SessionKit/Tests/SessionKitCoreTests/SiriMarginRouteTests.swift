@@ -185,14 +185,16 @@ final class SiriMarginRouteTests: XCTestCase {
         XCTAssertTrue(all.isEmpty)
     }
 
-    func testAnOpenScreensStaleSaveKeepsTheQuickMargin() async throws {
+    func testAnOpenScreensStaleSaveKeepsAMarginThatJoinedItsQuickSession() async throws {
         let worker = LiveSessionFileWorker(root: root)
-        let filed = await worker.fileWrittenMarginAsQuick(text: "kept", markedAt: t0, now: t0)
-        var staleScreen = try XCTUnwrap(filed)
-        staleScreen.margins = [] // the screen's copy, opened before the Margin arrived
-        try await worker.save(staleScreen, generation: 1)
-        let stored = await worker.session(id: staleScreen.id)
-        XCTAssertEqual(stored?.margins.map(\.text), ["kept"])
+        let filed = await worker.fileWrittenMarginAsQuick(text: "first", markedAt: t0, now: t0)
+        let first = try XCTUnwrap(filed)
+        try await worker.save(first, generation: 1) // the Library's Live row opened the session with its first Margin
+        let joined = await worker.fileWrittenMarginAsQuick(text: "second", markedAt: t0.addingTimeInterval(20), now: t0.addingTimeInterval(20))
+        XCTAssertEqual(joined?.id, first.id)
+        try await worker.save(first, generation: 2) // the screen's copy, without the second Margin
+        let stored = await worker.session(id: first.id)
+        XCTAssertEqual(stored?.margins.map(\.text), ["first", "second"])
     }
 
     func testTheQuickRouteDoesNotWriteIntoAnEndedNamedSession() async throws {
