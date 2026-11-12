@@ -22,6 +22,9 @@ import Foundation
 //   attestation can't succeed (no entitlement, a development key against the production server) a Share tap would
 //   otherwise orphan a Secure Enclave key and spend a server challenge each time, which Apple advises against (#4135).
 //   During the wait `send` throws `.failed` without asking Apple or the server anything.
+// - A send that gave up at the gate limit is abandoned, and Apple's calls ignore cancellation, so it may wake long
+//   after a later send began. It must change nothing: it checks it was not cancelled after every call that can hang
+//   and before each step that acts, and it forgets only the key it used (#4164).
 
 /// Apple's App Attest calls (`DCAppAttestService`), as the app implements them. A `DCAppAttestService` file must
 /// itself check consent before it makes a key; `scripts/tests/test_server_contact_consent.py` fails if one doesn't.
@@ -56,6 +59,12 @@ public final class AppAttestKeyStore: @unchecked Sendable {
 
     public func forget() {
         defaults.removeObject(forKey: Self.defaultsKey)
+    }
+
+    /// Forgets the saved key only if it is still `keyID`. A send that found its key unusable (or unknown to the server)
+    /// must not delete a newer key that was saved while it was working (#4164).
+    func forget(ifKeyID keyID: String) {
+        if defaults.string(forKey: Self.defaultsKey) == keyID { defaults.removeObject(forKey: Self.defaultsKey) }
     }
 }
 
@@ -171,7 +180,11 @@ public final class AttestedServerClient: @unchecked Sendable {
     private func sendHoldingGate(path: String, body: Data) async throws -> (status: Int, body: Data) {
         var attestedAgain = false
         while true {
+            // `bounded` cancels this work when the gate limit passes. Apple's calls ignore that and may return much
+            // later, when a newer send owns the gate and the key: an abandoned send does nothing more (#4164).
+            try Self.stillWanted()
             let keyID = try await registeredKeyID()
+            try Self.stillWanted()
             let response: (status: Int, body: Data)
             do {
                 response = try await sendOnce(keyID: keyID, path: path, body: body)
@@ -179,14 +192,16 @@ public final class AttestedServerClient: @unchecked Sendable {
                 // A key id came back from a backup or a new phone, but the Secure Enclave key did not. Attest a new
                 // one, once.
                 guard !attestedAgain else { throw AppAttestFailure.failed }
-                store.forget()
+                try Self.stillWanted()
+                store.forget(ifKeyID: keyID)
                 attestedAgain = true
                 continue
             }
             switch response.status {
             case 401 where Self.errorCode(response.body) == "unknown_key" && !attestedAgain:
                 // The server lost this key (its records expire after 90 days). Attest a new one, once.
-                store.forget()
+                try Self.stillWanted()
+                store.forget(ifKeyID: keyID)
                 attestedAgain = true
             case 403:
                 throw AppAttestFailure.refused
@@ -194,6 +209,11 @@ public final class AttestedServerClient: @unchecked Sendable {
                 return response
             }
         }
+    }
+
+    /// `.failed` if this send was abandoned at the gate limit: it then acts on nothing.
+    private static func stillWanted() throws {
+        if Task.isCancelled { throw AppAttestFailure.failed }
     }
 
     /// Runs `work`, and gives up after `seconds` with `.failed` whether or not `work` ever returns. The abandoned work is
@@ -231,6 +251,9 @@ public final class AttestedServerClient: @unchecked Sendable {
         if let saved = store.keyID { return saved }
         let task: Task<String, Error> = try lock.withLock {
             if let registering { return registering }
+            // A registration that finished while this caller was on its way here has saved the key: use it, don't make
+            // a second one beside it.
+            if let saved = store.keyID { return Task { saved } }
             // A request that joins a registration already running shares its outcome; only a new one waits out a failure.
             if let retryAfter = registrationRetryAfter, now() < retryAfter { throw AppAttestFailure.failed }
             let created = Task { try await self.register() }
@@ -318,12 +341,15 @@ public final class AttestedServerClient: @unchecked Sendable {
         do {
             assertion = try await provider.generateAssertion(keyID, clientDataHash: Data(SHA256.hash(data: clientData)))
         } catch AppAttestFailure.keyUnusable {
+            // Whoever abandoned this send, the key it used is not theirs to replace (the caller checks again).
             throw KeyUnusable()
         } catch {
             // A one-off Apple error is not a lost key: replacing the key here would hand a paused sender a clean
             // standing under a new identity.
             throw AppAttestFailure.failed
         }
+        // The assertion's counter must reach the server in order: an abandoned send does not post a stale one.
+        try Self.stillWanted()
         let headers = [
             "Content-Type": "application/json",
             "X-SM-Key-Id": keyID,
