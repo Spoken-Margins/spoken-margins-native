@@ -101,7 +101,7 @@ extension Gate1AppModel {
         pendingImportedCommentary = nil
         let returnsSource = sharedMarginReturn.promptDismissed()
         if returnsSource, snapshot.status == .paused {
-            resumePlayback()
+            resumePlayback(afterMargin: true)
         }
     }
 
@@ -229,7 +229,7 @@ extension Gate1AppModel {
         stopInterjectionAudioPlayback()
         marginVoicePlayer.forgetSharedMargin()
         sharedMarginReturn.voiceStopped()
-        if returnsSource, snapshot.status == .paused { resumePlayback() }
+        if returnsSource, snapshot.status == .paused { resumePlayback(afterMargin: true) }
     }
 
     func reconcileImportedCommentary(previous: SessionSnapshot, current: SessionSnapshot) {
@@ -405,7 +405,7 @@ extension Gate1AppModel: MarginVoicePlayerHost {
         let returnsSource = sharedMarginReturn.returnsSourceWhenVoiceEnds(resumeSource: true)
         stopInterjectionAudioPlayback()
         guard returnsSource, snapshot.status == .paused else { return }
-        resumePlayback()
+        resumePlayback(afterMargin: true)
         if let playedID, let playedSessionID {
             continueWithLaterMargins(afterOwnMarginID: playedID, sessionID: playedSessionID, skipping: recordedOver)
         }
