@@ -133,7 +133,7 @@ func serve(args []string) error {
 	installURL := fs.String("links-install-url", "", "join guide path such as /join/, App Store listing or TestFlight invitation (required for links)")
 	relayOrigins := fs.String("relay-origins", "", "comma-separated web app origins that may use the feed relay (required for relay)")
 	linkOrigins := fs.String("link-origins", "", "comma-separated web app origins that may read sealed link packets and previews (CORS); empty sends no CORS headers")
-	requirePermit := fs.Bool("links-require-permit", false, "refuse a link upload that carries no sender permit (#2239); leave off until the app sends permits")
+	requirePermit := fs.Bool("links-require-permit", false, "refuse a link upload that carries no sender permit (#2239). Do not turn on yet: builds before the permit, phones without App Attest, and any phone whose sender check fails send none, and the app reads the refusal as \"busy\"; see #4134")
 	linkWebURL := fs.String("links-web-url", "", "origin of the web app whose page plays a share link (https://app.example.com); empty keeps the share page text only")
 	var mf mapsFlags
 	mf.register(fs)

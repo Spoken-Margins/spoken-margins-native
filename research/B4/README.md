@@ -72,9 +72,11 @@ week, a month, then permanent) has someone to pause. The flow:
    the sender's file in `state/senders/senders` and deletes the tie: keyed hashes of link
    ids with times, the ladder step and a "tell them" flag. No category, reporter, content or install key id is kept.
 4. A link made without a permit is not attributed and counts against nobody. That is
-   today's behaviour and the default, so the app that exists keeps working. Start
-   `serve -links-require-permit` once the app sends permits; then an upload with none
-   is 403 `permit_required`.
+   today's behaviour and the default, so the app that exists keeps working. With
+   `serve -links-require-permit` an upload with none is 403 `permit_required`. The
+   app sends permits since #4130, but don't turn it on yet: older builds, phones
+   without App Attest and any phone whose sender check fails send none, and the app
+   shows that refusal as "busy". #4134 lists what has to land first.
 
 What this does not do: DeviceCheck bits and the server-signed "sharing paused until"
 token are the app's and Apple's side; a reinstall makes a new install key and so a
