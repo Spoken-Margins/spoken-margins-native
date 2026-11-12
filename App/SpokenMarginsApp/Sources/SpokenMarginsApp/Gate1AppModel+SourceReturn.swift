@@ -26,8 +26,12 @@ extension Gate1AppModel {
         let sessionId = snapshot.sessionId
         let targetId = snapshot.targetId
         let pausedAtMs = snapshot.currentMediaTimeMs // a seek, skip, Play or Pause by the listener moves this, and then the source is theirs
+        // A text or PDF source has no media time, so its place is the text offset and progress.
+        let pausedAtText = snapshot.currentTextStart
+        let pausedAtPercent = snapshot.progressPercent
         let sourceIsStillOwed: @MainActor () -> Bool = { [weak self] in
-            self?.sourceIsStillOwedAfterMargin(sessionId: sessionId, targetId: targetId, pausedAtMs: pausedAtMs) ?? false
+            self?.sourceIsStillOwedAfterMargin(sessionId: sessionId, targetId: targetId, pausedAtMs: pausedAtMs,
+                                         pausedAtText: pausedAtText, pausedAtPercent: pausedAtPercent) ?? false
         }
         let resumedAtOnce = Self.marginReturnResume.resume(
             stillWaiting: sourceIsStillOwed,
@@ -68,11 +72,14 @@ extension Gate1AppModel {
 
     /// True while the source sits paused where the Margin left it and nothing else has the transport. The same owners
     /// `resumePlayback()` hands Play to before it starts the source: a Margin or moment voice, your own Margin's voice,
-    /// a Skim bridge, a recording.
-    private func sourceIsStillOwedAfterMargin(sessionId: String?, targetId: String?, pausedAtMs: Int?) -> Bool {
+    /// a Skim bridge, a recording; and not an offer card up (the offer paused the source). A text or PDF source is
+    /// held to its text offset and progress, since it has no media time.
+    private func sourceIsStillOwedAfterMargin(sessionId: String?, targetId: String?, pausedAtMs: Int?,
+                                              pausedAtText: Int?, pausedAtPercent: Int) -> Bool {
         snapshot.status == .paused && snapshot.sessionId == sessionId && snapshot.targetId == targetId
-            && snapshot.currentMediaTimeMs == pausedAtMs && !snapshot.isRecording
-            && playingImportedCommentary == nil && !marginVoiceIsHeldForRecording
+            && snapshot.currentMediaTimeMs == pausedAtMs && snapshot.currentTextStart == pausedAtText
+            && snapshot.progressPercent == pausedAtPercent && !snapshot.isRecording
+            && pendingImportedCommentary == nil && playingImportedCommentary == nil && !marginVoiceIsHeldForRecording
             && marginMomentConductor?.isPlayingVoice != true && marginMomentConductor?.isVoicePaused != true
             && !ownMarginVoiceHasTransport && snapshot.skimBridgeState == nil
     }
