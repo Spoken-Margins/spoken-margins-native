@@ -31,7 +31,7 @@ extension Gate1AppModel {
         guard UserDefaults.standard.bool(forKey: FirstRunVoiceDefault.downloadDueKey),
               !UITestingHooks.isActive, !Self.isRunningUnitTests else { return }
         let voices = requireVoiceDownloads()
-        let downloader = voices.firstRunDownloader ?? FirstRunVoiceDownloader(
+        let downloader = (voices.firstRunDownloader as? FirstRunVoiceDownloader) ?? FirstRunVoiceDownloader(
             voices: voices,
             connectivity: connectivity,
             context: { [weak self] in
