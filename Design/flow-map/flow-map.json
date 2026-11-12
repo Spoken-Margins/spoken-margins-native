@@ -2678,8 +2678,8 @@
    "line": 71,
    "anchor": "Button(\"Export this Margin\", systemImage: \"doc.text\")",
    "present_line": null,
-   "condition": "Margin has a note (MarginMarkdownShare.hasNote)",
-   "notes": "Exports a Markdown file for yourself or your tools, not a .spokenmargins packet."
+   "condition": "Margin has a note (MarginMarkdownShare.hasNote), or an active voice Margin with a recording",
+   "notes": "Exports for yourself or your tools, not a .spokenmargins packet: the Markdown note, or for a voice Margin with its recording on this phone asks Text only or Audio and text first (MarginExport in SessionKit)."
   },
   {
    "id": "e159",

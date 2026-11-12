@@ -114,7 +114,11 @@ public enum MarginMarkdownShare {
     /// `12m04s` (or `1h02m03s`) from the media time; the rough percent when there is none.
     /// No colon: Files and some share targets treat `:` as a path separator.
     static func position(of note: ExportInterjection) -> String {
-        guard let ms = note.mediaTimeMs else { return "\(note.roughPercent)%" }
+        position(mediaTimeMs: note.mediaTimeMs, roughPercent: note.roughPercent)
+    }
+
+    static func position(mediaTimeMs: Int?, roughPercent: Int) -> String {
+        guard let ms = mediaTimeMs else { return "\(roughPercent)%" }
         let seconds = max(0, ms / 1000)
         let (hours, minutes, rest) = (seconds / 3600, seconds / 60 % 60, seconds % 60)
         let tail = String(format: "%02dm%02ds", minutes, rest)
