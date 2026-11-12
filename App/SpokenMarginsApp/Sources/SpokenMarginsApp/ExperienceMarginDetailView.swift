@@ -9,7 +9,11 @@ struct ExperienceMarginDetailView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var pendingNavigation: NavigationIntent?
     @State private var showsManagement = false
-    @State private var markdownFileURL: URL?
+    @State private var exportShare: MarginExportShare?
+    /// Held while the listener reads that the recording couldn't be read, so the share sheet does not open under the alert.
+    @State private var exportAfterNotice: MarginExportShare?
+    @State private var showsExportQuestion = false
+    @State private var showsRecordingLeftOut = false
     @State private var isPreparingMarkdown = false
     let row: MarginRow
 
@@ -49,6 +53,44 @@ struct ExperienceMarginDetailView: View {
         }
     }
 
+    /// "Export this Margin" (#3211). With no choice given it decides what to do from what the Margin has; the question's
+    /// answers come back here with the choice made.
+    private func exportThisMargin(_ choice: MarginExportChoice? = nil) {
+        guard !isPreparingMarkdown else { return }
+        isPreparingMarkdown = true
+        let row = current
+        Task {
+            defer { isPreparingMarkdown = false }
+            let offer = await model.marginExportOffer(for: row.interjection)
+            // A sheet or alert raised while the question is still closing is dropped, and text is ready almost at once.
+            if choice != nil { try? await Task.sleep(for: SpokenNoteExportModel.afterAlertCloses) }
+            switch (choice, offer) {
+            case (_, .nothing):
+                model.reportFailure("This Margin has no words or recording on this phone to export yet.")
+            case (nil, .askTextOrAudio):
+                // The menu is still closing; a dialog raised under it is dropped.
+                try? await Task.sleep(for: SpokenNoteExportModel.afterAlertCloses)
+                showsExportQuestion = true
+            case (_, .audioOnly), (.some(.audioAndText), _):
+                // A recording that has gone since the question was asked comes back as words only, and says so.
+                guard let files = await model.prepareMarginAudioAndTextExport(for: row.interjection, itemTitle: row.itemTitle) else { return }
+                // The folder is removed off the main thread when the share sheet closes.
+                let share = MarginExportShare(urls: files.shareURLs, discard: { Task.detached(priority: .utility) { files.discard() } })
+                // Audio was wanted (picked, or the only thing there) and did not come out: the recording is gone or
+                // unreadable. Say so before offering the words.
+                if files.recordingLeftOut || files.audioURL == nil {
+                    exportAfterNotice = share
+                    showsRecordingLeftOut = true
+                } else {
+                    exportShare = share
+                }
+            default: // text only: a written Margin, a voice Margin whose recording is gone, or "Text only" picked
+                guard let url = await model.prepareMarginMarkdownFileURL(for: [row.interjection], asItem: false) else { return }
+                exportShare = MarginExportShare(urls: [url], discard: { Task.detached(priority: .utility) { MarginMarkdownShare.discardShare(url) } })
+            }
+        }
+    }
+
     /// Rare actions live here so the screen is not a stack of look-alike buttons (#1980).
     private var moreMenu: some View {
         Menu {
@@ -66,19 +108,12 @@ struct ExperienceMarginDetailView: View {
                 .buttonStyle(.automatic)
                 .accessibilityIdentifier("marginDetail.share.button")
             }
-            // Export means yourself or your tools: this Margin's note as a Markdown file (#1866, #3211).
-            if MarginMarkdownShare.hasNote(current.interjection) {
-                Button("Export this Margin", systemImage: "doc.text") {
-                    guard !isPreparingMarkdown else { return }
-                    isPreparingMarkdown = true
-                    let margin = current.interjection
-                    Task {
-                        markdownFileURL = await model.prepareMarginMarkdownFileURL(for: [margin], asItem: false)
-                        isPreparingMarkdown = false
-                    }
-                }
-                .buttonStyle(.automatic)
-                .accessibilityIdentifier("marginDetail.exportMarkdown.button")
+            // Export means yourself or your tools (#1866, #3211): this Margin's note as a Markdown file. A voice Margin with
+            // its recording on this phone asks first whether to take the audio too; one with no words yet exports its audio.
+            if MarginMarkdownShare.hasNote(current.interjection) || (current.interjection.status == "active" && current.canPlayRecording) {
+                Button("Export this Margin", systemImage: "doc.text") { exportThisMargin() }
+                    .buttonStyle(.automatic)
+                    .accessibilityIdentifier("marginDetail.exportMarkdown.button")
             }
             if model.selectedItem.id == current.interjection.itemId,
                model.snapshot.sessionId == current.interjection.sessionId {
@@ -181,8 +216,36 @@ struct ExperienceMarginDetailView: View {
                 }
             }
             .buttonStyle(MarginDetailActionButtonStyle())
-            .fileShareSheet($markdownFileURL)
+            .marginExportShareSheet($exportShare)
+            .confirmationDialog("What do you want to export?", isPresented: $showsExportQuestion, titleVisibility: .visible) {
+                Button("Text only") { exportThisMargin(.textOnly) }
+                    .accessibilityIdentifier("marginDetail.export.textOnly")
+                Button("Audio and text") { exportThisMargin(.audioAndText) }
+                    .accessibilityIdentifier("marginDetail.export.audioAndText")
+                Button("Cancel", role: .cancel) {}
+            }
+            .alert("The recording can't be read", isPresented: $showsRecordingLeftOut) {
+                Button("Export the Words") {
+                    // The share sheet waits for the alert to finish closing; one raised while it still goes is dropped.
+                    let share = exportAfterNotice
+                    exportAfterNotice = nil
+                    Task {
+                        try? await Task.sleep(for: SpokenNoteExportModel.afterAlertCloses)
+                        exportShare = share
+                    }
+                }
+                Button("Cancel", role: .cancel) {
+                    exportAfterNotice?.discard()
+                    exportAfterNotice = nil
+                }
+            } message: {
+                Text("This Margin's recording isn't readable on this phone, so only its words can be exported.")
+            }
             .modifier(SheetFeedbackPresentation())
+            .onDisappear {
+                exportAfterNotice?.discard()
+                exportAfterNotice = nil
+            }
             .onDisappear {
                 // Having been opened is what clears the mark (#1976); it stays while the note is on screen.
                 guard CutShortMargins.shared.clear(sessionId: row.interjection.sessionId, interjectionId: row.interjection.id) else { return }
@@ -273,3 +336,4 @@ private struct MarginDetailPressedButtonStyle: ButtonStyle {
             .opacity(highlighted ? 0.75 : 1)
     }
 }
+
