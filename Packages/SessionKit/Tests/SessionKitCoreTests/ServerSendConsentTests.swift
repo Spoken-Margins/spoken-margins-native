@@ -51,7 +51,7 @@ final class ServerSendConsentTests: XCTestCase {
     func testTheWordsNameWhatTheUploadCarriesAndWhereTheFileGoes() {
         let text = ShareLinkConsentCopy.message
         // Each thing the upload holds (docs/legal/privacy-policy-draft.md row 14) and the way out.
-        for phrase in ["Margins", "audio and text", "excerpt of the source", "title and address", "sender name", "key that is only in the link", "30 days", "random code for this app", "tie each link to this install", "deleted with the app", "send the file instead"] {
+        for phrase in ["Margins", "audio and text", "excerpt of the source", "title and address", "sender name", "key that is only in the link", "30 days", "random code for this app", "tie each link to this install", "Deleting the app deletes your phone's copy", "90 days without use", "send the file instead"] {
             XCTAssertTrue(text.contains(phrase), "the consent text should say: \(phrase)")
         }
         XCTAssertFalse(ShareLinkConsentCopy.title.isEmpty)

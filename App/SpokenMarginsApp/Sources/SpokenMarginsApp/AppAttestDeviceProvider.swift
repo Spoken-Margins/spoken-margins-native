@@ -32,7 +32,12 @@ struct AppAttestDeviceProvider: AppAttestKeyProvider {
 
     func generateAssertion(_ keyID: String, clientDataHash: Data) async throws -> Data {
         guard ServerSendConsent.hasConsented(to: .shareLinks) else { throw AppAttestFailure.needsConsent }
-        return try await DCAppAttestService.shared.generateAssertion(keyID, clientDataHash: clientDataHash)
+        do {
+            return try await DCAppAttestService.shared.generateAssertion(keyID, clientDataHash: clientDataHash)
+        } catch let error as DCError where error.code == .invalidKey {
+            // The key id is saved in UserDefaults and came back without its Secure Enclave key: make a new one.
+            throw AppAttestFailure.keyUnusable
+        }
     }
 }
 

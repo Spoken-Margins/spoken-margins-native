@@ -54,7 +54,8 @@ public enum ShareLinkConsentCopy {
 
         To make a link, your phone also makes a random code for this app. Our server uses it to check that the \
         request comes from Spoken Margins, and to tie each link to this install so a report of a link can be \
-        counted. The code holds no name. It is deleted with the app.
+        counted. The code holds no name. Deleting the app deletes your phone's copy, and our server forgets the \
+        code after 90 days without use.
 
         You can send the file instead. It goes straight to your friend and never touches our server.
         """

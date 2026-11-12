@@ -65,7 +65,9 @@ public enum ShareLinkSenderCheck {
             guard let standing = decode(answer.body) else { return .failed(.failed) }
             return .standing(standing)
         case 429: return .failed(.busy)
-        case 503: return .failed(.unavailable)
+        // 503 here is the attest service or the sender ledger being off, which the server means as "make the link
+        // unattributed" (smserver: "without it links still work, unattributed"). If links themselves are off, the
+        // upload's own 503 says so.
         default: return .notChecked
         }
     }
@@ -99,7 +101,8 @@ public enum ShareLinkSenderCheck {
         fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         if let date = fractional.date(from: text) { return date }
         // Nanosecond fractions are longer than the formatter takes: cut the fraction to milliseconds.
-        guard let dot = text.firstIndex(of: "."), let zone = text.firstIndex(where: { $0 == "Z" || $0 == "+" || $0 == "-" }), zone > dot else { return nil }
+        guard let dot = text.firstIndex(of: "."),
+              let zone = text[dot...].firstIndex(where: { $0 == "Z" || $0 == "+" || $0 == "-" }) else { return nil }
         let fraction = text[text.index(after: dot)..<zone].prefix(3)
         return fractional.date(from: String(text[..<dot]) + "." + fraction + String(text[zone...]))
     }

@@ -66,6 +66,9 @@ public enum AppAttestFailure: Error, Equatable, Sendable {
     case offline
     /// Apple's call failed, or the server answered something unexpected.
     case failed
+    /// Apple has no key for the saved key id (`DCError.invalidKey`): the id came back from a backup or a new phone.
+    /// This is the only signing failure that replaces the key; any other leaves the install's identity as it is.
+    case keyUnusable
 }
 
 /// Makes requests the server can tie to a real install without learning who it is.
@@ -180,7 +183,7 @@ public final class AttestedServerClient: @unchecked Sendable {
         return keyID
     }
 
-    /// Apple would not sign with the saved key.
+    /// Apple says it has no key for the saved key id.
     private struct KeyUnusable: Error {}
 
     private struct Challenge: Decodable {
@@ -195,8 +198,12 @@ public final class AttestedServerClient: @unchecked Sendable {
         let assertion: Data
         do {
             assertion = try await provider.generateAssertion(keyID, clientDataHash: Data(SHA256.hash(data: clientData)))
-        } catch {
+        } catch AppAttestFailure.keyUnusable {
             throw KeyUnusable()
+        } catch {
+            // A one-off Apple error is not a lost key: replacing the key here would hand a paused sender a clean
+            // standing under a new identity.
+            throw AppAttestFailure.failed
         }
         let headers = [
             "Content-Type": "application/json",

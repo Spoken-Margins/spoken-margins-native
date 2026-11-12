@@ -32,8 +32,11 @@ final class ShareLinkSenderCheckTests: XCTestCase {
     /// The server's dates, with and without a fraction and at any precision.
     func testTheServersDatesAllParse() {
         let whole = Date(timeIntervalSince1970: 1_795_082_400)
-        for text in ["2026-11-19T10:00:00Z", "2026-11-19T10:00:00.000Z", "2026-11-19T10:00:00.000000000Z", "2026-11-19T10:00:00+00:00"] {
-            XCTAssertEqual(ShareLinkSenderCheck.parseDate(text), whole, text)
+        for text in ["2026-11-19T10:00:00Z", "2026-11-19T10:00:00.000Z", "2026-11-19T10:00:00.000000000Z", "2026-11-19T10:00:00+00:00", "2026-11-19T10:00:00.123456789+00:00", "2026-11-19T05:00:00.123456789-05:00"] {
+            let parsed = ShareLinkSenderCheck.parseDate(text)
+            XCTAssertNotNil(parsed, text)
+            // Same instant to the second; a fraction only adds under one.
+            XCTAssertEqual(parsed?.timeIntervalSince(whole) ?? -1, 0, accuracy: 0.999, text)
         }
         for text in ["", "tomorrow", "2026-11-19", "2026-11-19T10:00:00.Z"] {
             XCTAssertNil(ShareLinkSenderCheck.parseDate(text), text)
@@ -265,7 +268,8 @@ final class ShareLinkSenderCheckLiveTests: XCTestCase {
         XCTAssertEqual(apple, .notChecked)
         let registration = await outcome(registerStatus: 401, body: "")
         XCTAssertEqual(registration, .notChecked)
-        for status in [400, 401, 404, 500, 502] {
+        // 503 is the attest service or the sender ledger switched off: links still work, unattributed.
+        for status in [400, 401, 404, 500, 502, 503] {
             let other = await outcome(status: status, body: #"{"error":"x"}"#)
             XCTAssertEqual(other, .notChecked, "\(status)")
         }
@@ -278,8 +282,6 @@ final class ShareLinkSenderCheckLiveTests: XCTestCase {
         XCTAssertEqual(blocked, .failed(.unavailable))
         let limited = await outcome(status: 429, body: #"{"error":"rate_limited"}"#)
         XCTAssertEqual(limited, .failed(.busy))
-        let off = await outcome(status: 503, body: #"{"error":"disabled"}"#)
-        XCTAssertEqual(off, .failed(.unavailable))
         let garbled = await outcome(body: "nonsense")
         XCTAssertEqual(garbled, .failed(.failed))
         let noConsent = await outcome(consent: false, body: "")

@@ -17,6 +17,8 @@ final class AppAttestClientTests: XCTestCase {
         private(set) var attestedHashes: [Data] = []
         private(set) var assertedHashes: [Data] = []
         var failAttest = false
+        /// A one-off Apple error while signing, with the key itself fine.
+        var failAssertion = false
         /// Key ids Apple has no key for (a key id restored from a backup).
         var unknownToApple: Set<String> = []
         init(supported: Bool = true) { self.supported = supported }
@@ -33,7 +35,8 @@ final class AppAttestClientTests: XCTestCase {
         }
         func generateAssertion(_ keyID: String, clientDataHash: Data) async throws -> Data {
             try lock.withLock {
-                if unknownToApple.contains(keyID) { throw URLError(.cancelled) }
+                if unknownToApple.contains(keyID) { throw AppAttestFailure.keyUnusable }
+                if failAssertion { throw URLError(.cancelled) }
                 assertedHashes.append(clientDataHash)
             }
             return Data("assertion".utf8)
@@ -210,6 +213,24 @@ final class AppAttestClientTests: XCTestCase {
         XCTAssertEqual(answer.status, 200)
         XCTAssertNotEqual(store.keyID, restored)
         XCTAssertEqual(provider.counts.keys, 1)
+    }
+
+    /// A paused sender must not shed its standing by a transient Apple error: the key stays, the request fails.
+    func testAOneOffAppleErrorWhileSigningKeepsTheKeyAndTheIdentity() async throws {
+        let provider = Provider(), server = Server()
+        let store = AppAttestKeyStore(defaults: defaults())
+        let attested = client(provider, server, store: store)
+        _ = try await attested.send(path: "/api/v1/links/sender", body: Data())
+        let kept = try XCTUnwrap(store.keyID)
+        provider.failAssertion = true
+        do {
+            _ = try await attested.send(path: "/api/v1/links/sender", body: Data())
+            XCTFail("should throw")
+        } catch {
+            XCTAssertEqual(error as? AppAttestFailure, .failed)
+        }
+        XCTAssertEqual(store.keyID, kept)
+        XCTAssertEqual(provider.counts.keys, 1, "no new identity was made")
     }
 
     func testAnAssertionThatKeepsFailingIsAFailureNotALoop() async {
