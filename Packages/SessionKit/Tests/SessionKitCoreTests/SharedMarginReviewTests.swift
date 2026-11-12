@@ -10,24 +10,26 @@ final class SharedMarginReviewTests: XCTestCase {
 
     private func layer(
         _ id: String, label: String? = "Ana", enabled: Bool = true, muted: Bool = false,
-        status: ImportedSourceResolutionStatus = .resolved, deleted: Bool = false
+        status: ImportedSourceResolutionStatus = .resolved, deleted: Bool = false, passFinished: Bool = false
     ) -> ImportedCommentaryLayer {
         ImportedCommentaryLayer(
             id: id, itemId: "item", packageDigest: "digest-\(id)", packageId: "package-\(id)",
             itemIdentity: SharedItemIdentity(itemType: .podcast, title: "Episode", durationMs: 1_800_000),
             displayLabel: label, importedAt: early, sourceResolutionStatus: status,
-            isEnabled: enabled, isMuted: muted, deletedAt: deleted ? early : nil
+            isEnabled: enabled, isMuted: muted, deletedAt: deleted ? early : nil,
+            resolvedRecipientEditionSHA256: passFinished ? "edition-digest" : nil
         )
     }
 
     private func margin(
         _ id: String, in layerId: String = "ana", at ms: Int? = 60_000,
         evidence: AnchorResolutionEvidenceClass = .acousticVerified, voice: Bool = true,
-        heard: Bool = false, createdAt: Date? = nil, replyLinks: [MarginReplyLink]? = nil, words: String = "Words"
+        heard: Bool = false, createdAt: Date? = nil, replyLinks: [MarginReplyLink]? = nil, words: String = "Words",
+        senderMs: Int? = nil
     ) -> ImportedCommentaryInterjection {
         ImportedCommentaryInterjection(
             id: id, layerId: layerId, packageScopedId: id, createdAt: createdAt ?? early,
-            anchorEvidence: PortableAnchorEvidence(anchorType: .media), approvedTranscript: words,
+            anchorEvidence: PortableAnchorEvidence(anchorType: .media, mediaTimeMs: senderMs), approvedTranscript: words,
             // As an import builds them (`SharingFoundation`): a written Margin has no recording and so no length.
             audioPath: voice ? "ImportedCommentary/\(id).m4a" : nil, audioDurationMs: voice ? 4_000 : nil,
             resolution: ImportedAnchorResolution(evidenceClass: evidence, localMediaTimeMs: ms, confidence: 1),
@@ -48,6 +50,35 @@ final class SharedMarginReviewTests: XCTestCase {
         XCTAssertEqual(ids(SharedMarginReview.entriesBehind(entries, placeMs: 120_001)), ["passed", "here"])
         XCTAssertEqual(ids(SharedMarginReview.entriesBehind(entries, placeMs: 1_200_000)), ["passed", "here", "ahead"])
         XCTAssertEqual(ids(SharedMarginReview.entriesBehind(entries, placeMs: nil)), ["passed", "here", "ahead"], "place unknown: ask, as before")
+    }
+
+    /// #4097: a podcast layer waits for its placement pass until the episode's audio has been matched, and its Margins
+    /// have no place in this copy until then. The automatic prompts play them at the sender's time (#3059); the review
+    /// list left them out, so a just-imported packet showed Continue, asked nothing and went on past every Margin.
+    func testMarginsStillWaitingForTheirPlacementPassAreOfferedAtTheSendersTime() {
+        let waiting = [margin("a", at: nil, evidence: .unresolved, senderMs: 134_000),
+                       margin("b", at: nil, evidence: .unresolved, senderMs: 487_000)]
+        let entries = SharedMarginReview.entries(layers: [layer("ana")], records: ["ana": waiting])
+        XCTAssertEqual(ids(entries), ["a", "b"])
+        XCTAssertEqual(entries.map(\.mediaTimeMs), [134_000, 487_000], "the sender's time, until the pass places them")
+        XCTAssertEqual(entries.map(\.isApproximate), [true, true])
+        // A listener at the end of the episode is past every one of them, so Continue asks (#474).
+        XCTAssertEqual(SharedMarginReview.entriesBehind(entries, placeMs: 1_800_000).count, 2)
+    }
+
+    /// The sender's time is a stand-in only until a pass has run; after it, a Margin the pass couldn't place is not
+    /// played at a guess, and one it did place plays where it was placed.
+    func testAFinishedPassLeavesOutWhatItCouldNotPlaceAndKeepsWhatItPlaced() {
+        let records = [margin("lost", at: nil, evidence: .unresolved, senderMs: 134_000),
+                       margin("absent", at: nil, evidence: .absentFromRecipientEdition, senderMs: 200_000),
+                       margin("placed", at: 300_000, senderMs: 290_000)]
+        let afterPass = SharedMarginReview.entries(layers: [layer("ana", passFinished: true)], records: ["ana": records])
+        XCTAssertEqual(ids(afterPass), ["placed"])
+        XCTAssertEqual(afterPass.map(\.mediaTimeMs), [300_000], "placed, not the sender's time")
+        XCTAssertEqual(afterPass.map(\.isApproximate), [false])
+        // Before the pass, the one it ruled out as absent from this edition is still left out.
+        let beforePass = SharedMarginReview.entries(layers: [layer("ana")], records: ["ana": records])
+        XCTAssertEqual(ids(beforePass), ["lost", "placed"])
     }
 
     func testOnlyMarginsTheListenerHasntHeardAreOffered() {

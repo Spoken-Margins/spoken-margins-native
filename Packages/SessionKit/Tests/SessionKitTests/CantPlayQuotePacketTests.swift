@@ -88,7 +88,9 @@ final class CantPlayQuotePacketTests: XCTestCase {
 
     func testAnEpisodeNeverDownloadedStillOffersItsMarginsAtTheSendersTime() throws {
         let (layers, records) = try importedUnplaced()
-        XCTAssertEqual(SharedMarginReview.entries(layers: layers, records: records), [], "the bug: nothing is placed, so the ordinary entries are empty")
+        // #4097: the ordinary entries no longer need a placement either. While the layer awaits its pass they read the
+        // sender's time, as the prompts do, so a just-imported packet offers its Margins before the pass has run.
+        XCTAssertEqual(SharedMarginReview.entries(layers: layers, records: records).map(\.mediaTimeMs), [720_000])
         let entries = SharedMarginReview.entriesWithoutEpisode(layers: layers, records: records, asking: false)
         XCTAssertEqual(entries.map(\.mediaTimeMs), [720_000])
         XCTAssertTrue(entries.allSatisfy(\.isApproximate), "the sender's time, not a placement")

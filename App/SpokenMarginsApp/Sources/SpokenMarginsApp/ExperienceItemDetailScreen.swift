@@ -454,7 +454,7 @@ struct ExperienceItemDetailScreen: View {
 
     private var hasFinishedSession: Bool {
         guard let session = model.selectedItemPreferredContinuationSession else { return false }
-        return session.status == "finished" || session.phase == .finished || session.completionPercent >= 100
+        return !SessionContinuation.continueResumes(session)
     }
 
     private var overview: some View {

@@ -88,7 +88,7 @@ extension Gate1AppModel {
     private func ensureSessionForSelectedItem(_ engine: SessionEngine) throws -> Bool {
         try prepareSourceMediaPlayback(itemId: activeItemId)
         if let session = engine.currentSession, session.itemId == activeItemId,
-           session.status != "finished", session.phase != .finished, session.completionPercent < 100 {
+           SessionContinuation.continueResumes(session) {
             return false
         }
         resetMixWithOtherAudioForNewSession()

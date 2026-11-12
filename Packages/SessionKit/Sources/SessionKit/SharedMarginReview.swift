@@ -67,12 +67,16 @@ public enum SharedMarginReview {
             let layerRecords = records[layer.id] ?? []
             guard SharedMarginPrompts.isLayerPlaybackEligible(layer, records: layerRecords) else { return [] }
             return layerRecords.compactMap { record -> Entry? in
-                guard record.isNewToListener, SharedMarginAudio.canOffer(record),
-                      SharedMarginPrompts.isPlayable(record.resolution),
-                      let mediaTimeMs = record.resolution.localMediaTimeMs, mediaTimeMs >= 0 else { return nil }
+                // The same test and the same time the automatic prompts use. A podcast layer waits for its placement
+                // pass until the episode's audio has been matched, and until then a Margin plays at the sender's time
+                // (#3059). Asking for a placed Margin here left a just-imported packet with nothing to hear: the item
+                // screen said Continue, Continue asked nothing, and the episode went on past every Margin (#4097).
+                guard record.isNewToListener, SharedMarginPrompts.isPlayable(record, in: layer),
+                      let mediaTimeMs = SharedMarginPrompts.mediaTimeMs(record, in: layer), mediaTimeMs >= 0 else { return nil }
                 return Entry(
                     layer: layer, interjection: record, mediaTimeMs: mediaTimeMs,
-                    isApproximate: record.resolution.evidenceClass == .mapInterpolated
+                    isApproximate: record.resolution.localMediaTimeMs == nil // the sender's time, not yet placed
+                        || record.resolution.evidenceClass == .mapInterpolated
                         || record.resolution.evidenceClass == .timestampFallback,
                     replyContext: contexts[record.id]
                 )
