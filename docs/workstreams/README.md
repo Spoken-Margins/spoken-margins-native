@@ -12,7 +12,7 @@ Status never lives in these files. It lives in GitHub: one tracking issue per st
 
 ## Reading a brief's "Done when"
 
-A milestone's "Done when" is met through PRs, and a PR is done when it's armed: `automerge` on, plus a `/lane T3` request when the diff needs one (`AGENTS.md`, [lane-request skill](../../.claude/skills/lane-request/SKILL.md)). This rule covers every brief, so the briefs themselves don't repeat it.
+A milestone's "Done when" is met through PRs, and a PR is done when it's armed: `automerge` on, plus a `/lane T3` request when the diff needs one (owner overlay `OWNER.md`, [lane-request skill](../../.claude/skills/lane-request/SKILL.md)). This rule covers every brief, so the briefs themselves don't repeat it.
 
 - **Items the agent can show** (a test that fails without the change, a measured number, a fixture, a tap count, a screenshot) are shown in the PR description before arming.
 - **Lane items** ("T2 green", "T3 green", "Lane T3 is green") are met by arming the PR. The runner merges only on PASS, so the thread doesn't wait for the report.
@@ -84,7 +84,7 @@ The gates, in plain words:
 
 - **The root-view split (A2 M1).** Library, Following, Margins, Item and the tab shell already have their own files. Playback, Settings, Export, Batch Export and Help still live inside the 5,500-line `Gate1RootView.swift`, alongside about 1,200 lines of dead views. A2 M1 moves them out and adds stable UI identifiers. It gates the player redesign, Settings and the guides. Other UI streams can start without it; their shared risk is `Gate1AppModel`, covered by ground rule 4.
 - **The playback coordinator (A2 M2)** comes before any *new* feature that interleaves Margin audio with source audio: Skim to the next Margin, the weekly review's audio mode, and co-op. This is the fix the repo review recommended after four playback state machines collided. "Play this moment" (#158, #159) already exists on `play-this-moment` as `MarginMomentConductor`; the coordinator absorbs it rather than adding another.
-- **The server foundation (B4 M1)** comes before any app feature that calls a server. It runs on the owner's VPS, which is approved (`AGENTS.md`); deploying to it is the owner's step.
+- **The server foundation (B4 M1)** comes before any app feature that calls a server. It runs on the owner's VPS, which is approved (`docs/decisions.md`); deploying to it is the owner's step.
 - **The #168 → #177 chain.** Packets could leak private feed URLs (#168); the fix is on `private-feed-urls` (`ShareableLinkPolicy`). Storing episode GUIDs (#177) builds on it, and community maps need GUIDs to find an episode.
 - **Rights (owner call)** decide whether the community server may store transcripts or only derived maps (#14, #173).
 
@@ -173,7 +173,7 @@ The reach pass (#141, #145–#149, #151) moves into B1, D3, D4 and D5.
   - Cost, measured on 2026-10-15: the first applying run on the live board made 142 changes (184 writes, all read back) in 398 calls and 263 s; the next run changed nothing, with 0 writes, 69 calls and 44 s. The worker's log keeps each run's changes, unknowns, calls, writes and seconds. Repeated writes on a run with no new evidence, or the calls climbing, mean the derivation is flipping or scanning twice. Authentication needs repository read and project write permissions (the Mac's `gh` token has the `project` scope).
 - Streams merge `main` into their branch at least daily, and before any lane request, so reports test what will actually integrate.
 - Merge order when PRs conflict: gate streams (A2 first), then the older PR.
-- A TestFlight candidate is a commit on `main` that passed T5. Releasing still follows "Releasing a build" in `AGENTS.md`, by the owner's decision.
+- A TestFlight candidate is a commit on `main` that passed T5. Releasing still follows "Releasing a build" in the owner overlay (the public `AGENTS.md` holds the generic version), by the owner's decision.
 
 ## Owner setup (one-time, about 30 minutes at the Mac)
 

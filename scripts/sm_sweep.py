@@ -687,7 +687,7 @@ def decide(facts, window=STALE_AFTER):
         oldest = min(untriaged, key=lambda row: row['created_at'])
         act('untriaged', LOOK, f'{len(untriaged)} open issue(s) lack exactly one `area:` label or a state label (oldest '
             f'#{oldest["number"]}, filed {oldest["created_at"][:10]}): the daily triage must label every one, not only the '
-            'issues filed since its last run (AGENTS.md, Current focus: areas are labels).',
+            'issues filed since its last run (owner overlay, Current focus: areas are labels).',
             issues=[row['number'] for row in untriaged[:10]])
 
     outside = facts.get('outside') or []
