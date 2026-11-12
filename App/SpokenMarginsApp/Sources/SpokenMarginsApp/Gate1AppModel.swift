@@ -1612,11 +1612,9 @@ final class Gate1AppModel: ObservableObject {
         }
         do {
             let store = try requireStore()
-            if let continuation = Self.preferredContinuationSession(in: try store.loadSessions(itemId: id)),
-               SessionContinuation.continueResumes(continuation) {
-                resumeSession(continuation)
-            } else {
-                startNewSession(id: id)
+            switch PlayRule.startAction(sessions: try store.loadSessions(itemId: id)) {
+            case .resume(let continuation): resumeSession(continuation)
+            case .startNew: startNewSession(id: id)
             }
         } catch {
             reportFailure(error, context: "Continue listening failed")
