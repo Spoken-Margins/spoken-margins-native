@@ -247,8 +247,9 @@ final class Gate1FlowUITests: XCTestCase {
         app.terminate()
         app.launchArguments += ["-UIPreferredContentSizeCategoryName", UIContentSizeCategory.accessibilityExtraExtraExtraLarge.rawValue]
         launchAllowingOneStall()
-        // At AX5 the guided tour's row fills the first screen and the seeded row sits below the fold, where the lazy
-        // list hasn't built it yet, so wait for the Library, not the row, then scroll to it (#2717, #3932).
+        // At AX5 the first screen holds few rows and the seeded row can sit below the fold, where the lazy list hasn't
+        // built it yet, so wait for the Library, not the row, then scroll to it (#2717, #3932). A UI-test launch no
+        // longer fetches the guided tour, whose row used to sit on top (#4071), but the scroll stays as the guard.
         XCTAssertTrue(element("library.screen").waitForExistence(timeout: 8))
         let row = scrollToButtonIdentified("library.row.item-pill")
         row.press(forDuration: 0.8)

@@ -22,6 +22,8 @@ final class J10OfflineJourneyUITests: XCTestCase {
             "-libraryOfflineStateFilter", "all", "-librarySort", "recently_added",
             "-libraryUnfinishedDefaultApplied", "YES"]
         app.launchEnvironment["SPOKEN_MARGINS_UI_TESTING"] = "1"
+        // This journey covers the guided tour's fetch failing; the host above is unreachable, so it never reaches production.
+        app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_GUIDED_TOUR_FETCH"] = "1"
     }
 
     override func tearDownWithError() throws {

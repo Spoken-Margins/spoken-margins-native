@@ -205,6 +205,15 @@ public enum UITestingLaunchSeed: Equatable, Sendable {
         arguments.contains("--ui-testing")
             && (environment["SPOKEN_MARGINS_UI_TEST_RECORDING"] == "1" || environment["SPOKEN_MARGINS_UI_TEST_PODCAST"] == "1")
     }
+
+    /// Whether a UI-test launch may fetch the guided tour from the product server at startup:
+    /// `SPOKEN_MARGINS_UI_TEST_GUIDED_TOUR_FETCH=1`, set by a script that covers the tour (J10 does, against an
+    /// unreachable host). Every other UI-test launch skips the fetch, so the answer can't add a `guided-onboarding`
+    /// row to a Library the script has seeded (#4071, as #2772 did for unit tests). A launch that isn't a UI test
+    /// always fetches.
+    public static func fetchesGuidedTour(arguments: [String], environment: [String: String]) -> Bool {
+        !arguments.contains("--ui-testing") || environment["SPOKEN_MARGINS_UI_TEST_GUIDED_TOUR_FETCH"] == "1"
+    }
     #endif
 
     /// Whether the start of a session should add the generated timeline turns

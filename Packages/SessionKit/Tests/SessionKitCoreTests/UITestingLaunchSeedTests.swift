@@ -97,6 +97,18 @@ final class UITestingLaunchSeedTests: XCTestCase {
         XCTAssertTrue(UITestingLaunchSeed.usesStandInAudioServices(arguments: ["--ui-testing"], environment: podcast))
     }
 
+    /// #4071: a UI-test launch must not ask the production server for the guided tour unless its script opts in.
+    func testAUITestLaunchSkipsTheGuidedTourFetchUnlessItOptsIn() {
+        let optIn = ["SPOKEN_MARGINS_UI_TEST_GUIDED_TOUR_FETCH": "1"]
+        XCTAssertFalse(UITestingLaunchSeed.fetchesGuidedTour(arguments: ["--ui-testing"], environment: [:]))
+        XCTAssertFalse(UITestingLaunchSeed.fetchesGuidedTour(arguments: ["--ui-testing"], environment: ["SPOKEN_MARGINS_UI_TEST_PODCAST": "1"]))
+        XCTAssertFalse(UITestingLaunchSeed.fetchesGuidedTour(arguments: ["--ui-testing"], environment: ["SPOKEN_MARGINS_UI_TEST_GUIDED_TOUR_FETCH": "0"]))
+        XCTAssertTrue(UITestingLaunchSeed.fetchesGuidedTour(arguments: ["--ui-testing"], environment: optIn))
+        // A normal launch always fetches, whatever the environment holds.
+        XCTAssertTrue(UITestingLaunchSeed.fetchesGuidedTour(arguments: ["SpokenMarginsApp"], environment: [:]))
+        XCTAssertTrue(UITestingLaunchSeed.fetchesGuidedTour(arguments: ["SpokenMarginsApp"], environment: optIn))
+    }
+
     func testThePDFSeedImportsThroughTheAppRatherThanWritingAnItem() {
         let seed = UITestingLaunchSeed(arguments: ["--ui-testing"], environment: ["SPOKEN_MARGINS_UI_TEST_PDF": "1"])
         XCTAssertEqual(seed, .importedPDF)
