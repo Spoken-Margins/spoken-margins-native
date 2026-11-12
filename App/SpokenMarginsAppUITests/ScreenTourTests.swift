@@ -94,12 +94,14 @@ final class ScreenTourTests: XCTestCase {
             XCTAssertTrue(element("liveActivityPreview.screen").waitForExistence(timeout: 10),
                           "The Live Activity card did not appear at \(size)")
             for status in ["paused", "playing"] {
-                // The caption reads 0 × 0 until the card has been laid out and measured.
+                // The caption reads 0 × 0 until the card has been laid out and measured. One check of the caption is
+                // a full accessibility snapshot, which took 3 to 9 s on a loaded hosted runner (hosted run 43238517854),
+                // so a 5 s wait left room for one check, and a miss in it was final (#3954). The wait returns as soon as it is true.
                 let caption = element("liveActivityPreview.size.\(status)")
                 let measured = XCTNSPredicateExpectation(
                     predicate: NSPredicate(format: "exists == true AND NOT (label CONTAINS %@)", ": 0 × 0 pt"), object: caption
                 )
-                XCTAssertEqual(XCTWaiter().wait(for: [measured], timeout: 5), .completed,
+                XCTAssertEqual(XCTWaiter().wait(for: [measured], timeout: 30), .completed,
                                "The \(status) card was not measured at \(size)")
             }
             capture("10-live-activity-\(size)", "Live Activity Lock Screen card, paused and playing, at text size \(size)")
@@ -357,7 +359,7 @@ final class ScreenTourTests: XCTestCase {
 
     private func waitFor(_ target: XCUIElement, label: String, _ message: String) {
         let met = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", label), object: target)
-        XCTAssertEqual(XCTWaiter().wait(for: [met], timeout: 15), .completed, message)
+        XCTAssertEqual(XCTWaiter().wait(for: [met], timeout: 30), .completed, message)
     }
 
     private func waitFor(_ target: XCUIElement, enabled: Bool, _ message: String) {
