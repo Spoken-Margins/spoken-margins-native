@@ -37,6 +37,7 @@ struct Build23SenderSharingExperience: View {
                 coordinator.recordSystemShareCompleted(packetURL: packet)
             })
             .task { isLinkOffered = await linkSender.isOffered() }
+            .onDisappear { linkSender.takedownNoticeWasShown() }
         #else
         content
         #endif
@@ -241,7 +242,11 @@ struct Build23SenderSharingExperience: View {
     @ViewBuilder
     private var linkStatusLines: some View {
         #if SM_SHARE_LINK_CREATION
-        let lines = ShareLinkStatusLines(state: linkSender.state, companionNote: linkSender.companionNote)
+        let lines = ShareLinkStatusLines(
+            state: linkSender.state,
+            companionNote: linkSender.companionNote,
+            showsTakedownNotice: linkSender.showsTakedownNotice
+        )
         if sharesLink, lines.hasLines {
             lines
         }

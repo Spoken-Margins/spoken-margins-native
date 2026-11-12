@@ -31,10 +31,24 @@ final class ShareLinkSender: ObservableObject {
     @Published private(set) var state: State = .idle
     /// Shown while the link is made and after, when the share will carry the file too.
     @Published private(set) var companionNote: String?
+    /// A link this install made was taken down after a report (#2239). One line, no button, kept until a screen has
+    /// shown it: the server marks it shown the moment it sends it.
+    @Published private(set) var showsTakedownNotice: Bool
     private let bridge = BridgeService.makeStore()
+    private let noticeStore = ShareLinkTakedownNoticeStore()
+    /// One App Attest identity per install, made only after the listener agreed (`AttestedServerClient`).
+    private let attested = AttestedServerClient(
+        provider: AppAttestDeviceProvider(),
+        consent: { ServerSendConsent.hasConsented(to: .shareLinks) },
+        post: AttestedTransport.post
+    )
     /// Only the newest request's answer reaches the screen; `reset` voids the one in flight (#3751 audit).
     private var requests = ShareLinkRequests()
     private static let companionLine = "This has no public web page, so the file goes in the same message as the link."
+
+    init() {
+        showsTakedownNotice = noticeStore.isPending
+    }
 
     /// Whether to show the button at all. The cached config decides; with none, or a stale one, the sender's own
     /// screen asks the server once (our server, no one else's) so a fresh install can offer the button.
@@ -83,7 +97,19 @@ final class ShareLinkSender: ObservableObject {
                 linksState = await bridge.state(of: ServerService.links)
             }
             guard requests.accepts(ticket) else { return }
-            let client = ShareLinkClient(consent: { ServerSendConsent.hasConsented(to: .shareLinks) }, post: ShareLinkTransport.post)
+            let attested = self.attested
+            let noticeStore = self.noticeStore
+            let client = ShareLinkClient(
+                consent: { ServerSendConsent.hasConsented(to: .shareLinks) },
+                senderCheck: { await ShareLinkSenderCheck.check(using: attested) },
+                takedownNotice: { [weak self] in
+                    // Kept first, so a notice the screen never gets to show is not lost.
+                    noticeStore.setPending()
+                    guard let sender = self else { return }
+                    Task { @MainActor in sender.showsTakedownNotice = true }
+                },
+                post: ShareLinkTransport.postWithHeaders
+            )
             let result = await client.makeLink(packet: packet, preview: preview, linksState: linksState)
             // The listener went back or changed the selection meanwhile: this link is for a packet the screen no
             // longer shows, so no sheet opens for it.
@@ -99,6 +125,13 @@ final class ShareLinkSender: ObservableObject {
                 state = .needsConsent
             }
         }
+    }
+
+    /// The sender screen has been on show with the takedown line: the server won't say it again, so neither will we.
+    func takedownNoticeWasShown() {
+        guard showsTakedownNotice else { return }
+        noticeStore.clear()
+        showsTakedownNotice = false
     }
 
     /// Back to idle, and a link still being made is dropped when it arrives.
@@ -171,9 +204,12 @@ struct ShareLinkPresentation: ViewModifier {
 struct ShareLinkStatusLines: View {
     let state: ShareLinkSender.State
     let companionNote: String?
+    /// A link this install made was taken down after a report (#2239): one line, never a button.
+    var showsTakedownNotice = false
 
     /// Whether there is anything to draw, so the screen leaves no gap above its button when there isn't.
     var hasLines: Bool {
+        if showsTakedownNotice { return true }
         if companionNote != nil { return true }
         if case .useFile = state { return true }
         return false
@@ -181,6 +217,13 @@ struct ShareLinkStatusLines: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
+            if showsTakedownNotice {
+                Text(ShareLinkTakedownNotice.text)
+                    .font(.subheadline)
+                    .foregroundStyle(AppColors.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("build23.sender.share.link.takedown")
+            }
             if let companionNote {
                 Text(companionNote)
                     .font(.subheadline)
