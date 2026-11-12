@@ -1,0 +1,52 @@
+{
+  "format": "capture-trace/1",
+  "name": "Hands-free profile switch: phantom plays at 50 ms and 440 ms, and one just after a route change",
+  "bug": "#1708",
+  "source": "Written from the timings issue #1708 gives (a play 50 ms and 440 ms after the recorder began ended the Margin); not the export itself. Times and port names only.",
+  "events": [
+    {
+      "atMs": 0,
+      "kind": "recordingStarted",
+      "inputs": [
+        "BluetoothHFP"
+      ]
+    },
+    {
+      "atMs": 50,
+      "kind": "command",
+      "command": "play",
+      "origin": "now_playing"
+    },
+    {
+      "atMs": 440,
+      "kind": "command",
+      "command": "togglePlayPause",
+      "origin": "now_playing"
+    },
+    {
+      "atMs": 1100,
+      "kind": "recorderReading",
+      "running": true,
+      "capturedMs": 900
+    },
+    {
+      "atMs": 6000,
+      "kind": "routeChange",
+      "inputs": [
+        "BluetoothHFP"
+      ]
+    },
+    {
+      "atMs": 6400,
+      "kind": "command",
+      "command": "togglePlayPause",
+      "origin": "now_playing"
+    },
+    {
+      "atMs": 13200,
+      "kind": "command",
+      "command": "togglePlayPause",
+      "origin": "now_playing"
+    }
+  ]
+}

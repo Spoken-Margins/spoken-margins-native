@@ -1,0 +1,39 @@
+{
+  "format": "capture-trace/1",
+  "name": "A recorder that accepts its start and never gets audio",
+  "bug": "#937",
+  "source": "Written from issue #937's description (a recorder reporting running over 22 ms of audio); not an export. Times only.",
+  "events": [
+    {
+      "atMs": 0,
+      "kind": "recordingStarted",
+      "inputs": [
+        "BluetoothHFP"
+      ]
+    },
+    {
+      "atMs": 1000,
+      "kind": "recorderReading",
+      "running": true,
+      "capturedMs": 20
+    },
+    {
+      "atMs": 2100,
+      "kind": "recorderReading",
+      "running": true,
+      "capturedMs": 20
+    },
+    {
+      "atMs": 2600,
+      "kind": "recorderReading",
+      "running": true,
+      "capturedMs": 0
+    },
+    {
+      "atMs": 3200,
+      "kind": "recorderReading",
+      "running": true,
+      "capturedMs": 300
+    }
+  ]
+}

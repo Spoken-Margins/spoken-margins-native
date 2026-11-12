@@ -1,0 +1,27 @@
+{
+  "format": "capture-trace/1",
+  "name": "The same commands on a wired headset: a Lock Screen or headset play is the listener's",
+  "bug": "#1030",
+  "source": "The #2182 trace with the input changed to the phone's own port; no real recording.",
+  "events": [
+    {
+      "atMs": 0,
+      "kind": "recordingStarted",
+      "inputs": [
+        "MicrophoneBuiltIn"
+      ]
+    },
+    {
+      "atMs": 900,
+      "kind": "recorderReading",
+      "running": true,
+      "capturedMs": 800
+    },
+    {
+      "atMs": 2182,
+      "kind": "command",
+      "command": "play",
+      "origin": "now_playing"
+    }
+  ]
+}
