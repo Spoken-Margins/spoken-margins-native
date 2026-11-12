@@ -70,6 +70,28 @@ final class RecordingRouteReplayTests: XCTestCase {
     ]}
     """
 
+    /// The profile switch can arrive after the microphone opened on the phone's own input: the route changes to the
+    /// hands-free port mid-recording, and the headset's `play` follows more than a second later.
+    private let handsFreeAfterARouteChange = """
+    {"name": "hands-free after a route change", "issue": "#2182", "events": [
+      {"atMs": 0, "event": "recording_started", "handsFreeInput": false},
+      {"atMs": 3000, "event": "route_changed", "handsFreeInput": true},
+      {"atMs": 5000, "event": "command", "command": "play", "origin": "now_playing_remote"},
+      {"atMs": 8000, "event": "command", "command": "togglePlayPause", "origin": "now_playing_remote"}
+    ]}
+    """
+
+    /// A press the detector ignores still moves its idea of the mute state, so the next notification repeating that
+    /// state is no press: 800 ms is in the start window (ignored, but the microphone is now muted), and 5,000 ms repeats it.
+    private let ignoredPressStillMovesTheState = """
+    {"name": "ignored press moves the state", "events": [
+      {"atMs": 0, "event": "recording_started", "muted": false},
+      {"atMs": 800, "event": "mute_changed", "muted": true},
+      {"atMs": 5000, "event": "mute_changed", "muted": true},
+      {"atMs": 6000, "event": "mute_changed", "muted": false}
+    ]}
+    """
+
     private func trace(_ json: String) throws -> RecordingRouteTrace { try RecordingRouteTrace.decode(Data(json.utf8)) }
 
     /// The rule before #1708's fix: every command that can end a Margin does.
@@ -119,6 +141,20 @@ final class RecordingRouteReplayTests: XCTestCase {
         let result = try RecordingRouteReplay.replay(trace(headsetMutePress))
         XCTAssertEqual(result.ignoredReasons, ["recording_just_started", "recording_just_started", "route_just_changed", "no_change"])
         XCTAssertEqual(result.endedAtMs, 7_000)
+    }
+
+    func testARouteChangeToHandsFreeMidRecordingMakesAPlayNoise() throws {
+        let parsed = try trace(handsFreeAfterARouteChange)
+        let result = try RecordingRouteReplay.replay(parsed)
+        XCTAssertEqual(result.ignoredReasons, ["bare_play_on_hands_free"])
+        XCTAssertEqual(result.endedAtMs, 8_000)
+        XCTAssertEqual(try RecordingRouteReplay.replay(parsed, rules: beforeTheFixFor2182).endedAtMs, 5_000, "timing alone ends it")
+    }
+
+    func testAPressInTheStartWindowStillMovesTheMuteState() throws {
+        let result = try RecordingRouteReplay.replay(trace(ignoredPressStillMovesTheState))
+        XCTAssertEqual(result.ignoredReasons, ["recording_just_started", "no_change"])
+        XCTAssertEqual(result.endedAtMs, 6_000)
     }
 
     // MARK: Each trace fails against the rule before its fix
@@ -177,7 +213,10 @@ final class RecordingRouteReplayTests: XCTestCase {
         XCTAssertNil(clock.msSinceRouteChange(atMs: 9_050), "a route change from the last recording must not hold back this one's click")
         clock.end()
         XCTAssertEqual(clock.elapsedMs(atMs: 9_100), 0)
+        clock.begin(atMs: 1_000)
+        clock.routeChanged(atMs: 1_200)
         XCTAssertEqual(clock.elapsedMs(atMs: 100), 0, "a clock that went backwards never gives a negative time")
+        XCTAssertEqual(clock.msSinceRouteChange(atMs: 100), 0)
     }
 
     // MARK: The format refuses what it cannot replay
