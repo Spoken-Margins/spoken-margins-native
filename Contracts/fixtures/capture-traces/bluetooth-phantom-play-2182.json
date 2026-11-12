@@ -2,15 +2,8 @@
   "format": "capture-trace/1",
   "name": "A Live Activity Margin on a hands-free Bluetooth headset: the phantom play at 2.2 s",
   "bug": "#2182",
-  "source": "Written from the timings issue #2182 gives (a play 14 ms, 38 ms and 2,182 ms in on a hands-free Bluetooth input, in Build 35's export); not the export itself. Times and port names only.",
+  "source": "The 14 ms, 38 ms and 2,182 ms plays on a hands-free Bluetooth input are the timings issue #2182 gives; the earlier route change, the readings, the Now Playing event and the 9,500 ms pause that ends the Margin are illustrative. Not an export. Times and port names only.",
   "events": [
-    {
-      "atMs": -300,
-      "kind": "routeChange",
-      "inputs": [
-        "BluetoothHFP"
-      ]
-    },
     {
       "atMs": 0,
       "kind": "recordingStarted",

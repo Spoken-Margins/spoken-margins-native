@@ -2,7 +2,7 @@
   "format": "capture-trace/1",
   "name": "Hands-free profile switch: phantom plays at 50 ms and 440 ms, and one just after a route change",
   "bug": "#1708",
-  "source": "Written from the timings issue #1708 gives (a play 50 ms and 440 ms after the recorder began ended the Margin); not the export itself. Times and port names only.",
+  "source": "The plays 50 ms and 440 ms after the recorder began are the timings issue #1708 gives; the route change at 6,000 ms, the toggle 400 ms after it and the click at 13,200 ms are illustrative. Not an export. Times and port names only.",
   "events": [
     {
       "atMs": 0,

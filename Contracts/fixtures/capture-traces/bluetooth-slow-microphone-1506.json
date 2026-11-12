@@ -1,8 +1,8 @@
 {
   "format": "capture-trace/1",
-  "name": "The microphone takes 1.4 s to open over Bluetooth: slow, not failed",
+  "name": "The microphone takes 1.5 s to open over Bluetooth: slow, not failed",
   "bug": "#1506",
-  "source": "Written from issue #1506's description (audio first arrived after more than a second on the hands-free profile); not the export itself. Times only.",
+  "source": "Written from issue #1506's description (audio arrived more than a second after the recorder began on the hands-free profile); the readings are illustrative. Not an export. Times only.",
   "events": [
     {
       "atMs": 0,

@@ -72,8 +72,15 @@ public struct CaptureTrace: Codable, Equatable, Sendable {
 /// restart, and `RecordingTransportGuard` for whether a command ends the Margin. What it supplies is the wiring the app does around
 /// them, which lives in `Gate1AppModel+CompactCommands.swift` and `MarginCaptureWatcher.swift`: elapsed time from the
 /// recording's start, time since the last route change *during this recording* (a change before it started is not
-/// counted, which is how #2182's phantom play got through), and whether the input is a Bluetooth hands-free port. If
-/// that wiring changes in the app, change it here in the same PR.
+/// counted; the start window is longer than the route window, so such a change could never alter a verdict), and whether the input is a Bluetooth hands-free port. The wiring is copied here, not shared: if it changes in
+/// the app, change it here in the same PR (#3937 notes sharing it as a follow-up).
+///
+/// What it does not model, so a trace cannot catch a bug in it: a restart that fails or the listener's Try again
+/// (`MarginCaptureWatcher.restartNow`, `retry`); the app's own steps before the guard (`LiveSessionTransportGuard`, the headphone
+/// double-press branch, `isFinishingInterjection`); commands before `recordingStarted` or after the Margin ends (dropped, not
+/// judged); and the input port, which the app reads from the audio session at the moment of the command but a trace gives only at
+/// `recordingStarted` and each `routeChange`. The health steps include `notCapturing` before a restart, which the screen does not
+/// show (the app reports once after the restart); the replay shows it so a test can see why the restart happened.
 public enum CaptureTraceReplay {
     public static let handsFreePort = "BluetoothHFP"
 

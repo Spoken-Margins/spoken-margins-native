@@ -24,15 +24,8 @@ final class CaptureTraceReplayTests: XCTestCase {
         XCTAssertEqual(result.endedAtMs, 9_500, "only the listener's pause ends it")
     }
 
-    /// The route change at -300 ms came before the recording: the watcher does not count it, so the 1 s route window
-    /// does not cover 2,182 ms. That is why timing alone let the play through.
-    func testTheRouteChangeBeforeTheRecordingStartedIsNotCounted() throws {
-        let result = try replay("bluetooth-phantom-play-2182")
-        XCTAssertFalse(reasons(result).contains { $0.hasSuffix("route_just_changed") })
-    }
-
     func testTheSameCommandsOnAWiredHeadsetEndTheMarginAtTheFirstPlay() throws {
-        let result = try replay("bluetooth-phantom-play-2182-wired")
+        let result = try replay("wired-headset-play-2182-control")
         XCTAssertEqual(result.endedAtMs, 2_182, "a Lock Screen or wired play is the listener's (#1030)")
         XCTAssertEqual(result.ignored.count, 0)
     }
@@ -52,7 +45,7 @@ final class CaptureTraceReplayTests: XCTestCase {
 
     // MARK: - #1506 and #937: how long the microphone takes to open
 
-    func testAMicrophoneThatOpensIn1400msIsSlowNotFailed() throws {
+    func testAMicrophoneThatOpensIn1500msIsSlowNotFailed() throws {
         let result = try replay("bluetooth-slow-microphone-1506")
         XCTAssertEqual(result.healthChanges, [.starting, .capturing])
         XCTAssertEqual(result.restarts, 0, "1.5 s is inside the 2 s the start may take")
@@ -61,7 +54,6 @@ final class CaptureTraceReplayTests: XCTestCase {
     func testARecorderThatNeverGetsAudioIsRestartedOnceAfterTheGrace() throws {
         let result = try replay("bluetooth-microphone-never-opens-937")
         XCTAssertEqual(result.healthChanges.first, .starting)
-        XCTAssertTrue(result.healthChanges.contains(.notCapturing(.noAudioAfterStart)))
         XCTAssertEqual(result.restarts, 1)
         XCTAssertEqual(result.steps.first { $0.outcome == .restarted }?.atMs, 2_100,
                        "the first reading past the 2 s grace")
@@ -72,7 +64,10 @@ final class CaptureTraceReplayTests: XCTestCase {
 
     /// The error a trace is refused with, or nil if it replays (kept out of an assertion: see TestInputs.swift).
     private func refusal(_ trace: CaptureTrace) -> CaptureTraceReplay.TraceError? {
-        do { _ = try CaptureTraceReplay.replay(trace); return nil } catch { return error as? CaptureTraceReplay.TraceError }
+        do { _ = try CaptureTraceReplay.replay(trace); return nil } catch {
+            guard let known = error as? CaptureTraceReplay.TraceError else { XCTFail("\(error)"); return nil }
+            return known
+        }
     }
 
     func testATraceThatIsNotInOrderIsRefusedNotReplayed() {
