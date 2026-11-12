@@ -109,6 +109,97 @@ class HostedRecordsTests(unittest.TestCase):
         self.assertIsNone(found)
         self.assertIn('ended failure', why)
 
+    def lane_fault(self, message='setup fault: no DNS', title='lane-fault', level='failure'):
+        return {'title': title, 'annotation_level': level, 'message': message}
+
+    def failed(self, conclusion, annotations, earlier=()):
+        """FakeChecks where "hosted fast: portable" has run id 1 last and failed with <annotations>; <earlier> is a list of
+        (conclusion, annotations) for older runs of it on the same head."""
+        portable = 'hosted fast: portable'
+        checks = passing(self.HEAD, **{portable: {'conclusion': conclusion}})
+        checks.annotations[1] = annotations
+        for index, (old_conclusion, old_annotations) in enumerate(earlier, start=10):
+            checks.runs[portable].append({**checks.runs[portable][0], 'id': index, 'conclusion': old_conclusion,
+                                          'started_at': f'2026-10-18T09:0{index - 10}:00Z'})
+            checks.annotations[index] = old_annotations
+        return checks
+
+    def test_a_check_that_failed_with_a_lane_fault_annotation_is_the_runners_not_the_prs(self):
+        # #4085: #4082's swift container had no DNS; `hosted fast: portable` went red on three PRs and the lane said FAIL.
+        for conclusion in ('failure', 'timed_out'):
+            with self.subTest(conclusion):
+                found, why = lane.hosted_fast_records(self.failed(conclusion, [self.lane_fault()]), self.HEAD)
+                self.assertIsNone(found)
+                self.assertTrue(lane.HOSTED_LANE_FAULT.search(why), why)
+                self.assertEqual(lane.HOSTED_LANE_FAULT.search(why).group(1), '1')
+                self.assertEqual(lane.hosted_checks_missing(why, 'INCONCLUSIVE')[0], 'INCONCLUSIVE')
+                self.assertEqual(lane.hosted_checks_missing(why)[0], 'INCONCLUSIVE')  # even where the Mac is the fallback
+
+    def test_an_ordinary_failure_or_a_lookalike_annotation_is_still_a_fail(self):
+        for name, annotations in (
+                ('no annotation', []),
+                ('another title', [self.lane_fault(title='lane-hosted-tested')]),
+                ('the title as a notice', [self.lane_fault(level='notice')]),
+                ('the title as a warning', [self.lane_fault(level='warning')]),
+                ('the title in the message only', [self.lane_fault(title='error', message='lane-fault')]),
+                ('the title with other letters', [self.lane_fault(title='Lane-Fault')]),
+                ('an ordinary test failure', [self.lane_fault(title='test failure')])):
+            with self.subTest(name):
+                found, why = lane.hosted_fast_records(self.failed('failure', annotations), self.HEAD)
+                self.assertIsNone(found)
+                self.assertFalse(lane.HOSTED_LANE_FAULT.search(why), why)
+                self.assertEqual(lane.hosted_checks_missing(why, 'INCONCLUSIVE')[0], 'FAIL')
+
+    def test_only_a_check_that_failed_can_be_a_lane_fault(self):
+        for conclusion in ('cancelled', 'skipped', 'neutral'):
+            with self.subTest(conclusion):
+                checks = self.failed(conclusion, [self.lane_fault()])
+                found, why = lane.hosted_fast_records(checks, self.HEAD)
+                self.assertFalse(lane.HOSTED_LANE_FAULT.search(why), why)
+                self.assertFalse(any('/annotations' in call for call in checks.calls))
+
+    def test_a_passing_check_reads_no_extra_annotations(self):
+        checks = passing(self.HEAD)
+        lane.hosted_fast_records(checks, self.HEAD)
+        self.assertFalse(any('filter=all' in call for call in checks.calls))
+
+    def test_the_same_fault_twice_on_one_head_is_a_fail(self):
+        # #4085 done-when 3: a fault that keeps happening is the PR's (or the pipeline's) to look at, not retried forever.
+        faulty = [self.lane_fault()]
+        for name, earlier, marked in (
+                ('first fault', [], True),
+                ('an ordinary failure before it', [('failure', [])], True),
+                ('a cancelled run before it', [('cancelled', faulty)], True),
+                ('second fault', [('failure', faulty)], False),
+                ('second fault after an ordinary one', [('failure', []), ('timed_out', faulty)], False),
+                ('third fault', [('failure', faulty), ('failure', faulty)], False)):
+            with self.subTest(name):
+                found, why = lane.hosted_fast_records(self.failed('failure', faulty, earlier), self.HEAD)
+                self.assertIsNone(found)
+                self.assertEqual(bool(lane.HOSTED_LANE_FAULT.search(why)), marked, why)
+                self.assertEqual(lane.hosted_checks_missing(why, 'INCONCLUSIVE')[0], 'INCONCLUSIVE' if marked else 'FAIL')
+
+    def test_a_fault_annotation_another_app_posted_does_not_count_as_an_earlier_one(self):
+        faulty = [self.lane_fault()]
+        checks = self.failed('failure', faulty, [('failure', faulty)])
+        checks.runs['hosted fast: portable'][1]['app'] = {'slug': 'someone-else'}
+        found, why = lane.hosted_fast_records(checks, self.HEAD)
+        self.assertTrue(lane.HOSTED_LANE_FAULT.search(why), why)
+
+    def test_annotations_that_cannot_be_read_leave_the_failure_a_fail(self):
+        checks = self.failed('failure', [self.lane_fault()])
+        real = checks.api
+
+        def broken(path):
+            if '/annotations' in path:
+                raise OSError('rate limited')
+            return real(path)
+        checks.api = broken
+        found, why = lane.hosted_fast_records(checks, self.HEAD)
+        self.assertIsNone(found)
+        self.assertFalse(lane.HOSTED_LANE_FAULT.search(why), why)
+        self.assertEqual(lane.hosted_checks_missing(why, 'INCONCLUSIVE')[0], 'FAIL')
+
     def test_a_record_for_another_plan_or_head_is_not_this_run(self):
         for name, annotation in (('another plan', notice('fast', 'e' * 40, 'd' * 40, self.HEAD)),
                                  ('another head', notice('fast-portable', 'e' * 40, 'd' * 40, 'f' * 40))):

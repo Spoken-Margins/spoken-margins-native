@@ -1249,6 +1249,13 @@ HOSTED_MERGED_CHECKS = {**HOSTED_PORTABLE_CHECK, **HOSTED_REST_CHECK}
 HOSTED_APP_CHECK = {'app build (T2, tests only when asked)': None}
 HOSTED_APP_WORKFLOW = 'hosted-app-macos.yml'
 HOSTED_TESTED_TITLE = 'lane-hosted-tested'
+# #4085: a hosted check that failed because the runner did (no DNS in the swift container, #4082) and said so with a
+# `::error title=lane-fault::` annotation (scripts/linux_core_tests.py, exit 75) is the lane's fault, not the PR's.
+# Only the Actions check run's own annotation counts. The second such failure on one head is a FAIL as before, so a
+# fault that keeps happening (or a PR that prints the title itself) is not retried forever.
+HOSTED_LANE_FAULT_TITLE = 'lane-fault'
+HOSTED_LANE_FAULT_LIMIT = 2  # fault runs of one check on one head; the first is run again, the second ends as FAIL
+HOSTED_FAILED_CONCLUSIONS = ('failure', 'timed_out')
 HOSTED_TESTED = re.compile(r'^plan=(\S+) tree=([0-9a-f]{40}) parents=([0-9a-f]{40}) ([0-9a-f]{40})\s*$')
 
 
@@ -1320,7 +1327,8 @@ def hosted_fast_records(github, head: str, checks: dict = HOSTED_FAST_CHECKS) ->
         if run.get('status') != 'completed':
             return None, f'"{name}" {NOT_FINISHED} on {head[:7]}'
         if run.get('conclusion') != 'success':
-            return None, f'"{name}" ended {run.get("conclusion")} on {head[:7]}'
+            fault = hosted_lane_fault(github, run, name, head) if run.get('conclusion') in HOSTED_FAILED_CONCLUSIONS else ''
+            return None, f'"{name}" ended {run.get("conclusion")} on {head[:7]}{fault}'
         if plan is None:  # the app build (#3539): green on this head is all it says
             found[name] = {'head': head, 'url': run.get('html_url', '')}
             continue
@@ -1329,6 +1337,44 @@ def hosted_fast_records(github, head: str, checks: dict = HOSTED_FAST_CHECKS) ->
             return None, f'"{name}" on {head[:7]} did not record that it tested {plan} on this head'
         found[name] = {**record, 'url': run.get('html_url', '')}
     return found, ''
+
+
+def _lane_fault_message(github, run: dict) -> str | None:
+    """The message of <run>'s `lane-fault` failure annotation, or None. A read that fails says nothing: None."""
+    try:
+        for annotation in json.loads(github.api(f'repos/{github.repo}/check-runs/{run["id"]}/annotations')):
+            if annotation.get('title') == HOSTED_LANE_FAULT_TITLE and annotation.get('annotation_level') == 'failure':
+                return str(annotation.get('message', '')).strip()
+    except (OSError, subprocess.SubprocessError, ValueError, TypeError, KeyError, AttributeError):
+        pass
+    return None
+
+
+def hosted_lane_fault(github, run: dict, name: str, head: str) -> str:
+    """What to add to a failed hosted check's "ended failure on <head>" line when the runner, not the PR's code, failed
+    it (#4085): ' with a lane-fault annotation (run <id>): <message>', else ''. <run> is the newest Actions run of <name>
+    on <head>. It is '' (so a FAIL, as before) when the run carries no `lane-fault` failure annotation, or when
+    another earlier run of this check on this head failed the same way: HOSTED_LANE_FAULT_LIMIT runs, then it is the
+    PR's to look at. The extra reads happen only for a failed check."""
+    message = _lane_fault_message(github, run)
+    if message is None:
+        return ''
+    try:
+        earlier = json.loads(github.api(f'repos/{github.repo}/commits/{head}/check-runs?check_name='
+                                        f'{urllib.parse.quote(name, safe="")}&filter=all&per_page=100'))
+        earlier = [other for other in earlier.get('check_runs', [])
+                   if (other.get('app') or {}).get('slug') == 'github-actions' and other.get('id') != run.get('id')
+                   and other.get('conclusion') in HOSTED_FAILED_CONCLUSIONS]
+    except (OSError, subprocess.SubprocessError, ValueError, TypeError, KeyError, AttributeError):
+        return ''  # can't count the earlier faults: a failure blocks, as before
+    faults = 1
+    for other in earlier:
+        if faults >= HOSTED_LANE_FAULT_LIMIT:
+            break
+        faults += _lane_fault_message(github, other) is not None
+    if faults >= HOSTED_LANE_FAULT_LIMIT:
+        return ''
+    return f' with a lane-fault annotation (run {run.get("id")}): {message[:200]}'
 
 
 def merged_tree(tree: Path, base: str, head: str, fetch: str | None = None) -> str | None:
@@ -1462,6 +1508,7 @@ HOSTED_MISSING_GRACE = 5 * 60
 # 2 minutes after its checks finish, and a waiting job takes about 120 requests an hour, not 480 (#3501 audit).
 HOSTED_REST_POLL = 120
 HOSTED_FAILED = re.compile(r'" ended (failure|timed_out) on ')
+HOSTED_LANE_FAULT = re.compile(r' with a lane-fault annotation \(run (\d+)\)')  # hosted_lane_fault's words (#4085)
 HOSTED_MISSING = re.compile(r'^no ".+" check ran on ')
 HOSTED_SKIPPED = re.compile(r'" ended skipped on ')
 HOSTED_UNREADABLE = 'could not read the fast checks'  # says nothing about the checks themselves
@@ -1518,6 +1565,7 @@ def hosted_rest_checks(github, tree: Path, base: str, head: str, base_sha: str, 
     started = clock()
     deadline = started + wait
     dispatches, dispatched_at, running_seen = 0, started, False
+    faulted: set[str] = set()  # runs of a check that failed with a lane-fault annotation (#4085)
     while True:
         stop = alive()
         if stop:
@@ -1528,6 +1576,23 @@ def hosted_rest_checks(github, tree: Path, base: str, head: str, base_sha: str, 
             except (OSError, subprocess.SubprocessError):
                 pass  # keep comparing with the tip we have; the push says if it moved
         found, why = _hosted_fast_checks_once(github, tree, base, head, base_sha, env, records, checks)
+        fault = None if found is not None else HOSTED_LANE_FAULT.search(why)
+        if fault:  # #4085: the runner failed it, not the PR: start the check again once, and wait for that run
+            if fault.group(1) not in faulted:
+                faulted.add(fault.group(1))
+                if not run_again or len(faulted) > HOSTED_LANE_FAULT_LIMIT - 1:
+                    return None, why
+                problem = dispatch()
+                if problem:
+                    return None, f'{why}; running them again on {base} failed: {problem}'
+                dispatches, dispatched_at, running_seen = dispatches + 1, clock(), False
+                print(f'[lane] {why}; started them again on the newest {base}', file=out, flush=True)
+            elif clock() - dispatched_at > grace:  # the run it started has not shown up
+                return None, f'{why}; the run started again {duration(clock() - dispatched_at)} ago has not shown up'
+            if clock() + poll > deadline:
+                return None, f'{why} (waited {duration(clock() - started)})'
+            sleep(poll)
+            continue
         if found is not None or HOSTED_FAILED.search(why):
             return found, why
         if NOT_FINISHED in why:
@@ -1632,6 +1697,10 @@ def hosted_web_check(github, tree: Path, base: str, head: str, alive=lambda: Non
 def hosted_checks_missing(why: str, fallback: str = NEEDS_MAC) -> tuple[str, str, str, list[str]]:
     """What a run that merges on the hosted checks returns when they don't stand: FAIL when one failed on this head
     (the PR's code, as the Mac's own run would have shown), else <fallback> with why."""
+    if HOSTED_LANE_FAULT.search(why):  # #4085: before FAIL; hosted_lane_fault leaves the marker off a repeated fault
+        return 'INCONCLUSIVE', 'hosted Linux runner', 'nothing', [
+            f'not merged: {why}. Runner fault, not this PR\'s code: run again (remove and re-add automerge). The '
+            'second fault of the same check on this head reports FAIL.']
     if HOSTED_FAILED.search(why):
         return 'FAIL', 'hosted checks', 'hosted fast checks: failed', [
             f'not merged: {why}. Its log is in the PR\'s checks; fix it and push.']

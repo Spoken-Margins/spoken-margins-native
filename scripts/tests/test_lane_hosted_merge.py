@@ -28,6 +28,8 @@ STOOD = {name: {'plan': plan, 'tree': 'a' * 40, 'base': MERGE, 'head': HEAD, 'ur
 RUNNING = f'"hosted fast: Mac rest" {lane.NOT_FINISHED} on {HEAD[:7]}'
 STALE = f'"hosted fast: portable" tested it on main at {MERGE[:7]}, and main since: its commits touch build inputs (x)'
 FAILED = f'"hosted fast: Mac rest" ended failure on {HEAD[:7]}'
+FAULT = f'"hosted fast: portable" ended failure on {HEAD[:7]} with a lane-fault annotation (run 41): setup fault: no DNS'
+FAULT_AGAIN = FAULT.replace('(run 41)', '(run 42)')
 MISSING = f'no "hosted fast: Mac rest" check ran on {HEAD[:7]}'
 UNRECORDED = f'"hosted fast: portable" on {HEAD[:7]} did not record that it tested fast-portable on this head'
 NEWER = '9' * 40
@@ -116,6 +118,46 @@ class HostedRestChecksTests(unittest.TestCase):
         self.assertIsNone(found)
         self.assertEqual(waited, 0)
         self.assertEqual(lane.hosted_checks_missing(why)[0], 'FAIL')
+
+    def test_a_lane_fault_is_run_again_once_and_the_new_run_is_waited_for(self):
+        # #4085: re-adding automerge alone would read the same failed run; the job starts the checks again itself.
+        (found, why), waited, dispatched = self.wait([(None, FAULT), (None, FAULT), (None, RUNNING), (STOOD, '')],
+                                                     run_again=True)
+        self.assertEqual(found, STOOD)
+        self.assertEqual(dispatched, [0.0])  # one dispatch: the second answer was the faulted run still newest
+
+    def test_a_lane_fault_with_no_way_to_run_again_reports_inconclusive_at_once(self):
+        (found, why), waited, dispatched = self.wait([(None, FAULT)], run_again=False)
+        self.assertIsNone(found)
+        self.assertEqual((waited, dispatched), (0, []))
+        verdict, _, ran, details = lane.hosted_checks_missing(why, lane.NEEDS_MAC)
+        self.assertEqual((verdict, ran), ('INCONCLUSIVE', 'nothing'))
+        self.assertIn('Runner fault', details[0])
+
+    def test_the_second_fault_on_a_head_is_a_fail_not_another_rerun(self):
+        # records stops marking the fault at the second run on one head, so the answer the second run gets has no marker.
+        (found, why), _, dispatched = self.wait([(None, FAULT), (None, RUNNING), (None, FAILED)], run_again=True)
+        self.assertIsNone(found)
+        self.assertEqual(dispatched, [0.0])
+        self.assertEqual(lane.hosted_checks_missing(why, 'INCONCLUSIVE')[0], 'FAIL')
+        # and a marked fault from a different run after the one rerun is never run again either
+        (found, why), _, dispatched = self.wait([(None, FAULT), (None, FAULT_AGAIN)], run_again=True)
+        self.assertEqual(dispatched, [0.0])
+        self.assertEqual(lane.hosted_checks_missing(why)[0], 'INCONCLUSIVE')
+
+    def test_a_rerun_that_never_shows_up_ends_the_wait(self):
+        (found, why), waited, dispatched = self.wait([(None, FAULT)] * 50, run_again=True)
+        self.assertIsNone(found)
+        self.assertEqual(dispatched, [0.0])
+        self.assertIn('has not shown up', why)
+        self.assertGreater(waited, lane.HOSTED_MISSING_GRACE)
+        self.assertEqual(lane.hosted_checks_missing(why, 'INCONCLUSIVE')[0], 'INCONCLUSIVE')
+
+    def test_a_failed_rerun_dispatch_still_reports_the_fault(self):
+        (found, why), _, dispatched = self.wait([(None, FAULT)], run_again=True, dispatch_result='HTTP 403')
+        self.assertIsNone(found)
+        self.assertIn('HTTP 403', why)
+        self.assertEqual(lane.hosted_checks_missing(why, 'INCONCLUSIVE')[0], 'INCONCLUSIVE')
 
     def test_stale_checks_are_run_again_on_the_newest_base_once_and_then_taken(self):
         (found, why), _, dispatched = self.wait([(None, STALE), (None, STALE), (None, RUNNING), (STOOD, '')])
