@@ -64,6 +64,18 @@ public final class OnDeviceVoiceGovernor: @unchecked Sendable {
         self.sleep = sleep
     }
 
+    /// The same, with the clocks and the sleep taken from one `SystemReadings`: the live ones in the app, a
+    /// `SimulatedIOSBackground` in a host test that asks whether iOS would stop the app (#3936).
+    public convenience init(
+        readings: any SystemReadings,
+        conditions: @escaping @Sendable () -> SpeechEngineConditions = { SpeechEngineConditions() }
+    ) {
+        self.init(
+            conditions: conditions,
+            now: { readings.uptime() }, cpuTime: { readings.processCPUTime() }, sleep: { readings.sleep($0) }
+        )
+    }
+
     /// CPU time the whole process has used, in seconds; 0 when the clock can't be read.
     public static func processCPUTime() -> TimeInterval {
         var time = timespec()
