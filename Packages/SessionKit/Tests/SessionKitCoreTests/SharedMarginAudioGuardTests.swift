@@ -40,6 +40,8 @@ final class SharedMarginAudioGuardTests: XCTestCase {
                    reason: "making level-matched copies of the listener's own recordings ahead of time"),
             Excuse(file: app + "Gate1AppModel+MarginLeveling.swift", line: "guard let path = margin.audioPath, let url = resolvedApplicationSupportAssetURL(for: path) else { continue }",
                    reason: "making level-matched copies of friends' recordings ahead of time; neither offers nor plays them, and a reading is leveled when it plays"),
+            Excuse(file: app + "Gate1AppModel+MarginExport.swift", line: "guard margin.captureKind != .written, let path = margin.audioPath,",
+                   reason: "taking the listener's own Margin out (Export this Margin, #3211): the menu is on `MarginRow`, never on a friend's Margin"),
             Excuse(file: app + "Gate1AppModel+PermanentDeleteFiles.swift", line: "let deletedAudioPaths = deleted.compactMap(\\.audioPath) + quarantinedAudioPaths",
                    reason: "deleting recording files"),
             Excuse(file: app + "Gate1AppModel+ShareDrafts.swift", line: "hasVoice: interjection.audioPath.flatMap(resolvedInterjectionAudioURL(for:)) != nil,",
