@@ -45,9 +45,14 @@ var (
 )
 
 // Record is one filed report.
+//
+// A report about a club (#1799) has ClubID, and Post when it named one post, and no LinkID. The club id
+// is kept for the owner, who reads it with `smserver reports`; it is never written to a log.
 type Record struct {
 	Ref      string               `json:"ref"`
-	LinkID   string               `json:"link"`
+	LinkID   string               `json:"link,omitempty"`
+	ClubID   string               `json:"club,omitempty"`
+	Post     int                  `json:"post,omitempty"`
 	Category reportrules.Category `json:"category"`
 	At       time.Time            `json:"at"`
 	Reason   string               `json:"reason,omitempty"`
@@ -135,13 +140,33 @@ func (s *Store) Add(r Record) error {
 	if err != nil {
 		return err
 	}
-	r.Reason = cleanReason(r.Category, r.Reason)
+	r.Reason = cleanReasonFor(r, r.Reason)
 	return s.save(append(recs, r))
 }
 
 // AddReason attaches the written reason to a filed report, once. The ref and the link id must both
 // match, so a ref from one link's page cannot be used on another's.
 func (s *Store) AddReason(ref, linkID, reason string) error {
+	return s.addReason(ref, reason, func(r *Record) bool { return r.LinkID == linkID && r.ClubID == "" })
+}
+
+// cleanReasonFor is cleanReason, except that a report about a club never keeps an invite key in its
+// written reason, abuse material included: the club hold keeps the link, and the record is read by the
+// owner's tooling. (A share-link report keeps one in the abuse-material category, as before.)
+func cleanReasonFor(r Record, reason string) string {
+	if r.ClubID != "" {
+		return linkWithKey.ReplaceAllString(strings.TrimSpace(reason), "[link removed]")
+	}
+	return cleanReason(r.Category, reason)
+}
+
+// AddClubReason is AddReason for a report about a club: the ref and the club id must both match, so a ref
+// from a link's page cannot be used on a club, nor one club's on another's.
+func (s *Store) AddClubReason(ref, clubID, reason string) error {
+	return s.addReason(ref, reason, func(r *Record) bool { return r.ClubID == clubID && r.LinkID == "" })
+}
+
+func (s *Store) addReason(ref, reason string, same func(*Record) bool) error {
 	reason = strings.TrimSpace(reason)
 	if len(reason) > MaxReasonBytes {
 		return ErrReasonTooLong
@@ -156,11 +181,11 @@ func (s *Store) AddReason(ref, linkID, reason string) error {
 		return err
 	}
 	for i := range recs {
-		if recs[i].Ref == ref && recs[i].LinkID == linkID {
+		if recs[i].Ref == ref && same(&recs[i]) {
 			if recs[i].Reason != "" {
 				return ErrReasonGiven
 			}
-			recs[i].Reason = cleanReason(recs[i].Category, reason)
+			recs[i].Reason = cleanReasonFor(recs[i], reason)
 			return s.save(recs)
 		}
 	}
@@ -201,10 +226,10 @@ func (s *Store) Sweep(now time.Time, handleKeep, recordKeep time.Duration) (int,
 	return len(recs) - len(kept), s.save(kept)
 }
 
-// linkWithKey matches a pasted share link or its tail: anything ending in /l/<32 hex> followed by # and
-// the key. A reason is free text, so outside the abuse-material category a link pasted into it must not
+// linkWithKey matches a pasted share link or club invite link, or its tail: anything ending in /l/<32 hex>
+// or /c/<32 hex> followed by # and the key. A reason is free text, so outside the abuse-material category a link pasted into it must not
 // carry the key to disk.
-var linkWithKey = regexp.MustCompile(`(?i)\S*/l/[0-9a-f]{32}(?:#|%23|\x{FF03})\S*`)
+var linkWithKey = regexp.MustCompile(`(?i)\S*/[lc]/[0-9a-f]{32}(?:#|%23|\x{FF03})\S*`)
 
 // cleanReason trims a reason and, for every category but abuse-material, replaces a pasted link that
 // carries a key with a marker. Only an abuse-material report may keep the key, and it keeps it in the
@@ -217,7 +242,7 @@ func cleanReason(c reportrules.Category, reason string) string {
 	return linkWithKey.ReplaceAllString(reason, "[link removed]")
 }
 
-// RedactKeys replaces every pasted share link that carries a key with a marker. An owner-facing
+// RedactKeys replaces every pasted share or club invite link that carries a key with a marker. An owner-facing
 // reader uses it in every category, abuse-material included, so reading a report never puts a key on
 // the owner's screen: the key stays in the hold, which nobody opens.
 func RedactKeys(text string) string { return linkWithKey.ReplaceAllString(text, "[link removed]") }

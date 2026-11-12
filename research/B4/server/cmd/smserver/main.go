@@ -27,6 +27,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -88,6 +89,8 @@ func main() {
 		err = releaseHold(args)
 	case "reports":
 		err = listReports(args, os.Stdout, time.Now())
+	case "club":
+		err = clubCommand(args, os.Stdout, time.Now())
 	default:
 		usage()
 	}
@@ -98,7 +101,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: smserver serve|block|unblock|switch|purge|validate-manifest|publish-manifest|make-test-ca|takedown|takedown-map|hold|show-reported-link|release-hold|reports [flags]")
+	fmt.Fprintln(os.Stderr, "usage: smserver serve|block|unblock|switch|purge|validate-manifest|publish-manifest|make-test-ca|takedown|takedown-map|hold|show-reported-link|release-hold|reports|club [flags]")
 	os.Exit(2)
 }
 
@@ -302,6 +305,11 @@ func serve(args []string) error {
 					log.Print("clubs: daily sweep failed")
 				} else if n > 0 {
 					log.Printf("clubs: ended %d expired clubs", n)
+				}
+				if n, err := clubStore.SweepHeld(time.Now()); err != nil {
+					log.Print("clubs: held-club sweep failed")
+				} else if n > 0 {
+					log.Printf("clubs: deleted %d held clubs at one year", n)
 				}
 			}
 			if reportStore != nil {
@@ -666,6 +674,7 @@ func listReports(args []string, out io.Writer, now time.Time) error {
 		return err
 	}
 	linksDir := filepath.Join(*state, "links")
+	var clubStore *clubs.Store
 	shown := 0
 	for _, r := range recs {
 		if *category != "" && string(r.Category) != *category {
@@ -674,7 +683,21 @@ func listReports(args []string, out io.Writer, now time.Time) error {
 		if *since > 0 && now.Sub(r.At) > *since {
 			continue
 		}
-		fmt.Fprintf(out, "%s  %s  %-16s  link %s  %s\n", r.Ref, r.At.UTC().Format("2006-01-02 15:04Z"), r.Category, r.LinkID, linkStatus(linksDir, r.LinkID, now))
+		if r.ClubID != "" {
+			// A report about a club. The club id is the owner's to read; the content never is.
+			if clubStore == nil {
+				if clubStore, err = clubs.OpenStore(filepath.Join(*state, "clubs")); err != nil {
+					return err
+				}
+			}
+			what := "club " + r.ClubID
+			if r.Post > 0 {
+				what += " post " + strconv.Itoa(r.Post)
+			}
+			fmt.Fprintf(out, "%s  %s  %-16s  %s  %s\n", r.Ref, r.At.UTC().Format("2006-01-02 15:04Z"), r.Category, what, clubStore.Status(r.ClubID, r.Post, now))
+		} else {
+			fmt.Fprintf(out, "%s  %s  %-16s  link %s  %s\n", r.Ref, r.At.UTC().Format("2006-01-02 15:04Z"), r.Category, r.LinkID, linkStatus(linksDir, r.LinkID, now))
+		}
 		if r.Reason != "" {
 			fmt.Fprintf(out, "    reason: %s\n", oneLine(reports.RedactKeys(r.Reason)))
 		}

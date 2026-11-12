@@ -12,6 +12,11 @@
 //	<id>/meta.json   the two proof hashes, the days it was made and last used, and an optional state
 //	<id>/header      the sealed header (item 0 of the box: the club's name, sealed)
 //	<id>/posts/<n>   the sealed posts, numbered from 1 with no gaps
+//	<id>/disabled/<n> a post a report disabled: its bytes, kept until the club ends so a hold can still
+//	                 be made by hand. Its place in posts/ is an empty file, so numbers keep their gaps closed.
+//	<id>/reported-link, reported-link-2 .. 5
+//	                 only after an abuse-material report the hold cap refused: the reported invite link, parked
+//	                 for the owner's hold by hand, gone when the club ends (see hold.go).
 //
 // Times are days, never instants: meta.json holds days and every file and folder time is set to
 // midnight UTC, so neither the contents nor the file system say when in a day anyone posted or
@@ -52,6 +57,9 @@ const (
 	// may go with no post and no read.
 	FirstPostDays = 7
 	IdleDays      = 90
+	// DisabledDays is how long a club that was disabled (by a report or by the owner) keeps its content
+	// for a hold by hand: 30 days from the day it was disabled, as a reported share link does.
+	DisabledDays = 30
 
 	dayFormat = "2006-01-02"
 
@@ -118,6 +126,8 @@ type metadata struct {
 	// State is "" for a live club, "disabled" while it is not served but its content stays, "gone" once
 	// the content is deleted.
 	State string `json:"state,omitempty"`
+	// DisabledDay is the day State became "disabled", for the 30-day keep. Cleared when the club ends.
+	DisabledDay string `json:"disabledDay,omitempty"`
 }
 
 const (
@@ -134,7 +144,10 @@ type PostInfo struct {
 type Store struct {
 	dir    string
 	Limits Limits
-	mu     sync.Mutex
+	// HoldLimits caps what the public report path may hold for a year (hold.go). Zero fields mean the
+	// share-link defaults.
+	HoldLimits links.HoldLimits
+	mu         sync.Mutex
 	// total is the bytes held in every live club. It is counted when the store opens and kept as
 	// posts arrive and clubs end, so a cap needs no walk.
 	total int64
@@ -281,6 +294,14 @@ func (s *Store) access(id string, kind Kind, proof string, now time.Time) (metad
 // for ninety days, has ended. Days, not instants.
 func (s *Store) expired(id string, m metadata, now time.Time) bool {
 	today := dayOf(now)
+	if m.State == stateDisabled {
+		// A disabled club keeps its content DisabledDays from the day it was disabled, whatever its idle or
+		// first-post rules say, so the owner's hold by hand has the whole time. (A disabled club with no
+		// readable day, made before the day was kept, falls back to the rules below.)
+		if d, err := time.Parse(dayFormat, m.DisabledDay); err == nil {
+			return !today.Before(d.AddDate(0, 0, DisabledDays))
+		}
+	}
 	if last, err := time.Parse(dayFormat, m.LastActiveDay); err != nil || !today.Before(last.AddDate(0, 0, IdleDays)) {
 		return true
 	}
@@ -325,7 +346,22 @@ func (s *Store) contentBytes(id string) int64 {
 		n += info.Size()
 	}
 	_, held, _ := s.posts(id)
-	return n + held
+	return n + held + s.disabledBytes(id)
+}
+
+// disabledBytes is what the disabled posts of a club still hold.
+func (s *Store) disabledBytes(id string) int64 {
+	entries, err := os.ReadDir(s.path(id, "disabled"))
+	if err != nil {
+		return 0
+	}
+	var n int64
+	for _, e := range entries {
+		if info, err := e.Info(); err == nil && info.Mode().IsRegular() {
+			n += info.Size()
+		}
+	}
+	return n
 }
 
 // touch records that the club was used today. Only the day is kept, and the file is written only when
@@ -423,7 +459,7 @@ func (s *Store) Post(id, postProof string, packet []byte, now time.Time) (int, e
 	}
 	infos, held, count := s.posts(id)
 	size := int64(len(packet))
-	if count >= s.Limits.posts() || held+size > s.Limits.club() {
+	if count >= s.Limits.posts() || held+s.disabledBytes(id)+size > s.Limits.club() {
 		return 0, ErrClubFull
 	}
 	if s.total+size > s.Limits.total() {
@@ -506,8 +542,8 @@ func (s *Store) Item(id, readProof string, seq int, now time.Time) (*os.File, er
 	return f, err
 }
 
-// Disable stops a club being served, for every request, and keeps its content until the club's own
-// lifetime ends, so a hold can still be made by hand. A member with the proof is told it is gone.
+// Disable stops a club being served, for every request, and keeps its content for DisabledDays, so a hold
+// can still be made by hand. A member with the proof is told it is gone.
 func (s *Store) Disable(id string, now time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -519,6 +555,7 @@ func (s *Store) Disable(id string, now time.Time) error {
 		return nil
 	}
 	m.State = stateDisabled
+	m.DisabledDay = dayOf(now).Format(dayFormat)
 	return s.writeMeta(id, m, dayOf(now))
 }
 
@@ -540,6 +577,7 @@ func (s *Store) endLocked(id string, m metadata, now time.Time) error {
 		// the folder, so a failure below cannot leave the counter and the disk disagreeing for good.
 		held := s.contentBytes(id)
 		m.State = stateGone
+		m.DisabledDay = ""
 		if err := s.writeMeta(id, m, dayOf(now)); err != nil {
 			return err
 		}
@@ -559,6 +597,14 @@ func (s *Store) removeContent(id string, now time.Time) error {
 	}
 	if err := os.RemoveAll(s.path(id, "posts")); err != nil {
 		return err
+	}
+	if err := os.RemoveAll(s.path(id, "disabled")); err != nil {
+		return err
+	}
+	for n := 1; n <= links.MaxReportedLinks; n++ {
+		if err := os.Remove(s.path(id, reportedLinkName(n))); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
 	}
 	// Removing files changes the folder's own time; put it back to the day.
 	setTimes(dayOf(now), s.path(id))

@@ -172,6 +172,7 @@ type Server struct {
 	relayWindow      window
 	linkReportWindow window
 	clubWindow       window
+	clubReportWindow window
 	clubBytes        byteWindow
 	linkSlots        chan struct{}
 	linkReports      map[linkReportKey]int
@@ -257,6 +258,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST "+PathClubs+"/{id}/posts", s.postClub)
 	mux.HandleFunc("GET "+PathClubs+"/{id}/posts", s.listClubPosts)
 	mux.HandleFunc("GET "+PathClubs+"/{id}/posts/{seq}", s.getClubItem)
+	mux.HandleFunc("POST "+PathClubs+"/{id}/report", s.reportClub)
+	mux.HandleFunc("POST "+PathClubs+"/{id}/report/reason", s.reportClubReason)
 	if len(s.LinkOrigins) > 0 {
 		// Registered only with origins listed, so an empty list leaves
 		// OPTIONS answering 405 as it always has.
