@@ -113,6 +113,67 @@ final class TodaysMarginsDigestTests: XCTestCase {
         XCTAssertEqual(found.map(\.itemTitle), ["Gamma", "Alpha", "Alpha", "Beta"])
     }
 
+    // MARK: Live and quick sessions
+
+    private func liveMargin(
+        _ id: String, at markedAt: Date, text: String = "words", audio: String? = nil, whereNote: String? = nil,
+        offsetMs: Int = 90_000, place: LiveSessionPlace? = nil, blind: Bool = false
+    ) -> LiveSessionMargin {
+        var margin = LiveSessionMargin(
+            id: id, text: text, markedAt: markedAt, sessionOffsetMs: offsetMs, whereNote: whereNote, isBlindMark: blind)
+        margin.audioPath = audio
+        margin.place = place
+        return margin
+    }
+
+    func testLiveAndQuickSessionMarginsCountForTheDayAndMergeInOrder() {
+        let calendar = calendar("UTC")
+        let noon = date("2026-11-12T12:00:00Z")
+        var meeting = LiveSession(id: "m", kind: .meeting, title: "  Budget review ", startedAt: noon)
+        meeting.margins = [
+            liveMargin("m-late", at: noon.addingTimeInterval(120), text: "  late words ", whereNote: " page 118 "),
+            liveMargin("m-yesterday", at: noon.addingTimeInterval(-86_400)),
+            liveMargin("m-blind", at: noon, text: "  ", blind: true),
+            liveMargin("m-spoken", at: noon.addingTimeInterval(60), text: "", audio: "SpokenMargins/interjections/x.m4a"),
+        ]
+        var quick = LiveSession(id: "q", kind: .other, startedAt: noon, isQuick: true)
+        quick.margins = [liveMargin("q1", at: noon.addingTimeInterval(30), place: LiveSessionPlace(unit: .percent, value: 40))]
+        var untitled = LiveSession(id: "p", kind: .paper, startedAt: noon)
+        untitled.margins = [liveMargin("p1", at: noon.addingTimeInterval(150), offsetMs: 3_725_000)]
+        let library = TodaysMarginsDigest.entries(
+            from: [(margin("lib", at: noon.addingTimeInterval(45)), "Library Item", nil)], on: noon, calendar: calendar)
+
+        let live = TodaysMarginsDigest.entries(fromLiveSessions: [meeting, quick, untitled], on: noon, calendar: calendar)
+        let day = TodaysMarginsDigest.ordered(library + live)
+
+        XCTAssertEqual(day.map(\.id), ["q1", "lib", "m-spoken", "m-late", "p1"])
+        XCTAssertEqual(day.map(\.itemTitle), ["Quick session", "Library Item", "Budget review", "Budget review", "Paper book session"])
+        XCTAssertEqual(day.map(\.place), ["40%", "about 40% through", "01:30 into the session", "page 118", "1:02:05 into the session"])
+        XCTAssertEqual(day.first { $0.id == "m-late" }?.words, "late words")
+        XCTAssertEqual(day.first { $0.id == "m-spoken" }?.isSpoken, true)
+        XCTAssertEqual(day.first { $0.id == "m-spoken" }?.words, "")
+    }
+
+    /// A saved session's Margins are on its Library item and counted there, so it adds nothing here.
+    func testASessionSavedAsALibraryItemIsNotCountedTwice() {
+        let noon = date("2026-11-12T12:00:00Z")
+        var saved = LiveSession(id: "s", kind: .meeting, startedAt: noon, savedItemId: "item")
+        saved.margins = [liveMargin("s1", at: noon)]
+        XCTAssertEqual(TodaysMarginsDigest.entries(fromLiveSessions: [saved], on: noon, calendar: calendar("UTC")), [])
+    }
+
+    func testLiveSessionMarginsFollowTheLocalDay() {
+        let chicago = calendar("America/Chicago")
+        let start = chicago.startOfDay(for: date("2026-11-12T15:00:00Z"))
+        var session = LiveSession(id: "s", kind: .meeting, startedAt: start)
+        session.margins = [
+            liveMargin("before", at: start.addingTimeInterval(-1)), liveMargin("first", at: start),
+            liveMargin("last", at: start.addingTimeInterval(86_399)), liveMargin("after", at: start.addingTimeInterval(86_400)),
+        ]
+        let found = TodaysMarginsDigest.entries(fromLiveSessions: [session], on: start, calendar: chicago)
+        XCTAssertEqual(Set(found.map(\.id)), ["first", "last"])
+    }
+
     // MARK: Words and places
 
     func testWordsFollowTheNotesFolderRule() {

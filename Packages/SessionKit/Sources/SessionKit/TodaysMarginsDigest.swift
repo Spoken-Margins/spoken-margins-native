@@ -1,7 +1,7 @@
 import Foundation
 
 /// The "Today's Margins" Shortcuts action's text (#1991): every Margin the listener made on one local calendar day,
-/// in the order they were made, as Markdown a chatbot or a notes app can read. Pure: it reads nothing, so the day's
+/// on Library items and in live and quick sessions, in the order they were made, as Markdown a chatbot or a notes app can read. Pure: it reads nothing, so the day's
 /// boundaries, the empty day and the order are host-tested here, and the store read lives in `SessionKitPersistence`.
 ///
 /// What a Margin contributes is what the notes folder's note for it would say (`SessionExportMarkdownRenderer`): the
@@ -65,7 +65,7 @@ public enum TodaysMarginsDigest {
         on day: Date,
         calendar: Calendar = .current
     ) -> [Entry] {
-        margins
+        let found = margins
             .compactMap { candidate -> Entry? in
                 let margin = candidate.margin
                 guard margin.status == "active" else { return nil }
@@ -78,7 +78,42 @@ public enum TodaysMarginsDigest {
                     id: margin.id, itemTitle: candidate.itemTitle, takenAt: takenAt, words: words,
                     place: place(of: margin), isSpoken: isSpoken)
             }
-            .sorted { ($0.takenAt, $0.id) < ($1.takenAt, $1.id) }
+        return ordered(found)
+    }
+
+    /// Earliest first; the same moment keeps a stable order by id.
+    public static func ordered(_ entries: [Entry]) -> [Entry] {
+        entries.sorted { ($0.takenAt, $0.id) < ($1.takenAt, $1.id) }
+    }
+
+    /// The day's Margins in live sessions (a meeting, an audiobook or paper book elsewhere) and quick sessions, which
+    /// are kept as files and not in the database (#2487), unordered: merge them with `entries(from:on:calendar:)`'s
+    /// through `ordered`. A session already saved as a Library item is skipped, since its Margins are on the item and
+    /// counted there. A blind Mark with no words is left out, as a blank written Margin is; a spoken Margin whose
+    /// transcript hasn't arrived is kept. The title is the session's own, else "Quick session" or "<kind> session".
+    public static func entries(
+        fromLiveSessions sessions: [LiveSession], on day: Date, calendar: Calendar = .current
+    ) -> [Entry] {
+        sessions.filter { $0.savedItemId == nil }.flatMap { session -> [Entry] in
+            session.margins.compactMap { margin -> Entry? in
+                guard calendar.isDate(margin.markedAt, inSameDayAs: day) else { return nil }
+                let words = margin.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                let isSpoken = margin.audioPath != nil
+                guard isSpoken || !words.isEmpty else { return nil }
+                return Entry(
+                    id: margin.id, itemTitle: LiveSessionFileWorker.title(of: session), takenAt: margin.markedAt,
+                    words: words, place: place(of: margin), isSpoken: isSpoken)
+            }
+        }
+    }
+
+    /// What the listener said about where they were (their words, else the place they gave), else how far into the
+    /// session it was.
+    static func place(of margin: LiveSessionMargin) -> String {
+        let said = margin.whereNote?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !said.isEmpty { return said }
+        if let place = margin.place { return place.label }
+        return "\(MarginDeepLink.clockPosition(ms: margin.sessionOffsetMs)) into the session"
     }
 
     /// The text the action returns.

@@ -4,17 +4,25 @@ import Foundation
 import SessionKit
 import SessionKitPersistence
 
-/// The text behind the Today's Margins action (#1991): the day's Margins as Markdown. The read runs off the main
-/// actor through `StoreReader` (a time-of-day automation can run it before any screen has loaded), the rules for what
-/// counts and how it reads are `TodaysMarginsDigest` in SessionKit. Nothing here writes, and nothing leaves the phone
-/// until the listener's own shortcut passes the text on.
+/// The text behind the Today's Margins action (#1991): the day's Margins as Markdown. The Library's Margins are read
+/// off the main actor through `StoreReader` (a time-of-day automation can run it before any screen has loaded), and the
+/// live and quick sessions' Margins, which are files and not in the database, come from `LiveSessionFileWorker`, so a
+/// Margin Siri or the Watch filed into a quick session is in the day too. The rules for what counts and how it reads
+/// are `TodaysMarginsDigest` in SessionKit. Nothing here writes, and nothing leaves the phone until the listener's own
+/// shortcut passes the text on.
 enum TodaysMarginsShortcutAction {
+    /// - `liveSessions`: the sessions to read; nil reads the app's own session files.
     static func text(
-        store: SQLiteSessionStore?, now: Date = Date(), calendar: Calendar = .current, locale: Locale = .current
+        store: SQLiteSessionStore?, liveSessions: [LiveSession]? = nil, now: Date = Date(),
+        calendar: Calendar = .current, locale: Locale = .current
     ) async throws -> String {
         guard let store else { throw AddMarginShortcutError.libraryUnavailable }
-        let entries = try await StoreReader(store).todaysMargins(on: now, calendar: calendar)
-        return TodaysMarginsDigest.markdown(entries, day: now, calendar: calendar, locale: locale)
+        let library = try await StoreReader(store).todaysMargins(on: now, calendar: calendar)
+        let sessions: [LiveSession]
+        if let liveSessions { sessions = liveSessions } else { sessions = await LiveSessionFileWorker.shared.allSessions() }
+        let live = TodaysMarginsDigest.entries(fromLiveSessions: sessions, on: now, calendar: calendar)
+        return TodaysMarginsDigest.markdown(
+            TodaysMarginsDigest.ordered(library + live), day: now, calendar: calendar, locale: locale)
     }
 }
 
@@ -23,7 +31,7 @@ enum TodaysMarginsShortcutAction {
 struct TodaysMarginsIntent: AppIntent {
     static let title: LocalizedStringResource = "Today's Margins"
     static let description = IntentDescription(
-        "Returns every Margin you made today, oldest first, as text: the episode, article or PDF it is on, the time you made it, where in it you were, and your words. Spoken Margins sends nothing anywhere; pass the text to any action you like."
+        "Returns every Margin you made today, oldest first, as text: the episode, article, PDF or live session it is on, the time you made it, where in it you were, and your words. Spoken Margins sends nothing anywhere; pass the text to any action you like."
     )
     static let openAppWhenRun = false
 

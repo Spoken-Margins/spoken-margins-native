@@ -39,6 +39,31 @@ final class TodaysMarginsShortcutIntentTests: XCTestCase {
         XCTAssertEqual(try store.loadInterjections(sessionId: sessionId).count, marginsBefore, "the action only reads")
     }
 
+    /// A Margin Siri or the Watch filed into a quick session is not in the database; it is in the day all the same, in
+    /// order with the Library's Margins. A session already saved as a Library item is not counted twice.
+    func testTheActionIncludesMarginsFiledInLiveAndQuickSessions() async throws {
+        let model = makeModel()
+        model.startItem(id: "item-pill")
+        let store = try XCTUnwrap(model.store)
+        model.beginWrittenMargin()
+        model.saveWrittenMargin(text: "On a Library item.")
+        let now = Date()
+        var quick = LiveSession(id: "quick-1", kind: .other, startedAt: now.addingTimeInterval(-60), isQuick: true)
+        quick.margins = [quick.margin(id: "q1", text: "Filed by Siri into a quick session.", markedAt: now.addingTimeInterval(-60))]
+        var saved = LiveSession(id: "saved-1", kind: .meeting, title: "Saved meeting", startedAt: now, savedItemId: "some-item")
+        saved.margins = [saved.margin(id: "s1", text: "Counted on its item, not here.", markedAt: now)]
+
+        let text = try await TodaysMarginsShortcutAction.text(store: store, liveSessions: [quick, saved], now: now)
+
+        XCTAssertTrue(text.contains("> Filed by Siri into a quick session."), text)
+        XCTAssertTrue(text.contains("· Quick session\n"), text)
+        XCTAssertTrue(text.contains("> On a Library item."), text)
+        XCTAssertFalse(text.contains("Counted on its item"), text)
+        let quickAt = try XCTUnwrap(text.range(of: "Filed by Siri"))
+        let libraryAt = try XCTUnwrap(text.range(of: "On a Library item."))
+        XCTAssertLessThan(quickAt.lowerBound, libraryAt.lowerBound, "the quick one was made a minute earlier")
+    }
+
     func testTheIntentSaysSoWhenTheLibraryIsUnavailable() async {
         let priorModel = ListeningEditionShortcutBridge.model
         ListeningEditionShortcutBridge.model = nil
