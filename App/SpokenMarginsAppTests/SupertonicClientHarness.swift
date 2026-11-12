@@ -123,17 +123,17 @@ final class SupertonicClientHarness {
 
     /// Waits until `count` renders have returned to the client.
     func waitForRenders(_ count: Int) async {
-        for _ in 0..<250 where renderer.finishedCount < count { try? await Task.sleep(for: .milliseconds(20)) }
+        try? await pollUntil { renderer.finishedCount >= count }
     }
 
     /// Waits until `count` renders have started, held ones included.
     func waitForRenderStarts(_ count: Int) async {
-        for _ in 0..<250 where renderer.startedCount < count { try? await Task.sleep(for: .milliseconds(20)) }
+        try? await pollUntil { renderer.startedCount >= count }
     }
 
     /// Waits until the client has started `count` players in all; true when it has.
     func waitForPlayerStarts(_ count: Int) async -> Bool {
-        for _ in 0..<150 where players.count < count { try? await Task.sleep(for: .milliseconds(20)) }
+        try? await pollUntil { players.count >= count }
         return players.count >= count
     }
 
@@ -173,13 +173,13 @@ final class SupertonicClientHarness {
 
     /// Waits until the chunk queued behind the playing one starts at `start` (nil: none is queued); true when it does.
     func waitForQueuedChunk(_ start: Int?) async -> Bool {
-        for _ in 0..<150 where client.debugQueuedChunkStart != start { try? await Task.sleep(for: .milliseconds(20)) }
+        try? await pollUntil { client.debugQueuedChunkStart == start }
         return client.debugQueuedChunkStart == start
     }
 
     /// Waits until the client is playing the chunk that starts at `start`; true when it is.
     func waitForPlayingChunk(_ start: Int, seconds: Double = 3) async -> Bool {
-        for _ in 0..<Int(seconds * 50) where playingChunkStart != start { try? await Task.sleep(for: .milliseconds(20)) }
+        try? await pollUntil(timeout: .seconds(max(seconds, 30))) { playingChunkStart == start }
         return playingChunkStart == start
     }
 

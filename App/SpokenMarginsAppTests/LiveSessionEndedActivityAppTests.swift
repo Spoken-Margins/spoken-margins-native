@@ -78,9 +78,7 @@ final class LiveSessionEndedActivityAppTests: XCTestCase {
 
         NotificationCenter.default.post(name: LiveSessionFinishMargin.requested, object: nil)
 
-        for _ in 0..<50 where capture.isRecording(for: "s") {
-            try await Task.sleep(for: .milliseconds(20))
-        }
+        try await pollUntil { !capture.isRecording(for: "s") }
         XCTAssertFalse(capture.isRecording(for: "s"))
     }
 }

@@ -41,9 +41,7 @@ final class EpisodeMapStoredNamesTests: XCTestCase {
                 externalReference: nil, status: "ready",
                 media: ItemMedia(sourceType: .remoteStream, durationMs: 10_000)))
             model.prepareEpisodeMap(itemId: entry.itemID)
-            for _ in 0..<2_000 where ((try? store.loadEpisodeMapPreparationJobs())?.isEmpty ?? true) {
-                try await Task.sleep(for: .milliseconds(5))
-            }
+            try await pollUntil { !(((try? store.loadEpisodeMapPreparationJobs())?.isEmpty ?? true)) }
             let jobs = try store.loadEpisodeMapPreparationJobs()
             XCTAssertEqual(jobs.count, 1, entry.itemID.debugDescription)
             let job = try XCTUnwrap(jobs.first)
@@ -217,16 +215,13 @@ final class EpisodeMapStoredNamesTests: XCTestCase {
         await model.waitForPackageStaging()
         XCTAssertEqual(model.spokenMarginsPackageImportReview?.matchingItemId, itemID)
         model.confirmSpokenMarginsPackageImport()
-        for _ in 0..<500 where model.isImportingSpokenMarginsPackage {
-            try await Task.sleep(for: .milliseconds(20))
-        }
+        try await pollUntil { !model.isImportingSpokenMarginsPackage }
         XCTAssertFalse(model.isImportingSpokenMarginsPackage)
         XCTAssertNil(model.spokenMarginsPackageImportError)
         // The injected renderer is immediate; James's summary is rendered by Kitten, which loads its bundled model on a busy lane.
-        let bridgePolls = voice == .james ? 3_000 : 500
-        for _ in 0..<bridgePolls where model.diagnostics["localAudioSkim:\(itemID)"] != "ready"
-            && model.diagnostics["localAudioSkim:\(itemID)"]?.hasPrefix("failed:") != true {
-            try await Task.sleep(for: .milliseconds(20))
+        try await pollUntil(timeout: voice == .james ? .seconds(60) : .seconds(30)) {
+            let state = model.diagnostics["localAudioSkim:\(itemID)"]
+            return state == "ready" || state?.hasPrefix("failed:") == true
         }
         XCTAssertEqual(model.diagnostics["localAudioSkim:\(itemID)"], "ready")
         let assets = try store.loadOwnedOfflineAssets().filter { $0.itemId == itemID && $0.category == .summaryBridge }

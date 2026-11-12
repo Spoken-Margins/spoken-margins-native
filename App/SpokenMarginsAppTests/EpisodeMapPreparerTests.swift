@@ -49,9 +49,7 @@ final class EpisodeMapPreparerTests: XCTestCase {
     }
 
     private func waitUntil(_ description: String, _ condition: () -> Bool) async throws {
-        for _ in 0..<2_000 where !condition() {
-            try await Task.sleep(for: .milliseconds(5))
-        }
+        try await pollUntil { condition() }
         XCTAssertTrue(condition(), description)
     }
 

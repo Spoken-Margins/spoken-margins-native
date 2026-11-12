@@ -435,6 +435,20 @@ struct SettingsScreen: View, Equatable {
                         Label("How Spoken Margins Works", systemImage: "questionmark.circle")
                     }
                     .accessibilityIdentifier("settings.help.button")
+                    // Shown in every build while the app is distributed through TestFlight; removed before the first
+                    // App Store build (#1770). The whole message is a constant, so nothing from the Library goes with it.
+                    ShareLink(item: BetaInviteShare.text) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Label("Share beta instructions", systemImage: "square.and.arrow.up")
+                            Text("A short message with the link spokenmargins.com/join. Nothing from your Library goes with it.")
+                                .font(.footnote)
+                                .foregroundStyle(AppColors.secondaryText)
+                        }
+                        .fullRowTapTarget()
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityHint("Opens the share sheet with a short message and a link to join the beta.")
+                    .accessibilityIdentifier("settings.shareBeta.button")
                     Link("Privacy Policy", destination: AppLinks.privacy)
                     Link("Support", destination: AppLinks.support)
                     Link("Copyright and DMCA", destination: AppLinks.copyright)

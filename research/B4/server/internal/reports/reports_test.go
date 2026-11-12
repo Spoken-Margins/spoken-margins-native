@@ -158,6 +158,89 @@ func TestAKeyPastedIntoAReasonIsNotStoredExceptForAbuseMaterial(t *testing.T) {
 	}
 }
 
+// The same rule for a club's invite link (#1799): its key is the one place the server must not keep.
+func TestAKeyPastedIntoAReasonCoversClubInviteLinksInTheSameShapes(t *testing.T) {
+	const id = "0123456789abcdef0123456789abcdef"
+	for _, tc := range []struct {
+		name, text string
+		redacted   bool
+	}{
+		{"invite link", "https://spokenmargins.com/c/" + id + "#SECRETKEY", true},
+		{"upper-case path", "https://spokenmargins.com/C/" + id + "#SECRETKEY", true},
+		{"encoded hash", "https://spokenmargins.com/c/" + id + "%23SECRETKEY", true},
+		{"full-width hash", "https://spokenmargins.com/c/" + id + "\uFF03SECRETKEY", true},
+		{"tail only", "/c/" + id + "#SECRETKEY", true},
+		{"share link", "https://spokenmargins.com/l/" + id + "#SECRETKEY", true},
+		{"no key", "https://spokenmargins.com/c/" + id, false},
+		{"other path", "https://spokenmargins.com/x/" + id + "#SECRETKEY", false},
+		{"short id", "https://spokenmargins.com/c/abc#SECRETKEY", false},
+	} {
+		// Redacted means the text is replaced; otherwise it must come through unchanged.
+		if got := RedactKeys("see " + tc.text + " ok"); (got == "see [link removed] ok") != tc.redacted || (!tc.redacted && got != "see "+tc.text+" ok") {
+			t.Errorf("%s: RedactKeys gave %q", tc.name, got)
+		}
+		s, dir := open(t)
+		if err := s.Add(Record{Ref: "R1", ClubID: "c1", Category: reportrules.Harassment, At: t0, Reason: "see " + tc.text + " ok"}); err != nil {
+			t.Fatal(err)
+		}
+		data, _ := os.ReadFile(filepath.Join(dir, recordsFile))
+		if tc.redacted && strings.Contains(string(data), "SECRETKEY") {
+			t.Errorf("%s: the key was stored: %s", tc.name, data)
+		}
+		if !tc.redacted && !strings.Contains(string(data), strings.ReplaceAll(tc.text, "\uFF03", "\\uff03")) {
+			t.Errorf("%s: a plain link was altered: %s", tc.name, data)
+		}
+	}
+}
+
+// A club report never keeps an invite key in its reason, abuse material included (a link report does keep
+// one there, as before; see TestAKeyPastedIntoAReasonIsNotStoredExceptForAbuseMaterial).
+func TestAClubReportDropsAnInviteKeyFromItsReasonInEveryCategory(t *testing.T) {
+	const link = "https://spokenmargins.com/c/0123456789abcdef0123456789abcdef#SECRETKEY"
+	for _, c := range reportrules.Categories() {
+		s, dir := open(t)
+		s.Add(Record{Ref: "R1", ClubID: "c1", Category: c, At: t0, Reason: "this " + link + " is bad"})
+		s.Add(Record{Ref: "R2", ClubID: "c2", Category: c, At: t0})
+		if err := s.AddClubReason("R2", "c2", "see "+link); err != nil {
+			t.Fatal(err)
+		}
+		data, _ := os.ReadFile(filepath.Join(dir, recordsFile))
+		if strings.Contains(string(data), "SECRETKEY") || !strings.Contains(string(data), "this [link removed] is bad") {
+			t.Fatalf("%s: %s", c, data)
+		}
+	}
+}
+
+func TestAClubReportsReasonNeedsItsRefAndItsClub(t *testing.T) {
+	s, _ := open(t)
+	s.Add(Record{Ref: "RCLUB", ClubID: "c1", Post: 4, Category: reportrules.Other, At: t0})
+	s.Add(Record{Ref: "RLINK", LinkID: "l1", Category: reportrules.Other, At: t0})
+	for name, err := range map[string]error{
+		"a link's ref on a club": s.AddClubReason("RLINK", "l1", "x"),
+		"another club":           s.AddClubReason("RCLUB", "c2", "x"),
+		"a club's ref on a link": s.AddReason("RCLUB", "c1", "x"),
+		"a club id as a link id": s.AddReason("RCLUB", "", "x"),
+		"a link id as a club id": s.AddClubReason("RLINK", "", "x"),
+	} {
+		if err != ErrNotFound {
+			t.Errorf("%s: %v, want ErrNotFound", name, err)
+		}
+	}
+	if err := s.AddClubReason("RCLUB", "c1", " "); err != ErrReasonMissing {
+		t.Errorf("empty reason: %v", err)
+	}
+	if err := s.AddClubReason("RCLUB", "c1", "why"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddClubReason("RCLUB", "c1", "again"); err != ErrReasonGiven {
+		t.Errorf("second reason: %v", err)
+	}
+	recs, _ := s.load()
+	if recs[0].Reason != "why" || recs[0].Post != 4 || recs[1].Reason != "" {
+		t.Errorf("%+v", recs)
+	}
+}
+
 func TestNewRefIsTwelveUnambiguousCharacters(t *testing.T) {
 	seen := map[string]bool{}
 	for i := 0; i < 200; i++ {

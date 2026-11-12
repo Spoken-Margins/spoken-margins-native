@@ -84,6 +84,10 @@ CONTACTS = {
         "none needed: the starter list is a plain request, the same for every listener, made when the drawer opens",
         None, 0,
     ),
+    KIT + "SessionKit/ClubSealing.swift": (
+        "none needed here: it builds and reads an invite link and seals bytes, and makes no request. The club client takes its transport as a parameter, so the slice that wires one (club screens, #1799) must add its file here with the consent that gates creating or joining a club",
+        None, 0,
+    ),
     KIT + "SessionKit/ShareLinkOpening.swift": (
         "none needed: the listener tapped a link they were sent; the request names that link only",
         None, 0,

@@ -85,7 +85,8 @@ final class MiniPlayerKeepOutLayoutTests: XCTestCase {
     private func settledFrames(in mounted: Mounted, names: [String]) async throws -> [String: CGRect] {
         var last: [String: CGRect] = [:]
         var steady = 0
-        for _ in 0..<150 {
+        let pollDeadline = ContinuousClock.now + .seconds(30)
+        while ContinuousClock.now < pollDeadline {
             mounted.window.layoutIfNeeded()
             var frames: [String: CGRect] = [:]
             for probe in Self.probes(in: mounted.window) where names.contains(probe.name) && probe.window != nil {

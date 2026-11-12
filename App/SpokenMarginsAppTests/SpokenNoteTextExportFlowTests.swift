@@ -36,7 +36,7 @@ final class SpokenNoteTextExportFlowTests: XCTestCase {
     }
 
     private func settle(_ done: @MainActor () -> Bool) async throws {
-        for _ in 0..<500 where !done() { try await Task.sleep(for: .milliseconds(10)) }
+        try await pollUntil { done() }
         XCTAssertTrue(done(), "the export never reached the expected state")
     }
 

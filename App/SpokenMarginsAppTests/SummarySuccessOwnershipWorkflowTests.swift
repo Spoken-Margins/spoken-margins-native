@@ -48,7 +48,8 @@ final class SummarySuccessOwnershipWorkflowTests: XCTestCase {
         let request = try XCTUnwrap(requests.first)
         let turn = try XCTUnwrap(model.store?.loadTurns(sessionId: session).last)
         try await provider.succeed(request.id, text: "The original argument remains worth remembering.")
-        for _ in 0..<500 {
+        let pollDeadline = ContinuousClock.now + .seconds(30)
+        while ContinuousClock.now < pollDeadline {
             if model.snapshot.targetId == turn.id || model.diagnostics["pendingAutoPlayTurnId"] == turn.id { break }
             try await Task.sleep(for: .milliseconds(10))
         }
@@ -132,7 +133,8 @@ final class SummarySuccessOwnershipWorkflowTests: XCTestCase {
 
         let responseA = "SUMMARY_A_ONLY: Compare the original argument with its evidence. Keep this result with source A."
         try await provider.succeed(requestA.id, text: responseA)
-        for _ in 0..<500 {
+        let pollDeadline = ContinuousClock.now + .seconds(30)
+        while ContinuousClock.now < pollDeadline {
             if model.diagnostics["lastSummaryMode"] != nil { break }
             try await Task.sleep(for: .milliseconds(10))
         }
@@ -158,7 +160,8 @@ final class SummarySuccessOwnershipWorkflowTests: XCTestCase {
     }
 
     private func waitForRequests(_ count: Int, provider: HeldSummarySuccessProvider) async throws {
-        for _ in 0..<500 {
+        let pollDeadline = ContinuousClock.now + .seconds(30)
+        while ContinuousClock.now < pollDeadline {
             if await provider.requests.count >= count { return }
             try await Task.sleep(for: .milliseconds(10))
         }

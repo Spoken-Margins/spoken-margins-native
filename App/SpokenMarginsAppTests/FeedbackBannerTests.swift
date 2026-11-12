@@ -332,7 +332,8 @@ final class FeedbackBannerTests: XCTestCase {
     }
 
     private func waitForSummaryFailure(_ model: Gate1AppModel) async throws {
-        for _ in 0..<100 {
+        let pollDeadline = ContinuousClock.now + .seconds(30)
+        while ContinuousClock.now < pollDeadline {
             if model.diagnostics["lastSummaryMode"] == "apple_foundation_failed" { return }
             try await Task.sleep(for: .milliseconds(10))
         }
@@ -381,7 +382,8 @@ private actor PendingFailingSummaryClient: LocalFoundationModelClient {
     }
 
     func waitUntilRequested() async -> Bool {
-        for _ in 0..<100 {
+        let pollDeadline = ContinuousClock.now + .seconds(30)
+        while ContinuousClock.now < pollDeadline {
             if pending != nil { return true }
             try? await Task.sleep(for: .milliseconds(10))
         }

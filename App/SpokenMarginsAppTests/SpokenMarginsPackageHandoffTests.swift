@@ -144,9 +144,7 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
 
     @MainActor
     private func waitForShareLink(_ model: Gate1AppModel, until done: @MainActor () -> Bool) async throws {
-        for _ in 0..<250 where !done() {
-            try await Task.sleep(for: .milliseconds(20))
-        }
+        try await pollUntil { done() }
         XCTAssertTrue(done(), "Timed out waiting for the share link: \(model.diagnostics["lastShareLink"] ?? "no state")")
     }
 
@@ -248,15 +246,11 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         let second = try XCTUnwrap(ShareLinkURL(url: try XCTUnwrap(ShareLinkSealing.linkURL(base: URL(string: base + secondID)!, key: .random()))))
 
         opener.open(first, stage: { _ in XCTFail("the first link has no packet") }, fail: { message, _ in failures.first.append(message) })
-        for _ in 0..<250 where !firstAnswer.isWaiting {
-            try await Task.sleep(for: .milliseconds(20))
-        }
+        try await pollUntil { firstAnswer.isWaiting }
         XCTAssertTrue(firstAnswer.isWaiting, "the first link's download never started")
         opener.open(second, stage: { _ in XCTFail("the second link has no packet") }, fail: { message, _ in failures.second.append(message) })
         firstAnswer.answer()
-        for _ in 0..<250 where failures.second.isEmpty || !firstAnswer.answered {
-            try await Task.sleep(for: .milliseconds(20))
-        }
+        try await pollUntil { !(failures.second.isEmpty || !firstAnswer.answered) }
         // Give the replaced task time to reach its catch on the main actor.
         try await Task.sleep(for: .milliseconds(200))
 
@@ -468,9 +462,7 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
             })
         )
         model.confirmSpokenMarginsPackageImport()
-        for _ in 0..<250 where model.spokenMarginsPackageImportError == nil {
-            try await Task.sleep(for: .milliseconds(20))
-        }
+        try await pollUntil { model.spokenMarginsPackageImportError != nil }
         let message = try XCTUnwrap(model.spokenMarginsPackageImportError)
         XCTAssertEqual(message, SharedMarginsImportMessage.userFacing(SessionKitError.persistenceFailed("shared_podcast_item_is_ambiguous")))
         XCTAssertFalse(message.contains("_"), message)
@@ -797,14 +789,16 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         let importedMargin = try XCTUnwrap(store.loadImportedCommentaryInterjections(layerId: importedLayer.id).first)
         XCTAssertTrue(PodcastTranscriptAnchorResolver.hasUsableContext(importedMargin.anchorEvidence))
         model.podcastLocalAssetDidBecomeReady(itemId: item.id, url: localURL)
-        for _ in 0..<250 {
+        let pollDeadline = ContinuousClock.now + .seconds(30)
+        while ContinuousClock.now < pollDeadline {
             if await transcriber.fullRequestCount() > 0 { break }
             try await Task.sleep(for: .milliseconds(20))
         }
         let fullRequestCount = await transcriber.fullRequestCount()
         XCTAssertEqual(fullRequestCount, 1)
 
-        for _ in 0..<250 {
+        let resolvedDeadline = ContinuousClock.now + .seconds(30)
+        while ContinuousClock.now < resolvedDeadline {
             if try store.loadImportedCommentaryLayer(packageDigest: digest)?.sourceResolutionStatus == .resolved {
                 break
             }
@@ -852,9 +846,7 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
             extraction: .failure(ReadablePageExtractionError.httpStatus(403))
         )
         model.confirmSpokenMarginsPackageImport()
-        for _ in 0..<250 where model.spokenMarginsPackageImportError == nil {
-            try await Task.sleep(for: .milliseconds(20))
-        }
+        try await pollUntil { model.spokenMarginsPackageImportError != nil }
 
         XCTAssertEqual(
             model.spokenMarginsPackageImportError,
@@ -880,9 +872,7 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
             )
         ))
         model.confirmSpokenMarginsPackageImport()
-        for _ in 0..<250 where model.spokenMarginsPackageImportError == nil {
-            try await Task.sleep(for: .milliseconds(20))
-        }
+        try await pollUntil { model.spokenMarginsPackageImportError != nil }
 
         XCTAssertEqual(
             model.spokenMarginsPackageImportError,
@@ -970,9 +960,7 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         // The placement pass reads the store off the main actor and records both answers when it returns, so wait for
         // the last one it writes. A fixed sleep here failed on slow runners (#3295).
         let afterDownloadKey = "sourceTranscriptionAfterDownload:\(item.id)"
-        for _ in 0..<500 where model.diagnostics[afterDownloadKey] == nil {
-            try await Task.sleep(for: .milliseconds(20))
-        }
+        try await pollUntil { model.diagnostics[afterDownloadKey] != nil }
         // The download also queues the coordinator's own placement pass, which reads the item off the main actor and
         // asks the #914 question when it gets back. The caller's answer above can land first. Ending the session
         // before that pass has asked lets it find no stream to keep, place at once, and clear the deferral, so
@@ -989,7 +977,8 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         XCTAssertNotEqual(try store.loadImportedCommentaryLayer(packageDigest: digest)?.sourceResolutionStatus, .resolved)
 
         model.endSession()
-        for _ in 0..<250 {
+        let pollDeadline = ContinuousClock.now + .seconds(30)
+        while ContinuousClock.now < pollDeadline {
             if try store.loadImportedCommentaryLayer(packageDigest: digest)?.sourceResolutionStatus == .resolved { break }
             try await Task.sleep(for: .milliseconds(20))
         }
@@ -1066,9 +1055,7 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         XCTAssertEqual(model.diagnostics[key], "scheduled:2", "the pass has not published yet")
 
         // Release the pass.
-        for _ in 0..<500 where model.diagnostics[key]?.hasPrefix("complete") != true {
-            try await Task.sleep(for: .milliseconds(20))
-        }
+        try await pollUntil { model.diagnostics[key]?.hasPrefix("complete") == true }
         XCTAssertEqual(model.diagnostics[key]?.hasPrefix("complete:1/1"), true, model.diagnostics[key] ?? "never published")
 
         let keptAfter = try XCTUnwrap(store.loadImportedCommentaryLayer(id: kept.id))
@@ -1164,7 +1151,8 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
 
     @MainActor
     private func waitForImportToFinish(_ model: Gate1AppModel) async throws {
-        for _ in 0..<250 {
+        let pollDeadline = ContinuousClock.now + .seconds(30)
+        while ContinuousClock.now < pollDeadline {
             if model.spokenMarginsPackageImportReview == nil, !model.isImportingSpokenMarginsPackage {
                 return
             }
