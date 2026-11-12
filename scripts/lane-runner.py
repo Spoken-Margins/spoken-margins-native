@@ -359,12 +359,19 @@ def report(request_id: str, verdict: str, head: str, base: str, tier: str, where
         (f'{event}\n' if event else '')
 
 
+def held_for_t3_report(verdict: str, lines: list[str]) -> bool:
+    """Whether a report is the T3 hold working as designed (#4089), not a runner fault: INCONCLUSIVE with a line of its
+    own that starts "not merged: held for T3:". The same rule lane_report_verdict reads (PENDING_T3_HOLD), so the event
+    line and the auto-revert agree. The "checks did not finish" report carries the words mid-line, so it stays a fault."""
+    return verdict == 'INCONCLUSIVE' and bool(PENDING_T3_HOLD.search('\n'.join(lines)))
+
+
 def event_note(verdict: str, tier: str, head: str, base: str, seconds: float, evidence: Path | None,
-               requested_at: str | None = None, runs: list | None = None) -> str:
+               requested_at: str | None = None, runs: list | None = None, hold: bool = False) -> str:
     """The report's hidden lane-event line (lane_event.py, #2378), from this job's step runs and the
     verify-tests.py manifests under <evidence>. requested_at: when the /lane request was commented (an automerge
     run has none). runs: this report's own step runs, default all of the job's so far; a run the job starts after
-    another report (the automerge run a T3 PASS releases) passes only its own. Best effort: a report never fails for want of its measurements, and says nothing then."""
+    another report (the automerge run a T3 PASS releases) passes only its own. hold: held_for_t3_report. Best effort: a report never fails for want of its measurements, and says nothing then."""
     try:
         import lane_event
         waited = None
@@ -372,7 +379,8 @@ def event_note(verdict: str, tier: str, head: str, base: str, seconds: float, ev
             waited = max(0.0, (utc(time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())) - utc(requested_at)).total_seconds()
                          - seconds)
         records = lane_event.test_records(evidence) if evidence else {}
-        return lane_event.note(lane_event.build(verdict, tier, head, base, seconds, waited, STEP_RUNS if runs is None else runs, records))
+        return lane_event.note(lane_event.build(verdict, tier, head, base, seconds, waited, STEP_RUNS if runs is None else runs, records,
+                                                hold=hold))
     except Exception as error:  # noqa: BLE001
         print(f'[lane] no lane-event line: {error!r}')
         return ''
@@ -2489,7 +2497,7 @@ def merge_after_t3(github, pr: int, base: str, head: str, request_id: str, evide
                   started_by + details, 'none', str(evidence), NOT_VERIFIED, identity('auto', head, base_sha, []),
                   base_name=base,
                   event=event_note(verdict, 'auto', head, base_sha, time.monotonic() - started, evidence,
-                                   runs=STEP_RUNS[mark:]))
+                                   runs=STEP_RUNS[mark:], hold=held_for_t3_report(verdict, started_by + details)))
     (evidence / 'report.md').write_text(body)
     print(body)
     github.comment(body)
@@ -4146,7 +4154,7 @@ def main(argv=None) -> int:
                   ran, moved + details, crashes, str(evidence),
                   NOT_VERIFIED, wanted, cc, args.base, hosted=args.hosted,
                   event=event_note(verdict, request['tier'], head, base_sha, time.monotonic() - started, evidence,
-                                   request.get('created_at')))
+                                   request.get('created_at'), hold=held_for_t3_report(verdict, moved + details)))
     (evidence / 'report.md').write_text(body)
     print(body)
     t3_url = github.comment(body)  # if this fails, the job fails and the tidy step says so on the PR
