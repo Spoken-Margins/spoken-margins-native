@@ -64,8 +64,8 @@ enum AddMarginShortcutAction {
     }
 
     /// Where Siri's Margin goes (#3880): a Library item chosen in a Shortcut, else the running live session (a written
-    /// Margin at this moment, whatever is in the player), else the item in the player, else a refusal. Returns what
-    /// Siri says it went to: the item's title or the live session's name.
+    /// Margin at this moment, whatever is in the player), else the item in the player, else a quick session in the
+    /// Library. Returns what Siri says it went to: the item's title or the session's name.
     static func perform(
         text: String, toItemId itemId: String?, in model: Gate1AppModel,
         files: LiveSessionFileWorker = .shared, now: Date = Date()
@@ -87,8 +87,15 @@ enum AddMarginShortcutAction {
             LiveSessionBoard.shared.refresh()
             WatchMarginReceiver.shared.processInbox()
             return name
-        case .nothingRunning:
-            throw AddMarginShortcutError.nothingRunning
+        case .quickSession:
+            // Nothing runs: the Margin is kept in a quick session, where the Library's Live row shows it (#3880).
+            guard let session = await files.fileWrittenMarginAsQuick(text: words, markedAt: now, now: now) else {
+                throw AddMarginShortcutError.notSaved(nil)
+            }
+            NotificationCenter.default.post(name: LiveSessionSpokenMargins.changedOnDisk, object: nil)
+            LiveSessionBoard.shared.refresh()
+            WatchMarginReceiver.shared.processInbox()
+            return SiriMarginRoute.filedName(session)
         }
     }
 
@@ -120,7 +127,7 @@ enum AddMarginShortcutAction {
 struct AddMarginToSpokenMarginsIntent: AppIntent {
     static let title: LocalizedStringResource = "Add Margin"
     static let description = IntentDescription(
-        "Writes a text Margin in Spoken Margins: into your running live session if there is one, else on whatever is playing, at the current place, and playback carries on. Choose something else from your Library to write on it instead, at the place where you left it, without starting it."
+        "Writes a text Margin in Spoken Margins: into your running live session if there is one, else on whatever is playing, at the current place, and playback carries on; with neither, into a quick session in your Library. Choose something else from your Library to write on it instead, at the place where you left it, without starting it."
     )
     static let openAppWhenRun = false
 

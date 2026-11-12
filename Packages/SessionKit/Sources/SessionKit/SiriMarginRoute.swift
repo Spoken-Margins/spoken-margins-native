@@ -2,13 +2,13 @@ import Foundation
 
 /// Where a Margin dictated to Siri goes, and the one line Siri says about it (#3880 Design, sections 2 and 5).
 /// A pure decision: the first match wins. A Library item chosen in a Shortcut, then a running live session, then
-/// the item in the player, then (until slice 2) a refusal. The live session beats the player, as it does for the
+/// the item in the player, then a quick session in the Library (slice 2). The live session beats the player, as it does for the
 /// Watch and the Lock Screen (`LiveSessionFiling`).
 public enum SiriMarginRoute: Equatable, Sendable {
     case chosenItem
     case liveSession(name: String)
     case playerItem
-    case nothingRunning
+    case quickSession
 
     public struct Facts: Equatable, Sendable {
         public var choseItem: Bool
@@ -26,7 +26,7 @@ public enum SiriMarginRoute: Equatable, Sendable {
         if facts.choseItem { return .chosenItem }
         if let session = facts.runningSession { return .liveSession(name: sessionName(session)) }
         if facts.playerHasSession { return .playerItem }
-        return .nothingRunning
+        return .quickSession
     }
 
     /// The session's title, or for an untitled one "your audiobook session" and the like.
@@ -41,6 +41,13 @@ public enum SiriMarginRoute: Equatable, Sendable {
         }
     }
 
+    /// What Siri calls the session a Margin went into: a quick session is "a quick session in your Library".
+    public static func filedName(_ session: LiveSession) -> String {
+        session.isQuick == true ? quickSessionName : sessionName(session)
+    }
+
+    public static let quickSessionName = "a quick session in your Library"
+
     /// "Margin added to <name>."
     public static func confirmation(named name: String) -> String {
         "Margin added to \(name)."
@@ -48,6 +55,8 @@ public enum SiriMarginRoute: Equatable, Sendable {
 
     public static let emptyText = "The Margin was empty, so nothing was saved."
     public static let writingInProgress = "You're already writing a Margin in Spoken Margins. Save or cancel it, then ask again."
+    /// Only for the narrow case where the player's session ended between the decision and the save: the route itself no
+    /// longer refuses (the Margin goes to a quick session).
     public static let nothingRunningMessage = "Nothing is running in Spoken Margins. Start a live session or play something, then ask again."
     public static let notSaved = "Spoken Margins couldn't save the Margin. Ask again."
 }
