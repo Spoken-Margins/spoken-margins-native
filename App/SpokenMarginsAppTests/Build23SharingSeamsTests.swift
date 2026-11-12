@@ -103,7 +103,7 @@ final class Build23SharingSeamsTests: XCTestCase {
         coordinator.send(.begin)
         coordinator.send(.advanceToReview)
         coordinator.send(.buildRecipientPreview)
-        for _ in 0..<100 where coordinator.previewState == .building { try await Task.sleep(for: .milliseconds(20)) }
+        try await waitForSharingPreview(coordinator) { $0.previewState != .building }
         XCTAssertEqual(coordinator.previewState, .ready)
         let url = try XCTUnwrap(coordinator.verifiedShareFileURL)
         defer { try? FileManager.default.removeItem(at: url) }
@@ -163,9 +163,7 @@ final class Build23SharingSeamsTests: XCTestCase {
         XCTAssertEqual(coordinator.snapshot.stage, .review)
         coordinator.send(.buildRecipientPreview)
 
-        for _ in 0..<100 where coordinator.snapshot.previewState != .ready {
-            try await Task.sleep(for: .milliseconds(20))
-        }
+        try await waitForSharingPreview(coordinator)
         let preview = try XCTUnwrap(coordinator.snapshot.verifiedPreview)
         XCTAssertEqual(coordinator.snapshot.stage, .recipientPreview)
         XCTAssertEqual(preview.margins.map(\.reviewedText), ["A reviewed Margin."])
@@ -232,9 +230,7 @@ final class Build23SharingSeamsTests: XCTestCase {
         coordinator.send(.setIncludesAcousticEvidence(false))
         coordinator.send(.buildRecipientPreview)
 
-        for _ in 0..<100 where coordinator.snapshot.previewState != .ready {
-            try await Task.sleep(for: .milliseconds(20))
-        }
+        try await waitForSharingPreview(coordinator)
         let preview = try XCTUnwrap(coordinator.snapshot.verifiedPreview)
         XCTAssertEqual(coordinator.snapshot.stage, .recipientPreview)
         XCTAssertEqual(preview.margins.map(\.reviewedText), ["A reviewed Margin."])
