@@ -43,7 +43,7 @@ struct PlaybackScreen: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var selectedPane: PlaybackPane = .now
-    @State private var isTimelineEditing = false
+    @State private var timelineDock = TimelineEditingDock()
     @State private var selectedInterjection: Interjection?
     @State private var isPastingAssistantResponse = false
     @State private var mediaScrubState = PlaybackScrubState()
@@ -145,7 +145,8 @@ struct PlaybackScreen: View {
                         case .timeline:
                             ExperienceTimelineRailScreen(
                                 onReturnToPlayback: { selectedPane = .now },
-                                onEditorFocusChange: { isTimelineEditing = $0 }
+                                onEditorFocusChange: { timelineDock.editorFocusChanged($0) },
+                                playbackDockHidden: timelineDock.hidesDock
                             )
                         case .margins:
                             PlaybackMarginsView()
@@ -168,7 +169,7 @@ struct PlaybackScreen: View {
                         }
                     }
                     .safeAreaInset(edge: .bottom, spacing: 0) {
-                        if !isTimelineEditing { playbackControls }
+                        if !timelineDock.hidesDock { playbackControls }
                     }
                 }
                 .accessibilityElement(children: .contain)
@@ -176,6 +177,14 @@ struct PlaybackScreen: View {
                 .announcesScreenChange()
                 .onChange(of: model.marginMoment?.target.marginId) { _, target in
                     if target != nil { selectedPane = .now }
+                }
+                // The dock returns only once the keyboard has left the Timeline editor (#4043); a missed hide can't
+                // strand it.
+                .tracksKeyboard(for: $timelineDock)
+                .task(id: timelineDock.waitsForKeyboard) {
+                    guard timelineDock.waitsForKeyboard else { return }
+                    do { try await Task.sleep(for: .seconds(1)) } catch { return }
+                    timelineDock.keyboardWaitTimedOut()
                 }
                 .task(id: model.renderFrontierKey) { await model.observeRenderedFrontier() }
                 .task(id: "\(model.snapshot.itemId ?? "")|\(model.snapshot.status.rawValue)") {
@@ -197,7 +206,7 @@ struct PlaybackScreen: View {
             .toolbar {
                 // One meaning for the top-left arrow on every tab: leave the screen. The exception is the Timeline editor
                 // with the keyboard up, where the tab switch is hidden and this is the way back to Now (#4027).
-                let leading = PlaybackLeadingControl.control(pane: leadingControlPane, timelineEditorHasFocus: isTimelineEditing)
+                let leading = PlaybackLeadingControl.control(pane: leadingControlPane, timelineEditorHasFocus: timelineDock.hidesDock)
                 if leading == .libraryExit {
                     ToolbarItem(placement: .topBarLeading) { libraryExitButton }
                 } else if leading == .returnToNow {

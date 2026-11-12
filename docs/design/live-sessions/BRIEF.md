@@ -31,7 +31,7 @@ Where it started: a friend asked to take Margins during Teams meetings, on his *
 - **On the Watch, the microphone follows the device you recorded from.** "if someone decides to record from the watch, the microphone should be on the watch. And if they're not on a call, then the watch could try to grab the headphones." The fact that the Watch's mic is independent of the phone is an advantage: "we're using that to our advantage right now, which is awesome."
 - **Hands-free is the dream.** "start a session on the watch and it was just recording, transcribing everything, and then when you raised your watch to your mouth like Dick Tracy, it would start a margin... worst case scenario, it doesn't lose your recording... any third-party thing like a lecture." The order agreed so far: tap to record, then continuous recording with double-tap marks, then raise-to-mouth as an experiment.
 - **Dynamic Island snapshot Margins** (#1508, comment on #2481): long-pressing the island expands it, and the expanded view offers Record and Stop buttons, so the listener can add a Margin without leaving YouTube, Audible or Zoom. A long press can't be our own gesture, and during a call there's no phone microphone.
-- Standing calls in `AGENTS.md` that apply here:
+- Standing calls in the owner overlay (`OWNER.md`) and `docs/decisions.md` that apply here:
   - Default on only when it costs the listener nothing.
   - Keep no user data that could identify someone unless the feature needs it.
   - A headphone double-press adds a Margin.
@@ -65,7 +65,7 @@ Lessons the design must answer:
 
 ## How to work
 
-- Read `AGENTS.md` and `docs/decisions.md` (Current focus and the owner's standing calls), `Design/brief.md` (the design rules: taps, disclosure, colour-blind safety), `docs/areas.md`, `docs/design/hands-free-margins.md`, issue #1989, and this brief.
+- Read `AGENTS.md`, the owner overlay (Current focus) and `docs/decisions.md` (the owner's standing calls), `Design/brief.md` (the design rules: taps, disclosure, colour-blind safety), `docs/areas.md`, `docs/design/hands-free-margins.md`, issue #1989, and this brief.
 - Use the project's own method: **jobs measured in taps and actions**. See `Design/flow-map/` (the map of today's app), `Design/proposals/README.md` (how proposals are written as edits to the map, with jobs) and `Design/proposals/compute-taps.py` (the cost rules). Add Watch-specific costs: a wrist raise, a Watch tap, a double-tap gesture, a crown turn, a glance with no touch. Add "eyes off the call": did the listener have to leave the other app? State the cost rules you add.
 - Design from **situations, not screens**. For each situation, say who it is, where both hands and eyes are, which devices are present, what the listener does second by second, and what they expect afterwards.
 - Say what is unconfirmed on watchOS or iOS, and what device check would settle it. Don't present an unverified platform capability as fact. Prefer Apple documentation; mark inferences.

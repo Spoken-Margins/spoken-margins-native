@@ -93,6 +93,8 @@ final class Gate1FlowUITests: XCTestCase {
         editor.tap()
         app.typeText(String(repeating: "This is a substantial response with a useful argument. ", count: 25))
         app.buttons["timeline.keyboard.done"].tap()
+        // The dock comes back once the keyboard has left, and the Reflect box scrolls above it (#4043).
+        XCTAssertTrue(app.buttons["playback.timeline.button"].waitForExistence(timeout: 4), "The playback dock did not come back")
         let action = scrollToElement("timeline.reflection.import.button")
         XCTAssertTrue(action.isHittable)
         XCTAssertLessThan(editor.frame.height, 320, "Response length must not expand the editor")
@@ -174,6 +176,8 @@ final class Gate1FlowUITests: XCTestCase {
         returnToNowPlayingFromTimelineIfNeeded()
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
 
+        // The seeded article is one paragraph, so Next paragraph moves a sentence, or to the end, which finishes the
+        // article for good; Back then lands on a sentence. At every cut it reached the end (#3929).
         app.buttons["playback.forward.button"].tap()
         app.buttons["playback.back.button"].tap()
 
@@ -188,10 +192,17 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(element("miniPlayer.interject.button").exists)
         XCTAssertTrue(element("miniPlayer.playPause.button").exists)
         let hero = element("library.row.item-pill")
-        XCTAssertTrue(hero.waitForExistence(timeout: 4), app.debugDescription)
+        // A finished article leaves the Unfinished Library, as it should; Show completed brings its row back. The
+        // caught-up card has a Show completed button too, so take the one in the filter row.
+        if !hero.waitForExistence(timeout: 4) {
+            let showCompleted = element("library.completed.visibility").buttons["Show completed"]
+            XCTAssertTrue(showCompleted.waitForExistence(timeout: 4), app.debugDescription)
+            showCompleted.tap()
+            XCTAssertTrue(hero.waitForExistence(timeout: 4), app.debugDescription)
+        }
         app.swipeUp()
         XCTAssertLessThanOrEqual(hero.frame.maxY, element("miniPlayer.bar").frame.minY,
-                                 "The single Continue Listening card must scroll clear of the mini-player")
+                                 "The playing item's row must scroll clear of the mini-player")
         openLibrarySettings()
 
         XCTAssertTrue(element("settings.screen").waitForExistence(timeout: 4))
@@ -236,8 +247,10 @@ final class Gate1FlowUITests: XCTestCase {
         app.terminate()
         app.launchArguments += ["-UIPreferredContentSizeCategoryName", UIContentSizeCategory.accessibilityExtraExtraExtraLarge.rawValue]
         launchAllowingOneStall()
-        // At AX5 the seeded row can sit below the fold, so scroll to it before the long press (#2717).
-        XCTAssertTrue(app.buttons["library.row.item-pill"].waitForExistence(timeout: 8))
+        // At AX5 the first screen holds few rows and the seeded row can sit below the fold, where the lazy list hasn't
+        // built it yet, so wait for the Library, not the row, then scroll to it (#2717, #3932). A UI-test launch no
+        // longer fetches the guided tour, whose row used to sit on top (#4071), but the scroll stays as the guard.
+        XCTAssertTrue(element("library.screen").waitForExistence(timeout: 8))
         let row = scrollToButtonIdentified("library.row.item-pill")
         row.press(forDuration: 0.8)
         app.buttons["Mark Complete"].tap()
@@ -389,11 +402,19 @@ final class Gate1FlowUITests: XCTestCase {
         editor.tap()
         app.typeText("Keyboard dismissal probe.")
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 4))
-        XCTAssertTrue(element("timeline.screen").exists)
+        // The Timeline editor's own keyboard Done shows the Timeline is still up. At every cut `timeline.screen` was not
+        // found at this point, though the recording shows the Timeline drawn under the keyboard (#3926).
+        let keyboardDone = app.buttons["timeline.keyboard.done"]
+        XCTAssertTrue(keyboardDone.waitForExistence(timeout: 2), "Focusing the reflection editor left the Timeline")
         XCTAssertTrue(editor.isHittable, "Focusing the reflection editor blanked or displaced the Timeline content")
-        app.buttons["timeline.keyboard.done"].tap()
+        keyboardDone.tap()
         XCTAssertTrue(waitForDisappearance(app.keyboards.firstMatch, timeout: 4))
-        XCTAssertTrue(editor.isHittable, "Dismissing the keyboard left the Timeline scrolled into an empty region")
+        // The dock comes back once the keyboard has left, with the Reflect box above it (#4043).
+        XCTAssertTrue(app.buttons["playback.timeline.button"].waitForExistence(timeout: 4), "The playback dock did not come back")
+        XCTAssertTrue(
+            waitUntil(editor, "isHittable == true", timeout: 2),
+            "Dismissing the keyboard left the Timeline scrolled into an empty region"
+        )
 
         let importButton = scrollToElement("timeline.reflection.import.button")
         XCTAssertTrue(importButton.isHittable, "The floating Now Playing bar covers the import action")
@@ -638,13 +659,20 @@ final class Gate1FlowUITests: XCTestCase {
     func testRecordingExclusivelyOwnsTheAccessibleExperience() throws {
         app.terminate()
         app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_RECORDING"] = "1"
+        // The generated offline podcast, as J3 uses: the simulator's synthesizer reads the seeded article to its end
+        // at once, so a Margin on it is a recap Margin on a finished item, which stays paused and hides the mini
+        // player (#3928). The episode keeps playing, so Save and Cancel have a source to resume.
+        app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_PODCAST"] = "1"
+        app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_SOURCE_TITLE"] = "Recording owns the screen: an episode"
         launchAllowingOneStall()
 
         XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8))
-        let seededStart = app.buttons["queue.start.item-pill"]
+        let seededStart = app.buttons["queue.start.item-ui-podcast"]
         XCTAssertTrue(seededStart.waitForExistence(timeout: 4), app.debugDescription)
         seededStart.tap()
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
+        let playPause = element("playback.play.button")
+        XCTAssertTrue(waitUntil(playPause, "label == %@ AND enabled == true", "Pause", timeout: 20), "The episode never reached the playing state")
         scrollToElement("playback.interject.button").tap()
 
         XCTAssertTrue(element("recording.screen").waitForExistence(timeout: 4))
@@ -665,7 +693,7 @@ final class Gate1FlowUITests: XCTestCase {
         finish.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).doubleTap()
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
         XCTAssertFalse(element("recording.screen").exists, "A second finish tap started another Margin")
-        XCTAssertEqual(element("playback.play.button").label, "Pause", "Saving a voice Margin did not resume playback")
+        XCTAssertTrue(waitUntil(playPause, "label == %@", "Pause", timeout: 10), "Saving a voice Margin did not resume playback")
         pausePlaybackIfNeeded()
         openRootMarginsFromPlayback()
         XCTAssertTrue(element("margins.screen").waitForExistence(timeout: 4))
@@ -690,13 +718,17 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertFalse(app.buttons["Open in Timeline"].exists)
         element("miniPlayer.open.button").tap()
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 4))
-        element("playback.interject.button").tap()
+        // Paused above for the Margins screen: play again, so Cancel has a playing source to put back.
+        XCTAssertTrue(waitUntil(playPause, "enabled == true AND hittable == true", timeout: 5), "The play button is not ready")
+        if playPause.label == "Play" { playPause.tap() }
+        XCTAssertTrue(waitUntil(playPause, "label == %@", "Pause", timeout: 10), "The episode did not play again")
+        scrollToElement("playback.interject.button").tap()
         XCTAssertTrue(element("recording.screen").waitForExistence(timeout: 4))
         element("recording.cancel.button").tap()
         app.alerts.buttons["Discard recording"].tap()
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
         XCTAssertFalse(element("recording.screen").exists)
-        XCTAssertEqual(element("playback.play.button").label, "Pause", "Voice capture cancellation did not resume the source")
+        XCTAssertTrue(waitUntil(playPause, "label == %@", "Pause", timeout: 10), "Voice capture cancellation did not resume the source")
     }
 
     /// #1942: at AX5 with the keyboard up, the editor keeps a usable height and sits inside the screen.
@@ -853,7 +885,9 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertEqual(app.buttons["marginDetail.star.button"].label, "Unstar Margin")
         captureScreen(named: "second-edition-written-margin-detail")
         element("marginDetail.playMoment.button").tap()
-        XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 5))
+        guard element("playback.screen").waitForExistence(timeout: 5) else {
+            return XCTFail("Go to this moment did not open playback. \(recentFailureDiagnostic())")
+        }
         XCTAssertTrue(app.buttons["playback.itemTitle.button"].label.contains("A walk with room to think"))
         pausePlaybackIfNeeded()
         element("playback.write.button").tap()
@@ -1313,6 +1347,30 @@ final class Gate1FlowUITests: XCTestCase {
             ) == .completed
         }
         XCTAssertTrue(paused, "Playback did not pause: the play button still reads \(playPause.label)")
+    }
+
+    /// The banner shows only "Something went wrong" for an engine error; the raw text is the `recentFailure` row in
+    /// Settings' Developer tools (Debug builds). Reads it for a failure message, so a red cut names the cause (#3930).
+    /// Never asserts: the caller is already failing.
+    private func recentFailureDiagnostic() -> String {
+        let settings = app.buttons["Settings"].firstMatch
+        guard settings.waitForExistence(timeout: 4) else { return "recentFailure: no Settings tab to read it from" }
+        settings.tap()
+        let tools = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Developer tools")).firstMatch
+        for _ in 0..<12 where !isReadyToTap(tools) {
+            app.swipeUp()
+        }
+        guard isReadyToTap(tools) else { return "recentFailure: Developer tools not found" }
+        tools.tap()
+        // The row's text is "<context>: <raw error>"; the banner's own copy says "Something went wrong" instead.
+        let raw = NSPredicate(format: "(label CONTAINS %@ OR value CONTAINS %@) AND NOT (label CONTAINS %@)",
+                              "Margin's position: ", "Margin's position: ", "Something went wrong")
+        let row = app.descendants(matching: .any).matching(raw).firstMatch
+        for _ in 0..<20 where !row.exists {
+            app.swipeUp()
+        }
+        guard row.exists else { return "recentFailure: no row found" }
+        return "recentFailure: \(row.label) \(row.value as? String ?? "")"
     }
 
     private func openBuild23Review() {

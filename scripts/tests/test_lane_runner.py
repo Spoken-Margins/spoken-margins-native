@@ -1656,6 +1656,51 @@ class MergeTests_Runner(unittest.TestCase):
         named = [comment('/lane T3\ncommit: aaaaaaa'), self.no_tests_t3_report(), self.T3_REQUEST]
         self.assertIn('no lane report yet', lane.t3_gate(named)[1])  # a later request that names tests still waits
 
+    OLD = 'd' * 40
+
+    def plan_miss_report(self, commit=OLD):
+        # #4059: run_t3's FAIL for a named test that is in no app test plan; it ran nothing.
+        wanted = lane.identity('T3', commit, MERGE, ['Gate1FlowUITests/testProbation'])
+        details = [f'{lane.NOT_IN_PLAN} Gate1FlowUITests/testProbation. A named test that does not exist is a failure '
+                   '(verify-tests.py rule).']
+        return comment(lane.report('pr1-r1', 'FAIL', commit, MERGE, 'T3', 'no simulator', 1, 'nothing', details,
+                                   'none', '/e', 'owner', wanted), login='github-actions[bot]')
+
+    def t2_report(self, verdict, commit):
+        return runner_report(verdict, lane.identity('T2', commit, MERGE, []))
+
+    def test_a_plan_miss_t3_fail_holds_nothing_once_a_later_head_passes_t2(self):
+        # #4059 (from #4016): the T3 named a probation test in no plan, FAIL with "ran: nothing"; T2 then passed on
+        # a newer head, and every automerge pass still said "held for T3" for hours.
+        request = comment('/lane T3\ncommit: ddddddd\ntests: Gate1FlowUITests/testProbation')
+        history = [request, self.plan_miss_report(), self.t2_report('PASS', self.OLD)]
+        self.assertEqual(lane.t3_gate(history)[0], 'FAIL')  # a T2 PASS on the same head says nothing new
+        self.assertIsNone(lane.t3_gate(history + [self.t2_report('PASS', HEAD)]))
+        github = FakeGitHub(labels=('automerge',), comments=history + [self.t2_report('PASS', HEAD)])
+        (got, _, _, _), events = self.run_auto(github)
+        self.assertEqual((got, events), ('PASS', ['build', 'comment', 'push m1', 'sweep']))
+
+    def test_a_plan_miss_t3_fail_still_holds_without_a_later_pass_and_a_real_t3_fail_always_holds(self):
+        request = comment('/lane T3\ncommit: ddddddd\ntests: Gate1FlowUITests/testProbation')
+        self.assertEqual(lane.t3_gate([request, self.plan_miss_report()])[0], 'FAIL')
+        self.assertEqual(lane.t3_gate([request, self.plan_miss_report(), self.t2_report('FAIL', HEAD)])[0], 'FAIL')
+        # A T3 that ran tests and failed holds even when a later head passes T2: the tests are the verdict.
+        real = [self.T3_REQUEST, self.t3_report('FAIL', commit=self.OLD), self.t2_report('PASS', HEAD)]
+        self.assertEqual(lane.t3_gate(real)[0], 'FAIL')
+
+    def test_a_corrected_request_after_the_plan_miss_waits_for_its_report_whatever_t2_passes(self):
+        # The audit of #4073: request, plan-miss FAIL, the author's corrected /lane T3 (no report yet), then a T2 PASS
+        # on a newer head. The T2 PASS must not stand in for the T3 the author actually asked for.
+        request = comment('/lane T3\ncommit: ddddddd\ntests: Gate1FlowUITests/testProbation')
+        corrected = comment('/lane T3\ncommit: aaaaaaa\ntests: SupertonicSpeechTests')
+        history = [request, self.plan_miss_report(), corrected, self.t2_report('PASS', HEAD)]
+        self.assertIn('no lane report yet', lane.t3_gate(history)[1])
+
+    def test_a_request_after_the_plan_miss_and_its_later_pass_still_waits_for_its_report(self):
+        request = comment('/lane T3\ncommit: ddddddd\ntests: Gate1FlowUITests/testProbation')
+        history = [request, self.plan_miss_report(), self.t2_report('PASS', HEAD), self.T3_REQUEST]
+        self.assertIn('no lane report yet', lane.t3_gate(history)[1])
+
     def test_a_bare_request_after_a_named_one_does_not_void_the_named_one(self):
         # The audit of #2556: the runner answers only the newest request, so a no-tests report for a bare request
         # must not make the earlier request that named tests look answered.

@@ -113,9 +113,7 @@ struct ExperienceLibraryScreen: View {
             ExperienceAudioPreparationQueueScreen()
                 .environmentObject(model)
         }
-        .sheet(isPresented: $isPlayQueuePresented) {
-            ExperiencePlayQueueScreen(model: model)
-        }
+        .playQueueSheet(isPresented: $isPlayQueuePresented, model: model)
         .onAppear { model.loadPlayQueue() }
         .fullScreenCover(item: $openedNote) { opening in
             SpokenNoteRecordingView(opening: opening).environmentObject(model)
@@ -469,7 +467,8 @@ struct ExperienceLibraryScreen: View {
                     onMarkUnfinished: { model.markItemUnfinished(id: row.id) },
                     onPrepareOffline: { model.prioritizeOfflinePreparation(id: row.id) },
                     onPlayNext: { model.queuePlayNext(itemId: row.id) },
-                    onAddToQueue: { model.queueAppend(itemId: row.id) },
+                    queueAction: QueueRowAction.action(forItem: row.id, queuedItemIds: playQueue.itemIds),
+                    onAddToQueue: { model.toggleQueue(itemId: row.id) },
                     onAddToCollection: { collectionItem = row },
                     onExport: row.spokenNoteId.map { noteId -> () -> Void in
                         { noteExport.export(noteId: noteId, title: row.title, applicationSupport: try? model.applicationSupportDirectory()) }
@@ -546,6 +545,10 @@ private struct ExperienceLibraryCompactRow: View {
     let onMarkUnfinished: () -> Void
     let onPrepareOffline: () -> Void
     let onPlayNext: () -> Void
+    /// Add to Queue, or Remove from Queue when the item is queued: one name on the swipe, the menu and VoiceOver (#4044).
+    /// The state is read from `PlayQueueState` by the screen, never kept on the row.
+    var queueAction: QueueRowAction = .add
+    /// Does what `queueAction` says: puts the item last in the queue, or takes it out.
     let onAddToQueue: () -> Void
     let onAddToCollection: () -> Void
     /// A spoken note's Export (#3660); nil for every other row.
@@ -663,7 +666,7 @@ private struct ExperienceLibraryCompactRow: View {
             }
             Button("Play Next", systemImage: "text.line.first.and.arrowtriangle.forward", action: onPlayNext)
                 .accessibilityIdentifier("library.playNext.\(row.id)")
-            Button("Add to Queue", systemImage: "text.line.last.and.arrowtriangle.forward", action: onAddToQueue)
+            Button(queueAction.title, systemImage: queueAction.systemImage, action: onAddToQueue)
                 .accessibilityIdentifier("library.addToQueue.\(row.id)")
             Button("Add to Collection…", systemImage: "folder.badge.plus", action: onAddToCollection)
                 .accessibilityIdentifier("library.addToCollection.\(row.id)")
@@ -695,6 +698,11 @@ private struct ExperienceLibraryCompactRow: View {
                     .tint(AppColors.swipeOchre)
                     .accessibilityIdentifier("library.unfinished.\(row.id)")
             }
+            // Second, so a long swipe still takes the first button; on a row with no other button it is the only one and
+            // allowsFullSwipe is false (#4044).
+            Button(action: onAddToQueue) { Label(queueAction.title, systemImage: queueAction.systemImage) }
+                .tint(AppColors.swipeSlate)
+                .accessibilityIdentifier("library.queueSwipe.\(row.id)")
         }
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
             if row.canDelete {
@@ -718,7 +726,7 @@ private struct ExperienceLibraryCompactRow: View {
                 Button("Mark Unfinished", action: onMarkUnfinished)
             }
             Button("Play Next", action: onPlayNext)
-            Button("Add to Queue", action: onAddToQueue)
+            Button(queueAction.title, action: onAddToQueue)
         }
         // The same guards as the context menu and swipe actions above (#1917).
         .accessibilityActions {

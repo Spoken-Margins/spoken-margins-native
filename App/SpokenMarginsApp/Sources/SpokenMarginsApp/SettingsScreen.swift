@@ -5,8 +5,17 @@ import UniformTypeIdentifiers
 import UIKit
 #endif
 
-struct SettingsScreen: View {
-    @EnvironmentObject private var model: Gate1AppModel
+/// Settings: voice, controls, storage, import and export, help, and the developer tools in a debug build.
+///
+/// It does not watch `Gate1AppModel`: it reads what it shows through a `ScreenInputsFeed`, so a model publish that
+/// leaves its rows as they were does not rebuild the form while the listener scrolls (#4028). The tab bar redraws on every
+/// publish and shows it with `.equatable()`: it is equal to its last copy while the model and the notice are the same
+/// ones, so the tab bar's redraw stops here. Without that, a hosted run drew it once per publish all the same (24 for 20).
+struct SettingsScreen: View, Equatable {
+    let model: Gate1AppModel
+    /// The notice's identity, for `==`: the observed notice itself is read on the main actor only.
+    private let supertonicNoticeID: ObjectIdentifier
+    @StateObject private var feed: ScreenInputsFeed<Inputs>
     @Environment(\.isEdgeSwipePreview) private var isEdgeSwipePreview
     @AppStorage("playbackUsesVerboseActions") private var usesVerbosePlaybackActions = true
     @AppStorage(HeadphoneDoublePressAction.storageKey) private var headphoneDoublePress = HeadphoneDoublePressAction.default.rawValue
@@ -31,27 +40,109 @@ struct SettingsScreen: View {
     @State private var showsVoices = false
     @State private var showsControls = false
 
-    init(supertonicNotice: SupertonicDownloadNotice) {
+    init(model: Gate1AppModel, supertonicNotice: SupertonicDownloadNotice) {
+        self.model = model
         _supertonicNotice = ObservedObject(wrappedValue: supertonicNotice)
+        supertonicNoticeID = ObjectIdentifier(supertonicNotice)
+        _feed = StateObject(wrappedValue: ScreenInputsFeed(model: model, read: Inputs.init))
+    }
+
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        #if DEBUG
+        ScreenRedrawProbe.recordEqualityCheck("settings")
+        #endif
+        return lhs.model === rhs.model && lhs.supertonicNoticeID == rhs.supertonicNoticeID
+    }
+
+    /// Every value the form shows from the model. A publish that changes none of it leaves the screen alone. The
+    /// voice downloads, connectivity, hidden senders and diagnostics are objects their own rows watch.
+    struct Inputs: Equatable {
+        var ttsVoiceSelection: AppTTSVoiceSelection
+        var speechVoiceIdentifier: String
+        var speechVoiceOptions: [SpeechVoiceChoice]
+        var speechRate: Double
+        var speechRateDescription: String
+        var isRenderingSupertonicPreview: Bool
+        var showsMixWithOtherAudioOption: Bool
+        var skipUnit: String
+        var mediaSkipBackSeconds: Int
+        var mediaSkipForwardSeconds: Int
+        var offlineStorageLimitGB: Int
+        var offlineStorageUsageDescription: String
+        var automaticAudioPreparationPolicy: AutomaticAudioPreparationPolicy
+        var automaticEpisodeMapPreparationPolicy: AutomaticEpisodeMapPreparationPolicy
+        var recentlyDeletedItems: [LibraryItemRow]
+        var quickFolderFeedsQueue: Bool
+        var sourceLinksWaitingForNetwork: Int
+        var importInbox: [ImportInboxEntry]
+        var localFoundationModelAvailabilityDescription: String
+        var hasAcceptedCurrentTerms: Bool
+        var termsAcceptanceDescription: String
+        #if DEBUG
+        var developerDiagnosticRecordingEnabled: Bool
+        var developerDiagnosticBuild: String
+        var selectedProfileId: String
+        var hasLibraryAccessError: Bool
+        var knownIssues: [String]
+        var selectedItemTitle: String
+        var listeningMapJSON: String
+        #endif
+
+        @MainActor init(_ model: Gate1AppModel) {
+            ttsVoiceSelection = model.ttsVoiceSelection
+            speechVoiceIdentifier = model.speechVoiceIdentifier
+            speechVoiceOptions = model.speechVoiceOptions
+            speechRate = model.speechRate
+            speechRateDescription = model.speechRateDescription
+            isRenderingSupertonicPreview = model.isRenderingSupertonicPreview
+            showsMixWithOtherAudioOption = model.showsMixWithOtherAudioOption
+            skipUnit = model.skipUnit
+            mediaSkipBackSeconds = model.mediaSkipBackSeconds
+            mediaSkipForwardSeconds = model.mediaSkipForwardSeconds
+            offlineStorageLimitGB = model.offlineStorageLimitGB
+            offlineStorageUsageDescription = model.offlineStorageUsageDescription
+            automaticAudioPreparationPolicy = model.automaticAudioPreparationPolicy
+            automaticEpisodeMapPreparationPolicy = model.automaticEpisodeMapPreparationPolicy
+            recentlyDeletedItems = model.recentlyDeletedItems
+            quickFolderFeedsQueue = model.quickAccess.inboxFeedsQueue
+            sourceLinksWaitingForNetwork = model.sourceLinksWaitingForNetwork
+            importInbox = model.importInbox
+            localFoundationModelAvailabilityDescription = model.localFoundationModelAvailabilityDescription
+            hasAcceptedCurrentTerms = model.hasAcceptedCurrentTerms
+            termsAcceptanceDescription = model.termsAcceptanceDescription
+            #if DEBUG
+            developerDiagnosticRecordingEnabled = model.developerDiagnosticRecordingEnabled
+            developerDiagnosticBuild = model.developerDiagnosticBuild
+            selectedProfileId = model.selectedProfileId
+            hasLibraryAccessError = model.libraryAccessError != nil
+            knownIssues = model.knownIssues
+            selectedItemTitle = model.selectedItem.title
+            listeningMapJSON = model.listeningMapJSON
+            #endif
+        }
     }
 
     var body: some View {
+        #if DEBUG
+        let _ = ScreenRedrawProbe.record("settings")
+        #endif
+        let inputs = feed.inputs
         NavigationStack {
             Form {
                 Section("Voice") {
-                    AppVoicePicker(selection: $model.ttsVoiceSelection, voices: model.requireVoiceDownloads())
-                    .onCompatibleChange(of: model.ttsVoiceSelection) { _ in
+                    AppVoicePicker(selection: model.screenBinding(\.ttsVoiceSelection), voices: model.requireVoiceDownloads())
+                    .onCompatibleChange(of: inputs.ttsVoiceSelection) { _ in
                         model.ttsVoiceSelectionChanged()
                     }
-                    Text(model.ttsVoiceSelection.detail)
+                    Text(inputs.ttsVoiceSelection.detail)
                         .font(.caption)
                         .foregroundStyle(AppColors.secondaryText)
                     // A new listener starts on Phonon; the backup voice reads until it has downloaded (#2858).
-                    PhononStatusLine(model: model, choice: model.ttsVoiceSelection, voices: model.requireVoiceDownloads(), connectivity: model.connectivity)
+                    PhononStatusLine(model: model, choice: inputs.ttsVoiceSelection, voices: model.requireVoiceDownloads(), connectivity: model.connectivity)
                     Text("Voice synthesized on-device. Spoken text comes from your selected source.")
                         .font(.caption)
                         .foregroundStyle(AppColors.secondaryText)
-                    if model.ttsVoiceSelection == .system {
+                    if inputs.ttsVoiceSelection == .system {
                         HStack {
                             Text("iOS Voice")
                             Spacer()
@@ -65,15 +156,15 @@ struct SettingsScreen: View {
                             .accessibilityLabel("Refresh iOS Voices")
                             .accessibilityIdentifier("settings.refreshSpeechVoices.button")
                         }
-                        Picker("Speech Voice", selection: $model.speechVoiceIdentifier) {
+                        Picker("Speech Voice", selection: model.screenBinding(\.speechVoiceIdentifier)) {
                             Text("System Spoken Content Voice (Siri falls back)").tag("")
-                            ForEach(model.speechVoiceOptions) { voice in
+                            ForEach(inputs.speechVoiceOptions) { voice in
                                 Text("\(voice.name) · \(voice.language) · \(voice.quality)")
                                     .tag(voice.id)
                             }
                         }
                         .accessibilityIdentifier("settings.speechVoice.picker")
-                        .onCompatibleChange(of: model.speechVoiceIdentifier) { _ in
+                        .onCompatibleChange(of: inputs.speechVoiceIdentifier) { _ in
                             model.ttsVoiceSelectionChanged()
                         }
                     }
@@ -81,7 +172,7 @@ struct SettingsScreen: View {
                         HStack {
                             Text("Speaking Rate")
                             Spacer()
-                            Text(model.speechRateDescription)
+                            Text(inputs.speechRateDescription)
                                 .foregroundStyle(AppColors.secondaryText)
                         }
                         DiscretePlaybackRateSlider(
@@ -90,11 +181,11 @@ struct SettingsScreen: View {
                                 set: { model.speechRate = $0 * 0.5 }
                             ),
                             accessibilityLabel: "Speaking rate",
-                            accessibilityValue: model.speechRateDescription,
+                            accessibilityValue: inputs.speechRateDescription,
                             accessibilityIdentifier: "settings.speechRate.slider"
                         )
                     }
-                    .onCompatibleChange(of: model.speechRate) { _ in
+                    .onCompatibleChange(of: inputs.speechRate) { _ in
                         model.speechSettingsChanged()
                     }
                     DisclosureGroup("Compare voice playback") {
@@ -112,7 +203,7 @@ struct SettingsScreen: View {
                             Label("Try App Voice", systemImage: "slider.horizontal.3")
                         }
                         .buttonStyle(SecondaryButtonStyle())
-                        .disabled(model.isRenderingSupertonicPreview)
+                        .disabled(inputs.isRenderingSupertonicPreview)
                         .accessibilityIdentifier("settings.preview.appVoice.button")
 
                         Button {
@@ -152,22 +243,22 @@ struct SettingsScreen: View {
                         Text("Adds a per-session option to the listening screen. It lets music or other audio continue, but Lock Screen and headphone controls may control the other app. Each listening session starts with this option off.")
                             .font(.caption)
                             .foregroundStyle(AppColors.secondaryText)
-                        Picker("Text Navigation", selection: $model.skipUnit) {
+                        Picker("Text Navigation", selection: model.screenBinding(\.skipUnit)) {
                             Text("Sentence").tag("sentence")
                             Text("Paragraph").tag("paragraph")
                             Text("Section").tag("section")
                         }
                         .accessibilityIdentifier("settings.skipUnit.picker")
-                        .onCompatibleChange(of: model.skipUnit) { _ in
+                        .onCompatibleChange(of: inputs.skipUnit) { _ in
                             model.skipUnitChanged()
                         }
-                        Picker("Podcast Skip Back", selection: $model.mediaSkipBackSeconds) {
+                        Picker("Podcast Skip Back", selection: model.screenBinding(\.mediaSkipBackSeconds)) {
                             ForEach(Gate1AppModel.supportedMediaSkipSeconds, id: \.self) { seconds in
                                 Text("\(seconds) seconds").tag(seconds)
                             }
                         }
                         .accessibilityIdentifier("settings.mediaSkipBack.picker")
-                        .onCompatibleChange(of: model.mediaSkipBackSeconds) { _ in
+                        .onCompatibleChange(of: inputs.mediaSkipBackSeconds) { _ in
                             model.mediaSkipSettingsChanged()
                         }
                         Picker("Headphone double-press", selection: $headphoneDoublePress) {
@@ -178,13 +269,13 @@ struct SettingsScreen: View {
                         Text("Add a Margin starts one. End it with the button on screen, or by pressing your headphones (not every headset reports a press).")
                             .font(.caption)
                             .foregroundStyle(AppColors.secondaryText)
-                        Picker("Podcast Skip Forward", selection: $model.mediaSkipForwardSeconds) {
+                        Picker("Podcast Skip Forward", selection: model.screenBinding(\.mediaSkipForwardSeconds)) {
                             ForEach(Gate1AppModel.supportedMediaSkipSeconds, id: \.self) { seconds in
                                 Text("\(seconds) seconds").tag(seconds)
                             }
                         }
                         .accessibilityIdentifier("settings.mediaSkipForward.picker")
-                        .onCompatibleChange(of: model.mediaSkipForwardSeconds) { _ in
+                        .onCompatibleChange(of: inputs.mediaSkipForwardSeconds) { _ in
                             model.mediaSkipSettingsChanged()
                         }
                     }
@@ -201,34 +292,34 @@ struct SettingsScreen: View {
                         }
                     }
                     .accessibilityIdentifier("settings.offlineStorage.button")
-                    Picker("Storage Budget", selection: $model.offlineStorageLimitGB) {
+                    Picker("Storage Budget", selection: model.screenBinding(\.offlineStorageLimitGB)) {
                         ForEach(OfflineStorageBudget.allowedGigabytes, id: \.self) { gigabytes in
                             Text("\(gigabytes) GB").tag(gigabytes)
                         }
                     }
                     .accessibilityIdentifier("settings.offlineStorageBudget.picker")
-                    .onCompatibleChange(of: model.offlineStorageLimitGB) { _ in
+                    .onCompatibleChange(of: inputs.offlineStorageLimitGB) { _ in
                         model.offlineStorageBudgetChanged()
                     }
-                    Text(model.offlineStorageUsageDescription)
+                    Text(inputs.offlineStorageUsageDescription)
                         .font(.caption)
                         .foregroundStyle(AppColors.secondaryText)
-                    Picker("Automatic Audio Preparation", selection: $model.automaticAudioPreparationPolicy) {
+                    Picker("Automatic Audio Preparation", selection: model.screenBinding(\.automaticAudioPreparationPolicy)) {
                         ForEach(AutomaticAudioPreparationPolicy.allCases, id: \.self) { policy in
                             Text(policy.displayName).tag(policy)
                         }
                     }
                     .accessibilityIdentifier("settings.automaticAudioPreparation.picker")
-                    .onCompatibleChange(of: model.automaticAudioPreparationPolicy) { _ in
+                    .onCompatibleChange(of: inputs.automaticAudioPreparationPolicy) { _ in
                         model.automaticAudioPreparationPolicyChanged()
                     }
-                    Picker("Prepare Chapters and Scenes Ahead", selection: $model.automaticEpisodeMapPreparationPolicy) {
+                    Picker("Prepare Chapters and Scenes Ahead", selection: model.screenBinding(\.automaticEpisodeMapPreparationPolicy)) {
                         ForEach(AutomaticEpisodeMapPreparationPolicy.allCases, id: \.self) { policy in
                             Text(policy.displayName).tag(policy)
                         }
                     }
                     .accessibilityIdentifier("settings.automaticEpisodeMapPreparation.picker")
-                    .onCompatibleChange(of: model.automaticEpisodeMapPreparationPolicy) { _ in
+                    .onCompatibleChange(of: inputs.automaticEpisodeMapPreparationPolicy) { _ in
                         model.automaticEpisodeMapPreparationPolicyChanged()
                     }
                     Text("Chapters and scenes for podcasts are prepared on your device and are off by default. While Charging only prepares episodes that are already downloaded; the full transcript and temporary audio are deleted once the chapters and scenes are saved.")
@@ -237,8 +328,8 @@ struct SettingsScreen: View {
                     Text("While Charging uses durable jobs and pauses between parts of what it is preparing when power, thermal, or storage safety changes. Completion timing is not guaranteed.")
                         .font(.caption)
                         .foregroundStyle(AppColors.secondaryText)
-                    DisclosureGroup("Recently Deleted\(model.recentlyDeletedItems.isEmpty ? "" : " (\(model.recentlyDeletedItems.count))")") {
-                        if model.recentlyDeletedItems.isEmpty {
+                    DisclosureGroup("Recently Deleted\(inputs.recentlyDeletedItems.isEmpty ? "" : " (\(inputs.recentlyDeletedItems.count))")") {
+                        if inputs.recentlyDeletedItems.isEmpty {
                             Text("Anything moved here can be restored. Nothing is deleted automatically.")
                                 .foregroundStyle(AppColors.secondaryText)
                         } else {
@@ -247,8 +338,8 @@ struct SettingsScreen: View {
                             }
                             .accessibilityIdentifier("recentlyDeleted.empty.button")
                             let list = CollapsedListPresentation(
-                                total: model.recentlyDeletedItems.count, isExpanded: showsAllRecentlyDeleted)
-                            ForEach(Array(model.recentlyDeletedItems.prefix(list.shownCount))) { item in
+                                total: inputs.recentlyDeletedItems.count, isExpanded: showsAllRecentlyDeleted)
+                            ForEach(Array(inputs.recentlyDeletedItems.prefix(list.shownCount))) { item in
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text(item.title)
                                         .font(.headline)
@@ -307,12 +398,12 @@ struct SettingsScreen: View {
                     }
                     .accessibilityIdentifier("settings.quickFolderQueue.toggle")
                     DisclosureGroup("Import Inbox", isExpanded: $showsImportInbox) {
-                        PendingLinksWaitingLine(count: model.sourceLinksWaitingForNetwork)
-                        if model.importInbox.isEmpty {
+                        PendingLinksWaitingLine(count: inputs.sourceLinksWaitingForNetwork)
+                        if inputs.importInbox.isEmpty {
                             Text("No failed shares.")
                                 .foregroundStyle(AppColors.secondaryText)
                         } else {
-                            ForEach(model.importInbox) { entry in
+                            ForEach(inputs.importInbox) { entry in
                                 VStack(alignment: .leading, spacing: 8) {
                                     Text(entry.title)
                                         .font(.headline)
@@ -421,17 +512,17 @@ struct SettingsScreen: View {
                     DisclosureGroup("About & Legal", isExpanded: $showsAboutAndLegal) {
                         LabeledContent("Processing", value: "On device")
                             .accessibilityIdentifier("settings.ai.processing")
-                        LabeledContent("Apple Foundation Model", value: model.localFoundationModelAvailabilityDescription)
+                        LabeledContent("Apple Foundation Model", value: inputs.localFoundationModelAvailabilityDescription)
                         Text("Margin summaries are made on this device. Publisher podcast chapters and deterministic native-text Listening Maps do not require AI. Spoken Margins has no third-party AI provider or API key setting. If you turn on Help make listening maps, podcast transcripts go to the Spoken Margins server, which uses an AI service to draft maps.")
                             .font(.caption)
                             .foregroundStyle(AppColors.secondaryText)
                             .accessibilityIdentifier("settings.ai.releaseBoundary")
                         NavigationLink("Terms of Use") {
-                            SpokenMarginsTermsView(allowsAcceptance: !model.hasAcceptedCurrentTerms)
+                            SpokenMarginsTermsView(allowsAcceptance: !inputs.hasAcceptedCurrentTerms)
                                 .miniPlayerKeepOut()
                         }
                         .accessibilityIdentifier("settings.terms.link")
-                        LabeledContent("Terms Status", value: model.termsAcceptanceDescription)
+                        LabeledContent("Terms Status", value: inputs.termsAcceptanceDescription)
                             .accessibilityIdentifier("settings.terms.status")
                         NavigationLink("Legal · On-Device Voice") {
                             SupertonicLegalView()
@@ -449,29 +540,29 @@ struct SettingsScreen: View {
                 #if DEBUG
                 Section("Developer") {
                     DisclosureGroup("Developer tools", isExpanded: $showsDeveloperTools) {
-                        Toggle("Record Detailed Device Diagnostics", isOn: $model.developerDiagnosticRecordingEnabled)
+                        Toggle("Record Detailed Device Diagnostics", isOn: model.screenBinding(\.developerDiagnosticRecordingEnabled))
                             .accessibilityIdentifier("settings.developer.recordDiagnostics")
                         Text("Basic playback events are saved locally automatically (latest 300 events, no source text or audio). For detailed sampling, turn on, reproduce, then turn off and Share Diagnostics. Detailed recording keeps 1,200 events and is off after restart.")
                             .font(.caption)
-                        Text(model.developerDiagnosticBuild).font(.caption.monospaced())
+                        Text(inputs.developerDiagnosticBuild).font(.caption.monospaced())
                         Button("Add Sample Source", action: model.addSampleItem)
-                        Picker("Runtime Profile", selection: $model.selectedProfileId) {
+                        Picker("Runtime Profile", selection: model.screenBinding(\.selectedProfileId)) {
                             Text("Phone/Tablet Online").tag("phone-tablet-online")
                             Text("Phone/Tablet Offline").tag("phone-tablet-offline")
                         }
                         .accessibilityIdentifier("runtime.profile.picker")
-                        .onCompatibleChange(of: model.selectedProfileId) { _ in
+                        .onCompatibleChange(of: inputs.selectedProfileId) { _ in
                             model.runtimeProfileChanged()
                         }
                         Button("Reset Library and Load Sample", role: .destructive) {
                             isResetConfirmationPresented = true
                         }
-                        .disabled(model.libraryAccessError != nil) // never reset a Library this build couldn't open (#1969)
+                        .disabled(inputs.hasLibraryAccessError) // never reset a Library this build couldn't open (#1969)
                         .accessibilityIdentifier("settings.reset.button")
                         Button("Refresh Diagnostics", action: model.refreshDiagnostics)
                             .accessibilityIdentifier("settings.diagnostics.button")
                         RuntimeDiagnosticRows(diagnostics: model.runtimeDiagnostics)
-                        ForEach(model.knownIssues, id: \.self) { issue in
+                        ForEach(inputs.knownIssues, id: \.self) { issue in
                             Text(issue)
                                 .font(.caption)
                                 .foregroundStyle(AppColors.secondaryText)
@@ -479,10 +570,10 @@ struct SettingsScreen: View {
                     }
                     Text("Listening Map JSON")
                         .font(.headline)
-                    Text("Developer diagnostic for \(model.selectedItem.title.isEmpty ? "what is selected" : model.selectedItem.title).")
+                    Text("Developer diagnostic for \(inputs.selectedItemTitle.isEmpty ? "what is selected" : inputs.selectedItemTitle).")
                         .font(.caption)
                         .foregroundStyle(AppColors.secondaryText)
-                    TextEditor(text: $model.listeningMapJSON)
+                    TextEditor(text: model.screenBinding(\.listeningMapJSON))
                         .font(.system(.caption, design: .monospaced))
                         .frame(minHeight: 130)
                         .accessibilityLabel("Listening Map JSON")
@@ -494,7 +585,7 @@ struct SettingsScreen: View {
                         editingMapJSON = false
                         model.applyListeningMapJSON()
                     }
-                    .disabled(model.listeningMapJSON.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(inputs.listeningMapJSON.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     .accessibilityIdentifier("settings.developer.mapJSON.apply")
                 }
                 #endif
@@ -558,7 +649,7 @@ struct SettingsScreen: View {
                     model.permanentlyDeleteRecentlyDeletedItems()
                 }
             } message: {
-                Text("All \(model.recentlyDeletedItems.count) recently deleted \(model.recentlyDeletedItems.count == 1 ? "entry" : "entries") and their sessions, notes, transcripts, and downloaded audio will be permanently deleted. This cannot be undone.")
+                Text("All \(inputs.recentlyDeletedItems.count) recently deleted \(inputs.recentlyDeletedItems.count == 1 ? "entry" : "entries") and their sessions, notes, transcripts, and downloaded audio will be permanently deleted. This cannot be undone.")
             }
             .alert("Reset the entire library?", isPresented: $isResetConfirmationPresented) {
                 Button("Cancel", role: .cancel) {}

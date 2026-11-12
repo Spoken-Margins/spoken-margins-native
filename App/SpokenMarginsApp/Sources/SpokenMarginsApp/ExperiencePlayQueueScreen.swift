@@ -11,12 +11,20 @@ import SwiftUI
 /// rows hopped and the remove icons flickered (#3891). The sheet is also `.equatable()`, a second guard in case the
 /// Library redraws this screen. A hosted run showed the sheet drawn once per publish with SwiftUI never asking its `==`
 /// (#4033), so the first guard is that nothing here is invalidated by a model publish at all.
+///
+/// The Library presents it with `playQueueSheet(isPresented:model:)`, never a plain `.sheet`: see `PlayQueueSheetHost`.
 struct ExperiencePlayQueueScreen: View {
     let model: Gate1AppModel
     @StateObject private var feed: PlayQueueRowsFeed
+    /// Closes the sheet; the presenter's own flag, so calling it from an older copy of the sheet still closes it.
+    let close: () -> Void
 
-    init(model: Gate1AppModel) {
+    init(model: Gate1AppModel, close: @escaping () -> Void) {
         self.model = model
+        self.close = close
+        #if DEBUG
+        PlayQueueSheetProbe.screenInits += 1
+        #endif
         _feed = StateObject(wrappedValue: PlayQueueRowsFeed(model: model))
     }
 
@@ -25,6 +33,7 @@ struct ExperiencePlayQueueScreen: View {
             rows: feed.rows,
             actions: PlayQueueSheetActions(
                 load: { model.loadPlayQueue() },
+                close: close,
                 playNow: { model.playQueuedItemNow(itemId: $0) },
                 remove: { model.removeFromQueue(itemId: $0) },
                 move: { model.moveInQueue(fromOffsets: $0, toOffset: $1) },
@@ -32,6 +41,40 @@ struct ExperiencePlayQueueScreen: View {
             )
         )
         .equatable()
+    }
+}
+
+extension View {
+    /// Presents the play queue from a view that redraws on every model publish, as the Library does while audio plays.
+    func playQueueSheet(isPresented: Binding<Bool>, model: Gate1AppModel) -> some View {
+        background {
+            PlayQueueSheetHost(model: model, isPresented: isPresented).equatable()
+        }
+    }
+}
+
+/// Holds the queue sheet's presentation in a view the presenter's redraws do not reach (#3891, reopened). With `.sheet`
+/// on the Library itself, every model publish may re-run the presentation while the sheet and its rows do not redraw,
+/// which is the theory for the remove icons and handles fading that the owner filmed (not yet shown on a device; the
+/// control test counts the re-runs). This view is equal to its last copy unless the flag changes, so SwiftUI skips it
+/// and the presentation is left alone.
+private struct PlayQueueSheetHost: View, Equatable {
+    let model: Gate1AppModel
+    @Binding var isPresented: Bool
+
+    nonisolated static func == (lhs: PlayQueueSheetHost, rhs: PlayQueueSheetHost) -> Bool {
+        lhs.model === rhs.model && lhs.isPresented == rhs.isPresented
+    }
+
+    var body: some View {
+        #if DEBUG
+        let _ = PlayQueueSheetProbe.hostRuns += 1
+        #endif
+        Color.clear
+            .sheet(isPresented: $isPresented) {
+                // The binding writes the presenter's own flag, so an older copy of this closure still closes the sheet.
+                ExperiencePlayQueueScreen(model: model, close: { isPresented = false })
+            }
     }
 }
 
@@ -56,6 +99,7 @@ final class PlayQueueRowsFeed: ObservableObject {
 /// What the queue sheet's buttons do. Not part of the sheet's equality: they only reach the model, which does not change.
 struct PlayQueueSheetActions {
     let load: () -> Void
+    let close: () -> Void
     let playNow: (String) -> Void
     let remove: (String) -> Void
     let move: (IndexSet, Int) -> Void
@@ -63,12 +107,20 @@ struct PlayQueueSheetActions {
 }
 
 #if DEBUG
-/// Counts how often the queue sheet's body runs, and how SwiftUI's equality check on the sheet came out, so a test can
-/// tell a redraw from a skipped one and a failure says which kind it was (#3891, #3999). `==` is not main-actor, so its
-/// two counters are not either; SwiftUI calls it on the main thread.
+/// Counts how often the queue sheet's body and its rows' bodies run, and how SwiftUI's equality check on the sheet came
+/// out, so a test can tell a redraw from a skipped one and a failure says which kind it was (#3891, #3999). `==` is not
+/// main-actor, so its two counters are not either; SwiftUI calls it on the main thread.
 @MainActor
 enum PlayQueueSheetProbe {
     static var bodyRuns = 0
+    static var rowRuns = 0
+    static var hostRuns = 0
+    /// How often the queue screen was built: once per presentation under the host, once per presenter redraw under a plain `.sheet`.
+    static var screenInits = 0
+    /// Sets the sheet's Edit mode as its Edit button does, so a test can enter Edit mode once the sheet is on screen.
+    static var setEditMode: ((EditMode) -> Void)?
+    /// The sheet's own Edit mode as SwiftUI holds it, the truth a test compares the list's UIKit flag with.
+    static var editMode: EditMode = .inactive
     nonisolated(unsafe) static var comparisons = 0
     nonisolated(unsafe) static var unequalComparisons = 0
 }
@@ -107,8 +159,9 @@ struct PlayQueueSheet: View, Equatable {
                 } else {
                     Section {
                         ForEach(rows) { row in
-                            PlayQueueDismissingButton(action: { actions.playNow(row.id) }) {
-                                PlayQueueRowLabel(row: row)
+                            PlayQueueRowButton(row: row) {
+                                actions.close()
+                                actions.playNow(row.id)
                             }
                             .buttonStyle(.plain)
                             .accessibilityHint("Plays it now")
@@ -129,7 +182,7 @@ struct PlayQueueSheet: View, Equatable {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    PlayQueueDismissingButton(action: {}) { Text("Done") }
+                    Button("Done", action: actions.close)
                         .accessibilityIdentifier("playQueue.done.button")
                 }
                 if !rows.isEmpty {
@@ -149,7 +202,18 @@ struct PlayQueueSheet: View, Equatable {
             } message: {
                 Text("Everything in your Library stays.")
             }
-            .onAppear { actions.load() }
+            .onAppear {
+                actions.load()
+                #if DEBUG
+                PlayQueueSheetProbe.setEditMode = { editMode = $0 }
+                PlayQueueSheetProbe.editMode = editMode
+                #endif
+            }
+            .onChange(of: editMode) { _, mode in
+                #if DEBUG
+                PlayQueueSheetProbe.editMode = mode
+                #endif
+            }
             .onChange(of: rows.isEmpty) { _, isEmpty in
                 // With nothing left there is no Edit button to leave Edit mode with.
                 if isEmpty { editMode = .inactive }
@@ -160,20 +224,18 @@ struct PlayQueueSheet: View, Equatable {
     }
 }
 
-/// A button that closes the sheet, then does its action. It reads `dismiss` here, in its own small view, not in the
-/// sheet: a sheet that reads an environment value is redrawn whenever SwiftUI says that value changed, whatever its
-/// `==` says, and a redraw per model publish is what #3891 removed (#3999).
-private struct PlayQueueDismissingButton<Content: View>: View {
-    @Environment(\.dismiss) private var dismiss
+/// A queued row as a button. Its own view so a test can count its redraws, and tell a redrawn row from an Edit mode
+/// the presentation upset (#3891).
+private struct PlayQueueRowButton: View {
+    let row: PlayQueueRow
     let action: () -> Void
-    @ViewBuilder let label: () -> Content
 
     var body: some View {
-        Button {
-            dismiss()
-            action()
-        } label: {
-            label()
+        #if DEBUG
+        let _ = PlayQueueSheetProbe.rowRuns += 1
+        #endif
+        Button(action: action) {
+            PlayQueueRowLabel(row: row)
         }
     }
 }

@@ -52,6 +52,12 @@ enum UITestingHooks {
         )
     }
 
+    /// The startup fetch of the guided tour from the product server runs. False in a UI-test launch unless the script
+    /// asks for it (#4071); true for every launch that isn't a UI test.
+    static var fetchesGuidedTour: Bool {
+        UITestingLaunchSeed.fetchesGuidedTour(arguments: CommandLine.arguments, environment: ProcessInfo.processInfo.environment)
+    }
+
     /// A keep-library relaunch also imports one friend's Margin onto the seeded podcast (#474).
     static var importsCoopLayer: Bool {
         UITestingLaunchSeed.importsCoopLayer(arguments: CommandLine.arguments, environment: ProcessInfo.processInfo.environment)
@@ -142,6 +148,7 @@ enum UITestingHooks {
     static let seed = UITestingLaunchSeed.none
     static var usesStandInAudioServices: Bool { false }
     static var importsCoopLayer: Bool { false }
+    static var fetchesGuidedTour: Bool { true }
     static var forcesFirstSharedSourceMiss: Bool { false }
     static var ambiguousSourceLinkResolver: LinkResolutionClient? { nil }
     static var localFoundationModelClient: (any LocalFoundationModelClient)? { nil }

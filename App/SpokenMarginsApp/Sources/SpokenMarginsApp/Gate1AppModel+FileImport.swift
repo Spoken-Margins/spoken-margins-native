@@ -148,6 +148,7 @@ extension Gate1AppModel {
         openImportedItemWhenFinished: Bool = false,
         quickAccessFileToDismiss: QuickAccessFile? = nil,
         onImported: (([Item]) -> Void)? = nil,
+        onFinished: (([Item]) -> Void)? = nil,
         navigatesWhenFinished: Bool = true,
         confirmationOverride: ((Int) -> String)? = nil
     ) {
@@ -200,6 +201,7 @@ extension Gate1AppModel {
                 openImportedItemWhenFinished: openImportedItemWhenFinished,
                 quickAccessFileToDismiss: quickAccessFileToDismiss,
                 onImported: onImported,
+                onFinished: onFinished,
                 navigatesWhenFinished: navigatesWhenFinished,
                 confirmationOverride: confirmationOverride
             )
@@ -308,15 +310,19 @@ extension Gate1AppModel {
         openImportedItemWhenFinished: Bool,
         quickAccessFileToDismiss: QuickAccessFile?,
         onImported: (([Item]) -> Void)? = nil,
+        onFinished: (([Item]) -> Void)? = nil,
         navigatesWhenFinished: Bool = true,
         confirmationOverride: ((Int) -> String)? = nil
     ) async {
+        // What this import saved, set once `onImported` has run; `onFinished` hears it, or an empty list on any failure (#4044).
+        var landed: [Item] = []
         defer {
             sourceImportTask = nil
             sourceImportProgressMessage = nil
             if refreshQuickFolderWhenFinished {
                 refreshQuickAccessFolder()
             }
+            onFinished?(landed)
         }
         do {
             let saved = try result.get()
@@ -358,6 +364,7 @@ extension Gate1AppModel {
                 dismissQuickAccessFile(quickAccessFileToDismiss)
             }
             onImported?(imported)
+            landed = imported
             imported.forEach { scheduleTextAudioPrewarmIfNeeded(itemId: $0.id) }
             if let structure = imported.compactMap(\.documentStructure).last {
                 recordPDFExtractionDiagnostics(structure)

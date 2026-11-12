@@ -180,6 +180,8 @@ public enum SpeechTextNormalizer {
         rendered = replace(pattern: markdownImagePattern, in: rendered, replacement: spaceReplacement)
 
         if speakIdentifiers {
+            // Speech only: import cleaning keeps stored text byte-identical (I13 rule 1a), tables included.
+            rendered = replaceMarkdownTables(in: rendered)
             rendered = speakReferenceMarkers(in: rendered)
             rendered = speakDefangedDomains(in: rendered)
         }
@@ -189,6 +191,168 @@ public enum SpeechTextNormalizer {
             rendered = speakMathAlphabet(in: rendered)
         }
         return rendered
+    }
+
+    /// What a table is replaced with. It is the notice `DocumentSpeechRules.treatment(forRole: "table")` says for a
+    /// table in a PDF or other structured document, so a table sounds the same wherever it came from.
+    static let tableNotice = "Table not read."
+
+    /// A web article's table reaches speech as markdown rows, and a voice read the pipes and the `| --- |` line aloud
+    /// (#4048). A table is a header row, a separator row with the same number of cells, and the pipe rows after
+    /// them. It becomes `tableNotice`, mapped to the header's offset. A lone pipe in a sentence, a rule line with no
+    /// pipe, a header whose cell count differs from the separator's, and anything inside a fenced code block stay as
+    /// they are. A row indented four spaces or more is code, so it never starts a table.
+    private static func replaceMarkdownTables(in input: [MappedCharacter]) -> [MappedCharacter] {
+        guard input.contains(where: { $0.character == "|" }) else { return input }
+
+        var lines: [(start: Int, end: Int)] = []
+        var lineStart = 0
+        for (index, mapped) in input.enumerated() where mapped.character.isNewline {
+            lines.append((lineStart, index))
+            lineStart = index + 1
+        }
+        lines.append((lineStart, input.count))
+
+        func text(_ line: (start: Int, end: Int)) -> String {
+            String(input[line.start..<line.end].map(\.character))
+        }
+
+        var output: [MappedCharacter] = []
+        output.reserveCapacity(input.count)
+        /// Emits `lines[first..<after]` with the newline that ends each, the last one's included when the source has it.
+        func keep(_ first: Int, _ after: Int) {
+            let lower = lines[first].start
+            let upper = min(lines[after - 1].end + 1, input.count)
+            output.append(contentsOf: input[lower..<upper])
+        }
+
+        let fences = lines.map { codeFence(in: text($0)) }
+        var openFence: (marker: Character, length: Int)?
+        // Openers known to have no closer anywhere after them, so a text of many stray fences is still one pass.
+        var unclosed: [String: Bool] = [:]
+        var index = 0
+        while index < lines.count {
+            let line = text(lines[index])
+            if let fence = fences[index] {
+                if let open = openFence {
+                    if fence.marker == open.marker, fence.length >= open.length, fence.closes { openFence = nil }
+                } else if opens(fence, at: index, in: fences, unclosed: &unclosed) {
+                    openFence = (fence.marker, fence.length)
+                }
+                keep(index, index + 1)
+                index += 1
+                continue
+            }
+            if openFence == nil,
+               index + 1 < lines.count,
+               let headerCells = tableCells(in: line, allowingIndent: false),
+               let separatorCells = tableSeparatorCells(in: text(lines[index + 1])),
+               headerCells.count == separatorCells {
+                let edgePipes = line.drop(while: { $0 == " " }).first == "|"
+                var after = index + 2
+                while after < lines.count,
+                      let cells = tableCells(in: text(lines[after]), allowingIndent: true),
+                      isTableBodyRow(text(lines[after]), cells: cells, edgePipes: edgePipes, columns: headerCells.count) {
+                    after += 1
+                }
+                let start = input[lines[index].start].sourceOffset
+                output.append(contentsOf: mappedCharacters(tableNotice, sourceOffset: start))
+                if lines[after - 1].end < input.count { output.append(input[lines[after - 1].end]) }
+                index = after
+                continue
+            }
+            keep(index, index + 1)
+            index += 1
+        }
+        return output
+    }
+
+    /// A line after the separator belongs to the table when it is shaped like a row of it: it starts with a pipe when
+    /// the header does, and otherwise has the header's number of cells. A sentence or list item that merely holds a
+    /// pipe ends the table and stays text (GFM would keep taking rows to the blank line; deleting prose costs more).
+    private static func isTableBodyRow(_ line: String, cells: [String], edgePipes: Bool, columns: Int) -> Bool {
+        if edgePipes { return line.drop(while: { $0 == " " }).first == "|" }
+        return cells.count == columns
+    }
+
+    /// Whether `fence` opens a code block: a closing fence of the same kind has to follow it. A stray fence line with
+    /// no closer is text, and must not switch table replacement off for the rest of the document.
+    private static func opens(
+        _ fence: (marker: Character, length: Int, closes: Bool),
+        at index: Int,
+        in fences: [(marker: Character, length: Int, closes: Bool)?],
+        unclosed: inout [String: Bool]
+    ) -> Bool {
+        let key = "\(fence.marker)\(fence.length)"
+        if unclosed[key] == true { return false }
+        var next = index + 1
+        while next < fences.count {
+            if let other = fences[next], other.marker == fence.marker, other.length >= fence.length, other.closes { return true }
+            next += 1
+        }
+        unclosed[key] = true
+        return false
+    }
+
+    /// The cells of a pipe row, or nil when the line has no unescaped pipe (or is code-indented and
+    /// `allowingIndent` is false). One leading and one trailing pipe are the row's edges, not cells.
+    private static func tableCells(in line: String, allowingIndent: Bool) -> [String]? {
+        var body = Substring(line)
+        var indent = 0
+        while body.first == " " { body = body.dropFirst(); indent += 1 }
+        if !allowingIndent, indent >= 4 || body.first == "\t" { return nil }
+        while let last = body.last, last.isWhitespace { body = body.dropLast() }
+        var cells: [String] = []
+        var current = ""
+        var escaped = false
+        var sawPipe = false
+        for character in body {
+            if escaped {
+                current.append(character)
+                escaped = false
+            } else if character == "\\" {
+                current.append(character)
+                escaped = true
+            } else if character == "|" {
+                cells.append(current)
+                current = ""
+                sawPipe = true
+            } else {
+                current.append(character)
+            }
+        }
+        cells.append(current)
+        guard sawPipe else { return nil }
+        if cells.first?.allSatisfy(\.isWhitespace) == true { cells.removeFirst() }
+        if cells.last?.allSatisfy(\.isWhitespace) == true { cells.removeLast() }
+        return cells.map { $0.trimmingCharacters(in: .whitespaces) }
+    }
+
+    /// The cell count of a separator row (`| --- | :-: |`), or nil when the line is not one: every cell is dashes with
+    /// an optional colon at either end, and the line has a pipe.
+    private static func tableSeparatorCells(in line: String) -> Int? {
+        guard let cells = tableCells(in: line, allowingIndent: true), !cells.isEmpty else { return nil }
+        for cell in cells {
+            var dashes = Substring(cell)
+            if dashes.first == ":" { dashes = dashes.dropFirst() }
+            if dashes.last == ":" { dashes = dashes.dropLast() }
+            guard !dashes.isEmpty, dashes.allSatisfy({ $0 == "-" }) else { return nil }
+        }
+        return cells.count
+    }
+
+    /// A line that opens or closes a fenced code block: three or more backticks or tildes, indented at most three
+    /// spaces. `closes` is true when nothing but whitespace follows the fence, which is what a closing fence needs.
+    private static func codeFence(in line: String) -> (marker: Character, length: Int, closes: Bool)? {
+        var body = Substring(line)
+        var indent = 0
+        while body.first == " ", indent < 4 { body = body.dropFirst(); indent += 1 }
+        guard indent < 4, let marker = body.first, marker == "`" || marker == "~" else { return nil }
+        let length = body.prefix(while: { $0 == marker }).count
+        guard length >= 3 else { return nil }
+        let rest = body.dropFirst(length)
+        if marker == "`", rest.contains("`") { return nil }
+        return (marker, length, rest.allSatisfy(\.isWhitespace))
     }
 
     /// Real markup only. Speech normalizes a whole document at once, and a bare `<[^>]*>` ran from a table note's

@@ -28,6 +28,8 @@ final class PlayQueueLayoutTests: XCTestCase {
     override func setUp() async throws {
         try await super.setUp()
         UIPasteboard.general.items = [] // a copied link would add its card above the rows mid-test
+        PlayQueueSheetProbe.setEditMode = nil
+        PlayQueueSheetProbe.editMode = .inactive
     }
 
     override func tearDown() async throws {
@@ -55,7 +57,7 @@ final class PlayQueueLayoutTests: XCTestCase {
         XCTAssertEqual(rows.count, 3)
 
         for size in Self.sizes {
-            let mounted = try mount(AnyView(ExperiencePlayQueueScreen(model: model)), size: size)
+            let mounted = try mount(AnyView(ExperiencePlayQueueScreen(model: model, close: {})), size: size)
             defer { mounted.close() }
             let list = try await settledList(in: mounted) { $0.totalItems >= 1 }
             attachScreenshot(of: mounted, name: "play-queue-sheet-\(size)")
@@ -98,7 +100,7 @@ final class PlayQueueLayoutTests: XCTestCase {
     func testTheQueueSheetIsNotRedrawnByModelPublishesThatLeaveTheQueueAsItWas() async throws {
         let model = try makeModel(itemCount: 3)
         for id in Self.itemIds(3) { model.queueAppend(itemId: id) }
-        let mounted = try mount(AnyView(ExperiencePlayQueueScreen(model: model)), size: .large)
+        let mounted = try mount(AnyView(ExperiencePlayQueueScreen(model: model, close: {})), size: .large)
         defer { mounted.close() }
         let settled = try await settledList(in: mounted) { $0.totalItems >= 3 }
         // The list's shape settles before the sheet stops drawing: the first rows' own async work (#3999: this failed on
@@ -129,6 +131,72 @@ final class PlayQueueLayoutTests: XCTestCase {
         let afterRemoving = try await settledList(in: mounted) { $0.totalItems < settled.totalItems }
         XCTAssertGreaterThan(PlayQueueSheetProbe.bodyRuns, runsBefore, "Removing a queued item should redraw the sheet")
         XCTAssertEqual(afterRemoving.totalItems, settled.totalItems - 1, "The removed item's row should be gone")
+    }
+
+    /// #3891, reopened: with the sheet no longer redrawn, the owner's phone still showed the remove icon and handle fading
+    /// between full and half strength in Edit mode, row text still. The Library redraws on every model publish, and a
+    /// `.sheet` on it re-ran the presentation each time. Presented the way the Library presents it, in Edit mode, nothing
+    /// in the sheet may redraw, Edit mode must hold, and nothing in a row may be animating while nobody touches the screen.
+    /// Edit mode comes on once the sheet is up, as the owner's tap on Edit did, and is read from SwiftUI's own state; the
+    /// list's UIKit flag did not follow it in the hosted run that failed (#4036), so it counts only if it ever does.
+    /// The control below runs the same steps against a plain `.sheet` and must show the fault this one guards.
+    func testInEditModeTheQueueRowsHoldStillWhileTheirPresenterRedrawsOnEveryPublish() async throws {
+        let model = try makeModel(itemCount: 3)
+        for id in Self.itemIds(3) { model.queueAppend(itemId: id) }
+        let mounted = try mount(AnyView(QueueSheetPresenter(model: model)), size: .large)
+        defer { mounted.close() }
+        _ = try await settledList(in: mounted) { $0.totalItems >= 3 }
+        let settled = try await enterEditMode(in: mounted)
+        let sheetBefore = try await bodyRunsOnceTheSheetIsQuiet()
+        let rowsBefore = try await rowRunsOnceTheRowsAreQuiet()
+        let hostBefore = PlayQueueSheetProbe.hostRuns
+        let screensBefore = PlayQueueSheetProbe.screenInits
+        try await waitForTheRowsToStopAnimating(in: settled.view)
+
+        let idle = try await editModeWhilePublishing(model, list: settled.view)
+
+        XCTAssertEqual(PlayQueueSheetProbe.hostRuns, hostBefore,
+                       "20 model publishes redrew the sheet's presentation \(PlayQueueSheetProbe.hostRuns - hostBefore) times")
+        XCTAssertEqual(PlayQueueSheetProbe.screenInits, screensBefore,
+                       "20 model publishes re-ran the presentation, building the queue screen \(PlayQueueSheetProbe.screenInits - screensBefore) more times")
+        XCTAssertEqual(PlayQueueSheetProbe.bodyRuns, sheetBefore,
+                       "20 model publishes with the queue unchanged redrew the sheet \(PlayQueueSheetProbe.bodyRuns - sheetBefore) times")
+        XCTAssertEqual(PlayQueueSheetProbe.rowRuns, rowsBefore,
+                       "20 model publishes with the queue unchanged redrew the rows \(PlayQueueSheetProbe.rowRuns - rowsBefore) times")
+        XCTAssertEqual(idle.notEditing, 0, "Edit mode went off in \(idle.notEditing) of \(idle.looks) looks with nothing touched; "
+                           + "after: \(Self.editState(of: settled.view))")
+        XCTAssertTrue(idle.animating.isEmpty, "Rows were animating with nothing touched: \(idle.animating.sorted())")
+
+        // A real change still lands, and Edit mode survives it.
+        model.removeFromQueue(itemId: Self.itemIds(3)[0])
+        let afterRemoving = try await settledList(in: mounted) { $0.totalItems < settled.totalItems }
+        XCTAssertEqual(afterRemoving.totalItems, settled.totalItems - 1, "The removed item's row should be gone")
+        XCTAssertEqual(PlayQueueSheetProbe.editMode, .active, "Removing a row should leave Edit mode on: \(Self.editState(of: afterRemoving.view))")
+        if listFlagFollowsEditMode {
+            XCTAssertTrue(afterRemoving.view.isEditing, "Removing a row took the list out of Edit mode: \(Self.editState(of: afterRemoving.view))")
+        }
+    }
+
+    /// The control for the test above, run against the plain `.sheet` the Library had. The test above only means something
+    /// if this presenter shows the fault it guards: with a plain `.sheet`, a publish that changes nothing must re-run the
+    /// presentation (its content closure), which the host's test says never happens, or knock Edit mode off, or set a row
+    /// animating. If none of these shows, the test above no longer reproduces the owner's recording and its pass proves
+    /// nothing. The failure message gives all four counts.
+    func testWithAPlainSheetOnTheWatchingPresenterEditModeFlickersOnEveryPublish() async throws {
+        let model = try makeModel(itemCount: 3)
+        for id in Self.itemIds(3) { model.queueAppend(itemId: id) }
+        let mounted = try mount(AnyView(PlainSheetQueuePresenter(model: model)), size: .large)
+        defer { mounted.close() }
+        _ = try await settledList(in: mounted) { $0.totalItems >= 3 }
+        let settled = try await enterEditMode(in: mounted)
+        try await waitForTheRowsToStopAnimating(in: settled.view)
+        let buildsBefore = PlayQueueSheetProbe.screenInits
+
+        let idle = try await editModeWhilePublishing(model, list: settled.view)
+
+        let rebuilt = PlayQueueSheetProbe.screenInits - buildsBefore
+        XCTAssertGreaterThan(rebuilt, 0, "Plain sheet: the queue screen was built \(rebuilt) times, Edit mode off in \(idle.notEditing) of \(idle.looks) looks, "
+                                         + "rows animating: \(idle.animating.sorted())")
     }
 
     /// #4033: the sheet's rows are published only when they differ, so a screen watching them is not invalidated by
@@ -270,6 +338,7 @@ final class PlayQueueLayoutTests: XCTestCase {
         let previousKeyWindow: UIWindow?
 
         func close() {
+            window.rootViewController?.presentedViewController?.dismiss(animated: false)
             window.isHidden = true
             window.rootViewController = nil
             previousKeyWindow?.makeKeyAndVisible()
@@ -337,6 +406,158 @@ final class PlayQueueLayoutTests: XCTestCase {
         }
         XCTFail("The sheet kept drawing with nothing changing (\(last) body runs)")
         throw NotSettled()
+    }
+
+    /// The queue rows' body-run count once it has not moved for 10 polls (0.4 s).
+    private func rowRunsOnceTheRowsAreQuiet() async throws -> Int {
+        var last = PlayQueueSheetProbe.rowRuns
+        var quiet = 0
+        for _ in 0..<150 {
+            try await Task.sleep(for: .milliseconds(40))
+            let now = PlayQueueSheetProbe.rowRuns
+            quiet = now == last ? quiet + 1 : 0
+            last = now
+            if quiet >= 10 { return now }
+        }
+        XCTFail("The rows kept drawing with nothing changing (\(last) body runs)")
+        throw NotSettled()
+    }
+
+    /// Waits until no row layer has animated for 10 polls (0.4 s), so the sheet's arrival is over before idle counts.
+    private func waitForTheRowsToStopAnimating(in list: UICollectionView) async throws {
+        var quiet = 0
+        var seen: Set<String> = []
+        for _ in 0..<150 {
+            try await Task.sleep(for: .milliseconds(40))
+            seen = Self.animatingLayers(in: list.visibleCells)
+            quiet = seen.isEmpty ? quiet + 1 : 0
+            if quiet >= 10 { return }
+        }
+        XCTFail("The rows kept animating with nothing changing: \(seen.sorted())")
+        throw NotSettled()
+    }
+
+    /// Whether the list's UIKit flag followed SwiftUI's Edit mode when it came on. A hosted run (#4036) saw the sheet's
+    /// Edit mode on while `UICollectionView.isEditing` stayed false, so the flag only counts when it did follow.
+    private var listFlagFollowsEditMode = false
+    /// How Edit mode was turned on, for a failure message.
+    private var editModeHow = "not tried"
+
+    /// Turns Edit mode on the way a tap on Edit does: through the Edit button's accessibility activation, and, if no such
+    /// button is found or it changes nothing, through the sheet's own setter. Waits until SwiftUI's Edit mode has held
+    /// for 3 looks running, then gives the list's UIKit flag a second to follow.
+    private func enterEditMode(in mounted: Mounted) async throws -> ListState {
+        let setEditMode = try XCTUnwrap(PlayQueueSheetProbe.setEditMode, "The queue sheet never appeared")
+        var visited = Set<ObjectIdentifier>()
+        let button = Self.accessibilityElement(withIdentifier: "playQueue.edit.button", in: mounted.window, visited: &visited)
+        if let button, button.accessibilityActivate() {
+            editModeHow = "the Edit button's activation"
+            if try await editModeHeld(in: mounted, looks: 40) == nil { editModeHow = "the setter, after the button changed nothing" }
+        } else {
+            editModeHow = button == nil ? "the setter, no Edit button found" : "the setter, the Edit button refused activation"
+        }
+        if PlayQueueSheetProbe.editMode != .active {
+            withAnimation { setEditMode(.active) }
+        }
+        guard let list = try await editModeHeld(in: mounted, looks: 100) else {
+            XCTFail("Edit mode never held for 3 looks (turned on by \(editModeHow)): SwiftUI's Edit mode is "
+                    + "\(PlayQueueSheetProbe.editMode == .active ? "active" : "inactive"), "
+                    + "\(Self.collectionView(in: mounted.window).map(Self.editState) ?? "no list")")
+            throw NotSettled()
+        }
+        let how = XCTAttachment(string: "Edit mode turned on by \(editModeHow)")
+        how.lifetime = .keepAlways
+        add(how)
+        for _ in 0..<25 {
+            if list.isEditing { listFlagFollowsEditMode = true; break }
+            try await Task.sleep(for: .milliseconds(40))
+        }
+        let paths = (0..<list.numberOfSections).flatMap { section in
+            (0..<list.numberOfItems(inSection: section)).map { IndexPath(item: $0, section: section) }
+        }
+        return ListState(view: list, paths: paths)
+    }
+
+    /// The list once SwiftUI's Edit mode has been active for 3 looks running, or nil after `looks` looks.
+    private func editModeHeld(in mounted: Mounted, looks: Int) async throws -> UICollectionView? {
+        var steady = 0
+        for _ in 0..<looks {
+            try await Task.sleep(for: .milliseconds(40))
+            mounted.window.layoutIfNeeded()
+            if PlayQueueSheetProbe.editMode == .active, let list = Self.collectionView(in: mounted.window) {
+                steady += 1
+                if steady >= 3 { return list }
+            } else {
+                steady = 0
+            }
+        }
+        return nil
+    }
+
+    /// The first element at or under `root` whose accessibility identifier is `identifier`, looking through views and
+    /// accessibility containers the way a UI test does.
+    private static func accessibilityElement(withIdentifier identifier: String, in root: NSObject, visited: inout Set<ObjectIdentifier>) -> NSObject? {
+        guard visited.insert(ObjectIdentifier(root)).inserted else { return nil }
+        if (root as? UIAccessibilityIdentification)?.accessibilityIdentifier == identifier { return root }
+        var children: [NSObject] = []
+        if let view = root as? UIView {
+            children += (view.accessibilityElements ?? []).compactMap { $0 as? NSObject }
+            children += view.subviews
+        }
+        let count = root.accessibilityElementCount()
+        if count != NSNotFound, count > 0 {
+            children += (0..<count).compactMap { root.accessibilityElement(at: $0) as? NSObject }
+        }
+        for child in children {
+            if let found = accessibilityElement(withIdentifier: identifier, in: child, visited: &visited) { return found }
+        }
+        return nil
+    }
+
+    /// What a failure needs to tell Edit mode on from off: the list's own flag, and how many rows show a reorder handle.
+    private static func editState(of list: UICollectionView) -> String {
+        func handles(in view: UIView) -> Int {
+            let own = "\(type(of: view))".contains("ReorderControl") && !view.isHidden && view.alpha > 0.5 ? 1 : 0
+            return view.subviews.reduce(own) { $0 + handles(in: $1) }
+        }
+        let cells = list.visibleCells
+        return "isEditing \(list.isEditing), \(cells.filter { handles(in: $0) > 0 }.count) of \(cells.count) rows show a reorder handle"
+    }
+
+    /// Sends 20 model publishes that change nothing, looking twice after each: how often the sheet's Edit mode (and the list's
+    /// flag, when it follows it) was off,
+    /// and every row layer seen animating, including in the 0.3 s after the last.
+    private func editModeWhilePublishing(_ model: Gate1AppModel, list: UICollectionView) async throws
+        -> (notEditing: Int, looks: Int, animating: Set<String>) {
+        var notEditing = 0
+        var looks = 0
+        var animating: Set<String> = []
+        for _ in 0..<20 {
+            model.objectWillChange.send()
+            for _ in 0..<2 {
+                try await Task.sleep(for: .milliseconds(20))
+                looks += 1
+                if PlayQueueSheetProbe.editMode != .active || (listFlagFollowsEditMode && !list.isEditing) { notEditing += 1 }
+                animating.formUnion(Self.animatingLayers(in: list.visibleCells))
+            }
+        }
+        try await Task.sleep(for: .milliseconds(300))
+        animating.formUnion(Self.animatingLayers(in: list.visibleCells))
+        return (notEditing, looks, animating)
+    }
+
+    /// Each layer in the cells with an animation running, as "layer's class (its view's class): animation keys".
+    private static func animatingLayers(in cells: [UICollectionViewCell]) -> Set<String> {
+        var found: Set<String> = []
+        func visit(_ layer: CALayer) {
+            if let keys = layer.animationKeys(), !keys.isEmpty {
+                let owner = (layer.delegate as? UIView).map { " (\(type(of: $0)))" } ?? ""
+                found.insert("\(type(of: layer))\(owner): \(keys.sorted().joined(separator: ","))")
+            }
+            layer.sublayers?.forEach(visit)
+        }
+        cells.forEach { visit($0.layer) }
+        return found
     }
 
     /// Where the row's top edge sits relative to the top of the visible list: 0 at the edge, negative above it.
@@ -416,5 +637,30 @@ private struct PlainListWithTopRow: View {
             }
             .listStyle(.plain)
         }
+    }
+}
+
+/// The Library's shape around the queue sheet: a presenter that watches the model, so every publish redraws it, and
+/// presents the sheet the way the Library does.
+private struct QueueSheetPresenter: View {
+    @ObservedObject var model: Gate1AppModel
+    @State private var isPresented = true
+
+    var body: some View {
+        Color.clear
+            .playQueueSheet(isPresented: $isPresented, model: model)
+    }
+}
+
+/// The same presenter with a plain `.sheet`, as the Library had before #3891 was reopened.
+private struct PlainSheetQueuePresenter: View {
+    @ObservedObject var model: Gate1AppModel
+    @State private var isPresented = true
+
+    var body: some View {
+        Color.clear
+            .sheet(isPresented: $isPresented) {
+                ExperiencePlayQueueScreen(model: model, close: { isPresented = false })
+            }
     }
 }

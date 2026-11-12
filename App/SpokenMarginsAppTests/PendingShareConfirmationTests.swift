@@ -61,7 +61,7 @@ final class PendingShareConfirmationTests: XCTestCase {
 
         XCTAssertEqual(model.feedbackEvent?.message, "Added During One to Library without changing Now Playing.")
         XCTAssertNil(model.feedbackEvent?.action)
-        XCTAssertEqual(model.snapshot, before)
+        assertNowPlayingUnchanged(model.snapshot, from: before)
     }
 
     func testSeveralSharesDuringPlaybackSayNowPlayingIsUnchanged() async throws {
@@ -75,7 +75,7 @@ final class PendingShareConfirmationTests: XCTestCase {
 
         XCTAssertEqual(model.feedbackEvent?.message, "Added 2 to Library without changing Now Playing.")
         XCTAssertNil(model.feedbackEvent?.action)
-        XCTAssertEqual(model.snapshot, before)
+        assertNowPlayingUnchanged(model.snapshot, from: before)
     }
 
     func testTheSamePageSharedTwiceIsOneItem() async throws {
@@ -136,5 +136,24 @@ final class PendingShareConfirmationTests: XCTestCase {
             elapsed += interval
         }
         XCTFail("Timed out waiting for \(description).")
+    }
+}
+
+extension XCTestCase {
+    /// #4080: Now Playing is the same session on the same item, still playing. The rest of the snapshot is
+    /// live playback progress: while the voice reads, the chapter label moves from "Summary" to the first
+    /// chapter, the status settles from starting to playing and the percent and offsets advance, so a whole-snapshot comparison fails on timing alone.
+    func assertNowPlayingUnchanged(
+        _ after: SessionSnapshot,
+        from before: SessionSnapshot,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        XCTAssertEqual(after.sessionId, before.sessionId, "A share must not replace the session", file: file, line: line)
+        XCTAssertEqual(after.itemId, before.itemId, "A share must not change the item", file: file, line: line)
+        XCTAssertEqual(after.title, before.title, file: file, line: line)
+        // `.starting` settles to `.playing` on its own; a pause or stop is what a share must not cause.
+        XCTAssertEqual(after.status.isPlaybackActive, before.status.isPlaybackActive, "A share must not pause or stop playback", file: file, line: line)
+        XCTAssertEqual(after.phase, before.phase, file: file, line: line)
     }
 }

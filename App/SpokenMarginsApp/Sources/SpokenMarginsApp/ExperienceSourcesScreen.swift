@@ -4,11 +4,19 @@ import SwiftUI
 /// Following (#1865): one row per followed show, newest episode first, with "N new", a play button for the
 /// newest unplayed episode and a chevron into the show's own screen. Quiet shows sit in a collapsed group
 /// at the bottom. The plus opens the Follow sheet (#3205): Paste, Browse and Import from another app.
-struct ExperienceSourcesScreen: View {
-    @EnvironmentObject private var model: Gate1AppModel
+///
+/// It does not watch `Gate1AppModel`: it reads what it shows through a `ScreenInputsFeed`, so a model publish that
+/// leaves the list as it was does not rebuild it while the listener scrolls (#4028). The tab bar redraws on every publish
+/// and shows it with `.equatable()`: it is equal to its last copy while the model is the same one, so the tab bar's
+/// redraw stops here. Without that, a hosted run drew it once per publish all the same (36 runs for 20).
+struct ExperienceSourcesScreen: View, Equatable {
+    let model: Gate1AppModel
+    @StateObject private var feed: ScreenInputsFeed<Inputs>
     @Environment(\.isEdgeSwipePreview) private var isEdgeSwipePreview
     @EnvironmentObject private var catalogDrawer: CatalogDrawerModel
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    /// A show row's queue button reads the queue as it is now (#4044).
+    @ObservedObject private var playQueue = PlayQueueState.shared
 
     /// Following's follow flow lives on its own sheet so this tab stays a list of shows (#141, #3205).
     @State private var isShowingFollowSheet = false
@@ -19,34 +27,78 @@ struct ExperienceSourcesScreen: View {
     @State private var isQuietExpanded = false
     /// Each followed show's artwork (#773), read from the coordinator's side file.
     @State private var artwork = FollowingArtworkCache()
-    /// Kept for the root view's signature. The shows are pushed inside this stack, so the list is not
-    /// destroyed when one opens and keeps its own place.
-    @Binding var scrollMemory: FollowingScrollMemory
 
     /// A friend with Margins on more than one item, whose items are open.
     @State private var openFriend: FollowingFriends.Friend?
 
-    var body: some View {
-        NavigationStack(path: $path) {
-            let list = model.followingShowListCache
+    /// The shows are pushed inside this stack, so the list is not destroyed when one opens and keeps its own place
+    /// (#2395). It takes no scroll binding from the root: the tab bar redraws on every model publish, and a fresh binding
+    /// each time could count as a change and redraw this screen anyway (#4028).
+    init(model: Gate1AppModel) {
+        self.model = model
+        _feed = StateObject(wrappedValue: ScreenInputsFeed(model: model, read: Inputs.init))
+    }
+
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        #if DEBUG
+        ScreenRedrawProbe.recordEqualityCheck("following")
+        #endif
+        return lhs.model === rhs.model
+    }
+
+    /// Everything the list shows from the model. A publish that changes none of it leaves the screen alone.
+    struct Inputs: Equatable {
+        var list: FollowingShowList
+        var feedRows: [FollowingFeed.Row]
+        var showsEmptyState: Bool
+        var hasFollowCandidates: Bool
+        var isOfflineSnapshot: Bool
+        var quickFolderFileCount: Int
+        var isRefreshingQuickAddFeed: Bool
+        var importingEntryIds: Set<String>
+        var subscriptionIDs: [String]
+        var isRefreshingFollowedSources: Bool
+
+        @MainActor init(_ model: Gate1AppModel) {
             let friends = model.followingFriends
+            list = model.followingShowListCache
+            feedRows = model.followingFeedRows(friends: friends)
+            showsEmptyState = model.followingShowsEmptyState(friends: friends)
+            hasFollowCandidates = !model.followedSourceCandidates.isEmpty
+            isOfflineSnapshot = model.selectedProfileId.contains("offline")
+            // New files in the Quick Folder. They used to arrive in Following's stream; the folder is a place to open now.
+            quickFolderFileCount = model.quickAddCandidates.filter { if case .localFile = $0 { true } else { false } }.count
+            isRefreshingQuickAddFeed = model.isRefreshingQuickAddFeed
+            importingEntryIds = model.importingFollowedSourceEntryIds
+            subscriptionIDs = model.feedSubscriptions.map(\.id)
+            isRefreshingFollowedSources = model.isRefreshingFollowedSources
+        }
+    }
+
+    var body: some View {
+        #if DEBUG
+        let _ = ScreenRedrawProbe.record("following")
+        #endif
+        let inputs = feed.inputs
+        NavigationStack(path: $path) {
+            let list = inputs.list
             List {
                 // An item's Follow can find several feeds; the choice shows here too, not only on the follow screen.
-                if !model.followedSourceCandidates.isEmpty {
+                if inputs.hasFollowCandidates {
                     VStack(alignment: .leading, spacing: 10) { FollowCandidateChoices() }
                         .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
                 }
-                if model.selectedProfileId.contains("offline") {
+                if inputs.isOfflineSnapshot {
                     Label("Showing the last local snapshot", systemImage: "wifi.slash")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(AppColors.secondaryText)
                         .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
                 }
-                if quickFolderFiles.count > 0 {
-                    quickFolderRow
+                if inputs.quickFolderFileCount > 0 {
+                    quickFolderRow(count: inputs.quickFolderFileCount)
                         .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
                 }
-                if model.followingShowsEmptyState(friends: friends) {
+                if inputs.showsEmptyState {
                     SMExperienceEmptyState(
                         systemImage: "dot.radiowaves.left.and.right",
                         title: "You’re not following anything yet",
@@ -66,7 +118,7 @@ struct ExperienceSourcesScreen: View {
                     .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
                 }
                 // Friends who sent Margins and followed shows in one list, newest first (#3291, #3343).
-                ForEach(model.followingFeedRows(friends: friends)) { row in
+                ForEach(inputs.feedRows) { row in
                     switch row {
                     case .friend(let friend): friendRow(friend)
                     case .show(let show): showRow(show)
@@ -94,11 +146,11 @@ struct ExperienceSourcesScreen: View {
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     Button(action: { model.refreshQuickAddFeed() }) {
                         Group {
-                            if model.isRefreshingQuickAddFeed { ProgressView() } else { Image(systemName: "arrow.clockwise") }
+                            if inputs.isRefreshingQuickAddFeed { ProgressView() } else { Image(systemName: "arrow.clockwise") }
                         }
                         .minimumTapTarget()
                     }
-                    .disabled(model.isRefreshingQuickAddFeed)
+                    .disabled(inputs.isRefreshingQuickAddFeed)
                     .accessibilityLabel("Refresh Following")
                     .accessibilityIdentifier("quickAdd.refresh.button")
                     Button(action: { isShowingFollowSheet = true }) {
@@ -140,27 +192,12 @@ struct ExperienceSourcesScreen: View {
             .task { if !isEdgeSwipePreview { model.refreshQuickAddFeed(force: false) } } // the swipe's preview fetches nothing (#106)
             // The catalog gives followed shows their artwork (#773).
             .task { if !isEdgeSwipePreview { await catalogDrawer.loadSnapshot() } }
-            // Re-read the rows' entries when the shows, the unplayed entries or a refresh change them. Played and
-            // Quiet shows' entries aren't in `followedSourceEntries`, so the rows read the store.
-            .task(id: ShowRowsKey(
-                subscriptions: model.feedSubscriptions.map { "\($0.id):\($0.state.rawValue)" },
-                unplayedCount: model.followedSourceEntries.count,
-                isRefreshing: model.isRefreshingFollowedSources,
-                // Finishing an episode moves its show's row to the next unread one, so a change in what the Library
-                // holds or has finished re-reads the rows.
-                libraryCount: model.libraryItems.count,
-                finishedCount: model.libraryItems.filter(\.isCompleted).count,
-                // An episode counts as heard before the Library calls it finished (95%, or its last two minutes;
-                // `FollowingHeardRule`), so each 1% of listening re-reads the rows too (#3691).
-                listeningSteps: model.libraryItems.reduce(0) { $0 + ($1.continuationProgressPercent ?? 0) }
-            )) {
-                await model.reloadFollowingShowEntries()
-            }
+            .background { FollowingShowRowsReload(model: model) }
             // Re-read the artwork when the shows, the catalog or a refresh changes it (#773).
             .task(id: ArtworkKey(
-                subscriptionIDs: model.feedSubscriptions.map(\.id),
+                subscriptionIDs: inputs.subscriptionIDs,
                 hasCatalog: catalogDrawer.catalog != nil,
-                isRefreshing: model.isRefreshingFollowedSources
+                isRefreshing: inputs.isRefreshingFollowedSources
             )) {
                 guard let coordinator = model.followedSourceCoordinator else { return }
                 artwork = await coordinator.followingArtwork(catalog: catalogDrawer.catalog)
@@ -189,6 +226,27 @@ struct ExperienceSourcesScreen: View {
         .listRowBackground(AppColors.bone)
     }
 
+    /// What the show row's queue button does for its newest episode: Remove from Queue only when that episode is in the
+    /// Library and queued; every other episode would be saved first, so it is Add to Queue (#4044).
+    private func showRowQueueAction(_ row: FollowingShowRow) -> QueueRowAction? {
+        if row.isNewestInLibrary {
+            guard let itemId = row.playItemID else { return nil }
+            return QueueRowAction.action(forItem: itemId, queuedItemIds: playQueue.itemIds)
+        }
+        return row.addEntryID == nil ? nil : .add
+    }
+
+    @ViewBuilder
+    private func queueSwipeButton(_ row: FollowingShowRow) -> some View {
+        if let action = showRowQueueAction(row) {
+            Button { model.queueNewestEpisode(of: row) } label: {
+                Label(action.title, systemImage: action.systemImage)
+            }
+            .tint(AppColors.swipeSlate)
+            .accessibilityIdentifier("sources.show.\(row.id).queue")
+        }
+    }
+
     @ViewBuilder
     private func showRow(_ row: FollowingShowRow) -> some View {
         FollowingShowRowView(
@@ -197,11 +255,14 @@ struct ExperienceSourcesScreen: View {
             open: { path.append(row.id) },
             play: { model.playNewestEpisode(of: row) },
             add: { model.addPreviewedEpisode(of: row) },
-            isPlayStarting: row.playEntryID.map { model.importingFollowedSourceEntryIds.contains($0) } ?? false,
-            isAdding: row.newestEntryID.map { model.importingFollowedSourceEntryIds.contains($0) } ?? false
+            isPlayStarting: row.playEntryID.map { feed.inputs.importingEntryIds.contains($0) } ?? false,
+            isAdding: row.newestEntryID.map { feed.inputs.importingEntryIds.contains($0) } ?? false,
+            queueAction: showRowQueueAction(row),
+            queue: { model.queueNewestEpisode(of: row) }
         )
-        // Add the episode the row previews without opening the show (#2929). Once it is in the Library the
-        // button says so and does nothing; a show with no episode offers no swipe.
+        // Add the episode the row previews without opening the show (#2929), or Add to Queue, which saves it and queues it
+        // (#4044). Once it is in the Library the second button is the only one: Add to Queue or Remove from Queue, and no
+        // long swipe. A show with no episode offers no swipe.
         .swipeActions(edge: .leading, allowsFullSwipe: row.addEntryID != nil) {
             if row.addEntryID != nil {
                 Button { model.addPreviewedEpisode(of: row) } label: {
@@ -209,6 +270,9 @@ struct ExperienceSourcesScreen: View {
                 }
                 .tint(AppColors.swipeEvergreen)
                 .accessibilityIdentifier("sources.show.\(row.id).add")
+                queueSwipeButton(row)
+            } else if row.isNewestInLibrary, row.playItemID != nil {
+                queueSwipeButton(row)
             } else if row.isNewestInLibrary {
                 Button {} label: {
                     Label("In Library", systemImage: "checkmark.circle")
@@ -255,18 +319,13 @@ struct ExperienceSourcesScreen: View {
         .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
     }
 
-    /// New files in the Quick Folder. They used to arrive in Following's stream; the folder is a place to open now.
-    private var quickFolderFiles: [QuickAddCandidate] {
-        model.quickAddCandidates.filter { if case .localFile = $0 { true } else { false } }
-    }
-
-    private var quickFolderRow: some View {
+    private func quickFolderRow(count: Int) -> some View {
         Button { isShowingQuickFolder = true } label: {
             HStack(spacing: 10) {
                 Image(systemName: "folder")
                     .foregroundStyle(AppColors.evergreen)
                     .accessibilityHidden(true)
-                Text("Quick Folder · \(quickFolderFiles.count) new")
+                Text("Quick Folder · \(count) new")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(AppColors.text)
                 Spacer()
@@ -282,19 +341,49 @@ struct ExperienceSourcesScreen: View {
         .accessibilityIdentifier("sources.quickFolder")
     }
 
-    private struct ShowRowsKey: Equatable {
+    struct ShowRowsKey: Equatable {
         var subscriptions: [String]
         var unplayedCount: Int
         var isRefreshing: Bool
         var libraryCount: Int
         var finishedCount: Int
         var listeningSteps: Int
+
+        @MainActor init(_ model: Gate1AppModel) {
+            subscriptions = model.feedSubscriptions.map { "\($0.id):\($0.state.rawValue)" }
+            unplayedCount = model.followedSourceEntries.count
+            isRefreshing = model.isRefreshingFollowedSources
+            // Finishing an episode moves its show's row to the next unread one, so a change in what the Library
+            // holds or has finished re-reads the rows.
+            libraryCount = model.libraryItems.count
+            finishedCount = model.libraryItems.filter(\.isCompleted).count
+            // An episode counts as heard before the Library calls it finished (95%, or its last two minutes;
+            // `FollowingHeardRule`), so each 1% of listening re-reads the rows too (#3691).
+            listeningSteps = model.libraryItems.reduce(0) { $0 + ($1.continuationProgressPercent ?? 0) }
+        }
     }
 
     private struct ArtworkKey: Equatable {
         var subscriptionIDs: [String]
         var hasCatalog: Bool
         var isRefreshing: Bool
+    }
+}
+
+/// Re-reads the show rows' entries when the shows, the unplayed entries or a refresh change them. Played and Quiet
+/// shows' entries aren't in `followedSourceEntries`, so the rows read the store. This empty view holds the key in its own
+/// feed, so each 1% of listening wakes it and not the list (#4028); the rows redraw only if the re-read changes them.
+private struct FollowingShowRowsReload: View {
+    let model: Gate1AppModel
+    @StateObject private var key: ScreenInputsFeed<ExperienceSourcesScreen.ShowRowsKey>
+
+    init(model: Gate1AppModel) {
+        self.model = model
+        _key = StateObject(wrappedValue: ScreenInputsFeed(model: model, read: ExperienceSourcesScreen.ShowRowsKey.init))
+    }
+
+    var body: some View {
+        Color.clear.task(id: key.inputs) { await model.reloadFollowingShowEntries() }
     }
 }
 
@@ -309,6 +398,9 @@ private struct FollowingShowRowView: View {
     let isPlayStarting: Bool
     /// The previewed episode is being fetched into the Library after a swipe (#2929).
     let isAdding: Bool
+    /// The row has no menu, so its queue action is a VoiceOver action only (#4044); nil when the show has no episode to queue.
+    var queueAction: QueueRowAction?
+    var queue: () -> Void = {}
 
     var body: some View {
         HStack(spacing: 0) {
@@ -366,6 +458,9 @@ private struct FollowingShowRowView: View {
             .accessibilityLabel(row.accessibilityLabel)
             .accessibilityHint("Opens the show.")
             .accessibilityAction(named: "Add newest episode to Library") { if row.addEntryID != nil { add() } }
+            .accessibilityActions {
+                if let queueAction { Button(queueAction.newestEpisodeTitle, action: queue) }
+            }
             .accessibilityIdentifier("sources.show.\(row.id)")
             if row.playEntryID != nil {
                 Button(action: play) {
@@ -489,6 +584,11 @@ struct SourceInboxRow: View {
     let artwork: FollowingArtworkCache
     @State private var confirmsUnfollow = false
 
+    /// A Quick Folder link list adds many links, so there is no one item to queue (#4044).
+    private var canQueue: Bool {
+        if case .localFile(let file) = candidate { !Gate1AppModel.isQuickFolderLinkList(file) } else { true }
+    }
+
     var body: some View {
         // The row is a Button and a More menu side by side, so the menu is not nested inside the Button. A
         // listener who can't swipe precisely or hold for the context menu reaches the same actions from the menu (#1932).
@@ -504,6 +604,14 @@ struct SourceInboxRow: View {
                 Label("Add", systemImage: "plus.circle.fill")
             }
             .tint(AppColors.swipeEvergreen)
+            // Second, so a long swipe still adds: Add to Queue saves the item and queues it once it lands (#4044).
+            if canQueue {
+                Button(action: addToQueue) {
+                    Label(QueueRowAction.add.title, systemImage: QueueRowAction.add.systemImage)
+                }
+                .tint(AppColors.swipeSlate)
+                .accessibilityIdentifier("\(identifier).queue")
+            }
         }
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
             Button(action: dismiss) {
@@ -560,6 +668,7 @@ struct SourceInboxRow: View {
         .accessibilityAction(named: "Add to Library", addAndOpen)
         .accessibilityAction(named: "Dismiss", dismiss)
         .accessibilityActions {
+            if canQueue { Button(QueueRowAction.add.title, action: addToQueue) }
             // A Quick Folder file has no show to play from, mute or unfollow.
             if let subscription {
                 Button("Play now", action: playNow)
@@ -573,6 +682,9 @@ struct SourceInboxRow: View {
     @ViewBuilder
     private var rowActions: some View {
         Button(action: addInPlace) { Label("Add to Library", systemImage: "plus.circle") }
+        if canQueue {
+            Button(action: addToQueue) { Label(QueueRowAction.add.title, systemImage: QueueRowAction.add.systemImage) }
+        }
         if isFeedEntry {
             Button(action: playNow) { Label("Play now", systemImage: "play.fill") }
         }
@@ -775,6 +887,14 @@ struct SourceInboxRow: View {
         switch candidate {
         case .localFile(let file): model.importQuickAccessFile(file)
         case .followedSource(let entry): model.importFollowedSourceEntry(entry)
+        }
+    }
+
+    /// Saves the item and queues it once the import lands (#4044).
+    private func addToQueue() {
+        switch candidate {
+        case .localFile(let file): model.addQuickFolderFileToQueue(file)
+        case .followedSource(let entry): model.addEntryToQueue(entry)
         }
     }
 
