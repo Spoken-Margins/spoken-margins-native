@@ -553,6 +553,7 @@ How it is used:
   - Default: asked "A. Opt-in, and switched on only in a build made for it. Cost: nobody gets it without turning it on." He answered: "Let's start opt-in and if it is stable we can make it opt-out". Chosen: opt-in and build-gated now. Default-on later is his intent once it is stable, and then a new decision, still held to the 2026-10-05 battery and privacy bar.
   - Deleted-Margin markers: asked "A. 90 days after a device was last seen. Cost: a phone unused longer than that re-syncs from scratch, and keeps its own data." He answered: "agree". Chosen: 90 days.
   - All five calls are answered. The design is `docs/design/icloud-library-sync.md`; the build issues are filed from it.
+- **Test audio on his speakers needs no more work (#3814, 2026-11-12).** Told that keeping host-test audio off his speakers needed a measurement with his Mac's output on the speakers, and that his output was on BlackHole, he answered: "I already got this working". His own setup, the Mac's output left on BlackHole, is the fix. Done-when 1 and 2 of #3814 had merged (#3815, #4057); item 3, measuring which host tests are audible, is not wanted. Don't ask him to switch his output for this.
 
 ## Background moved out of the guide (2026-11-06)
 - **From the guide.** Explanations that stood next to rules in `AGENTS.md`, moved here to keep it under its 4,000-word cap (the rules themselves are unchanged):
