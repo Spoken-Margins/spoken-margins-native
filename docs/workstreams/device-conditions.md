@@ -28,7 +28,7 @@ Each row: the condition, how a host test expresses it, the seams that exist toda
 | `store` | Store busy or not open yet; data not loaded when the screen draws | Hold a read connection or a write lock in the test and call the screen's read; assert it neither blocks nor shows the wrong first state | `SessionKitPersistence` read pool and `SQLiteConnectionLockTests`, `SessionKit/LibraryReadSnapshot` | #2103 (one locked connection stalls reads), #3753 (friends' old Margins show first, then snap away) |
 | `main-thread` | Work on the main thread a screen waits for | Run the read or build off the main actor through `MainThreadOffload`; fail a test that calls the synchronous path; `scripts/main_thread_reads.py` keeps new ones out | `SessionKit/MainThreadOffload`, `MainThreadHangProbe`, `scripts/main_thread_reads.py` baseline | #2073 (item screen freezes after a map), #2255 (downloaded mapped podcast freezes 10–20 s) |
 | `network` | Offline, a slow server, or a server that says no | Hand-drive `ConnectivityProviding` and a fake transport; assert the message, the retry and that nothing is lost | `SessionKit/ConnectivityProviding`, `PendingHandoffNetworkRetry`, `RetryCooldown` | #1546 (Safari import lost offline), #933 (stream took three tries to start) |
-| `route` | Audio route change or interruption: AirPods, Bluetooth, AirPlay, a headphone button, another app taking audio | Feed the interruption, route and remote-command events to the coordinator; assert resume, the Margin that is recording and the one that is playing | `SessionKit/InterruptionEnd`, `InterruptionResumeRetrier`, `CaptureInputRouteCache`, `MarginRecordingInterruption`, `HeadphoneDoublePressPolicy`, `RecordingInputPolicy` | #1434 (AirPods interruption leaves it paused), #1030 (a headphone click ends the Margin) |
+| `route` | Audio route change or interruption: AirPods, Bluetooth, AirPlay, a headphone button, another app taking audio | Feed the interruption, route and remote-command events to the coordinator; assert resume, the Margin that is recording and the one that is playing | `SessionKit/RecordingRouteReplay` (a JSON trace of route, remote-command and mute events with times, replayed on a fake clock into `RecordingTransportGuard` and `HeadphoneMuteGestureDetector`, #3937), `InterruptionEnd`, `InterruptionResumeRetrier`, `CaptureInputRouteCache`, `MarginRecordingInterruption`, `HeadphoneDoublePressPolicy`, `RecordingInputPolicy` | #1434 (AirPods interruption leaves it paused), #1030 (a headphone click ends the Margin) |
 | `web-packet` | A packet or text that arrived from the web page or the Safari extension, not from the app | Use a packet fixture shaped like the web page's (sender clock time only, no fingerprint), or a Safari-extension payload fixture (page text, title, URL); import it and assert placement and playback | `SessionKit/BrowserTextImporter`, `Gate5BrowserTextHandoffStore`, `PackageImportPolicy`, `SharedMarginPlacement`; fixtures in `Contracts/fixtures` and `docs/sharing-test-kit` | #3041 (web-packet Margins never auto-play), #658 (Safari extension on a PDF imports viewer CSS as text) |
 | `live-activity` | A Live Activity or Lock Screen control is already up when the user acts | Feed the lifecycle events with the activity present; assert one owner of the audio session and that the controls still map to a live state | `SessionKit/LiveActivityLifecycle`, `LiveSessionTransportGuard` | #1337 (audio continues after idle; Live Activity cannot reopen controls), #2182 (phantom Now Playing ends the recording) |
 | `hot` | Hot, Low Power Mode or short on memory | Inject the thermal, power and memory readings; assert what the governor slows or stops | `SessionKit/OnDeviceVoiceGovernor`, `OnDeviceCPUBudget`, `RenderHeadroomMemory`, `RenderAheadPolicy`, `MemoryFootprintLog`; `SimulatedIOSBackground` grades a background run against iOS's own limit, not ours | #1681 (renders the whole article ahead on a hot phone), #1786 (voice bounces on a warm phone) |
@@ -56,9 +56,7 @@ Also name the entry point a flow can start from (a Library row, the item screen,
 
 ## Missing seams
 
-A condition the host cannot put the code in today. Two or more bugs needed each of these, so each has its own issue. One is left; #3936's seam is built (below).
-
-- **Real route timing: Bluetooth, AirPlay and phantom Now Playing** (#3937). A fake route event proves our reaction, not that the microphone opens in under a second or that a phantom play arrives at all: #1506, #1668, #1708, #2182, #3633.
+A condition the host cannot put the code in today. Two or more bugs needed each of these, so each has its own issue. None are left: #3936's and #3937's seams are built (below).
 
 ## iOS's own kill, as a seam (#3936)
 
@@ -70,6 +68,14 @@ How to use it: put the code under test on `ios` (`enterBackground()`), script wh
 - **#2184 (main thread), the rule only.** A stall of 10 s or more on the main thread as the app returns is a watchdog kill, and the next launch's record says `foreground_watchdog`; the same work in slices under the hang probe's 250 ms is not. These tests script the stall's cost and run no app code: the Skim reload lives in the app target (`SkimBridgeController`), so the app test that pins that fix is still the guard for the code, and this seam only says what a stall of that size would have cost.
 
 What the seam does not model: memory kills (`RenderHeadroomMemory`), suspension timing, or the Lock Screen. Those are `hot` and `lock` rows with their own tests.
+
+## Route timing, as a seam (#3937)
+
+`SessionKit/RecordingRouteTrace.swift` holds it. A trace is a JSON fixture of what a route did while a Margin recorded, with times: `recording_started` (optional `handsFreeInput`, `muted`), `route_changed`, a Now Playing `command` and its `origin`, and `mute_changed`. `RecordingRouteReplay.replay` plays one into `RecordingTransportGuard` and `HeadphoneMuteGestureDetector` on the trace's own clock, through `RecordingRouteClock`, the same type `MarginCaptureWatcher` holds. It takes the rules as a parameter, so a test can run a trace against the rule as it stood before a fix. The format refuses a trace it can't replay.
+
+Traces are hand-written from the timings in a bug report or a Diagnostics line (`transport.ignored_during_recording` carries `recordingMs` and `sinceRouteChangeMs`), never from a listener's recording. `RecordingRouteReplayTests` holds #1708 (a `play` 50 and 440 ms in), #2182 (a `play` 2,182 ms in on a hands-free input, and one after a route change to hands-free) and #3650's mute press; each of the first two ends the Margin at the wrong moment under the rule before its fix.
+
+Not covered: the microphone's open delay (#1506), the 9 s Bluetooth capture (#1668) and the AirPlay crash (#3633). They need a seam further into the recorder.
 
 ## Waste signal
 

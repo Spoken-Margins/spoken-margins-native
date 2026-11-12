@@ -26,8 +26,9 @@ final class MarginCaptureWatcher {
     private var pollTask: Task<Void, Never>?
     private var lastReported: (health: MarginCaptureSupervisor.Health, restarts: Int, keepable: Bool)?
     private let autoPoll: Bool
-    private var startedAtMs = 0
-    private var lastRouteChangeAtMs: Int?
+    /// When this recording began and when the route last changed: the numbers the headset rules read, and the same
+    /// type the route-trace replay uses (#3937).
+    private var routeClock = RecordingRouteClock()
     private var routeObserver: NSObjectProtocol?
     private let notificationCenter: NotificationCenter
     private let readyCue: MarginReadyCuePlaying
@@ -61,9 +62,9 @@ final class MarginCaptureWatcher {
     /// The most audio the current recorder has reported, for the diagnostics log.
     var capturedMs: Int { supervisor?.capturedMs ?? 0 }
     /// Milliseconds since the recording began, for the diagnostics log.
-    var elapsedMs: Int { supervisor == nil ? 0 : max(0, nowMs() - startedAtMs) }
+    var elapsedMs: Int { supervisor == nil ? 0 : routeClock.elapsedMs(atMs: nowMs()) }
     /// Milliseconds since the audio route last changed during this recording, nil when it has not (#1708).
-    var msSinceRouteChange: Int? { lastRouteChangeAtMs.map { max(0, nowMs() - $0) } }
+    var msSinceRouteChange: Int? { routeClock.msSinceRouteChange(atMs: nowMs()) }
     /// The headphone-event monitor for this watcher's recordings, made by the model on first use (#3650). It lives here so
     /// the model's own file does not grow.
     var headphoneMonitor: HeadphoneEndGestureMonitor?
@@ -89,11 +90,11 @@ final class MarginCaptureWatcher {
         self.changed = changed
         self.holdRecorder = holdRecorder
         self.releaseRecorder = releaseRecorder
-        startedAtMs = nowMs()
+        let startedAtMs = nowMs()
+        routeClock.begin(atMs: startedAtMs)
         supervisor = MarginCaptureSupervisor(beganAtMs: startedAtMs)
         lastReported = nil
         finalRecorded = false
-        lastRouteChangeAtMs = nil
         readyCueGate = MarginReadyCueGate()
         readyCueResult = nil
         observeRouteChanges()
@@ -196,7 +197,7 @@ final class MarginCaptureWatcher {
     /// Called by the observer below; tests call it directly.
     func routeChanged() {
         guard supervisor != nil else { return }
-        lastRouteChangeAtMs = nowMs()
+        routeClock.routeChanged(atMs: nowMs())
     }
 
     private func observeRouteChanges() {
@@ -220,7 +221,7 @@ final class MarginCaptureWatcher {
         pollTask?.cancel()
         pollTask = nil
         removeRouteObserver()
-        lastRouteChangeAtMs = nil
+        routeClock.end()
         supervisor = nil
         lastReported = nil
         reading = { nil }

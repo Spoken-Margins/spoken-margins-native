@@ -37,6 +37,13 @@ public enum RecordingTransportGuard {
     /// After the audio route changes while recording: the headset can announce its new profile with a command.
     public static let routeChangeGraceMs = 1_000
 
+    /// Whether a command that reached the app while a Margin records is one the guard judges at all: a headphone click,
+    /// car button or Lock Screen control (`endsRecordingMargin`), from Now Playing only. A stale queued widget command
+    /// must not save a Margin (#1030).
+    public static func isEndCandidate(command: CompactControlCommand, origin: String) -> Bool {
+        command.endsRecordingMargin && origin.hasPrefix("now_playing")
+    }
+
     /// `command` is what arrived (it only matters for `play`). `recordingMs` is how long the Margin has been
     /// recording. `sinceRouteChangeMs` is how long ago the audio route last changed during this recording, nil when
     /// it has not. `onHandsFreeProfile` is whether the recording input is a Bluetooth hands-free port.
