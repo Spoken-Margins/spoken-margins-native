@@ -74,7 +74,8 @@ struct ExperienceMarginDetailView: View {
             case (_, .audioOnly), (.some(.audioAndText), _):
                 // A recording that has gone since the question was asked comes back as words only, and says so.
                 guard let files = await model.prepareMarginAudioAndTextExport(for: row.interjection, itemTitle: row.itemTitle) else { return }
-                let share = MarginExportShare(urls: files.shareURLs, discard: files.discard)
+                // The folder is removed off the main thread when the share sheet closes.
+                let share = MarginExportShare(urls: files.shareURLs, discard: { Task.detached(priority: .utility) { files.discard() } })
                 // Audio was wanted (picked, or the only thing there) and did not come out: the recording is gone or
                 // unreadable. Say so before offering the words.
                 if files.recordingLeftOut || files.audioURL == nil {
@@ -85,7 +86,7 @@ struct ExperienceMarginDetailView: View {
                 }
             default: // text only: a written Margin, a voice Margin whose recording is gone, or "Text only" picked
                 guard let url = await model.prepareMarginMarkdownFileURL(for: [row.interjection], asItem: false) else { return }
-                exportShare = MarginExportShare(urls: [url], discard: { MarginMarkdownShare.discardShare(url) })
+                exportShare = MarginExportShare(urls: [url], discard: { Task.detached(priority: .utility) { MarginMarkdownShare.discardShare(url) } })
             }
         }
     }
