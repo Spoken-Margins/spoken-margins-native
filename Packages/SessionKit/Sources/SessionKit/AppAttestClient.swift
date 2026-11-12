@@ -75,6 +75,32 @@ public enum AppAttestFailure: Error, Equatable, Sendable {
     case keyUnusable
 }
 
+/// A first-in, first-out mutex for async code. `release` is synchronous so a `defer` can call it.
+final class SerialGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var busy = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func acquire() async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            let runNow: Bool = lock.withLock {
+                if busy { waiters.append(continuation); return false }
+                busy = true
+                return true
+            }
+            if runNow { continuation.resume() }
+        }
+    }
+
+    func release() {
+        let next: CheckedContinuation<Void, Never>? = lock.withLock {
+            if waiters.isEmpty { busy = false; return nil }
+            return waiters.removeFirst()
+        }
+        next?.resume()
+    }
+}
+
 /// Makes requests the server can tie to a real install without learning who it is.
 public final class AttestedServerClient: @unchecked Sendable {
     /// What the server signs over (`api.ClientData` in research/B4/server): method, path, time and the body's hash.
@@ -89,6 +115,9 @@ public final class AttestedServerClient: @unchecked Sendable {
     private let post: AttestedPost
     private let now: @Sendable () -> Date
     private let lock = NSLock()
+    /// One send at a time, across every caller of this client (#4137): each assertion carries a counter the server
+    /// requires to rise, so two sends must not be signed and posted out of order, and two must not both register a key.
+    private let gate = SerialGate()
     private var registering: Task<String, Error>?
     /// Failed registrations since the last success, and when the next one may start (#4135). Memory only: a new launch
     /// tries once, so a fixed build or entitlement is picked up without waiting.
@@ -117,12 +146,18 @@ public final class AttestedServerClient: @unchecked Sendable {
     /// Whether an attested request can be made on this phone at all. Asks nothing of Apple and sends nothing.
     public var isSupported: Bool { provider.isSupported }
 
-    /// Sends one attested POST and returns the server's answer. Callers must not overlap sends: each assertion carries
-    /// a counter the server requires to rise (the share screen makes one link at a time).
+    /// Sends one attested POST and returns the server's answer. Sends from any number of callers are made one at a
+    /// time in the order they asked: each assertion carries a counter the server requires to rise, and a late answer
+    /// from an earlier send (a screen that was reset) must not be overtaken by a newer one (#4137).
     public func send(path: String, body: Data) async throws -> (status: Int, body: Data) {
         // Before the key, the challenge or any request: the listener's agreement, then whether this phone can attest.
         guard hasConsent() else { throw AppAttestFailure.needsConsent }
         guard provider.isSupported else { throw AppAttestFailure.unsupported }
+        await gate.acquire()
+        defer { gate.release() }
+        // The wait may have been long: agreement is read again, so a send queued behind another never outlives a
+        // withdrawal.
+        guard hasConsent() else { throw AppAttestFailure.needsConsent }
         var attestedAgain = false
         while true {
             let keyID = try await registeredKeyID()

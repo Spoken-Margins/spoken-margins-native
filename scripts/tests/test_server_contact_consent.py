@@ -45,8 +45,8 @@ CONTACTS = {
         "guard hasConsent()", 1,
     ),
     KIT + "SessionKit/AppAttestClient.swift": (
-        "refuses before the key, the challenge or any request unless the share-link consent record is current (v2 names the install's code)",
-        "guard hasConsent()", 1,
+        "refuses before the key, the challenge or any request unless the share-link consent record is current (v2 names the install's code); read again after waiting for an earlier send (#4137)",
+        "guard hasConsent()", 2,
     ),
     APP + "AppAttestDeviceProvider.swift": (
         "checks the same consent record before each of Apple's App Attest calls",

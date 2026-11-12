@@ -13,6 +13,16 @@ import SessionKitSharing
 
 #if SM_SHARE_LINK_CREATION
 
+/// The one attested client of the app (#4137). A static, so every sender screen asks the same one; it holds no key until
+/// the first attested request after the listener agreed, so creating it at first use makes nothing.
+enum ShareLinkAttestation {
+    static let client = AttestedServerClient(
+        provider: AppAttestDeviceProvider(),
+        consent: { ServerSendConsent.hasConsented(to: .shareLinks) },
+        post: AttestedTransport.post
+    )
+}
+
 @MainActor
 final class ShareLinkSender: ObservableObject {
     enum State: Equatable {
@@ -37,12 +47,10 @@ final class ShareLinkSender: ObservableObject {
     private let bridge = BridgeService.makeStore()
     private let noticeStore = ShareLinkTakedownNoticeStore()
     private var noticeDrawn = false
-    /// One App Attest identity per install, made only after the listener agreed (`AttestedServerClient`).
-    private let attested = AttestedServerClient(
-        provider: AppAttestDeviceProvider(),
-        consent: { ServerSendConsent.hasConsented(to: .shareLinks) },
-        post: AttestedTransport.post
-    )
+    /// One App Attest identity per install, made only after the listener agreed (`AttestedServerClient`). The client is
+    /// the app's, not this screen's: a second sender screen (iPad windows) or a tap right after `reset` shares its key
+    /// and its send order (#4137).
+    private let attested = ShareLinkAttestation.client
     /// Only the newest request's answer reaches the screen; `reset` voids the one in flight (#3751 audit).
     private var requests = ShareLinkRequests()
     private static let companionLine = "This has no public web page, so the file goes in the same message as the link."

@@ -461,4 +461,102 @@ final class AppAttestClientTests: XCTestCase {
         let answer = try await attested.send(path: "/api/v1/links/sender", body: Data())
         XCTAssertEqual(answer.status, 200, "a saved key never waits")
     }
+
+    // MARK: One client, many callers (#4137)
+
+    /// A post that holds each attested request until the test lets it go, and counts how many are on the wire at once.
+    private final class GatedWire: @unchecked Sendable {
+        private let lock = NSLock()
+        private(set) var inFlight = 0
+        private(set) var maxInFlight = 0
+        private(set) var order: [String] = []
+        private var waiting: [CheckedContinuation<Void, Never>] = []
+        private var arrived = 0
+        let server: Server
+        init(_ server: Server) { self.server = server }
+
+        func post(_ url: URL, _ headers: [String: String], _ body: Data) async throws -> (status: Int, body: Data) {
+            guard url.path == "/api/v1/links/sender" else { return try await server.handle(url, headers, body) }
+            lock.withLock {
+                inFlight += 1
+                maxInFlight = max(maxInFlight, inFlight)
+                order.append(String(decoding: body, as: UTF8.self))
+                arrived += 1
+            }
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in lock.withLock { waiting.append(continuation) } }
+            lock.withLock { inFlight -= 1 }
+            return try await server.handle(url, headers, body)
+        }
+        var arrivedCount: Int { lock.withLock { arrived } }
+        func releaseOne() {
+            let next: CheckedContinuation<Void, Never>? = lock.withLock { waiting.isEmpty ? nil : waiting.removeFirst() }
+            next?.resume()
+        }
+    }
+
+    private func waitUntil(_ condition: () -> Bool) async {
+        for _ in 0..<2000 where !condition() { try? await Task.sleep(nanoseconds: 1_000_000) }
+    }
+
+    /// Scenario 1: two screens at once on a fresh install. They share the client, so one key is registered.
+    /// Scenario 2: a reset screen's old send is still on the wire when the next tap sends. The newer request waits for
+    /// the older one's answer, so the counters reach the server in the order they were signed.
+    func testSendsFromManyCallersGoOutOneAtATimeInOrderWithOneKey() async throws {
+        let provider = Provider(), server = Server()
+        let wire = GatedWire(server)
+        let attested = AttestedServerClient(
+            provider: provider, store: AppAttestKeyStore(defaults: defaults()), consent: { true },
+            server: { URL(string: "https://links.example.test\($0)")! },
+            now: { Date(timeIntervalSince1970: 1_700_000_000) },
+            post: { url, headers, body in try await wire.post(url, headers, body) }
+        )
+        let first = Task { try await attested.send(path: "/api/v1/links/sender", body: Data("first".utf8)) }
+        let second = Task { try await attested.send(path: "/api/v1/links/sender", body: Data("second".utf8)) }
+        await waitUntil { wire.arrivedCount >= 1 }
+        // Give the second send every chance to overtake the first.
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        XCTAssertEqual(wire.arrivedCount, 1, "the second send waits for the first one's answer")
+        wire.releaseOne()
+        await waitUntil { wire.arrivedCount >= 2 }
+        wire.releaseOne()
+        _ = try await (first.value, second.value)
+        XCTAssertEqual(wire.maxInFlight, 1)
+        XCTAssertEqual(wire.order.count, 2)
+        XCTAssertEqual(provider.counts.keys, 1, "one key for both callers")
+        XCTAssertEqual(server.paths().filter { $0.hasSuffix("/register") }.count, 1)
+        XCTAssertEqual(provider.counts.asserted, 2)
+    }
+
+    func testASendQueuedBehindAnotherReadsTheAgreementAgain() async throws {
+        let provider = Provider(), server = Server()
+        let wire = GatedWire(server)
+        let agreed = AgreementFlag()
+        let attested = AttestedServerClient(
+            provider: provider, store: AppAttestKeyStore(defaults: defaults()), consent: { agreed.value },
+            server: { URL(string: "https://links.example.test\($0)")! },
+            now: { Date(timeIntervalSince1970: 1_700_000_000) },
+            post: { url, headers, body in try await wire.post(url, headers, body) }
+        )
+        let first = Task { try await attested.send(path: "/api/v1/links/sender", body: Data("first".utf8)) }
+        await waitUntil { wire.arrivedCount >= 1 }
+        let second = Task { () -> AppAttestFailure? in
+            do { _ = try await attested.send(path: "/api/v1/links/sender", body: Data("second".utf8)); return nil } catch { return error as? AppAttestFailure }
+        }
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        agreed.value = false
+        wire.releaseOne()
+        _ = try await first.value
+        let failure = await second.value
+        XCTAssertEqual(failure, .needsConsent, "the listener withdrew while it waited: nothing more is signed or sent")
+        XCTAssertEqual(provider.counts.asserted, 1)
+    }
+
+    private final class AgreementFlag: @unchecked Sendable {
+        private let lock = NSLock()
+        private var stored = true
+        var value: Bool {
+            get { lock.withLock { stored } }
+            set { lock.withLock { stored = newValue } }
+        }
+    }
 }
