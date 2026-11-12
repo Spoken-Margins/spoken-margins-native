@@ -18,8 +18,8 @@ final class J14ComeBackToAFriendsMarginsJourneyUITests: XCTestCase {
     override func setUpWithError() throws {
         continueAfterFailure = false
         app = XCUIApplication()
-        // "all": a completed episode is not in the Library's default "unfinished" view, which is a product question
-        // (J14, "fails today") and not what a script can settle.
+        // "all": a completed episode is not in the Library's default "unfinished" view (#3794, J14 step 5 "fails today"),
+        // which a script can't settle; this proves the episode is findable once the filter allows it.
         app.launchArguments = ["--ui-testing",
             "-libraryContentTypeFilter", "all", "-libraryListeningStateFilter", "all",
             "-libraryOfflineStateFilter", "all", "-librarySort", "recently_added",
@@ -39,7 +39,7 @@ final class J14ComeBackToAFriendsMarginsJourneyUITests: XCTestCase {
     func testSavedPlaceAtTheEndAsksBeforeContinueSkipsTheFriendsMargins() throws {
         seedThenFriendArrives(history: "J14 row 1", placeSeconds: 1_490, completed: false)
 
-        XCTContext.runActivity(named: "J14 row 1, step 3: Continue on the Library row asks about the new Margins") { _ in
+        XCTContext.runActivity(named: "J14 row 1, step 4: Continue on the Library row asks about the new Margins") { _ in
             tap("queue.start.\(itemId)")
             let hear = offerButton("newMarginsOffer.review", orLabel: "Hear new Margins first")
             XCTAssertTrue(hear.waitForExistence(timeout: 5), "Continue did not offer the friend's Margin first")
@@ -49,14 +49,14 @@ final class J14ComeBackToAFriendsMarginsJourneyUITests: XCTestCase {
             hear.tap()
         }
 
-        hearTheMarginThenFindTheEpisode(history: "J14 row 1", from: 4)
+        hearTheMarginThenFindTheEpisode(history: "J14 row 1", hearStep: 3, leaveStep: 5)
     }
 
     /// Row 1 again, from the item screen: the episode's own screen offers the Margins whatever the listener's place.
     func testSavedPlaceAtTheEndOffersTheFriendsMarginsOnTheItemScreen() throws {
         seedThenFriendArrives(history: "J14 row 1b", placeSeconds: 1_490, completed: false)
         openTheItemAndChooseTheMargins(history: "J14 row 1b")
-        hearTheMarginThenFindTheEpisode(history: "J14 row 1b", from: 4)
+        hearTheMarginThenFindTheEpisode(history: "J14 row 1b", hearStep: 3, leaveStep: 5)
     }
 
     /// Row 2: the listener marked the episode complete by hand. It has no saved place, and the Margins are still
@@ -64,14 +64,14 @@ final class J14ComeBackToAFriendsMarginsJourneyUITests: XCTestCase {
     func testMarkedCompleteStillOffersTheFriendsMargins() throws {
         seedThenFriendArrives(history: "J14 row 2", placeSeconds: nil, completed: true)
         openTheItemAndChooseTheMargins(history: "J14 row 2")
-        hearTheMarginThenFindTheEpisode(history: "J14 row 2", from: 4)
+        hearTheMarginThenFindTheEpisode(history: "J14 row 2", hearStep: 3, leaveStep: 5)
     }
 
     /// Row 3: the listener never started the episode (J9's item screen, with a step to find the episode after).
     func testNotStartedOffersTheFriendsMargins() throws {
         seedThenFriendArrives(history: "J14 row 3", placeSeconds: nil, completed: false)
         openTheItemAndChooseTheMargins(history: "J14 row 3")
-        hearTheMarginThenFindTheEpisode(history: "J14 row 3", from: 4)
+        hearTheMarginThenFindTheEpisode(history: "J14 row 3", hearStep: 3, leaveStep: 5)
     }
 
     // MARK: - Steps
@@ -81,12 +81,12 @@ final class J14ComeBackToAFriendsMarginsJourneyUITests: XCTestCase {
         if let placeSeconds { app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_PODCAST_PLACE"] = String(placeSeconds) }
         if completed { app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_PODCAST_COMPLETED"] = "1" }
 
-        XCTContext.runActivity(named: "\(history), step 1: The episode is in the Library with the listener's history (offline seed)") { _ in
+        XCTContext.runActivity(named: "\(history), setup: The episode is in the Library with the listener's history (offline seed)") { _ in
             app.launch()
             XCTAssertTrue(revealLibraryRow(), "Seeded episode did not appear in the Library")
         }
 
-        XCTContext.runActivity(named: "\(history), step 2: Force-quit; a friend's Margin from before this place arrives") { _ in
+        XCTContext.runActivity(named: "\(history), setup: Force-quit; a friend's Margin arrives (the import itself is not scripted)") { _ in
             app.terminate()
             app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_KEEP_LIBRARY"] = "1"
             app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_COOP"] = "1"
@@ -97,7 +97,7 @@ final class J14ComeBackToAFriendsMarginsJourneyUITests: XCTestCase {
 
     /// Step 3 from the item screen: open the episode, see the two choices, choose the Margins.
     private func openTheItemAndChooseTheMargins(history: String) {
-        XCTContext.runActivity(named: "\(history), step 3: Open the episode; it offers the friend's Margins") { _ in
+        XCTContext.runActivity(named: "\(history), step 2: Open the episode; it offers the friend's Margins") { _ in
             tap("library.row.\(itemId)")
             XCTAssertTrue(element("item.screen").waitForExistence(timeout: 8), "The item screen did not open")
             let marginsOnly = app.buttons["item.reviewNewMargins.button"].firstMatch
@@ -108,10 +108,10 @@ final class J14ComeBackToAFriendsMarginsJourneyUITests: XCTestCase {
         }
     }
 
-    /// Steps `first` and after: the friend's Margin is where it should be, then the listener leaves playback and finds
-    /// the episode again in the Library.
-    private func hearTheMarginThenFindTheEpisode(history: String, from first: Int) {
-        XCTContext.runActivity(named: "\(history), step \(first): The friend's Margin is next, with a lead-in before it") { _ in
+    /// The doc's step 3 (the Margin is where it should be) and step 5 (leave playback, find the episode in the Library).
+    /// Row 1's Library-row Continue is the doc's step 4, between them.
+    private func hearTheMarginThenFindTheEpisode(history: String, hearStep: Int, leaveStep: Int) {
+        XCTContext.runActivity(named: "\(history), step \(hearStep): Choose the Margins; the friend's Margin is next, with a lead-in before it") { _ in
             XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8), "Now Playing did not open")
             XCTAssertEqual(app.buttons["playback.itemTitle.button"].label, episodeTitle, "A different item is playing")
             XCTAssertTrue(element("marginCard").waitForExistence(timeout: 8), "The Margin card did not appear")
@@ -119,12 +119,12 @@ final class J14ComeBackToAFriendsMarginsJourneyUITests: XCTestCase {
             // The Margin sits at 5:00; the lead-in starts a short way before it. Past it is the fault: a start at the
             // end of the episode, with the Margin behind.
             waitUntil("The episode did not go to the friend's Margin; clock shows \(element("playback.progress.label").label)", timeout: 10) {
-                self.currentPosition().map { (self.friendMarginAt - 50)...(self.friendMarginAt + 5) ~= $0 } ?? false
+                self.currentPosition().map { (self.friendMarginAt - 30)...(self.friendMarginAt + 5) ~= $0 } ?? false
             }
             XCTAssertFalse(element("item.lastFailure").exists, "A playback problem was reported")
         }
 
-        XCTContext.runActivity(named: "\(history), step \(first + 1): Leave playback; the episode can be found in the Library") { _ in
+        XCTContext.runActivity(named: "\(history), step \(leaveStep): Leave playback; the episode can be found in the Library (filter All)") { _ in
             tap("playback.exit.button")
             XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8), "Leaving playback did not reach the Library")
             XCTAssertTrue(revealLibraryRow(), "The episode cannot be found in the Library after leaving playback")

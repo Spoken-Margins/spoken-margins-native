@@ -204,28 +204,29 @@ Check the row text against #3291 ("Cole", "3 Margins on 1 episode") and that Voi
 A listener with history on an episode receives a friend's Margins (#4100, part of the flow audit; the owner met this on his phone on 2026-11-11, #4097 and #4098). No other journey starts from a listener who has already finished the episode. Each step says where it starts, in one line. Run each row on its own, from a Library that has the episode with the history named.
 
 **Rows** (the listener's history on the episode):
-- **Row 1, heard to the end:** a saved place at 99% (about 24:50 of 25:00). Continue resumes it at its end.
-- **Row 2, marked complete:** marked complete by hand, with no saved place.
+- **Row 1, heard to the end:** a saved place at 99% (about 24:50 of 25:00). Continue resumes it at its end. By hand: play the episode, scrub to about 24:50 and pause.
+- **Row 2, marked complete:** marked complete by hand, with no saved place. By hand: "Mark complete" on a fresh episode.
 - **Row 3, not started:** no saved place, not marked.
-- **Row 4, finished by listening:** the session reached 100%. Continue starts again from 0 ("Replay").
+- **Row 4, finished by listening:** the session reached 100%. Continue starts again from 0 ("Replay"). By hand: let an episode play to its end.
 
 **Packet** is the friend's first packet unless a step says it is a reply to the listener's own Margin. **Entry point** is where the listener starts.
 
 1. Start from a row above, with the friend's packet not yet imported. Packet: first packet, one Margin five minutes in, which is behind the place in rows 1 and 4 and ahead of it in rows 2 and 3. Import it. Entry point: the packet opened from Files or a share.
    - Pass: the episode is in the Library, and its row shows the friend's Margin as new. The Library's state filter hides an episode whose history is "complete", so use "All" to see it; note what the default view shows.
 2. Open the episode's screen. Entry point: the Library row, then the item screen.
-   - Pass: two choices, "Play" and "Skip to <friend>'s Margins · N min", in every row (J9 step 1: whatever state the item is in). The Margin is marked new in the Timeline.
+   - Pass: two choices, "Play" and "Skip to <friend>'s Margins · N min", in every row (J9 step 1: whatever state the item is in). The Margin is marked new in the Timeline. The item screen's "Play" resumes the listener's own place and asks nothing, by design (#3219, J9 step 2), so in row 1 it plays at the end and the Margin stays new; that is not a failure here. The two choices are how the listener gets to the Margin, and step 4 covers the Library row's Continue.
 3. Choose "Skip to <friend>'s Margins".
    - Pass: the episode goes to about 20 s before the Margin (about 4:40) and the pinned card says "Margin from <friend>" with a lead-in, then the Margin plays. The episode does not start at its end, and the clock is nowhere near the listener's old place.
 4. Back out, and press Continue on the episode's Library row. Entry point: Library row Continue. Row 1 only, where Continue would otherwise resume at the end.
    - Pass: Continue asks "hear the new Margins first?" before anything plays (#4097, #474); it never lands at the end with the friend's Margins skipped. Row 4 (Replay) and rows 2 and 3 (Continue plays from the start) ask nothing, and the Margin plays in place when the episode reaches it.
 5. Leave playback to the Library.
-   - Pass: the episode can be found again from the Library, with its place or its completed mark as it was.
+   - Pass: the episode can be found again from the Library with the filter on "All", with its place or its completed mark as it was.
+   - **Fails today, issue #3794:** in the Library's default view an episode that is complete (rows 1, 2 and 4: marked complete, or listened to 99% or more) is hidden ("Completed hidden"), and nothing there says where the friend's Margins went. Record what the default view shows after leaving playback, and do not count the default view as a pass until the issue closes.
 6. Reply case: Start from row 1 or 4 after the listener has recorded a Margin of their own at 12:00. Packet: the friend's reply to that Margin. Import it. Entry point: the packet opened from Files or a share, then the Margins tab, scope Everything, filter Shared.
    - Pass: each reply is listed under its episode, and an item heading opens the episode's screen (step 2), where "Skip to <friend>'s Margins" plays the first reply. "Play" on that screen resumes the listener's own place.
    - **Fails today, issue #4098:** the Shared list shows each Margin on its own with no item heading, and there is no way to open the episode from it. The owner's words, 2026-11-11: "no way to open up the item I was just sent by my phone that I want to listen to". Record what the list shows now, and do not count the step as a pass until the issue closes.
 
-The script `J14ComeBackToAFriendsMarginsJourneyUITests` runs rows 1 (from the Library row and from the item screen), 2 and 3, one test each, each with its own history from the seed hooks `SPOKEN_MARGINS_UI_TEST_PODCAST_PLACE` (a saved place, in seconds) and `SPOKEN_MARGINS_UI_TEST_PODCAST_COMPLETED=1` (marked complete by hand). Both apply only to the launch that seeds the podcast; the relaunch with `KEEP_LIBRARY=1` and `COOP=1` imports the friend's Margin the way J9 does, so the import in step 1 and the packet's own file are not covered. The script checks steps 2, 3 and 5 for rows 1 to 3 and step 4 for row 1, with the Library on "All" so a completed episode can be found. Row 4 is seeded by `PODCAST_PLACE=1500` (the end of the episode, a finished session); the script does not run it yet, because no run has shown what its item screen offers. Step 1's import from Files, step 6 and the default Library view stay with the agent run. A script pass never stands in for them, and audible content stays with the owner.
+The script `J14ComeBackToAFriendsMarginsJourneyUITests` runs rows 1 (from the Library row and from the item screen), 2 and 3, one test each, each with its own history from the seed hooks `SPOKEN_MARGINS_UI_TEST_PODCAST_PLACE` (a saved place, in seconds) and `SPOKEN_MARGINS_UI_TEST_PODCAST_COMPLETED=1` (marked complete by hand). Both apply only to the launch that seeds the podcast; the relaunch with `KEEP_LIBRARY=1` and `COOP=1` imports the friend's Margin the way J9 does, so the import in step 1 and the packet's own file are not covered. The script checks steps 2, 3 and 5 for rows 1 to 3 and step 4 for row 1. It sets the Library to "All" because the default view hides a completed episode (#3794, step 5), so it proves the episode is findable once the filter allows it, and nothing about the default view; its step 5 asserts only that the Library row exists. Row 4 is seeded by `PODCAST_PLACE=1500` (the end of the episode, a finished session); the script does not run it yet, because no run has shown what its item screen offers. Step 1's import from Files, step 6 and the default Library view (step 5) stay with the agent run. A script pass never stands in for them, and audible content stays with the owner.
 
 ## Writing scripted journeys
 
