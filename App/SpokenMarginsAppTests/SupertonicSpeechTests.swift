@@ -1073,8 +1073,9 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertEqual(fallback.playedOffsets.count, voiceAsksBefore, "and the iOS voice is not asked again")
         XCTAssertFalse(client.isSystemVoiceActive)
 
-        // The kept chunk is 3 s long; the chunk after it renders well inside that.
-        try await pollUntil { await renderer.renderCount > chunkCount }
+        // The kept chunk is 3 s long; the chunk after it renders well inside that. The 2 s bound is part of the claim
+        // ("while the kept chunk plays"), not a guard against a slow runner.
+        try await pollUntil(timeout: .seconds(2)) { await renderer.renderCount > chunkCount }
         let rendersAfterReturn = await renderer.renderCount
         XCTAssertGreaterThan(rendersAfterReturn, chunkCount, "the queue starts again behind the kept chunk while it plays")
         XCTAssertEqual(log.startCount, 3, "before the kept chunk has ended")
@@ -1119,7 +1120,8 @@ final class SupertonicSpeechTests: XCTestCase {
         try client.play(targetId: "heat", from: 0)
         try await pollUntil { log.startCount >= 3 }
         XCTAssertEqual(log.startCount, 3, "the kept chunk plays again")
-        try await pollUntil { await renderer.renderCount > chunkCount }
+        // Under the kept chunk's 3 s: the 2 s bound is part of the claim, as in the memory test.
+        try await pollUntil(timeout: .seconds(2)) { await renderer.renderCount > chunkCount }
         let rendersAfterCooling = await renderer.renderCount
         XCTAssertGreaterThan(rendersAfterCooling, chunkCount, "the queue starts again behind the kept chunk while it plays")
         XCTAssertEqual(log.startCount, 3, "before the kept chunk has ended")
@@ -2493,8 +2495,9 @@ final class SupertonicSpeechTests: XCTestCase {
 
         try await pollUntil { client.debugBackgroundSeamSummary != nil }
         XCTAssertEqual(client.debugBackgroundSeamSummary, "next_not_rendered 1", "the first chunk ended at a background seam")
-        // Well inside the 15 s render deadline: only the seam's own deadline can start the iOS voice this soon.
-        try await pollUntil { !fallback.playedOffsets.isEmpty }
+        // Well inside the 15 s render deadline, and under the client's 5 s default for this limit: the 4 s bound is part of
+        // the claim (only the injected 500 ms can start the iOS voice this soon), not a guard against a slow runner.
+        try await pollUntil(timeout: .seconds(4)) { !fallback.playedOffsets.isEmpty }
         XCTAssertEqual(fallback.playedOffsets.count, 1, "the iOS voice reads on from the seam within the seam's deadline")
         XCTAssertEqual(log.fallbacks, ["supertonic_background_gap"], "the app is told why")
         XCTAssertTrue(client.isSystemVoiceActive)

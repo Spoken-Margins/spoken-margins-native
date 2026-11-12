@@ -449,21 +449,21 @@ final class PlayQueueLayoutTests: XCTestCase {
 
     /// Turns Edit mode on the way a tap on Edit does: through the Edit button's accessibility activation, and, if no such
     /// button is found or it changes nothing, through the sheet's own setter. Waits until SwiftUI's Edit mode has held
-    /// for 3 looks running, then gives the list's UIKit flag a second to follow.
+    /// for 3 looks running, then gives the list's UIKit flag two seconds to follow.
     private func enterEditMode(in mounted: Mounted) async throws -> ListState {
         let setEditMode = try XCTUnwrap(PlayQueueSheetProbe.setEditMode, "The queue sheet never appeared")
         var visited = Set<ObjectIdentifier>()
         let button = Self.accessibilityElement(withIdentifier: "playQueue.edit.button", in: mounted.window, visited: &visited)
         if let button, button.accessibilityActivate() {
             editModeHow = "the Edit button's activation"
-            if try await editModeHeld(in: mounted, looks: 40) == nil { editModeHow = "the setter, after the button changed nothing" }
+            if try await editModeHeld(in: mounted, within: .seconds(2)) == nil { editModeHow = "the setter, after the button changed nothing" }
         } else {
             editModeHow = button == nil ? "the setter, no Edit button found" : "the setter, the Edit button refused activation"
         }
         if PlayQueueSheetProbe.editMode != .active {
             withAnimation { setEditMode(.active) }
         }
-        guard let list = try await editModeHeld(in: mounted, looks: 100) else {
+        guard let list = try await editModeHeld(in: mounted, within: .seconds(30)) else {
             XCTFail("Edit mode never held for 3 looks (turned on by \(editModeHow)): SwiftUI's Edit mode is "
                     + "\(PlayQueueSheetProbe.editMode == .active ? "active" : "inactive"), "
                     + "\(Self.collectionView(in: mounted.window).map(Self.editState) ?? "no list")")
@@ -472,21 +472,21 @@ final class PlayQueueLayoutTests: XCTestCase {
         let how = XCTAttachment(string: "Edit mode turned on by \(editModeHow)")
         how.lifetime = .keepAlways
         add(how)
-        let pollDeadline = ContinuousClock.now + .seconds(30)
-        while ContinuousClock.now < pollDeadline {
-            if list.isEditing { listFlagFollowsEditMode = true; break }
-            try await Task.sleep(for: .milliseconds(40))
-        }
+        // "No" is an expected answer here (#4036: the flag stays false on a hosted run), so the wait is short on purpose.
+        try await pollUntil(timeout: .seconds(2), pollEvery: .milliseconds(40)) { list.isEditing }
+        if list.isEditing { listFlagFollowsEditMode = true }
         let paths = (0..<list.numberOfSections).flatMap { section in
             (0..<list.numberOfItems(inSection: section)).map { IndexPath(item: $0, section: section) }
         }
         return ListState(view: list, paths: paths)
     }
 
-    /// The list once SwiftUI's Edit mode has been active for 3 looks running, or nil once `looks` looks (40 ms each) or 30 s have passed, whichever is longer.
-    private func editModeHeld(in mounted: Mounted, looks: Int) async throws -> UICollectionView? {
+    /// The list once SwiftUI's Edit mode has been active for 3 looks running (40 ms each), or nil once `limit` has passed.
+    /// The probe after a tap on Edit passes a short limit because "no" is a normal answer there; the wait after the setter
+    /// passes a long one because that is a wait for real work.
+    private func editModeHeld(in mounted: Mounted, within limit: Duration) async throws -> UICollectionView? {
         var steady = 0
-        let pollDeadline = ContinuousClock.now + .seconds(max(30, Double(looks) * 0.04))
+        let pollDeadline = ContinuousClock.now + limit
         while ContinuousClock.now < pollDeadline {
             try await Task.sleep(for: .milliseconds(40))
             mounted.window.layoutIfNeeded()
