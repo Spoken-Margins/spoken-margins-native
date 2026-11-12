@@ -581,6 +581,111 @@ final class AppAttestClientTests: XCTestCase {
         XCTAssertEqual(second.status, 200, "the next send got through")
     }
 
+    /// #4164: a send that gave up at the gate limit keeps running if Apple's call ignores cancellation. When that call
+    /// finally throws `keyUnusable`, the abandoned send must not forget the key a later send registered, and must not
+    /// start a registration of its own.
+    func testAnAbandonedSendCannotForgetOrReplaceTheKeyALaterSendRegistered() async throws {
+        let server = Server()
+        let restored = Data(repeating: 9, count: 32).base64EncodedString()
+        let provider = LateKeyUnusableProvider(unusable: restored)
+        let store = AppAttestKeyStore(defaults: defaults())
+        store.save(restored)
+        let attested = AttestedServerClient(
+            provider: provider, store: store, consent: { true },
+            server: { URL(string: "https://links.example.test\($0)")! },
+            now: { Date(timeIntervalSince1970: 1_700_000_000) },
+            gateTimeout: 0.2,
+            post: { url, headers, body in try await server.handle(url, headers, body) }
+        )
+        let first = Task { () -> AppAttestFailure? in
+            do { _ = try await attested.send(path: "/api/v1/links/sender", body: Data("first".utf8)); return nil } catch { return error as? AppAttestFailure }
+        }
+        await waitUntil { provider.hungCalls >= 1 }
+        // The first send times out; the second finds the restored key unusable, registers key B and saves it.
+        let second = try await attested.send(path: "/api/v1/links/sender", body: Data("second".utf8))
+        XCTAssertEqual(second.status, 200)
+        let firstFailure = await first.value
+        XCTAssertEqual(firstFailure, .failed, "the hung send gave up")
+        let keyB = try XCTUnwrap(store.keyID)
+        XCTAssertNotEqual(keyB, restored)
+        let registersBefore = server.paths().filter { $0.hasSuffix("/register") }.count
+        XCTAssertEqual(provider.keys, 1)
+
+        // Apple's call now returns for the abandoned send, with the old key unusable.
+        provider.releaseHungCall()
+        await waitUntil { provider.hungCallReturned }
+        try? await Task.sleep(nanoseconds: 150_000_000)
+
+        XCTAssertEqual(store.keyID, keyB, "the abandoned send must not delete the newer key")
+        XCTAssertEqual(provider.keys, 1, "and must not make another key")
+        XCTAssertEqual(server.paths().filter { $0.hasSuffix("/register") }.count, registersBefore, "or spend another challenge")
+        XCTAssertEqual(server.paths().filter { $0.hasSuffix("/challenge") }.count, registersBefore)
+    }
+
+    /// The same class without a timeout: a send forgets only the key it used. If the saved key changed while its request
+    /// was on the wire, the server's `unknown_key` answer for the old key leaves the newer one alone.
+    func testAnUnknownKeyAnswerForAnOldKeyDoesNotForgetANewerSavedKey() async throws {
+        let provider = Provider(), server = Server()
+        let wire = GatedWire(server)
+        let store = AppAttestKeyStore(defaults: defaults())
+        let old = Data(repeating: 9, count: 32).base64EncodedString()
+        let newer = Data(repeating: 5, count: 32).base64EncodedString()
+        store.save(old)
+        server.answers = [(401, #"{"error":"unknown_key"}"#), (200, #"{"ok":true}"#)]
+        let attested = AttestedServerClient(
+            provider: provider, store: store, consent: { true },
+            server: { URL(string: "https://links.example.test\($0)")! },
+            now: { Date(timeIntervalSince1970: 1_700_000_000) },
+            post: { url, headers, body in try await wire.post(url, headers, body) }
+        )
+        let send = Task { try await attested.send(path: "/api/v1/links/sender", body: Data()) }
+        await waitUntil { wire.arrivedCount >= 1 }
+        store.save(newer)   // while the request is on the wire, a newer key is saved
+        wire.releaseOne()
+        await waitUntil { wire.arrivedCount >= 2 }
+        wire.releaseOne()
+        let answer = try await send.value
+        XCTAssertEqual(answer.status, 200)
+        XCTAssertEqual(store.keyID, newer, "the old key's unknown_key answer did not delete the newer key")
+        XCTAssertEqual(provider.counts.keys, 0, "no key was made: the retry used the saved newer key")
+    }
+
+    /// Signs normally except one key id, whose first assertion waits until the test lets it go and then throws
+    /// `keyUnusable` (ignoring cancellation, as Apple's calls do); its later assertions throw `keyUnusable` at once.
+    private final class LateKeyUnusableProvider: AppAttestKeyProvider, @unchecked Sendable {
+        private let lock = NSLock()
+        private let unusable: String
+        private var keysMade = 0
+        private var hung = 0
+        private var returned = false
+        private var continuation: CheckedContinuation<Void, Never>?
+        private var released = false
+        init(unusable: String) { self.unusable = unusable }
+        var isSupported: Bool { true }
+        var hungCalls: Int { lock.withLock { hung } }
+        var hungCallReturned: Bool { lock.withLock { returned } }
+        var keys: Int { lock.withLock { keysMade } }
+        func releaseHungCall() {
+            let next: CheckedContinuation<Void, Never>? = lock.withLock { released = true; defer { continuation = nil }; return continuation }
+            next?.resume()
+        }
+        func generateKey() async throws -> String {
+            lock.withLock { keysMade += 1; return Data(repeating: UInt8(keysMade), count: 32).base64EncodedString() }
+        }
+        func attestKey(_ keyID: String, clientDataHash: Data) async throws -> Data { Data("attestation".utf8) }
+        func generateAssertion(_ keyID: String, clientDataHash: Data) async throws -> Data {
+            guard keyID == unusable else { return Data("assertion".utf8) }
+            let first: Bool = lock.withLock { hung += 1; return hung == 1 }
+            guard first else { throw AppAttestFailure.keyUnusable }
+            await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+                let resumeNow: Bool = lock.withLock { if released { return true }; continuation = c; return false }
+                if resumeNow { c.resume() }
+            }
+            lock.withLock { returned = true }
+            throw AppAttestFailure.keyUnusable
+        }
+    }
+
     /// Signs normally except the first assertion, which waits forever.
     private final class HangingFirstAssertionProvider: AppAttestKeyProvider, @unchecked Sendable {
         private let lock = NSLock()
