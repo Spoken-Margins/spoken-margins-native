@@ -245,17 +245,21 @@ private enum PlainSheetShareProbe {
     nonisolated(unsafe) static var builds = 0
 }
 
-/// What #4026 replaced: a plain `.sheet` on a row of a form, on a screen that watches the whole model.
+/// What #4026 replaced: a plain `.sheet` on a row of a form, on a screen that reads the model, as the old Settings did
+/// (its rows and the sheet's content came from model values). An unread `@ObservedObject` is not enough: the first lane
+/// run showed SwiftUI does not rebuild the sheet's content for publishes the view never reads (0 rebuilds in 80), so the
+/// screen and the sheet both read the prepared-audio status the publishes flip.
 private struct PlainSheetSharePresenter: View {
     @ObservedObject var model: Gate1AppModel
     @State private var isPresented = true
 
     var body: some View {
         Form {
+            Text("Audio: \(model.preparedTextAudioStatus)")
             Button("Share Diagnostics") { isPresented = true }
                 .sheet(isPresented: $isPresented) {
                     let _ = PlainSheetShareProbe.builds += 1
-                    Text("Share sheet")
+                    Text("Share sheet, audio \(model.preparedTextAudioStatus)")
                 }
         }
     }
