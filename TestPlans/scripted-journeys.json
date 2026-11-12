@@ -68,6 +68,10 @@
       "journey": "Live session setup: Done closes the keyboard and Start Session is tappable with it up (#3547)"
     },
     {
+      "test": "SpokenMarginsAppUITests/J14ComeBackToAFriendsMarginsJourneyUITests",
+      "journey": "J14: a friend's Margins offered and heard by a listener who heard the episode to its end, marked it complete or never started it; the episode found in the Library after (#4100)"
+    },
+    {
       "test": "SpokenMarginsAppUITests/J12SharingLoopJourneyUITests",
       "journey": "J12 steps 2-6: record two Margins, send, a friend's Margin on the Margins tab and heard first (#3222); an answer opens the reply sheet on its receipt (#3792)"
     },
