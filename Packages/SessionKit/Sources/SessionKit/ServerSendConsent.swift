@@ -44,6 +44,8 @@ public enum ServerSendConsent {
 /// goes up. "30 days" is the server's
 /// retention (D4, `research/B4/DESIGN.md`); the app only passes the server's `expiresAt` through, so a change there
 /// needs the same edit and bump here.
+/// The 90-day sentence follows `research/B4/server/internal/senders/senders.go` `Sweep`: install records go after 90
+/// idle days, but a sender with a strike keeps a file and a blocked install's tag stays on the block list.
 public enum ShareLinkConsentCopy {
     public static let title = "Share as a link?"
     public static let message = """
@@ -54,8 +56,9 @@ public enum ShareLinkConsentCopy {
 
         To make a link, your phone also makes a random code for this app. Our server uses it to check that the \
         request comes from Spoken Margins, and to tie each link to this install so a report of a link can be \
-        counted. The code holds no name. Deleting the app deletes your phone's copy, and our server forgets the \
-        code after 90 days without use.
+        counted. The code holds no name. Deleting the app deletes your phone's copy. Our server deletes the code \
+        after 90 days without use, unless links made with it were reported: then it keeps a note of that, which \
+        also holds no name.
 
         You can send the file instead. It goes straight to your friend and never touches our server.
         """
