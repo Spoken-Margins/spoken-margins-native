@@ -1,10 +1,10 @@
 # Syncing the Library across a listener's Apple devices (design note)
 
-Issue #1769. Docs only: no app change, and nothing here is built yet. The owner decides (last section) before any code. Facts about the code were read on `main` at `5c0ab7a7` (12 November 2026); file names are the way to re-check them, line numbers are left out because they drift.
+Issue #1769. Docs only: no app change, and nothing here is built yet. The owner answered the five calls in the last section on 2026-11-12; they are recorded in `docs/decisions.md`. Facts about the code were read on `main` at `5c0ab7a7` (12 November 2026); file names are the way to re-check them, line numbers are left out because they drift.
 
 ## Recommendation
 
-1. **Do not start with a whole-Library sync.** Start with the part a listener would miss most and that is cheapest to get right: **Margins and listening place, for items both devices already have.** Items (articles, PDFs, podcast episodes) are brought in on each device by the source address, as they are today; sync only tells a device "you also have this item, and these are the Margins and the place".
+1. **Do not start with a whole-Library sync.** Start with the part a listener would miss most and that is cheapest to get right: **the listener's own words (Margins and Spoken Notes) and listening place.** Items with a source address (articles, PDFs, podcast episodes) are brought in on each device by that address, as they are today; sync only tells a device "you also have this item, and these are the Margins and the place". A **Spoken Note is the listener's own writing, so it syncs as an item** (owner, 2026-11-12, quoted under "Decisions for Cole").
 2. Use **CloudKit's private database through `CKSyncEngine`** (iOS 17 and later; the app targets iOS 26), with a small sync layer in SessionKit that is host-tested against a fake transport. Do not use `NSPersistentCloudKitContainer`: the Library is not Core Data (see "What exists today").
 3. Make it **opt-in, default off, and gated at build time** (standing calls 2026-10-05, 2026-10-17). Encrypt every field that identifies or quotes the listener with CloudKit's `encryptedValues`, so Apple's servers hold only ciphertext, record ids and sizes.
 4. **Never sync** feed credentials, tokens, downloaded media, rendered voice audio, caches or diagnostics. **Recordings sync last**, as a separate step with its own size rules and its own owner decision.
@@ -48,9 +48,10 @@ What would show this wrong is at the end.
 | Thing | Sync? | Notes |
 |---|---|---|
 | **Margin text, transcript, anchor, status, createdAt** | Yes (slice 2) | Encrypted fields. Anchor already holds source terms (char offset, media time, surrounding text). |
-| **Margin recording (audio)** | Later, own step (slice 5) | Asset. Needs a quota story and the owner's call. Without it, the other phone shows the Margin with a plain "recording is on your other device" and plays its transcript. |
+| **Margin recording (audio)** | Later, own step (slice 5); decided 2026-11-12: Wi-Fi only, off by default, size shown first | Asset. Needs a quota story. Without it, the other phone shows the Margin with a plain "recording is on your other device" and plays its transcript. |
 | **Item identity** (title, source address, canonical key, media type, `episodeGUID`) | Yes (slice 1) | A "have this item" record. Not the text, not the audio. |
-| **Item text** (articles, PDFs, notes typed in the app) | **No by default** | Too large for a record and a rights question (see below). The other phone re-fetches an address-based item itself, on the listener's action. A note that exists only in the app (a spoken note, pasted text) has no address; those need slice 6, or stay on one device. |
+| **Spoken Notes** (the item, its title, its transcript text, its takes' text and order) | **Yes (slice 2)** | The listener's own words, not publisher content, so none of the rights concern below applies. Owner, 2026-11-12: "If it is the user's note that they created (Spoken Note) it should sync." Small enough for a record. The item id is already `spoken-note-<noteId>` (`SpokenNoteItem.itemId`), the same on every device, so it is the record key and adding a note on two phones cannot make two rows. The takes' **audio** follows the recordings decision (slice 5): until then the other phone shows the note's text and says the recording is on the other device. |
+| **Other item text** (articles, PDFs, pasted text) | **No by default** | Too large for a record and a rights question (see below). The other phone re-fetches an address-based item itself, on the listener's action. Pasted text that is not the listener's own note has no address and stays on one device, until slice 6. |
 | **Listening place** | Yes (slice 3) | Per item, small. Rules below. |
 | **Collections** (name, ordered item keys) | Yes (slice 4) | Small. |
 | **Followed sources** (show, policy) | Yes, **public feeds only** | A feed address with a token, password or user-specific query string is not synced (see below). |
@@ -66,7 +67,7 @@ What would show this wrong is at the end.
 
 ## Identity, duplicates and the first sync
 
-- **Item key.** A stable, content-derived key: `episodeGUID` + show for podcast episodes, else the canonical source key, else the text digest. It is the CloudKit record name, so two phones that each added the same article create **one** record (CloudKit's "record already exists" is the duplicate guard). Local item ids stay local; a sync table maps `itemKey ↔ local itemId` on each device.
+- **Item key.** A stable, content-derived key: the note id for a Spoken Note (`spoken-note-<noteId>`), `episodeGUID` + show for podcast episodes, else the canonical source key, else the text digest. It is the CloudKit record name, so two phones that each added the same article create **one** record (CloudKit's "record already exists" is the duplicate guard). Local item ids stay local; a sync table maps `itemKey ↔ local itemId` on each device.
 - **Margin key.** The Margin's existing UUID is already unique across devices and is the record name. A Margin belongs to an item key, not to a local item id.
 - **No matching item yet.** A Margin that arrives for an item this phone does not have is **kept, hidden-safe, and shown under "On your other device"** with a one-tap "Add this item" that fetches by address. It is never dropped and never auto-fetches a publisher's page (standing call 2026-10-21: only on a listener's action).
 - **Two items that look like one** (a re-published article with new text): the key says they differ, so they stay two items. Over-splitting is safe; over-merging would attach Margins to the wrong text.
@@ -109,22 +110,22 @@ Furthest-wins is wrong because a listener who rewinds on purpose would lose the 
 Each is a separate challenge issue. "Cloud" slices are host-testable in SessionKit on Linux; "Mac" needs an app build and the iCloud entitlement.
 
 1. **Sync core, SessionKit (cloud).** Item key derivation, hybrid-clock version stamps, the merge functions above, a fake transport, and a **convergence simulator**: N replicas, random drops, duplicates, reordering, offline edits, reinstall, a schema-skew replica; asserts every replica ends identical and no user-authored Margin is lost. This is the biggest risk and needs no Apple API. Tests exist before any CloudKit code.
-2. **Margins sync (Mac + cloud).** `CKSyncEngine` adapter, record mapping, `encryptedValues`, the "On your other device" list, status in Settings, entitlement, build flag.
+2. **Margins and Spoken Notes sync (Mac + cloud).** `CKSyncEngine` adapter, record mapping, `encryptedValues`, the "On your other device" list, status in Settings, entitlement, build flag. A Spoken Note's text edits merge by the same per-field rule as a Margin (`SpokenNoteItemMerge` already refuses to resurrect a note the listener deleted, which the sync layer must keep).
 3. **Listening place (cloud for the rule, Mac for wiring).**
 4. **Collections and followed public sources.**
 5. **Recordings as assets** (after the owner's decision on quota and cellular).
-6. **App-only notes and an item's own text**, only if the lawyer and the owner agree to syncing content.
+6. **Pasted text and other item text**, only if the lawyer and the owner agree to syncing publisher content.
 7. **Owner validation on two physical devices** (airplane-mode edits on both, then reconnect; rewind on one; delete on one; reinstall one; sign out of iCloud).
 
 Compatibility checks that go with every slice: `scripts/check-build29-database.sh` (the previous builds open the database), packet round trip through `ShippedReader`, and "a failed sync never blocks a local save".
 
 ## Decisions for Cole
 
-1. **Start with Margins and place only, no item text and no recordings?** Pick: yes. Cost: a new iPhone gets items back by address, not by copy, and an app-only note stays on one phone. Alternative: sync text too, which waits on the lawyer and a size plan.
-2. **Syncing private curation fields** (`privateSharingNote`, starred): pick: yes, encrypted, because they are the listener's own. Alternative: leave them on the phone, as they are for packets today.
-3. **Recordings over iCloud** (slice 5): pick: on Wi-Fi only, off by default, with a size shown first (the way voice downloads show theirs). Alternative: never sync recordings and show transcripts only.
-4. **Default**: opt-in. Pick: opt-in and build-gated. It would be default-on only if it passes the 2026-10-05 battery and privacy bar, which I do not expect for recordings.
-5. **Tombstone length**: 90 days after a device was last seen. Change it only if you expect phones to sit unused longer.
+1. **Start with the listener's own words and place only, no publisher text and no recordings?** Answered (2026-11-12): yes, **and a Spoken Note syncs as well**. Asked as "Margins and listening place only … Cost: a note you typed or pasted in the app has no web address, so it stays on one phone", he replied: "If it is the user's note that they created (Spoken Note) it should sync." Cost of what remains: a new iPhone gets articles and episodes back by address, not by copy, and pasted text that is not a Spoken Note stays on one phone. Alternative still open: sync publisher text too, which waits on the lawyer and a size plan.
+2. **Syncing private curation fields** (`privateSharingNote`, starred): answered (2026-11-12): "agree. A", meaning yes, encrypted, because they are the listener's own notes. They stay out of packets and exports.
+3. **Recordings over iCloud** (slice 5; this covers a Spoken Note's takes too): answered (2026-11-12): "Agree", to "Sync them later, as a separate step. Wi-Fi only, off by default, with the size shown first, like voice downloads." Cost: recordings use the listener's iCloud storage (the free plan is 5 GB). Until slice 5, the other phone shows the transcript.
+4. **Default**: answered (2026-11-12): opt-in, switched on only in a build made for it. He added: "Let's start opt-in and if it is stable we can make it opt-out." Making it default-on later is his stated intent once it is stable; it must still meet the 2026-10-05 battery and privacy bar (not expected for recordings, which stay opt-in by decision 3), and it is a new decision when the time comes.
+5. **Tombstone length**: answered (2026-11-12): "agree", to "90 days after a device was last seen. Cost: a phone unused longer than that re-syncs from scratch, and keeps its own data."
 
 None of these touches his Library or the database today: this note changes no code.
 
