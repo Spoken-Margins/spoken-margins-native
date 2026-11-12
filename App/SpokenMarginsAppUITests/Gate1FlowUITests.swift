@@ -1039,21 +1039,31 @@ final class Gate1FlowUITests: XCTestCase {
 
         scrollToBuild23SenderElement("build23.sender.preview.edit").tap()
         XCTAssertTrue(element("build23.sender.stage.select").waitForExistence(timeout: 5))
-        scrollToButton(containingLabel: "Sharing options").tap()
-        let evidenceToggle = app.switches["Include acoustic evidence when available"]
-        for _ in 0..<6 where !(evidenceToggle.exists && evidenceToggle.isHittable) {
-            app.scrollViews["build23.sender.experience"].swipeUp()
-        }
-        XCTAssertTrue(evidenceToggle.isHittable)
-        let previousEvidenceValue = evidenceToggle.value as? String
-        evidenceToggle.tap()
-        XCTAssertNotEqual(evidenceToggle.value as? String, previousEvidenceValue)
+        // Both scroll with the sender helper, which drags above the pinned bar. `build23.sender.experience` is a
+        // container ("Other"), not a scroll view, so `app.scrollViews[...]` found nothing to swipe (#3923).
+        let sharingOptions = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Sharing options")).firstMatch
+        scrollToBuild23Sender(sharingOptions, named: "Sharing options").tap()
+        let evidenceToggle = app.switches["build23.sender.include-acoustic-evidence"].firstMatch
+        scrollToBuild23Sender(evidenceToggle, named: "build23.sender.include-acoustic-evidence")
+        let previousEvidenceValue = evidenceToggle.value as? String ?? ""
+        // The toggle's frame is its whole row, label included; only the switch at the trailing end flips it.
+        evidenceToggle.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: evidenceToggle.frame.width - 26, dy: evidenceToggle.frame.height / 2))
+            .tap()
+        XCTAssertTrue(
+            waitUntil(evidenceToggle, "value != %@", previousEvidenceValue),
+            "The acoustic evidence switch did not change: it still reads \(previousEvidenceValue)"
+        )
         XCTAssertFalse(element("build23.sender.recipient.verified-preview").exists)
         XCTAssertFalse(element("build23.sender.share.present").exists)
 
         openBuild23Review()
-        // The primary Share action must build, verify and present in one tap.
-        scrollToBuild23SenderElement("build23.sender.review.share").tap()
+        // The Share action must build, verify and present in one tap. When the server offers links, the main button
+        // makes a link instead, and "Send as a file" under it is the one that opens the system share sheet (#3750).
+        // The server's answer arrives once, soon after the sheet opens; the short wait covers a late one.
+        XCTAssertTrue(element("build23.sender.review.share").waitForExistence(timeout: 5))
+        let sendsFile = element("build23.sender.review.share.file").waitForExistence(timeout: 2)
+        scrollToBuild23SenderElement(sendsFile ? "build23.sender.review.share.file" : "build23.sender.review.share").tap()
 
         XCTAssertTrue(element("build23.sender.stage.share").waitForExistence(timeout: 5))
         let nativeShareSurface = element("ActivityListView")
@@ -1376,7 +1386,13 @@ final class Gate1FlowUITests: XCTestCase {
     }
 
     private func scrollToBuild23SenderElement(_ identifier: String) -> XCUIElement {
-        let candidate = element(identifier)
+        scrollToBuild23Sender(element(identifier), named: identifier)
+    }
+
+    /// Scrolls the sender sheet until `candidate` is fully on screen, clear of the pinned bar. `identifier` names it in
+    /// the failure message; when it is a pinned-bar button's identifier, the bar does not count as covering it.
+    @discardableResult
+    private func scrollToBuild23Sender(_ candidate: XCUIElement, named identifier: String) -> XCUIElement {
         let senderExperience = element("build23.sender.experience")
         XCTAssertTrue(senderExperience.waitForExistence(timeout: 5), "Build 23 sender experience is missing")
         let recipientFooter = element("build23.sender.recipient-test-session")
