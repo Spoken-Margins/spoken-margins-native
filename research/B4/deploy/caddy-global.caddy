@@ -21,12 +21,13 @@
 				request>headers delete
 				request>tls delete
 				# A listening-map path names an episode (#551), a /l/ path
-				# names a share link, and a query can hold anything: the
+				# names a share link, a club path (the API's, and the /c/
+				# landing page's) names a club (#1799), and a query can hold anything: the
 				# relay's is the fetched URL, maybe with a private feed's
 				# token (#2988). Log those paths as their route and drop
 				# every query, even on proxy failures. One filter per field,
 				# so it is one regexp; Caddy replaces every match.
-				request>uri regexp (^/api/v1/maps/|^/l/|[?]).* $1*
+				request>uri regexp (^/api/v1/maps/|^/api/v1/clubs/|^/l/|^/c/|[?]).* $1*
 			}
 		}
 	}

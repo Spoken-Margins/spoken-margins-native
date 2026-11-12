@@ -29,6 +29,9 @@ const (
 	// (#743). It is a switch of its own, not a field on maps, so an app that
 	// knows nothing of it reads it as off and nothing else changes. Relay
 	// gates the web app's feed and page relay (#2985), off by default.
+	// Clubs gates the club mailbox (#1799): off by default, and it can only
+	// ever turn clubs off, never on, for a build that lacks the app's own
+	// build-time flag.
 	ServiceLinks          = "links"
 	ServiceAttest         = "attest"
 	ServiceBridge         = "bridge"
@@ -36,10 +39,11 @@ const (
 	ServiceTokens         = "tokens"
 	ServiceMapUploadToken = "mapUploadToken"
 	ServiceRelay          = "relay"
+	ServiceClubs          = "clubs"
 )
 
 // KnownServices are the switches the owner can flip.
-var KnownServices = []string{ServiceLinks, ServiceAttest, ServiceBridge, ServiceMaps, ServiceTokens, ServiceMapUploadToken, ServiceRelay}
+var KnownServices = []string{ServiceLinks, ServiceAttest, ServiceBridge, ServiceMaps, ServiceTokens, ServiceMapUploadToken, ServiceRelay, ServiceClubs}
 
 type Service struct {
 	Enabled bool `json:"enabled"`

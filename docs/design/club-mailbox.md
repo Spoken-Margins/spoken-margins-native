@@ -1,6 +1,6 @@
 # Club mailbox: what the server stores and logs (F1 M3, #1799 step 1)
 
-Status: **proposal for the owner's read.** It changes no code. Slices 1 and 2 (section 10) are held until he answers the two questions in section 1. Part of #1799 (Done when 1). The stream brief is [F1-coop.md](../workstreams/streams/F1-coop.md); the server rules it must meet are in [research/B4/DESIGN.md](../../research/B4/DESIGN.md), sections 2, 3, 5, 11 and 14.
+Status: **the owner agreed to both questions in section 1 (2026-11-07, #1799).** Slice 1 of section 10, the server (`research/B4/server/internal/clubs`, `internal/api/clubs.go`), is built, switched off by default (`smserver switch ... clubs on` turns it on); the other slices are not. Part of #1799 (Done when 1). The stream brief is [F1-coop.md](../workstreams/streams/F1-coop.md); the server rules it must meet are in [research/B4/DESIGN.md](../../research/B4/DESIGN.md), sections 2, 3, 5, 11 and 14.
 
 ## 1. Questions for the owner
 
@@ -85,6 +85,17 @@ Read and post work like this:
 
 The server compares proofs in constant time and keeps no list of who presented one.
 
+**The wire format, as built (slice 1; slice 2's Swift client and fixtures follow it).** Hashes, ids and proofs are lowercase hex. A proof is the 32 bytes the phone derived (64 digits) and its hash is the SHA-256 of those 32 bytes. Sealed bytes are the `SMLINK` header (version 1) plus nonce, ciphertext and tag, as for share links; the header's part is 3, a post's is 2.
+
+| Call | Credential | Body | Answers |
+| --- | --- | --- | --- |
+| `POST /api/v1/clubs` | none | JSON `{"id", "readHash", "postHash", "header"}`, header as standard base64, at most 16 KiB sealed | `201`, `200` (repeat), `409 id_in_use`, `400 bad_request` or `bad_packet`, `413 too_large`, `429 rate_limited`, `503 disabled` or `full` |
+| `POST /api/v1/clubs/<id>/posts` | `Authorization: Bearer <post proof>` | the sealed packet, at most 20 MB | `201 {"seq": n}`, `409 club_full`, `400 bad_packet`, `413`, `429`, `503 busy`, `full` or `disabled` |
+| `GET /api/v1/clubs/<id>/posts?after=n` | `Bearer <read proof>` | none | `200 {"posts": [{"seq", "size"}]}` for every post after n |
+| `GET /api/v1/clubs/<id>/posts/<seq>` | `Bearer <read proof>` | none | the sealed bytes, unchanged. **`seq` 0 is the sealed header**, the first item in the box; posts start at 1 with no gaps. |
+
+A wrong or missing proof, an id that never existed and a malformed id all answer the same `404 not_found`. A member with the right proof whose club ended or was disabled gets `410 expired_or_removed`, so the app can say the club is gone; everyone else still gets the `404`. An ended club keeps only a tombstone (`meta.json`, state `gone`), so its id cannot be made again. Writes (creates and posts) are limited to 30 an hour and 200 MB of posts an hour per hashed network address, with the 30 counted whether or not the proof was right (the bytes only for a body that was read, which needs a right proof); reads are not counted, as share-link reads are not.
+
 ## 6. When the phone talks to the server
 
 - **Nothing is sent until the listener creates or joins a club.** Joining is the opt-in (2026-10-10). Creating or joining a club asks first, with the same consent step that #2842 adds before the first share link leaves the phone (Apple agreement 3.3.3). The wording names the club mailbox.
@@ -122,7 +133,7 @@ When this is built, the same PR must update:
 
 Each is one PR with one issue. The first two are cloud work with host tests.
 
-1. **Server package `internal/clubs`** and the API routes, the `clubs` switch, the caps, and the log and file tests in section 4. Go, Linux. Done when a **10-member simulated club** test passes: one creates, nine join with only the link, each posts three packets (spread over test time, since the per-address limit is 30 an hour), each fetches, and all ten end with the same 30 posts and no duplicate. (This is #1799's Done when 2 on the server side.)
+1. **Built (#1799): server package `internal/clubs`** and the API routes, the `clubs` switch, the caps, and the log and file tests in section 4. Go, Linux. Done when a **10-member simulated club** test passes: one creates, nine join with only the link, each posts three packets (spread over test time, since the per-address limit is 30 an hour), each fetches, and all ten end with the same 30 posts and no duplicate. (This is #1799's Done when 2 on the server side.)
 2. **SessionKit `ClubSealing` and `ClubClient`:** the HKDF derivation, link parsing and building, sealing and opening a packet, the cursor, fixtures shared with the server's test, and merging through the existing importer. Host tests on real SQLite. Packets exported by this build must still import into Build 32 and 34.
 3. **Report and takedown for clubs:** the form's club case, the hold case in `hold.go`, `smserver` listing. Depends on #2239's rules package, which is merged.
 4. **Web landing page `/c/<id>`:** "Open in Spoken Margins", no JavaScript needed for the button. Nothing here can read the key.
