@@ -32,7 +32,7 @@ extension Gate1AppModel {
             .contains(where: { $0.marginId == momentMarginId }) {
             let voiceWasSounding = conductor.isPlayingVoice && !conductor.isVoicePaused
             endMarginMoment()
-            if voiceWasSounding { resumePlayback() }
+            if voiceWasSounding { resumePlayback(returningFromMargin: true) }
         }
         guard hiddenSenders.hideMargin(margin.id, senderLabel: layer.displayLabel, text: margin.approvedTranscript) else { return }
         reloadAfterSenderVisibilityChanged()

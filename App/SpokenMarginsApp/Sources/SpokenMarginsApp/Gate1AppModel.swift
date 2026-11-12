@@ -1180,7 +1180,7 @@ final class Gate1AppModel: ObservableObject {
             sequence: sequence,
             source: .init(
                 pause: { [weak self] in self?.pause() },
-                resume: { [weak self] in self?.resumePlayback() },
+                resume: { [weak self] in self?.resumePlayback(returningFromMargin: true) }, // the moment's voice ended, or a review is done (#4110)
                 seek: { [weak self] in self?.seekMarginMomentSource(toPosition: $0) }
             ),
             voiceURL: leveledVoiceURL(voiceURLs, itemId: sequence.itemId, margins: [sequence.target] + sequence.unplayed)
@@ -1492,7 +1492,8 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    func resumePlayback() {
+    /// `returningFromMargin`: a Margin's voice ended and the source is owed back; a refused start is retried (#4110).
+    func resumePlayback(returningFromMargin: Bool = false) {
         if marginVoiceIsHeldForRecording { return }
         if playingImportedCommentary != nil {
             setImportedCommentaryPaused(false)
@@ -1518,11 +1519,7 @@ final class Gate1AppModel: ObservableObject {
         guard !requireTermsDecisionBeforePlayback(.resumeSession(sessionId)) else { return }
         stopSpeechPreviews()
         streamingSpeechQueue.relinquishToCanonicalPlayback()
-        run { engine in
-            snapshot = try engine.resumePlayback()
-            refreshSelectedItemInBackground() // like pause(): the icon flips without waiting for the item reload (#2098)
-            reportSuccess("Resumed.")
-        }
+        startSourceAgain(returningFromMargin: returningFromMargin)
     }
 
     /// Why a friend's shared map couldn't be placed on this item's copy, as stored on its packets (#481).
