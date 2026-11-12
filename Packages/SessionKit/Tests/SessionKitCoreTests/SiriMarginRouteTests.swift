@@ -40,9 +40,20 @@ final class SiriMarginRouteTests: XCTestCase {
         XCTAssertEqual(SiriMarginRoute.decide(facts), .playerItem)
     }
 
-    func testNothingRunningRefuses() {
+    func testNothingRunningKeepsItInAQuickSession() {
         let facts = SiriMarginRoute.Facts(choseItem: false, runningSession: nil, playerHasSession: false)
-        XCTAssertEqual(SiriMarginRoute.decide(facts), .nothingRunning)
+        XCTAssertEqual(SiriMarginRoute.decide(facts), .quickSession)
+    }
+
+    func testAQuickSessionIsNamedForTheLibraryAndAnyOtherSessionByItsName() {
+        let quick = LiveSession(id: "q", title: "", startedAt: t0, isQuick: true)
+        XCTAssertEqual(SiriMarginRoute.filedName(quick), "a quick session in your Library")
+        XCTAssertEqual(
+            SiriMarginRoute.confirmation(named: SiriMarginRoute.filedName(quick)),
+            "Margin added to a quick session in your Library."
+        )
+        XCTAssertEqual(SiriMarginRoute.filedName(session(title: "Night read")), "Night read")
+        XCTAssertEqual(SiriMarginRoute.filedName(session()), "your audiobook session")
     }
 
     func testUntitledSessionsAreNamedByKindAndBlankTitlesCountAsUntitled() {
@@ -138,5 +149,63 @@ final class SiriMarginRouteTests: XCTestCase {
         try await worker.save(quick, generation: 1)
         let filed = await worker.addWrittenMargin(text: "no", markedAt: t0)
         XCTAssertNil(filed)
+    }
+
+    // MARK: Nothing running: a quick session (#3880 slice 2)
+
+    func testWithNothingRunningAWrittenMarginStartsAQuickSessionAtThatMoment() async throws {
+        let worker = LiveSessionFileWorker(root: root, makeId: { "x" })
+        let filed = await worker.fileWrittenMarginAsQuick(text: "  while the audiobook plays \n", markedAt: t0.addingTimeInterval(90), now: t0.addingTimeInterval(90))
+        let session = try XCTUnwrap(filed)
+        XCTAssertEqual(session.isQuick, true)
+        let margin = try XCTUnwrap(session.margins.first)
+        XCTAssertEqual(margin.text, "while the audiobook plays")
+        XCTAssertFalse(margin.isBlindMark)
+        XCTAssertNil(margin.audioPath)
+        XCTAssertEqual(margin.markedAt, t0.addingTimeInterval(90))
+        let stored = await worker.session(id: session.id)
+        XCTAssertEqual(stored?.margins.map(\.text), ["while the audiobook plays"])
+        XCTAssertEqual(SiriMarginRoute.filedName(session), "a quick session in your Library")
+    }
+
+    func testASecondMarginSoonAfterJoinsTheSameQuickSession() async throws {
+        let worker = LiveSessionFileWorker(root: root)
+        let first = await worker.fileWrittenMarginAsQuick(text: "one", markedAt: t0, now: t0)
+        let second = await worker.fileWrittenMarginAsQuick(text: "two", markedAt: t0.addingTimeInterval(20), now: t0.addingTimeInterval(20))
+        XCTAssertEqual(first?.id, second?.id)
+        let stored = await worker.session(id: try XCTUnwrap(first).id)
+        XCTAssertEqual(stored?.margins.map(\.text), ["one", "two"])
+    }
+
+    func testEmptyTextStartsNoQuickSession() async throws {
+        let worker = LiveSessionFileWorker(root: root)
+        let filed = await worker.fileWrittenMarginAsQuick(text: " \n ", markedAt: t0, now: t0)
+        XCTAssertNil(filed)
+        let all = await worker.allSessions()
+        XCTAssertTrue(all.isEmpty)
+    }
+
+    func testAnOpenScreensStaleSaveKeepsAMarginThatJoinedItsQuickSession() async throws {
+        let worker = LiveSessionFileWorker(root: root)
+        let filed = await worker.fileWrittenMarginAsQuick(text: "first", markedAt: t0, now: t0)
+        let first = try XCTUnwrap(filed)
+        try await worker.save(first, generation: 1) // the Library's Live row opened the session with its first Margin
+        let joined = await worker.fileWrittenMarginAsQuick(text: "second", markedAt: t0.addingTimeInterval(20), now: t0.addingTimeInterval(20))
+        XCTAssertEqual(joined?.id, first.id)
+        try await worker.save(first, generation: 2) // the screen's copy, without the second Margin
+        let stored = await worker.session(id: first.id)
+        XCTAssertEqual(stored?.margins.map(\.text), ["first", "second"])
+    }
+
+    func testTheQuickRouteDoesNotWriteIntoAnEndedNamedSession() async throws {
+        let worker = LiveSessionFileWorker(root: root)
+        var ended = session()
+        ended.endedAt = t0.addingTimeInterval(60)
+        try await worker.save(ended, generation: 1)
+        let filed = await worker.fileWrittenMarginAsQuick(text: "after", markedAt: t0.addingTimeInterval(7_200), now: t0.addingTimeInterval(7_200))
+        XCTAssertEqual(filed?.isQuick, true)
+        XCTAssertNotEqual(filed?.id, "live")
+        let stored = await worker.session(id: "live")
+        XCTAssertEqual(stored?.margins, [])
     }
 }

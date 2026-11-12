@@ -77,19 +77,21 @@ final class AddMarginSiriRouteAppTests: XCTestCase {
         XCTAssertTrue(model.marginRows.contains { $0.fullText == "on the item" })
     }
 
-    func testNothingRunningRefusesWithTheNewWords() async throws {
+    func testNothingRunningKeepsTheMarginInAQuickSession() async throws {
         let model = makeModel()
+        XCTAssertFalse(model.hasActiveSession)
         let files = LiveSessionFileWorker(root: root)
-        do {
-            _ = try await AddMarginShortcutAction.perform(text: "nowhere", toItemId: nil, in: model, files: files)
-            XCTFail("Nothing is running, so it must refuse.")
-        } catch let error as AddMarginShortcutError {
-            XCTAssertEqual(error, .nothingRunning)
-            XCTAssertEqual(
-                error.localizedDescription,
-                "Nothing is running in Spoken Margins. Start a live session or play something, then ask again."
-            )
-        }
+        let name = try await AddMarginShortcutAction.perform(text: "while another app plays", toItemId: nil, in: model, files: files, now: t0)
+        XCTAssertEqual(name, "a quick session in your Library")
+        XCTAssertEqual(SiriMarginRoute.confirmation(named: name), "Margin added to a quick session in your Library.")
+        let sessions = await files.allSessions()
+        let quick = try XCTUnwrap(sessions.first)
+        XCTAssertEqual(sessions.count, 1)
+        XCTAssertEqual(quick.isQuick, true)
+        XCTAssertEqual(quick.margins.map(\.text), ["while another app plays"])
+        // The player was never started and no Margin was made on a Library item.
+        XCTAssertFalse(model.hasActiveSession)
+        XCTAssertNil(model.writtenMarginDraft)
     }
 
     func testEmptyTextSavesNothingInTheLiveSession() async throws {
