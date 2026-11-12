@@ -180,7 +180,47 @@ public enum UITestingLaunchSeed: Equatable, Sendable {
         )
     }
 
+    /// The listener's saved place on the seeded podcast, as the Session that Continue would resume (#4100): in progress
+    /// at `placeSeconds`, or finished (100%, Continue then starts again from 0) when that is the end of the episode or
+    /// past it. The place is clamped to the episode.
+    public static func podcastSession(placeSeconds: Int, durationSeconds: Int, now: Date) -> Session {
+        let durationMs = max(durationSeconds, 1) * 1_000
+        let placeMs = min(max(placeSeconds, 0) * 1_000, durationMs)
+        let finished = placeMs >= durationMs
+        return Session(
+            id: "session-\(podcastItemId)-ui-test-place",
+            itemId: podcastItemId,
+            createdAt: now,
+            updatedAt: now,
+            completedAt: finished ? now : nil,
+            status: finished ? "finished" : "in_progress",
+            phase: finished ? .finished : .itemPlayback,
+            currentTargetType: .transcriptBackedMedia,
+            currentTargetId: podcastRemoteURL,
+            position: Position(charOffset: 0, mediaTimeMs: placeMs, chapterId: nil),
+            completionPercent: finished ? 100 : min(99, placeMs * 100 / durationMs),
+            playbackRate: 1
+        )
+    }
+
     #if DEBUG
+    /// Where a fresh podcast launch starts the listener, in seconds: `SPOKEN_MARGINS_UI_TEST_PODCAST_PLACE` (J14, #4100).
+    /// Only the launch that seeds the podcast sets it, so a kept-Library relaunch never moves a place the script reached.
+    /// Nil for anything but a whole number of seconds above 0, which is "not started".
+    public static func podcastPlaceSeconds(arguments: [String], environment: [String: String]) -> Int? {
+        guard case .offlinePodcast = UITestingLaunchSeed(arguments: arguments, environment: environment),
+              let seconds = environment["SPOKEN_MARGINS_UI_TEST_PODCAST_PLACE"].flatMap(Int.init), seconds > 0 else { return nil }
+        return seconds
+    }
+
+    /// Whether a fresh podcast launch starts with the episode marked complete by hand:
+    /// `SPOKEN_MARGINS_UI_TEST_PODCAST_COMPLETED=1` (J14, #4100). It changes nothing else about the item, as
+    /// `ManualItemCompletion.markComplete` does.
+    public static func podcastStartsCompleted(arguments: [String], environment: [String: String]) -> Bool {
+        guard case .offlinePodcast = UITestingLaunchSeed(arguments: arguments, environment: environment) else { return false }
+        return environment["SPOKEN_MARGINS_UI_TEST_PODCAST_COMPLETED"] == "1"
+    }
+
     /// Whether a keep-library UI-test relaunch also imports one friend's Margin onto the seeded podcast, the way a
     /// co-op packet would: `SPOKEN_MARGINS_UI_TEST_COOP=1` (J5-style co-op journey, #474). It adds to the kept
     /// Library and never changes which seed runs.

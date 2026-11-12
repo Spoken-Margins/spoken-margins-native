@@ -28,7 +28,7 @@ extension Gate1AppModel {
 /// normal launch never does.
 enum UITestingLaunchSeedWriter {
     static func write(_ seed: UITestingLaunchSeed, into store: SQLiteSessionStore) throws -> Item {
-        guard let item = seed.item else { throw CocoaError(.featureUnsupported) }
+        guard var item = seed.item else { throw CocoaError(.featureUnsupported) }
         try store.reset()
         if case let .offlinePodcast(_, durationSeconds) = seed {
             let support = try FileManager.default.url(
@@ -42,7 +42,12 @@ enum UITestingLaunchSeedWriter {
                 try store.savePodcastDownload(download)
             }
         }
+        // J14 (#4100): a listener with history on the episode. Marked complete by hand, and/or a saved place.
+        if UITestingHooks.podcastStartsCompleted { item.sourceCompletedAt = Date() }
         try store.seed(item: item)
+        if case let .offlinePodcast(_, durationSeconds) = seed, let place = UITestingHooks.podcastPlaceSeconds {
+            try store.saveSession(UITestingLaunchSeed.podcastSession(placeSeconds: place, durationSeconds: durationSeconds, now: Date()))
+        }
         return item
     }
 
