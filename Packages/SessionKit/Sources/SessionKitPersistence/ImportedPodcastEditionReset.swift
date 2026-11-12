@@ -7,6 +7,11 @@ extension SQLiteSessionStore {
     /// reset Margins don't play until the pass places them; the screen shows them as being placed (#872).
     /// Moved unchanged from the app model.
     public func invalidateImportedPodcastPlacements(itemId: String, editionSHA256 digest: String) throws {
+        // One transaction, so a layer read here is not saved over a change another thread made to it meanwhile (#3601).
+        try withSessionTransaction { try invalidateImportedPodcastPlacementsUnderWriteLock(itemId: itemId, editionSHA256: digest) }
+    }
+
+    private func invalidateImportedPodcastPlacementsUnderWriteLock(itemId: String, editionSHA256 digest: String) throws {
         for var layer in try loadImportedCommentaryLayers(itemId: itemId)
         where layer.deletedAt == nil && layer.itemIdentity.itemType == .podcast
             && layer.resolvedRecipientEditionSHA256 != digest {

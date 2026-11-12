@@ -115,7 +115,7 @@ public enum ImportedMarginResends {
             held.shareLinkId = linkId
             try repository.saveImportedCommentaryLayer(held)
         }
-        if let store = repository as? any SessionRepositoryTransaction { try store.withSessionTransaction(remember) } else { try remember() }
+        try ImportedLayerChange.underWriteLock(on: repository, remember)
     }
 
     /// Artifact-only layers still need the app's podcast placement pass after commentary deduplication.
@@ -129,6 +129,19 @@ public enum ImportedMarginResends {
     /// Imports a packet's layer, leaving out the Margins this sender already gave the listener on this item.
     /// Call it where the layer would otherwise go to `importCommentaryLayer`.
     public static func importLayer(
+        _ layer: ImportedCommentaryLayer,
+        interjections: [ImportedCommentaryInterjection],
+        repository: ListeningSessionRepository
+    ) throws -> ImportedCommentaryImportDisposition {
+        // One transaction from the first read: the held layers and Margins below are read after the write lock is taken,
+        // so a switch or repair that commits meanwhile is not saved over with an older copy (#3601). It also means a
+        // failure partway leaves no back-filled id behind.
+        try ImportedLayerChange.underWriteLock(on: repository) {
+            try importLayerUnderWriteLock(layer, interjections: interjections, repository: repository)
+        }
+    }
+
+    private static func importLayerUnderWriteLock(
         _ layer: ImportedCommentaryLayer,
         interjections: [ImportedCommentaryInterjection],
         repository: ListeningSessionRepository
