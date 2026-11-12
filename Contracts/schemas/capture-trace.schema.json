@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "capture-trace.schema.json",
+  "title": "Capture trace (#3937)",
+  "description": "A recorded run of the events a Margin's recording meets on a real route: route changes, Now Playing and remote commands, and recorder readings, with timestamps on one forward-moving clock. Times and audio port names only; never a recording, a title, a transcript or an id. Replayed by SessionKit's CaptureTraceReplay.",
+  "type": "object",
+  "required": ["format", "name", "source", "events"],
+  "additionalProperties": false,
+  "properties": {
+    "format": { "const": "capture-trace/1" },
+    "name": { "type": "string", "minLength": 1 },
+    "bug": { "type": "string", "pattern": "^#[0-9]+$" },
+    "source": { "type": "string", "minLength": 1, "description": "Which events come from an issue or export and which are illustrative." },
+    "events": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["atMs", "kind"],
+        "additionalProperties": false,
+        "properties": {
+          "atMs": { "type": "integer" },
+          "kind": { "enum": ["recordingStarted", "routeChange", "recorderReading", "command", "nowPlayingInfo"] },
+          "inputs": { "type": "array", "items": { "type": "string" } },
+          "command": { "type": "string" },
+          "origin": { "type": "string" },
+          "running": { "type": "boolean" },
+          "capturedMs": { "type": "integer", "minimum": 0 }
+        },
+        "allOf": [
+          { "if": { "properties": { "kind": { "enum": ["recordingStarted", "routeChange"] } } }, "then": { "required": ["inputs"] } },
+          { "if": { "properties": { "kind": { "const": "recorderReading" } } }, "then": { "required": ["running", "capturedMs"] } },
+          { "if": { "properties": { "kind": { "const": "command" } } }, "then": { "required": ["command", "origin"] } }
+        ]
+      }
+    }
+  }
+}

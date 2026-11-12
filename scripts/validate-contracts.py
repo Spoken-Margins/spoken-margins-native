@@ -57,6 +57,7 @@ PATH_SCHEMA_RULES = [
     ("fixtures/voice-model-catalog/neighbour-inputs.json", "voice-model-catalog-neighbour-inputs.schema.json"),
     ("fixtures/podcast-search/test-names.json", "podcast-search-test-list.schema.json"),
     ("fixtures/podcast-search/itunes-responses/*.json", "itunes-search-response.schema.json"),
+    ("fixtures/capture-traces/*.json", "capture-trace.schema.json"),
     ("traces/*.json", "session-trace.schema.json"),
 ]
 
