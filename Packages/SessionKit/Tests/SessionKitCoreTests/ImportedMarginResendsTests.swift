@@ -587,6 +587,60 @@ final class ImportedMarginResendsTests: XCTestCase {
         XCTAssertEqual(held.senderId, sender, "the link back-fill must not save an older copy over the sender id")
     }
 
+    // MARK: Sender id back-fill needs the share token (#2846, owner's call 2026-11-09)
+    // An older layer learns a sender id from a later packet only when that packet repeats one of its Margins with the
+    // same share token. A label and words alone are not enough: a packet made under a friend's label by someone else
+    // must not tie its id to the friend's older layer, or hiding that id would hide the friend's Margins.
+
+    private let stranger = "ffeeddccbbaa99887766554433221100"
+
+    private func senderIdOfOlderLayer() throws -> String? {
+        try XCTUnwrap(layers().first { $0.packageDigest == "O" }).senderId
+    }
+
+    func testTheSameShareTokenBackFillsTheSenderId() throws {
+        try send(packet("O", from: "Ada", [("one", 60_000)]))
+        try send(packet("U", from: "Ada", [("one", 60_000)]), senderId: sender)
+        XCTAssertEqual(try senderIdOfOlderLayer(), sender)
+    }
+
+    func testAnotherShareTokenOnTheSameLabelAndWordsDoesNotBackFillTheSenderId() throws {
+        try send(packet("O", from: "Ada", [("one", 60_000)]))
+        // Same label, words and place; a different person's capture, so a different token.
+        try send(packet("U", from: "Ada", [("one", 60_000)], person: "Mallory"), senderId: stranger)
+        XCTAssertNil(try senderIdOfOlderLayer())
+        XCTAssertEqual(try visible(), ["Ada|60000|one", "Ada|60000|one"], "the lookalike is its own Margin")
+    }
+
+    func testAPacketWithoutShareTokensDoesNotBackFillTheSenderId() throws {
+        try send(packet("O", from: "Ada", [("one", 60_000)]))
+        try send(packet("U", from: "Ada", [("one", 60_000)], provenance: false), senderId: stranger)
+        XCTAssertNil(try senderIdOfOlderLayer())
+        XCTAssertEqual(try layers().count, 2, "an older packet without tokens still imports, whole")
+    }
+
+    func testAnOlderLayerWithoutShareTokensIsNeverBackFilled() throws {
+        try send(packet("O", from: "Ada", [("one", 60_000)], provenance: false))
+        try send(packet("U", from: "Ada", [("one", 60_000)], provenance: false), senderId: sender)
+        try send(packet("V", from: "Ada", [("one", 60_000)]), senderId: sender)
+        XCTAssertNil(try senderIdOfOlderLayer(), "nothing ties a token-less layer to anyone")
+        XCTAssertEqual(try layers().count, 3)
+    }
+
+    func testOneMatchingTokenDoesNotLinkTheLayersItDoesNotHold() throws {
+        try send(packet("O", from: "Ada", [("one", 60_000)]))
+        try send(packet("B", from: "Ada", [("other", 180_000)]))
+        try send(packet("U", from: "Ada", [("one", 60_000), ("other", 180_000)], person: "Mallory"), senderId: stranger)
+        XCTAssertNil(try senderIdOfOlderLayer())
+        XCTAssertNil(try XCTUnwrap(layers().first { $0.packageDigest == "B" }).senderId)
+    }
+
+    func testALayerThatAlreadyHasASenderIdKeepsIt() throws {
+        try send(packet("O", from: "Ada", [("one", 60_000)]), senderId: sender)
+        try send(packet("U", from: "Ada", [("one", 60_000)]), senderId: stranger)
+        XCTAssertEqual(try senderIdOfOlderLayer(), sender)
+    }
+
     func testRememberingALinkOnAHeldPacket() throws {
         try send(packet("O", from: "Ada", [("one", 60_000)]))
         try ImportedMarginResends.rememberShareLink(linkA, onLayerWithDigest: "O", repository: store)
