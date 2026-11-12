@@ -118,6 +118,8 @@ public final class AttestedServerClient: @unchecked Sendable {
     /// One send at a time, across every caller of this client (#4137): each assertion carries a counter the server
     /// requires to rise, so two sends must not be signed and posted out of order, and two must not both register a key.
     private let gate = SerialGate()
+    /// How long one send may hold the gate: registration and the request each have a 30 s transport limit.
+    private let gateTimeout: TimeInterval
     private var registering: Task<String, Error>?
     /// Failed registrations since the last success, and when the next one may start (#4135). Memory only: a new launch
     /// tries once, so a fixed build or entitlement is picked up without waiting.
@@ -133,8 +135,10 @@ public final class AttestedServerClient: @unchecked Sendable {
         consent: @escaping @Sendable () -> Bool,
         server: @escaping @Sendable (String) -> URL = { ProductServer.url(path: $0) },
         now: @escaping @Sendable () -> Date = { Date() },
+        gateTimeout: TimeInterval = 90,
         post: @escaping AttestedPost
     ) {
+        self.gateTimeout = gateTimeout
         self.provider = provider
         self.store = store
         self.hasConsent = consent
@@ -158,6 +162,13 @@ public final class AttestedServerClient: @unchecked Sendable {
         // The wait may have been long: agreement is read again, so a send queued behind another never outlives a
         // withdrawal.
         guard hasConsent() else { throw AppAttestFailure.needsConsent }
+        // Apple's calls have no timeout of their own, and the gate is the app's: one call that never returns would hold
+        // every later send until relaunch. The held section is bounded; past it the send fails (`.failed`, which the
+        // sender check treats as "no permit, link still made") and the gate passes on.
+        return try await Self.bounded(by: gateTimeout) { try await self.sendHoldingGate(path: path, body: body) }
+    }
+
+    private func sendHoldingGate(path: String, body: Data) async throws -> (status: Int, body: Data) {
         var attestedAgain = false
         while true {
             let keyID = try await registeredKeyID()
@@ -183,6 +194,35 @@ public final class AttestedServerClient: @unchecked Sendable {
                 return response
             }
         }
+    }
+
+    /// Runs `work`, and gives up after `seconds` with `.failed` whether or not `work` ever returns. The abandoned work is
+    /// cancelled; if it ignores that and finishes later, its result is dropped.
+    private static func bounded<T: Sendable>(by seconds: TimeInterval, _ work: @escaping @Sendable () async throws -> T) async throws -> T {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<T, Error>) in
+            let once = OnceFlag()
+            let running = Task {
+                do {
+                    let value = try await work()
+                    if once.claim() { continuation.resume(returning: value) }
+                } catch {
+                    if once.claim() { continuation.resume(throwing: error) }
+                }
+            }
+            Task {
+                try? await Task.sleep(nanoseconds: UInt64(max(seconds, 0) * 1_000_000_000))
+                if once.claim() {
+                    running.cancel()
+                    continuation.resume(throwing: AppAttestFailure.failed)
+                }
+            }
+        }
+    }
+
+    private final class OnceFlag: @unchecked Sendable {
+        private let lock = NSLock()
+        private var claimed = false
+        func claim() -> Bool { lock.withLock { if claimed { return false }; claimed = true; return true } }
     }
 
     // MARK: Registration

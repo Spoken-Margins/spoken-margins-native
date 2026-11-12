@@ -511,8 +511,8 @@ final class AppAttestClientTests: XCTestCase {
             post: { url, headers, body in try await wire.post(url, headers, body) }
         )
         let first = Task { try await attested.send(path: "/api/v1/links/sender", body: Data("first".utf8)) }
-        let second = Task { try await attested.send(path: "/api/v1/links/sender", body: Data("second".utf8)) }
         await waitUntil { wire.arrivedCount >= 1 }
+        let second = Task { try await attested.send(path: "/api/v1/links/sender", body: Data("second".utf8)) }
         // Give the second send every chance to overtake the first.
         try? await Task.sleep(nanoseconds: 50_000_000)
         XCTAssertEqual(wire.arrivedCount, 1, "the second send waits for the first one's answer")
@@ -521,7 +521,7 @@ final class AppAttestClientTests: XCTestCase {
         wire.releaseOne()
         _ = try await (first.value, second.value)
         XCTAssertEqual(wire.maxInFlight, 1)
-        XCTAssertEqual(wire.order.count, 2)
+        XCTAssertEqual(wire.order, ["first", "second"], "the older send reaches the server first")
         XCTAssertEqual(provider.counts.keys, 1, "one key for both callers")
         XCTAssertEqual(server.paths().filter { $0.hasSuffix("/register") }.count, 1)
         XCTAssertEqual(provider.counts.asserted, 2)
@@ -557,6 +557,42 @@ final class AppAttestClientTests: XCTestCase {
         var value: Bool {
             get { lock.withLock { stored } }
             set { lock.withLock { stored = newValue } }
+        }
+    }
+
+    /// Apple's calls have no timeout. One that never returns must not hold every later send until the app is relaunched.
+    func testASigningCallThatNeverReturnsDoesNotBlockLaterSends() async throws {
+        let server = Server()
+        let hanging = HangingFirstAssertionProvider()
+        let attested = AttestedServerClient(
+            provider: hanging, store: AppAttestKeyStore(defaults: defaults()), consent: { true },
+            server: { URL(string: "https://links.example.test\($0)")! },
+            now: { Date(timeIntervalSince1970: 1_700_000_000) },
+            gateTimeout: 0.2,
+            post: { url, headers, body in try await server.handle(url, headers, body) }
+        )
+        let first = Task { () -> AppAttestFailure? in
+            do { _ = try await attested.send(path: "/api/v1/links/sender", body: Data()); return nil } catch { return error as? AppAttestFailure }
+        }
+        await waitUntil { hanging.signCalls >= 1 }
+        let second = try await attested.send(path: "/api/v1/links/sender", body: Data())
+        let firstFailure = await first.value
+        XCTAssertEqual(firstFailure, .failed, "the hung send gave up")
+        XCTAssertEqual(second.status, 200, "the next send got through")
+    }
+
+    /// Signs normally except the first assertion, which waits forever.
+    private final class HangingFirstAssertionProvider: AppAttestKeyProvider, @unchecked Sendable {
+        private let lock = NSLock()
+        private var calls = 0
+        var isSupported: Bool { true }
+        var signCalls: Int { lock.withLock { calls } }
+        func generateKey() async throws -> String { Data(repeating: 7, count: 32).base64EncodedString() }
+        func attestKey(_ keyID: String, clientDataHash: Data) async throws -> Data { Data("attestation".utf8) }
+        func generateAssertion(_ keyID: String, clientDataHash: Data) async throws -> Data {
+            let n = lock.withLock { calls += 1; return calls }
+            if n == 1 { await withCheckedContinuation { (_: CheckedContinuation<Void, Never>) in } }
+            return Data("assertion".utf8)
         }
     }
 }
