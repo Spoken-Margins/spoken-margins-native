@@ -3379,6 +3379,14 @@ class AutoRevertTests(unittest.TestCase):
         self.assertTrue(self.revert(repo).startswith('reverted #7 as '))
         self.assertEqual(self.origin_file('scripts/lane-runner.py'), 'v1\n')
 
+    def test_a_hosted_runner_fault_is_no_lane_change_to_revert(self):
+        # #4085: a lane-fault annotation on a hosted check is INCONCLUSIVE now, not a FAIL, so it must not count toward
+        # reverting the newest lane change (audit on 9d98b41).
+        why = ('"hosted fast: portable" ended failure on aaaaaaa with a lane-fault annotation (run 41): setup fault')
+        report = self.report('INCONCLUSIVE', lane.hosted_checks_missing(why, 'INCONCLUSIVE')[3], '2026-10-01T13:00:00Z')
+        self.assertEqual(lane.lane_report_verdict(report['body'])[0], False)
+        self.assertTrue(lane.lane_report_verdict(self.fault('2026-10-01T13:00:00Z', 2)['body'])[0])
+
     def test_only_reports_on_prs_by_the_runner_after_the_change_landed_count(self):
         before = self.fault('2026-10-01T11:00:00Z', 1)  # posted before the merge
         older_next = self.fault('2026-10-01T13:00:00Z', 2, tested=self.start)  # tested a main without it
