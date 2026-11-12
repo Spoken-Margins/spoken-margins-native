@@ -55,9 +55,18 @@ RESET_HOUR_UTC = int(os.environ.get('SM_DIAL_RESET_HOUR', '11'))    # 07:00 EDT
 FINISH_BY = {'reset': 0, 'fri noon': 19, 'fri 7': 24}             # hours before the reset
 USAGE_MAX_AGE = dt.timedelta(hours=3)    # younger reads at face value; the Mac worker still holds past it
 # Points an hour added to a report past USAGE_MAX_AGE. Measured from 437 reports on #337, 2026-10-01 to 11-06: the
-# busiest 6 hours in 100 burned 2.0 an hour, and the busiest 12 hours ever burned 1.38. Those windows include the
-# owner's Mac sessions, which can't run while it sleeps. How to re-measure: ops/dial/README.md.
+# busiest 6 hours in 100 burned 2.0 an hour (three threads running), and the busiest 12 hours ever burned 1.38.
+# Those windows include the owner's Mac sessions, which can't run while it sleeps. How to re-measure: ops/dial/README.md.
 STALE_BURN = 2.0
+# Charging all of STALE_BURN for the whole age held the gate on 2026-11-12 (#4111): a 65% report 12 h old read 90%
+# while real usage was 66%, because the gate was holding, nothing ran, and the estimate rose with the clock alone.
+# So an old report is charged for what ran. IDLE_BURN is the top of the idle gaps (0.09 to 0.33 an hour, gate holding,
+# Mac off). THREAD_BURN is per hour a Claude thread was active: with three threads, IDLE_BURN + 3 * THREAD_BURN is
+# about STALE_BURN, so a fully busy week still reads as before.
+IDLE_BURN = 0.33
+THREAD_BURN = 0.55
+COMMENT_PAGES = 20                       # pages of 100 repo comments read; the repo gets about 2,000 a week
+THREAD_READ_PAD = dt.timedelta(hours=6)  # the thread read starts this long before the report: threads running then
 USAGE_WINDOW = dt.timedelta(days=8)      # how far back #337 is read: a week, plus a report from before the reset
 MIN_SPACING = dt.timedelta(minutes=15)   # between wake-ups
 FALLBACK = dt.timedelta(hours=3)         # wake-up even when every slot looks full
@@ -344,22 +353,51 @@ def trend_line(now: dt.datetime, stop: int, hours_early: int) -> float:
     return stop * max(0.0, min(1.0, share))
 
 
-def usage_estimate(now: dt.datetime, u: dict) -> dict:
+def thread_hours(threads: list[dict], start: dt.datetime, end: dt.datetime, now: dt.datetime) -> float:
+    """Hours of Claude thread time inside [start, end], summed over threads (two threads for an hour is 2). A
+    thread counts from its first claim to its stop note, or its last sign of life if it went quiet, or now."""
+    total = 0.0
+    for t in of_provider(threads):
+        spans = [(r['started'], r['ended']) for r in t['runs']]
+        last_end = {'stopped': t['stopped_at'], 'quiet': t['last_seen']}.get(t['state'], now)
+        spans.append((t['started'], last_end))
+        for a, b in spans:
+            lo, hi = max(a, start), min(b, end)
+            if hi > lo:
+                total += (hi - lo).total_seconds() / 3600
+    return total
+
+
+def usage_estimate(now: dt.datetime, u: dict, activity: dict | None = None) -> dict:
     """What Paced believes about usage, given the Mac's newest report.
 
-    A report under USAGE_MAX_AGE reads at face value. An older one gets STALE_BURN for its whole
-    age. A report from before this week's reset says nothing about this week: the first report of
-    each of the four weeks from 2026-10-10 read 0%, so the estimate counts up from 0% at the reset."""
+    A report under USAGE_MAX_AGE reads at face value. An older one is charged for what ran since it: IDLE_BURN
+    for its whole age, plus THREAD_BURN for each hour a Claude thread was active. `activity` is
+    {'thread_hours': hours of thread time since the report, 'covered_from': how far back the threads were read}.
+    Any part of the age before `covered_from`, or all of it when there is no `activity`, is charged STALE_BURN, so
+    missing data holds more, never less. A report from before this week's reset says nothing about this week: the
+    first report of each of the four weeks from 2026-10-10 read 0%, so the estimate counts up from 0% at the reset."""
     week_start = next_reset(now) - dt.timedelta(days=7)
     last_week = u['at'] < week_start
     if not last_week and now - u['at'] <= USAGE_MAX_AGE:
         return {'percent': u['percent'], 'estimated': False, 'last_week': False, 'words': f"usage {u['percent']}%"}
     base, since = (0, week_start) if last_week else (u['percent'], u['at'])
-    percent = base + STALE_BURN * (now - since).total_seconds() / 3600
+    age = (now - since).total_seconds() / 3600
+    if activity is None:
+        percent = base + STALE_BURN * age
+        burn = f'plus {STALE_BURN:g} points an hour'
+    else:
+        unread = max(0.0, (min(activity['covered_from'], now) - since).total_seconds() / 3600) if activity['covered_from'] > since else 0.0
+        read = age - unread
+        percent = base + STALE_BURN * unread + IDLE_BURN * read + THREAD_BURN * activity['thread_hours']
+        burn = (f"plus {IDLE_BURN:g} points an hour idle and {THREAD_BURN:g} for each hour a thread ran "
+                f"({activity['thread_hours']:.1f} thread-hours)")
+        if unread:
+            burn += f", with the first {unread:.0f} h counted at {STALE_BURN:g} an hour because threads could not be read that far back"
     source = ("the Mac last reported before this week's reset, so counted from 0% at the reset" if last_week
               else f"{u['percent']}% reported {hours(now - u['at'])} ago")
-    return {'percent': percent, 'estimated': True, 'last_week': last_week,
-            'words': f'estimated usage {percent:.0f}% ({source}, plus {STALE_BURN:g} points an hour)'}
+    return {'percent': percent, 'estimated': True, 'last_week': last_week, 'burn': burn,
+            'words': f'estimated usage {percent:.0f}% ({source}, {burn})'}
 
 
 def ack_wait(state: dict, active: int) -> dt.timedelta:
@@ -397,7 +435,7 @@ def decide(now, dial, usage_info, ready_count, ack, state, active) -> dict:
         elif u is None:
             hold = f'no usage report from the Mac found in the last {USAGE_WINDOW.days} days'
         else:
-            est = usage_estimate(now, u)
+            est = usage_estimate(now, u, usage_info.get('activity'))
             line = trend_line(now, stop, dial.get('hours_early', 0))
             if est['percent'] >= stop - MARGIN:
                 hold = f"{est['words']} has reached the hold line {stop - MARGIN}% (stop line {stop}% minus {MARGIN})"
@@ -459,14 +497,14 @@ def status_text(now, dial, usage_info, ready_count, ack, state, decision, thread
     lines.append(f"- I read: **{dial['mode'].capitalize()}**, {dial['threads']} threads, refill {refill}, {stop}.")
     for p in dial['problems']:
         lines.append(f'- Note: {p}.')
-    est = usage_estimate(now, u) if u else None
+    est = usage_estimate(now, u, usage_info.get('activity')) if u else None
     if not u:
         lines.append('- Usage: no report from the Mac.')
     elif est['estimated']:
         lines.append(f"- Usage: about {est['percent']:.0f}%, an estimate. The Mac's newest report is "
                      f"{u['percent']}% at {t(u['at'])}" +
                      (", from before this week's reset, so this counts up from 0% at the reset" if est['last_week'] else '') +
-                     f", plus {STALE_BURN:g} points an hour.")
+                     f", {est['burn']}.")
     else:
         lines.append(f"- Usage: {u['percent']}% from the Mac at {t(u['at'])}.")
     if dial['mode'] == 'paced' and dial['stop'] and u:
@@ -597,11 +635,26 @@ def main(argv=None, now: dt.datetime | None = None) -> int:
     # Newest first, then reversed: the repo gets over 2,000 comments a week (2026-10-01), so
     # an oldest-first read hit the page cap before the latest notes. A thread is quiet after
     # 2 hours without a sign of life, so 24 hours (inside the week) is plenty.
-    since = max(next_reset(now) - dt.timedelta(days=7), now - THREAD_WINDOW).strftime('%Y-%m-%dT%H:%M:%SZ')
+    # An old report is charged for the thread time since it (#4111), so the read reaches back to it, but never
+    # before this week's start.
+    week_start = next_reset(now) - dt.timedelta(days=7)
+    window_start = now - THREAD_WINDOW
+    if usage_info['usage']:
+        window_start = min(window_start, usage_info['usage']['at'] - THREAD_READ_PAD)
+    window_start = max(week_start, window_start)
+    since = window_start.strftime('%Y-%m-%dT%H:%M:%SZ')
     all_comments = gh_pages(f'repos/{REPO}/issues/comments?since={since}&sort=created'
-                            f'&direction=desc&per_page=100', token)[::-1]
+                            f'&direction=desc&per_page=100', token, max_pages=COMMENT_PAGES)[::-1]
+    # Newest first, so a page cap drops the oldest comments: then threads are readable only back to the oldest one.
+    covered_from = window_start
+    if all_comments and len(all_comments) >= COMMENT_PAGES * 100:
+        covered_from = max(window_start, parse_time(all_comments[0]['created_at']))
     events = gh_pages(f'repos/{REPO}/events?per_page=100', token, max_pages=3)
     threads = parse_threads(all_comments, events, now)
+    if usage_info['usage']:
+        usage_info['activity'] = {
+            'thread_hours': thread_hours(threads, usage_info['usage']['at'], now, now),
+            'covered_from': covered_from}
     # The coordinator's own comment can be blocked by its permission check (seen
     # 2026-10-01), so a thread claiming an issue after the fire also counts as the
     # acknowledgement.
