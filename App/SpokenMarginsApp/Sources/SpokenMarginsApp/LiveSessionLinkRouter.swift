@@ -66,7 +66,7 @@ private struct LiveSessionLinkCover: ViewModifier {
 
     func body(content: Content) -> some View {
         content.fullScreenCover(item: $links.cover) { _ in
-            LiveSessionView().environmentObject(model)
+            LiveSessionView(model: model).equatable() // so the root's redraw on each model publish stops here (#4091)
         }
     }
 }
