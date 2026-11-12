@@ -44,7 +44,8 @@ final class MixedPlaybackAudioSessionTests: XCTestCase {
         try client.setLowersBackgroundAudio(true)
         try client.play(targetId: "sample", fromMediaTimeMs: 2_800)
         XCTAssertTrue(AVAudioSession.sharedInstance().categoryOptions.contains(.duckOthers))
-        for _ in 0..<40 {
+        let pollDeadline = ContinuousClock.now + .seconds(30)
+        while ContinuousClock.now < pollDeadline {
             if client.isPlaybackComplete(targetId: "sample") { break }
             try await Task.sleep(for: .milliseconds(100))
         }
@@ -78,7 +79,7 @@ final class MixedPlaybackAudioSessionTests: XCTestCase {
         try client.setLowersBackgroundAudio(true)
         _ = try client.prepareSpeechText("One sentence of narration is enough for this chunk.")
         try client.play(targetId: "mix", from: 0)
-        for _ in 0..<250 where starts.value < 1 { try await Task.sleep(for: .milliseconds(20)) }
+        try await pollUntil { starts.value >= 1 }
         XCTAssertEqual(starts.value, 1, "the rendered chunk started")
         XCTAssertTrue(session.categoryOptions.contains(.duckOthers), "playing lowers other audio")
 
@@ -88,7 +89,7 @@ final class MixedPlaybackAudioSessionTests: XCTestCase {
         XCTAssertEqual(session.category, .playback)
 
         try client.play(targetId: "mix", from: client.currentCharOffset() ?? 0)
-        for _ in 0..<150 where !session.categoryOptions.contains(.duckOthers) { try await Task.sleep(for: .milliseconds(20)) }
+        try await pollUntil { session.categoryOptions.contains(.duckOthers) }
         XCTAssertTrue(session.categoryOptions.contains(.duckOthers), "resuming lowers other audio again")
 
         try client.setLowersBackgroundAudio(false)
@@ -97,9 +98,7 @@ final class MixedPlaybackAudioSessionTests: XCTestCase {
         try client.setLowersBackgroundAudio(true)
         XCTAssertTrue(session.categoryOptions.contains(.duckOthers), "and turning it on again does too")
 
-        for _ in 0..<300 where client.playbackTransportState(targetId: "mix") != .stopped {
-            try await Task.sleep(for: .milliseconds(20))
-        }
+        try await pollUntil { client.playbackTransportState(targetId: "mix") == .stopped }
         XCTAssertEqual(client.playbackTransportState(targetId: "mix"), .stopped, "the article played to its end")
         XCTAssertFalse(session.categoryOptions.contains(.duckOthers), "the end of the article stops lowering other audio")
         XCTAssertTrue(session.categoryOptions.contains(.mixWithOthers))

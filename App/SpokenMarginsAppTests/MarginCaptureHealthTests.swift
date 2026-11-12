@@ -263,7 +263,7 @@ final class MarginCaptureHealthTests: XCTestCase {
         harness.recorder.durationUnknown = true
 
         harness.recorder.onInterruption?(.interruptionBegan, 10)
-        for _ in 0..<50 where harness.model.snapshot.isRecording { try await Task.sleep(for: .milliseconds(10)) }
+        try await pollUntil { !harness.model.snapshot.isRecording }
 
         XCTAssertFalse(harness.model.snapshot.isRecording)
         XCTAssertEqual(harness.recorder.finishCount, 0, "an empty voice must not be saved as a Margin")
@@ -286,7 +286,7 @@ final class MarginCaptureHealthTests: XCTestCase {
         recorder.durationUnknown = true
 
         recorder.onInterruption?(.interruptionBegan, 5)
-        for _ in 0..<50 where harness.model.snapshot.isRecording { try await Task.sleep(for: .milliseconds(10)) }
+        try await pollUntil { !harness.model.snapshot.isRecording }
 
         XCTAssertFalse(harness.model.snapshot.isRecording)
         XCTAssertEqual(recorder.finishCount, 1)

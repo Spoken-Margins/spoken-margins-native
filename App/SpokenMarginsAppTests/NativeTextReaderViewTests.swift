@@ -79,10 +79,10 @@ final class NativeTextReaderViewTests: XCTestCase {
         }
 
         var textView: UITextView?
-        for _ in 0..<150 where textView == nil {
+        try await pollUntil {
             host.view.layoutIfNeeded()
             textView = Self.subviews(of: host.view).compactMap { $0 as? UITextView }.first
-            if textView == nil { try await Task.sleep(for: .milliseconds(20)) }
+            return textView != nil
         }
         let mountedTextView = try XCTUnwrap(textView, "The full-source reader never mounted its text view")
         XCTAssertEqual(mountedTextView.accessibilityIdentifier, NativeTextPeekView.textIdentifier)

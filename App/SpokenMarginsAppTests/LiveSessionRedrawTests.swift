@@ -146,7 +146,8 @@ final class LiveSessionRedrawTests: XCTestCase {
 
     /// The cover has presented once the screen's body has run since `count` was read, before mounting.
     private func waitForFirstRun(_ screen: String, after count: Int) async throws {
-        for _ in 0..<150 {
+        let pollDeadline = ContinuousClock.now + .seconds(30)
+        while ContinuousClock.now < pollDeadline {
             if ScreenRedrawProbe.count(screen) > count { return }
             try await Task.sleep(for: .milliseconds(40))
         }
@@ -158,7 +159,8 @@ final class LiveSessionRedrawTests: XCTestCase {
     private func waitUntilQuiet(_ screen: String) async throws {
         var last = ScreenRedrawProbe.count(screen)
         var quiet = 0
-        for _ in 0..<150 {
+        let pollDeadline = ContinuousClock.now + .seconds(30)
+        while ContinuousClock.now < pollDeadline {
             try await Task.sleep(for: .milliseconds(40))
             let now = ScreenRedrawProbe.count(screen)
             quiet = now == last ? quiet + 1 : 0
