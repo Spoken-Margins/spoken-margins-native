@@ -6,6 +6,16 @@ extension Gate1AppModel {
     /// One retrier for the app: a return that starts over replaces one still waiting.
     static let marginReturnResume = MarginReturnResume()
 
+    /// The last step of `resumePlayback()`, kept here so the hot file doesn't grow (#4110).
+    func startSourceAgain(returningFromMargin: Bool) {
+        if returningFromMargin, resumeSourceAfterMargin() { return }
+        run { engine in
+            snapshot = try engine.resumePlayback()
+            refreshSelectedItemInBackground() // like pause(): the icon flips without waiting for the item reload (#2098)
+            reportSuccess("Resumed.")
+        }
+    }
+
     /// Starts the paused source again. Returns false only when there is no engine yet, so the caller's plain path runs.
     /// A refusal (iOS declining the audio session in the background) is recorded as `margin.return_resume`, retried
     /// with the interruption retrier's waits while the source is still paused where it was, and, when every retry is

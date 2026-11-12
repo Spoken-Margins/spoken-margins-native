@@ -1492,8 +1492,7 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    /// `returningFromMargin`: a Margin's voice just ended and the source is owed back. A refusal then is retried and
-    /// recorded, and the listener is told only when it gives up (#4110); see `resumeSourceAfterMargin()`.
+    /// `returningFromMargin`: a Margin's voice ended and the source is owed back; a refused start is retried (#4110).
     func resumePlayback(returningFromMargin: Bool = false) {
         if marginVoiceIsHeldForRecording { return }
         if playingImportedCommentary != nil {
@@ -1520,12 +1519,7 @@ final class Gate1AppModel: ObservableObject {
         guard !requireTermsDecisionBeforePlayback(.resumeSession(sessionId)) else { return }
         stopSpeechPreviews()
         streamingSpeechQueue.relinquishToCanonicalPlayback()
-        if returningFromMargin, resumeSourceAfterMargin() { return }
-        run { engine in
-            snapshot = try engine.resumePlayback()
-            refreshSelectedItemInBackground() // like pause(): the icon flips without waiting for the item reload (#2098)
-            reportSuccess("Resumed.")
-        }
+        startSourceAgain(returningFromMargin: returningFromMargin)
     }
 
     /// Why a friend's shared map couldn't be placed on this item's copy, as stored on its packets (#481).
