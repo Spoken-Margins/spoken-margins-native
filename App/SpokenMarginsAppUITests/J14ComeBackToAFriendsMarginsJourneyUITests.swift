@@ -59,6 +59,27 @@ final class J14ComeBackToAFriendsMarginsJourneyUITests: XCTestCase {
         hearTheMarginThenFindTheEpisode(history: "J14 row 1b", hearStep: 3, leaveStep: 5)
     }
 
+    /// Row 1, from the item screen's "Play" (owner, 2026-11-12: he expects Play to play the Margins he hasn't heard).
+    /// Play must not drop the listener at the end past the friend's Margin: it plays the Margin or asks first. Fails on
+    /// `main` until #4125 is fixed (J14 step 2, "fails today"); on probation, so it can't turn an integration run red.
+    func testItemScreenPlayDoesNotSkipAFriendsMarginsBehindTheSavedPlace() throws {
+        seedThenFriendArrives(history: "J14 row 1c", placeSeconds: 1_490, completed: false)
+
+        XCTContext.runActivity(named: "J14 row 1c, step 2: Play on the item screen does not skip the friend's Margin (fails today, #4125)") { _ in
+            tap("library.row.\(itemId)")
+            XCTAssertTrue(element("item.screen").waitForExistence(timeout: 8), "The item screen did not open")
+            let play = app.buttons["item.start.button"].firstMatch
+            XCTAssertTrue(play.waitForExistence(timeout: 5), "The big button is missing")
+            play.tap()
+            waitUntil("Play went past the friend's Margin without playing it or asking; clock shows \(clockText())", timeout: 10) {
+                self.app.buttons["newMarginsOffer.review"].firstMatch.exists
+                    || self.app.buttons["Hear new Margins first"].firstMatch.exists
+                    || self.element("review.comingUp").exists
+                    || self.element("review.playing").exists
+            }
+        }
+    }
+
     /// Row 2: the listener marked the episode complete by hand. It has no saved place, and the Margins are still
     /// offered on its screen.
     func testMarkedCompleteStillOffersTheFriendsMargins() throws {
@@ -118,7 +139,7 @@ final class J14ComeBackToAFriendsMarginsJourneyUITests: XCTestCase {
             XCTAssertTrue(element("review.comingUp").waitForExistence(timeout: 8), "No lead-in before the friend's Margin")
             // The Margin sits at 5:00; the lead-in starts a short way before it. Past it is the fault: a start at the
             // end of the episode, with the Margin behind.
-            waitUntil("The episode did not go to the friend's Margin; clock shows \(element("playback.progress.label").label)", timeout: 10) {
+            waitUntil("The episode did not go to the friend's Margin; clock shows \(clockText())", timeout: 10) {
                 self.currentPosition().map { (self.friendMarginAt - 30)...(self.friendMarginAt + 5) ~= $0 } ?? false
             }
             XCTAssertFalse(element("item.lastFailure").exists, "A playback problem was reported")
@@ -150,6 +171,12 @@ final class J14ComeBackToAFriendsMarginsJourneyUITests: XCTestCase {
     private func offerButton(_ identifier: String, orLabel label: String) -> XCUIElement {
         let byIdentifier = app.buttons[identifier].firstMatch
         return byIdentifier.waitForExistence(timeout: 5) ? byIdentifier : app.buttons[label].firstMatch
+    }
+
+    /// The clock's words for a failure message, which is built before the wait: "no clock" when Now Playing isn't up.
+    private func clockText() -> String {
+        let label = element("playback.progress.label")
+        return label.exists ? label.label : "no clock"
     }
 
     /// The episode's elapsed-time label in seconds, without waiting, for use inside a predicate.
