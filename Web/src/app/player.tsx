@@ -2,13 +2,14 @@
 // off), play, pause, skip, speed, seek, and the Media Session, so Android's lock screen and notification
 // controls work. Positions are saved every few seconds while playing, and on pause, seek and leaving.
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import type { Episode, Margin } from '../shared/model.ts';
+import type { Episode, Margin, PlaybackPosition } from '../shared/model.ts';
 import { useData } from './data.tsx';
 import { friendMargins, readsAloud } from './logic/arrival.ts';
 import { clipRejection, EPISODE_FAILED, failureNoticeShown, nextFailure, type FailureEvent } from './logic/episode-failure.ts';
 import { CrossingClock } from './logic/margin-autoplay.ts';
 import { MESSAGES, plainError } from './logic/messages.ts';
 import { newestPlayableMessage, playCandidates, playNewestAvailable, type PlayAttempt } from './logic/newest-playable.ts';
+import { browserStorage, MIRROR_EVERY_MS, mirrorPosition } from './logic/position-mirror.ts';
 import { NotSavedError } from './logic/storage.ts';
 import { FINISHED_WITHIN_SECONDS } from './logic/library.ts';
 import { services } from './services.ts';
@@ -75,6 +76,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const [time, setTime] = useState(0);
   const [mediaDuration, setMediaDuration] = useState<number>();
   const lastSave = useRef(0);
+  const lastMirror = useRef(0);
   const pendingSeek = useRef<number | undefined>(undefined);
   const [arrived, setArrived] = useState<Arrived>();
   // Whether the episode failed to load, as a ref (events must see it at once) and as state (the screen shows it).
@@ -109,13 +111,32 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   // under the next one's id while React catches up.
   const loadedId = useRef<string | undefined>(undefined);
 
-  const save = useCallback(() => {
+  // The place now, or nothing while an episode is loading or has none (a place filed then would be 0 or another episode's).
+  const placeNow = useCallback((): PlaybackPosition | undefined => {
     const audio = audioRef.current;
     const id = loadedId.current;
-    if (!audio || !id || !audio.src || !Number.isFinite(audio.currentTime) || pendingSeek.current !== undefined) return;
-    lastSave.current = Date.now();
-    void dataRef.current.savePosition({ episodeId: id, seconds: audio.currentTime, updatedAt: new Date().toISOString() });
+    if (!audio || !id || !audio.src || !Number.isFinite(audio.currentTime) || pendingSeek.current !== undefined) return undefined;
+    return { episodeId: id, seconds: audio.currentTime, updatedAt: new Date().toISOString() };
   }, []);
+
+  // Writes the place to localStorage, which finishes before the page can go (#4096). Never waits on anything.
+  const remember = useCallback(() => {
+    const place = placeNow();
+    if (!place) return;
+    lastMirror.current = Date.now();
+    mirrorPosition(browserStorage(), place);
+  }, [placeNow]);
+
+  const save = useCallback(() => {
+    const place = placeNow();
+    if (!place) return;
+    const now = Date.now();
+    lastSave.current = now;
+    lastMirror.current = now;
+    // First the synchronous copy: an IndexedDB write begun while the page unloads may not commit (#4096).
+    mirrorPosition(browserStorage(), place);
+    void dataRef.current.savePosition(place);
+  }, [placeNow]);
 
   const stopReading = useCallback(() => {
     const current = reading.current;
@@ -402,7 +423,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const max = Number.isFinite(audio.duration) ? audio.duration : Number.POSITIVE_INFINITY;
     audio.currentTime = Math.min(Math.max(0, seconds), max);
     setTime(audio.currentTime);
-  }, []);
+    // The scrub itself is the place, even if the page goes before the browser reports the seek finished (#4096).
+    remember();
+  }, [remember]);
 
   const skip = useCallback((seconds: number) => seek((audioRef.current?.currentTime ?? 0) + seconds), [seek]);
 
@@ -525,7 +548,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
             for (const m of due) comeUp.current.add(m.id);
             if (due.length > 0) fire(due);
           }
-          if (Date.now() - lastSave.current > SAVE_EVERY_MS) save();
+          const now = Date.now();
+          if (now - lastSave.current > SAVE_EVERY_MS) save();
+          else if (now - lastMirror.current > MIRROR_EVERY_MS) remember();
         }}
       />
     </PlayerContext.Provider>

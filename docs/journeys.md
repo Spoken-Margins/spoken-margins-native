@@ -34,6 +34,15 @@ Use a Library that already has content, not only a fresh install. Many of the wo
 
 Steps are written in terms of what the listener wants, not exact button labels, so they stay valid as the UI changes.
 
+**Starting state.** A journey step says where the listener starts, not only which screens they pass through (#4102). Name each of these that the step depends on:
+
+- the item: not started, part way, at the end (99% and over), or marked complete;
+- the listener's own Margins on it: none, or some, and whether any are friends' that they have not heard;
+- the listener: first run or returning (a Library with history);
+- what else is playing, and the entry point (Library row, item screen, Now, a link, the Share sheet).
+
+A step that is true for "whatever state" (or "any", "every") must have a test for each state it names, or say which states have none. Unnamed states are where the owner's bugs have been: #4097 sat in "an item finished at 99%", which no step or test named. The states a PR or a Design comment must name are in [device-conditions.md](workstreams/device-conditions.md), "Listener history".
+
 ## J1 — Listen to an article
 
 1. Add a web article, by pasting a URL or sharing from Safari.
@@ -114,7 +123,7 @@ The owner's one-phone version, with prepared packets and an episode that shares 
 ## J9 — Hear a friend's new Margins before carrying on
 
 1. Listen to a podcast episode well past its start, save a Margin of your own, and pause. Get a co-op packet from a friend for the same episode, with one Margin from before the place you reached, and import it.
-   - Pass: the item screen shows two choices, "Play" and "Skip to <friend>'s Margins · N min" (the friend's name when one named friend sent them, otherwise "the Margins"), whatever state the item is in (not started, part way, finished). The Margin is marked new in the Timeline.
+   - Pass: the item screen shows two choices, "Play" and "Skip to <friend>'s Margins · N min" (the friend's name when one named friend sent them, otherwise "the Margins"), whatever state the item is in (not started, part way, finished). The Margin is marked new in the Timeline. Scripted for not started (`testItemScreenOffersTwoChoicesForAFriendsNewMargin`) and part way (`testHearAFriendsNewMarginThenCarryOnWhereYouWere`); no script for finished or at 99% (#4097).
 2. Press "Play".
    - Pass: the episode plays at once, with no question first, and the friend's Margin plays in place when the episode reaches it. Until it does, the pinned card says "Next Margin in N min" (whole minutes, no clock; "in N sec" in the last 20 s) and "Plays by itself when you get there.", and its button says "Skip to just before <friend>" ("Skip to just before it" with no name); tapping it jumps to the lead-in and the button becomes "Skip to <friend> now". One button, never "item" or "review"; the card is as tall as its words, with no blank row. A Margin from before the place the listener is at stays new; "Skip to <friend>'s Margins" plays it. (Continue on the item's row in the Library still asks whether to hear the new Margin first.)
 3. Back out, then choose "Skip to <friend>'s Margins" on the item screen (or "Hear new Margins first" on the Library row's question).
