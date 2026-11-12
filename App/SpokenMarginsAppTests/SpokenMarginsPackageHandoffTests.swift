@@ -89,9 +89,7 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         coordinator.send(.begin)
         coordinator.send(.advanceToReview)
         coordinator.send(.buildRecipientPreview)
-        for _ in 0..<100 where coordinator.snapshot.previewState != .ready {
-            try await Task.sleep(for: .milliseconds(20))
-        }
+        try await waitForSharingPreview(coordinator)
         let packageURL = try XCTUnwrap(coordinator.verifiedShareFileURL)
         defer { try? FileManager.default.removeItem(at: packageURL) }
 

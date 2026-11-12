@@ -441,9 +441,7 @@ final class Build23SenderSharingExperienceTests: XCTestCase {
     private func waitForVerifiedPreview(
         from coordinator: Build23SharingCoordinator
     ) async throws -> Build23VerifiedRecipientPreview {
-        for _ in 0..<100 where coordinator.snapshot.previewState != .ready {
-            try await Task.sleep(for: .milliseconds(20))
-        }
+        try await waitForSharingPreview(coordinator)
         return try XCTUnwrap(coordinator.snapshot.verifiedPreview)
     }
 

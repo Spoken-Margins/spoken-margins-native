@@ -18,7 +18,7 @@ public enum ServerSendFeature: String, CaseIterable, Sendable {
 public enum ServerSendConsent {
     /// Bump when the words below, or what the feature sends, change in a way a listener who already agreed would
     /// want to read again. Every feature shares the number, so a bump asks everyone once more.
-    public static let disclosureVersion = 1
+    public static let disclosureVersion = 2
 
     private static func key(for feature: ServerSendFeature) -> String {
         "serverSendConsent.\(feature.rawValue).version"
@@ -39,8 +39,9 @@ public enum ServerSendConsent {
 
 /// What the listener reads before the first share link. Drafted from `docs/legal/privacy-policy-draft.md` (row 14)
 /// and D15, D16 and D20 in `docs/legal/attorney-questions.md`; the owner's wording replaces it (#2842). It says only
-/// what the code does today. When the code starts to send more (an App Attest key, a keyed hash for strikes), the
-/// words change in the same PR and `ServerSendConsent.disclosureVersion` goes up. "30 days" is the server's
+/// what the code does today. Version 2 (#2239) adds the App Attest code and the tie from a link to its install.
+/// When the code starts to send more, the words change in the same PR and `ServerSendConsent.disclosureVersion`
+/// goes up. "30 days" is the server's
 /// retention (D4, `research/B4/DESIGN.md`); the app only passes the server's `expiresAt` through, so a change there
 /// needs the same edit and bump here.
 public enum ShareLinkConsentCopy {
@@ -50,6 +51,11 @@ public enum ShareLinkConsentCopy {
         your phone, the Margins, their audio and text, a short excerpt of the source around each one, the source's \
         title and address, and the sender name if you typed one are locked with a key that is only in the link. We can't read them. Anyone who has the link \
         can. The link stops working after 30 days.
+
+        To make a link, your phone also makes a random code for this app. Our server uses it to check that the \
+        request comes from Spoken Margins, and to tie each link to this install so a report of a link can be \
+        counted. The code holds no name. Deleting the app deletes your phone's copy, and our server forgets the \
+        code after 90 days without use.
 
         You can send the file instead. It goes straight to your friend and never touches our server.
         """

@@ -1,7 +1,7 @@
 """Every way the app talks to our server has a named consent route (#2842, Apple agreement 3.3.3).
 
 The app reaches Spoken Margins' server through three transports in `BridgePublicTransport.swift`
-(`BridgePublicTransport`, `CommunityMapTransport`, `ShareLinkTransport`), through addresses built with
+(`BridgePublicTransport`, `CommunityMapTransport`, `ShareLinkTransport`, `AttestedTransport`), through addresses built with
 `ProductServer`, and, later, through App Attest. Each file that uses one is listed below with the way the listener agreed, and the guard checks that
 the file still carries it. A file that is not listed fails, so a new server feature cannot ship
 without someone saying how the listener consents to it (or why none is needed).
@@ -22,7 +22,7 @@ APP = "App/SpokenMarginsApp/Sources/SpokenMarginsApp/"
 KIT = "Packages/SessionKit/Sources/"
 
 # A file that names a transport, or builds an address on our host (`ProductServer`), is a server contact.
-TRANSPORTS = re.compile(r"\b(BridgePublicTransport|CommunityMapTransport|ShareLinkTransport|ProductServer)\b")
+TRANSPORTS = re.compile(r"\b(BridgePublicTransport|CommunityMapTransport|ShareLinkTransport|AttestedTransport|ProductServer)\b")
 # DeviceCheck's per-device bits survive a reinstall, so they get the same rules as App Attest.
 ATTEST = re.compile(r"\b(DCAppAttestService|DCDevice)\b")
 KEYCHAIN = re.compile(r"\b(SecItem\w+|kSecClass\w*|Keychain\w*)\b")
@@ -43,6 +43,14 @@ CONTACTS = {
     KIT + "SessionKit/ShareLinkUpload.swift": (
         "the upload refuses to seal or send without the consent record",
         "guard hasConsent()", 1,
+    ),
+    KIT + "SessionKit/AppAttestClient.swift": (
+        "refuses before the key, the challenge or any request unless the share-link consent record is current (v2 names the install's code)",
+        "guard hasConsent()", 1,
+    ),
+    APP + "AppAttestDeviceProvider.swift": (
+        "checks the same consent record before each of Apple's App Attest calls",
+        "guard ServerSendConsent.hasConsented(to: .shareLinks)", 3,
     ),
     APP + "CommunityMapUploadService.swift": (
         "Settings > Help make listening maps, off until the listener turns it on",
