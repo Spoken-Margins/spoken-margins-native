@@ -1,4 +1,5 @@
 #if SM_SHARE_LINK_CREATION
+import DeviceCheck
 import SessionKit
 import SwiftUI
 import XCTest
@@ -12,6 +13,19 @@ import XCTest
 final class ShareAsLinkRenderingTests: XCTestCase {
     /// The preview's width on a 375 pt-wide phone, the narrowest iOS 26 runs on, less 16 pt of padding on each side.
     private static let narrowestWidth: CGFloat = 343
+
+    /// #4135: the one place Apple's `DCError.invalidKey` becomes `keyUnusable`, the only signing failure that replaces
+    /// the key. Every other error, `DCError` or not, passes through and leaves the install's identity alone.
+    func testOnlyAnInvalidKeyBecomesKeyUnusable() {
+        XCTAssertEqual(
+            AppAttestDeviceProvider.signingFailure(DCError(.invalidKey)) as? AppAttestFailure, .keyUnusable)
+        for code in [DCError.Code.featureUnsupported, .invalidInput, .serverUnavailable] {
+            let mapped = AppAttestDeviceProvider.signingFailure(DCError(code))
+            XCTAssertNil(mapped as? AppAttestFailure, "a \(code) is not a lost key")
+            XCTAssertEqual((mapped as? DCError)?.code, code)
+        }
+        XCTAssertNil(AppAttestDeviceProvider.signingFailure(URLError(.cancelled)) as? AppAttestFailure)
+    }
 
     /// #3751 audit: sharing by link recorded no share signal (#483), though the file sheet does. The link's sheet now
     /// reports a completed share, and only a completed one.

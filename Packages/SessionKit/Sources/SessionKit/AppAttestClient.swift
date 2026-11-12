@@ -18,6 +18,10 @@ import Foundation
 //   would carry the old key and link two installs (Apple agreement 3.3.3B). A reinstall asks for consent again and
 //   attests a fresh key.
 // - A server that no longer knows the key (`unknown_key`) gets one fresh attestation, then the request again.
+// - A registration that failed after a key was made is remembered for this launch, with a backoff that doubles. While
+//   attestation can't succeed (no entitlement, a development key against the production server) a Share tap would
+//   otherwise orphan a Secure Enclave key and spend a server challenge each time, which Apple advises against (#4135).
+//   During the wait `send` throws `.failed` without asking Apple or the server anything.
 
 /// Apple's App Attest calls (`DCAppAttestService`), as the app implements them. A `DCAppAttestService` file must
 /// itself check consent before it makes a key; `scripts/tests/test_server_contact_consent.py` fails if one doesn't.
@@ -86,6 +90,12 @@ public final class AttestedServerClient: @unchecked Sendable {
     private let now: @Sendable () -> Date
     private let lock = NSLock()
     private var registering: Task<String, Error>?
+    /// Failed registrations since the last success, and when the next one may start (#4135). Memory only: a new launch
+    /// tries once, so a fixed build or entitlement is picked up without waiting.
+    private var registrationFailures = 0
+    private var registrationRetryAfter: Date?
+    static let registrationBackoffBase: TimeInterval = 10 * 60
+    static let registrationBackoffCap: TimeInterval = 6 * 60 * 60
 
     /// `consent` has no default on purpose, as in `ShareLinkClient`.
     public init(
@@ -144,8 +154,10 @@ public final class AttestedServerClient: @unchecked Sendable {
 
     private func registeredKeyID() async throws -> String {
         if let saved = store.keyID { return saved }
-        let task: Task<String, Error> = lock.withLock {
+        let task: Task<String, Error> = try lock.withLock {
             if let registering { return registering }
+            // A request that joins a registration already running shares its outcome; only a new one waits out a failure.
+            if let retryAfter = registrationRetryAfter, now() < retryAfter { throw AppAttestFailure.failed }
             let created = Task { try await self.register() }
             registering = created
             return created
@@ -169,6 +181,7 @@ public final class AttestedServerClient: @unchecked Sendable {
             // The server checks Apple's certificate against SHA-256 of its own challenge.
             attestation = try await provider.attestKey(keyID, clientDataHash: Data(SHA256.hash(data: challengeBytes)))
         } catch {
+            noteRegistrationFailed()
             throw AppAttestFailure.failed
         }
         let body = try JSONSerialization.data(withJSONObject: [
@@ -176,11 +189,34 @@ public final class AttestedServerClient: @unchecked Sendable {
             "challenge": challenge.challenge,
             "attestation": attestation.base64EncodedString()
         ], options: [.sortedKeys])
-        let registered = try await transport(server(Self.registerPath), ["Content-Type": "application/json"], body)
+        // From here a key exists, so any failure orphans it: remember it, offline included.
+        let registered: (status: Int, body: Data)
+        do {
+            registered = try await transport(server(Self.registerPath), ["Content-Type": "application/json"], body)
+        } catch {
+            noteRegistrationFailed()
+            throw error
+        }
         // The key is kept only once the server has accepted it; a key it never saw would fail every request.
-        guard registered.status == 201 else { throw AppAttestFailure.failed }
+        guard registered.status == 201 else {
+            noteRegistrationFailed()
+            throw AppAttestFailure.failed
+        }
         store.save(keyID)
+        lock.withLock {
+            registrationFailures = 0
+            registrationRetryAfter = nil
+        }
         return keyID
+    }
+
+    /// A key was made and could not be registered. The next registration waits 10 minutes, then 20, 40, up to 6 hours.
+    private func noteRegistrationFailed() {
+        lock.withLock {
+            registrationFailures += 1
+            let wait = min(Self.registrationBackoffBase * pow(2, Double(min(registrationFailures - 1, 20))), Self.registrationBackoffCap)
+            registrationRetryAfter = now().addingTimeInterval(wait)
+        }
     }
 
     /// Apple says it has no key for the saved key id.
