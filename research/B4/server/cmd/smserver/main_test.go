@@ -2,7 +2,12 @@ package main
 
 import (
 	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"net"
 	"net/http"
@@ -18,6 +23,7 @@ import (
 
 	"errors"
 	"spokenmargins.dev/bridge/internal/config"
+	"spokenmargins.dev/bridge/internal/devicecheck"
 	"spokenmargins.dev/bridge/internal/links"
 	"spokenmargins.dev/bridge/internal/maps"
 	"spokenmargins.dev/bridge/internal/reportrules"
@@ -559,5 +565,47 @@ func TestShowReportedLinkNeverFollowsASymlinkAndLogsNothingForAnUnheldId(t *test
 	}
 	if strings.Contains(out.String(), "opaque ciphertext") || strings.Contains(out.String(), "SMLINK") {
 		t.Fatal("held content was printed through a symlink")
+	}
+}
+
+func TestSetupDeviceCheckNeedsTheWholeConfigOrNone(t *testing.T) {
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	der, _ := x509.MarshalPKCS8PrivateKey(key)
+	good := filepath.Join(t.TempDir(), "AuthKey_TEST.p8")
+	os.WriteFile(good, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}), 0o600)
+	bad := filepath.Join(t.TempDir(), "bad.p8")
+	os.WriteFile(bad, []byte("not a key"), 0o600)
+	const app = "TEAMID1234.com.example.app"
+
+	if dc, err := setupDeviceCheck("", "", app, false); dc != nil || err != nil {
+		t.Fatalf("no flags is off, not an error: %v %v", dc, err)
+	}
+	for name, c := range map[string]struct {
+		key, id, app string
+		dev          bool
+	}{
+		"key without id":    {good, "", app, false},
+		"id without key":    {"", "KEYID12345", app, false},
+		"development alone": {"", "", app, true},
+		"missing file":      {filepath.Join(t.TempDir(), "none"), "KEYID12345", app, false},
+		"not a key":         {bad, "KEYID12345", app, false},
+		"no team in app id": {good, "KEYID12345", "nodots", false},
+		"empty team in id":  {good, "KEYID12345", ".com.example", false},
+	} {
+		if dc, err := setupDeviceCheck(c.key, c.id, c.app, c.dev); dc != nil || err == nil {
+			t.Errorf("%s: %v %v", name, dc, err)
+		}
+	}
+	dc, err := setupDeviceCheck(good, "KEYID12345", app, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := dc.(*devicecheck.Client)
+	if c.TeamID != "TEAMID1234" || c.KeyID != "KEYID12345" || c.BaseURL != "" {
+		t.Fatalf("%+v", c)
+	}
+	dev, _ := setupDeviceCheck(good, "KEYID12345", app, true)
+	if dev.(*devicecheck.Client).BaseURL != devicecheck.DevelopmentURL {
+		t.Fatal("development flag")
 	}
 }

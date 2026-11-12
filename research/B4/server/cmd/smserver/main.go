@@ -138,6 +138,9 @@ func serve(args []string) error {
 	relayOrigins := fs.String("relay-origins", "", "comma-separated web app origins that may use the feed relay (required for relay)")
 	linkOrigins := fs.String("link-origins", "", "comma-separated web app origins that may read sealed link packets and previews (CORS); empty sends no CORS headers")
 	requirePermit := fs.Bool("links-require-permit", false, "refuse a link upload that carries no sender permit (#2239). Do not turn on yet: builds before the permit, phones without App Attest, and any phone whose sender check fails send none, and the app reads the refusal as \"busy\"; see #4134")
+	dcKey := fs.String("devicecheck-key", "", "path to the DeviceCheck .p8 key (#1728); with -devicecheck-key-id, a reinstall keeps a sender's strikes")
+	dcKeyID := fs.String("devicecheck-key-id", "", "key id of the DeviceCheck key")
+	dcDev := fs.Bool("devicecheck-development", false, "use Apple's development DeviceCheck servers (debug builds)")
 	linkWebURL := fs.String("links-web-url", "", "origin of the web app whose page plays a share link (https://app.example.com); empty keeps the share page text only")
 	var mf mapsFlags
 	mf.register(fs)
@@ -185,6 +188,11 @@ func serve(args []string) error {
 		if *requirePermit {
 			linkStore = nil
 		}
+	}
+	// DeviceCheck's two bits per device (#1728). Unset, a reinstall starts a sender clean.
+	deviceCheck, err := setupDeviceCheck(*dcKey, *dcKeyID, *appID, *dcDev)
+	if err != nil {
+		return err
 	}
 	// Club mailboxes (#1799). Optional like links: if the folder cannot be opened, health and the
 	// bridge stay up and club routes answer 503.
@@ -250,6 +258,7 @@ func serve(args []string) error {
 		Reports:           reportStore,
 		Senders:           senderStore,
 		RequireLinkPermit: *requirePermit,
+		DeviceCheck:       deviceCheck,
 		LinkInstallURL:    *installURL,
 		LinkWebURL:        *linkWebURL,
 		Relay:             feedRelay,

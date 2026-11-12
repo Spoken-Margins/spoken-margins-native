@@ -82,9 +82,28 @@ week, a month, then permanent) has someone to pause. The flow:
    without App Attest and any phone whose sender check fails send none, and the app
    shows that refusal as "busy". #4134 lists what has to land first.
 
-What this does not do: DeviceCheck bits and the server-signed "sharing paused until"
-token are the app's and Apple's side; a reinstall makes a new install key and so a
-new sender here. The daily sweep deletes ties past link expiry, drops reported links
+DeviceCheck (#1728) keeps the ladder step across a reinstall. Off by default; start
+`serve -devicecheck-key AuthKey_XXXX.p8 -devicecheck-key-id XXXX` (the team id is read
+from `-app-id`; `-devicecheck-development` for debug builds) to turn it on. Do not turn it on yet: once someone has been struck, an app that does not send the token gets no permit (and reads the answer as "busy", see #4134). Until some
+sender has been struck, nothing changes and nobody is asked for anything (the marker is
+the empty file `state/senders/ladder`). After the first strike, a sender check with no
+token is answered `{"deviceCheckWanted": true}` and nothing else, no permit. The app
+repeats it with `{"deviceCheckToken": "<base64>"}` in the signed body; the server reads
+the device's two bits at Apple and, bit 0 the low one, 00 clean, 01 strike 1, 10 strike 2,
+11 ended: bits above this install's step raise it (a reinstall cannot skip a step, and 11
+stays ended), and a step above the bits is written (a failed write is tried again at the
+next check). The token is used for those calls and dropped: not stored, not logged, not
+in an error. Apple unreachable or refusing the server's own key: the check is answered
+from this server's record and counted as `devicecheck_unavailable` in the abuse log; a
+token Apple refuses is 400 `bad_device_token`. The 11 bits end link sharing only; the
+reporter rule in #1728's 2026-11-05 comment (turn off *receiving*, not reporting) has no
+bit and is not built. Known limits: the bits are written at the struck install's next check (the server has no token when a report arrives), so a struck listener who reinstalls before that install checks again starts clean; once any sender is struck, every sender check is asked for a token and read at Apple (one call each); Apple's reply for a bad token is taken as a 400, and a plain-text 200 that is neither bits nor "Failed to find bit state" fails open (not checked against Apple's live error table). A pause is a second record here, not in the bits, so a reinstall
+clears a running pause but not the strike.
+
+What this does not do: the server-signed "sharing paused until" token is the app's
+side; a reinstall makes a new install key and so a new sender here. The app does not
+yet ask for or send a device token (Swift, a Mac slice), and sealed-sender tags
+(#1728, 2026-11-05) are not built. The daily sweep deletes ties past link expiry, drops reported links
 past 90 days, and deletes a clean sender's file; a sender on the ladder keeps theirs.
 
 `GET /l/<id>` serves a page shell with the install link and the report form,
