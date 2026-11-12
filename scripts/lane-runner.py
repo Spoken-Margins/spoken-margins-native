@@ -1340,13 +1340,10 @@ def hosted_fast_records(github, head: str, checks: dict = HOSTED_FAST_CHECKS) ->
 
 
 def _lane_fault_message(github, run: dict) -> str | None:
-    """The message of <run>'s `lane-fault` failure annotation, or None. A read that fails says nothing: None."""
-    try:
-        for annotation in json.loads(github.api(f'repos/{github.repo}/check-runs/{run["id"]}/annotations')):
-            if annotation.get('title') == HOSTED_LANE_FAULT_TITLE and annotation.get('annotation_level') == 'failure':
-                return str(annotation.get('message', '')).strip()
-    except (OSError, subprocess.SubprocessError, ValueError, TypeError, KeyError, AttributeError):
-        pass
+    """The message of <run>'s `lane-fault` failure annotation, or None when it has none. A read that fails raises."""
+    for annotation in json.loads(github.api(f'repos/{github.repo}/check-runs/{run["id"]}/annotations')):
+        if annotation.get('title') == HOSTED_LANE_FAULT_TITLE and annotation.get('annotation_level') == 'failure':
+            return str(annotation.get('message', '')).strip()
     return None
 
 
@@ -1356,25 +1353,26 @@ def hosted_lane_fault(github, run: dict, name: str, head: str) -> str:
     on <head>. It is '' (so a FAIL, as before) when the run carries no `lane-fault` failure annotation, or when
     another earlier run of this check on this head failed the same way: HOSTED_LANE_FAULT_LIMIT runs, then it is the
     PR's to look at. The extra reads happen only for a failed check."""
-    message = _lane_fault_message(github, run)
-    if message is None:
-        return ''
     try:
+        message = _lane_fault_message(github, run)
+        if message is None:
+            return ''
         earlier = json.loads(github.api(f'repos/{github.repo}/commits/{head}/check-runs?check_name='
                                         f'{urllib.parse.quote(name, safe="")}&filter=all&per_page=100'))
         earlier = [other for other in earlier.get('check_runs', [])
                    if (other.get('app') or {}).get('slug') == 'github-actions' and other.get('id') != run.get('id')
                    and other.get('conclusion') in HOSTED_FAILED_CONCLUSIONS]
+        faults = 1
+        for other in earlier:
+            if faults >= HOSTED_LANE_FAULT_LIMIT:
+                break
+            faults += _lane_fault_message(github, other) is not None
     except (OSError, subprocess.SubprocessError, ValueError, TypeError, KeyError, AttributeError):
-        return ''  # can't count the earlier faults: a failure blocks, as before
-    faults = 1
-    for other in earlier:
-        if faults >= HOSTED_LANE_FAULT_LIMIT:
-            break
-        faults += _lane_fault_message(github, other) is not None
+        return ''  # can't read or count the faults: a failure blocks, as before
     if faults >= HOSTED_LANE_FAULT_LIMIT:
         return ''
-    return f' with a lane-fault annotation (run {run.get("id")}): {message[:200]}'
+    message = ' '.join(message.split())[:200].replace('@', '')  # one line, and no mention in the report
+    return f' with a lane-fault annotation (run {run.get("id")}): {message}'
 
 
 def merged_tree(tree: Path, base: str, head: str, fetch: str | None = None) -> str | None:
@@ -1509,6 +1507,7 @@ HOSTED_MISSING_GRACE = 5 * 60
 HOSTED_REST_POLL = 120
 HOSTED_FAILED = re.compile(r'" ended (failure|timed_out) on ')
 HOSTED_LANE_FAULT = re.compile(r' with a lane-fault annotation \(run (\d+)\)')  # hosted_lane_fault's words (#4085)
+HOSTED_LANE_FAULT_TEXT = re.compile(r' with a lane-fault annotation \(run \d+\).*', re.S)
 HOSTED_MISSING = re.compile(r'^no ".+" check ran on ')
 HOSTED_SKIPPED = re.compile(r'" ended skipped on ')
 HOSTED_UNREADABLE = 'could not read the fast checks'  # says nothing about the checks themselves
@@ -1577,10 +1576,14 @@ def hosted_rest_checks(github, tree: Path, base: str, head: str, base_sha: str, 
                 pass  # keep comparing with the tip we have; the push says if it moved
         found, why = _hosted_fast_checks_once(github, tree, base, head, base_sha, env, records, checks)
         fault = None if found is not None else HOSTED_LANE_FAULT.search(why)
+        if fault and not run_again:
+            # Nothing here starts a new run (the pair, or a merge after T3), so re-adding automerge would read this same
+            # run and report INCONCLUSIVE again forever: it is the FAIL it was before #4085.
+            return None, HOSTED_LANE_FAULT_TEXT.sub('', why)
         if fault:  # #4085: the runner failed it, not the PR: start the check again once, and wait for that run
             if fault.group(1) not in faulted:
                 faulted.add(fault.group(1))
-                if not run_again or len(faulted) > HOSTED_LANE_FAULT_LIMIT - 1:
+                if len(faulted) > HOSTED_LANE_FAULT_LIMIT - 1:
                     return None, why
                 problem = dispatch()
                 if problem:

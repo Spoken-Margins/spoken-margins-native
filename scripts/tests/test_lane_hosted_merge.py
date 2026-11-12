@@ -126,11 +126,18 @@ class HostedRestChecksTests(unittest.TestCase):
         self.assertEqual(found, STOOD)
         self.assertEqual(dispatched, [0.0])  # one dispatch: the second answer was the faulted run still newest
 
-    def test_a_lane_fault_with_no_way_to_run_again_reports_inconclusive_at_once(self):
+    def test_a_lane_fault_with_no_way_to_run_again_stays_a_fail(self):
+        # Nothing starts a new run there (the pair, a merge after T3): INCONCLUSIVE would repeat on every re-add of
+        # automerge, because the same failed run is still the newest. So it is the FAIL it was before #4085.
         (found, why), waited, dispatched = self.wait([(None, FAULT)], run_again=False)
         self.assertIsNone(found)
         self.assertEqual((waited, dispatched), (0, []))
-        verdict, _, ran, details = lane.hosted_checks_missing(why, lane.NEEDS_MAC)
+        self.assertFalse(lane.HOSTED_LANE_FAULT.search(why), why)
+        self.assertIn('ended failure', why)
+        self.assertEqual(lane.hosted_checks_missing(why, lane.NEEDS_MAC)[0], 'FAIL')
+
+    def test_hosted_checks_missing_reports_a_marked_fault_inconclusive(self):
+        verdict, _, ran, details = lane.hosted_checks_missing(FAULT, lane.NEEDS_MAC)
         self.assertEqual((verdict, ran), ('INCONCLUSIVE', 'nothing'))
         self.assertIn('Runner fault', details[0])
 

@@ -200,6 +200,27 @@ class HostedRecordsTests(unittest.TestCase):
         self.assertFalse(lane.HOSTED_LANE_FAULT.search(why), why)
         self.assertEqual(lane.hosted_checks_missing(why, 'INCONCLUSIVE')[0], 'FAIL')
 
+    def test_an_earlier_run_whose_annotations_cannot_be_read_leaves_the_failure_a_fail(self):
+        faulty = [self.lane_fault()]
+        checks = self.failed('failure', faulty, [('failure', faulty)])
+        real = checks.api
+
+        def broken(path):
+            if '/annotations' in path and path.split('/')[-2] == '10':
+                raise OSError('rate limited')
+            return real(path)
+        checks.api = broken
+        found, why = lane.hosted_fast_records(checks, self.HEAD)
+        self.assertFalse(lane.HOSTED_LANE_FAULT.search(why), why)
+
+    def test_the_annotation_message_is_one_line_with_no_mention(self):
+        checks = self.failed('failure', [self.lane_fault('no DNS\n@someone look\n::error::x' + ' y' * 200)])
+        found, why = lane.hosted_fast_records(checks, self.HEAD)
+        self.assertTrue(lane.HOSTED_LANE_FAULT.search(why), why)
+        self.assertNotIn('\n', why)
+        self.assertNotIn('@', why)
+        self.assertLessEqual(len(why), 400)
+
     def test_a_record_for_another_plan_or_head_is_not_this_run(self):
         for name, annotation in (('another plan', notice('fast', 'e' * 40, 'd' * 40, self.HEAD)),
                                  ('another head', notice('fast-portable', 'e' * 40, 'd' * 40, 'f' * 40))):
