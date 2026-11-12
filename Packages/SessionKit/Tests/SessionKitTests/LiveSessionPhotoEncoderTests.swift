@@ -67,7 +67,9 @@ final class LiveSessionPhotoEncoderTests: XCTestCase {
     func testAPhoneSizedPictureIsFittedAndKeptWithinBothCaps() throws {
         let source = try data(pageImage(width: 4_000, height: 3_000))
         let encoded = try LiveSessionPhotoEncoder.encode(source)
-        XCTAssertEqual([encoded.widthPx, encoded.heightPx], [2_048, 1_536])
+        // ImageIO rounds the short side itself, so it may differ from `fitted` by a pixel.
+        XCTAssertEqual(encoded.widthPx, 2_048)
+        XCTAssertEqual(Double(encoded.heightPx), 1_536, accuracy: 1)
         XCTAssertLessThanOrEqual(encoded.data.count, LiveSessionPhoto.maxByteCount)
         let written = try size(of: encoded.data)
         XCTAssertEqual([written.0, written.1], [encoded.widthPx, encoded.heightPx], "the reported size is the file's")
@@ -81,7 +83,7 @@ final class LiveSessionPhotoEncoderTests: XCTestCase {
         XCTAssertEqual([tiny.widthPx, tiny.heightPx], [3, 2])
     }
 
-    func testAnUprightPictureStaysUprightAndATurnedOneIsTurnedIntoThePixels() throws {
+    func testATurnedPictureIsTurnedIntoThePixelsAndLeavesNoRotationTag() throws {
         let source = try pageImage(width: 400, height: 200)
         // Orientation 6: the camera held in portrait; the stored pixels are landscape and a tag says "rotate right".
         let turned = try LiveSessionPhotoEncoder.encode(data(source, properties: [kCGImagePropertyOrientation: 6]))
@@ -187,7 +189,8 @@ final class LiveSessionPhotoEncoderTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: base) }
         let store = LiveSessionPhotoStore(root: base.appending(path: "support"), temporaryRoot: base.appending(path: "tmp"))
         let encoded = try LiveSessionPhotoEncoder.encode(data(pageImage(width: 3_024, height: 4_032)))
-        XCTAssertEqual([encoded.widthPx, encoded.heightPx], [1_536, 2_048])
+        XCTAssertEqual(encoded.heightPx, 2_048)
+        XCTAssertEqual(Double(encoded.widthPx), 1_536, accuracy: 1)
         let staged = try store.stage(data: encoded.data, widthPx: encoded.widthPx, heightPx: encoded.heightPx, fileExtension: encoded.fileExtension)
         let photo = try store.commit(staged, sessionId: "s1", marginId: "m1")
         XCTAssertTrue(store.fileExists(for: photo))

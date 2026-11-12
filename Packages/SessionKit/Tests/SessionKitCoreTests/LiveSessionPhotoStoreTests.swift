@@ -108,6 +108,7 @@ final class LiveSessionPhotoStoreTests: XCTestCase {
         XCTAssertThrowsError(try store.stage(data: Data(), widthPx: 100, heightPx: 100))
         XCTAssertThrowsError(try store.stage(data: bytes, widthPx: 100, heightPx: 100, fileExtension: "png"))
         XCTAssertThrowsError(try store.stage(data: bytes, widthPx: 100, heightPx: 100, fileExtension: "../x"))
+        XCTAssertThrowsError(try store.stage(data: bytes, widthPx: 100, heightPx: 100, fileExtension: "a/b.jpg"))
         XCTAssertNoThrow(try store.stage(data: Data(count: 1_500_000), widthPx: 2_048, heightPx: 1_536))
         XCTAssertNoThrow(try store.stage(data: bytes, widthPx: 100, heightPx: 100, fileExtension: "HEIC"))
         // A refused picture leaves no file behind.

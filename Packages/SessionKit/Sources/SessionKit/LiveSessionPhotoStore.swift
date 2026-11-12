@@ -90,6 +90,8 @@ public struct LiveSessionPhotoStore: Sendable {
     /// is meant to have fitted it, so this is the guard that keeps a bug there from filling the device.
     public func stage(data: Data, widthPx: Int, heightPx: Int, fileExtension: String = "jpg") throws -> Staged {
         let ext = fileExtension.lowercased()
+        // Only a photo's own extensions: an extension holding a "/" would nest a file the sweep never looks at.
+        guard LiveSessionPhoto.allowedExtensions.contains(ext) else { throw StoreError.refusedByRules }
         // `LiveSessionPhoto` is the one place the caps and the allowed extensions live.
         guard LiveSessionPhoto(
             path: Self.relativePath(sessionId: "s", marginId: "m", fileExtension: ext),
