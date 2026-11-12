@@ -162,7 +162,7 @@ The claim decides *whether* the source comes back; `MarginReturnResume` (Session
 
 | Resume threw, app is | What happens |
 | --- | --- |
-| in front | A `resume.failed` event (error type, domain/code, text class, no message text), then a warning with a Resume button. No retry. |
-| in the background (screen locked counts) | The same event, then one retry after 1.5 s. It runs only while the source is still paused where the Margin left it with no other Margin, offer card or recording in the way, and not past the retry window (`InterruptionResumeRetrier`). If it works: `resume.retried` with `outcome: resumed`. If it fails: `gave_up` and the Resume button. If the listener moved on: `abandoned`, nothing shown. |
+| in front | A `resume.failed` event (error type, domain/code, text class, no message text), then an error banner that stays, with a Resume button. No retry. |
+| in the background (screen locked counts) | The same event, then one retry after 1.5 s. It runs only while the source is still paused where the Margin left it with no other Margin, offer card or recording in the way, and not past the retry window (`InterruptionResumeRetrier`). If it works: `resume.retried` with `outcome: resumed`. If it fails: `gave_up` and the same banner. If the listener moved on: `abandoned`, nothing shown. |
 
 A listener's own failed resume (play button, Lock Screen) writes the same `resume.failed` event and shows the error banner as before.

@@ -10,7 +10,7 @@ import Foundation
 ///    so the next device export names the cause.
 /// 2. In the background, the resume is tried once more after a short wait (`InterruptionResumeRetrier`, which gives
 ///    up if the listener took over or the app was suspended past the window).
-/// 3. When it still fails, the listener is offered a Resume button. Not an error banner with no action.
+/// 3. When it still fails, the banner has a Resume button that stays until the listener acts, not an error with no action.
 ///
 /// The orchestration lives here, not in the app model, so a host test can make the engine throw.
 @MainActor

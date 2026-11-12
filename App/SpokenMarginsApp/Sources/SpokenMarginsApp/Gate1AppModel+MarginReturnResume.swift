@@ -31,13 +31,17 @@ extension Gate1AppModel {
         let sessionId = snapshot.sessionId
         let targetId = snapshot.targetId
         // Where it paused. A seek, skip, or a Play and Pause by the listener moves this, and then the source is theirs.
+        // A text or PDF source has no media time, so its place is the text offset and progress.
         let pausedAtMs = snapshot.currentMediaTimeMs
+        let pausedAtText = snapshot.currentTextStart
+        let pausedAtPercent = snapshot.progressPercent
         Self.marginReturnResume.resume(
             appIsInBackground: Gate2AppState.isInBackground(),
             stillWaiting: { [weak self] in
                 guard let self else { return false }
                 return snapshot.status == .paused && snapshot.sessionId == sessionId && snapshot.targetId == targetId
-                    && snapshot.currentMediaTimeMs == pausedAtMs && !snapshot.isRecording
+                    && snapshot.currentMediaTimeMs == pausedAtMs && snapshot.currentTextStart == pausedAtText
+                    && snapshot.progressPercent == pausedAtPercent && !snapshot.isRecording
                     // Another Margin took the voice, or its card is up and the offer paused the source.
                     && playingImportedCommentary == nil && playingInterjectionAudioId == nil
                     && pendingImportedCommentary == nil && marginMomentConductor?.isPlayingVoice != true
@@ -59,14 +63,19 @@ extension Gate1AppModel {
             diagnostics["marginReturnResume"] = "retry_abandoned"
         case .needsListener(let reason, let retried):
             diagnostics["marginReturnResume"] = "needs_listener:\(retried ? "retried:" : "")\(reason)"
-            // The listener's own tap is a plain resume. The Lock Screen play control reaches the same call.
-            reportWarning(
-                "Playback paused after the Margin.",
+            // An error, not a warning: a warning goes after 6 s, and the listener who locked the phone finds it later.
+            // An error stays until they act on it or close it. The Lock Screen play control reaches the same call.
+            let message = "Playback paused after the Margin."
+            statusMessage = "Error"
+            lastError = message
+            presentFeedback(UserFeedbackEvent(
+                kind: .error, message: message,
                 action: UserFeedbackEvent.Action(
                     title: "Resume", accessibilityLabel: "Resume playback", identifier: "resumeAfterMargin",
                     perform: { [weak self] in self?.resumePlayback() }
                 )
-            )
+            ))
+            diagnostics["recentFailure"] = "Margin return could not resume: \(reason)" // the type and code, never the text
         }
     }
 }
