@@ -72,6 +72,18 @@ runuser -u smserver -- smserver release-hold -state /var/lib/smserver -reason "l
 
 The reason goes in the access log. Otherwise leave the hold alone: the daily sweep deletes it at one year.
 
+## Clubs (#1799)
+
+A club is a box of sealed packets, not a link, and it works the same way with different names. The report route is `POST /api/v1/clubs/ID/report`; the form is the app's, because only the app has the read proof a post-level report needs. Everything below is `smserver club ...` with `-state /var/lib/smserver`, run as the `smserver` user like the commands above. Nothing here opens a club's content.
+
+- **An abuse-material report holds first, then ends the club.** The held copy is `/var/lib/smserver/clubs-held/CLUBID` (the header, `posts/`, `disabled/`, and the reported invite links, key included, in `reported-link` to `reported-link-5`). The log is `clubs-held/access.log`, with the same lines as for links. The year runs from the hold, `hold.json` has the date, and the daily sweep deletes the copy at one year.
+- **Forward the links:** `smserver club show-reported-link -state /var/lib/smserver CLUBID` prints them, one per line (open none of them), and logs the read.
+- **The hold cap is the links' numbers** (500 clubs, 5 GiB, 50 a UTC day, and 5 holds a day from one client network, counted together with link holds for the client allowance). At a cap the club is disabled, keeps its content and its reported link for 30 days from the report, and the server logs `HOLD CAP REACHED, club disabled`. Hold it by hand: `smserver club hold -state /var/lib/smserver -report REPORTID CLUBID` (add `-link-file FILE` if the report came by email). Your own run is not capped.
+- **A reported club or post that is not abuse material** is disabled at once, blind. A club keeps its content 30 days from the report, a post until its club ends; then the sweep deletes it. A club's member sees "this club has ended"; anyone else sees nothing.
+- **Reading the reports:** `smserver reports` lists club reports too, as `club CLUBID` (and `post N`), with what the club is now: `taken down`, `taken down, held`, `disabled`, `post disabled`, `expired`, `no such club`, or **`STILL SERVED` / `post STILL SERVED`, which means the report did not stop it**. Fix those with `smserver club disable CLUBID [POST]`, or `smserver club takedown CLUBID` (for abuse material, `club hold` first).
+- **Turning every club off at once:** `smserver switch -public /var/www/smserver clubs off`.
+- **Ending a hold early** (a law-enforcement request): `smserver club release-hold -state /var/lib/smserver -reason "law-enforcement request, their reference" CLUBID`.
+
 ## Renewal and checks
 
 - The year runs from the day you ran `hold`. `hold.json` in the held folder has the exact date; read only that file if you must check it.
