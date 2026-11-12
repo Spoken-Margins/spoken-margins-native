@@ -257,6 +257,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST "+PathClubs+"/{id}/posts", s.postClub)
 	mux.HandleFunc("GET "+PathClubs+"/{id}/posts", s.listClubPosts)
 	mux.HandleFunc("GET "+PathClubs+"/{id}/posts/{seq}", s.getClubItem)
+	mux.HandleFunc("GET /c/club-page.mjs", s.getClubScript)
+	mux.HandleFunc("GET /c/{id}", s.getClubPage)
 	if len(s.LinkOrigins) > 0 {
 		// Registered only with origins listed, so an empty list leaves
 		// OPTIONS answering 405 as it always has.

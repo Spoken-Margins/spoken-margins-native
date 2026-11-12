@@ -27,7 +27,7 @@ Map uploads can require one of those tokens (#743, DESIGN.md §10): `smserver sw
 
 ## Club mailbox (#1799)
 
-`/api/v1/clubs/*` is the club mailbox: a box of sealed packets that members of a club read and add to, with the club's key only in the invite link (`docs/design/club-mailbox.md`, section 5 has the wire format). Nothing is stored but the club id, two hashes of proofs, the sealed header and the sealed posts, in `<state>/clubs/`, with every file time at midnight UTC. It is off until `smserver switch -public DIR clubs on`, and answers 503 `disabled` until then. The request log names every club path as one route, `/api/v1/clubs/*` (and `/c/*` for the landing page to come), and Caddy's error log reduces those paths to the same names (`deploy/caddy-global.caddy`), so deploy that before switching clubs on. The daily sweep ends clubs with no post in their first 7 days or no use in 90.
+`/api/v1/clubs/*` is the club mailbox: a box of sealed packets that members of a club read and add to, with the club's key only in the invite link (`docs/design/club-mailbox.md`, section 5 has the wire format). Nothing is stored but the club id, two hashes of proofs, the sealed header and the sealed posts, in `<state>/clubs/`, with every file time at midnight UTC. It is off until `smserver switch -public DIR clubs on`, and answers 503 `disabled` until then. The request log names every club path as one route, `/api/v1/clubs/*` (and `/c/*` for the invitation page, `GET /c/<id>`: one shell for every well-formed id, never a lookup, no key), and Caddy's error log reduces those paths to the same names (`deploy/caddy-global.caddy`), so deploy that before switching clubs on. The daily sweep ends clubs with no post in their first 7 days or no use in 90.
 
 ## Feed relay (#2985)
 
