@@ -23,4 +23,45 @@ public enum ShareLinkReport {
     public static func validLinkId(_ linkId: String) -> String? {
         pageURL(forLinkId: linkId) == nil ? nil : linkId
     }
+
+    /// One "Report" entry for the item's ⋯ menu: a link the item's friend Margins came from.
+    public struct Entry: Equatable, Identifiable, Sendable {
+        /// The link's public id; one entry per link.
+        public let id: String
+        /// The share page, where the report form is. Holds the id only, never the link's key.
+        public let url: URL
+        /// What the menu says: "Report this link" when the item has one link, else "Report <name>'s link".
+        public let title: String
+    }
+
+    /// The links to offer in the item's ⋯ menu (#2239): one entry per distinct link the item's live friend layers
+    /// were opened from. A layer from a file, a deleted layer and a damaged saved id offer nothing, so a listener is
+    /// never sent anywhere but the share page. A friend who sent two links is listed twice, told apart by number.
+    public static func entries(for layers: [ImportedCommentaryLayer]) -> [Entry] {
+        var seen = Set<String>()
+        var found: [(id: String, url: URL, name: String?)] = []
+        for layer in layers where layer.deletedAt == nil {
+            guard let linkId = layer.shareLinkId.flatMap(validLinkId), let url = pageURL(forLinkId: linkId) else { continue }
+            let name = SharedPacketArrival.senderName(layer.displayLabel)
+            if seen.insert(linkId).inserted {
+                found.append((linkId, url, name))
+            } else if let at = found.firstIndex(where: { $0.id == linkId }), found[at].name == nil {
+                found[at].name = name // a later layer of the same link may be the one that names the sender
+            }
+        }
+        guard found.count > 1 else {
+            return found.map { Entry(id: $0.id, url: $0.url, title: "Report this link") }
+        }
+        var uses: [String: Int] = [:]
+        let named = found.map { $0.name.map { "Report \($0)\u{2019}s link" } ?? "Report a link" }
+        let totals = named.reduce(into: [String: Int]()) { $0[$1, default: 0] += 1 }
+        return zip(found, named).map { link, title in
+            var title = title
+            if totals[title, default: 0] > 1 {
+                uses[title, default: 0] += 1
+                title += " (\(uses[title, default: 0]))"
+            }
+            return Entry(id: link.id, url: link.url, title: title)
+        }
+    }
 }
