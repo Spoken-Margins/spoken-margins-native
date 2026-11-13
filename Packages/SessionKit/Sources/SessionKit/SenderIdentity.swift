@@ -278,3 +278,11 @@ extension SenderIdentityFileStore where Value == SenderIDLedger {
         return id
     }
 }
+
+/// Whether a sender label is a name a screen may show or read aloud (#4125, #4104): the label trimmed, or nil when it
+/// names nobody. It is `SharedPacketArrival.senderName`, the one rule: blank labels and the stand-ins ("Unsigned
+/// sender", "Imported collection", "Someone", "Your friend", any case, spacing or accents) are not names. The name is
+/// for a screen that has only a label, such as the item screen's choices.
+public enum FriendName {
+    public static func usable(_ label: String?) -> String? { SharedPacketArrival.senderName(label) }
+}

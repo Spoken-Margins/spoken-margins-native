@@ -10,6 +10,11 @@ import Foundation
 /// "Skip to Cole's Margins · 3 min", each Margin with its lead-in. The words are the ones the owner reviewed on the
 /// #3247 screens; the length came from the blind test there, where newcomers asked how long the Margins take.
 /// Everything else keeps today's single button and words.
+///
+/// #4125 adds two states for a friend's Margins that sit behind the listener's saved place, where "Play" would
+/// resume past them and they would never be heard. There the words follow the place, on purpose (the owner,
+/// 2026-11-12: "play should do that"): "Hear Sam's Margins first · 1 min" plays them and carries on, and the second
+/// choice is "Listen without them", or "Play from the start" when the place is the very end of the episode.
 public struct ItemListeningChoices: Equatable, Sendable {
     public static let playTitle = "Play"
 
@@ -34,39 +39,86 @@ public struct ItemListeningChoices: Equatable, Sendable {
         }
     }
 
+    /// What a button does. The screen switches on this and decides nothing itself.
+    public enum Action: Equatable, Sendable {
+        /// Start the item: carry on its saved session, or begin one. Margins ahead of the place play in place.
+        case play
+        /// Review the waiting Margins, each with its lead-in. With `thenContinue`, carry on from the saved place
+        /// when the last one has played; without it the review is all the listener asked for.
+        case reviewNewMargins(thenContinue: Bool)
+        /// Carry on from the saved place, leaving the waiting Margins new (the offer's "Listen without them").
+        case continueWithout
+        /// A new session at 0, leaving the waiting Margins new. They are then ahead and play in place.
+        case startFromBeginning
+    }
+
     /// The big button's words.
     public let primaryTitle: String
+    /// What VoiceOver reads for the big button when it isn't just its title; nil to read the title.
+    public let primaryAccessibilityLabel: String?
+    /// What the big button does.
+    public let primaryAction: Action
     /// The second choice's words. Nil when the item has no unheard friend Margins, so there is nothing to choose.
-    public let marginsOnlyTitle: String?
-    /// What VoiceOver reads for the second choice: whose Margins, how many, and about how long.
-    public let marginsOnlyAccessibilityLabel: String?
+    public let secondaryTitle: String?
+    /// What VoiceOver reads for the second choice.
+    public let secondaryAccessibilityLabel: String?
+    /// What the second choice does; nil exactly when `secondaryTitle` is.
+    public let secondaryAction: Action?
+
+    /// The second choice's words when it is "Skip to <friend>'s Margins" (the state with nothing behind the place).
+    public var marginsOnlyTitle: String? { secondaryAction == .reviewNewMargins(thenContinue: false) ? secondaryTitle : nil }
+    /// What VoiceOver reads for that "Skip to …" choice: whose Margins, how many, and about how long.
+    public var marginsOnlyAccessibilityLabel: String? {
+        secondaryAction == .reviewNewMargins(thenContinue: false) ? secondaryAccessibilityLabel : nil
+    }
 
     /// - Parameters:
     ///   - unheardFriendMargins: the friend Margins on this item that the listener can hear and hasn't.
+    ///   - marginsBehindPlace: those of them that sit behind the place Play would resume (`PlayRule
+    ///     .marginsBehindSavedPlace`), empty when none does or the place isn't known. The screen leaves it empty
+    ///     for a listener who already turned the offer down in this run.
+    ///   - placeIsAtEnd: that place is the end of the episode (`PlayRule.savedPlaceIsAtEnd`).
     ///   - hasFinishedSession: the item's session reached its end, so the plain button says "Replay".
     ///   - hasContinuationSession: the item has a session to carry on, so the plain button says "Continue".
     ///   - isPreparingAudio: the item's audio is still being made or fetched, so the plain button says "Listen now".
     public init(
         unheardFriendMargins: [WaitingMargin],
+        marginsBehindPlace: [WaitingMargin] = [],
+        placeIsAtEnd: Bool = false,
         hasFinishedSession: Bool,
         hasContinuationSession: Bool,
         isPreparingAudio: Bool
     ) {
-        if !unheardFriendMargins.isEmpty {
+        if !marginsBehindPlace.isEmpty {
+            // Margins the episode would skip. The first button plays exactly these, then carries on, so the words
+            // and the minutes are counted over them.
+            let (whose, counted) = Self.describe(marginsBehindPlace)
+            let minutes = Self.marginsOnlyMinutes(marginsBehindPlace)
+            primaryTitle = "Hear \(whose) first · \(minutes) min"
+            primaryAction = .reviewNewMargins(thenContinue: true)
+            primaryAccessibilityLabel = "Hear \(whose) first, \(counted), about \(minutes) minute\(minutes == 1 ? "" : "s"), "
+                + "then carry on from where you were."
+            if placeIsAtEnd {
+                secondaryTitle = "Play from the start"
+                secondaryAccessibilityLabel = "Play from the start"
+                secondaryAction = .startFromBeginning
+            } else {
+                secondaryTitle = "Listen without them"
+                secondaryAccessibilityLabel = "Listen without them. \(Self.capitalizingFirst(whose)) stay new."
+                secondaryAction = .continueWithout
+            }
+        } else if !unheardFriendMargins.isEmpty {
             // The same words whether or not the episode was heard, started or is still being prepared: the two
             // choices describe what will play, not where the listener is in the item.
-            let mix = FriendReplyMix(unheardFriendMargins)
-            // Replies only: "Skip to Sam's replies" (the reply, when there is one), and the label counts replies
-            // to the listener's Margins (#3889). Anything else keeps "Skip to Sam's Margins" and counts new Margins.
-            let whose = mix.isAllReplies
-                ? Self.whose(unheardFriendMargins, noun: mix.replies == 1 ? "reply" : "replies")
-                : Self.whoseMargins(unheardFriendMargins)
+            let (whose, counted) = Self.describe(unheardFriendMargins)
             let minutes = Self.marginsOnlyMinutes(unheardFriendMargins)
-            let counted = mix.hasReplies ? mix.spokenCount : "\(mix.total) new Margin\(mix.total == 1 ? "" : "s")"
             primaryTitle = Self.playTitle
-            marginsOnlyTitle = "Skip to \(whose) · \(minutes) min"
-            marginsOnlyAccessibilityLabel = "Skip to \(whose), \(counted), "
+            primaryAccessibilityLabel = nil
+            primaryAction = .play
+            secondaryTitle = "Skip to \(whose) · \(minutes) min"
+            secondaryAccessibilityLabel = "Skip to \(whose), \(counted), "
                 + "about \(minutes) minute\(minutes == 1 ? "" : "s")"
+            secondaryAction = .reviewNewMargins(thenContinue: false)
         } else {
             if isPreparingAudio {
                 primaryTitle = "Listen now"
@@ -75,9 +127,28 @@ public struct ItemListeningChoices: Equatable, Sendable {
             } else {
                 primaryTitle = hasContinuationSession ? "Continue" : "Start listening"
             }
-            marginsOnlyTitle = nil
-            marginsOnlyAccessibilityLabel = nil
+            primaryAccessibilityLabel = nil
+            primaryAction = .play
+            secondaryTitle = nil
+            secondaryAccessibilityLabel = nil
+            secondaryAction = nil
         }
+    }
+
+    /// Whose they are and how many, for the words around `margins`. Replies only: "Sam's replies" (the reply, when
+    /// there is one), counted as replies to the listener's Margins (#3889). Anything else keeps "Sam's Margins" and
+    /// counts new Margins.
+    private static func describe(_ margins: [WaitingMargin]) -> (whose: String, counted: String) {
+        let mix = FriendReplyMix(margins)
+        let whose = mix.isAllReplies
+            ? Self.whose(margins, noun: mix.replies == 1 ? "reply" : "replies")
+            : Self.whoseMargins(margins)
+        let counted = mix.hasReplies ? mix.spokenCount : "\(mix.total) new Margin\(mix.total == 1 ? "" : "s")"
+        return (whose, counted)
+    }
+
+    private static func capitalizingFirst(_ text: String) -> String {
+        text.prefix(1).uppercased() + text.dropFirst()
     }
 
     /// "Cole's Margins" when one named friend sent them all; "the Margins" for several friends or none named.

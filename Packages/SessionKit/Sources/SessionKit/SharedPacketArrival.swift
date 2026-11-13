@@ -82,7 +82,8 @@ public enum SharedPacketArrival {
         guard let trimmed = label?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else { return nil }
         let folded = trimmed.split(whereSeparator: \.isWhitespace).joined(separator: " ")
             .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
-        let standIns = [unsignedSenderLabel, importedCollectionLabel]
+        // Also the words a packet's own README and the app's phrases put where nobody is named (#4125).
+        let standIns = [unsignedSenderLabel, importedCollectionLabel, "Someone", "Your friend"]
         if standIns.contains(where: { $0.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil) == folded }) {
             return nil
         }

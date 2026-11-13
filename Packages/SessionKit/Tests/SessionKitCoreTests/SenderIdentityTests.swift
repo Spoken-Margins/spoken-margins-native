@@ -194,4 +194,22 @@ final class SenderIdentityTests: XCTestCase {
         XCTAssertNotEqual(first, second)
         XCTAssertTrue(SenderID.isValid(first) && SenderID.isValid(second))
     }
+
+    /// Which sender labels are a name a screen may show (#4125). Neighbouring inputs: case, spacing, accents, blank,
+    /// each stand-in, a near miss, a long name.
+    func testWhichSenderLabelsAreUsableNames() {
+        let table: [(String?, String?)] = [
+            (nil, nil), ("", nil), ("   ", nil), ("\n\t", nil),
+            ("Unsigned sender", nil), ("UNSIGNED SENDER", nil), ("  unsigned   sender ", nil),
+            ("Imported collection", nil), ("imported\u{00A0}collection", nil),
+            ("Someone", nil), ("someone", nil), ("SOMEONE ", nil),
+            ("Your friend", nil), ("your  FRIEND", nil),
+            ("Sam", "Sam"), ("  Sam \n", "Sam"), ("Zoë", "Zoë"), ("Someone Else", "Someone Else"),
+            ("Unsigned", "Unsigned"), ("Your friend Sam", "Your friend Sam"),
+            (String(repeating: "x", count: 500), String(repeating: "x", count: 500)),
+        ]
+        for (label, expected) in table {
+            XCTAssertEqual(FriendName.usable(label), expected, "\(String(describing: label).debugDescription)")
+        }
+    }
 }
