@@ -33,7 +33,16 @@ public enum TextSpeechAtTheEndInventory {
     /// A client that starts nothing, with the real one's refusal: no speakable text from the offset on.
     public final class RefusingAtTheEndSpeech: AudioPlaybackClient {
         var source = ""
-        public init() {}
+        /// Whether the client still reports where its last speech started once it is stopped, as the on-device
+        /// (Supertonic) voice does; the system speech client reports nothing.
+        let keepsLastOffsetAfterStop: Bool
+        private var lastStart: Int?
+        /// With `keepsLastOffsetAfterStop`, an earlier speech (the article playing before the Margin was tapped) started at 5.
+        public init(keepsLastOffsetAfterStop: Bool = false) {
+            self.keepsLastOffsetAfterStop = keepsLastOffsetAfterStop
+            lastStart = keepsLastOffsetAfterStop ? 5 : nil
+        }
+        public func currentCharOffset() -> Int? { keepsLastOffsetAfterStop ? lastStart : nil }
         private(set) var starts: [Int] = []
         /// How often the speech was stopped: a refused start must not leave the old speech running.
         public private(set) var stops = 0
@@ -45,6 +54,7 @@ public enum TextSpeechAtTheEndInventory {
                 throw SessionKitError.invalidCommandForState("playback_text_empty")
             }
             starts.append(charOffset)
+            lastStart = charOffset
         }
         public func play(targetId: String, seekingTo charOffset: Int) throws { try play(targetId: targetId, from: charOffset) }
         public func pause() throws {}
@@ -147,6 +157,61 @@ public enum TextSpeechAtTheEndInventory {
             XCTAssertEqual(rig.engine.snapshot.status.isPlaybackActive, true, "it plays again")
             _ = try rig.engine.syncPlaybackProgress(coalescingWrites: true)
             XCTAssertNotEqual(rig.engine.currentSession?.phase, .finished, "the end was left behind")
+        }
+    }
+
+
+    /// A Margin whose place is the end of an AI answer or an interjection summary (#4199): the same refusal as for an
+    /// item's text, answered the same way. The engine has one answer for "nothing left to read" across every text
+    /// target, so the generated turns land at the end of the turn, paused, without the error banner.
+    public static func generatedTurnMarginAtTheEnd(
+        audio makeAudio: () -> AudioPlaybackClient,
+        file: StaticString = #filePath, line: UInt = #line
+    ) throws {
+        let cases: [(InterjectionTargetType, String, TargetType, SessionPhase)] = [
+            (.assistantTurn, "assistant_response", .assistantTurnTTS, .aiResponsePlayback),
+            (.summaryTurn, "interjection_summary", .summaryTurnTTS, .summaryPlayback)
+        ]
+        for (marginTarget, turnType, speechTarget, phase) in cases {
+            let what = "\(marginTarget.rawValue)"
+            let session = Session(
+                id: "session-\(what)", itemId: article.id, status: "in_progress", phase: .itemPlayback,
+                currentTargetType: .itemTextTTS, currentTargetId: article.id, position: Position(),
+                completionPercent: 0, playbackRate: 1
+            )
+            let turnText = "First response. Second response."
+            // Decoded: the turn's memberwise initializer is not public, and its stored form is what the app saves.
+            let turnJSON: [String: Any] = [
+                "id": "turn-\(what)", "sessionId": session.id, "role": "assistant", "turnType": turnType, "status": "complete",
+                "summary": "Brief.", "text": turnText + "\n\n   \n", "sourceInterjectionIds": [String]()
+            ]
+            let turn = try JSONDecoder().decode(ConversationTurn.self, from: JSONSerialization.data(withJSONObject: turnJSON))
+            let margin = Interjection(
+                id: "margin-\(what)", itemId: article.id, sessionId: session.id, targetType: marginTarget, targetId: turn.id,
+                createdAt: Date(), roughPercent: 100,
+                anchor: Anchor(anchorType: .turn, startChar: turnText.count, endChar: turnText.count, anchorBefore: "Second response.", anchorAfter: ""),
+                audioPath: nil, audioStatus: "none", transcriptionStatus: "transcribed", transcript: "A note.",
+                cleanedTranscript: nil, displayText: "A note.", status: "active"
+            )
+            let repository = InMemorySessionRepository(
+                items: [article.id: article], sessions: [session.id: session], interjections: [margin.id: margin], turns: [turn.id: turn]
+            )
+            let engine = SessionEngine(profile: profile, repository: repository, audio: makeAudio(), recorder: Recorder())
+
+            XCTAssertNoThrow(try engine.playInterjectionAnchor(margin), "\(what): go to the Margin at the end", file: file, line: line)
+            _ = try engine.syncPlaybackProgress(coalescingWrites: true)
+            XCTAssertEqual(engine.currentSession?.currentTargetType, speechTarget, "\(what): on the generated turn", file: file, line: line)
+            XCTAssertEqual(engine.snapshot.status, .paused, "\(what): paused at the end of the turn", file: file, line: line)
+            XCTAssertEqual(engine.currentSession?.phase, phase, "\(what): still in the turn", file: file, line: line)
+            XCTAssertNil(engine.snapshot.lastFailure, "\(what): no failure banner", file: file, line: line)
+            XCTAssertEqual(engine.currentSession?.position.charOffset, turnText.count, "\(what): the place is the end, not the top", file: file, line: line)
+            // The rate change restarts speech where it is, and Play resumes from there: neither fails either.
+            XCTAssertNoThrow(try engine.restartPlaybackFromCurrentPosition(), "\(what): restart in place", file: file, line: line)
+            XCTAssertNoThrow(try engine.resumePlayback(), "\(what): resume", file: file, line: line)
+            _ = try engine.syncPlaybackProgress(coalescingWrites: true)
+            XCTAssertEqual(engine.snapshot.status, .paused, "\(what): still at the end", file: file, line: line)
+            XCTAssertNil(engine.snapshot.lastFailure, "\(what): no failure banner after resume", file: file, line: line)
+            XCTAssertEqual(engine.currentSession?.position.charOffset, turnText.count, "\(what): still the end after resume", file: file, line: line)
         }
     }
 
